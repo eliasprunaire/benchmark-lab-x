@@ -212,6 +212,8 @@ def main(argv=None):
                         help='Alias glm-5.3-flash ou chemin d’un profil JSON local')
     parser.add_argument('--judgment-profile', metavar='ALIAS_OR_PROFILE')
     parser.add_argument('--candidate-pi', action='store_true', help='Charger le transport candidat Pi/OpenRouter dans l’exécuteur privé')
+    parser.add_argument('--candidate-provider', choices=('openrouter', 'anthropic', 'deepseek', 'zai'), default='openrouter',
+                        help='Canal candidat explicitement admis ; les API officielles sont un dernier recours')
     parser.add_argument('--model')
     parser.add_argument('--pi-package', type=Path)
     parser.add_argument('--node', type=Path)
@@ -221,6 +223,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     os.umask(0o077)
     try:
+        if args.candidate_provider != 'openrouter' and args.action != 'execute-candidate':
+            raise ValueError('Canal officiel réservé à une acquisition opérateur explicitement admise')
         if args.judgment_profile is not None and args.action not in ('reserve-judgment', 'execute-judgment'):
             raise ValueError('Profil réservé au jugement privé')
         if args.candidate_pi and args.action != 'executor':
@@ -385,7 +389,12 @@ def main(argv=None):
                         before = campaigns.inspect(store, request['campaign_id'])
                         if request['attempt_id'] not in {a['operation_id'] for a in before['attempts']}:
                             raise ValueError('Tentative étrangère à la campagne')
-                        transport = PiOpenRouter(os.environ.pop('OPENROUTER_API_KEY', ''), args.pi_package, args.node)
+                        if args.candidate_provider == 'openrouter':
+                            transport = PiOpenRouter(os.environ.pop('OPENROUTER_API_KEY', ''), args.pi_package, args.node)
+                        else:
+                            from .pi_official import PiOfficial, CHANNELS
+                            transport = PiOfficial(os.environ.pop(CHANNELS[args.candidate_provider][3], ''),
+                                                   args.pi_package, args.node, args.candidate_provider)
                         campaigns.execute(args.data, request['attempt_id'], transport)
                         result = next(a for a in campaigns.inspect(store, request['campaign_id'])['attempts']
                                       if a['operation_id'] == request['attempt_id'])

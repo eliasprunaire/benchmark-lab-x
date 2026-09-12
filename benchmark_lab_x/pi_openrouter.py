@@ -87,10 +87,6 @@ class PiOpenRouter:
         config, conditions = request['requested_configuration'], request['conditions']
         if operation['phase'] != 'acquisition':
             raise ValueError('Tentative candidate requise')
-        if config['access'] != 'API' or config['channel_id'] != http.ENDPOINT:
-            raise ValueError('Canal OpenRouter obligatoire')
-        if (not config['model'].strip() or config['model'] != config['revision']):
-            raise ValueError('Identifiant de modèle exact requis, sans alias substitué')
         if any(conditions[k] for k in ('tools', 'packages', 'skills')):
             raise ValueError('Ce transport Pi ne fournit aucun outil ni extension')
         defaults = conditions['defaults']
@@ -106,6 +102,27 @@ class PiOpenRouter:
             raise ValueError('Installation Pi divergente')
         if any(conditions['environment'].get(k) != live[k] for k in ('node_version', 'node_sha256', 'bridge_sha256')):
             raise ValueError('Exécuteur Pi divergent')
+        parameters = config['parameters']
+        prompt = storage._strict_json(projected)
+        messages = [dict(role='system', content=system_context(defaults['system_prompt'])),
+                    dict(role='user', content=prompt)]
+        wire = storage._strict_json(self._payload(config, messages))
+        if len(wire.encode()) > http.MAX_REQUEST_BYTES or self._key in wire:
+            raise ValueError('Requête hors limites')
+        self._input = dict(model=config['model'], system=defaults['system_prompt'], prompt=prompt,
+                           max_tokens=parameters['max_tokens'], context_window=defaults['context_window'])
+        self._wire_bytes = wire
+        self._wire_sha256 = sha256(wire.encode('utf-8')).hexdigest()
+        self._wire_proof = outgoing.wire_proof(wire, messages)
+        self._prepared = q.digest(request)
+        self._identity = live
+        self._timeout = defaults['timeout_seconds']
+
+    def _payload(self, config, messages):
+        if config['access'] != 'API' or config['channel_id'] != http.ENDPOINT:
+            raise ValueError('Canal OpenRouter obligatoire')
+        if (not config['model'].strip() or config['model'] != config['revision']):
+            raise ValueError('Identifiant de modèle exact requis, sans alias substitué')
         parameters = config['parameters']
         if (not {'max_tokens', 'provider'} <= parameters.keys()
                 or parameters.keys() - {'max_tokens', 'provider', 'temperature', 'top_p', 'reasoning', 'stream'}
@@ -127,20 +144,10 @@ class PiOpenRouter:
         if (provider['order'] != provider['only'] or type(provider['allow_fallbacks']) is not bool
                 or provider['require_parameters'] is not True):
             raise ValueError('Routage explicite et paramètres requis')
-        prompt = storage._strict_json(projected)
-        messages = [dict(role='system', content=system_context(defaults['system_prompt'])),
-                    dict(role='user', content=prompt)]
-        wire = storage._strict_json({'model': config['model'], **parameters, 'stream': False, 'messages': messages})
-        if len(wire.encode()) > http.MAX_REQUEST_BYTES or self._key in wire:
-            raise ValueError('Requête hors limites')
-        self._input = dict(model=config['model'], system=defaults['system_prompt'], prompt=prompt,
-                           max_tokens=parameters['max_tokens'], context_window=defaults['context_window'])
-        self._wire_bytes = wire
-        self._wire_sha256 = sha256(wire.encode('utf-8')).hexdigest()
-        self._wire_proof = outgoing.wire_proof(wire, messages)
-        self._prepared = q.digest(request)
-        self._identity = live
-        self._timeout = defaults['timeout_seconds']
+        return {'model': config['model'], **parameters, 'stream': False, 'messages': messages}
+
+    def _messages(self, wire):
+        return json.loads(wire)['messages']
 
     def __call__(self, operation, request):
         if (operation['state'] != 'EMISSION_POSSIBLE' or getattr(self, '_prepared', None) != q.digest(request)):
@@ -160,9 +167,9 @@ class PiOpenRouter:
                 storage._fields(event, ('type', 'model', 'context'), 'Pi request')
                 context = event['context']
                 messages = context.get('messages', [])
-                emitted = json.loads(wire)
+                emitted = self._messages(wire)
                 if (event['type'] != 'request' or event['model'] != self._input['model']
-                        or context.get('systemPrompt') != emitted['messages'][0]['content'] or context.get('tools') != []
+                        or context.get('systemPrompt') != emitted[0]['content'] or context.get('tools') != []
                         or len(messages) != 1 or messages[0].get('role') != 'user'
                         or messages[0].get('content') != [{'type': 'text', 'text': self._input['prompt']}]):
                     raise ValueError('Contexte Pi effectif divergent')
@@ -225,6 +232,9 @@ class PiOpenRouter:
                 if (status == 200 and complete and not redacted and message.get('role') == 'assistant'
                         and not message.get('tool_calls') and choices[0]['finish_reason'] == 'stop' and output is not None):
                     incident = None
+                if (message.get('refusal') or choices[0].get('native_finish_reason') == 'refusal'
+                        or choices[0].get('finish_reason') == 'content_filter'):
+                    incident = 'CONTENT_REFUSAL'
         except (ValueError, TypeError, KeyError, AttributeError):
             pass
         route = data.get('openrouter_metadata')

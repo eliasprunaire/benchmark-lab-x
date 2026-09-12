@@ -29,7 +29,7 @@ Une décision métier aboutie porte `SATISFAIT` ou `NE SATISFAIT PAS`. Une preuv
 - API directe : aucune substitution de version, estimation séparée d’une facture absente
 - Projections et comparaison : rôles, octets, autorités et populations préservés
 
-Tests proches : `test_recovery`, `test_s14_judgment`, `test_s14_acceptance`, `test_private_comparison`, `test_s5_regressions`, `test_s6_regressions`. Validation de livraison : `uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests`, puis `benchmark_lab_x/test_demo.py` séparément. Les nouvelles régressions portent sur les défauts observés et les chemins opérateur.
+Tests proches : `test_official_transport`, `test_recovery`, `test_s14_judgment`, `test_s14_acceptance`, `test_private_comparison`, `test_s5_regressions`, `test_s6_regressions`. Validation de livraison : `uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests`, puis `benchmark_lab_x/test_demo.py` séparément. Les nouvelles régressions portent sur les défauts observés et les chemins opérateur.
 
 ## Point d’arrêt
 

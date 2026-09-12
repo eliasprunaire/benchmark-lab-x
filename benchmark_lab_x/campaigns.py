@@ -185,11 +185,16 @@ def _entries(values, fields, label):
 
 
 def _manifest(value, contract):
-    _fields(value, _MANIFEST + tuple(k for k in ('financial_cost_policy', 'recovery_of') if k in value), 'manifest')
+    _fields(value, _MANIFEST + tuple(k for k in ('financial_cost_policy', 'recovery_of', 'official_fallback') if k in value), 'manifest')
     if value.get('financial_cost_policy', 'require_observed') not in ('require_observed', 'retain_reserve'):
         raise ValueError('Politique financière inconnue')
     if 'recovery_of' in value:
         identifier(value['recovery_of'])
+    if 'official_fallback' in value:
+        if 'recovery_of' not in value:
+            raise ValueError('Secours officiel sans tentative source')
+        _fields(value['official_fallback'], ('route_attempts',), 'official fallback')
+        q._texts(value['official_fallback']['route_attempts'], 'route attempts', required=True, unique=True)
     encode(value)
     identifier(value['campaign_id'])
     if type(value['version']) is not int or value['version'] < 1:
@@ -200,6 +205,10 @@ def _manifest(value, contract):
         if case['package_sha256'] != contract['package_sha256']:
             raise ValueError('Cas sans paquet contractuel exact')
     panel = _entries(value['panel'], _CONFIGURATION, 'panel')
+    from .pi_official import CHANNELS
+    official_channels = {'https://' + host + path for provider, host, path, key in CHANNELS.values()}
+    if any(config['channel_id'] in official_channels for config in value['panel']) and 'official_fallback' not in value:
+        raise ValueError('Secours officiel lié aux reçus OpenRouter requis')
     for config in value['panel']:
         for field in ('provider', 'model', 'revision', 'access', 'channel_id'):
             _present(config[field], field)
@@ -258,7 +267,7 @@ def _approved(store, connection, fingerprint, *, current=False):
 
 def create(store, manifest):
     value = deepcopy(manifest)
-    _fields(value, _MANIFEST + tuple(k for k in ('financial_cost_policy', 'recovery_of') if k in value), 'manifest')
+    _fields(value, _MANIFEST + tuple(k for k in ('financial_cost_policy', 'recovery_of', 'official_fallback') if k in value), 'manifest')
     _intact(store)
     connection = connection_for(store)
     with _transaction(connection, write=True):
