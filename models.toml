@@ -312,3 +312,46 @@ nom_public = "Muse Spark 1.2"
 provider = "meta"
 omit_params = ["seed"]
 reasoning_effort = "max"
+
+# Configurations OpenRouter vérifiées le 2026-09-12, effort low commun à la recette
+# Disponibilité annoncée ; aucun appel de qualification implicite
+
+[gpt-5-6-sol-low]
+model = "openai/gpt-5.6-sol"
+nom_public = "GPT 5.6 Sol"
+provider = "openai"
+expect_provider = "OpenAI"
+omit_params = ["temperature", "top_p"]
+reasoning_effort = "low"
+
+[gpt-6-astra-low]
+model = "openai/gpt-6-astra"
+nom_public = "GPT 6 Astra"
+provider = "openai"
+expect_provider = "OpenAI"
+omit_params = ["temperature", "top_p"]
+reasoning_effort = "low"
+
+[kimi-k3-low]
+model = "moonshotai/kimi-k3"
+nom_public = "Kimi K3"
+provider = "moonshotai/mxfp4"
+expect_provider = "Moonshot AI"
+omit_params = ["temperature", "top_p", "seed"]
+reasoning_effort = "low"
+
+[qwen3-8-max-0902-low]
+model = "qwen/qwen3.8-max-0902"
+nom_public = "Qwen3.8 Max 0902"
+provider = "alibaba"
+expect_provider = "Alibaba"
+omit_params = []
+reasoning_effort = "low"
+
+[hy4-preview-low]
+model = "tencent/hy4-preview"
+nom_public = "Hy4 preview"
+provider = "tencent/fp8"
+expect_provider = "Tencent"
+omit_params = ["top_p", "seed"]
+reasoning_effort = "low"

@@ -1,0 +1,152 @@
+[
+  {
+    "id": "gpt-5-6-sol-low",
+    "provider": "OpenRouter",
+    "model": "openai/gpt-5.6-sol",
+    "revision": "openai/gpt-5.6-sol",
+    "access": "API",
+    "channel_id": "https://openrouter.ai/api/v1/chat/completions",
+    "route": "OpenRouter pinned endpoint: openai",
+    "effort": "low",
+    "required_observations": [
+      "revision",
+      "channel_id"
+    ],
+    "parameters": {
+      "max_tokens": 16384,
+      "reasoning": {
+        "effort": "low"
+      },
+      "provider": {
+        "only": [
+          "openai"
+        ],
+        "order": [
+          "openai"
+        ],
+        "allow_fallbacks": false,
+        "require_parameters": true
+      }
+    }
+  },
+  {
+    "id": "gpt-6-astra-low",
+    "provider": "OpenRouter",
+    "model": "openai/gpt-6-astra",
+    "revision": "openai/gpt-6-astra",
+    "access": "API",
+    "channel_id": "https://openrouter.ai/api/v1/chat/completions",
+    "route": "OpenRouter pinned endpoint: openai",
+    "effort": "low",
+    "required_observations": [
+      "revision",
+      "channel_id"
+    ],
+    "parameters": {
+      "max_tokens": 16384,
+      "reasoning": {
+        "effort": "low"
+      },
+      "provider": {
+        "only": [
+          "openai"
+        ],
+        "order": [
+          "openai"
+        ],
+        "allow_fallbacks": false,
+        "require_parameters": true
+      }
+    }
+  },
+  {
+    "id": "kimi-k3-low",
+    "provider": "OpenRouter",
+    "model": "moonshotai/kimi-k3",
+    "revision": "moonshotai/kimi-k3",
+    "access": "API",
+    "channel_id": "https://openrouter.ai/api/v1/chat/completions",
+    "route": "OpenRouter pinned endpoint: moonshotai/mxfp4",
+    "effort": "low",
+    "required_observations": [
+      "revision",
+      "channel_id"
+    ],
+    "parameters": {
+      "max_tokens": 16384,
+      "reasoning": {
+        "effort": "low"
+      },
+      "provider": {
+        "only": [
+          "moonshotai/mxfp4"
+        ],
+        "order": [
+          "moonshotai/mxfp4"
+        ],
+        "allow_fallbacks": false,
+        "require_parameters": true
+      }
+    }
+  },
+  {
+    "id": "qwen3-8-max-0902-low",
+    "provider": "OpenRouter",
+    "model": "qwen/qwen3.8-max-0902",
+    "revision": "qwen/qwen3.8-max-0902",
+    "access": "API",
+    "channel_id": "https://openrouter.ai/api/v1/chat/completions",
+    "route": "OpenRouter pinned endpoint: alibaba",
+    "effort": "low",
+    "required_observations": [
+      "revision",
+      "channel_id"
+    ],
+    "parameters": {
+      "max_tokens": 16384,
+      "reasoning": {
+        "effort": "low"
+      },
+      "provider": {
+        "only": [
+          "alibaba"
+        ],
+        "order": [
+          "alibaba"
+        ],
+        "allow_fallbacks": false,
+        "require_parameters": true
+      }
+    }
+  },
+  {
+    "id": "hy4-preview-low",
+    "provider": "OpenRouter",
+    "model": "tencent/hy4-preview",
+    "revision": "tencent/hy4-preview",
+    "access": "API",
+    "channel_id": "https://openrouter.ai/api/v1/chat/completions",
+    "route": "OpenRouter pinned endpoint: tencent/fp8",
+    "effort": "low",
+    "required_observations": [
+      "revision",
+      "channel_id"
+    ],
+    "parameters": {
+      "max_tokens": 16384,
+      "reasoning": {
+        "effort": "low"
+      },
+      "provider": {
+        "only": [
+          "tencent/fp8"
+        ],
+        "order": [
+          "tencent/fp8"
+        ],
+        "allow_fallbacks": false,
+        "require_parameters": true
+      }
+    }
+  }
+]
