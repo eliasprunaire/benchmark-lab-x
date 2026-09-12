@@ -90,6 +90,8 @@ def indication(estimate, usage):
 
 
 def forecast(model, input_tokens, output_tokens, cached_input_tokens=0):
+    from .model_catalog import require_current
+    require_current(dict(model=model))
     if (type(model) is not str or re.fullmatch(r'[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+', model) is None
             or any(type(value) is not int or value < 0 for value in (input_tokens, output_tokens, cached_input_tokens))
             or cached_input_tokens > input_tokens):

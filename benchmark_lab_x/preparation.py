@@ -1269,6 +1269,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         status += '.</strong> Admission ' + ('ouverte' if state['admission_open'] else 'fermée') + '.</p><p>'
         status += text(reasons[state['reason']]) + '</p><p class="hint">La consultation et la validation d’un paquet ne lancent aucun appel.</p></aside>'
         content = status + content
+    from .model_catalog import RETIREMENT_NOTICE
+    content = '<aside aria-label="Modèles disponibles"><p>' + text(RETIREMENT_NOTICE) + '</p></aside>' + content
     template = Path(__file__).with_name('preparation.html').read_text()
     body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''
     return (template.replace('{{title}}', text(title)).replace('{{body_class}}', body_class)

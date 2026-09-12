@@ -650,3 +650,7 @@ uv run --env-file .env python -m benchmark_lab_x.runtime <commande> <options>
 ```
 
 Cette option charge les variables pour la commande opérateur concernée ; le runtime ne recherche pas automatiquement un fichier dans le dossier courant. Ne pas charger les clés dans le processus du serveur web public. Sur la VM, le fichier privé d’environnement de l’exécuteur remplit déjà cette fonction et reste hors des archives de déploiement. Aucun coffre de secrets supplémentaire n’est requis pour ce mode de configuration.
+
+## Modèle DeepSeek courant
+
+DeepSeek V4.1 Flash remplace 0731 dans le panel et les assistants à sélectionner. Le registre propose `deepseek-v4-1-flash`, identifiant OpenRouter `deepseek/deepseek-v4.1-flash`. L’ancien modèle et son alias redirigé sont refusés pour les nouvelles campagnes, réservations et émissions, y compris depuis un ancien profil ou une intention déjà enregistrée. Le parcours de préparation affiche ce retrait. Les lectures et preuves historiques gardent leurs identités ; aucun résultat 0731 n’est renommé en V4.1.

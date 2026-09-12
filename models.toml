@@ -26,23 +26,13 @@
 # require_parameters (vérifié contre /models/<id>/endpoints) ; l'omission est
 # consignée dans le meta.json de chaque run
 
-# L'endpoint DeepSeek first-party est exclu par la politique de données du
-# compte OpenRouter (pas d'entraînement sur les prompts) : Novita fp8 est le
-# pin conforme
-# Route : DeepSeek depuis le 2026-08-06, sur critère `selection-route/v2`.
-# Novita servait déjà en `fp8`, comme l'éditeur : à précision égale, la route
-# de celui qui publie le modèle fait référence. Aucune route en pleine
-# précision n'existe pour ce modèle, `fp8` est ce que tout le monde obtient
-# `omit_params` établi par pré-vol le 2026-08-06, pas par la déclaration de
-# l'API : sans lui, la route rend un 404 « aucun endpoint ne peut traiter ces
-# paramètres ». La déclaration n'est fiable dans aucun des deux sens (xAI,
-# Mistral et Alibaba ont accepté `top_p` qu'ils ne déclaraient pas), donc seul
-# un appel réel établit ce qu'une route accepte
-[deepseek-v4-flash]
-model = "deepseek/deepseek-v4-flash-0731"
-nom_public = "DeepSeek V4 Flash"
+# DeepSeek V4.1 Flash remplace 0731 dans les nouveaux essais
+# Route DeepSeek disponible et top_p déclaré le 2026-09-12 ; seed non déclaré
+[deepseek-v4-1-flash]
+model = "deepseek/deepseek-v4.1-flash"
+nom_public = "DeepSeek V4.1 Flash"
 provider = "deepseek"
-omit_params = ["top_p", "seed"]
+omit_params = ["seed"]
 
 # reasoning supporté chez Alibaba (vérifié /endpoints 2026-08-04)
 [qwen3-8-max]

@@ -279,6 +279,9 @@ def _create(store, connection, value):
     try:
         contract = _approved(store, connection, value['contract_sha256'], current=True)
         _manifest(value, contract)
+        from .model_catalog import require_current
+        for configuration in value['panel']:
+            require_current(configuration)
         if 'recovery_of' in value:
             from .recovery import validate_link
             validate_link(store, connection, value)
@@ -735,6 +738,9 @@ def launch_view(store, session_id, dossier_id, campaign_id):
         eligible = False
         if grant and grant['session_id'] == session_id:
             try:
+                from .model_catalog import require_current
+                for configuration in snapshot['manifest']['panel']:
+                    require_current(configuration)
                 _eligible(store, connection, snapshot, admission['authority'], admission['evidence'])
                 eligible = not snapshot['restore_pending'] and not snapshot['attempts']
             except (ValueError, ConflictError, BudgetError):

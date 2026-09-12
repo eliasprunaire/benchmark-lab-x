@@ -23,6 +23,8 @@ import secrets
 import sqlite3
 import stat
 
+from .model_catalog import require_current
+
 
 SCHEMA_VERSION = 1
 PREPARATION_IDENTITY = "benchmark-lab-x/preparation/v1"
@@ -898,6 +900,7 @@ class Store:
     def _reserve_intent(self, connection, operation, budget_id, amount, *, retained_cost_ids=()):
         """Shared reservation body; caller owns the enclosing transaction."""
         _operation(operation)
+        require_current(operation['requested_configuration'])
         _text(budget_id, 'budget_id')
         requested = _money(amount)
         values = [operation[key] for key in _OPERATION_KEYS]
@@ -941,7 +944,8 @@ class Store:
         _text(operation_id, 'operation_id')
         connection = self._s1_connection()
         with _transaction(connection, write=True):
-            self._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
+            operation = self._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
+            require_current(operation['requested_configuration'])
             connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' WHERE operation_id=?",
                                (operation_id,))
 

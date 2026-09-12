@@ -46,6 +46,8 @@ from typing import Any, NoReturn
 import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from benchmark_lab_x.model_catalog import require_current
 from empreintes import empreinte  # noqa: E402
 from protocole_v2 import (  # noqa: E402
     CAUSES_REPRISE,
@@ -811,6 +813,10 @@ def main() -> None:
         omit_params = []
     if not args.model or not args.provider:
         die(EXIT_USAGE, "--model et --provider sont requis, ou utiliser --alias")
+    try:
+        require_current(dict(model=args.model))
+    except ValueError as error:
+        die(EXIT_USAGE, str(error))
 
     # Quatre runs par candidat depuis le 2026-08-05 : le niveau retenu est le
     # troisième meilleur des quatre (R-019), ce qui tolère un mauvais tirage
