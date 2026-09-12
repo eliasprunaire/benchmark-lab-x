@@ -629,3 +629,18 @@ La comparaison privée expose `decision`, un verdict métier éventuellement nul
 Les reprises utilisent toujours les capacités et autorités figées. Une réponse HTTP 429/502/503/504 complète peut omettre l’identité du modèle sans constituer une contradiction ; une identité explicitement divergente reste bloquante. La réserve prudente ne devient pas une consommation observée. Une route fautive non attribuable, des routes épuisées, une autorité absente ou des effets inconnus donnent un motif d’arrêt. Aucun nouvel appel candidat ne suit une réponse complète simplement pour chercher un meilleur verdict.
 
 Le secours par API officielle est un périmètre autorisé sous les conditions de l’ARD, pas une capacité déployée attestée par ce document. L’inventaire opérateur du 12 septembre 2026 n’a trouvé que la clé OpenRouter dans l’exécuteur de la VM. Les accès produit officiels et l’identité exacte disponible restent à établir avant leur raccordement et leur recette. L’API DeepSeek a retiré V4 Flash et redirige son ancien alias vers V4.1 : ce chemin ne peut pas servir de secours pour 0731.
+
+
+## Clés API dans un fichier .env
+
+Depuis la racine du projet, copier [.env.example](../.env.example) vers `.env`, puis renseigner les clés souhaitées. Le fichier `.env` est ignoré par Git ; seul l’exemple avec des valeurs vides est versionné. Lui donner les permissions `600` sur macOS ou Linux.
+
+`OPENROUTER_API_KEY` concerne le canal principal. `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY` et `ZAI_API_KEY` sont facultatives et réservées aux secours officiels. Les renseigner ne rend pas un transport non raccordé disponible et ne déclenche aucun appel.
+
+Le chargement local utilise uv, déjà présent dans la chaîne du projet, sans dépendance supplémentaire :
+
+```sh
+uv run --env-file .env python -m benchmark_lab_x.runtime <commande> <options>
+```
+
+Cette option charge les variables pour la commande opérateur concernée ; le runtime ne recherche pas automatiquement un fichier dans le dossier courant. Ne pas charger les clés dans le processus du serveur web public. Sur la VM, le fichier privé d’environnement de l’exécuteur remplit déjà cette fonction et reste hors des archives de déploiement. Aucun coffre de secrets supplémentaire n’est requis pour ce mode de configuration.
