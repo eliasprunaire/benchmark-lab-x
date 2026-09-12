@@ -242,7 +242,7 @@ class PiOpenRouter:
             http=dict(endpoint=http.ENDPOINT, status=status, response_headers=headers, started_at=started,
                 received_at=datetime.now(timezone.utc).isoformat(), elapsed_seconds=time.monotonic()-clock,
                 complete=complete, credential_redacted=redacted, body_base64=b64encode(raw).decode(), body_sha256=sha256(raw).hexdigest()))
-        if model != request['requested_configuration']['revision']:
+        if (model is not None or status == 200) and model != request['requested_configuration']['revision']:
             incident = 'MODEL_IDENTITY_MISMATCH'
         tag = endpoint.get('tag')
         if tag is not None and (type(tag) is not str or not any(

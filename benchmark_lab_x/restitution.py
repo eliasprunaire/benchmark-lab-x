@@ -20,7 +20,7 @@ ATTRIBUTION = (
     'Il n’attribue pas au seul modèle les effets du fournisseur, de l’effort, de Pi ou de ses réglages. '
     'Il ne démontre pas le même résultat sous un autre harnais, contexte ou environnement.')
 LIMIT = 'Observations fictives locales, sans généralisation aux dossiers réels ni agrégation entre cas ou campagnes.'
-VERDICTS = ('SATISFAIT', 'NE SATISFAIT PAS', 'INDETERMINE')
+VERDICTS = ('SATISFAIT', 'NE SATISFAIT PAS', 'A_REPRENDRE', 'INDETERMINE')
 FILTERS = ('case', 'sort', 'direction', 'verdict', 'obligation', 'configuration')
 _FILES = re.compile(r'[A-Za-z0-9_-]+\.(?:html|css|txt)\Z')
 
@@ -115,11 +115,20 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     _queries(query, campaign, spec, columns)
     records = e.projection(store, connection, dossier_id, campaign_id)
     latest = {record['attempt_id']: record for record in records}
+    pending = [dict(attempt_id=a['operation_id'], verdict=None,
+                    state='REVIEW_REQUIRED' if a['state'] == 'RECEIVED' and a['incident'] is None else 'EXECUTION_REQUIRED',
+                    next_action='Inspecter cette tentative et compléter son évaluation avant finalisation')
+               for a in campaign['attempts'] if a['operation_id'] not in latest]
+    pending += [dict(attempt_id=record['attempt_id'], **record['decision'])
+                for record in latest.values() if record['decision']['verdict'] is None]
+    pending += e.pending_judgments(store, connection, campaign_id, latest)
     rows = []
     base = campaign_url(dossier_id, campaign_id)
     suffix = '?' + urlencode(query) if query else ''
     for record in latest.values():
         row = deepcopy(record)
+        row['historical_verdict'] = record['verdict'] if record['engine_version'] == e.FORMAT_IDENTITY else None
+        row['verdict'] = row['decision']['verdict']
         attempt = next(a for a in campaign['attempts'] if a['operation_id'] == record['attempt_id'])
         incompatible = ('Attribution requise absente ou incompatible' if record['attribution_incident'] else
                         'Incident du harnais empêchant l’attribution' if record['incident'] == 'HARNESS_ERROR' else
@@ -150,7 +159,8 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     population = [r['attempt_id'] for r in rows]
     attempted = sum(cell['state'] != 'NOT_STARTED' for cell in campaign['cells'])
     coverage = dict(planned_cells=len(campaign['cells']), attempted_cells=attempted,
-                    evaluated_attempts=len(rows), not_started=len(campaign['cells']) - attempted)
+                    evaluated_attempts=len(rows), decided_attempts=sum(r['verdict'] is not None for r in rows),
+                    not_started=len(campaign['cells']) - attempted)
     complete = (len(rows) == len(campaign['cells']) and all(r['cost']['rank'] is not None for r in rows))
     scope = dict(task=campaign['task'], campaign_id=campaign_id, contract_sha256=campaign['contract_sha256'],
                  cases=campaign['cases'], attempts=population, configurations=campaign['panel'],
@@ -162,7 +172,9 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     selected = []
     for row in rows:
         if any(query.get(key) is not None and query[key] != row[field] for key, field in (
-                ('case', 'case_id'), ('configuration', 'configuration_id'), ('verdict', 'verdict'))):
+                ('case', 'case_id'), ('configuration', 'configuration_id'))):
+            continue
+        if 'verdict' in query and (None if query['verdict'] in ('A_REPRENDRE', 'INDETERMINE') else query['verdict']) != row['verdict']:
             continue
         if 'obligation' in query:
             cid, status = query['obligation'].split(':')
@@ -189,7 +201,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 economic_status='COMPLETE' if complete else 'INCOMPLETE', columns=columns, rows=ordered,
                 cases=campaign['cases'], panel=campaign['panel'], conditions=campaign['conditions'],
                 obligations=spec['obligations'], cost_basis=basis, cells=campaign['cells'],
-                campaign_state=campaign['state'], history=records, href=base,
+                campaign_state=campaign['state'], history=records, href=base, pending_attempts=pending,
                 acquisition_dates=[a['received_at'] for a in campaign['attempts'] if a['received_at']],
                 stop_reason=campaign['stop_reason'],
                 dossier_href=f'/preparation/dossiers/{dossier_id}/revisions/{contract["revision"]}')
@@ -262,6 +274,8 @@ def _projection_body(value, selected):
                         ('Conditions communes', value['conditions']), ('Base de coût', value['cost_basis'])):
         body += '<details><summary>' + label + '</summary><pre>' + t(encode(data)) + '</pre></details>'
     body += '<p>Comparaison économique : ' + t(value['economic_status']) + '. Coûts candidats et jugement séparés.</p>'
+    for pending in value.get('pending_attempts', []):
+        body += '<p>Tentative ' + t(pending['attempt_id']) + ' : ' + t(pending['next_action']) + '</p>'
     body += '<p>Vérification publique restreinte : les pièces non sélectionnées et leurs passages restent privés. '
     body += 'Leur empreinte ne remplace pas une preuve consultable. Les constats qui en dépendent restent invérifiables ici.</p>'
     for column in value['columns']:
@@ -270,7 +284,11 @@ def _projection_body(value, selected):
         body += '<section><h2>Cas ' + t(row['case_id']) + ' · ' + t(row['configuration_id']) + '</h2>'
         body += '<p>Tentative ' + t(row['attempt_id']) + ', évaluation ' + t(row['evaluation_id'])
         body += ', date ' + t(row['created_at']) + ', responsable ' + t(row['responsible']) + '.</p>'
-        body += '<p><strong>' + t(row['verdict']) + '</strong> : ' + t(row['reason']) + '</p>'
+        decision = row.get('decision', {})
+        label = decision.get('verdict') or ('Évaluation à reprendre' if row['verdict'] in (None, 'INDETERMINE') else row['verdict'])
+        body += '<p><strong>' + t(label) + '</strong> : ' + t(row['reason']) + '</p>'
+        if decision.get('next_action'):
+            body += '<p>' + t(decision['next_action']) + '</p>'
         for label, data in (('Configuration demandée', row['requested_configuration']),
                             ('Configuration observée', row['observed_configuration']),
                             ('Sources des observations', row['observation_sources']), ('Coût candidat', row['cost']),

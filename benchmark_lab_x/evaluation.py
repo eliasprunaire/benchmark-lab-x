@@ -16,6 +16,7 @@ from .storage import (ConflictError, IntegrityError, SchemaError, _fields,
                       _strict_json as encode, _transaction)
 
 FORMAT_IDENTITY = 'benchmark-lab-x/evaluations/v1'
+RECORD_FORMAT_IDENTITY = 'benchmark-lab-x/evaluations/v2'
 _ACTOR = 'responsable-fictif-S5'
 _AUTHORITY = 'TEST_ONLY_EVALUATION_S5'
 _TABLES = {
@@ -366,7 +367,10 @@ def _verdict(ctx, findings, judgment):
 
 
 def _record(store, connection, ctx, report, *, evaluation_id, created_at, engine_source,
-            previous_evaluation_id, source_operation=None, responsible=_ACTOR, authority=None):
+            previous_evaluation_id, source_operation=None, responsible=_ACTOR, authority=None,
+            record_format=FORMAT_IDENTITY):
+    if record_format not in (FORMAT_IDENTITY, RECORD_FORMAT_IDENTITY):
+        raise IntegrityError('Format d’évaluation inconnu')
     authority = authority or {'actor': _ACTOR, 'authority_id': _AUTHORITY}
     _authority(responsible, authority)
     resources = _resources(store, ctx)
@@ -396,7 +400,7 @@ def _record(store, connection, ctx, report, *, evaluation_id, created_at, engine
     c._date(created_at)
     q._hash(engine_source)
     record = dict(evaluation_id=evaluation_id, execution_id=evaluation_id, created_at=created_at,
-                engine_version=FORMAT_IDENTITY, engine_source_sha256=engine_source,
+                engine_version=record_format, engine_source_sha256=engine_source,
                 context_sha256=q.digest(ctx), campaign_id=manifest['campaign_id'],
                 manifest_sha256=campaign['manifest_sha256'], attempt_id=attempt['operation_id'],
                 case_id=cell['case_id'], configuration_id=cell['configuration_id'],
@@ -417,6 +421,10 @@ def _record(store, connection, ctx, report, *, evaluation_id, created_at, engine
                 previous_evaluation_id=previous_evaluation_id)
     if authority['actor'] == 'Ayo':
         record['authority_actor'] = 'Ayo'
+    if record_format == RECORD_FORMAT_IDENTITY:
+        record['decision'] = decision(record, attempt=attempt)
+        record['verdict'] = record['decision']['verdict']
+        record['state'] = record['decision']['state']
     return record
 
 
@@ -445,7 +453,8 @@ def _records(store, connection, attempt_id=None):
         expected = _record(store, connection, ctx, report, evaluation_id=eid, created_at=record['created_at'],
                            engine_source=record['engine_source_sha256'], previous_evaluation_id=previous,
                            source_operation=record['judgment']['operation'], responsible=record['responsible'],
-                           authority={'actor': record.get('authority_actor', _ACTOR), 'authority_id': record['authority_id']})
+                           authority={'actor': record.get('authority_actor', _ACTOR), 'authority_id': record['authority_id']},
+                           record_format=record['engine_version'])
         if expected != record:
             raise IntegrityError('Verdict ou preuve d’évaluation divergent')
         latest[aid] = eid
@@ -467,6 +476,73 @@ def inspect(store, evaluation_id):
         return next(r for r in _records(store, connection, row[0]) if r['evaluation_id'] == evaluation_id)
 
 
+def decision(record, *, attempt=None):
+    """Current business view; never rewrite the historical evaluation record"""
+    if 'decision' in record:
+        return deepcopy(record['decision'])
+    if record['verdict'] != 'INDETERMINE':
+        return dict(verdict=record['verdict'], state='DECIDED', reason=record['reason'], next_action=None)
+    if attempt is not None and (attempt['state'] != 'RECEIVED' or
+            attempt['operation']['receipt']['result']['emission'] != 'ESTABLISHED'):
+        state, action = 'RECONCILIATION_REQUIRED', 'Rapprocher les effets de la tentative avant toute reprise'
+    elif record['output_piece_id'] is None or record['attribution_incident'] or record['incident']:
+        state, action = 'EXECUTION_REQUIRED', 'Diagnostiquer le reçu candidat avant toute reprise autorisée'
+    elif record['judgment']['mode'] == 'assisted' and record['judgment']['operation']['receipt'] is None:
+        state, action = 'RECONCILIATION_REQUIRED', 'Rapprocher les effets et le coût du jugement avant tout nouvel appel'
+    elif any(d['arbitration'] is None for d in record['judgment']['disagreements']):
+        state, action = 'REVIEW_REQUIRED', 'Arbitrer les désaccords sur la même sortie et soumettre une nouvelle décision'
+    else:
+        state, action = 'REVIEW_REQUIRED', 'Compléter ou corriger les constats sur la même sortie ; qualifier une nouvelle version si le contrat change'
+    return dict(verdict=None, state=state, reason=record['reason'], next_action=action,
+                criteria=list(dict.fromkeys(f['criterion_id'] for f in record['findings'] if f['status'] != 'PASS')))
+
+
+def attempt_status(store, campaign_id, attempt_id):
+    """Private read-only next action, including attempts without an official verdict"""
+    from . import recovery, judgment
+    recovery_status = recovery.diagnose(store, attempt_id)
+    connection = connection_for(store)
+    with _transaction(connection):
+        ctx = _context(store, connection, campaign_id, attempt_id)
+        records = _records(store, connection, attempt_id)
+        latest = records[-1] if records else None
+        result = (decision(latest) if latest else dict(verdict=None,
+            state='REVIEW_REQUIRED' if recovery_status['kind'] == 'COMPLETE' else 'EXECUTION_REQUIRED',
+            reason=recovery_status['reason'], next_action=recovery_status['reason']))
+        result.update(attempt_id=attempt_id, campaign_id=campaign_id,
+                      evaluation_id=latest['evaluation_id'] if latest else None, recovery=recovery_status)
+        for op in reversed(store._operations(connection)):
+            if op['engine_version'] != judgment.FORMAT:
+                continue
+            binding = json.loads(op['resources'][0])['request']
+            if binding['attempt_id'] == attempt_id and binding['campaign_id'] == campaign_id:
+                result['judgment'] = dict(operation_id=op['operation_id'], **judgment.diagnostic(store, connection, op, ctx))
+                result['judgment']['review_pending'] = binding['previous_evaluation_id'] == (latest['evaluation_id'] if latest else None)
+                break
+        return result
+
+
+def pending_judgments(store, connection, campaign_id, latest):
+    """Expose only the next local work, never a judge payload or its authority"""
+    from . import judgment
+    pending = {}
+    ids = {row[0] for row in connection.execute("SELECT operation_id FROM operations WHERE phase='judgment'")}
+    for op in store._operations(connection, operation_ids=ids):
+        if op['engine_version'] != judgment.FORMAT:
+            continue
+        binding = json.loads(op['resources'][0])['request']
+        attempt_id = binding['attempt_id']
+        previous = latest.get(attempt_id)
+        if (binding['campaign_id'] != campaign_id or binding['previous_evaluation_id'] !=
+                (previous['evaluation_id'] if previous else None)):
+            continue
+        _, ctx = judgment._bound(store, connection, op)
+        diagnostic = judgment.diagnostic(store, connection, op, ctx)
+        pending[attempt_id] = dict(attempt_id=attempt_id, operation_id=op['operation_id'],
+                                  verdict=None, state=diagnostic['state'], next_action=diagnostic['reason'])
+    return list(pending.values())
+
+
 def evaluate(store, campaign_id, attempt_id, *, responsible, authority, check, previous_evaluation_id=None):
     """One trusted callback; immutable result and explicit correction chain"""
     _authority(responsible, authority)
@@ -485,7 +561,8 @@ def evaluate(store, campaign_id, attempt_id, *, responsible, authority, check, p
             report = deepcopy(check(deepcopy(ctx), deepcopy(resources)))
             record = _record(store, connection, ctx, report, evaluation_id=secrets.token_hex(16),
                              created_at=c._now(), engine_source=sha256(Path(__file__).read_bytes()).hexdigest(),
-                             previous_evaluation_id=previous_evaluation_id, responsible=responsible, authority=authority)
+                             previous_evaluation_id=previous_evaluation_id, responsible=responsible, authority=authority,
+                             record_format=RECORD_FORMAT_IDENTITY if authority['actor'] == 'Ayo' else FORMAT_IDENTITY)
             if _context(store, connection, campaign_id, attempt_id) != ctx or _resources(store, ctx) != resources:
                 raise IntegrityError('Source changée pendant le jugement')
             connection.execute('INSERT INTO s5_evaluations VALUES (?,?,?,?,?,?,?,?,?,?)',
@@ -506,6 +583,7 @@ def projection(store, connection, dossier_id, campaign_id):
             raise IntegrityError('Évaluation étrangère au dossier')
         # The context, operator admissions and other S1 operations stay private
         visible = {k: deepcopy(v) for k, v in record.items() if k != 'judgment'}
+        visible['decision'] = decision(record)
         visible['judgment'] = {k: deepcopy(v) for k, v in record['judgment'].items() if k != 'operation'}
         operation = record['judgment']['operation']
         if operation is not None:

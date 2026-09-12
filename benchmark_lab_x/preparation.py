@@ -698,7 +698,9 @@ def render_evaluations(evaluations, dossier_url):
     content += 'il ne prouve ni une propriété du modèle seul ni une compétence métier générale.</p>'
     for record in evaluations:
         eid = record['evaluation_id']
-        content += '<section id="evaluation-' + text(eid) + '"><h5>' + text(record['verdict']) + '</h5>'
+        label = ('Évaluation à reprendre (valeur historique : INDETERMINE)' if record['verdict'] == 'INDETERMINE'
+                 else record['verdict'] or 'Évaluation à reprendre')
+        content += '<section id="evaluation-' + text(eid) + '"><h5>' + text(label) + '</h5>'
         content += '<p>' + text(record['reason']) + '</p><p>Cas ' + text(record['case_id'])
         content += ', configuration ' + text(record['configuration_id']) + ', évaluation ' + text(eid) + '.</p>'
         content += '<p>Responsable : ' + text(record['responsible']) + '. Date : ' + text(record['created_at']) + '.</p>'
@@ -799,10 +801,10 @@ def render_comparison(value):
     for case in value['cases']:
         records = [record for record in latest.values() if record['case_id'] == case['id']]
         if records:
-            counts = [str(sum(record['verdict'] == verdict for record in records)) + ' ' + label
+            counts = [str(sum(record['decision']['verdict'] == verdict for record in records)) + ' ' + label
                       for verdict, label in (('SATISFAIT', 'satisfait(s)'), ('NE SATISFAIT PAS', 'non satisfait(s)'),
-                                             ('INDETERMINE', 'indéterminé(s)'))
-                      if any(record['verdict'] == verdict for record in records)]
+                                             (None, 'évaluation(s) à reprendre'))
+                      if any(record['decision']['verdict'] == verdict for record in records)]
             content += '<p><strong>Cas ' + text(case['id']) + '</strong> : ' + text(' · '.join(counts)) + '.</p>'
     if not latest:
         content += '<p>Aucun résultat évalué pour cette campagne.</p>'
@@ -828,7 +830,7 @@ def render_comparison(value):
         'case': ('Cas', [(v['id'], v['id']) for v in value['cases']]),
         'sort': ('Critère de tri', [(v['id'], 'Coût observé' if 'criterion_id' not in v else v['definition']['measure']) for v in value['columns']]),
         'direction': ('Ordre d’affichage', [('asc', 'Croissant'), ('desc', 'Décroissant')]),
-        'verdict': ('Verdict', [(v, v) for v in ('SATISFAIT', 'NE SATISFAIT PAS', 'INDETERMINE')]),
+        'verdict': ('Décision ou travail restant', [('SATISFAIT', 'SATISFAIT'), ('NE SATISFAIT PAS', 'NE SATISFAIT PAS'), ('A_REPRENDRE', 'À reprendre')]),
         'obligation': ('Constat par obligation', [(v['id'] + ':' + s, v['id'] + ' : ' + s)
                         for v in value['obligations'] for s in ('PASS', 'FAIL', 'INDETERMINE')]),
         'configuration': ('Configuration', [(v['id'], v['model'] + ' · ' + v['id']) for v in value['panel']]),
@@ -879,7 +881,9 @@ def render_comparison(value):
             content += '<tr id="attempt-' + text(row['attempt_id']) + '" tabindex="-1"><th scope="row">'
             content += '<strong>' + text(row['requested_configuration']['model']) + '</strong>'
             content += data('Demandée, observée et sources', {k: row[k] for k in ('requested_configuration', 'observed_configuration', 'observation_sources')}) + '</th>'
-            content += '<td><strong>' + text(row['verdict']) + '</strong><p>' + text(row['reason']) + '</p>'
+            content += '<td><strong>' + text(row['verdict'] or 'Évaluation à reprendre') + '</strong><p>' + text(row['reason']) + '</p>'
+            if row.get('decision', {}).get('next_action'):
+                content += '<p>' + text(row['decision']['next_action']) + '</p>'
             if row['incident']:
                 content += '<p>Incident : ' + text(row['incident']) + '</p>'
             content += '</td><td>' + metric(row['cost']) + '</td><td>'
@@ -892,7 +896,9 @@ def render_comparison(value):
     content += '<p>Travail humain restant : ' + text(value['human_work']) + '</p>'
     content += '<p>Les rangs comparent seulement les valeurs connues d’un même cas. Les égalités sont conservées ; '
     content += 'les valeurs inconnues ou incompatibles restent sans rang. Aucun choix automatique ni total multi-cas.</p>'
-    content += '<p>SATISFAIT : obligations prouvées. NE SATISFAIT PAS : défaut établi. INDETERMINE : preuve insuffisante.</p>'
+    for pending in value.get('pending_attempts', []):
+        content += '<p>Tentative ' + text(pending['attempt_id']) + ' : ' + text(pending['next_action']) + '</p>'
+    content += '<p>SATISFAIT : obligations prouvées. NE SATISFAIT PAS : défaut établi. Une évaluation à reprendre ne porte pas encore de verdict métier.</p>'
     for column in value['columns']:
         content += data('Définition, unité, sens favorable et preuve : ' + column['id'], column)
     content += data('Population entière utilisée pour les rangs, conservée après filtrage', value['population'])

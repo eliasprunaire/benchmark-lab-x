@@ -12,7 +12,7 @@ Ce glossaire fixe les termes du domaine. Il ne porte ni statut de livraison des 
 Objet produit mis en avant. Un verdict sur un modèle reste borné à la configuration dans laquelle il a été observé.
 
 ### Accès direct ou API
-Mode d’accès déclaré au modèle. Les appels courants du produit utilisent exclusivement l’API OpenRouter, selon l’[ARD](docs/ARD.md#3-pi-comme-frontière-constante). Les preuves historiques conservent leurs modes d’origine, notamment OAuth ou API directe ; un produit agentique sous abonnement n’est pas pour autant l’objet comparé.
+Mode d’accès déclaré au modèle. Les appels courants du produit utilisent normalement l’API OpenRouter ; le secours par API officielle exige les conditions et autorités distinctes, selon l’[ARD](docs/ARD.md#3-pi-comme-frontière-constante). Les preuves historiques conservent leurs modes d’origine, notamment OAuth ou API directe ; un produit agentique sous abonnement n’est pas pour autant l’objet comparé.
 
 ### Configuration demandée
 Cible figée du panel de campagne : modèle, fournisseur, accès, route, paramètres et effort requis, avec les identités exactes attendues. Sa présence dans un manifeste ne prouve ni disponibilité ni exécution.
@@ -107,7 +107,7 @@ Défaut défini avant l'exécution qui interdit le verdict `SATISFAIT`, indépen
 Propriété complémentaire aux obligations et au coût, prévue au contrat pour comparer les résultats. Une mesure valide peut porter sur une sortie non admissible sans modifier son verdict. Les conditions de mesure, de classement et le plafond de 0.1.0 appartiennent aux [règles](docs/RULES.md#4-contrat-avant-exécution).
 
 ### Verdict d'admissibilité
-Conclusion d'une configuration selon le contrat de réussite : `SATISFAIT`, `NE SATISFAIT PAS` ou `INDETERMINE`. Un verdict publiable porte sa valeur, un motif court intelligible, les critères ou constats concernés, les références de preuve et son responsable.
+Conclusion d'une configuration selon le contrat de réussite : `SATISFAIT` ou `NE SATISFAIT PAS`. Une évaluation à reprendre n’a pas encore de verdict métier. Un verdict publiable porte sa valeur, un motif court intelligible, les critères ou constats concernés, les références de preuve et son responsable.
 
 ### SATISFAIT
 Verdict indiquant que la preuve observée respecte le contrat de réussite et ne présente aucune erreur éliminatoire.
@@ -116,7 +116,7 @@ Verdict indiquant que la preuve observée respecte le contrat de réussite et ne
 Verdict indiquant qu'une erreur éliminatoire ou une obligation non remplie est établie.
 
 ### INDETERMINE
-Verdict indiquant que la preuve disponible ne permet pas de conclure `SATISFAIT` ou `NE SATISFAIT PAS`.
+État de constat, ou valeur d’un verdict historique, indiquant que la preuve disponible ne permet pas de conclure. Le parcours courant l’expose comme travail à reprendre avec une cause et une suite ; aucune nouvelle finalisation propriétaire ne crée ce verdict.
 
 ## Preuve et décision
 
@@ -154,7 +154,7 @@ Avantage observé sur un critère secondaire défini avant exécution, lorsque l
 Un classement ordonne les valeurs connues et comparables d’un critère prévu, sans rang pour les inconnues ou incompatibilités. Un filtre restreint la vue sans modifier le contrat, les verdicts ni la population des statistiques déjà calculées. Aucun de ces outils ne désigne automatiquement une option utilisable.
 
 ### Conclusion économique et INCOMPLETE
-État de complétude de la comparaison des coûts sur un périmètre identifié : valeurs connues, inconnues et incompatibilités. `INCOMPLETE` indique que cette comparaison est incomplète, sans constituer un quatrième verdict ni désigner un gagnant.
+État de complétude de la comparaison des coûts sur un périmètre identifié : valeurs connues, inconnues et incompatibilités. `INCOMPLETE` indique que cette comparaison est incomplète, sans constituer un verdict ni désigner un gagnant.
 
 ### Score pondéré personnalisé
 Capacité future de combinaison de critères selon des poids explicites, hors 0.1.0. Sa méthode reste à décider selon le [PRD](docs/PRD.md#52-extensions) ; elle conserve mesures, verdicts et erreurs et ne rend pas une sortie non admissible acceptable grâce au coût. Elle n’établit aucun classement universel.

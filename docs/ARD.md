@@ -20,9 +20,9 @@ L’architecture relie des contrats figés, des observations attribuables et des
 
 Pi est le harnais commun des comparaisons. Sa constance réduit une source de variation entre configurations ; elle ne prouve pas que Pi est neutre ou que le modèle seul cause le résultat. Pi, ses paquets et l'environnement sont présentés une fois comme conditions de test communes, jamais comme propriétés répétées de chaque modèle.
 
-Pi est la frontière des comparaisons candidates ; il ne choisit pas les modèles de préparation ou de jugement. Par décision d’Ayo, OpenRouter est le canal API unique de tous les appels modèles du produit : préparation, correction, jugement et candidats. Pi reste le harnais des candidats et doit être configuré via OpenRouter. Aucun accès direct aux API propres des fournisseurs ni repli implicite n’est permis ; un modèle indisponible via OpenRouter reste indisponible. Le secret est réservé à l’exécuteur ; choix du modèle, budget et autorité d’appel restent distincts. Le secours natif OpenRouter de préparation et correction peut être explicitement autorisé entre trois endpoints au plus du même modèle, avec les mêmes paramètres ; cette liste ne garantit pas un nombre maximal de requêtes internes. Cette règle produit ne s’applique pas aux outils de développement Graph ou Codex et ne requalifie aucun contrat historique.
+Pi est la frontière des comparaisons candidates ; il ne choisit pas les modèles de préparation ou de jugement. OpenRouter est le canal normal des appels modèles du produit. Pour une acquisition en incident, après diagnostic et épuisement des routes utilisables du même modèle, une API officielle peut être admise comme dernier recours explicite. Cette configuration est distincte : identité exacte disponible, preuve de correspondance de version, paramètres réellement pris en charge, accès produit, budget, octets émis et reçu natif doivent être liés. Pi, la tâche et les projections fermées restent constants. Aucune substitution de modèle ou révision ni recours destiné à contourner un refus de sécurité n’est permis. Le secret reste réservé à l’exécuteur. Les reprises techniques ne prononcent aucun verdict et ne sélectionnent pas des réponses jusqu’au succès. Le secours natif OpenRouter de préparation et correction conserve ses endpoints explicitement autorisés et les mêmes paramètres. Cette règle produit ne s’applique pas aux outils de développement et ne requalifie aucun contrat historique.
 
-L’assistant de préparation est choisi au démarrage par un profil OpenRouter approuvé : l’alias historique `glm-5.3-flash` ou le chemin d’un fichier JSON local. Le profil fige l’identifiant demandé, la révision unique de réponse autorisée, les paramètres envoyés, les routes, les capacités attendues, le message système et les limites de taille et de temps, sans dépasser les plafonds historiques de cet adaptateur. Il est chargé une fois, recopié indépendamment du fichier ou de l’objet appelant, et son empreinte canonique est liée à la configuration demandée avec le relevé tarifaire et la réserve. Le chemin hôte du fichier n’entre pas dans la configuration, les messages ni les reçus. Une divergence de profil, d’empreinte, de modèle, de révision, de paramètres, de système, de route, de capacité, de relevé, de réserve ou de limite bloque avant l’émission HTTP. Aucun registre de plugins, fabrique générique, base de profils, synchronisation de catalogue, OAuth personnel, API directe de fournisseur ou canal hors OpenRouter n’est ajouté. Fournir un fichier de profil ne sélectionne aucun nouvel assistant de production.
+L’assistant de préparation est choisi au démarrage par un profil OpenRouter approuvé : l’alias historique `glm-5.3-flash` ou le chemin d’un fichier JSON local. Le profil fige l’identifiant demandé, la révision unique de réponse autorisée, les paramètres envoyés, les routes, les capacités attendues, le message système et les limites de taille et de temps, sans dépasser les plafonds historiques de cet adaptateur. Il est chargé une fois, recopié indépendamment du fichier ou de l’objet appelant, et son empreinte canonique est liée à la configuration demandée avec le relevé tarifaire et la réserve. Le chemin hôte du fichier n’entre pas dans la configuration, les messages ni les reçus. Une divergence de profil, d’empreinte, de modèle, de révision, de paramètres, de système, de route, de capacité, de relevé, de réserve ou de limite bloque avant l’émission HTTP. Aucun registre de plugins, fabrique générique, base de profils, synchronisation de catalogue ou OAuth personnel n’est requis. Les profils des assistants restent OpenRouter ; le secours officiel candidat exige sa propre configuration. Fournir un fichier de profil ne sélectionne aucun nouvel assistant de production.
 
 ### 3.1 Identité de l'environnement d'exécution
 
@@ -98,11 +98,12 @@ Une tentative ne décide pas de son propre verdict. L'exécuteur doit enregistre
 
 ### 4.5 Évaluation
 
-Responsabilité : appliquer les erreurs éliminatoires et obligations du contrat, puis produire exactement un verdict publiable :
+Responsabilité : appliquer les erreurs éliminatoires et obligations du contrat, puis produire un verdict conclusif :
 
 - `SATISFAIT`
 - `NE SATISFAIT PAS`
-- `INDETERMINE`
+
+Une évaluation non concluante conserve son rapport et ses preuves comme travail à reprendre, sans verdict métier. Son état, ses causes et la prochaine action restent consultables. Les anciens verdicts `INDETERMINE` gardent leur valeur d’origine dans l’historique.
 
 L'évaluation s'applique à un cas et une tentative identifiés. Le verdict porte les éléments exigés par la règle « Verdict explicable » des [règles](RULES.md#6-erreurs-et-verdict) : valeur, motif court, critères ou constats concernés, références de preuve et responsable. L’évaluation référence la version de la méthode et de la référence de jugement ainsi que les preuves de leur qualification. Lorsqu’elle est assistée par un modèle, elle conserve sa configuration demandée et observée, les consignes, les pièces vues et l’arbitrage humain ; ces éléments se distinguent de la configuration candidate et suivent les [règles de provenance](RULES.md#5-sortie-et-provenance). L’éventuelle revue professionnelle est une preuve attribuée à son auteur et à son périmètre, sans nouveau rôle produit obligatoire. Une mesure valide d’un critère secondaire peut décrire une sortie non admissible ; elle ne change pas le verdict ni ne compense une erreur éliminatoire. Un défaut de consigne, de données, de référence, de contrôle ou d’exécution ne devient pas artificiellement une erreur candidate.
 
@@ -128,7 +129,7 @@ Demande, éventuellement vague
   -> Contrat de tâche qualifié et approuvé ; manifeste et autorités approuvés
   -> Admission et acquisition candidate sous Pi constant
   -> Sortie brute ou incident, conservé avec sa provenance
-  -> Évaluation : SATISFAIT / NE SATISFAIT PAS / INDETERMINE et preuves
+  -> Évaluation : SATISFAIT / NE SATISFAIT PAS, ou travail à reprendre sans verdict ; preuves conservées
   -> Mesures et coûts observés, classements par critère et filtres
   -> Choix de l’utilisateur ; publication uniquement sous autorité distincte
 ```
@@ -163,7 +164,7 @@ Une mesure valide d’une configuration non admissible peut être classée sur s
 
 ## 7. Verdict, coût et bénéfices
 
-L’évaluation applique l’[ordre de décision](RULES.md#7-ordre-de-décision), puis la vue applique les [règles économiques](RULES.md#8-coût-et-bénéfices). La conclusion économique décrit le périmètre et la complétude de la comparaison des coûts, avec inconnues et incompatibilités, sans objet de recommandation « co-moins-chères ». Elle reste distincte du verdict : `INCOMPLETE` n’est pas un quatrième verdict. Les versions de l’évaluateur, de sa méthode et du calcul de conclusion restent reliées aux preuves. Le coût ne compense aucune non-admissibilité, y compris dans la vision future du score personnalisé.
+L’évaluation applique l’[ordre de décision](RULES.md#7-ordre-de-décision), puis la vue applique les [règles économiques](RULES.md#8-coût-et-bénéfices). La conclusion économique décrit le périmètre et la complétude de la comparaison des coûts, avec inconnues et incompatibilités, sans objet de recommandation « co-moins-chères ». Elle reste distincte du verdict : `INCOMPLETE` est un état économique distinct du verdict. Les versions de l’évaluateur, de sa méthode et du calcul de conclusion restent reliées aux preuves. Le coût ne compense aucune non-admissibilité, y compris dans la vision future du score personnalisé.
 
 ## 8. Incidents et attribution
 
@@ -172,7 +173,7 @@ L’évaluation applique l’[ordre de décision](RULES.md#7-ordre-de-décision)
 | Sortie obtenue | artefact disponible pour le contrat | entre dans l'évaluation |
 | Incident fournisseur | fournisseur ou route n'accomplit pas l'unité prévue | observation attribuable, séparée du contenu de la sortie |
 | `HARNESS_ERROR` | Pi ou le dispositif empêche l'attribution | réduit la couverture, ne devient pas `NE SATISFAIT PAS` |
-| Preuve manquante | identité ou preuve nécessaire absente | `INDETERMINE` ou `INCONNU` selon le champ |
+| Preuve manquante | identité ou preuve nécessaire absente | Travail à reprendre ; `INCONNU` pour une valeur absente |
 
 Le verdict n'attribue pas au seul modèle un effet que le fournisseur, l'effort, Pi ou ses réglages peuvent influencer, et ne permet pas d'affirmer que le modèle isolé aurait produit la même sortie avec un autre harnais, fournisseur, contexte ou environnement.
 

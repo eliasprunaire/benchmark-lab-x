@@ -190,6 +190,11 @@ class S14Acceptance(unittest.TestCase):
                 self.assertEqual(view['operation']['observed_cost']['amount'],'0.0002')
                 observed=view['operation']['receipt']['observed_configuration']
                 self.assertEqual(b64decode(observed['http']['body_base64']),raw)
+                self.assertIn('diagnostic', view)
+                if kind == 'false-proof':
+                    self.assertEqual(view['diagnostic']['state'], 'EVIDENCE_REVIEW_REQUIRED')
+                if kind == 'refusal':
+                    self.assertEqual(view['diagnostic']['state'], 'REFUSAL_REVIEW_REQUIRED')
         self.assertEqual(self.http.request.call_count,8)
         self.assertEqual(self.count(),0)
 

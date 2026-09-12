@@ -198,6 +198,7 @@ def restore(source, destination):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     campaign_actions = ('create-campaign', 'inspect-campaign', 'admit-campaign', 'stop-campaign', 'resume-campaign')
+    campaign_actions += ('inspect-attempt-status',)
     parser.add_argument('action', choices=campaign_actions + ('reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'admit-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
     parser.add_argument('--data', type=Path)
     parser.add_argument('--authority', type=Path)
@@ -303,7 +304,16 @@ def main(argv=None):
             result = (backup if args.action == 'backup' else restore)(args.data, args.destination)
         else:
             with closing(Store(args.data)) as store:
-                if args.action in ('reserve-judgment', 'execute-judgment', 'inspect-judgment'):
+                if args.action == 'inspect-attempt-status':
+                    from .evaluation import attempt_status
+                    from .storage import _fields
+                    if args.authority is None:
+                        raise ValueError('Fichier opérateur privé requis')
+                    private_path(args.authority)
+                    request = json.loads(args.authority.read_text(), object_pairs_hook=_unique_object)
+                    _fields(request, ('campaign_id', 'attempt_id'), args.action)
+                    result = attempt_status(store, request['campaign_id'], request['attempt_id'])
+                elif args.action in ('reserve-judgment', 'execute-judgment', 'inspect-judgment'):
                     from . import judgment
                     from .storage import _fields
                     if args.authority is None:

@@ -38,7 +38,7 @@ Le catalogue distingue le métier ou domaine, qui donne le contexte, et la famil
 | L’exemple ne me convient pas | corriger ce qui diffère de mon besoin | dossier révisé sans perdre les accords non touchés |
 | Je dois choisir un modèle pour une tâche précise | comparer les résultats sous le même Pi | verdicts, classements par critère et filtres explicables |
 | Je veux examiner les compromis de coût et de résultat | consulter des mesures connues et comparables | erreurs visibles, égalités conservées et inconnues non classées |
-| La preuve ne suffit pas | éviter une conclusion artificielle | préparation suspendue ou verdict `INDETERMINE` motivé selon la phase |
+| La preuve ne suffit pas | résoudre ce qui empêche la décision | préparation, exécution ou évaluation à reprendre, avec cause et prochaine action |
 | Je veux vérifier une conclusion                  | retrouver tâche, contrat, configuration, sortie et preuves                    | chaîne d'attribution bornée                              |
 | Je cherche une tâche proche de mon besoin        | parcourir le catalogue et sa couverture réelle                               | tâche, version, cas et campagnes pertinents              |
 
@@ -60,7 +60,7 @@ Ce jalon réunit les capacités ci-dessous et les [critères d’acceptation pro
 - catalogue de tâches versionnées, avec contrat et cas d'essai identifiés ; aucune demande n’y est publiée automatiquement
 - plusieurs campagnes, chacune liée à une version de tâche, à ses cas et à un panel figé
 - résultats réellement acquis et évalués sur le catalogue et le panel approuvés
-- accès API via OpenRouter sous Pi constant pour chaque comparaison
+- accès API via OpenRouter sous Pi constant ; secours officiel candidat en dernier recours selon les conditions de l’ARD
 - suivi des tentatives, incidents, coûts et preuves sans relance implicite
 - navigation catalogue, tâche, campagne et comparaison des configurations
 - classements par critère et filtres combinés, sans note pondérée ni désignation automatique du meilleur modèle
@@ -82,7 +82,7 @@ Un score pondéré personnalisé appartient à la vision durable, hors 0.1.0. Av
 
 La couverture de métiers variés appartient à la vision durable : droit et notariat, documentation de santé, enseignement, artisanat, maintenance, logistique, agriculture, comptabilité, journalisme ou qualité industrielle, sans liste fermée ni couverture de tous ces domaines exigée pour 0.1.0. Les cas sont choisis pour leur utilité et les difficultés concrètes du travail, sans obligation de mettre en échec un humain ou un modèle réputé performant.
 
-Les bons modèles locaux appartiennent à la vision durable du produit, sans intégration imposée à 0.1.0. Leur entrée dans un panel exige une décision propre, avec identité des poids, quantification, serveur d’inférence, matériel et base de coût explicites. Cette perspective n’autorise aucun contournement du canal unique [OpenRouter](ARD.md#3-pi-comme-frontière-constante).
+Les bons modèles locaux appartiennent à la vision durable du produit, sans intégration imposée à 0.1.0. Leur entrée dans un panel exige une décision propre, avec identité des poids, quantification, serveur d’inférence, matériel et base de coût explicites. Cette perspective n’autorise aucun contournement du canal normal [OpenRouter](ARD.md#3-pi-comme-frontière-constante).
 
 Les abonnements comme objets de comparaison, les produits agentiques et la comparaison de harnais exigent un besoin démontré et une décision de périmètre. Aucun scénario de maquette ne devient implicitement une tâche du catalogue.
 

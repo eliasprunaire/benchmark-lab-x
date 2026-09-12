@@ -27,7 +27,7 @@ def parent(store, connection, operation_id):
 
 
 def observation(attempt):
-    if attempt['state'] != 'RECEIVED' or attempt['attribution_incident']:
+    if attempt['state'] != 'RECEIVED':
         raise ConflictError('Reçu attribuable requis ; aucun rejeu ambigu')
     receipt = attempt['operation']['receipt']
     observed = receipt['observed_configuration']
@@ -57,10 +57,24 @@ def observation(attempt):
         kind = 'COMPLETE'
     else:
         kind = 'UNRECOVERABLE'
+    if attempt['attribution_incident'] and (kind != 'ROUTE_ERROR' or any(
+            observed.get(field) is not None for field in attempt['attribution_incident'])):
+        raise ConflictError('Reçu attribuable requis ; aucune identité contradictoire admise')
     usage = data.get('usage') or {}
     return dict(kind=kind, output_chars=len(content), usage=usage,
                 provider=observed.get('provider'), route=observed.get('route'),
                 receipt_sha256=q.digest(receipt), received_at=http.get('received_at'))
+
+
+def routing_error(operation):
+    """A complete HTTP error may omit model identity without contradicting it"""
+    if operation['receipt'] is None:
+        return False
+    try:
+        return observation(dict(state=operation['state'], operation=operation,
+            attribution_incident=c._attribution(operation['receipt'], operation['requested_configuration'])))['kind'] == 'ROUTE_ERROR'
+    except (ValueError, ConflictError, IntegrityError, KeyError, TypeError):
+        return False
 
 
 def validate_link(store, connection, manifest):
@@ -172,7 +186,12 @@ def derive_child(source_manifest, attempt, observed, capabilities, *, budget_id,
         raise ValueError('Endpoints autorisés épuisés')
     input_tokens = observed['usage'].get('prompt_tokens')
     if type(input_tokens) is not int or input_tokens < 0:
-        raise ValueError('Quantité d’entrée non établie')
+        if observed['kind'] != 'ROUTE_ERROR':
+            raise ValueError('Quantité d’entrée non établie')
+        # Bound context without claiming an observed token count
+        input_tokens = manifest['conditions']['defaults']['context_window'] - params['max_tokens']
+        if input_tokens < 0:
+            raise ValueError('Limite de contexte atteinte')
     limit = min(manifest['conditions']['defaults']['context_window'] - input_tokens,
                 *(min(e['max_completion_tokens'], e['context_length'] - input_tokens) for e in endpoints))
     if observed['kind'] == 'LENGTH':
@@ -232,6 +251,35 @@ def propose(store, operation_id, capabilities):
     connection = c.connection_for(store)
     with _transaction(connection):
         return _proposal(store, connection, operation_id, capabilities)
+
+
+def diagnose(store, operation_id):
+    """Explain the existing recovery gate without reserving or emitting anything"""
+    c._intact(store)
+    connection = c.connection_for(store)
+    with _transaction(connection):
+        snapshot, attempt = parent(store, connection, operation_id)
+        try:
+            observed = observation(attempt)
+        except (ValueError, ConflictError, IntegrityError, KeyError, TypeError):
+            return dict(kind='RECONCILIATION_REQUIRED', automatic=False,
+                        reason='Reçu complet attribuable absent ; rapprocher les effets avant tout rejeu')
+        kind = observed['kind']
+        if kind == 'COMPLETE':
+            return dict(kind=kind, automatic=False, reason='Sortie complète : poursuivre le jugement, sans nouvel appel candidat')
+        if kind not in _RECOVERABLE:
+            return dict(kind=kind, automatic=False, reason='Examiner le refus ou l’intégrité ; aucun contournement ni rejeu automatique')
+        _, grant = _owner_grant(store, connection, snapshot)
+        if grant is None:
+            return dict(kind=kind, automatic=False, reason='Préautorisation de reprise absente ; préparer une reprise avec ses capacités et son autorité')
+        try:
+            capabilities = frozen_capabilities(grant, attempt['operation']['requested_configuration']['model'])
+            proposal = _proposal(store, connection, operation_id, capabilities)
+        except (ValueError, ConflictError, IntegrityError, BudgetError, KeyError) as exc:
+            return dict(kind=kind, automatic=False, reason=str(exc))
+        admitted = snapshot['admission'] is not None and not os.path.lexists(store._root / 'restore.json')
+        return dict(kind=kind, automatic=admitted, reason='Reprise technique préautorisée' if admitted else 'Admission fermée ; aucune émission',
+                    next_campaign_id=proposal['manifest']['campaign_id'], reserve_amount=proposal['reserve_amount'])
 
 
 def starting_configuration(store, configuration, *, content_format=None):
@@ -384,7 +432,7 @@ def _next_preauthorized_attempt(store, operation_id):
     try:
         with _transaction(connection, write=True):
             snapshot, attempt = parent(store, connection, operation_id)
-            if (attempt['state'] != 'RECEIVED' or attempt['attribution_incident']
+            if (attempt['state'] != 'RECEIVED'
                     or snapshot['admission'] is None
                     or os.path.lexists(store._root / 'restore.json')):
                 return None

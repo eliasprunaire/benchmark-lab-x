@@ -198,7 +198,37 @@ def inspect(store, operation_id):
         request = saved['request']
         proposal = _retained_proposal(store, connection, operation, ctx)
         return dict(operation=operation, binding={k: request[k] for k in
-                    ('campaign_id', 'attempt_id', 'previous_evaluation_id', 'review_sha256')}, proposal=proposal)
+                    ('campaign_id', 'attempt_id', 'previous_evaluation_id', 'review_sha256')}, proposal=proposal,
+                    diagnostic=diagnostic(store, connection, operation, ctx))
+
+
+def diagnostic(store, connection, operation, ctx):
+    """Explain retained judge evidence without changing its receipt or repairing quotes"""
+    receipt = operation['receipt']
+    if receipt is None:
+        return dict(state='RECONCILIATION_REQUIRED' if operation['state'] != 'INTENT_RECORDED' else 'EXECUTION_REQUIRED',
+                    reason='Jugement sans reçu ; vérifier les effets avant tout nouvel appel')
+    if receipt['result'] is not None:
+        return dict(state='OWNER_REVIEW_REQUIRED', reason='Proposition disponible ; relecture et soumission locales requises')
+    observed = receipt['observed_configuration']
+    http = observed.get('http', {})
+    if not http.get('complete') or http.get('status') != 200 or http.get('credential_redacted'):
+        return dict(state='JUDGE_EXECUTION_REQUIRED', reason='Réponse du juge incomplète ou incident HTTP ; vérifier reçu et coût')
+    try:
+        data = json.loads(b64decode(http['body_base64'], validate=True), object_pairs_hook=storage._unique_object)
+        choice = data['choices'][0]
+        message = choice['message']
+        if choice.get('finish_reason') == 'content_filter' or message.get('refusal') or choice.get('native_finish_reason') == 'refusal':
+            return dict(state='REFUSAL_REVIEW_REQUIRED', reason='Refus du juge conservé ; examiner le contexte et le contenu')
+        if choice.get('finish_reason') != 'stop':
+            return dict(state='JUDGE_EXECUTION_REQUIRED', reason='Sortie du juge non terminée ; examiner les limites de transport')
+        answer = json.loads(message['content'], object_pairs_hook=storage._unique_object)
+        _proposal(store, connection, operation, ctx, answer)
+    except IntegrityError:
+        return dict(state='EVIDENCE_REVIEW_REQUIRED', reason='Identifiant, empreinte ou passage de preuve divergent ; relire la même sortie et corriger explicitement le jugement')
+    except (ValueError, KeyError, TypeError, IndexError):
+        return dict(state='JUDGE_FORMAT_REVIEW_REQUIRED', reason='Structure ou critères de la proposition invalides ; corriger le jugement sur la même sortie')
+    return dict(state='JUDGE_EXECUTION_REQUIRED', reason='Incident de provenance du juge ; rapprocher les observations conservées')
 
 
 def evaluation_judgment(store, connection, value, ctx, operation, result):

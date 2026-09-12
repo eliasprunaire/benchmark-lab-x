@@ -170,6 +170,24 @@ class Recovery(unittest.TestCase):
         bad=deepcopy(proposal['manifest']);bad['panel'][0]['parameters']['provider']['only']=['foreign']
         with self.assertRaises(ValueError):c.create(self.store,bad)
 
+    def test_route_error_without_usage_has_conservative_reserve_and_diagnostic(self):
+        self.emit(status=503, finish=None)
+        snapshot, attempt = r.parent(self.store, self.store._connection, 'first')
+        observed = r.observation(attempt)
+        observed['usage'] = {}
+        proposal = r.derive_child(snapshot['manifest'], attempt, observed, self.caps, budget_id='local-comparison')
+        self.assertEqual(['two'], proposal['manifest']['panel'][0]['parameters']['provider']['only'])
+        self.assertEqual('0.010200', proposal['reserve_amount'])
+        self.assertEqual({}, observed['usage'])
+        before = self.store.inspect_operations()
+        diagnostic = r.diagnose(self.store, 'first')
+        self.assertEqual('ROUTE_ERROR', diagnostic['kind'])
+        self.assertFalse(diagnostic['automatic'])
+        self.assertEqual(before, self.store.inspect_operations())
+        observed['route'] = None
+        with self.assertRaisesRegex(ValueError, 'Endpoint fautif non attribué'):
+            r.derive_child(snapshot['manifest'], attempt, observed, self.caps, budget_id='local-comparison')
+
     def test_route_error_then_success_keeps_incident_and_learned_route(self):
         source=c.inspect(self.store,'local-comparison')['manifest']['panel'][0]
         self.emit(status=503,finish=None)

@@ -145,7 +145,7 @@ class S6Regressions(unittest.TestCase):
         self.assertIs(rows['near']['measures'][0]['value'], True)
         self.assertEqual(4, rows['near']['measures'][1]['rank'])
         self.assertEqual(1, rows['tie']['measures'][1]['rank'])
-        self.assertEqual({'planned_cells': 6, 'attempted_cells': 5, 'evaluated_attempts': 5, 'not_started': 1}, view['coverage'])
+        self.assertEqual({'planned_cells': 6, 'attempted_cells': 5, 'evaluated_attempts': 5, 'decided_attempts': 5, 'not_started': 1}, view['coverage'])
         filtered = self.compare({'case': 'notes', 'verdict': 'SATISFAIT', 'configuration': 'error'})
         self.assertEqual([], filtered['rows'])
         self.assertEqual(view['population'], filtered['population'])

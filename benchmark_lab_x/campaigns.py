@@ -589,6 +589,7 @@ def verify_campaigns(store, connection):
 
 
 def _retained_costs(snapshot, store=None, connection=None):
+    from .recovery import routing_error
     if snapshot['manifest'].get('financial_cost_policy') != 'retain_reserve':
         return set()
     attempts = list(snapshot['attempts'])
@@ -596,14 +597,15 @@ def _retained_costs(snapshot, store=None, connection=None):
         from .recovery import parent
         previous, _ = parent(store, connection, snapshot['manifest']['recovery_of'])
         return _retained_costs(previous, store, connection) | {a['operation_id'] for a in attempts
-                if a['state'] == 'RECEIVED' and not a['attribution_incident']
+                if a['state'] == 'RECEIVED' and (not a['attribution_incident'] or routing_error(a['operation']))
                 and a['operation']['receipt']['result']['emission'] == 'ESTABLISHED'}
     return {a['operation_id'] for a in attempts
-            if a['state'] == 'RECEIVED' and not a['attribution_incident']
+            if a['state'] == 'RECEIVED' and (not a['attribution_incident'] or routing_error(a['operation']))
             and a['operation']['receipt']['result']['emission'] == 'ESTABLISHED'}
 
 
 def _envelope(store, connection, snapshot, authority):
+    from .recovery import routing_error
     operations = store._operations(connection)
     budget = store._budget(connection, authority['budget_id'], operations)
     campaign_operations = {row[0] for row in connection.execute('SELECT operation_id FROM s4_attempts')}
@@ -613,10 +615,10 @@ def _envelope(store, connection, snapshot, authority):
         raise BudgetError('Unité du budget différente de la base de coût')
     retained = _retained_costs(snapshot, store, connection)
     if (set(budget['unknown_cost_operations']) - retained or Decimal(budget['available']) < 0
-            or any(_attribution(op['receipt'], op['requested_configuration'])
+            or any((_attribution(op['receipt'], op['requested_configuration']) and not routing_error(op))
                    or op['receipt']['result']['emission'] != 'ESTABLISHED' for op in dependent_receipts)
             or any(op['budget_id'] == authority['budget_id'] and op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') for op in operations)
-            or any(a['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') or a['attribution_incident']
+            or any(a['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') or (a['attribution_incident'] and not routing_error(a['operation']))
                    or (a['operation']['observed_cost'] is not None and a['operation']['observed_cost']['status'] == 'UNKNOWN'
                        and a['operation_id'] not in retained)
                    or (a['operation']['receipt'] is not None and a['operation']['receipt']['result']['emission'] != 'ESTABLISHED')

@@ -91,12 +91,39 @@ class PrivateEvaluationTests(unittest.TestCase):
                     e.submit_report(self.store, req)
         self.assertEqual(0, self.store._connection.execute('SELECT count(*) FROM s5_evaluations').fetchone()[0])
 
-    def test_missing_findings_remain_indeterminate_after_reload(self):
+    def test_missing_findings_require_review_without_official_verdict(self):
         req = self.request()
         req['report']['findings'] = []
+        req['report']['limits'].append('Relecture interrompue : conserver ce travail')
+        req['report']['judgment']['disagreements'].append(dict(finding='Contrôle à arbitrer', arbitration=None))
         record = e.submit_report(self.store, req)
-        self.assertEqual('INDETERMINE', record['verdict'])
+        self.assertIsNone(record['verdict'])
+        self.assertTrue(record['evaluation_id'])
+        self.assertEqual('REVIEW_REQUIRED', record['state'])
         self.assertEqual(record, e.inspect(self.store, record['evaluation_id']))
+        self.assertEqual(req['report']['judgment']['disagreements'], record['judgment']['disagreements'])
+        self.assertIn('Relecture interrompue : conserver ce travail', record['limits'])
+        self.assertEqual(1, self.store._connection.execute('SELECT count(*) FROM s5_evaluations').fetchone()[0])
+        from benchmark_lab_x import restitution
+        comparison = restitution.comparison(self.store, self.fixture.session, 'fixture', 'local-comparison')
+        self.assertEqual(['intent-x'], [a['attempt_id'] for a in comparison['pending_attempts']])
+        completed = e.submit_report(self.store, self.request())
+        self.assertEqual('SATISFAIT', completed['verdict'])
+        self.assertEqual(record['evaluation_id'], completed['previous_evaluation_id'])
+        self.assertEqual(completed, e.inspect(self.store, completed['evaluation_id']))
+
+    def test_attempt_status_cli_without_emission_or_verdict(self):
+        path = self.fixture.home / 'status.json'
+        path.write_text(json.dumps(dict(campaign_id='local-comparison', attempt_id='intent-x')))
+        path.chmod(0o600)
+        before = self.store.inspect_operations()
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(0, runtime.main(['inspect-attempt-status', '--data', str(self.data), '--authority', str(path)]))
+        status = json.loads(out.getvalue())
+        self.assertIsNone(status['verdict'])
+        self.assertTrue(status['next_action'])
+        self.assertEqual(before, self.store.inspect_operations())
 
     def test_private_operator_cli_and_existing_projection(self):
         root = self.fixture.home
@@ -193,6 +220,7 @@ class PiTransportTests(unittest.TestCase):
         observed = attempt['operation']['receipt']['observed_configuration']
         self.assertTrue(observed['pi']['terminal'])
         self.assertEqual(self.raw, b64decode(observed['http']['body_base64']))
+
         self.assertNotIn('reference', self.wire['messages'][1]['content'])
         self.assertEqual(pi.system_context('Contexte commun fictif'), self.wire['messages'][0]['content'])
         self.assertEqual(before, len(self.store.inspect_operations()))
@@ -216,6 +244,25 @@ class PiTransportTests(unittest.TestCase):
         with closing(storage.Store(restored)) as store:
             self.assertEqual(evaluated, e.inspect(store, evaluated['evaluation_id']))
             self.assertFalse(runtime.status(restored, store)['admission'])
+
+    def test_http_error_without_model_is_not_an_identity_contradiction(self):
+        from benchmark_lab_x import recovery
+        raw = b'{"error":{"code":429,"message":"Rate limited"}}'
+        with patch.object(pi.http, 'post', return_value=(429, {}, raw, True,
+                '2026-09-10T10:00:00+00:00', time.monotonic())):
+            c.execute(self.data, 'pi-intent', self.transport)
+        attempt = c.inspect(self.store, 'pi-offline')['attempts'][0]
+        self.assertEqual('ROUTE_ERROR', recovery.observation(attempt)['kind'])
+        self.assertIsNone(attempt['operation']['receipt']['observed_configuration']['model'])
+        self.assertEqual('UNKNOWN', attempt['operation']['observed_cost']['status'])
+        self.assertTrue(runtime.verify(self.store)['integrity_ok'])
+
+    def test_success_without_model_still_cannot_be_attributed(self):
+        document = json.loads(self.raw)
+        del document['model']
+        self.raw = json.dumps(document).encode()
+        attempt = self.execute()
+        self.assertEqual('MODEL_IDENTITY_MISMATCH', attempt['operation']['receipt']['result']['incident'])
 
     def test_two_models_share_context_and_keep_their_verdicts_when_sorted(self):
         from benchmark_lab_x import restitution

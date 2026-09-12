@@ -131,7 +131,7 @@ Conserver au maximum deux lignes pour 0.1.0, complémentaires aux obligations et
 
 - `SATISFAIT` : résultat attendu et obligations prouvés, aucune erreur éliminatoire
 - `NE SATISFAIT PAS` : erreur éliminatoire ou obligation non remplie établie
-- `INDETERMINE` : preuve insuffisante ou contradictoire
+- Évaluation à reprendre, sans verdict métier : preuve insuffisante ou contradictoire, avec cause et prochaine action
 
 Appliquer les [règles de verdict](../docs/RULES.md#6-erreurs-et-verdict), notamment lorsqu’un défaut est prouvé mais qu’un autre contrôle manque.
 
@@ -265,7 +265,7 @@ Ordonner seulement les valeurs connues et comparables ; afficher les autres sans
 
 `<périmètre de comparaison des coûts ; valeurs connues, inconnues et incompatibilités ; INCOMPLETE si la comparaison de ce périmètre est incomplète ; aucune désignation d’option>`.
 
-Un coût inconnu ou non comparable peut conserver l’admissibilité sur les critères non économiques. `INCOMPLETE` n’est pas un quatrième verdict. Un coût `INCONNU` ne satisfait jamais une obligation de coût. Les dépenses non admissibles restent consultables et triables sur une base comparable, sans rendre les sorties utilisables ; un sous-total connu n’est pas un coût complet.
+Un coût inconnu ou non comparable peut conserver l’admissibilité sur les critères non économiques. `INCOMPLETE` est un état économique distinct du verdict. Un coût `INCONNU` ne satisfait jamais une obligation de coût. Les dépenses non admissibles restent consultables et triables sur une base comparable, sans rendre les sorties utilisables ; un sous-total connu n’est pas un coût complet.
 
 ### Mesures complémentaires
 
@@ -294,7 +294,7 @@ Limite d’attribution affichée : `<formulation conforme au PRD, section 8, et 
 - [ ] référence et méthode sont identifiées et qualifiées ; alternatives, exposition, assistance IA et éventuelle revue professionnelle sont documentées
 - [ ] toute agrégation des cas est définie avant exécution, sinon seuls les verdicts par cas sont permis
 - [ ] chaque campagne référence le contrat sans le réécrire ; ses autorités et états restent distincts
-- [ ] les trois verdicts sont présents
+- [ ] les verdicts conclusifs sont distincts des évaluations à reprendre ; chaque travail restant a une cause et une prochaine action
 - [ ] zéro à deux critères secondaires sont prévus pour 0.1.0 ; chaque colonne ordonnable a sa mesure, preuve, unité ou échelle justifiée, sens favorable et agrégation éventuelle
 - [ ] le besoin représenté par le paquet a été validé et le responsable a approuvé le contrat qualifié, ou les appels candidats restent interdits
 - [ ] les conditions de test communes sont déclarées une fois et identiques entre les configurations comparées

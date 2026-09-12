@@ -33,6 +33,22 @@ class JudgmentTests(unittest.TestCase):
         judgment.execute(h.data, 's14-judge', h.transport)
         self.assertEqual(h.http.request.call_count, 1)
 
+    def test_new_judge_work_remains_visible_after_a_decision(self):
+        from benchmark_lab_x import restitution
+        h = self.h
+        first = h.submit(h.execute())
+        second = h.execute('second-review')
+        status = evaluation.attempt_status(h.store, 'local-comparison', 'intent-x')
+        self.assertEqual('SATISFAIT', status['verdict'])
+        self.assertTrue(status['judgment']['review_pending'])
+        view = restitution.comparison(h.store, h.fixture.session, 'fixture', 'local-comparison')
+        self.assertEqual('second-review', view['pending_attempts'][0]['operation_id'])
+        self.assertEqual(first, evaluation.inspect(h.store, first['evaluation_id']))
+        final = h.submit(second)
+        self.assertEqual(first['evaluation_id'], final['previous_evaluation_id'])
+        view = restitution.comparison(h.store, h.fixture.session, 'fixture', 'local-comparison')
+        self.assertEqual([], view['pending_attempts'])
+
     def test_competing_execution_has_one_emission(self):
         h = self.h
         judgment.reserve(h.store, h.request(), h.transport)
@@ -166,7 +182,10 @@ class JudgmentTests(unittest.TestCase):
         view = h.execute()
         finding = view['proposal']['report']['findings'][0]
         self.assertEqual(finding['status'], 'INDETERMINE')
-        self.assertEqual(h.submit(view)['verdict'], 'INDETERMINE')
+        pending = h.submit(view)
+        self.assertIsNone(pending['verdict'])
+        self.assertEqual('REVIEW_REQUIRED', pending['state'])
+        self.assertEqual(h.count(), 1)
         next_view = h.execute('local-cost-correction')
         next_view['proposal']['report']['findings'][0] = deepcopy(h.answer['findings'][0])
         with self.assertRaisesRegex(ValueError, 'Preuve opérationnelle'):
