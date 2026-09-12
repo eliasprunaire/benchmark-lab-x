@@ -18,7 +18,7 @@ Mode d’accès déclaré au modèle. Les appels courants du produit utilisent n
 Cible figée du panel de campagne : modèle, fournisseur, accès, route, paramètres et effort requis, avec les identités exactes attendues. Sa présence dans un manifeste ne prouve ni disponibilité ni exécution.
 
 ### Profil d’assistant de préparation
-Configuration OpenRouter explicite chargée au démarrage pour l’assistance de préparation et de correction. Elle fige l’identité, les paramètres, les routes, le système et les limites, et lie leur empreinte à la configuration demandée. L’alias `glm-5.3-flash` désigne le profil historique de compatibilité. Un chemin JSON local désigne un autre profil déjà approuvé. Ce n’est ni un panel candidat, ni une base de modèles, ni un choix de production.
+Configuration OpenRouter explicite chargée au démarrage pour l’assistance de préparation et de correction. Elle fige l’identité, les paramètres, les routes, le système et les limites, et lie leur empreinte à la configuration demandée. Un alias de compatibilité ou un chemin JSON local désigne un profil déjà approuvé ; leurs valeurs courantes relèvent de la configuration. Ce n’est ni un panel candidat, ni une base de modèles, ni un choix de production.
 
 ### Configuration observée
 Valeurs établies pour une tentative, avec leurs sources, reliées à la configuration demandée et aux [conditions de test communes](#conditions-de-test-communes). Une valeur absente reste `INCONNU`. Les champs et relations sont définis dans l’[ARD](docs/ARD.md#43-configuration-demandée-et-configuration-observée).
@@ -64,7 +64,7 @@ Le volume décrit la quantité d’information ; la difficulté, les contraintes
 Ensemble navigable des tâches, de leurs versions et des campagnes associées.
 
 ### Panel
-Le panel nominal est la sélection de modèles du [PRD](docs/PRD.md#51-périmètre-010). Le panel d’une campagne est la liste figée des configurations demandées, avec les révisions exigées. Le second exige des identités et conditions précises que le premier ne prouve pas. La liste de modèles à essayer pour l’accueil et la préparation est distincte de ces panels ; elle ne constitue ni un panel candidat de campagne ni une sélection d’assistants déjà qualifiés.
+Liste des configurations demandées pour une campagne, figée avec leurs révisions et conditions avant admission. La sélection courante relève de la configuration opérationnelle ; le [PRD](docs/PRD.md#51-périmètre-010) définit les exigences de sélection et de preuve sans fixer de modèles. La liste de modèles à essayer pour l’accueil et la préparation est distincte de ces panels ; elle ne constitue ni un panel candidat de campagne ni une sélection d’assistants déjà qualifiés.
 
 ### Campagne
 Ensemble organisé sur une version de tâche, des cas, un panel, des conditions communes et des autorisations identifiés. Elle relie plusieurs opérations et leurs preuves. Son état reste distinct de celui d’une Issue, des verdicts et de sa publication.

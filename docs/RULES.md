@@ -32,7 +32,7 @@ Ces règles préservent les contrats historiques et n'autorisent aucune exécuti
 
 **Conditions de test communes.** L’objet défini par l’[ARD](ARD.md#42-conditions-de-test-communes) est gelé avant le premier candidat et référencé par toutes les configurations comparées. Une condition commune modifiée ouvre une nouvelle comparaison. Un paramètre propre au candidat ne doit pas être présenté comme une condition partagée.
 
-**Périmètre décidé.** Le périmètre, le panel nominal et les exclusions appartiennent au [PRD](PRD.md#5-périmètre-produit). Choisir un panel ne prouve ni la disponibilité des configurations ni l’autorisation de les appeler.
+**Périmètre décidé.** Le périmètre et les exclusions appartiennent au [PRD](PRD.md#5-périmètre-produit). Les modèles et versions sélectionnés relèvent de la configuration opérationnelle ; le manifeste de chaque campagne fige son panel avant admission. Choisir un panel ne prouve ni la disponibilité des configurations ni l’autorisation de les appeler.
 
 ## 4. Contrat avant exécution
 
