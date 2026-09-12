@@ -654,3 +654,11 @@ Cette option charge les variables pour la commande opérateur concernée ; le ru
 ## Modèle DeepSeek courant
 
 DeepSeek V4.1 Flash remplace 0731 dans le panel et les assistants à sélectionner. Le registre propose `deepseek-v4-1-flash`, identifiant OpenRouter `deepseek/deepseek-v4.1-flash`. L’ancien modèle et son alias redirigé sont refusés pour les nouvelles campagnes, réservations et émissions, y compris depuis un ancien profil ou une intention déjà enregistrée. Le parcours de préparation affiche ce retrait. Les lectures et preuves historiques gardent leurs identités ; aucun résultat 0731 n’est renommé en V4.1.
+
+## Configurations candidates supplémentaires via OpenRouter
+
+[openrouter-expanded-panel.json](openrouter-expanded-panel.json) contient cinq configurations à intégrer au champ `panel` d’un nouveau manifeste : GPT 5.6 Sol, GPT 6 Astra, Kimi K3, Qwen3.8 Max 0902 et Hy4 preview. Les identifiants et routes ont été vérifiés dans le catalogue OpenRouter le 12 septembre 2026. Les alias correspondants, suffixés `low`, figurent dans [models.toml](../models.toml) pour le collecteur historique ; les anciens alias restent inchangés.
+
+Ces configurations reprennent l’effort demandé `low` et la limite de sortie de 16 384 jetons de la recette précédente. Ces valeurs sont déclarées, sans preuve qu’un effort identique représente le même calcul entre modèles. Les routes sont épinglées et le repli automatique désactivé. Le fichier est une sélection opérationnelle, sans campagne, admission ni appel implicite. Revalider les routes, les tarifs et les réserves avant exécution ; un catalogue disponible ne prouve pas un appel réussi.
+
+`OPENROUTER_API_KEY` suffit pour ces cinq configurations. Les emplacements vides `OPENAI_API_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY` et `HUNYUAN_API_KEY` de [.env.example](../.env.example) préparent les accès directs futurs. Ces quatre transports ne sont pas encore raccordés au moteur ; renseigner les variables ne les active pas. Les identités directes exactes, la région éventuelle et la compatibilité resteront à vérifier avant leur raccordement.
