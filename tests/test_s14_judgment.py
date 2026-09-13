@@ -22,6 +22,48 @@ class JudgmentTests(unittest.TestCase):
         self.h.setUp()
         self.addCleanup(self.h.doCleanups)
 
+    def test_verification_reuses_context_metadata_without_hiding_changes(self):
+        h = self.h
+        h.submit(h.execute())
+        original = evaluation.verify_evaluations
+
+        def verify_with_repeated_reads(store, connection):
+            with patch.object(evaluation.c, '_inspect', wraps=evaluation.c._inspect) as inspected:
+                first = evaluation._context(store, connection, 'local-comparison', 'intent-x')
+                first['campaign']['manifest']['campaign_id'] = 'caller-only'
+                second = evaluation._context(store, connection, 'local-comparison', 'intent-x')
+                self.assertEqual('local-comparison', second['campaign']['manifest']['campaign_id'])
+                self.assertEqual(1, inspected.call_count)
+                connection.execute('CREATE INDEX unexpected_context ON operations(phase)')
+                with self.assertRaises(storage.SchemaError):
+                    evaluation._context(store, connection, 'local-comparison', 'intent-x')
+                connection.execute('DROP INDEX unexpected_context')
+                pid = second['attempt']['output_piece_id']
+                path = store._root / store.get_piece(pid)['relative_path']
+                raw = path.read_bytes()
+                try:
+                    path.write_bytes(bytes([raw[0] ^ 1]) + raw[1:])
+                    with self.assertRaises(storage.IntegrityError):
+                        evaluation._resources(store, second)
+                finally:
+                    path.write_bytes(raw)
+                connection.execute('UPDATE s4_status SET stop_reason=stop_reason')
+                evaluation._context(store, connection, 'local-comparison', 'intent-x')
+                self.assertEqual(2, inspected.call_count)
+            original(store, connection)
+
+        with patch.object(evaluation, 'verify_evaluations', side_effect=verify_with_repeated_reads):
+            self.assertTrue(runtime.verify(h.store)['integrity_ok'])
+        self.assertIsNone(h.store._verified_contexts)
+        with patch.object(evaluation, 'verify_evaluations', side_effect=RuntimeError('verification stopped')):
+            with self.assertRaises(RuntimeError):
+                runtime.verify(h.store)
+        self.assertIsNone(h.store._verified_contexts)
+        with patch.object(evaluation.c, '_inspect', wraps=evaluation.c._inspect) as inspected:
+            evaluation._context(h.store, h.store._connection, 'local-comparison', 'intent-x')
+            evaluation._context(h.store, h.store._connection, 'local-comparison', 'intent-x')
+            self.assertEqual(2, inspected.call_count)
+
     def test_profile_change_after_reservation(self):
         h = self.h
         judgment.reserve(h.store, h.request(), h.transport)

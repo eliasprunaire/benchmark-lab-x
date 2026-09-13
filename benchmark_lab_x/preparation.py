@@ -188,7 +188,7 @@ def package_check(store, dossier_id, revision, package, digest):
 
 def view(store, session_id, dossier_id, revision=None):
     connection = connection_for(store)
-    with _transaction(connection):
+    with store.read_snapshot() as connection:
         current = owner(connection, session_id, dossier_id)
         if revision is None:
             revision = current
