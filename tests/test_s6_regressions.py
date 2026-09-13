@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark_lab_x import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, service, storage
+from benchmark import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, service, storage
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 from tests.test_s4_regressions import inputs, manifest, response
 from tests.test_s5_regressions import RESPONSIBLE, EVALUATION_AUTHORITY, findings

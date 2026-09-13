@@ -11,7 +11,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from benchmark_lab_x.storage import Store, initialize
+from benchmark.storage import Store, initialize
 from tests.test_storage import PAYLOAD, cost, require_budget
 
 

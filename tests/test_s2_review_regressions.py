@@ -15,7 +15,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from benchmark_lab_x import preparation as prep, service, storage
+from benchmark import preparation as prep, service, storage
 
 
 def response_for(operation, *, unknown=False):

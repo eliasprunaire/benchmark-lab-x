@@ -1622,7 +1622,7 @@ def _supervise_collect(run_dir, authority):
         active_path = Path(private_dir) / "active.pid"
         command = [
             sys.executable, "-B", "-c",
-            "from benchmark_lab_x.__main__ import _collect_worker; raise SystemExit(_collect_worker())",
+            "from benchmark.__main__ import _collect_worker; raise SystemExit(_collect_worker())",
             str(run), str(authority), str(Path(repo_root or DEFAULT_REPO_ROOT).absolute()), str(result_path), str(active_path),
         ]
         worker_env = os.environ.copy()
@@ -1709,7 +1709,7 @@ def _supervise_collect(run_dir, authority):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="python -m benchmark_lab_x")
+    parser = argparse.ArgumentParser(prog="python -m benchmark")
     commands = parser.add_subparsers(dest="command", required=True)
     p = commands.add_parser("prepare")
     p.add_argument("--run-dir", required=True)

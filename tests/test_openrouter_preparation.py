@@ -16,8 +16,8 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark_lab_x import preparation as prep, runtime, service, storage
-from benchmark_lab_x import openrouter_preparation as assistant
+from benchmark import preparation as prep, runtime, service, storage
+from benchmark import openrouter_preparation as assistant
 
 
 KEY = 'fixture-key-never-a-credential'

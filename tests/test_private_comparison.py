@@ -13,7 +13,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from benchmark_lab_x import campaigns as c, evaluation as e, pi_openrouter as pi, runtime, storage
+from benchmark import campaigns as c, evaluation as e, pi_openrouter as pi, runtime, storage
 from tests.test_s4_regressions import inputs, manifest, response
 from tests import test_s5_regressions as s5
 from tests.test_s5_regressions import findings
@@ -104,7 +104,7 @@ class PrivateEvaluationTests(unittest.TestCase):
         self.assertEqual(req['report']['judgment']['disagreements'], record['judgment']['disagreements'])
         self.assertIn('Relecture interrompue : conserver ce travail', record['limits'])
         self.assertEqual(1, self.store._connection.execute('SELECT count(*) FROM s5_evaluations').fetchone()[0])
-        from benchmark_lab_x import restitution
+        from benchmark import restitution
         comparison = restitution.comparison(self.store, self.fixture.session, 'fixture', 'local-comparison')
         self.assertEqual(['intent-x'], [a['attempt_id'] for a in comparison['pending_attempts']])
         completed = e.submit_report(self.store, self.request())
@@ -148,7 +148,7 @@ class PrivateEvaluationTests(unittest.TestCase):
 
 class CustomNeedEngineTests(unittest.TestCase):
     def test_atelier_boisclair_custom_need_crosses_current_engine_without_network(self):
-        from benchmark_lab_x import preparation as prep, qualification as q
+        from benchmark import preparation as prep, qualification as q
         from tests.test_s2_review_regressions import response_for
         from tests.test_s3_regressions import ACTOR, AUTHORITY, check, specification
 
@@ -163,8 +163,8 @@ class CustomNeedEngineTests(unittest.TestCase):
                     budget_id='atelier-preparation-budget', reserve_amount='7',
                     requested_configuration={'model': 'fictional-local-preview'}))
                 _, home, token, _ = prep.dispatch(store, 'GET', '/preparation', None, None, 'a' * 40, True)
-                task = Path(__file__).parents[1].joinpath('benchmark_lab_x', 'task.md').read_text()
-                mail = Path(__file__).parents[1].joinpath('benchmark_lab_x', 'mail-thread.md').read_text()
+                task = Path(__file__).parents[1].joinpath('benchmark', 'task.md').read_text()
+                mail = Path(__file__).parents[1].joinpath('benchmark', 'mail-thread.md').read_text()
                 body = dict(dossier_id='atelier-boisclair-custom', action_id='atelier-boisclair-create',
                             request='Synthétiser le fil fictif Atelier Boisclair', csrf_token=home['csrf_token'])
                 code, _, _, operation = prep.dispatch(
@@ -243,7 +243,7 @@ class PiTransportTests(unittest.TestCase):
         # The simulated fixture remains; add a separate campaign with actual Pi identity
         # This fixture declares TEST in its frozen cost basis: use a fresh qualified USD fixture
         from tests.test_s3_regressions import fixture, specification, check, ACTOR, AUTHORITY
-        from benchmark_lab_x import preparation as prep, qualification as q
+        from benchmark import preparation as prep, qualification as q
         self.realdata = self.fixture.home / 'pi-private'
         session, view, reference = fixture(self.realdata)
         self.session = session
@@ -313,7 +313,7 @@ class PiTransportTests(unittest.TestCase):
         evaluated = e.evaluate(self.store, 'pi-offline', 'pi-intent', responsible='Contrôleur du test logiciel',
             authority=authority, check=lambda ctx, resources:report)
         self.assertEqual('SATISFAIT', evaluated['verdict'])
-        from benchmark_lab_x import restitution
+        from benchmark import restitution
         comparison = restitution.comparison(self.store, self.session, 'fixture', 'pi-offline')
         self.assertIn('SATISFAIT', storage._strict_json(comparison))
         runtime.stop(self.data, self.store, 'END_OFFLINE_PROOF')
@@ -326,7 +326,7 @@ class PiTransportTests(unittest.TestCase):
             self.assertFalse(runtime.status(restored, store)['admission'])
 
     def test_http_error_without_model_is_not_an_identity_contradiction(self):
-        from benchmark_lab_x import recovery
+        from benchmark import recovery
         raw = b'{"error":{"code":429,"message":"Rate limited"}}'
         with patch.object(pi.http, 'post', return_value=(429, {}, raw, True,
                 '2026-09-10T10:00:00+00:00', time.monotonic())):
@@ -345,7 +345,7 @@ class PiTransportTests(unittest.TestCase):
         self.assertEqual('MODEL_IDENTITY_MISMATCH', attempt['operation']['receipt']['result']['incident'])
 
     def test_two_models_share_context_and_keep_their_verdicts_when_sorted(self):
-        from benchmark_lab_x import restitution
+        from benchmark import restitution
         first_context = None
         for cell, attempt_id in (('x', 'pi-intent'), ('y', 'pi-other')):
             if cell == 'y':

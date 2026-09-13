@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from benchmark_lab_x import preparation as prep, storage
+from benchmark import preparation as prep, storage
 from tests.test_s2_review_regressions import response_for
 
 

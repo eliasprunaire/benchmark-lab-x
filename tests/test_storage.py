@@ -48,7 +48,7 @@ import unittest
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
-from benchmark_lab_x import storage as product
+from benchmark import storage as product
 
 LEGACY_SCHEMA = ('CREATE TABLE dossier_revisions (\n        dossier_id TEXT NOT NULL,\n        revision INTEGER NOT NULL CHECK(revision > 0),\n        payload_json TEXT NOT NULL,\n        PRIMARY KEY (dossier_id, revision)\n    )', "CREATE TABLE pieces (\n        piece_id TEXT PRIMARY KEY NOT NULL,\n        dossier_id TEXT NOT NULL,\n        revision INTEGER NOT NULL,\n        name TEXT NOT NULL,\n        role TEXT NOT NULL CHECK(role IN ('candidate', 'judge')),\n        media_type TEXT NOT NULL,\n        relative_path TEXT UNIQUE NOT NULL,\n        sha256 TEXT NOT NULL,\n        size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),\n        FOREIGN KEY (dossier_id, revision)\n            REFERENCES dossier_revisions (dossier_id, revision)\n    )")
 

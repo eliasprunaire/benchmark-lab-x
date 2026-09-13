@@ -12,7 +12,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark_lab_x import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, service
+from benchmark import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, service
 from tests.test_s4_regressions import inputs, manifest, response
 from tests.test_s5_regressions import EVALUATION_AUTHORITY, RESPONSIBLE, findings
 from tests.test_s6_regressions import Markup, build

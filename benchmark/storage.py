@@ -360,7 +360,7 @@ def _root_path(root):
             continue
         if not stat.S_ISDIR(info.st_mode):
             raise IntegrityError("root components must be directories without links")
-        if (path / ".git").exists() or (path / "benchmark_lab_x/storage.py").exists():
+        if (path / ".git").exists() or (path / "benchmark/storage.py").exists():
             raise IntegrityError("private storage must be outside product sources")
     return root
 
