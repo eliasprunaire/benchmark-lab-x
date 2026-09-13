@@ -8,17 +8,43 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
-from benchmark_lab_x.service import executor_health
+from benchmark_lab_x.service import executor_health, preparation_request
 from benchmark_lab_x.storage import Store, initialize
 from tests.test_storage import PAYLOAD, operation
 
 
 class ServiceProcessesTests(unittest.TestCase):
+    def test_private_read_can_finish_after_two_seconds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'executor.sock'
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+                server.bind(str(path))
+                server.listen(1)
+                server.settimeout(5)
+
+                def respond():
+                    with server.accept()[0] as connection:
+                        connection.recv(4096)
+                        time.sleep(2.1)
+                        try:
+                            connection.sendall(b'{"status":200,"value":{}}\n')
+                        except BrokenPipeError:
+                            pass
+
+                worker = threading.Thread(target=respond)
+                worker.start()
+                try:
+                    self.assertEqual(200, preparation_request(path, 'GET', '/preparation', None)['status'])
+                finally:
+                    worker.join(5)
+                self.assertFalse(worker.is_alive())
+
     def test_health_restart_and_private_boundary(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve() / 'release'
