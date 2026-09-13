@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from benchmark import preparation as prep, service, storage
+from benchmark_web.server import serve_web
 
 
 def response_for(operation, *, unknown=False):
@@ -166,7 +167,7 @@ class S2ReviewRegressions(unittest.TestCase):
                     process.join()
         self.addCleanup(stop_children)
         for target, args in ((service.serve_executor, (self.data, sock, 'a' * 40)),
-                             (service.serve_web, ('127.0.0.1', port, public, sock, 'a' * 40))):
+                             (serve_web, ('127.0.0.1', port, public, sock, 'a' * 40))):
             process = context.Process(target=target, args=args)
             process.start()
             children.append(process)

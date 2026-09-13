@@ -231,6 +231,8 @@ def main(argv=None):
     parser.add_argument('--destination', type=Path)
     parser.add_argument('--socket', type=Path)
     parser.add_argument('--public', type=Path)
+    parser.add_argument('--presentation', default='benchmark_web.projection', metavar='MODULE',
+                        help='Module de présentation injecté dans l’exécuteur pour les projections ; son paquet fournit le serveur web')
     parser.add_argument('--listen', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--preparation-assistant', metavar='ALIAS_OR_PROFILE',
@@ -279,13 +281,16 @@ def main(argv=None):
             print(encode(result))
             return 0
         if args.action in ('web', 'executor'):
-            from .service import release_identity, serve_executor, serve_web
+            from importlib import import_module
+            from .service import release_identity, serve_executor
             if args.socket is None:
                 raise ValueError('Socket requise')
             if args.action == 'web':
                 if args.public is None or not 1024 <= args.port <= 65535:
                     raise ValueError('Projection et port requis')
-                serve_web(args.listen, args.port, args.public, args.socket, release_identity())
+                # Racine de composition : la présentation dépend du moteur, jamais l'inverse
+                import_module(args.presentation.rsplit('.', 1)[0] + '.server').serve_web(
+                    args.listen, args.port, args.public, args.socket, release_identity())
             else:
                 if args.data is None:
                     raise ValueError('Données requises')
@@ -306,7 +311,8 @@ def main(argv=None):
                     candidate_factory()
                 if args.preparation_assistant is not None:
                     transport = OpenRouterPreparation(key, profile)
-                serve_executor(args.data, args.socket, release_identity(), transport=transport, candidate_transport_factory=candidate_factory)
+                serve_executor(args.data, args.socket, release_identity(), transport=transport, candidate_transport_factory=candidate_factory,
+                               presentation=import_module(args.presentation))
             return 0
         if args.data is None:
             raise ValueError('Données requises')

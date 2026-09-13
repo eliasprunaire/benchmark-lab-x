@@ -2,7 +2,6 @@
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
-from html import escape
 import json
 import os
 from pathlib import Path
@@ -258,73 +257,7 @@ def catalogue(store, session_id):
         return dict(kind='catalogue', visibility='private', catalogue_admission=False, tasks=tasks)
 
 
-def _html_text(value):
-    return escape(str(value), quote=True)
-
-
-def _projection_body(value, selected):
-    """Only explicit presentation fields; never serialize a private evaluation object"""
-    t = _html_text
-    body = '<h1>Comparaison : ' + t(value['need']) + '</h1>'
-    body += '<p>Dossier ' + t(value['task']['dossier_id']) + ', version ' + t(value['task']['version'])
-    body += ', campagne ' + t(value['campaign_id']) + '.</p><p>' + t(value['result_expected']) + '</p>'
-    body += '<p>' + t(value['conclusion']['text']) + '</p><p>' + t(ATTRIBUTION) + '</p>'
-    body += '<p>' + t('; '.join(value['conclusion']['limits'])) + '</p>'
-    for label, data in (('Couverture de la campagne', value['coverage']), ('Population des rangs', value['population']),
-                        ('Conditions communes', value['conditions']), ('Base de coût', value['cost_basis'])):
-        body += '<details><summary>' + label + '</summary><pre>' + t(encode(data)) + '</pre></details>'
-    body += '<p>Comparaison économique : ' + t(value['economic_status']) + '. Coûts candidats et jugement séparés.</p>'
-    for pending in value.get('pending_attempts', []):
-        body += '<p>Tentative ' + t(pending['attempt_id']) + ' : ' + t(pending['next_action']) + '</p>'
-    body += '<p>Vérification publique restreinte : les pièces non sélectionnées et leurs passages restent privés. '
-    body += 'Leur empreinte ne remplace pas une preuve consultable. Les constats qui en dépendent restent invérifiables ici.</p>'
-    for column in value['columns']:
-        body += '<details><summary>Critère ' + t(column['id']) + '</summary><pre>' + t(encode(column)) + '</pre></details>'
-    for row in value['rows']:
-        body += '<section><h2>Cas ' + t(row['case_id']) + ' · ' + t(row['configuration_id']) + '</h2>'
-        body += '<p>Tentative ' + t(row['attempt_id']) + ', évaluation ' + t(row['evaluation_id'])
-        body += ', date ' + t(row['created_at']) + ', responsable ' + t(row['responsible']) + '.</p>'
-        decision = row.get('decision', {})
-        label = decision.get('verdict') or ('Évaluation à reprendre' if row['verdict'] in (None, 'INDETERMINE') else row['verdict'])
-        body += '<p><strong>' + t(label) + '</strong> : ' + t(row['reason']) + '</p>'
-        if decision.get('next_action'):
-            body += '<p>' + t(decision['next_action']) + '</p>'
-        for label, data in (('Configuration demandée', row['requested_configuration']),
-                            ('Configuration observée', row['observed_configuration']),
-                            ('Sources des observations', row['observation_sources']), ('Coût candidat', row['cost']),
-                            ('Coût de jugement', row['judgment']['cost']), ('Méthode', row['method'])):
-            body += '<details><summary>' + label + '</summary><pre>' + t(encode(data)) + '</pre></details>'
-        body += '<p>Qualification liée : ' + t(row['qualification_id']) + '. Preuves complètes restreintes.</p>'
-        body += '<p>Revue professionnelle : ' + ('ABSENTE' if row['judgment']['professional_review'] == 'ABSENTE'
-                 else 'Déclarée ; preuve restreinte dans cette projection') + '.</p>'
-        body += '<ul>'
-        for finding in row['findings']:
-            body += '<li>' + t(finding['criterion_id'] + ' : ' + finding['status'] + ' · ' + finding['finding']) + '</li>'
-        for measure in row['measures']:
-            data = {k: measure[k] for k in ('criterion_id', 'value', 'unit', 'rank', 'reason')}
-            body += '<li>' + t(encode(data)) + '</li>'
-        body += '</ul><ul>'
-        for link in row['proof_links']:
-            if link['piece_id'] in selected:
-                body += '<li><a href="' + t(selected[link['piece_id']]) + '">' + t(link['name']) + ' · octets exacts</a></li>'
-            else:
-                body += '<li>' + t(link['name']) + ' : pièce restreinte, non sélectionnée.</li>'
-        body += '</ul><p>' + t('; '.join(row['limits'])) + '</p></section>'
-    return body
-
-
-def _public_page(value, selected):
-    body = '<p>Projection fictive locale S6. Aucun droit de publication réelle ni admission au catalogue.</p>'
-    body += '<p>L’aperçu en mémoire reste sans approbation. Le service local ne rend cette projection qu’après '
-    body += 'vérification de son reçu fictif et de ses octets exacts.</p>'
-    body += _projection_body(value, selected)
-    return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" '
-            'content="width=device-width, initial-scale=1"><title>Projection fictive · Benchmark Lab-X</title>'
-            '<link rel="stylesheet" href="style.css"></head><body><a class="skip" href="#main">Aller au contenu</a>'
-            '<main id="main">' + body + '</main></body></html>').encode('utf-8')
-
-
-def _preview(store, value, piece_ids):
+def _preview(store, value, piece_ids, presentation):
     if type(piece_ids) is not list or any(type(pid) is not str for pid in piece_ids) or len(set(piece_ids)) != len(piece_ids):
         raise ValueError('Liste explicite de pièces uniques requise')
     linked = {link['piece_id'] for row in value['rows'] for link in row['proof_links']}
@@ -332,8 +265,10 @@ def _preview(store, value, piece_ids):
         raise p.Denied('Pièce non liée à la restitution')
     selected = {pid: 'piece-' + p.identifier(pid) + '.txt' for pid in sorted(piece_ids)}
     files = {name: store.read_piece(pid) for pid, name in selected.items()}
-    files['index.html'] = _public_page(value, selected)
-    files['style.css'] = Path(__file__).with_name('preparation.css').read_bytes()
+    if presentation is None:
+        raise ValueError('Présentation de projection non enregistrée')
+    files['index.html'] = presentation.public_page(value, selected)
+    files['style.css'] = presentation.stylesheet()
     manifest = dict(schema_version=SCHEMA, presentation_version='1', conclusion_version='1',
                     campaign_id=value['campaign_id'], contract_sha256=value['contract_sha256'], task=value['task'],
                     evaluation_ids=[row['evaluation_id'] for row in value['rows']],
@@ -344,18 +279,18 @@ def _preview(store, value, piece_ids):
     return dict(manifest=raw, files=files, projection_sha256=sha256(raw).hexdigest())
 
 
-def preview(store, session_id, dossier_id, campaign_id, *, piece_ids):
+def preview(store, session_id, dossier_id, campaign_id, *, piece_ids, presentation=None):
     connection = e.connection_for(store)
     with _transaction(connection):
         value = _comparison(store, connection, session_id, dossier_id, campaign_id, {})
-        return _preview(store, value, piece_ids)
+        return _preview(store, value, piece_ids, presentation)
 
 
-def preview_view(store, session_id, dossier_id, campaign_id, *, piece_ids):
+def preview_view(store, session_id, dossier_id, campaign_id, *, piece_ids, presentation=None):
     connection = e.connection_for(store)
     with _transaction(connection):
         value = _comparison(store, connection, session_id, dossier_id, campaign_id, {})
-        bundle = _preview(store, value, piece_ids)
+        bundle = _preview(store, value, piece_ids, presentation)
         links = {link['piece_id']: link for row in value['rows'] for link in row['proof_links']}
         return dict(kind='projection_preview', comparison=value, pieces=list(links.values()),
                     selected_links={pid: links[pid]['href'] for pid in piece_ids},

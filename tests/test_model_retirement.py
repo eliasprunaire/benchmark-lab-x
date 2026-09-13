@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from benchmark import storage, preparation, openrouter_prices, model_catalog
+from benchmark_web import views
 from tests.test_storage import operation, PAYLOAD
 
 
@@ -14,7 +15,7 @@ class ModelRetirementTests(unittest.TestCase):
         registry = tomllib.loads((Path(__file__).resolve().parents[1] / 'models.toml').read_text())
         self.assertNotIn('deepseek-v4-flash', registry)
         self.assertEqual(model_catalog.DEEPSEEK_REPLACEMENT, registry['deepseek-v4-1-flash']['model'])
-        page = preparation.render(dict(error='Fictional error'), 'csrf', error=True).decode()
+        page = views.render(dict(error='Fictional error'), 'csrf', error=True).decode()
         self.assertIn(model_catalog.RETIREMENT_NOTICE, page)
         model_catalog.require_current(dict(model='deepseek-flash'))
         model_catalog.require_current(dict(model=model_catalog.DEEPSEEK_REPLACEMENT))
