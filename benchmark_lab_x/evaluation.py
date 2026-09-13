@@ -103,11 +103,24 @@ def _authority(responsible, authority):
 
 
 def _context(store, connection, campaign_id, attempt_id):
-    campaign = c._inspect(store, connection, campaign_id)
+    # Reuse metadata only inside the unchanged checked-read transaction
+    # Piece bytes are still read and checked by _resources and _review_content
+    snapshot = (connection is store._connection and connection.in_transaction
+                and store._verified_contexts is not None
+                and connection.total_changes == store._verified_read_changes)
+    if snapshot:
+        store._connection_checked()
+    cached = store._verified_contexts.get(campaign_id) if snapshot else None
+    if cached is None:
+        campaign = c._inspect(store, connection, campaign_id)
+        qualification = q._inspect(store, connection, campaign['manifest']['contract_sha256'])
+        if snapshot:
+            store._verified_contexts[campaign_id] = deepcopy((campaign, qualification))
+    else:
+        campaign, qualification = deepcopy(cached)
     attempt = next((a for a in campaign['attempts'] if a['operation_id'] == attempt_id), None)
     if attempt is None:
         raise KeyError(attempt_id)
-    qualification = q._inspect(store, connection, campaign['manifest']['contract_sha256'])
     return dict(campaign=campaign, qualification=qualification, attempt=attempt)
 
 
@@ -428,12 +441,15 @@ def _record(store, connection, ctx, report, *, evaluation_id, created_at, engine
     return record
 
 
-def _records(store, connection, attempt_id=None):
+def _records(store, connection, attempt_id=None, *, campaign_id=None):
     query = 'SELECT * FROM s5_evaluations'
     params = ()
     if attempt_id is not None:
         query += ' WHERE attempt_id=?'
         params = (attempt_id,)
+    if campaign_id is not None:
+        query += (' AND' if params else ' WHERE') + ' campaign_id=?'
+        params += (campaign_id,)
     rows = connection.execute(query + ' ORDER BY rowid', params).fetchall()
     result, latest = [], {}
     for eid, cid, aid, fingerprint, qid, previous, raw, digest, context_raw, context_digest in rows:
@@ -575,7 +591,7 @@ def evaluate(store, campaign_id, attempt_id, *, responsible, authority, check, p
 def projection(store, connection, dossier_id, campaign_id):
     """Private owner projection, without broad access to the judge piece role"""
     records = []
-    for record in _records(store, connection):
+    for record in _records(store, connection, campaign_id=campaign_id):
         if record['campaign_id'] != campaign_id:
             continue
         contract = q._contract(store, connection, record['contract_sha256'])

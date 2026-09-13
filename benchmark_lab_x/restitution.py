@@ -209,7 +209,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
 
 def comparison(store, session_id, dossier_id, campaign_id, *, query=None):
     connection = e.connection_for(store)
-    with _transaction(connection):
+    with store.read_snapshot() as connection:
         return _comparison(store, connection, session_id, dossier_id, campaign_id, {} if query is None else query)
 
 
@@ -234,7 +234,7 @@ def detail(store, session_id, dossier_id, campaign_id, attempt_id, *, query=None
 
 def catalogue(store, session_id):
     connection = p.connection_for(store)
-    with _transaction(connection):
+    with store.read_snapshot() as connection:
         if not connection.execute('SELECT 1 FROM s2_sessions WHERE session_id=?', (session_id,)).fetchone():
             raise p.Denied('Session requise')
         tasks = []
