@@ -46,6 +46,18 @@ def observation(attempt):
     if observed.get('channel_id') == 'https://api.anthropic.com/v1/messages':
         reason = {'end_turn': 'stop', 'max_tokens': 'length'}.get(data.get('stop_reason'), data.get('stop_reason'))
         content = receipt['result']['output'] or ''
+    elif observed.get('channel_id', '').endswith('/responses'):
+        status = data.get('status')
+        detail = data.get('incomplete_details') or {}
+        if status == 'completed':
+            reason = 'stop'
+        elif status == 'incomplete' and detail.get('reason') == 'max_output_tokens':
+            reason = 'length'
+        elif status == 'incomplete' and detail.get('reason') == 'content_filter':
+            reason = 'content_filter'
+        else:
+            reason = status
+        content = receipt['result']['output'] or ''
     if incident == 'CONTENT_REFUSAL' or reason in ('content_filter', 'refusal') or choice.get('native_finish_reason') == 'refusal' or message.get('refusal'):
         kind = 'CONTENT_REFUSAL'
     elif incident in _UNRECOVERABLE or observed.get('pi', {}).get('terminal') is False:
@@ -107,16 +119,15 @@ def validate_link(store, connection, manifest):
 
 
 def validate_official_link(store, connection, manifest, source, original_config):
-    from .pi_official import CHANNELS
+    from .pi_official import CHANNELS, native_identity, provider_for_endpoint
     from .openrouter_preparation import ENDPOINT
     new = manifest['panel'][0]
-    endpoints = {'https://' + host + path: provider for provider, host, path, key in CHANNELS.values()}
-    if (new['channel_id'] not in endpoints or new['provider'] != endpoints[new['channel_id']]
+    official_provider = provider_for_endpoint(new['channel_id'])
+    if (official_provider is None or new['provider'] != official_provider
             or original_config['channel_id'] != ENDPOINT):
         raise ValueError('Secours officiel depuis OpenRouter uniquement')
-    # Native identifiers may omit the OpenRouter namespace, never change revision
-    namespace = {'Anthropic': 'anthropic', 'DeepSeek': 'deepseek', 'Z.ai': 'z-ai'}[new['provider']]
-    if any(original_config[key] != namespace + '/' + new[key] for key in ('model', 'revision')):
+    kind = next(kind for kind, values in CHANNELS.items() if values[0] == new['provider'])
+    if any(native_identity(kind, original_config[key]) != new[key] for key in ('model', 'revision')):
         raise ValueError('Identité native exacte indisponible ; aucun alias de substitution')
     if new['id'] != original_config['id'] or new['effort'] != original_config['effort']:
         raise ValueError('Cellule ou effort modifié dans le secours officiel')

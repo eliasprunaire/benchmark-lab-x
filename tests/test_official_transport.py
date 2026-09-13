@@ -13,6 +13,22 @@ from tests.test_s5_regressions import findings
 
 
 class OfficialTransportTests(unittest.TestCase):
+    OPENROUTER_MODELS = {
+        'deepseek': 'deepseek/deepseek-v4.1-flash',
+        'openai': 'openai/gpt-5.6-sol',
+        'moonshot': 'moonshotai/kimi-k3',
+        'dashscope': 'qwen/qwen3.8-max-0902',
+        'tokenhub': 'tencent/hy4-preview',
+    }
+    NATIVE_MODELS = {
+        'deepseek': 'deepseek-flash',
+        'openai': 'gpt-5.6-sol',
+        'moonshot': 'kimi-k3',
+        'dashscope': 'qwen3.8-max-0902',
+        'tokenhub': 'hy4-preview',
+    }
+    DASHSCOPE_BASE_URL = 'https://workspace.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'
+
     @classmethod
     def setUpClass(cls):
         private.PiTransportTests.setUpClass()
@@ -27,10 +43,13 @@ class OfficialTransportTests(unittest.TestCase):
         source_id = 'router-' + kind
         source = deepcopy(c.inspect(h.store, 'pi-offline')['manifest'])
         source.update(campaign_id=source_id, financial_cost_policy='retain_reserve')
-        namespace = {'anthropic':'anthropic', 'deepseek':'deepseek', 'zai':'z-ai'}[kind]
+        namespace = {'anthropic':'anthropic', 'deepseek':'deepseek', 'zai':'z-ai'}.get(kind)
+        openrouter_model = self.OPENROUTER_MODELS[kind] if kind in self.OPENROUTER_MODELS else namespace + '/model-fixed'
+        native_model = self.NATIVE_MODELS.get(kind, 'model-fixed')
+        effort = 'max' if kind == 'moonshot' else 'low'
         for config in source['panel']:
-            config.update(model=namespace + '/model-fixed', revision=namespace + '/model-fixed', effort='low')
-            config['parameters']['reasoning'] = dict(effort='low')
+            config.update(model=openrouter_model, revision=openrouter_model, effort=effort)
+            config['parameters']['reasoning'] = dict(effort=effort)
         h.store.create_budget(source_id, '1', 'USD')
         snapshot = c.create(h.store, source)
         authority, evidence = inputs(snapshot, cells=['x'], budget=source_id)
@@ -46,7 +65,7 @@ class OfficialTransportTests(unittest.TestCase):
         def failed(key, wire, timeout):
             import time
             body = json.loads(h.raw)
-            body['model'] = namespace + '/model-fixed'
+            body['model'] = openrouter_model
             body['choices'][0]['finish_reason'] = finish
             body['choices'][0]['message']['content'] = ''
             body['usage']['prompt_tokens'] = 10
@@ -71,18 +90,26 @@ class OfficialTransportTests(unittest.TestCase):
             c.reserve(h.store, source_id, 'x', source_oid)
             with patch.object(router.http, 'post', side_effect=failed):
                 c.execute(h.data, source_oid, h.transport)
-        transport = native.PiOfficial('fixture-native-key', h.package, h.node, kind)
+        transport = native.PiOfficial('fixture-native-key', h.package, h.node, kind,
+                                      self.DASHSCOPE_BASE_URL if kind == 'dashscope' else None)
         cid = 'official-' + kind
         h.store.create_budget(cid, '1', 'USD')
         manifest = deepcopy(c.inspect(h.store, source_id)['manifest'])
         config = manifest['panel'][0]
-        params = dict(max_tokens=64, stream=False)
+        params = {('max_output_tokens' if kind in ('openai', 'dashscope') else 'max_tokens'): 64,
+                  'stream': False}
         if kind == 'anthropic':
-            params['output_config'] = dict(effort=retry_effort or 'low')
+            params['output_config'] = dict(effort=retry_effort or effort)
+        elif kind in ('openai', 'dashscope'):
+            params['reasoning'] = dict(effort=retry_effort or effort)
+        elif kind in ('moonshot', 'tokenhub'):
+            params['reasoning_effort'] = retry_effort or effort
+            if kind == 'tokenhub':
+                params['thinking'] = dict(type='enabled')
         else:
             params.update(thinking=dict(type='enabled'), reasoning_effort=retry_effort or 'low')
-        config.update(provider=transport.provider, model='model-fixed', revision='model-fixed',
-                      channel_id=transport.endpoint, route=transport.endpoint, effort=retry_effort or 'low', parameters=params)
+        config.update(provider=transport.provider, model=native_model, revision=native_model,
+                      channel_id=transport.endpoint, route=transport.endpoint, effort=retry_effort or effort, parameters=params)
         config.update(changes)
         manifest.update(campaign_id=cid, panel=[config], plan=manifest['plan'][:1],
                         recovery_of=source_oid, official_fallback=dict(route_attempts=[source_oid]))
@@ -101,8 +128,12 @@ class OfficialTransportTests(unittest.TestCase):
         if kind == 'anthropic':
             body = dict(model='model-fixed', role='assistant', stop_reason='end_turn',
                         content=[dict(type='thinking', thinking='Private thought'), dict(type='text', text='Native output')])
+        elif kind in ('openai', 'dashscope'):
+            body = dict(model=self.NATIVE_MODELS[kind], status='completed', output=[dict(
+                type='message', role='assistant', status='completed',
+                content=[dict(type='output_text', text='Native output')])])
         else:
-            body = dict(model='model-fixed', choices=[dict(finish_reason='stop',
+            body = dict(model=self.NATIVE_MODELS.get(kind, 'model-fixed'), choices=[dict(finish_reason='stop',
                         message=dict(role='assistant', content='Native output'))])
         body.update(changes)
         connection = Mock()
@@ -209,3 +240,82 @@ class OfficialTransportTests(unittest.TestCase):
             self.prepare('deepseek', finish='length', retry_effort='high')
         _, cid, _ = self.prepare('anthropic', finish='length', retry_effort='low')
         self.assertEqual('INTENT_RECORDED', c.inspect(self.h.store, cid)['attempts'][0]['state'])
+
+    def test_dashscope_base_url_must_be_an_official_alibaba_endpoint(self):
+        for value in ('http://dashscope-us.aliyuncs.com/compatible-mode/v1',
+                      'https://example.org/compatible-mode/v1',
+                      'https://dashscope-us.aliyuncs.com/v1',
+                      'https://dashscope-us.aliyuncs.com/compatible-mode/v1/chat/completions'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'HTTPS officiel Alibaba'):
+                native.resolve_channel('dashscope', value)
+        provider, host, path, _ = native.resolve_channel('dashscope', self.DASHSCOPE_BASE_URL)
+        self.assertEqual('Alibaba Cloud Model Studio', provider)
+        self.assertEqual('/compatible-mode/v1/responses', path)
+        self.assertEqual('workspace.ap-southeast-1.maas.aliyuncs.com', host)
+
+    def test_kimi_rejects_any_effort_other_than_max_before_http(self):
+        transport = native.PiOfficial('fixture-native-key', self.h.package, self.h.node, 'moonshot')
+        config = dict(provider=transport.provider, model='kimi-k3', revision='kimi-k3', access='API',
+                      channel_id=transport.endpoint, route=transport.endpoint, effort='low',
+                      parameters=dict(max_tokens=64, stream=False, reasoning_effort='low'))
+        with self.assertRaisesRegex(ValueError, 'reasoning_effort=max'):
+            transport._payload(config, [dict(role='system', content='system'), dict(role='user', content='prompt')])
+
+    def test_explicit_native_identity_map_refuses_other_substitutions(self):
+        self.assertEqual('deepseek-flash', native.native_identity('deepseek', 'deepseek/deepseek-v4.1-flash'))
+        self.assertEqual('gpt-6-astra', native.native_identity('openai', 'openai/gpt-6-astra'))
+        self.assertEqual('qwen3.8-max', native.native_identity('dashscope', 'qwen/qwen3.8-max'))
+        with self.assertRaisesRegex(ValueError, 'aucun alias'):
+            native.native_identity('deepseek', 'deepseek/deepseek-v4-flash-0731')
+        with self.assertRaisesRegex(ValueError, 'aucun alias'):
+            native.native_identity('moonshot', 'moonshotai/another-model')
+
+    def test_provider_efforts_are_not_silently_remapped(self):
+        cases = [
+            ('openai', dict(max_output_tokens=64, stream=False, reasoning=dict(effort='minimal'))),
+            ('dashscope', dict(max_output_tokens=64, stream=False, reasoning=dict(effort='high'))),
+            ('tokenhub', dict(max_tokens=64, stream=False, reasoning_effort='medium',
+                              thinking=dict(type='enabled'))),
+        ]
+        for kind, parameters in cases:
+            with self.subTest(kind=kind):
+                transport = native.PiOfficial('fixture-native-key', self.h.package, self.h.node, kind,
+                    self.DASHSCOPE_BASE_URL if kind == 'dashscope' else None)
+                config = dict(provider=transport.provider, model=self.NATIVE_MODELS[kind],
+                              revision=self.NATIVE_MODELS[kind], access='API',
+                              channel_id=transport.endpoint, route=transport.endpoint,
+                              effort=parameters.get('reasoning_effort', parameters.get('reasoning', {}).get('effort')),
+                              parameters=parameters)
+                with self.assertRaisesRegex(ValueError, 'Effort natif|Raisonnement natif'):
+                    transport._payload(config, [dict(role='system', content='system'),
+                                                dict(role='user', content='prompt')])
+
+    def test_openai_content_filter_is_not_recoverable_as_length(self):
+        transport, cid, oid = self.prepare('openai')
+        connection = self.response('openai', status='incomplete',
+                                   incomplete_details={'reason': 'content_filter'})
+        with patch.object(native, 'HTTPSConnection', return_value=connection):
+            c.execute(self.h.data, oid, transport)
+        attempt = c.inspect(self.h.store, cid)['attempts'][0]
+        self.assertEqual('CONTENT_REFUSAL', recovery.observation(attempt)['kind'])
+
+    def test_numeric_sampling_parameters_are_validated_for_all_applicable_transports(self):
+        for kind in ('deepseek', 'zai', 'dashscope', 'tokenhub'):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, 'numérique invalide'):
+                transport, _, _ = self.prepare(kind)
+                token_field = 'max_output_tokens' if kind == 'dashscope' else 'max_tokens'
+                parameters = {token_field: 64, 'stream': False, 'temperature': 'wrong'}
+                if kind == 'dashscope':
+                    parameters['reasoning'] = {'effort': 'low'}
+                else:
+                    parameters.update(thinking={'type': 'enabled'}, reasoning_effort='low')
+                transport._payload(dict(provider=transport.provider, model=self.NATIVE_MODELS.get(kind, 'model-fixed'),
+                    revision=self.NATIVE_MODELS.get(kind, 'model-fixed'), access='API',
+                    channel_id=transport.endpoint, route=transport.endpoint, effort='low',
+                    parameters=parameters), [dict(role='system', content='system'),
+                                             dict(role='user', content='prompt')])
+
+    def test_missing_official_key_is_rejected_before_http(self):
+        with patch.object(native, 'HTTPSConnection') as connection, self.assertRaisesRegex(ValueError, 'Clé API officielle'):
+            native.PiOfficial('', self.h.package, self.h.node, 'tokenhub')
+        connection.assert_not_called()

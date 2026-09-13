@@ -4,7 +4,9 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from http.client import HTTPSConnection, IncompleteRead
 import json
+import os
 import time
+from urllib.parse import urlsplit
 
 from . import storage
 from .pi_openrouter import PiOpenRouter
@@ -14,14 +16,86 @@ CHANNELS = {
     'anthropic': ('Anthropic', 'api.anthropic.com', '/v1/messages', 'ANTHROPIC_API_KEY'),
     'deepseek': ('DeepSeek', 'api.deepseek.com', '/chat/completions', 'DEEPSEEK_API_KEY'),
     'zai': ('Z.ai', 'api.z.ai', '/api/paas/v4/chat/completions', 'ZAI_API_KEY'),
+    'openai': ('OpenAI', 'api.openai.com', '/v1/responses', 'OPENAI_API_KEY'),
+    'moonshot': ('Moonshot AI', 'api.moonshot.ai', '/v1/chat/completions', 'MOONSHOT_API_KEY'),
+    'dashscope': ('Alibaba Cloud Model Studio', None, None, 'DASHSCOPE_API_KEY'),
+    'tokenhub': ('Tencent TokenHub', 'tokenhub.tencentmaas.com', '/v1/chat/completions', 'TENCENT_TOKENHUB_API_KEY'),
+}
+
+_NATIVE_IDENTITIES = {
+    ('deepseek', 'deepseek/deepseek-v4.1-flash'): 'deepseek-flash',
+    ('moonshot', 'moonshotai/kimi-k3'): 'kimi-k3',
+    ('dashscope', 'qwen/qwen3.8-max'): 'qwen3.8-max',
+    ('dashscope', 'qwen/qwen3.8-max-0902'): 'qwen3.8-max-0902',
+    ('tokenhub', 'tencent/hy4-preview'): 'hy4-preview',
 }
 
 
+def _dashscope_endpoint(base_url):
+    parsed = urlsplit(base_url)
+    host = parsed.hostname or ''
+    workspace = host.split('.', 1)[0]
+    workspace_host = (workspace and workspace not in ('www', 'api') and (
+        host.endswith('.cn-beijing.maas.aliyuncs.com')
+        or host.endswith('.ap-southeast-1.maas.aliyuncs.com')
+        or host.endswith('.ap-northeast-1.maas.aliyuncs.com')
+        or host.endswith('.cn-hongkong.maas.aliyuncs.com')
+        or host.endswith('.eu-central-1.maas.aliyuncs.com')
+        or host.endswith('.us-east-1.maas.aliyuncs.com')))
+    legacy_hosts = {'dashscope-us.aliyuncs.com', 'dashscope.aliyuncs.com',
+                    'dashscope-intl.aliyuncs.com', 'cn-hongkong.dashscope.aliyuncs.com'}
+    if (parsed.scheme != 'https' or parsed.username or parsed.password or parsed.port not in (None, 443)
+            or parsed.query or parsed.fragment or parsed.path.rstrip('/') != '/compatible-mode/v1'
+            or not (workspace_host or host in legacy_hosts)):
+        raise ValueError('DASHSCOPE_BASE_URL HTTPS officiel Alibaba requis')
+    path = parsed.path.rstrip('/') + '/responses'
+    return host, path
+
+
+def resolve_channel(kind, base_url=None):
+    provider, host, path, key = CHANNELS[kind]
+    if kind == 'dashscope':
+        host, path = _dashscope_endpoint(base_url if base_url is not None else os.environ.get('DASHSCOPE_BASE_URL', ''))
+    return provider, host, path, key
+
+
+def provider_for_endpoint(endpoint):
+    if not isinstance(endpoint, str):
+        return None
+    for kind in CHANNELS:
+        if kind == 'dashscope':
+            try:
+                host, path = _dashscope_endpoint(endpoint.removesuffix('/responses'))
+            except ValueError:
+                continue
+            if endpoint == 'https://' + host + path:
+                return CHANNELS[kind][0]
+        else:
+            provider, host, path, _ = CHANNELS[kind]
+            if endpoint == 'https://' + host + path:
+                return provider
+    return None
+
+
+def native_identity(kind, openrouter_identity):
+    mapped = _NATIVE_IDENTITIES.get((kind, openrouter_identity))
+    if mapped:
+        return mapped
+    namespaces = {'anthropic': 'anthropic/', 'zai': 'z-ai/', 'openai': 'openai/'}
+    prefix = namespaces.get(kind)
+    if prefix and openrouter_identity.startswith(prefix) and len(openrouter_identity) > len(prefix):
+        return openrouter_identity[len(prefix):]
+    raise ValueError('Identité native exacte indisponible ; aucun alias de substitution')
+
+
 class PiOfficial(PiOpenRouter):
-    def __init__(self, api_key, package, node, provider):
-        self.provider, self.host, self.path, _ = CHANNELS[provider]
+    def __init__(self, api_key, package, node, provider, base_url=None):
+        self.provider, self.host, self.path, _ = resolve_channel(provider, base_url)
         self.kind = provider
         self.endpoint = 'https://' + self.host + self.path
+        if (type(api_key) is not str or not api_key or not api_key.isascii()
+                or any(character.isspace() or ord(character) < 32 for character in api_key)):
+            raise ValueError('Clé API officielle explicite requise côté exécuteur')
         super().__init__(api_key, package, node)
 
     def _payload(self, config, messages):
@@ -32,11 +106,21 @@ class PiOfficial(PiOpenRouter):
             if not isinstance(config[field], str) or not config[field].strip():
                 raise ValueError('Identité officielle explicite requise')
         params = config['parameters']
-        common = {'max_tokens', 'stream'}
-        allowed = common | ({'output_config'} if self.kind == 'anthropic' else
-                            {'thinking', 'reasoning_effort', 'temperature', 'top_p'})
+        responses = self.kind in ('openai', 'dashscope')
+        token_field = 'max_output_tokens' if responses else 'max_tokens'
+        common = {token_field, 'stream'}
+        extras = {
+            'anthropic': {'output_config'},
+            'openai': {'reasoning'},
+            'moonshot': {'reasoning_effort'},
+            'dashscope': {'reasoning', 'temperature', 'top_p'},
+            'tokenhub': {'thinking', 'reasoning_effort', 'temperature', 'top_p'},
+            'deepseek': {'thinking', 'reasoning_effort', 'temperature', 'top_p'},
+            'zai': {'thinking', 'reasoning_effort', 'temperature', 'top_p'},
+        }[self.kind]
+        allowed = common | extras
         if (set(params) - allowed or not common <= set(params)
-                or type(params['max_tokens']) is not int or params['max_tokens'] <= 0
+                or type(params[token_field]) is not int or params[token_field] <= 0
                 or params['stream'] is not False):
             raise ValueError('Paramètres natifs textuels explicites requis')
         if self.kind == 'anthropic':
@@ -44,25 +128,48 @@ class PiOfficial(PiOpenRouter):
             effort = params['output_config']['effort']
             if effort not in ('low', 'medium', 'high', 'max'):
                 raise ValueError('Effort natif non pris en charge')
+        elif self.kind == 'openai':
+            storage._fields(params.get('reasoning'), ('effort',), 'official reasoning')
+            effort = params['reasoning']['effort']
+            if effort not in ('none', 'low', 'medium', 'high', 'xhigh', 'max'):
+                raise ValueError('Effort natif non pris en charge')
+        elif self.kind == 'moonshot':
+            effort = params.get('reasoning_effort')
+            if effort != 'max':
+                raise ValueError('Kimi K3 exige reasoning_effort=max')
+        elif self.kind == 'dashscope':
+            storage._fields(params.get('reasoning'), ('effort',), 'official reasoning')
+            effort = params['reasoning']['effort']
+            if effort not in ('low', 'medium', 'xhigh'):
+                raise ValueError('Raisonnement natif explicite requis')
+        elif self.kind == 'tokenhub':
+            storage._fields(params.get('thinking'), ('type',), 'official thinking')
+            effort = params.get('reasoning_effort')
+            if params['thinking']['type'] != 'enabled' or effort not in ('low', 'high'):
+                raise ValueError('Raisonnement natif explicite requis')
         else:
             storage._fields(params.get('thinking'), ('type',), 'official thinking')
             effort = params.get('reasoning_effort')
             allowed_efforts = ('low', 'high', 'max')
             if params['thinking']['type'] != 'enabled' or effort not in allowed_efforts:
                 raise ValueError('Raisonnement natif explicite requis')
-            for field, low, high in (('temperature', 0, 2), ('top_p', 0, 1)):
-                if field in params and (type(params[field]) not in (int, float) or not low <= params[field] <= high):
-                    raise ValueError('Paramètre natif numérique invalide')
+        for field, low, high in (('temperature', 0, 2), ('top_p', 0, 1)):
+            if field in params and (type(params[field]) not in (int, float) or not low <= params[field] <= high):
+                raise ValueError('Paramètre natif numérique invalide')
         if config['effort'] != effort:
             raise ValueError('Effort natif divergent de la configuration admise')
         if self.kind == 'anthropic':
             return dict(model=config['model'], system=messages[0]['content'], messages=[messages[1]], **params)
+        if responses:
+            return dict(model=config['model'], input=messages, **params)
         return dict(model=config['model'], messages=messages, **params)
 
     def _messages(self, wire):
         body = json.loads(wire)
         if self.kind == 'anthropic':
             return [dict(role='system', content=body['system']), *body['messages']]
+        if self.kind in ('openai', 'dashscope'):
+            return body['input']
         return body['messages']
 
     def _exchange(self, operation, request):
@@ -111,6 +218,18 @@ class PiOfficial(PiOpenRouter):
                 refused = data.get('stop_reason') == 'refusal' or any(b.get('type') == 'refusal' for b in blocks)
                 ended = (data['stop_reason'] == 'end_turn' and data.get('role') == 'assistant'
                          and all(b.get('type') in ('text', 'thinking', 'redacted_thinking') for b in blocks))
+            elif self.kind in ('openai', 'dashscope'):
+                items = data['output']
+                if type(items) is not list or any(type(item) is not dict for item in items):
+                    raise ValueError('Sortie Responses invalide')
+                messages = [item for item in items if item.get('type') == 'message']
+                blocks = [block for item in messages for block in item.get('content', [])]
+                text = ''.join(block['text'] for block in blocks if block.get('type') == 'output_text')
+                refused = any(block.get('type') == 'refusal' for block in blocks)
+                ended = (data.get('status') == 'completed' and len(messages) == 1
+                         and messages[0].get('role') == 'assistant'
+                         and messages[0].get('status', 'completed') == 'completed'
+                         and all(block.get('type') in ('output_text', 'refusal') for block in blocks))
             else:
                 choices = data['choices']
                 if type(choices) is not list or len(choices) != 1:

@@ -212,7 +212,7 @@ def main(argv=None):
                         help='Alias glm-5.3-flash ou chemin d’un profil JSON local')
     parser.add_argument('--judgment-profile', metavar='ALIAS_OR_PROFILE')
     parser.add_argument('--candidate-pi', action='store_true', help='Charger le transport candidat Pi/OpenRouter dans l’exécuteur privé')
-    parser.add_argument('--candidate-provider', choices=('openrouter', 'anthropic', 'deepseek', 'zai'), default='openrouter',
+    parser.add_argument('--candidate-provider', choices=('openrouter', 'anthropic', 'deepseek', 'zai', 'openai', 'moonshot', 'dashscope', 'tokenhub'), default='openrouter',
                         help='Canal candidat explicitement admis ; les API officielles sont un dernier recours')
     parser.add_argument('--model')
     parser.add_argument('--pi-package', type=Path)
@@ -393,8 +393,9 @@ def main(argv=None):
                             transport = PiOpenRouter(os.environ.pop('OPENROUTER_API_KEY', ''), args.pi_package, args.node)
                         else:
                             from .pi_official import PiOfficial, CHANNELS
+                            base_url = os.environ.pop('DASHSCOPE_BASE_URL', '') if args.candidate_provider == 'dashscope' else None
                             transport = PiOfficial(os.environ.pop(CHANNELS[args.candidate_provider][3], ''),
-                                                   args.pi_package, args.node, args.candidate_provider)
+                                                   args.pi_package, args.node, args.candidate_provider, base_url)
                         campaigns.execute(args.data, request['attempt_id'], transport)
                         result = next(a for a in campaigns.inspect(store, request['campaign_id'])['attempts']
                                       if a['operation_id'] == request['attempt_id'])

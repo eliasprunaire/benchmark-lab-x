@@ -110,7 +110,8 @@ class PiOpenRouter:
         if len(wire.encode()) > http.MAX_REQUEST_BYTES or self._key in wire:
             raise ValueError('Requête hors limites')
         self._input = dict(model=config['model'], system=defaults['system_prompt'], prompt=prompt,
-                           max_tokens=parameters['max_tokens'], context_window=defaults['context_window'])
+                           max_tokens=parameters.get('max_tokens', parameters.get('max_output_tokens')),
+                           context_window=defaults['context_window'])
         self._wire_bytes = wire
         self._wire_sha256 = sha256(wire.encode('utf-8')).hexdigest()
         self._wire_proof = outgoing.wire_proof(wire, messages)
