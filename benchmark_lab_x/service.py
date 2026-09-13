@@ -107,7 +107,7 @@ def serve_executor(data, socket_path, source, *, transport=None, candidate_trans
 
 def preparation_request(socket_path, method, path, token, body=None):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        connection.settimeout(2)
+        connection.settimeout(5)
         connection.connect(str(socket_path))
         connection.sendall((encode(dict(method=method, path=path, token=token, body=body)) + '\n').encode())
         with connection.makefile('rb') as stream:
