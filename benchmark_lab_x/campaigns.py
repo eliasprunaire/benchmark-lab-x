@@ -205,9 +205,8 @@ def _manifest(value, contract):
         if case['package_sha256'] != contract['package_sha256']:
             raise ValueError('Cas sans paquet contractuel exact')
     panel = _entries(value['panel'], _CONFIGURATION, 'panel')
-    from .pi_official import CHANNELS
-    official_channels = {'https://' + host + path for provider, host, path, key in CHANNELS.values()}
-    if any(config['channel_id'] in official_channels for config in value['panel']) and 'official_fallback' not in value:
+    from .pi_official import provider_for_endpoint
+    if any(provider_for_endpoint(config['channel_id']) for config in value['panel']) and 'official_fallback' not in value:
         raise ValueError('Secours officiel lié aux reçus OpenRouter requis')
     for config in value['panel']:
         for field in ('provider', 'model', 'revision', 'access', 'channel_id'):
