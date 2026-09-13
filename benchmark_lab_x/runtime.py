@@ -1,4 +1,4 @@
-"""Commandes locales ; assistance fournisseur uniquement sur sélection explicite."""
+"""Commandes locales et transports figés par les autorités admises"""
 import argparse
 from collections import Counter
 from contextlib import closing, contextmanager
@@ -195,6 +195,31 @@ def restore(source, destination):
     return {**proof, 'state': 'RESTORED_ADMISSION_BLOCKED'}
 
 
+def candidate_transport_factory(package, node, openrouter_key):
+    """Resolve an admitted channel without exposing provider choice to web input"""
+    from .openrouter_preparation import ENDPOINT
+    from .pi_official import CHANNELS, PiOfficial, kind_for_endpoint
+    from .pi_openrouter import PiOpenRouter
+    keys = {kind: os.environ.pop(values[3], '') for kind, values in CHANNELS.items()}
+    bases = {
+        'dashscope': os.environ.pop('DASHSCOPE_BASE_URL', ''),
+        'tokenhub': os.environ.pop('TENCENT_TOKENHUB_BASE_URL', ''),
+    }
+
+    def resolve(channel_id=ENDPOINT):
+        if channel_id == ENDPOINT:
+            return PiOpenRouter(openrouter_key, package, node)
+        kind = kind_for_endpoint(channel_id)
+        if kind is None:
+            raise ValueError('Canal candidat admis inconnu')
+        transport = PiOfficial(keys[kind], package, node, kind, bases.get(kind))
+        if transport.endpoint != channel_id:
+            raise ValueError('Canal candidat distinct de la préautorisation')
+        return transport
+
+    return resolve
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     campaign_actions = ('create-campaign', 'inspect-campaign', 'admit-campaign', 'stop-campaign', 'resume-campaign')
@@ -272,12 +297,13 @@ def main(argv=None):
                     profile = load_profile(args.preparation_assistant)
                 key = os.environ.pop('OPENROUTER_API_KEY', '') if args.preparation_assistant is not None or args.candidate_pi else ''
                 if args.candidate_pi:
-                    from .pi_openrouter import PiOpenRouter, identity
+                    from .pi_openrouter import identity
                     if args.pi_package is None or args.node is None:
                         raise ValueError('Installation Pi et Node explicites requis')
                     identity(args.pi_package, args.node)
-                    PiOpenRouter(key, args.pi_package, args.node)
-                    candidate_factory = lambda: PiOpenRouter(key, args.pi_package, args.node)
+                    candidate_factory = candidate_transport_factory(
+                        args.pi_package, args.node, key)
+                    candidate_factory()
                 if args.preparation_assistant is not None:
                     transport = OpenRouterPreparation(key, profile)
                 serve_executor(args.data, args.socket, release_identity(), transport=transport, candidate_transport_factory=candidate_factory)
@@ -382,21 +408,25 @@ def main(argv=None):
                         _fields(request, ('campaign_id', 'cell_id', 'attempt_id'), args.action)
                         result = campaigns.reserve(store, request['campaign_id'], request['cell_id'], request['attempt_id'])
                     elif args.action == 'execute-candidate':
-                        from .pi_openrouter import PiOpenRouter
+                        from .openrouter_preparation import ENDPOINT
+                        from .pi_official import kind_for_endpoint
                         _fields(request, ('campaign_id', 'attempt_id'), args.action)
                         if args.pi_package is None or args.node is None:
                             raise ValueError('Installation Pi et Node explicites requis')
                         before = campaigns.inspect(store, request['campaign_id'])
-                        if request['attempt_id'] not in {a['operation_id'] for a in before['attempts']}:
+                        attempt = next((a for a in before['attempts']
+                                        if a['operation_id'] == request['attempt_id']), None)
+                        if attempt is None:
                             raise ValueError('Tentative étrangère à la campagne')
-                        if args.candidate_provider == 'openrouter':
-                            transport = PiOpenRouter(os.environ.pop('OPENROUTER_API_KEY', ''), args.pi_package, args.node)
-                        else:
-                            from .pi_official import PiOfficial, CHANNELS
-                            base_url = os.environ.pop('DASHSCOPE_BASE_URL', '') if args.candidate_provider == 'dashscope' else None
-                            transport = PiOfficial(os.environ.pop(CHANNELS[args.candidate_provider][3], ''),
-                                                   args.pi_package, args.node, args.candidate_provider, base_url)
-                        campaigns.execute(args.data, request['attempt_id'], transport)
+                        channel_id = attempt['operation']['requested_configuration']['channel_id']
+                        admitted_provider = 'openrouter' if channel_id == ENDPOINT else kind_for_endpoint(channel_id)
+                        if admitted_provider != args.candidate_provider:
+                            raise ValueError('Canal candidat distinct de la sélection opérateur')
+                        factory = candidate_transport_factory(
+                            args.pi_package, args.node,
+                            os.environ.pop('OPENROUTER_API_KEY', ''))
+                        campaigns.execute(args.data, request['attempt_id'],
+                                          transport_factory=factory)
                         result = next(a for a in campaigns.inspect(store, request['campaign_id'])['attempts']
                                       if a['operation_id'] == request['attempt_id'])
                     elif args.action == 'prepare-review':

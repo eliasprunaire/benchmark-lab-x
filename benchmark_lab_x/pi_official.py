@@ -19,7 +19,7 @@ CHANNELS = {
     'openai': ('OpenAI', 'api.openai.com', '/v1/responses', 'OPENAI_API_KEY'),
     'moonshot': ('Moonshot AI', 'api.moonshot.ai', '/v1/chat/completions', 'MOONSHOT_API_KEY'),
     'dashscope': ('Alibaba Cloud Model Studio', None, None, 'DASHSCOPE_API_KEY'),
-    'tokenhub': ('Tencent TokenHub', 'tokenhub.tencentmaas.com', '/v1/chat/completions', 'TENCENT_TOKENHUB_API_KEY'),
+    'tokenhub': ('Tencent TokenHub', None, None, 'TENCENT_TOKENHUB_API_KEY'),
 }
 
 _NATIVE_IDENTITIES = {
@@ -52,29 +52,48 @@ def _dashscope_endpoint(base_url):
     return host, path
 
 
+def _tokenhub_endpoint(base_url):
+    parsed = urlsplit(base_url)
+    hosts = {'tokenhub.tencentmaas.com', 'tokenhub-intl.tencentmaas.com',
+             'tokenhub.tencentmaas.cn', 'tokenhub-intl.tencentmaas.cn'}
+    if (parsed.scheme != 'https' or parsed.hostname not in hosts or parsed.username or parsed.password
+            or parsed.port not in (None, 443) or parsed.path.rstrip('/') or parsed.query or parsed.fragment):
+        raise ValueError('TENCENT_TOKENHUB_BASE_URL HTTPS officiel Tencent requis')
+    return parsed.hostname, '/v1/chat/completions'
+
+
 def resolve_channel(kind, base_url=None):
     provider, host, path, key = CHANNELS[kind]
     if kind == 'dashscope':
         host, path = _dashscope_endpoint(base_url if base_url is not None else os.environ.get('DASHSCOPE_BASE_URL', ''))
+    elif kind == 'tokenhub':
+        host, path = _tokenhub_endpoint(base_url if base_url is not None else os.environ.get('TENCENT_TOKENHUB_BASE_URL', ''))
     return provider, host, path, key
 
 
-def provider_for_endpoint(endpoint):
+def kind_for_endpoint(endpoint):
     if not isinstance(endpoint, str):
         return None
     for kind in CHANNELS:
-        if kind == 'dashscope':
+        if kind in ('dashscope', 'tokenhub'):
             try:
-                host, path = _dashscope_endpoint(endpoint.removesuffix('/responses'))
+                base = (endpoint.removesuffix('/responses') if kind == 'dashscope'
+                        else endpoint.removesuffix('/v1/chat/completions'))
+                host, path = (_dashscope_endpoint if kind == 'dashscope' else _tokenhub_endpoint)(base)
             except ValueError:
                 continue
             if endpoint == 'https://' + host + path:
-                return CHANNELS[kind][0]
+                return kind
         else:
-            provider, host, path, _ = CHANNELS[kind]
+            _, host, path, _ = CHANNELS[kind]
             if endpoint == 'https://' + host + path:
-                return provider
+                return kind
     return None
+
+
+def provider_for_endpoint(endpoint):
+    kind = kind_for_endpoint(endpoint)
+    return CHANNELS[kind][0] if kind else None
 
 
 def native_identity(kind, openrouter_identity):
