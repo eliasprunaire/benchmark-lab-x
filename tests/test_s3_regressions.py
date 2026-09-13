@@ -40,6 +40,7 @@ def specification(reference):
         method=dict(id='fictional-note', version='1', control_ids=['source', 'defect'],
                     expected_evidence='Texte effectivement conservé', responsible_role='responsable de campagne'),
         witnesses={'defect': 'Omission fictive'}, secondary_criteria=[], aggregation=None,
+        local_criterion_ids=[],
         cost_basis=dict(scope='Par tentative, assistance séparée', attempts='Tentatives autorisées', unit='TEST', conversion=None),
         exposure='Pièce réservée ; test entièrement fictif', professional_review='ABSENTE',
         limits=['Contrôle local fictif des notes seulement'])
@@ -68,6 +69,13 @@ class S3Regressions(unittest.TestCase):
         self.spec = specification(self.reference)
         self.candidate = q.draft(self.store, 'fixture', self.view['revision'], self.spec)
         self.fingerprint = self.candidate['contract_sha256']
+
+    def test_new_contract_requires_explicit_local_criteria(self):
+        spec = dict(self.spec)
+        spec.pop('local_criterion_ids')
+        with self.assertRaisesRegex(ValueError, 'preuve locale explicites'):
+            q.draft(self.store, 'fixture', self.view['revision'], spec)
+        q._specification(spec, legacy=True)
 
     def qualify(self, checker=check):
         return q.qualify(self.store, self.fingerprint, reviewer=ACTOR, check=checker)

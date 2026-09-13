@@ -216,6 +216,7 @@ class JudgmentTests(unittest.TestCase):
         def cost_spec(reference):
             spec = original(reference)
             spec['obligations'][0]['description'] = 'Coût observé inférieur au plafond'
+            spec['local_criterion_ids'] = ['O1']
             return spec
         with patch.object(s5, 'specification', cost_spec):
             h = acceptance.S14Acceptance()
@@ -233,6 +234,35 @@ class JudgmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Preuve opérationnelle'):
             h.submit(next_view)
         self.assertEqual(h.count(), 1)
+
+    def test_business_budget_is_not_mistaken_for_operational_evidence(self):
+        spec = {
+            'obligations': [
+                {'id': 'business', 'description': "Indiquer si l’hébergement exige un budget séparé"},
+                {'id': 'cost', 'description': 'Coût observé inférieur au plafond'},
+            ],
+            'eliminatory_errors': [
+                {'id': 'logs', 'description': 'Journaux de transport manquants'},
+            ],
+            'local_criterion_ids': ['cost', 'logs'],
+        }
+        self.assertEqual({'cost', 'logs'}, judgment.local_criteria(spec))
+
+    def test_explicit_business_budget_proposal_can_be_submitted(self):
+        from tests import test_s5_regressions as s5
+        original = s5.specification
+        def business_spec(reference):
+            spec = original(reference)
+            spec['obligations'][0]['description'] = "Indiquer si l’hébergement exige un budget séparé"
+            spec['local_criterion_ids'] = []
+            return spec
+        with patch.object(s5, 'specification', business_spec):
+            h = acceptance.S14Acceptance()
+            h.setUp()
+        self.addCleanup(h.doCleanups)
+        view = h.execute()
+        self.assertEqual('PASS', view['proposal']['report']['findings'][0]['status'])
+        self.assertEqual('SATISFAIT', h.submit(view)['verdict'])
 
     def test_null_extra_field_cannot_disappear_during_response_parsing(self):
         h = self.h

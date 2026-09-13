@@ -142,8 +142,11 @@ def _aggregation(value):
         raise ValueError('Agrégation incomplète')
 
 
-def _specification(spec):
-    _fields(spec, _SPEC_FIELDS, 'specification')
+def _specification(spec, *, legacy=False):
+    if 'local_criterion_ids' not in spec and not legacy:
+        raise ValueError('Critères de preuve locale explicites requis')
+    extra = ('local_criterion_ids',) if 'local_criterion_ids' in spec else ()
+    _fields(spec, _SPEC_FIELDS + extra, 'specification')
     encode(spec)
     _text(spec['result_expected'], 'result_expected')
     _text(spec['exposure'], 'exposure')
@@ -175,6 +178,10 @@ def _specification(spec):
             _texts(entry['control_ids'], 'control_ids', required=True, unique=True)
             if not set(entry['control_ids']) <= controls:
                 raise ValueError('Contrôle non déclaré')
+    if 'local_criterion_ids' in spec:
+        _texts(spec['local_criterion_ids'], 'local_criterion_ids', unique=True)
+        if not set(spec['local_criterion_ids']) <= ids:
+            raise ValueError('Critère local non déclaré')
     witnesses = spec['witnesses']
     if type(witnesses) is not dict or not witnesses or not set(witnesses) <= controls:
         raise ValueError('Témoins reliés aux contrôles requis')
@@ -243,7 +250,7 @@ def _contract(store, connection, fingerprint):
     _identity(contract['dossier_id'], contract['revision'])
     if type(contract['version']) is not int or contract['version'] < 1:
         raise IntegrityError('Version invalide')
-    _specification(contract['specification'])
+    _specification(contract['specification'], legacy=True)
     package, package_hash = _package(store, connection, *row[:2])
     if (contract['package'], contract['package_sha256']) != (package, package_hash):
         raise IntegrityError('Contrat sans paquet exact')
