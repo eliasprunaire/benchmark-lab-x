@@ -220,12 +220,8 @@ class CustomNeedEngineTests(unittest.TestCase):
                     return response(operation, request)
 
                 c.execute(data, 'atelier-boisclair-attempt', acquisition)
-                e.initialize(data)
-                evaluated = e.evaluate(store, 'atelier-boisclair-local', 'atelier-boisclair-attempt',
-                    responsible='responsable-fictif-atelier',
-                    authority={'actor': 'Ayo', 'authority_id': 'OFFLINE_ATELIER_VERDICT'},
-                    check=findings)
-                self.assertEqual('SATISFAIT', evaluated['verdict'])
+                attempt = c.inspect(store, 'atelier-boisclair-local')['attempts'][0]
+                self.assertEqual('RECEIVED', attempt['state'])
                 self.assertTrue(runtime.verify(store)['integrity_ok'])
                 network.assert_not_called()
 

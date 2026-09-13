@@ -48,7 +48,7 @@ def _dashscope_endpoint(base_url):
             or parsed.query or parsed.fragment or parsed.path.rstrip('/') != '/compatible-mode/v1'
             or not (workspace_host or host in legacy_hosts)):
         raise ValueError('DASHSCOPE_BASE_URL HTTPS officiel Alibaba requis')
-    path = parsed.path.rstrip('/') + '/chat/completions'
+    path = parsed.path.rstrip('/') + '/responses'
     return host, path
 
 
@@ -65,7 +65,7 @@ def provider_for_endpoint(endpoint):
     for kind in CHANNELS:
         if kind == 'dashscope':
             try:
-                host, path = _dashscope_endpoint(endpoint.removesuffix('/chat/completions'))
+                host, path = _dashscope_endpoint(endpoint.removesuffix('/responses'))
             except ValueError:
                 continue
             if endpoint == 'https://' + host + path:
@@ -81,8 +81,7 @@ def native_identity(kind, openrouter_identity):
     mapped = _NATIVE_IDENTITIES.get((kind, openrouter_identity))
     if mapped:
         return mapped
-    namespaces = {'anthropic': 'anthropic/', 'deepseek': 'deepseek/',
-                  'zai': 'z-ai/', 'openai': 'openai/'}
+    namespaces = {'anthropic': 'anthropic/', 'zai': 'z-ai/', 'openai': 'openai/'}
     prefix = namespaces.get(kind)
     if prefix and openrouter_identity.startswith(prefix) and len(openrouter_identity) > len(prefix):
         return openrouter_identity[len(prefix):]
@@ -107,13 +106,14 @@ class PiOfficial(PiOpenRouter):
             if not isinstance(config[field], str) or not config[field].strip():
                 raise ValueError('Identité officielle explicite requise')
         params = config['parameters']
-        token_field = 'max_output_tokens' if self.kind == 'openai' else 'max_tokens'
+        responses = self.kind in ('openai', 'dashscope')
+        token_field = 'max_output_tokens' if responses else 'max_tokens'
         common = {token_field, 'stream'}
         extras = {
             'anthropic': {'output_config'},
             'openai': {'reasoning'},
             'moonshot': {'reasoning_effort'},
-            'dashscope': {'reasoning_effort', 'temperature', 'top_p'},
+            'dashscope': {'reasoning', 'temperature', 'top_p'},
             'tokenhub': {'thinking', 'reasoning_effort', 'temperature', 'top_p'},
             'deepseek': {'thinking', 'reasoning_effort', 'temperature', 'top_p'},
             'zai': {'thinking', 'reasoning_effort', 'temperature', 'top_p'},
@@ -138,7 +138,8 @@ class PiOfficial(PiOpenRouter):
             if effort != 'max':
                 raise ValueError('Kimi K3 exige reasoning_effort=max')
         elif self.kind == 'dashscope':
-            effort = params.get('reasoning_effort')
+            storage._fields(params.get('reasoning'), ('effort',), 'official reasoning')
+            effort = params['reasoning']['effort']
             if effort not in ('low', 'medium', 'xhigh'):
                 raise ValueError('Raisonnement natif explicite requis')
         elif self.kind == 'tokenhub':
@@ -152,14 +153,14 @@ class PiOfficial(PiOpenRouter):
             allowed_efforts = ('low', 'high', 'max')
             if params['thinking']['type'] != 'enabled' or effort not in allowed_efforts:
                 raise ValueError('Raisonnement natif explicite requis')
-            for field, low, high in (('temperature', 0, 2), ('top_p', 0, 1)):
-                if field in params and (type(params[field]) not in (int, float) or not low <= params[field] <= high):
-                    raise ValueError('Paramètre natif numérique invalide')
+        for field, low, high in (('temperature', 0, 2), ('top_p', 0, 1)):
+            if field in params and (type(params[field]) not in (int, float) or not low <= params[field] <= high):
+                raise ValueError('Paramètre natif numérique invalide')
         if config['effort'] != effort:
             raise ValueError('Effort natif divergent de la configuration admise')
         if self.kind == 'anthropic':
             return dict(model=config['model'], system=messages[0]['content'], messages=[messages[1]], **params)
-        if self.kind == 'openai':
+        if responses:
             return dict(model=config['model'], input=messages, **params)
         return dict(model=config['model'], messages=messages, **params)
 
@@ -167,7 +168,7 @@ class PiOfficial(PiOpenRouter):
         body = json.loads(wire)
         if self.kind == 'anthropic':
             return [dict(role='system', content=body['system']), *body['messages']]
-        if self.kind == 'openai':
+        if self.kind in ('openai', 'dashscope'):
             return body['input']
         return body['messages']
 
@@ -217,7 +218,7 @@ class PiOfficial(PiOpenRouter):
                 refused = data.get('stop_reason') == 'refusal' or any(b.get('type') == 'refusal' for b in blocks)
                 ended = (data['stop_reason'] == 'end_turn' and data.get('role') == 'assistant'
                          and all(b.get('type') in ('text', 'thinking', 'redacted_thinking') for b in blocks))
-            elif self.kind == 'openai':
+            elif self.kind in ('openai', 'dashscope'):
                 items = data['output']
                 if type(items) is not list or any(type(item) is not dict for item in items):
                     raise ValueError('Sortie Responses invalide')

@@ -14,12 +14,14 @@ from tests.test_s5_regressions import findings
 
 class OfficialTransportTests(unittest.TestCase):
     OPENROUTER_MODELS = {
+        'deepseek': 'deepseek/deepseek-v4.1-flash',
         'openai': 'openai/gpt-5.6-sol',
         'moonshot': 'moonshotai/kimi-k3',
         'dashscope': 'qwen/qwen3.8-max-0902',
         'tokenhub': 'tencent/hy4-preview',
     }
     NATIVE_MODELS = {
+        'deepseek': 'deepseek-flash',
         'openai': 'gpt-5.6-sol',
         'moonshot': 'kimi-k3',
         'dashscope': 'qwen3.8-max-0902',
@@ -94,12 +96,13 @@ class OfficialTransportTests(unittest.TestCase):
         h.store.create_budget(cid, '1', 'USD')
         manifest = deepcopy(c.inspect(h.store, source_id)['manifest'])
         config = manifest['panel'][0]
-        params = {('max_output_tokens' if kind == 'openai' else 'max_tokens'): 64, 'stream': False}
+        params = {('max_output_tokens' if kind in ('openai', 'dashscope') else 'max_tokens'): 64,
+                  'stream': False}
         if kind == 'anthropic':
             params['output_config'] = dict(effort=retry_effort or effort)
-        elif kind == 'openai':
+        elif kind in ('openai', 'dashscope'):
             params['reasoning'] = dict(effort=retry_effort or effort)
-        elif kind in ('moonshot', 'dashscope', 'tokenhub'):
+        elif kind in ('moonshot', 'tokenhub'):
             params['reasoning_effort'] = retry_effort or effort
             if kind == 'tokenhub':
                 params['thinking'] = dict(type='enabled')
@@ -125,7 +128,7 @@ class OfficialTransportTests(unittest.TestCase):
         if kind == 'anthropic':
             body = dict(model='model-fixed', role='assistant', stop_reason='end_turn',
                         content=[dict(type='thinking', thinking='Private thought'), dict(type='text', text='Native output')])
-        elif kind == 'openai':
+        elif kind in ('openai', 'dashscope'):
             body = dict(model=self.NATIVE_MODELS[kind], status='completed', output=[dict(
                 type='message', role='assistant', status='completed',
                 content=[dict(type='output_text', text='Native output')])])
@@ -247,7 +250,7 @@ class OfficialTransportTests(unittest.TestCase):
                 native.resolve_channel('dashscope', value)
         provider, host, path, _ = native.resolve_channel('dashscope', self.DASHSCOPE_BASE_URL)
         self.assertEqual('Alibaba Cloud Model Studio', provider)
-        self.assertEqual('/compatible-mode/v1/chat/completions', path)
+        self.assertEqual('/compatible-mode/v1/responses', path)
         self.assertEqual('workspace.ap-southeast-1.maas.aliyuncs.com', host)
 
     def test_kimi_rejects_any_effort_other_than_max_before_http(self):
@@ -263,12 +266,14 @@ class OfficialTransportTests(unittest.TestCase):
         self.assertEqual('gpt-6-astra', native.native_identity('openai', 'openai/gpt-6-astra'))
         self.assertEqual('qwen3.8-max', native.native_identity('dashscope', 'qwen/qwen3.8-max'))
         with self.assertRaisesRegex(ValueError, 'aucun alias'):
+            native.native_identity('deepseek', 'deepseek/deepseek-v4-flash-0731')
+        with self.assertRaisesRegex(ValueError, 'aucun alias'):
             native.native_identity('moonshot', 'moonshotai/another-model')
 
     def test_provider_efforts_are_not_silently_remapped(self):
         cases = [
             ('openai', dict(max_output_tokens=64, stream=False, reasoning=dict(effort='minimal'))),
-            ('dashscope', dict(max_tokens=64, stream=False, reasoning_effort='high')),
+            ('dashscope', dict(max_output_tokens=64, stream=False, reasoning=dict(effort='high'))),
             ('tokenhub', dict(max_tokens=64, stream=False, reasoning_effort='medium',
                               thinking=dict(type='enabled'))),
         ]
@@ -284,6 +289,31 @@ class OfficialTransportTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'Effort natif|Raisonnement natif'):
                     transport._payload(config, [dict(role='system', content='system'),
                                                 dict(role='user', content='prompt')])
+
+    def test_openai_content_filter_is_not_recoverable_as_length(self):
+        transport, cid, oid = self.prepare('openai')
+        connection = self.response('openai', status='incomplete',
+                                   incomplete_details={'reason': 'content_filter'})
+        with patch.object(native, 'HTTPSConnection', return_value=connection):
+            c.execute(self.h.data, oid, transport)
+        attempt = c.inspect(self.h.store, cid)['attempts'][0]
+        self.assertEqual('CONTENT_REFUSAL', recovery.observation(attempt)['kind'])
+
+    def test_numeric_sampling_parameters_are_validated_for_all_applicable_transports(self):
+        for kind in ('deepseek', 'zai', 'dashscope', 'tokenhub'):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, 'numérique invalide'):
+                transport, _, _ = self.prepare(kind)
+                token_field = 'max_output_tokens' if kind == 'dashscope' else 'max_tokens'
+                parameters = {token_field: 64, 'stream': False, 'temperature': 'wrong'}
+                if kind == 'dashscope':
+                    parameters['reasoning'] = {'effort': 'low'}
+                else:
+                    parameters.update(thinking={'type': 'enabled'}, reasoning_effort='low')
+                transport._payload(dict(provider=transport.provider, model=self.NATIVE_MODELS.get(kind, 'model-fixed'),
+                    revision=self.NATIVE_MODELS.get(kind, 'model-fixed'), access='API',
+                    channel_id=transport.endpoint, route=transport.endpoint, effort='low',
+                    parameters=parameters), [dict(role='system', content='system'),
+                                             dict(role='user', content='prompt')])
 
     def test_missing_official_key_is_rejected_before_http(self):
         with patch.object(native, 'HTTPSConnection') as connection, self.assertRaisesRegex(ValueError, 'Clé API officielle'):

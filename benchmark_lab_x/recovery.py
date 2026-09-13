@@ -46,8 +46,17 @@ def observation(attempt):
     if observed.get('channel_id') == 'https://api.anthropic.com/v1/messages':
         reason = {'end_turn': 'stop', 'max_tokens': 'length'}.get(data.get('stop_reason'), data.get('stop_reason'))
         content = receipt['result']['output'] or ''
-    elif observed.get('channel_id') == 'https://api.openai.com/v1/responses':
-        reason = {'completed': 'stop', 'incomplete': 'length'}.get(data.get('status'), data.get('status'))
+    elif observed.get('channel_id', '').endswith('/responses'):
+        status = data.get('status')
+        detail = data.get('incomplete_details') or {}
+        if status == 'completed':
+            reason = 'stop'
+        elif status == 'incomplete' and detail.get('reason') == 'max_output_tokens':
+            reason = 'length'
+        elif status == 'incomplete' and detail.get('reason') == 'content_filter':
+            reason = 'content_filter'
+        else:
+            reason = status
         content = receipt['result']['output'] or ''
     if incident == 'CONTENT_REFUSAL' or reason in ('content_filter', 'refusal') or choice.get('native_finish_reason') == 'refusal' or message.get('refusal'):
         kind = 'CONTENT_REFUSAL'
