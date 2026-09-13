@@ -25,7 +25,7 @@ def build(repo, source, destination):
     files = {}
     modes = {}
     blobs = {}
-    for entry in git(repo, 'ls-tree', '-rz', source, '--', 'benchmark').split(b'\0'):
+    for entry in git(repo, 'ls-tree', '-rz', source, '--', 'benchmark', 'benchmark_web').split(b'\0'):
         if not entry:
             continue
         metadata, raw_name = entry.split(b'\t', 1)
@@ -33,14 +33,15 @@ def build(repo, source, destination):
         name = raw_name.decode('utf-8')
         if kind != 'blob' or mode not in {'100644', '100755'}:
             raise ValueError('Source non régulière')
-        if not re.fullmatch(r'benchmark/[A-Za-z0-9_./-]+', name) or '..' in Path(name).parts or any(part.startswith('.') for part in Path(name).parts):
+        if not re.fullmatch(r'benchmark(?:_web)?/[A-Za-z0-9_./-]+', name) or '..' in Path(name).parts or any(part.startswith('.') for part in Path(name).parts):
             raise ValueError('Chemin source interdit')
         if name.endswith('/test_demo.py'):
             continue
         files[name] = git(repo, 'cat-file', 'blob', blob)
         blobs[name] = blob
         modes[name] = 0o755 if mode == '100755' else 0o644
-    if not {'benchmark/storage.py', 'benchmark/runtime.py', 'benchmark/service.py', 'benchmark/benchmark-runtime', 'benchmark/__init__.py'} <= files.keys():
+    if not {'benchmark/storage.py', 'benchmark/runtime.py', 'benchmark/service.py', 'benchmark/benchmark-runtime', 'benchmark/__init__.py',
+            'benchmark_web/__init__.py', 'benchmark_web/server.py', 'benchmark_web/views.py', 'benchmark_web/projection.py'} <= files.keys():
         raise ValueError('Interfaces runtime absentes du commit')
     # Le schéma livré vient du commit construit, sans importer du code non approuvé
     match = re.search(rb'^SCHEMA_VERSION = ([0-9]+)$', files['benchmark/storage.py'], re.MULTILINE)

@@ -50,6 +50,7 @@ class ServiceProcessesTests(unittest.TestCase):
             root = Path(directory).resolve() / 'release'
             root.mkdir()
             shutil.copytree(Path(__file__).resolve().parents[1] / 'benchmark', root / 'benchmark')
+            shutil.copytree(Path(__file__).resolve().parents[1] / 'benchmark_web', root / 'benchmark_web')
             (root / 'release.json').write_text(json.dumps({'source_sha': 'a' * 40}))
             data, public = root.parent / 'private', root.parent / 'public'
             public.mkdir()

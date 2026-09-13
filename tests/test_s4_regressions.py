@@ -16,6 +16,7 @@ import unittest
 from unittest.mock import patch
 
 from benchmark import campaigns as c, preparation as prep, qualification as q, runtime, storage
+from benchmark_web import views
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 
 
@@ -319,7 +320,7 @@ class S4Regressions(unittest.TestCase):
         self.assertEqual(b'  fictional raw output\n',self.store.read_piece(attempt['output_piece_id']))
         with self.assertRaises(ValueError): prep.piece_bytes(self.store,self.session,'fixture',self.view['revision'],attempt['output_piece_id'])
         self.assertEqual(self.candidate['contract']['package'],view['package'])
-        self.assertIn('INCONNU',prep.render(view,'csrf').decode())
+        self.assertIn('INCONNU',views.render(view,'csrf').decode())
 
     def test_foreign_actor_extra_authority_fields_and_executable_tools_refused(self):
         authority,evidence=inputs(self.snapshot)
