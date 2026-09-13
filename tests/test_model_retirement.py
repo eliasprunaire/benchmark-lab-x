@@ -5,7 +5,7 @@ import tomllib
 import unittest
 from unittest.mock import patch
 
-from benchmark_lab_x import storage, preparation, openrouter_prices, model_catalog
+from benchmark import storage, preparation, openrouter_prices, model_catalog
 from tests.test_storage import operation, PAYLOAD
 
 

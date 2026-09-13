@@ -9,8 +9,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from benchmark_lab_x import evaluation, judgment, runtime, storage
-from benchmark_lab_x.openrouter_judgment import OpenRouterJudgment
+from benchmark import evaluation, judgment, runtime, storage
+from benchmark.openrouter_judgment import OpenRouterJudgment
 from tests import test_s14_acceptance as acceptance
 
 KEY = acceptance.KEY
@@ -76,7 +76,7 @@ class JudgmentTests(unittest.TestCase):
         self.assertEqual(h.http.request.call_count, 1)
 
     def test_new_judge_work_remains_visible_after_a_decision(self):
-        from benchmark_lab_x import restitution
+        from benchmark import restitution
         h = self.h
         first = h.submit(h.execute())
         second = h.execute('second-review')

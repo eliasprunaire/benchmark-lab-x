@@ -7,7 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from benchmark_lab_x import preparation as prep, qualification as q, storage
+from benchmark import preparation as prep, qualification as q, storage
 from tests.test_s2_review_regressions import response_for
 
 ACTOR = 'responsable-fictif-S3'

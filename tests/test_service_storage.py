@@ -12,8 +12,8 @@ import sys
 import tempfile
 import unittest
 
-from benchmark_lab_x.storage import BudgetError, ConflictError, IntegrityError, SchemaError, Store, initialize
-from benchmark_lab_x.runtime import backup, restore, verify_backup, status, stop, verify
+from benchmark.storage import BudgetError, ConflictError, IntegrityError, SchemaError, Store, initialize
+from benchmark.runtime import backup, restore, verify_backup, status, stop, verify
 from tests.test_storage import PAYLOAD, operation, receipt, cost
 
 
@@ -31,7 +31,7 @@ class ServiceStorageTests(unittest.TestCase):
                 original_budget = store._budget
 
                 def inspect_during_verification(connection, budget_id, operations):
-                    with patch('benchmark_lab_x.storage.deepcopy', wraps=deepcopy) as copied:
+                    with patch('benchmark.storage.deepcopy', wraps=deepcopy) as copied:
                         selected = store._operations(connection, operation_ids={'selected'})
                     self.assertEqual([r['operation_id'] for r in copied.call_args.args[0]], ['selected'])
                     selected[0]['resources'].append('caller-only')
@@ -109,7 +109,7 @@ class ServiceStorageTests(unittest.TestCase):
                     verify(store)
 
     def test_quiescence_refuses_active_qualification_and_preserves_data(self):
-        from benchmark_lab_x import preparation, qualification as q
+        from benchmark import preparation, qualification as q
         from tests.test_s3_regressions import ACTOR, check, fixture, specification
 
         with tempfile.TemporaryDirectory() as directory:
@@ -119,7 +119,7 @@ class ServiceStorageTests(unittest.TestCase):
 
             def cli(expected_code, expected_result):
                 result = subprocess.run(
-                    [sys.executable, '-B', '-m', 'benchmark_lab_x.runtime',
+                    [sys.executable, '-B', '-m', 'benchmark.runtime',
                      'quiescence', '--data', str(root)],
                     capture_output=True, text=True, timeout=10)
                 self.assertEqual(expected_code, result.returncode, result.stderr)
@@ -157,7 +157,7 @@ class ServiceStorageTests(unittest.TestCase):
             store.save_dossier('d', 1, PAYLOAD)
             row = store.put_piece('d', 1, 'piece', name='exemple.txt', role='candidate', media_type='text/plain', content=b'fictif')
             store.close()
-            code = "from benchmark_lab_x.storage import Store; import sys; s=Store(sys.argv[1]); assert s.get_dossier('d',1)['request']=='Suivi fictif Orme'; assert s.read_piece('piece')==b'fictif'; assert s.verify_storage()['integrity_ok']; s.close()"
+            code = "from benchmark.storage import Store; import sys; s=Store(sys.argv[1]); assert s.get_dossier('d',1)['request']=='Suivi fictif Orme'; assert s.read_piece('piece')==b'fictif'; assert s.verify_storage()['integrity_ok']; s.close()"
             subprocess.run([sys.executable, '-c', code, str(root)], check=True)
             (root / row['relative_path']).write_bytes(b'altere')
             store = Store(root)
@@ -174,7 +174,7 @@ class ServiceStorageTests(unittest.TestCase):
             with self.assertRaises(SchemaError):
                 Store(root)
             for action in ('verify', 'status', 'initialize'):
-                rejected = subprocess.run([sys.executable, '-m', 'benchmark_lab_x.runtime', action, '--data', str(root)], capture_output=True, text=True)
+                rejected = subprocess.run([sys.executable, '-m', 'benchmark.runtime', action, '--data', str(root)], capture_output=True, text=True)
                 self.assertEqual(78, rejected.returncode, rejected.stderr)
             self.assertEqual(before, sha256((root / 'metadata.sqlite3').read_bytes()).hexdigest())
 
@@ -245,7 +245,7 @@ class ServiceStorageTests(unittest.TestCase):
                     with self.assertRaisesRegex(sqlite3.OperationalError, 'locked'):
                         writer.execute('BEGIN IMMEDIATE')
                 return copytree(*args, **kwargs)
-            with patch('benchmark_lab_x.runtime.shutil.copytree', side_effect=copy_under_lock):
+            with patch('benchmark.runtime.shutil.copytree', side_effect=copy_under_lock):
                 self.assertEqual('BACKUP_VERIFIED', backup(root, target)['state'])
             before = sha256((root / 'metadata.sqlite3').read_bytes()).hexdigest()
             restored = Path(directory).resolve() / 'restored'

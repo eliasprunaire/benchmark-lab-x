@@ -15,7 +15,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from benchmark_lab_x import campaigns as c, preparation as prep, qualification as q, runtime, storage
+from benchmark import campaigns as c, preparation as prep, qualification as q, runtime, storage
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 
 
@@ -94,7 +94,7 @@ class S4Regressions(unittest.TestCase):
         return c.reserve(self.store,'local-comparison',cell,attempt)
 
     def worker_survives_service(self, killed):
-        from benchmark_lab_x.service import executor_health, serve_executor
+        from benchmark.service import executor_health, serve_executor
         context = multiprocessing.get_context('spawn')
         entered, release = self.home / 'entered', self.home / 'release'
         socket = self.home / 'executor.sock'
@@ -330,7 +330,7 @@ class S4Regressions(unittest.TestCase):
         self.assertEqual([],c.inspect(self.store,'local-comparison')['attempts'])
 
     def test_health_consumer_accepts_s4_status_before_during_and_after_admission(self):
-        from benchmark_lab_x.service import executor_health
+        from benchmark.service import executor_health
         # Exercise the unchanged health decoder with the actual producer's JSON
         # Only socket I/O is replaced; no socket permission is needed for this
         # wire-contract regression. Real process tests remain separate evidence
@@ -342,7 +342,7 @@ class S4Regressions(unittest.TestCase):
                     runtime.stop(self.data, self.store, 'TEST_HEALTH_STOP')
                 payload = {'source_sha': 'a' * 40, 'storage': 'ok',
                            **runtime.status(self.data, self.store)}
-                with patch('benchmark_lab_x.service.socket.socket') as socket:
+                with patch('benchmark.service.socket.socket') as socket:
                     connection = socket.return_value.__enter__.return_value
                     connection.makefile.return_value = BytesIO((runtime.encode(payload) + '\n').encode())
                     observed = executor_health(self.home / 'unused.sock')
@@ -352,7 +352,7 @@ class S4Regressions(unittest.TestCase):
                 self.assertEqual({'RECEIVED': 1}, observed['operations'])
 
     def cli(self,action,request=None,private=True):
-        args=[sys.executable,'-B','-m','benchmark_lab_x.runtime',action,'--data',str(self.data)]
+        args=[sys.executable,'-B','-m','benchmark.runtime',action,'--data',str(self.data)]
         if request is not None:
             path=self.home/'operator.json'; path.write_text(json.dumps(request)); path.chmod(0o600 if private else 0o644)
             args+=['--authority',str(path)]

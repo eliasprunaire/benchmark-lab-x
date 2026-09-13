@@ -9,7 +9,7 @@ import stat
 import unittest
 from unittest.mock import patch
 
-from benchmark_lab_x import runtime, storage
+from benchmark import runtime, storage
 from tests import test_s14_acceptance as acceptance
 
 

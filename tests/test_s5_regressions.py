@@ -8,7 +8,7 @@ import tempfile
 import threading
 import unittest
 
-from benchmark_lab_x import campaigns as c, evaluation as e, preparation as prep, qualification as q, runtime, storage
+from benchmark import campaigns as c, evaluation as e, preparation as prep, qualification as q, runtime, storage
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 from tests.test_s4_regressions import inputs, manifest, response
 
