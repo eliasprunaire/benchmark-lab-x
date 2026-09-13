@@ -424,7 +424,8 @@ def _request(store, manifest, fingerprint, contract, cell):
 def _engine():
     return {name: sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
             for name in ('campaigns.py', 'storage.py', 'preparation.py', 'qualification.py', 'runtime.py',
-                         'pi_openrouter.py', 'pi_bridge.mjs', 'openrouter_preparation.py', 'recovery.py', 'outgoing.py')}
+                         'pi_openrouter.py', 'pi_official.py', 'pi_bridge.mjs',
+                         'openrouter_preparation.py', 'recovery.py', 'outgoing.py')}
 
 
 def _transport_view(request):
@@ -785,7 +786,7 @@ def launch(store, session_id, dossier_id, campaign_id, body):
 def execute_launch(data, attempts, transport=None, *, transport_factory=None):
     for attempt_id in attempts:
         try:
-            execute(data, attempt_id, transport_factory() if transport_factory else transport)
+            execute(data, attempt_id, transport, transport_factory=transport_factory)
         except (ValueError, ConflictError, BudgetError, IntegrityError):
             # An interruption leaves the remaining intentions for private inspection
             break
@@ -837,9 +838,9 @@ def close_admission(store, reason):
         connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE admission_id IS NOT NULL', (reason, _now()))
 
 
-def execute(data, attempt_id, transport=None):
+def execute(data, attempt_id, transport=None, *, transport_factory=None):
     """One explicit worker, one durable boundary, one callback; never an implicit retry."""
-    if not callable(transport):
+    if not callable(transport) and not callable(transport_factory):
         raise ValueError('Transport injecté par le lanceur de confiance requis')
     from .runtime import worker_lock
     received = False
@@ -866,6 +867,11 @@ def execute(data, attempt_id, transport=None):
             request = json.loads(raw)
             closed_request = _transport_view(request)
             closed_operation = _transport_operation(attempt['operation'])
+            if transport_factory is not None:
+                transport = transport_factory(
+                    closed_request['requested_configuration']['channel_id'])
+            if not callable(transport):
+                raise ValueError('Transport injecté par le lanceur de confiance requis')
             if hasattr(transport, 'prepare'):
                 transport.prepare(deepcopy(closed_operation), deepcopy(closed_request))
             connection.execute('INSERT INTO s4_emissions VALUES (?,?,?)', (attempt_id, admission['admission_id'], _now()))
@@ -907,7 +913,8 @@ def execute(data, attempt_id, transport=None):
                                    ('ACQUISITION_RECEIPT_NOT_VERIFIED', _now(), snapshot['manifest']['campaign_id']))
     if received:
         from .recovery import continue_preauthorized
-        continue_preauthorized(data, attempt_id, transport)
+        continue_preauthorized(data, attempt_id, transport,
+                               transport_factory=transport_factory)
 
 
 def projection(store, connection, dossier_id):

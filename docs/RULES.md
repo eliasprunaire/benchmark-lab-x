@@ -26,7 +26,7 @@ Ces règles préservent les contrats historiques et n'autorisent aucune exécuti
 
 ## 3. Périmètre produit
 
-**Canal API et secours officiel.** OpenRouter reste le canal normal des appels modèles du produit. Après diagnostic et épuisement des routes de secours utilisables du même modèle, l’API officielle peut servir de dernier recours sous configuration et admission distinctes, selon l’[ARD](ARD.md#3-pi-comme-frontière-constante). L’identité exacte disponible, les paramètres, l’accès, le budget et les preuves doivent être établis. Un alias redirigé vers une autre version ne constitue pas un secours. Les contrats historiques restent inchangés.
+**Canal API et secours officiel.** OpenRouter reste le canal normal des appels modèles du produit. Après diagnostic et épuisement des routes de secours utilisables du même modèle, l’API officielle peut servir de dernier recours sous configuration et admission distinctes, selon l’[ARD](ARD.md#3-pi-comme-frontière-constante). L’admission propriétaire initiale peut préautoriser exactement cette dérivation, sa preuve de canal et sa réserve ; le moteur l’enchaîne alors sans nouvelle interaction. L’identité exacte disponible, les paramètres, l’accès, le budget et les preuves doivent être établis. Un alias redirigé vers une autre version ne constitue pas un secours. Les contrats historiques restent inchangés.
 
 **Pi obligatoire.** Pi est le harnais commun de chaque comparaison candidate. Son choix n'est pas rouvert par une revue de configuration. Cette contrainte ne choisit pas le transport de l’assistance de préparation ou de jugement.
 
@@ -80,7 +80,7 @@ Ces règles préservent les contrats historiques et n'autorisent aucune exécuti
 
 **Révision imposée.** Lorsqu'une révision de modèle est exigée, un alias mobile ne la remplace pas sans preuve de correspondance. Une identité non vérifiable bloque son utilisation sous cette identité ; aucune substitution implicite n'est permise.
 
-**Pas de fallback silencieux.** Un changement de modèle, fournisseur, route, paramètres ou effort de raisonnement change la configuration observée ; les valeurs demandées et observées de fournisseur, modèle, route et effort sont relevées par candidat. Une valeur non prouvée reste `INCONNU`. Un changement de Pi, paquet, outil, skill, contexte ou environnement modifie les conditions communes.
+**Pas de fallback silencieux dans les preuves.** Un secours préautorisé peut rester sans interaction dans le parcours utilisateur, mais son changement de fournisseur, route ou paramètres crée une configuration et un reçu distincts visibles dans le résultat. Les valeurs demandées et observées de fournisseur, modèle, route et effort sont relevées par candidat. Une valeur non prouvée reste `INCONNU`. Un changement de Pi, paquet, outil, skill, contexte ou environnement modifie les conditions communes.
 
 ## 6. Erreurs et verdict
 

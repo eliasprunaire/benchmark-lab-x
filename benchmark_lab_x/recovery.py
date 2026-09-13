@@ -219,6 +219,22 @@ def _chain(store, connection, snapshot, attempt):
     return steps
 
 
+def _official_route_attempts(store, connection, snapshot, attempt):
+    """Keep the final LENGTH proof for a route; recovery_of retains prior receipts"""
+    selected = []
+    length_routes = set()
+    for step in reversed(_chain(store, connection, snapshot, attempt)):
+        if step['kind'] == 'LENGTH':
+            allowed = step['parameters'].get('provider', {}).get('only', [])
+            route = step['route'] or (allowed[0] if len(allowed) == 1 else tuple(allowed))
+            if route in length_routes:
+                continue
+            length_routes.add(route)
+        selected.append(step['operation_id'])
+    selected.reverse()
+    return selected
+
+
 def _record(snapshot, attempt, observed, chain):
     config = attempt['operation']['requested_configuration']
     return dict(outgoing_format=outgoing.FORMAT, provider=config['provider'], model=config['model'],
@@ -319,7 +335,7 @@ def _progress_chars(store, connection, source_manifest, observed):
     return observation(earlier)['output_chars']
 
 
-def _proposal(store, connection, operation_id, capabilities):
+def _proposal(store, connection, operation_id, capabilities, *, check_budget=True):
     """Shared proposal body; caller owns the enclosing transaction"""
     snapshot, attempt = parent(store, connection, operation_id)
     contract = c._approved(store, connection, snapshot['manifest']['contract_sha256'])
@@ -329,10 +345,60 @@ def _proposal(store, connection, operation_id, capabilities):
     proposal = derive_child(snapshot['manifest'], attempt, observed, capabilities,
                             budget_id=snapshot['admissions'][-1]['authority']['budget_id'],
                             earlier_output_chars=_progress_chars(store, connection, snapshot['manifest'], observed))
-    budget = c._envelope(store, connection, snapshot, snapshot['admissions'][-1]['authority'])
-    if _money(proposal['reserve_amount']) > Decimal(budget['available']):
-        raise BudgetError('Budget de reprise insuffisant')
+    if check_budget:
+        budget = c._envelope(store, connection, snapshot, snapshot['admissions'][-1]['authority'])
+        if _money(proposal['reserve_amount']) > Decimal(budget['available']):
+            raise BudgetError('Budget de reprise insuffisant')
     return proposal
+
+
+def _official_grant(grant, configuration_id):
+    item = (grant.get('official_fallbacks') or {}).get(configuration_id)
+    if item is None:
+        raise ValueError('Secours officiel préautorisé absent')
+    return deepcopy(item)
+
+
+def _official_proposal(store, connection, operation_id, grant, budget_id, *, check_budget=True):
+    snapshot, attempt = parent(store, connection, operation_id)
+    observed = observation(attempt)
+    if observed['kind'] not in _RECOVERABLE:
+        raise ValueError('Aucun secours automatique de ce reçu')
+    cell = next(x for x in snapshot['manifest']['plan'] if x['cell_id'] == attempt['cell_id'])
+    source_config = next(x for x in snapshot['manifest']['panel'] if x['id'] == cell['configuration_id'])
+    item = _official_grant(grant, source_config['id'])
+    manifest = deepcopy(snapshot['manifest'])
+    config = item['configuration']
+    route_attempts = _official_route_attempts(store, connection, snapshot, attempt)
+    manifest.update(
+        campaign_id='recovery-' + q.digest([operation_id, config, route_attempts])[:40],
+        recovery_of=operation_id, panel=[config], plan=[cell],
+        official_fallback=dict(route_attempts=route_attempts),
+        attempt_policy=dict(retries=False, order=[cell['cell_id']],
+                            reason='Secours officiel préautorisé après épuisement OpenRouter ; aucune sélection sémantique'))
+    validate_official_link(store, connection, manifest, snapshot['manifest'], source_config)
+    proposal = dict(manifest=manifest, reserve_amount=item['reserve_amount'], budget_id=budget_id,
+                    source_receipt=observed, capabilities_sha256=q.digest(item))
+    if check_budget:
+        budget = c._envelope(store, connection, snapshot, snapshot['admissions'][-1]['authority'])
+        if _money(proposal['reserve_amount']) > Decimal(budget['available']):
+            raise BudgetError('Budget de secours officiel insuffisant')
+    return proposal
+
+
+def _automatic_proposal(store, connection, operation_id, grant, *, allow_official,
+                        check_budget=True):
+    snapshot, attempt = parent(store, connection, operation_id)
+    budget_id = snapshot['admissions'][-1]['authority']['budget_id']
+    capabilities = frozen_capabilities(grant, attempt['operation']['requested_configuration']['model'])
+    try:
+        return _proposal(store, connection, operation_id, capabilities,
+                         check_budget=check_budget)
+    except ValueError:
+        if not allow_official:
+            raise
+        return _official_proposal(store, connection, operation_id, grant, budget_id,
+                                  check_budget=check_budget)
 
 
 def propose(store, operation_id, capabilities):
@@ -362,8 +428,8 @@ def diagnose(store, operation_id):
         if grant is None:
             return dict(kind=kind, automatic=False, reason='Préautorisation de reprise absente ; préparer une reprise avec ses capacités et son autorité')
         try:
-            capabilities = frozen_capabilities(grant, attempt['operation']['requested_configuration']['model'])
-            proposal = _proposal(store, connection, operation_id, capabilities)
+            proposal = _automatic_proposal(store, connection, operation_id, grant,
+                                           allow_official=True)
         except (ValueError, ConflictError, IntegrityError, BudgetError, KeyError) as exc:
             return dict(kind=kind, automatic=False, reason=str(exc))
         admitted = snapshot['admission'] is not None and not os.path.lexists(store._root / 'restore.json')
@@ -417,7 +483,8 @@ def _capability(value):
 def validate_grant(grant, *, purpose, recovery):
     if purpose != 'start' or recovery:
         raise ValueError('Préautorisation figée à l’admission propriétaire initiale')
-    _fields(grant, ('capabilities',), 'technical recovery')
+    extra = ('official_fallbacks',) if 'official_fallbacks' in grant else ()
+    _fields(grant, ('capabilities',) + extra, 'technical recovery')
     capabilities = grant['capabilities']
     if type(capabilities) is dict:
         items = [capabilities]
@@ -431,6 +498,28 @@ def validate_grant(grant, *, purpose, recovery):
         if item['id'] in seen:
             raise ValueError('Capacités dupliquées')
         seen.add(item['id'])
+    fallbacks = grant.get('official_fallbacks', {})
+    if type(fallbacks) is not dict:
+        raise ValueError('Secours officiels figés invalides')
+    for configuration_id, item in fallbacks.items():
+        identifier(configuration_id)
+        _fields(item, ('configuration', 'channel', 'reserve_amount'), 'official fallback grant')
+        config = item['configuration']
+        _fields(config, c._CONFIGURATION, 'official fallback configuration')
+        if config['id'] != configuration_id:
+            raise ValueError('Identité de secours officielle divergente')
+        from .pi_official import provider_for_endpoint
+        if (provider_for_endpoint(config['channel_id']) != config['provider']
+                or config['access'] != 'API' or config['route'] != config['channel_id']):
+            raise ValueError('Canal de secours officiel invalide')
+        channel = item['channel']
+        keys = {'available', 'revision', 'channel_id', 'route', 'proof'} | set(config['required_observations'])
+        _fields(channel, keys, 'official fallback channel')
+        c._present(channel['proof'], 'official fallback proof')
+        if channel['available'] is not True or any(
+                channel[key] != config[key] for key in keys - {'available', 'proof'}):
+            raise ValueError('Preuve de secours officielle divergente')
+        _money(item['reserve_amount'])
 
 
 def validate_derived_from(value):
@@ -459,13 +548,9 @@ def bind_derived(store, connection, manifest, authority, *, stored=False):
         if authority[key] != owner[key]:
             raise error('Autorité dérivée divergente')
     try:
-        parent_snapshot, attempt = parent(store, connection, derived['operation_id'])
-        observed = observation(attempt)
-        capabilities = frozen_capabilities(owner['technical_recovery'],
-                                           attempt['operation']['requested_configuration']['model'])
-        expected = derive_child(parent_snapshot['manifest'], attempt, observed, capabilities,
-                                budget_id=owner['budget_id'],
-                                earlier_output_chars=_progress_chars(store, connection, parent_snapshot['manifest'], observed))
+        expected = _automatic_proposal(store, connection, derived['operation_id'],
+                                       owner['technical_recovery'], allow_official=True,
+                                       check_budget=False)
     except (ValueError, ConflictError, IntegrityError) as exc:
         raise error('Reprise dérivée non reconstruite') from exc
     cell = expected['manifest']['plan'][0]['cell_id']
@@ -506,16 +591,19 @@ def _derive_authority(owner_record, snapshot, operation_id, reserve_amount, budg
                           manifest_sha256=owner['manifest_sha256']))
 
 
-def _derive_evidence(owner_record, snapshot):
+def _derive_evidence(owner_record, snapshot, grant):
     source = owner_record['evidence']
     config = snapshot['manifest']['panel'][0]
-    channel = deepcopy(source['channels'][config['id']])
-    channel['route'] = config['route']
+    if 'official_fallback' in snapshot['manifest']:
+        channel = _official_grant(grant, config['id'])['channel']
+    else:
+        channel = deepcopy(source['channels'][config['id']])
+        channel['route'] = config['route']
     return dict(pi_sha256=source['pi_sha256'], context_sha256=source['context_sha256'],
                 channels={config['id']: channel}, confinement=deepcopy(source['confinement']))
 
 
-def _next_preauthorized_attempt(store, operation_id):
+def _next_preauthorized_attempt(store, operation_id, *, allow_official=False):
     c._intact(store)
     connection = c.connection_for(store)
     try:
@@ -534,12 +622,11 @@ def _next_preauthorized_attempt(store, operation_id):
                 return None
             if observed['kind'] not in _RECOVERABLE:
                 return None
-            model = attempt['operation']['requested_configuration']['model']
             try:
-                capabilities = frozen_capabilities(grant, model)
-            except ValueError:
+                proposal = _automatic_proposal(store, connection, operation_id, grant,
+                                               allow_official=allow_official)
+            except (ValueError, BudgetError):
                 return None
-            proposal = _proposal(store, connection, operation_id, capabilities)
             cid = proposal['manifest']['campaign_id']
             try:
                 c._create(store, connection, deepcopy(proposal['manifest']))
@@ -553,7 +640,7 @@ def _next_preauthorized_attempt(store, operation_id):
                     return None
                 authority = _derive_authority(owner, snap, operation_id,
                                               proposal['reserve_amount'], proposal['budget_id'])
-                evidence = _derive_evidence(owner, snap)
+                evidence = _derive_evidence(owner, snap, grant)
                 c._admit(store, connection, cid, authority, evidence)
                 snap = c._inspect(store, connection, cid)
             admission = snap['admission']
@@ -579,13 +666,17 @@ def _next_preauthorized_attempt(store, operation_id):
         return None
 
 
-def continue_preauthorized(data, operation_id, transport):
+def continue_preauthorized(data, operation_id, transport=None, *, transport_factory=None):
     """Create, admit, reserve and execute the next frozen recovery, or stop"""
     try:
         with closing(Store(data)) as store:
-            nxt = _next_preauthorized_attempt(store, operation_id)
+            nxt = _next_preauthorized_attempt(store, operation_id,
+                                              allow_official=transport_factory is not None)
         if nxt is None:
             return
-        c.execute(data, nxt, transport)
+        if transport_factory is None:
+            c.execute(data, nxt, transport)
+        else:
+            c.execute(data, nxt, transport_factory=transport_factory)
     except (ValueError, KeyError, ConflictError, BudgetError, IntegrityError):
         return
