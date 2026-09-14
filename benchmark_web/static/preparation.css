@@ -248,3 +248,4 @@ footer.site details > :not(summary) { margin: .4rem 0 0; }
   header.site { align-items: flex-start; flex-direction: column; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+.website{display:none}

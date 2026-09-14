@@ -84,8 +84,24 @@ def serve_executor(data, socket_path, source, *, transport=None, candidate_trans
                                     threading.Thread(target=preparation.execute, args=(data, start, transport), daemon=True).start()
                                 result = {'status': code, 'value': value.hex() if isinstance(value, bytes) else value,
                                           'piece': isinstance(value, bytes), 'cookie': cookie}
-                            except preparation.Denied:
-                                result = {'status': 403, 'value': {'error': 'Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier ou demandez au responsable de vérifier son autorisation.'}}
+                            except preparation.Denied as error:
+                                if error.code:
+                                    messages = {
+                                        'TEXT_TOO_SHORT': 'Ce texte est trop court.',
+                                        'TEXT_TOO_LONG': 'Ce texte est trop long.',
+                                        'PREPARATION_IN_PROGRESS': 'Une préparation est déjà en cours.',
+                                        'TOO_SOON': 'Attendez avant un nouvel envoi.',
+                                        'DAILY_SESSION_LIMIT': 'La limite quotidienne de dossiers est atteinte.',
+                                        'SOURCE_RATE_LIMIT': 'La limite horaire de cette source est atteinte.',
+                                        'SOURCE_MISSING': 'La source de cet envoi est absente ou invalide.',
+                                        'DAILY_CAP': 'Le plafond quotidien de préparation est atteint.',
+                                    }
+                                    response_status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG',
+                                                                            'SOURCE_MISSING') else 403
+                                    result = {'status': response_status, 'value': {'error': messages[error.code],
+                                              'error_code': error.code, 'error_field': error.field}}
+                                else:
+                                    result = {'status': 403, 'value': {'error': 'Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier ou demandez au responsable de vérifier son autorisation.'}}
                             except (ConflictError, BudgetError):
                                 result = {'status': 409, 'value': {'error': 'Action refusée : révision périmée, opération en attente ou budget indisponible. Consultez le dossier courant.'}}
                             except (ValueError, KeyError, TypeError, sqlite3.Error):

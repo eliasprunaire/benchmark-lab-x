@@ -166,7 +166,8 @@ class CustomNeedEngineTests(unittest.TestCase):
                 task = Path(__file__).parents[1].joinpath('benchmark', 'task.md').read_text()
                 mail = Path(__file__).parents[1].joinpath('benchmark', 'mail-thread.md').read_text()
                 body = dict(dossier_id='atelier-boisclair-custom', action_id='atelier-boisclair-create',
-                            request='Synthétiser le fil fictif Atelier Boisclair', csrf_token=home['csrf_token'])
+                            request='Synthétiser le fil fictif Atelier Boisclair', csrf_token=home['csrf_token'],
+                            source_sha256='a' * 64)
                 code, _, _, operation = prep.dispatch(
                     store, 'POST', '/preparation/dossiers', token, body, 'a' * 40, True)
                 self.assertEqual(202, code)

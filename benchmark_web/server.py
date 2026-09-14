@@ -7,9 +7,11 @@ from base64 import b64encode
 from hashlib import sha256
 from http.cookies import SimpleCookie, CookieError
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import ipaddress
 import json
 from pathlib import Path
 import re
+import secrets
 from urllib.parse import parse_qs
 
 from benchmark.runtime import encode
@@ -19,9 +21,25 @@ from benchmark.storage import _unique_object
 from . import views
 
 
+def _source_fingerprint(headers, client_address, salt):
+    value = headers.get('X-Real-IP')
+    if value is None:
+        forwarded = headers.get('X-Forwarded-For')
+        value = forwarded.split(',', 1)[0] if forwarded is not None else client_address[0]
+    try:
+        address = ipaddress.ip_address(value.strip())
+        if address.version == 6:
+            address = ipaddress.ip_network(str(address) + '/64', strict=False).network_address
+        normalized = str(address)
+    except (AttributeError, ValueError):
+        normalized = 'invalide'
+    return sha256(salt + b'\n' + normalized.encode()).hexdigest()
+
+
 def serve_web(address, port, public, socket_path, source):
     public = Path(public)
     views.SOURCE_SHA = source or ''
+    source_salt = secrets.token_bytes(32)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = 'Benchmark'
@@ -91,6 +109,17 @@ def serve_web(address, port, public, socket_path, source):
                             body['revision'] = int(body['revision'])
                     else:
                         raise ValueError('Type de formulaire inconnu')
+                    submission = (self.path == '/preparation/dossiers' or
+                                  re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/messages', self.path))
+                    if submission and body.get('website'):
+                        value = {'kind': 'honeypot_ack'}
+                        self.respond(200, value if wants_json else views.render(value, ''),
+                                     'application/json' if wants_json else 'text/html; charset=utf-8')
+                        return
+                    if submission:
+                        body = dict(body)
+                        body.pop('website', None)
+                        body['source_sha256'] = _source_fingerprint(self.headers, self.client_address, source_salt)
                 result = preparation_request(socket_path, 'GET' if self.command == 'HEAD' else self.command,
                                              self.path, token, body)
                 headers = {}
@@ -107,7 +136,7 @@ def serve_web(address, port, public, socket_path, source):
                 elif wants_json:
                     self.respond(result['status'], result['value'], headers=headers)
                 else:
-                    csrf = ''
+                    csrf = body.get('csrf_token', '') if type(body) is dict else ''
                     view_path = self.path
                     if result['status'] < 400:
                         home = preparation_request(socket_path, 'GET', '/preparation', token)
@@ -118,6 +147,9 @@ def serve_web(address, port, public, socket_path, source):
                             target = '/preparation/dossiers/' + result['value']['dossier_id']
                             result = preparation_request(socket_path, 'GET', target, token)
                             view_path = target
+                    elif self.command == 'POST' and type(body) is dict:
+                        result['value']['form'] = {key: value for key, value in body.items()
+                                                   if key not in ('csrf_token', 'source_sha256', 'website')}
                     page = views.render(result['value'], csrf, view_path, error=result['status'] >= 400)
                     script = views.COMPARISON_FOCUS_SCRIPT if result['value'].get('kind') == 'comparison' else None
                     self.respond(result['status'], page, 'text/html; charset=utf-8', headers, script=script)
