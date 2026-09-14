@@ -8,6 +8,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
+import hmac
 import json
 import os
 from pathlib import Path
@@ -107,6 +108,7 @@ for _table in _TABLES:
 
 _MANIFEST = ('campaign_id', 'version', 'contract_sha256', 'cases', 'panel',
              'conditions', 'plan', 'attempt_policy', 'cost_basis')
+_MANIFEST_OPTIONAL = ('financial_cost_policy', 'recovery_of', 'official_fallback', 'funding')
 _CONFIGURATION = ('id', 'provider', 'model', 'revision', 'access', 'channel_id',
                   'route', 'parameters', 'effort', 'required_observations')
 _AUTHORITY = ('actor', 'authority_id', 'purpose', 'manifest_sha256', 'execution_authority',
@@ -130,7 +132,7 @@ def initialize(data):
         connection = store._connection_checked()
         with _transaction(connection, write=True):
             layout = storage._check_schema(connection)
-            if layout in ('s4', 's5'):
+            if layout in ('s4', 's5', 's6'):
                 return
             if layout != 's3':
                 raise SchemaError('Extension explicite sur une base S3 requise')
@@ -185,7 +187,9 @@ def _entries(values, fields, label):
 
 
 def _manifest(value, contract):
-    _fields(value, _MANIFEST + tuple(k for k in ('financial_cost_policy', 'recovery_of', 'official_fallback') if k in value), 'manifest')
+    _fields(value, _MANIFEST + tuple(k for k in _MANIFEST_OPTIONAL if k in value), 'manifest')
+    if value.get('funding', 'operator') not in ('operator', 'requester'):
+        raise ValueError('Financement de campagne inconnu')
     if value.get('financial_cost_policy', 'require_observed') not in ('require_observed', 'retain_reserve'):
         raise ValueError('Politique financière inconnue')
     if 'recovery_of' in value:
@@ -223,6 +227,10 @@ def _manifest(value, contract):
             raise ValueError('Révision et canal exacts requis')
         if any(config[field] in (None, 'INCONNU') for field in required):
             raise ValueError('Identité requise inconnue')
+    if value.get('funding') == 'requester':
+        from .openrouter_preparation import ENDPOINT
+        if any(config['channel_id'] != ENDPOINT for config in value['panel']):
+            raise ValueError('Financement demandeur réservé au canal OpenRouter')
     conditions = value['conditions']
     _fields(conditions, ('pi', 'packages', 'tools', 'skills', 'context_sha256', 'defaults', 'environment', 'frozen_at'), 'conditions')
     pi = conditions['pi']
@@ -266,7 +274,7 @@ def _approved(store, connection, fingerprint, *, current=False):
 
 def create(store, manifest):
     value = deepcopy(manifest)
-    _fields(value, _MANIFEST + tuple(k for k in ('financial_cost_policy', 'recovery_of', 'official_fallback') if k in value), 'manifest')
+    _fields(value, _MANIFEST + tuple(k for k in _MANIFEST_OPTIONAL if k in value), 'manifest')
     _intact(store)
     connection = connection_for(store)
     with _transaction(connection, write=True):
@@ -752,13 +760,20 @@ def launch_view(store, session_id, dossier_id, campaign_id):
                     estimate=grant['estimate'] if grant else None)
 
 
-def launch(store, session_id, dossier_id, campaign_id, body):
+def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=None, access_transport=None):
     from .preparation import owner, Denied
     _fields(body, ('manifest_sha256', 'admission_id', 'confirm'), 'launch')
     if body['confirm'] != 'yes':
         raise ValueError('Confirmation requise')
     _intact(store)
     connection = connection_for(store)
+    with _transaction(connection):
+        owner(connection, session_id, dossier_id)
+        preview = _inspect(store, connection, campaign_id)
+    if (not preview['attempts']
+            and preview['manifest'].get('funding', 'operator') == 'requester'):
+        from .provider_access import key_for_session
+        key_for_session(store, session_id, access_secret, access_transport)
     with _transaction(connection, write=True):
         owner(connection, session_id, dossier_id)
         snapshot = _inspect(store, connection, campaign_id)
@@ -773,6 +788,10 @@ def launch(store, session_id, dossier_id, campaign_id, body):
         # Existing intentions are a receipt, never permission to redispatch a worker
         if snapshot['attempts']:
             return []
+        if (snapshot['manifest'].get('funding', 'operator') == 'requester'
+                and connection.execute("SELECT status FROM s2_provider_access WHERE session_id=?",
+                                       (session_id,)).fetchone() != ('connected',)):
+            raise Denied('ACCESS_REQUIRED')
         _eligible(store, connection, snapshot, admission['authority'], admission['evidence'])
         attempts = []
         for cell in snapshot['manifest']['attempt_policy']['order']:
@@ -783,10 +802,12 @@ def launch(store, session_id, dossier_id, campaign_id, body):
         return attempts
 
 
-def execute_launch(data, attempts, transport=None, *, transport_factory=None):
+def execute_launch(data, attempts, transport=None, *, transport_factory=None,
+                   access_secret=None, access_transport=None):
     for attempt_id in attempts:
         try:
-            execute(data, attempt_id, transport, transport_factory=transport_factory)
+            execute(data, attempt_id, transport, transport_factory=transport_factory,
+                    access_secret=access_secret, access_transport=access_transport)
         except (ValueError, ConflictError, BudgetError, IntegrityError):
             # An interruption leaves the remaining intentions for private inspection
             break
@@ -838,7 +859,8 @@ def close_admission(store, reason):
         connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE admission_id IS NOT NULL', (reason, _now()))
 
 
-def execute(data, attempt_id, transport=None, *, transport_factory=None):
+def execute(data, attempt_id, transport=None, *, transport_factory=None,
+            access_secret=None, access_transport=None):
     """One explicit worker, one durable boundary, one callback; never an implicit retry."""
     if not callable(transport) and not callable(transport_factory):
         raise ValueError('Transport injecté par le lanceur de confiance requis')
@@ -847,6 +869,19 @@ def execute(data, attempt_id, transport=None, *, transport_factory=None):
     with closing(storage.Store(data)) as store, worker_lock(store, shared=True):
         _intact(store)
         connection = connection_for(store)
+        requester_key = None
+        with _transaction(connection):
+            row = connection.execute('SELECT campaign_id FROM s4_attempts WHERE operation_id=?',
+                                     (attempt_id,)).fetchone()
+            if row is None:
+                raise KeyError(attempt_id)
+            preview = _inspect(store, connection, row[0])
+            if preview['manifest'].get('funding', 'operator') == 'requester':
+                session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
+                                                (preview['task']['dossier_id'],)).fetchone()[0]
+        if preview['manifest'].get('funding', 'operator') == 'requester':
+            from .provider_access import key_for_session
+            requester_key = key_for_session(store, session_id, access_secret, access_transport)
         with _transaction(connection, write=True):
             row = connection.execute('SELECT campaign_id FROM s4_attempts WHERE operation_id=?', (attempt_id,)).fetchone()
             if row is None:
@@ -868,8 +903,19 @@ def execute(data, attempt_id, transport=None, *, transport_factory=None):
             closed_request = _transport_view(request)
             closed_operation = _transport_operation(attempt['operation'])
             if transport_factory is not None:
-                transport = transport_factory(
-                    closed_request['requested_configuration']['channel_id'])
+                if snapshot['manifest'].get('funding', 'operator') == 'requester':
+                    from .provider_access import decrypt
+                    row = connection.execute("SELECT key_cipher FROM s2_provider_access WHERE session_id=? AND status='connected'",
+                                             (session_id,)).fetchone()
+                    if (row is None or not hmac.compare_digest(
+                            decrypt(access_secret, row[0]).encode(), requester_key.encode())):
+                        from .preparation import Denied
+                        raise Denied('ACCESS_REQUIRED')
+                    transport = transport_factory(
+                        closed_request['requested_configuration']['channel_id'], requester_key)
+                else:
+                    transport = transport_factory(
+                        closed_request['requested_configuration']['channel_id'])
             if not callable(transport):
                 raise ValueError('Transport injecté par le lanceur de confiance requis')
             if hasattr(transport, 'prepare'):

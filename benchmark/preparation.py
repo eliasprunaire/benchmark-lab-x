@@ -727,7 +727,8 @@ def verify_preparation(store, connection):
         encode(json.loads(raw, object_pairs_hook=_unique_object))
 
 
-def dispatch(store, method, path, token, body, source, transport, *, candidate_transport=None, presentation=None):
+def dispatch(store, method, path, token, body, source, transport, *, candidate_transport=None,
+             access_secret=None, access_transport=None, presentation=None):
     """Executor-side authorization: HTTP fields can never claim an operator role."""
     if method == 'GET' and path == '/preparation':
         session_id, csrf, token = session(store, token, create=True)
@@ -737,6 +738,15 @@ def dispatch(store, method, path, token, body, source, transport, *, candidate_t
                      'dossiers': [{'dossier_id': d, 'revision': r,
                                    'need': store.get_dossier(d, r)['request']} for d, r in rows]}, token, None
     session_id, csrf, _ = session(store, token)
+    access_paths = ('/preparation/access', '/preparation/access/start',
+                    '/preparation/access/callback', '/preparation/access/disconnect')
+    if method == 'GET' and path == '/preparation/access':
+        from . import provider_access
+        if not provider_access.available(store):
+            return 503, {'connected': False, 'status': 'unavailable',
+                         'error_code': 'ACCESS_UNAVAILABLE'}, None, None
+        value = provider_access.view(store, session_id, access_secret, access_transport)
+        return (200 if value['status'] != 'unavailable' else 503), value, None, None
     if method == 'GET':
         from . import restitution
         parsed = urlsplit(path)
@@ -771,6 +781,24 @@ def dispatch(store, method, path, token, body, source, transport, *, candidate_t
         if type(supplied) is not str or not hmac.compare_digest(supplied.encode(), csrf.encode()):
             raise Denied('Protection CSRF requise')
         body = {key: value for key, value in body.items() if key != 'csrf_token'}
+    if path in access_paths:
+        from . import provider_access
+        unavailable = access_secret is None or not provider_access.available(store)
+        if unavailable:
+            return 503, {'connected': False, 'status': 'unavailable',
+                         'error_code': 'ACCESS_UNAVAILABLE'}, None, None
+        if method == 'POST' and path == '/preparation/access/start':
+            _fields(body, ('callback_url',), 'access start')
+            return 200, provider_access.start(store, session_id, access_secret,
+                                               body['callback_url']), None, None
+        if method == 'POST' and path == '/preparation/access/callback':
+            _fields(body, ('code',), 'access callback')
+            return 200, provider_access.callback(store, session_id, access_secret, body['code'],
+                                                  access_transport), None, None
+        if method == 'POST' and path == '/preparation/access/disconnect':
+            _fields(body, (), 'access disconnect')
+            return 200, provider_access.disconnect(store, session_id, access_secret), None, None
+        raise Denied('Action inaccessible')
     launch_route = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/campaigns/([A-Za-z0-9_-]{1,128})/(conditions|start)', path)
     if launch_route:
         from . import campaigns
@@ -778,7 +806,8 @@ def dispatch(store, method, path, token, body, source, transport, *, candidate_t
         if method == 'POST' and action == 'start':
             if not callable(candidate_transport):
                 raise Denied('Acquisition indisponible')
-            attempts = campaigns.launch(store, session_id, dossier_id, campaign_id, body)
+            attempts = campaigns.launch(store, session_id, dossier_id, campaign_id, body,
+                                        access_secret=access_secret, access_transport=access_transport)
             value = campaigns.launch_view(store, session_id, dossier_id, campaign_id)
             value['can_launch'] = False
             return 202, value, None, {'candidate_attempts': attempts} if attempts else None

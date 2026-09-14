@@ -206,9 +206,9 @@ def candidate_transport_factory(package, node, openrouter_key):
         'tokenhub': os.environ.pop('TENCENT_TOKENHUB_BASE_URL', ''),
     }
 
-    def resolve(channel_id=ENDPOINT):
+    def resolve(channel_id=ENDPOINT, api_key=None):
         if channel_id == ENDPOINT:
-            return PiOpenRouter(openrouter_key, package, node)
+            return PiOpenRouter(api_key if api_key is not None else openrouter_key, package, node)
         kind = kind_for_endpoint(channel_id)
         if kind is None:
             raise ValueError('Canal candidat admis inconnu')
@@ -224,7 +224,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     campaign_actions = ('create-campaign', 'inspect-campaign', 'admit-campaign', 'stop-campaign', 'resume-campaign')
     campaign_actions += ('inspect-attempt-status',)
-    parser.add_argument('action', choices=campaign_actions + ('reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'admit-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
+    parser.add_argument('action', choices=campaign_actions + ('reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'admit-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
     parser.add_argument('--data', type=Path)
     parser.add_argument('--authority', type=Path)
     parser.add_argument('--allow-owner-launch', action='store_true', help='Autoriser explicitement le propriétaire à déclencher les cellules admises')
@@ -294,6 +294,8 @@ def main(argv=None):
             else:
                 if args.data is None:
                     raise ValueError('Données requises')
+                from .provider_access import OpenRouterAccess, parse_secret
+                access_secret = parse_secret(os.environ.pop('BENCHMARK_ACCESS_SECRET', ''))
                 transport = None
                 candidate_factory = None
                 profile = None
@@ -312,6 +314,7 @@ def main(argv=None):
                 if args.preparation_assistant is not None:
                     transport = OpenRouterPreparation(key, profile)
                 serve_executor(args.data, args.socket, release_identity(), transport=transport, candidate_transport_factory=candidate_factory,
+                               access_secret=access_secret, access_transport=OpenRouterAccess(),
                                presentation=import_module(args.presentation))
             return 0
         if args.data is None:
@@ -332,6 +335,10 @@ def main(argv=None):
             from .evaluation import initialize as initialize_evaluations
             initialize_evaluations(args.data)
             result = {'state': 'EVALUATIONS_INITIALIZED_REAL_JUDGMENT_CLOSED'}
+        elif args.action == 'initialize-provider-access':
+            from .provider_access import initialize as initialize_provider_access
+            initialize_provider_access(args.data)
+            result = {'state': 'PROVIDER_ACCESS_INITIALIZED'}
         elif args.action == 'verify-backup':
             result = verify_backup(args.data)
         elif args.action in ('backup', 'restore'):

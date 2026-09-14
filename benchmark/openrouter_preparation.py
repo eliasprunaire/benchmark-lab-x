@@ -337,13 +337,19 @@ class OpenRouterPreparation:
         return result
 
     def __init__(self, api_key, profile=None):
-        if (type(api_key) is not str or not api_key or not api_key.isascii()
-                or any(character.isspace() or ord(character) < 32 for character in api_key)):
-            raise ValueError('Clé OpenRouter explicite requise côté exécuteur')
+        self._validate_key(api_key)
         self._api_key = api_key
         self._profile = frozen_profile(profile)
 
-    def prepare(self, operation, request):
+    @staticmethod
+    def _validate_key(api_key):
+        if (type(api_key) is not str or not api_key or not api_key.isascii()
+                or any(character.isspace() or ord(character) < 32 for character in api_key)):
+            raise ValueError('Clé OpenRouter explicite requise côté exécuteur')
+
+    def prepare(self, operation, request, api_key=None):
+        key = self._api_key if api_key is None else api_key
+        self._validate_key(key)
         requested = operation['requested_configuration']
         expected = configuration(requested.get('reservation_estimate'), self._profile)
         if ('reserve_usd' not in expected or requested != expected
@@ -354,37 +360,41 @@ class OpenRouterPreparation:
         content = self.content(request)
         wire = encode({'model': self._profile['model'], **self._profile['parameters'], 'messages': [
             {'role': 'system', 'content': self._profile['system']}, {'role': 'user', 'content': encode(content)}]})
-        if len(wire.encode()) > self._profile['max_request_bytes'] or self._api_key in wire:
+        if len(wire.encode()) > self._profile['max_request_bytes'] or key in wire:
             raise ValueError('Requête hors limites')
         self._wire = wire
         self._wire_sha256 = sha256(wire.encode()).hexdigest()
+        self._key_sha256 = sha256(key.encode()).hexdigest()
         return wire
 
-    def __call__(self, operation, request):
+    def __call__(self, operation, request, api_key=None):
+        key = self._api_key if api_key is None else api_key
+        self._validate_key(key)
         if operation['state'] != 'EMISSION_POSSIBLE':
             raise ValueError('Intention HTTP persistée requise')
         if operation['requested_configuration'].get('outgoing_format') != outgoing.FORMAT:
             raise ValueError('Ancienne intention : nouvelle préparation requise')
         wire = operation.get('conserved_wire')
         if (type(wire) is not str or getattr(self, '_wire_sha256', None) is None
-                or sha256(wire.encode()).hexdigest() != self._wire_sha256 or self._api_key in wire):
+                or sha256(wire.encode()).hexdigest() != self._wire_sha256 or key in wire
+                or sha256(key.encode()).hexdigest() != self._key_sha256):
             raise ValueError('Corps préparé divergent')
         expected_models = operation['requested_configuration']['model_identities']
         named_providers = {row['provider_name'] for row in operation['requested_configuration']['reservation_estimate']['endpoints']}
         authorized = providers(self._profile)
         status, safe_headers, raw, complete, started, clock = post(
-            self._api_key, wire, timeout=self._profile['timeout_seconds'],
+            key, wire, timeout=self._profile['timeout_seconds'],
             max_response_bytes=self._profile['max_response_bytes'])
         # A reflected credential cannot enter private receipts either
-        redacted = self._api_key.encode() in raw
+        redacted = key.encode() in raw
         if redacted:
-            raw = raw.replace(self._api_key.encode(), b'[REDACTED_CREDENTIAL]')
+            raw = raw.replace(key.encode(), b'[REDACTED_CREDENTIAL]')
         document, result, incident = None, None, 'UNUSABLE_RESPONSE'
         try:
             parsed = json.loads(raw, object_pairs_hook=_unique_object, parse_float=str)
             encode(parsed)
             document = parsed
-            if self._api_key in encode(document):
+            if key in encode(document):
                 redacted = True
             if status != 200 or not complete or redacted or document.get('model') not in expected_models:
                 raise ValueError('Réponse non attribuable')
@@ -415,7 +425,7 @@ class OpenRouterPreparation:
                 raise ValueError('Réponse incomplète ou appel outil')
             result = json.loads(message['content'], object_pairs_hook=_unique_object)
             encode(result)
-            if self._api_key in encode(result):
+            if key in encode(result):
                 redacted = True
                 raise ValueError('Réponse confidentielle')
             if type(result) is dict and operation['phase'] != 'judgment':

@@ -214,6 +214,18 @@ python3 -B -m benchmark.runtime executor --data /chemin/prive/benchmark --socket
 
 `OPENROUTER_API_KEY` est injectée uniquement dans l’environnement de cet exécuteur par le mécanisme privé de l’opérateur, jamais dans la commande, l’autorité, le navigateur ou l’environnement du web. Le lanceur la retire de son environnement après lecture. Une clé absente ou invalide donne `78 / HOLD` sans connexion. L’assistant de préparation reste limité à ce transport OpenRouter ; les transports candidats et leurs secours sont raccordés séparément. Sans sélection explicite de l’assistant de préparation, son transport est absent ; le démarrage ferme toujours l’admission.
 
+## Accès OpenRouter délégué par session
+
+L’extension S6 s’ajoute explicitement après S5, sans migration implicite :
+
+```sh
+python3 -B -m benchmark.runtime initialize-provider-access --data /chemin/prive/benchmark
+```
+
+`BENCHMARK_ACCESS_SECRET` contient exactement 32 octets en hexadécimal et est retiré de l’environnement au démarrage de l’exécuteur. Son absence laisse l’exécuteur disponible mais ferme les routes d’accès. Le verifier PKCE et la clé reçue sont chiffrés au repos par un flux HMAC-SHA256 authentifié ; cette protection limite la lecture directe de la base, mais ne protège pas contre un exécuteur compromis. Les événements d’échange et de vérification ne conservent que le corps expurgé. Déconnexion, reconnexion et expiration suppriment ensemble l’accès et ses événements.
+
+Une campagne avec `funding: "requester"` exige l’accès `connected` de la session propriétaire avant toute réservation. Sa clé est déchiffrée uniquement dans l’exécuteur et fournie au transport candidat pour l’appel concerné. Le manifeste et son empreinte tracent ce financement sans élargir le schéma fermé des reçus. L’absence de `funding` conserve le financement opérateur historique.
+
 Le profil de production utilise `openai/gpt-6-astra`, sa révision `openai/gpt-6-astra-20260903`, `reasoning={"effort":"medium"}`, `max_tokens=16384`, `stream=false` et `response_format={"type":"json_object"}`. Il limite la route à l’endpoint `openai`, sans fallback. Le relevé public du 14 septembre 2026 annonce pour cet endpoint les paramètres requis. L’admission doit être régénérée avec la configuration du runtime livré ; les anciennes opérations restent intactes. Un message système précède le contexte S2 exact.
 
 Le profil historique GLM conserve ses paramètres et sa route native OpenRouter dans `provider.only=["modal/fp8","coreweave/fp8","novita/fp8"]`, avec le même `order`, `allow_fallbacks=true` et `require_parameters=true`. Il n’est plus le profil documenté par défaut. Le produit envoie une seule requête HTTP, sans boucle locale ni recherche d’une autre réponse après succès ; aucun proxy d’environnement ou autre canal n’est utilisé.
@@ -568,7 +580,7 @@ Chaque configuration utilise `access: "API"`, `channel_id: "https://openrouter.a
 
 Le bloc `provider` contient `only`, `order` (la même liste ordonnée), `allow_fallbacks` et `require_parameters: true`. Le manifeste décide les fournisseurs permis et l’autorisation de secours ; le transport ne les choisit pas. OpenRouter peut essayer les routes autorisées dans un même échange, selon sa [règle native de routage](https://openrouter.ai/docs/guides/routing/provider-selection). Aucun retry Python ou Pi n’est ajouté. Les [métadonnées de routage](https://openrouter.ai/docs/guides/features/router-metadata) sont conservées ; une route ou un effort non observé reste inconnu. Une transformation rapportée par le pipeline entraîne `HARNESS_ERROR` et conserve les octets reçus.
 
-`reservation.json` contient exactement `campaign_id`, `cell_id`, `attempt_id`. `tentative.json` contient `campaign_id` et `attempt_id`. Le contrat S3 doit déjà être qualifié et approuvé, le manifeste créé, le budget USD enregistré et la cellule admise sous les autorités d’exécution, de candidat et de budget. La préparation vérifie les empreintes avant la frontière d’émission. La commande d’exécution reçoit `OPENROUTER_API_KEY` dans son environnement privé ; elle ne reçoit pas la clé en argument et ne la transmet pas à Pi.
+`reservation.json` contient exactement `campaign_id`, `cell_id`, `attempt_id`. `tentative.json` contient `campaign_id` et `attempt_id`. Le contrat S3 doit déjà être qualifié et approuvé, le manifeste créé, le budget USD enregistré et la cellule admise sous les autorités d’exécution, de candidat et de budget. La préparation vérifie les empreintes avant la frontière d’émission. Une campagne financée par l’opérateur reçoit `OPENROUTER_API_KEY` dans l’environnement privé de l’exécuteur ; une campagne `funding: "requester"` utilise l’accès chiffré de sa session. Aucune de ces clés n’entre dans un argument ni dans Pi.
 
 Une tentative reçue n’est pas rejouée. Un problème après réception conserve le corps HTTP privé, le coût rapporté et l’incident, même si Pi n’a pas terminé correctement. L’absence de coût financier garde `UNKNOWN` et sa réservation selon les règles S4 existantes ; le budget de préparation n’est pas réutilisé. La sortie reste brute et les paramètres demandés ne deviennent pas des paramètres observés. Le code de sortie vaut 78 si la tentative n’est pas reçue ; un code 0 ne prouve ni sortie exploitable ni satisfaction du contrat, qui se lisent dans le reçu et le verdict.
 
