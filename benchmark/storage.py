@@ -455,6 +455,12 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
             if normalize(reconciliation) != normalize(objects):
                 raise SchemaError('unsupported cost reconciliation structure')
             rows = [row for row in rows if row[2] != 'cost_reconciliations']
+        catalogue = [row for row in rows if row[2] == 's2_model_catalogue']
+        if catalogue:
+            from .model_catalogue import schema_objects as catalogue_schema_objects
+            if _expected_schema(tuple(catalogue)) != _expected_schema(tuple(catalogue_schema_objects())):
+                raise SchemaError('structure du catalogue de modèles non prise en charge')
+            rows = [row for row in rows if row[2] != 's2_model_catalogue']
         # Compare all schema objects, including constraints and automatic indexes
         expected = [
             ("table", "dossier_revisions", "dossier_revisions", _SCHEMA[0]),
@@ -521,6 +527,8 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
                 raise SchemaError('unsupported provider access identity')
         if layout is None or (reconciliation and layout == 'canary'):
             raise SchemaError("unsupported storage schema structure")
+        if catalogue and layout not in ('s2', 's3', 's4', 's5', 's6'):
+            raise SchemaError('le catalogue de modèles exige un stockage S2 ou ultérieur')
         if connection.execute("PRAGMA journal_mode").fetchone()[0] != "delete":
             raise SchemaError("S1 requires the standard DELETE journal")
         if check_data:
