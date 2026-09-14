@@ -6,7 +6,7 @@ import json
 import unittest
 from unittest.mock import Mock, patch
 
-from benchmark_lab_x import campaigns as c, evaluation as e, pi_official as native, runtime, pi_openrouter as router, recovery
+from benchmark import campaigns as c, evaluation as e, pi_official as native, runtime, pi_openrouter as router, recovery
 from tests import test_private_comparison as private
 from tests.test_s4_regressions import inputs
 from tests.test_s5_regressions import findings

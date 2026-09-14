@@ -15,7 +15,9 @@ from urllib.parse import urlencode
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark_lab_x import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, service, storage
+from benchmark import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, service, storage
+from benchmark_web import projection, views
+from benchmark_web.server import serve_web
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 from tests.test_s4_regressions import inputs, manifest, response
 from tests.test_s5_regressions import RESPONSIBLE, EVALUATION_AUTHORITY, findings
@@ -108,6 +110,11 @@ def build(data, criterion_ids=('duration', 'present')):
         raise
 
 
+def executor_with_presentation(data, sock, source):
+    """Racine de composition des tests : la projection publique est injectée dans l'exécuteur"""
+    service.serve_executor(data, sock, source, presentation=projection)
+
+
 class S6Regressions(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(prefix='s6-reg-')
@@ -128,7 +135,7 @@ class S6Regressions(unittest.TestCase):
         return r.comparison(self.store, self.sid, 'fixture', 'comparison', query=query)
 
     def preview(self, pieces=None):
-        return r.preview(self.store, self.sid, 'fixture', 'comparison', piece_ids=[] if pieces is None else pieces)
+        return r.preview(self.store, self.sid, 'fixture', 'comparison', piece_ids=[] if pieces is None else pieces, presentation=projection)
 
     def approval(self, bundle):
         return dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
@@ -151,7 +158,7 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual(view['population'], filtered['population'])
         self.assertEqual(view['coverage'], filtered['coverage'])
         self.assertEqual('INCOMPLETE', filtered['economic_status'])
-        self.assertIn('Aucune ligne ne correspond', p.render(filtered, '').decode())
+        self.assertIn('Aucune ligne ne correspond', views.render(filtered, '').decode())
         empty = r.comparison(self.store, self.sid, 'fixture', 'empty')
         self.assertEqual([], empty['rows'])
         self.assertEqual([], empty['population'])
@@ -164,16 +171,16 @@ class S6Regressions(unittest.TestCase):
         query = '?case=notes&sort=cost&direction=asc&obligation=O1%3AFAIL'
         code, value, cookie, start = p.dispatch(self.store, 'GET', self.base + query, self.token, None, 'a' * 40, False)
         self.assertEqual((200, None, None), (code, cookie, start))
-        comparison_html = p.render(value, '')
+        comparison_html = views.render(value, '')
         markup = Markup(comparison_html)
         self.assertEqual([('script', {})], [(tag, attrs) for tag, attrs in markup.tags if tag == 'script'])
         self.assertFalse(any(k.startswith('on') for _, attrs in markup.tags for k in attrs))
-        self.assertEqual(p.COMPARISON_FOCUS_SCRIPT.encode(), comparison_html.split(b'<script>')[1].split(b'</script>')[0])
+        self.assertEqual(views.COMPARISON_FOCUS_SCRIPT.encode(), comparison_html.split(b'<script>')[1].split(b'</script>')[0])
         self.assertEqual('UYVwhfSrYOHss9ut/0sNyZev/f+WGn1ovpct7BS3gkA=',
-                         b64encode(sha256(p.COMPARISON_FOCUS_SCRIPT.encode()).digest()).decode())
+                         b64encode(sha256(views.COMPARISON_FOCUS_SCRIPT.encode()).digest()).decode())
         detail = next(link for link in markup.links if '/attempts/attempt-error' in link)
         code, value, _, _ = p.dispatch(self.store, 'GET', detail, self.token, None, 'a' * 40, False)
-        raw = p.render(value, '')
+        raw = views.render(value, '')
         self.assertEqual(200, code)
         self.assertIn(self.first['evaluation_id'].encode(), raw)
         self.assertIn(b'  &lt;script&gt;candidate()&lt;/script&gt;\n  source error\n', raw)
@@ -206,8 +213,8 @@ class S6Regressions(unittest.TestCase):
                     process.join()
 
         self.addCleanup(stop_children)
-        for target, args in ((service.serve_executor, (self.home / 'private', sock, 'a' * 40)),
-                             (service.serve_web, ('127.0.0.1', port, self.public, sock, 'a' * 40))):
+        for target, args in ((executor_with_presentation, (self.home / 'private', sock, 'a' * 40)),
+                             (serve_web, ('127.0.0.1', port, self.public, sock, 'a' * 40))):
             process = context.Process(target=target, args=args)
             process.start()
             children.append(process)
@@ -241,7 +248,7 @@ class S6Regressions(unittest.TestCase):
                     if path == self.base and accept == 'text/html':
                         expected += "; script-src 'sha256-UYVwhfSrYOHss9ut/0sNyZev/f+WGn1ovpct7BS3gkA='"
                         self.assertEqual(1, raw.count(b'<script>'))
-                        self.assertEqual(p.COMPARISON_FOCUS_SCRIPT.encode(), raw.split(b'<script>')[1].split(b'</script>')[0])
+                        self.assertEqual(views.COMPARISON_FOCUS_SCRIPT.encode(), raw.split(b'<script>')[1].split(b'</script>')[0])
                     elif accept == 'text/html':
                         self.assertFalse(any(tag == 'script' for tag, _ in Markup(raw).tags))
                     elif accept == 'text/plain':
@@ -280,7 +287,7 @@ class S6Regressions(unittest.TestCase):
         with self.assertRaises(p.Denied):
             self.preview(['unlinked'])
         with self.assertRaises(p.Denied):
-            r.preview(self.store, 'foreign', 'fixture', 'comparison', piece_ids=[])
+            r.preview(self.store, 'foreign', 'fixture', 'comparison', piece_ids=[], presentation=projection)
         self.assertFalse((self.public / 'active.json').exists())
 
     def test_browser_preview_is_private_selected_and_never_activates(self):
@@ -290,13 +297,13 @@ class S6Regressions(unittest.TestCase):
         before = {str(f.relative_to(self.public)): f.read_bytes() for f in self.public.rglob('*') if f.is_file()}
         for pieces in ([], [pid]):
             path = self.base + '/preview' + ('?' + urlencode([('piece', p) for p in pieces]) if pieces else '')
-            code, value, cookie, start = p.dispatch(self.store, 'GET', path, self.token, None, 'a' * 40, False)
+            code, value, cookie, start = p.dispatch(self.store, 'GET', path, self.token, None, 'a' * 40, False, presentation=projection)
             self.assertEqual((200, None, None), (code, cookie, start))
             self.assertEqual('projection_preview', value['kind'])
             bundle = self.preview(pieces)
             self.assertEqual(bundle['projection_sha256'], value['projection_sha256'])
             self.assertEqual(json.loads(bundle['manifest']), value['manifest'])
-            raw = p.render(value, '')
+            raw = views.render(value, '')
             self.assertIn('Aperçu privé · NON APPROUVÉ'.encode(), raw)
             self.assertNotIn(b'candidate()', raw)
             parsed = Markup(raw)
@@ -306,12 +313,12 @@ class S6Regressions(unittest.TestCase):
             for link in links:
                 self.assertEqual(self.store.read_piece(pid), p.dispatch(self.store, 'GET', link, self.token, None, 'a' * 40, False)[1])
             with self.assertRaises(p.Denied):
-                p.dispatch(self.store, 'GET', path, None, None, 'a' * 40, False)
+                p.dispatch(self.store, 'GET', path, None, None, 'a' * 40, False, presentation=projection)
             with self.assertRaises(p.Denied):
-                r.preview_view(self.store, 'foreign', 'fixture', 'comparison', piece_ids=pieces)
+                r.preview_view(self.store, 'foreign', 'fixture', 'comparison', piece_ids=pieces, presentation=projection)
         for query in ('?piece=unlinked', '?piece=', '?extra=1', '?piece=' + pid + '&piece=' + pid):
             with self.subTest(query=query), self.assertRaises(ValueError):
-                p.dispatch(self.store, 'GET', self.base + '/preview' + query, self.token, None, 'a' * 40, False)
+                p.dispatch(self.store, 'GET', self.base + '/preview' + query, self.token, None, 'a' * 40, False, presentation=projection)
         self.assertEqual(before, {str(f.relative_to(self.public)): f.read_bytes() for f in self.public.rglob('*') if f.is_file()})
 
     def test_exact_approval_and_files_no_partial_activation(self):
@@ -412,7 +419,7 @@ class CriterionNames(unittest.TestCase):
                         query=dict(case='notes', sort=column['id'], direction='asc'))
                     self.assertEqual(order, [row['configuration_id'] for row in result['rows']])
                 self.assertEqual('attempt_detail', r.detail(store, sid, 'fixture', 'comparison', 'attempt-error')['kind'])
-                self.assertIn(b'index.html', r.preview(store, sid, 'fixture', 'comparison', piece_ids=[])['manifest'])
+                self.assertIn(b'index.html', r.preview(store, sid, 'fixture', 'comparison', piece_ids=[], presentation=projection)['manifest'])
                 self.assertEqual(before, list(store._connection.iterdump()))
             finally:
                 store.close()

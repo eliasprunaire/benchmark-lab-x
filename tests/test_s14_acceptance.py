@@ -7,13 +7,13 @@ import json
 import unittest
 from unittest.mock import Mock, patch
 
-from benchmark_lab_x import evaluation, outgoing, storage
-from benchmark_lab_x import openrouter_preparation as profiles
+from benchmark import evaluation, outgoing, storage
+from benchmark import openrouter_preparation as profiles
 from tests import test_s5_regressions as s5
 from tests.test_openrouter_preparation import estimate_for, SYNTHETIC_PROFILE
 
 try:
-    from benchmark_lab_x import judgment, openrouter_judgment
+    from benchmark import judgment, openrouter_judgment
 except ImportError:
     judgment = openrouter_judgment = None
 

@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from benchmark_lab_x import campaigns as c, outgoing as out, storage, preparation as prep, evaluation as evaluation
+from benchmark import campaigns as c, outgoing as out, storage, preparation as prep, evaluation as evaluation
 from tests import test_openrouter_preparation as prep_fixture
 from tests.test_openrouter_preparation import result, http_body, assistant, NOTES, KEY, NEED, REFERENCE
 from tests import test_private_comparison as comparison_fixture

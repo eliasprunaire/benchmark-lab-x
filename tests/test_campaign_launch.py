@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from benchmark_lab_x import campaigns as c, preparation as p, qualification as q, storage
+from benchmark import campaigns as c, preparation as p, qualification as q, storage
 from tests.test_s3_regressions import fixture, specification, check, ACTOR, AUTHORITY
 from tests.test_s4_regressions import inputs, manifest, response
 
@@ -186,11 +186,11 @@ class BackendReadiness(CampaignLaunch):
 
     def test_runtime_loads_private_factory_without_emission(self):
         from unittest.mock import patch
-        from benchmark_lab_x import runtime
-        with patch('benchmark_lab_x.service.serve_executor') as server, \
-             patch('benchmark_lab_x.service.release_identity', return_value='a'*40), \
-             patch('benchmark_lab_x.pi_openrouter.identity'), \
-             patch('benchmark_lab_x.pi_openrouter.PiOpenRouter') as bridge, \
+        from benchmark import runtime
+        with patch('benchmark.service.serve_executor') as server, \
+             patch('benchmark.service.release_identity', return_value='a'*40), \
+             patch('benchmark.pi_openrouter.identity'), \
+             patch('benchmark.pi_openrouter.PiOpenRouter') as bridge, \
              patch.dict('os.environ', {'OPENROUTER_API_KEY':'fixture-not-a-real-key'}):
             result = runtime.main(['executor','--data',str(self.data),'--socket',str(self.data/'sock'),
                                    '--candidate-pi','--pi-package','/fixture/pi','--node','/fixture/node'])

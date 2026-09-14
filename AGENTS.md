@@ -57,7 +57,7 @@ Exécuter d'abord le test le plus proche du changement. Avant livraison d'un cha
 uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests
 ```
 
-Cette commande ne découvre pas la suite `benchmark_lab_x/test_demo.py`. Ne pas la présenter comme validation complète du moteur ; distinguer ses preuves macOS de celles réellement acquises sous Linux. Ne pas lancer un appel modèle pour compenser un test absent.
+Cette commande ne découvre pas la suite `benchmark/test_demo.py`. Ne pas la présenter comme validation complète du moteur ; distinguer ses preuves macOS de celles réellement acquises sous Linux. Ne pas lancer un appel modèle pour compenser un test absent.
 
 Pour un changement documentaire, vérifier aussi les liens, les chemins canoniques et l'absence de source concurrente. Ne pas déplacer dans la prose un contrôle que la CI peut garantir.
 

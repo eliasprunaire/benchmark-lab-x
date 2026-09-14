@@ -14,11 +14,11 @@ Depuis la racine du dépôt, sur macOS, avec Python 3 et le binaire Pi requis :
 
 ```bash
 mkdir -p -m 700 runs
-python3 -B -m benchmark_lab_x prepare --run-dir runs/ma-campagne --pi /chemin/reel/vers/pi
-python3 -B -m benchmark_lab_x collect --run-dir runs/ma-campagne --authority /chemin/authorization-s9.json
-python3 -B -m benchmark_lab_x review --run-dir runs/ma-campagne
-python3 -B -m benchmark_lab_x build --run-dir runs/ma-campagne --decisions /chemin/decisions.json --authority /chemin/authorization-s10.json
-python3 -B -m benchmark_lab_x show --run-dir runs/ma-campagne
+python3 -B -m benchmark prepare --run-dir runs/ma-campagne --pi /chemin/reel/vers/pi
+python3 -B -m benchmark collect --run-dir runs/ma-campagne --authority /chemin/authorization-s9.json
+python3 -B -m benchmark review --run-dir runs/ma-campagne
+python3 -B -m benchmark build --run-dir runs/ma-campagne --decisions /chemin/decisions.json --authority /chemin/authorization-s10.json
+python3 -B -m benchmark show --run-dir runs/ma-campagne
 ```
 
 `show` vérifie le sceau final et ouvre la page existante sans la régénérer. L’alternative directe est `open runs/ma-campagne/index.html`.
@@ -28,8 +28,8 @@ La page identifie la tâche par un brief (titre public, contexte, objectif, déc
 Après une évolution du rendu, `present` construit une nouvelle présentation locale depuis un run final scellé, sans modifier ses résultats ni relancer de candidat :
 
 ```bash
-python3 -B -m benchmark_lab_x present --source-run runs/ma-campagne --run-dir runs/ma-presentation
-python3 -B -m benchmark_lab_x show --run-dir runs/ma-presentation
+python3 -B -m benchmark present --source-run runs/ma-campagne --run-dir runs/ma-presentation
+python3 -B -m benchmark show --run-dir runs/ma-presentation
 ```
 
 ## Témoins d’autorité
@@ -83,7 +83,7 @@ Ces témoins documentent le format. Ils n’accordent aucune autorité réelle.
 
 ## Compatibilité et intégrité
 
-La commande courante est `python3 -B -m benchmark_lab_x`. Les nouveaux enregistrements utilisent le préfixe de schéma `benchmark-lab-x-`, suivi de leur objet et de leur version de format. Les exemples d’autorité ci-dessus correspondent à ces formats.
+La commande courante est `python3 -B -m benchmark`. Les nouveaux enregistrements utilisent le préfixe de schéma `benchmark-lab-x-`, suivi de leur objet et de leur version de format. Les exemples d’autorité ci-dessus correspondent à ces formats.
 
 Le contrat figé dans `campaign.json`, les données d’entrée et la carte du scénario conservent leurs octets et identifiants historiques. Les lecteurs `show` et `present` reconnaissent explicitement les anciens formats de résultats et de sceaux. `present` copie les résultats à l’identique dans une présentation distincte et conserve le lien au sceau source ; il ne convertit pas une campagne et ne change aucun verdict.
 
@@ -95,14 +95,14 @@ Le workflow [GitHub Pages](../.github/workflows/pages.yml) publie `pages/` lors 
 
 L’[ARD](../docs/ARD.md#3-pi-comme-frontière-constante) impose OpenRouter pour tous les appels modèles du produit : préparation, correction, jugement et candidats. Le secours officiel candidat explicitement autorisé suit les conditions décrites ci-dessous ; aucune substitution implicite de modèle n’est admise. Pi reste le harnais des candidats et doit utiliser OpenRouter ; le moteur historique le sélectionne déjà avec `--provider openrouter` et désactive le repli fournisseur. S4 fournit une interface à transport injecté ; le raccordement Pi/OpenRouter et le jugement opérateur sont décrits dans la section « Première comparaison privée » ci-dessous. S5 ne raccorde aucun modèle juge réel. Les contrats historiques et les outils de développement Graph/Codex restent hors de cette nouvelle règle produit.
 
-Le module `benchmark_lab_x.runtime` fournit une initialisation privée, la vérification de SQLite et des pièces, la maintenance, une sauvegarde cohérente et une restauration vers un nouvel emplacement. Ces interfaces sont distinctes du moteur historique ci-dessus. Les processus web et exécuteur sont fournis ci-dessous. Le candidat local ajoute le parcours fictif S2 décrit plus bas. Le raccordement local OpenRouter de préparation est décrit ci-dessous ; ses essais réels restent à autoriser et vérifier.
+Le module `benchmark.runtime` fournit une initialisation privée, la vérification de SQLite et des pièces, la maintenance, une sauvegarde cohérente et une restauration vers un nouvel emplacement. Ces interfaces sont distinctes du moteur historique ci-dessus. Les processus web et exécuteur sont fournis ci-dessous. Le candidat local ajoute le parcours fictif S2 décrit plus bas. Le raccordement local OpenRouter de préparation est décrit ci-dessous ; ses essais réels restent à autoriser et vérifier.
 
 Avec Python 3.12 ou supérieur, le répertoire parent des données doit exister. L’initialisation crée son emplacement privé ou utilise le répertoire vide préparé par Ansible sous le compte de service. Elle refuse tout emplacement contenant déjà des données :
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime initialize --data /chemin/prive/benchmark
-python3 -B -m benchmark_lab_x.runtime verify --data /chemin/prive/benchmark
-python3 -B -m benchmark_lab_x.runtime status --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime initialize --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime verify --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime status --data /chemin/prive/benchmark
 ```
 
 Ces commandes n’émettent aucun appel modèle. Les pièces et les révisions de dossier sont immuables. Une empreinte divergente, une pièce orpheline, une référence dangereuse ou un schéma inconnu provoque un refus. La bibliothèque S1 conserve les montants en texte décimal exact, les intentions, les réservations et les reçus. Elle persiste l’état `EMISSION_POSSIBLE` avant le transport. Elle ne fournit pas encore le transport ni l’interface publique d’autorisation.
@@ -110,11 +110,11 @@ Ces commandes n’émettent aucun appel modèle. Les pièces et les révisions d
 Sans sélection opérateur de l’assistant, le runtime ne fournit aucun transport. Sur une base S1 seule, `admission` reste faux. L’extension explicite S2 permet une admission opérateur ; `maintenance` la ferme durablement. Même avec cette admission configurée, l’absence de transport interdit tout appel. `quiescence` et `backup` refusent les opérations S1 encore en `EMISSION_POSSIBLE`. Après arrêt du processus, les effets inconnus sont conservés en `AMBIGUOUS` ; ils restent sauvegardables et bloquent les nouveaux appels dépendants dans S1 :
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime maintenance --data /chemin/prive/benchmark
-python3 -B -m benchmark_lab_x.runtime quiescence --data /chemin/prive/benchmark
-python3 -B -m benchmark_lab_x.runtime backup --data /chemin/prive/benchmark --destination /chemin/prive/sauvegarde-neuve
-python3 -B -m benchmark_lab_x.runtime verify-backup --data /chemin/prive/sauvegarde-neuve
-python3 -B -m benchmark_lab_x.runtime restore --data /chemin/prive/sauvegarde-neuve --destination /chemin/prive/restauration-neuve
+python3 -B -m benchmark.runtime maintenance --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime quiescence --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime backup --data /chemin/prive/benchmark --destination /chemin/prive/sauvegarde-neuve
+python3 -B -m benchmark.runtime verify-backup --data /chemin/prive/sauvegarde-neuve
+python3 -B -m benchmark.runtime restore --data /chemin/prive/sauvegarde-neuve --destination /chemin/prive/restauration-neuve
 ```
 
 `quiescence` exige aussi le verrou d’écriture SQLite, sans attente, pendant la lecture de l’état. Une transaction active, notamment pendant le callback de qualification S3, provoque le refus existant 78 / `HOLD` / `OPERATION_NOT_VERIFIED`. Le contrôle libère ses verrous au succès comme au refus, sans écrire de données ni ajouter de champ au protocole de santé. Ce contrôle ponctuel ne crée aucune barrière persistante : l’opérateur doit suspendre les futurs lancements et les publications avant une maintenance.
@@ -128,6 +128,8 @@ python3 tools/build_runtime.py --source <commit-produit-complet> --output /chemi
 ```
 
 Le reçu décrit la construction effectuée ; son authenticité doit être vérifiée depuis le job ou l’opérateur identifié. L’archive utilise le format `release.json` du candidat infra. Elle inclut les deux processus, leur commande et le stockage S1 ; le build refuse une archive sans ces composants. Aucun tag de livraison 0.1.0 n’est créé par ces interfaces.
+
+Le paquet `benchmark` contient le moteur : stockage, préparation, qualification, campagnes, transports, reprises, jugements, restitution structurée et intégrité. Le paquet `benchmark_web` contient la présentation : serveur HTTP, formulaires, cookies, rendu HTML, gabarits et feuille de style. La dépendance va seulement de `benchmark_web` vers `benchmark` ; le web n’ouvre ni le stockage, ni les secrets, ni les fournisseurs, il consomme les vues structurées de l’exécuteur par socket Unix. L’exécuteur reçoit le module de projection publique par `--presentation` (défaut `benchmark_web.projection`) ; la commande `web` charge le serveur du même paquet. L’archive runtime inclut les deux paquets.
 
 Les commandes `benchmark-runtime web --public … --socket …` et
 `benchmark-runtime executor --data … --socket …` fournissent les processus
@@ -161,7 +163,7 @@ Le cookie `benchmark_session` est opaque, `HttpOnly`, `Secure`, `SameSite=Strict
 L’initialisation suivante est une opération locale explicite sur une base S1 intégrée neuve, sans données métier ni pièces résiduelles. Elle refuse une base S1 peuplée, une extension partielle, un schéma inconnu et le schéma distinct de #197 :
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime initialize-preparation --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime initialize-preparation --data /chemin/prive/benchmark
 ```
 
 Elle ajoute les six tables identifiées `benchmark-lab-x/preparation/v1`, dans une seule transaction, avec admission fermée. Sur une extension déjà exacte, elle ne réécrit rien. `user_version=1` et les tables S1 restent inchangés. Le lecteur courant conserve la lecture des deux formes S1 ; les lecteurs S1 antérieurs refusent les tables S2 supplémentaires. Aucune migration ou compatibilité inverse n’est annoncée. Sauvegarde, restauration et vérification comprennent les jointures S2 et les empreintes des paquets.
@@ -169,7 +171,7 @@ Elle ajoute les six tables identifiées `benchmark-lab-x/preparation/v1`, dans u
 L’opérateur peut enregistrer une admission depuis un fichier privé contenant exactement `authority_id`, `budget_id`, `reserve_amount` (texte décimal) et `requested_configuration` (objet non vide). Le budget S1 doit déjà exister ; cette commande ne crée pas d’enveloppe :
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime admit-preparation --data /chemin/prive/benchmark --authority /chemin/prive/autorite.json
+python3 -B -m benchmark.runtime admit-preparation --data /chemin/prive/benchmark --authority /chemin/prive/autorite.json
 ```
 
 Cette commande d’admission ne fournit aucun transport. Le point d’injection reste `serve_executor(data, socket_path, source, *, transport=None)`. Le lanceur peut sélectionner explicitement l’assistant OpenRouter décrit ci-dessous ; les tests historiques injectent leur fonction fictive `transport(operation, request)`. Aucun paramètre HTTP ni fichier utilisateur ne sélectionne le transport. La valeur par défaut refuse tout appel. Les valeurs fictives des tests ne prouvent aucun coût réel ; les preuves historiques sur abonnement gardent leur statut `UNMEASURED`.
@@ -192,7 +194,7 @@ Les requêtes JSON et formulaires portent les mêmes champs. Une création porte
 
 Les contrôles S2 de publication du paquet portent sur sa structure, les jointures, la relecture des pièces et leurs empreintes. À eux seuls, ils laissent la justesse métier de la référence NON VÉRIFIÉ et `qualified` faux. L’extension locale S3 ci-dessous conserve une qualification distincte. Les déclarations de limites et les demandes de clarification sont celles du transport fictif attribué ; aucun assistant réel n’a été évalué.
 
-La commande CI est `uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests` : 870 tests passent sur macOS pour le candidat corrigé. Elle exclut `benchmark_lab_x/test_demo.py`, dont les 69 tests ont été exécutés séparément sur macOS. Les huit parcours HTTP avec vrais processus Web et exécuteur locaux passent également. Les transports sont entièrement fictifs ; ces preuves ne qualifient aucun assistant réel.
+La commande CI est `uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests` : 870 tests passent sur macOS pour le candidat corrigé. Elle exclut `benchmark/test_demo.py`, dont les 69 tests ont été exécutés séparément sur macOS. Les huit parcours HTTP avec vrais processus Web et exécuteur locaux passent également. Les transports sont entièrement fictifs ; ces preuves ne qualifient aucun assistant réel.
 
 La vérification manuelle du 7 septembre 2026 utilise macOS 27.0 (26A5425a) et Chrome 152.0.7977.83 installé. Saisie, clarification, consultation de la pièce textuelle, retour à l’aperçu, validation et correction ont été effectués au clavier, avec focus visible. Le texte de la pièce a été effectivement affiché ; la correction conserve les accords antérieurs et exige une nouvelle validation. Le zoom Chrome à 200 % a été observé sur l’aperçu, ses limites et son lien de pièce. Le contrôle antérieur à 320 × 720 dans le navigateur Codex a vérifié l’absence de débordement horizontal de la page ; il reste une preuve distincte.
 
@@ -203,8 +205,8 @@ Le 7 septembre 2026, Ayo a retiré l’exigence de qualification au lecteur d’
 [Le transport unique](openrouter_preparation.py) raccorde l’exécuteur S2 à `POST https://openrouter.ai/api/v1/chat/completions`. Le responsable choisit l’assistant au démarrage par `--preparation-assistant` : l’alias historique `glm-5.3-flash`, qui charge [le profil de compatibilité](glm-5.3-flash.profile.json), ou le chemin d’un profil JSON local déjà approuvé. Sans cette option, aucun transport de préparation n’est chargé. Le profil fige modèle, une unique révision, paramètres, routes, capacités, message système et limites ; son empreinte canonique, le relevé tarifaire et la réserve sont liés à la configuration demandée. Le chemin hôte du fichier n’entre pas dans cette configuration, les messages ni les reçus. Ce raccordement applique le canal unique OpenRouter décidé pour tous les appels modèles du produit. Les preuves et reçus historiques restent inchangés. Après intégration et autorisation d’essai distinctes, l’opérateur peut sélectionner :
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime executor --data /chemin/prive/benchmark --socket /chemin/prive/executor.sock --preparation-assistant glm-5.3-flash
-python3 -B -m benchmark_lab_x.runtime executor --data /chemin/prive/benchmark --socket /chemin/prive/executor.sock --preparation-assistant /chemin/prive/assistant.profile.json
+python3 -B -m benchmark.runtime executor --data /chemin/prive/benchmark --socket /chemin/prive/executor.sock --preparation-assistant glm-5.3-flash
+python3 -B -m benchmark.runtime executor --data /chemin/prive/benchmark --socket /chemin/prive/executor.sock --preparation-assistant /chemin/prive/assistant.profile.json
 ```
 
 `OPENROUTER_API_KEY` est injectée uniquement dans l’environnement de cet exécuteur par le mécanisme privé de l’opérateur, jamais dans la commande, l’autorité, le navigateur ou l’environnement du web. Le lanceur la retire de son environnement après lecture. Une clé absente ou invalide donne `78 / HOLD` sans connexion. L’assistant de préparation reste limité à ce transport OpenRouter ; les transports candidats et leurs secours sont raccordés séparément. Sans sélection explicite de l’assistant de préparation, son transport est absent ; le démarrage ferme toujours l’admission.
@@ -216,7 +218,7 @@ La route demandée autorise le secours natif OpenRouter dans `provider.only=["mo
 Avant l’admission, l’opérateur renouvelle la consultation publique décrite ci-dessous, avec le contexte complet annoncé par l’API et la limite de sortie configurée. Exemple pour le contexte observé le 10 septembre 2026 :
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime forecast-prices --model z-ai/glm-5.3-flash \
+python3 -B -m benchmark.runtime forecast-prices --model z-ai/glm-5.3-flash \
   --input-tokens 1310720 --output-tokens 16384 --cached-input-tokens 0 \
   --preparation-assistant glm-5.3-flash
 ```
@@ -246,12 +248,12 @@ Le rapprochement est une action opérateur privée, hors réseau, limitée aux o
 Après déploiement du code compatible, sous l’identité opérateur et avec les chemins privés vérifiés, fermer l’admission, vérifier la quiescence et le stockage, puis sauvegarder avant l’extension explicite :
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime maintenance --data /chemin/prive/benchmark
-python3 -B -m benchmark_lab_x.runtime quiescence --data /chemin/prive/benchmark
-python3 -B -m benchmark_lab_x.runtime verify --data /chemin/prive/benchmark
-python3 -B -m benchmark_lab_x.runtime backup --data /chemin/prive/benchmark --destination /chemin/prive/sauvegarde-neuve
-python3 -B -m benchmark_lab_x.runtime initialize-reconciliation --data /chemin/prive/benchmark
-python3 -B -m benchmark_lab_x.runtime verify --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime maintenance --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime quiescence --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime verify --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime backup --data /chemin/prive/benchmark --destination /chemin/prive/sauvegarde-neuve
+python3 -B -m benchmark.runtime initialize-reconciliation --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime verify --data /chemin/prive/benchmark
 ```
 
 L’ouverture normale ne migre rien. La table additive `cost_reconciliations` reste distincte du layout opérationnel S1–S5 et de `schema_version=1`. `verify` rapporte `cost_reconciliation_format=benchmark-lab-x/cost-reconciliation/v1` lorsque cette structure exacte est présente. Le nouveau code lit aussi les bases non étendues ; les anciens lecteurs refusent la table supplémentaire. Après initialisation, un retour à l’ancien code exige une base préextension cohérente, restaurée selon la procédure existante ; une sauvegarde ancienne ne prouve pas l’absence d’appels ultérieurs.
@@ -266,8 +268,8 @@ Deux formes de source sont reconnues :
 La génération connue dans le reçu ou son en-tête doit correspondre exactement. Si l’ancien reçu ne l’a pas conservée, `correlation` décrit les preuves utilisées par l’opérateur pour établir le lien. Les [tests fictifs de rapprochement](../tests/test_cost_reconciliation.py) donnent des exemples de format, sans valeur de preuve de facturation réelle.
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime reconcile-cost --data /chemin/prive/benchmark --authority /chemin/prive/preuve-cout.json
-python3 -B -m benchmark_lab_x.runtime inspect-cost --data /chemin/prive/benchmark --authority /chemin/prive/identite-operation.json
+python3 -B -m benchmark.runtime reconcile-cost --data /chemin/prive/benchmark --authority /chemin/prive/preuve-cout.json
+python3 -B -m benchmark.runtime inspect-cost --data /chemin/prive/benchmark --authority /chemin/prive/identite-operation.json
 ```
 
 Le fichier d’inspection contient seulement `{"operation_id":"identifiant-exact"}`. L’inspection privée distingue `observed_cost`, `effective_cost`, la preuve de rapprochement et le budget : `spent` est le sous-total connu ; une liste `unknown_cost_operations` non vide conserve l’incertitude sur le total. La même preuve de rapprochement est idempotente ; une preuve différente sur la même opération est refusée. L’admission doit rester fermée pendant ces écritures.
@@ -279,7 +281,7 @@ La vue propriétaire S2 conserve le coût initial et présente séparément l’
 La commande ponctuelle ci-dessous consulte l’[API Models](https://openrouter.ai/docs/guides/overview/models) et les [endpoints du modèle](https://openrouter.ai/docs/api/api-reference/endpoints/list-all-endpoints-for-a-model), sans clé ni appel d’inférence. Elle sert à examiner une prévision avant de fixer une enveloppe ; elle ne lit ni ne modifie le stockage du produit.
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime forecast-prices \
+python3 -B -m benchmark.runtime forecast-prices \
   --model z-ai/glm-5.3-flash --input-tokens 1000000 --output-tokens 8192 \
   --cached-input-tokens 0
 ```
@@ -322,8 +324,8 @@ Ayo est l’approbateur local désigné par le GO S3. Les seuls acteurs fictifs 
 Les commandes suivantes consomment un fichier privé, sans appel fournisseur. Elles retournent du JSON et le code 0 en cas de réussite ; une entrée ou opération non vérifiée retourne `HOLD` et le code 78 :
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime inspect-qualification --data /chemin/prive/benchmark --authority /chemin/prive/inspection.json
-python3 -B -m benchmark_lab_x.runtime approve-qualification --data /chemin/prive/benchmark --authority /chemin/prive/decision.json
+python3 -B -m benchmark.runtime inspect-qualification --data /chemin/prive/benchmark --authority /chemin/prive/inspection.json
+python3 -B -m benchmark.runtime approve-qualification --data /chemin/prive/benchmark --authority /chemin/prive/decision.json
 ```
 
 Pour inspecter, le fichier contient `contract_sha256`. Pour approuver, il contient exactement `contract_sha256`, `qualification_id`, `actor` et `authority = {authority_id, actor}`. L’acteur doit correspondre à l’autorité explicite ; les autorités fictives ne sont pas utilisables au nom de l’approbateur réel. L’inspection accepte aussi ce fichier complet. Les résultats de cette inspection sont privés. Le responsable examine les alternatives et limites dans `contract.specification`, les contrôles dans `qualifications` et les octets de chaque référence via `store.read_piece(piece['id'])` pour les entrées de `contract.reference_pieces`.
@@ -339,9 +341,9 @@ Le module [campaigns.py](campaigns.py) conserve plusieurs manifestes et leurs ce
 L’initialisation est explicite sur une base S3 reconnue et intègre, même peuplée. Elle ajoute l’identité `benchmark-lab-x/campaigns/v1`, ses tables et contraintes, avec admission fermée pour chaque nouvelle campagne. `user_version=1`, les pièces et les lignes S1–S3 sont conservés. Répéter cette initialisation, celle de S3 ou celle de S2 ne réécrit pas une extension S4 exacte. L’ouverture et l’inspection ne migrent rien ; les anciens lecteurs refusent l’extension non reconnue. L’usage opérationnel de données existantes garde son autorité distincte.
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime initialize-campaigns --data /chemin/prive/benchmark
-python3 -B -m benchmark_lab_x.runtime create-campaign --data /chemin/prive/benchmark --authority /chemin/prive/manifeste.json
-python3 -B -m benchmark_lab_x.runtime inspect-campaign --data /chemin/prive/benchmark --authority /chemin/prive/inspection.json
+python3 -B -m benchmark.runtime initialize-campaigns --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime create-campaign --data /chemin/prive/benchmark --authority /chemin/prive/manifeste.json
+python3 -B -m benchmark.runtime inspect-campaign --data /chemin/prive/benchmark --authority /chemin/prive/inspection.json
 ```
 
 Les fichiers opérateur sont des fichiers réguliers privés, sans lien symbolique ni accès groupe/autres, comme pour S3. Les entrées sont du JSON strict ; champs supplémentaires et clés répétées sont refusés. Le runtime retourne du JSON privé, code 0 à réussite ou `HOLD` et code 78 en cas de refus. L’inspection contient les reçus et sorties brutes : sa sortie doit rester privée.
@@ -488,13 +490,13 @@ La page du dossier propriétaire présente les évaluations dans chaque tentativ
 Les deux commandes locales suivantes retournent du JSON et le code 0 après vérification, ou `HOLD` avec le code 78 si l’opération n’est pas vérifiée :
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime initialize-evaluations --data /chemin/prive/benchmark
-python3 -B -m benchmark_lab_x.runtime inspect-evaluation --data /chemin/prive/benchmark --authority /chemin/prive/inspection.json
+python3 -B -m benchmark.runtime initialize-evaluations --data /chemin/prive/benchmark
+python3 -B -m benchmark.runtime inspect-evaluation --data /chemin/prive/benchmark --authority /chemin/prive/inspection.json
 ```
 
 Le fichier d’inspection, ordinaire, privé et détenu par l’opérateur, contient exactement `{"evaluation_id": "identifiant-conserve"}`. L’inspection n’initialise rien et ne donne aucune autorité de jugement réel.
 
-Les [régressions S5](../tests/test_s5_regressions.py) couvrent les garanties complémentaires de concurrence, d’intégrité, d’évolution du dossier, de réception tardive et de sauvegarde. Elles sont indépendantes des rapports et fixtures du juge scellé. La découverte CI et la suite `benchmark_lab_x.test_demo` restent des validations distinctes ; les preuves macOS ne valent pas preuve Linux. La revue du code et du parcours propriétaire reste nécessaire : comprendre le motif, retrouver qualification et correction, ouvrir la sortie et ses preuves, revenir au dossier, puis vérifier clavier, focus, petit écran et texte agrandi dans un navigateur identifié. Les contrôles binaires ne certifient ni la qualité métier ni ce parcours humain.
+Les [régressions S5](../tests/test_s5_regressions.py) couvrent les garanties complémentaires de concurrence, d’intégrité, d’évolution du dossier, de réception tardive et de sauvegarde. Elles sont indépendantes des rapports et fixtures du juge scellé. La découverte CI et la suite `benchmark.test_demo` restent des validations distinctes ; les preuves macOS ne valent pas preuve Linux. La revue du code et du parcours propriétaire reste nécessaire : comprendre le motif, retrouver qualification et correction, ouvrir la sortie et ses preuves, revenir au dossier, puis vérifier clavier, focus, petit écran et texte agrandi dans un navigateur identifié. Les contrôles binaires ne certifient ni la qualité métier ni ce parcours humain.
 
 ## Comparaison et restitution fictives locales S6
 
@@ -529,7 +531,7 @@ La matérialisation vérifie l’ensemble avant de sélectionner `<sha256>/` dan
 
 Consultation privée, aperçu sans activation et projection fictive approuvée sont distincts. Le service annonce cette dernière par `X-Benchmark-Publication: APPROVED_FICTIONAL_S6` et l’empreinte dans l’URL et `X-Benchmark-Projection-SHA256`. Les octets approuvés ne sont pas réécrits pour changer un libellé d’aperçu. Aucun endpoint d’approbation, commande d’exploitation réelle, compte, admission au catalogue public ou ouverture extérieure n’est ajouté. Droits publics, admission au catalogue, approbateur et pièces réellement publiables restent à décider.
 
-Les [régressions S6](../tests/test_s6_regressions.py) utilisent les primitives et fixtures maintenues S2–S5, sans dépendre de `reports`. Elles couvrent calcul, routes locales, isolation, octets et activation. La découverte CI et `benchmark_lab_x.test_demo` restent des preuves distinctes ; les résultats acquis sur macOS ne prouvent pas le candidat sous Linux ni une campagne réelle. La validation HTTP native et la revue propriétaire avec Ordinateur du candidat exact restent nécessaires. Les assertions HTML ne prouvent ni lisibilité, ni clavier, ni focus, ni Retour du navigateur. Un refus du navigateur sur une pièce brute reste distinct de la conformité de sa réponse HTTP.
+Les [régressions S6](../tests/test_s6_regressions.py) utilisent les primitives et fixtures maintenues S2–S5, sans dépendre de `reports`. Elles couvrent calcul, routes locales, isolation, octets et activation. La découverte CI et `benchmark.test_demo` restent des preuves distinctes ; les résultats acquis sur macOS ne prouvent pas le candidat sous Linux ni une campagne réelle. La validation HTTP native et la revue propriétaire avec Ordinateur du candidat exact restent nécessaires. Les assertions HTML ne prouvent ni lisibilité, ni clavier, ni focus, ni Retour du navigateur. Un refus du navigateur sur une pièce brute reste distinct de la conformité de sa réponse HTTP.
 
 ## Outillage des premières campagnes
 
@@ -547,10 +549,10 @@ Cette capacité concerne les tâches textuelles sans outils, comme le suivi de r
 Les commandes suivantes utilisent la même interface opérateur privée que l’admission S4. Les chemins sont à remplacer par les installations approuvées ; aucune commande n’installe une dépendance.
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime inspect-pi --pi-package /chemin/pi-coding-agent --node /chemin/node
-python3 -B -m benchmark_lab_x.runtime reserve-candidate --data /chemin/prive/benchmark --authority /chemin/prive/reservation.json
-python3 -B -m benchmark_lab_x.runtime execute-candidate --data /chemin/prive/benchmark --authority /chemin/prive/tentative.json --pi-package /chemin/pi-coding-agent --node /chemin/node
-python3 -B -m benchmark_lab_x.runtime inspect-model-profile --data /chemin/prive/benchmark --authority /chemin/prive/identite-transport.json
+python3 -B -m benchmark.runtime inspect-pi --pi-package /chemin/pi-coding-agent --node /chemin/node
+python3 -B -m benchmark.runtime reserve-candidate --data /chemin/prive/benchmark --authority /chemin/prive/reservation.json
+python3 -B -m benchmark.runtime execute-candidate --data /chemin/prive/benchmark --authority /chemin/prive/tentative.json --pi-package /chemin/pi-coding-agent --node /chemin/node
+python3 -B -m benchmark.runtime inspect-model-profile --data /chemin/prive/benchmark --authority /chemin/prive/identite-transport.json
 ```
 
 `identite-transport.json` contient exactement `provider`, `model`, `revision`, `access`, `channel_id` et `outgoing_format`. La commande ne cherche pas par le seul nom de modèle. Un profil retrouvé décrit une réponse de transport `COMPLETE`, pas un verdict de tâche.
@@ -570,8 +572,8 @@ Une tentative reçue n’est pas rejouée. Un problème après réception conser
 ### Évaluer et consulter
 
 ```sh
-python3 -B -m benchmark_lab_x.runtime prepare-evaluation --data /chemin/prive/benchmark --authority /chemin/prive/tentative.json
-python3 -B -m benchmark_lab_x.runtime evaluate-attempt --data /chemin/prive/benchmark --authority /chemin/prive/constats.json
+python3 -B -m benchmark.runtime prepare-evaluation --data /chemin/prive/benchmark --authority /chemin/prive/tentative.json
+python3 -B -m benchmark.runtime evaluate-attempt --data /chemin/prive/benchmark --authority /chemin/prive/constats.json
 ```
 
 La première commande exporte les entrées privées, le contrat, la sortie et un rapport à compléter. Ses constats commencent à `INDETERMINE` ; aucun succès ni lecture humaine ne sont inférés. Le format du rapport reste celui de S5 décrit plus haut. Les constats doivent appliquer la méthode qualifiée du contrat et citer les pièces effectivement examinées ; un contrôleur de témoins tabulaires ne devient pas un juge de toutes les réponses libres.
@@ -594,9 +596,9 @@ La projection est celle de `evaluation.prepare_review()` et `outgoing.closed_rev
 Les commandes privées se lancent ainsi, avec une clé injectée dans `OPENROUTER_API_KEY` pour les deux premières seulement :
 
 ```sh
-python -m benchmark_lab_x.runtime reserve-judgment --data /chemin/prive --authority /chemin/demande.json --judgment-profile /chemin/profil.json
-python -m benchmark_lab_x.runtime execute-judgment --data /chemin/prive --authority /chemin/operation.json --judgment-profile /chemin/profil.json
-python -m benchmark_lab_x.runtime inspect-judgment --data /chemin/prive --authority /chemin/operation.json
+python -m benchmark.runtime reserve-judgment --data /chemin/prive --authority /chemin/demande.json --judgment-profile /chemin/profil.json
+python -m benchmark.runtime execute-judgment --data /chemin/prive --authority /chemin/operation.json --judgment-profile /chemin/profil.json
+python -m benchmark.runtime inspect-judgment --data /chemin/prive --authority /chemin/operation.json
 ```
 
 `demande.json` contient exactement `operation_id`, `campaign_id`, `attempt_id`, `review_sha256`, `previous_evaluation_id`, `authority`, `budget_id`, `reserve_amount`, `requested_configuration`. `review_sha256` et le prédécesseur viennent de `prepare-review`. `authority` contient l’acteur opérateur `Ayo` et son `authority_id` effectif. La configuration vient de `openrouter_preparation.configuration(estimate, profile)` et la réserve de `reservation(estimate, profile)`, à partir d’un relevé déjà obtenu sous autorité distincte. Le budget USD doit déjà exister. `operation.json` contient seulement `{"operation_id":"identifiant-reserve"}`. Les fichiers opérateur doivent être privés. La réservation ne fait aucun HTTP ; l’exécution revalide le même profil, la projection, l’admission et l’enveloppe.
@@ -619,7 +621,7 @@ La disposition SQL et `s5_control` restent en version 1. Le lecteur accepte expl
 L’opérateur peut consulter la suite à donner sans clé ni appel modèle :
 
 ```sh
-python -m benchmark_lab_x.runtime inspect-attempt-status --data /chemin/prive --authority /chemin/tentative.json
+python -m benchmark.runtime inspect-attempt-status --data /chemin/prive --authority /chemin/tentative.json
 ```
 
 Le fichier privé contient exactement `campaign_id` et `attempt_id`. La réponse distingue décision, diagnostic candidat, dernière opération de juge et travail de relecture restant. `inspect-judgment` distingue notamment une citation de preuve invalide d’un incident de transport. Les passages restent vérifiés exactement ; aucune correction automatique de citation ne modifie le reçu. Une erreur du juge se résout sur la même sortie, avec une nouvelle évaluation liée à la précédente.
@@ -648,7 +650,7 @@ Pour Qwen, conserver `DASHSCOPE_API_KEY` et `DASHSCOPE_BASE_URL`. Pour Hy4, cons
 Le chargement local utilise uv, déjà présent dans la chaîne du projet, sans dépendance supplémentaire :
 
 ```sh
-uv run --env-file .env python -m benchmark_lab_x.runtime <commande> <options>
+uv run --env-file .env python -m benchmark.runtime <commande> <options>
 ```
 
 Cette option charge les variables pour la commande opérateur concernée ; le runtime ne recherche pas automatiquement un fichier dans le dossier courant. Ne pas charger les clés dans le processus du serveur web public. Sur la VM, le fichier privé d’environnement de l’exécuteur remplit déjà cette fonction et reste hors des archives de déploiement. Aucun coffre de secrets supplémentaire n’est requis pour ce mode de configuration.

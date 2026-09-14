@@ -11,8 +11,9 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from benchmark_lab_x import storage, preparation as prep, runtime, qualification, campaigns, evaluation
-from benchmark_lab_x import openrouter_preparation as assistant
+from benchmark import storage, preparation as prep, runtime, qualification, campaigns, evaluation
+from benchmark_web import views
+from benchmark import openrouter_preparation as assistant
 from tests.test_openrouter_preparation import ESTIMATE, RESERVE, KEY, NEED, http_body, result
 
 
@@ -90,7 +91,7 @@ class CostReconciliationTests(unittest.TestCase):
         self.assertNotIn('PRIVATE DOCUMENT SENTINEL', storage._strict_json(view))
         self.assertNotIn('fixture-account', storage._strict_json(view))
         self.assertNotIn('preparation_budget', view)
-        rendered = prep.render(view, self.csrf).decode()
+        rendered = views.render(view, self.csrf).decode()
         self.assertIn('Coût rapproché', rendered)
         self.assertIn('INCONNU', rendered)
         self.assertIsNone(prep.admission(self.store))

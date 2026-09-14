@@ -42,7 +42,7 @@ jobs:
         env:
           BENCHMARK_TEST_PI_PACKAGE: ${{ runner.temp }}/benchmark-pi/node_modules/@earendil-works/pi-coding-agent
         run: |
-          uv run --python 3.12 python -m benchmark_lab_x.runtime inspect-pi \
+          uv run --python 3.12 python -m benchmark.runtime inspect-pi \
             --pi-package "$BENCHMARK_TEST_PI_PACKAGE" --node "$(command -v node)"
           uv run --with requests --with mpmath==1.3.0 python -m unittest -v tests.test_private_comparison
 

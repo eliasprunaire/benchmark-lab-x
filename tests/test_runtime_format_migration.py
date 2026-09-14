@@ -4,8 +4,8 @@ import json
 import unittest
 from unittest import mock
 
-from benchmark_lab_x import __main__ as demo
-from benchmark_lab_x import test_demo as fixtures
+from benchmark import __main__ as demo
+from benchmark import test_demo as fixtures
 
 
 class FormatMigrationTests(unittest.TestCase):

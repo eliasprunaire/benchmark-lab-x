@@ -16,8 +16,10 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark_lab_x import preparation as prep, runtime, service, storage
-from benchmark_lab_x import openrouter_preparation as assistant
+from benchmark import preparation as prep, runtime, service, storage
+from benchmark_web import views
+from benchmark_web.server import serve_web
+from benchmark import openrouter_preparation as assistant
 
 
 KEY = 'fixture-key-never-a-credential'
@@ -192,7 +194,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('preview', view['stage'])
         self.assertEqual([NOTES.encode()], [prep.piece_bytes(self.store, self.session, 'd', view['revision'], p['id'])
                                           for p in view['package']['pieces']])
-        self.assertNotIn(REFERENCE, prep.render(view, self.csrf).decode())
+        self.assertNotIn(REFERENCE, views.render(view, self.csrf).decode())
         self.assertEqual('0', self.store.inspect_budget('fixture')['reserved'])
         self.http.request.side_effect = None
         self.http.getresponse.return_value.read.return_value = http_body(usage=None)
@@ -562,7 +564,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
                     process.join()
         self.addCleanup(stop_children)
         for target, args in [(executor_process, (self.data, sock)),
-                             (service.serve_web, ('127.0.0.1', port, public, sock, 'a' * 40))]:
+                             (serve_web, ('127.0.0.1', port, public, sock, 'a' * 40))]:
             process = context.Process(target=target, args=args)
             process.start()
             children.append(process)
@@ -622,7 +624,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual(ESTIMATE['sources']['model'], estimate['source'])
         self.assertEqual('0.009', operation['observed_cost']['amount'])
         self.assertEqual('0.009', self.store.inspect_budget('fixture')['spent'])
-        page = prep.render(view, self.csrf).decode()
+        page = views.render(view, self.csrf).decode()
         self.assertIn('Estimation indicative', page)
         self.assertIn('ce montant n’est pas une facture', page)
         self.assertIn('0.0003600 USD', page)
@@ -718,7 +720,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('clarification', view['stage'])
         self.assertNotIn('indicative_cost', view)
         self.assertIsNone(self.store.inspect_operations()[0]['receipt']['observed_configuration'])
-        self.assertIn('Coût observé', prep.render(view, self.csrf).decode())
+        self.assertIn('Coût observé', views.render(view, self.csrf).decode())
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
     def test_killed_executor_restarts_closed_with_durable_ambiguous_request(self):

@@ -47,7 +47,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from benchmark_lab_x.model_catalog import require_current
+from benchmark.model_catalog import require_current
 from empreintes import empreinte  # noqa: E402
 from protocole_v2 import (  # noqa: E402
     CAUSES_REPRISE,

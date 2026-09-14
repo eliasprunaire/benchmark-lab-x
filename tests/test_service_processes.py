@@ -14,8 +14,8 @@ import unittest
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
-from benchmark_lab_x.service import executor_health, preparation_request
-from benchmark_lab_x.storage import Store, initialize
+from benchmark.service import executor_health, preparation_request
+from benchmark.storage import Store, initialize
 from tests.test_storage import PAYLOAD, operation
 
 
@@ -49,7 +49,8 @@ class ServiceProcessesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve() / 'release'
             root.mkdir()
-            shutil.copytree(Path(__file__).resolve().parents[1] / 'benchmark_lab_x', root / 'benchmark_lab_x')
+            shutil.copytree(Path(__file__).resolve().parents[1] / 'benchmark', root / 'benchmark')
+            shutil.copytree(Path(__file__).resolve().parents[1] / 'benchmark_web', root / 'benchmark_web')
             (root / 'release.json').write_text(json.dumps({'source_sha': 'a' * 40}))
             data, public = root.parent / 'private', root.parent / 'public'
             public.mkdir()
@@ -60,7 +61,7 @@ class ServiceProcessesTests(unittest.TestCase):
                 store.reserve_intent(operation('attempt'), 'test', '1')
                 store.mark_emission_possible('attempt')
             sock = root / 'executor.sock'
-            command = [sys.executable, '-B', '-m', 'benchmark_lab_x.runtime']
+            command = [sys.executable, '-B', '-m', 'benchmark.runtime']
             children = []
             try:
                 executor = subprocess.Popen(command + ['executor', '--data', str(data), '--socket', str(sock)], cwd=root)

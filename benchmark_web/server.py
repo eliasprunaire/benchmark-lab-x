@@ -1,138 +1,22 @@
-"""Processus Linux du produit, sans admission ni appel implicite au démarrage."""
+"""Serveur HTTP public : formulaires, cookies, rendu HTML et projections approuvées.
+
+Il consomme les vues structurées de l'exécuteur par socket Unix et n'accède ni au
+stockage, ni aux secrets, ni aux fournisseurs.
+"""
 from base64 import b64encode
-from contextlib import closing
-import fcntl
 from hashlib import sha256
+from http.cookies import SimpleCookie, CookieError
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
-import os
 from pathlib import Path
 import re
-import signal
-import socket
-import socketserver
-import sqlite3
-import stat
-import threading
-from http.cookies import SimpleCookie, CookieError
 from urllib.parse import parse_qs
 
-from .storage import ConflictError, BudgetError, _unique_object
+from benchmark.runtime import encode
+from benchmark.service import executor_health, preparation_request, run
+from benchmark.storage import _unique_object
 
-from .storage import Store
-from .runtime import encode, status, stop, verify
-
-
-def release_identity():
-    manifest = json.loads((Path(__file__).resolve().parents[1] / 'release.json').read_text())
-    source = manifest['source_sha']
-    if not re.fullmatch('[0-9a-f]{40}', source):
-        raise ValueError('Identité de release invalide')
-    return source
-
-
-def executor_health(path):
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        connection.settimeout(5)
-        connection.connect(str(path))
-        connection.sendall(b'health\n')
-        with connection.makefile('rb') as stream:
-            raw = stream.readline(4097)
-        if len(raw) > 4096 or not raw.endswith(b'\n'):
-            raise ValueError('Réponse de santé invalide')
-        result = json.loads(raw)
-        if set(result) != {'source_sha', 'storage', 'admission', 'restore_pending', 'operations'}:
-            raise ValueError('Réponse de santé invalide')
-        return result
-
-
-def serve_executor(data, socket_path, source, *, transport=None, candidate_transport=None, candidate_transport_factory=None):
-    data, socket_path = Path(data), Path(socket_path)
-    with closing(Store(data)) as store:
-        lock_fd = os.open(data / 'executor.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            verify(store)
-            stop(data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
-            if socket_path.exists() or socket_path.is_symlink():
-                metadata = socket_path.lstat()
-                if not stat.S_ISSOCK(metadata.st_mode) or metadata.st_uid != os.getuid():
-                    raise ValueError('Socket non détenue par le service')
-                socket_path.unlink()
-
-            class Handler(socketserver.StreamRequestHandler):
-                def handle(self):
-                    self.connection.settimeout(2)
-                    try:
-                        raw = self.rfile.readline(1048577)
-                        if raw == b'health\n':
-                            verify(store)
-                            result = {'source_sha': source, 'storage': 'ok', **status(data, store)}
-                        else:
-                            from . import preparation
-                            if len(raw) > 1048576 or not raw.endswith(b'\n'):
-                                return
-                            message = json.loads(raw, object_pairs_hook=_unique_object)
-                            if set(message) != {'method', 'path', 'token', 'body'}:
-                                return
-                            try:
-                                code, value, cookie, start = preparation.dispatch(
-                                    store, message['method'], message['path'], message['token'], message['body'],
-                                    source, transport, candidate_transport=candidate_transport or candidate_transport_factory)
-                                if isinstance(start, dict):
-                                    from .campaigns import execute_launch
-                                    threading.Thread(target=execute_launch, args=(data, start['candidate_attempts'], candidate_transport),
-                                                     kwargs={'transport_factory': candidate_transport_factory}, daemon=True).start()
-                                elif start:
-                                    threading.Thread(target=preparation.execute, args=(data, start, transport), daemon=True).start()
-                                result = {'status': code, 'value': value.hex() if isinstance(value, bytes) else value,
-                                          'piece': isinstance(value, bytes), 'cookie': cookie}
-                            except preparation.Denied:
-                                result = {'status': 403, 'value': {'error': 'Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier ou demandez au responsable de vérifier son autorisation.'}}
-                            except (ConflictError, BudgetError):
-                                result = {'status': 409, 'value': {'error': 'Action refusée : révision périmée, opération en attente ou budget indisponible. Consultez le dossier courant.'}}
-                            except (ValueError, KeyError, TypeError, sqlite3.Error):
-                                result = {'status': 400, 'value': {'error': 'Action non vérifiée. Vérifiez les champs ou consultez le dossier courant.'}}
-                        self.wfile.write((encode(result) + '\n').encode())
-                    except (OSError, ValueError, sqlite3.Error):
-                        return
-
-            with socketserver.UnixStreamServer(str(socket_path), Handler) as server:
-                os.chmod(socket_path, 0o660)
-                run(server)
-            stop(data, store, 'PROCESS_STOPPED_ADMISSION_BLOCKED', after_process_exit=True)
-        finally:
-            os.close(lock_fd)
-
-
-def preparation_request(socket_path, method, path, token, body=None):
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        connection.settimeout(5)
-        connection.connect(str(socket_path))
-        connection.sendall((encode(dict(method=method, path=path, token=token, body=body)) + '\n').encode())
-        with connection.makefile('rb') as stream:
-            raw = stream.readline(8388609)
-        if len(raw) > 8388608 or not raw.endswith(b'\n'):
-            raise ValueError('Réponse de préparation invalide')
-        return json.loads(raw)
-
-
-def run(server):
-    stopping = False
-
-    def stop(signum, frame):
-        nonlocal stopping
-        stopping = True
-
-    previous = {number: signal.signal(number, stop) for number in (signal.SIGTERM, signal.SIGINT)}
-    # Une requête de santé locale est bornée à deux secondes pour permettre l'arrêt
-    server.timeout = 0.25
-    try:
-        while not stopping:
-            server.handle_request()
-    finally:
-        for number, handler in previous.items():
-            signal.signal(number, handler)
+from . import views
 
 
 def serve_web(address, port, public, socket_path, source):
@@ -169,9 +53,8 @@ def serve_web(address, port, public, socket_path, source):
                 self.wfile.write(raw)
 
         def preparation(self):
-            from . import preparation
             if self.path == '/preparation/style.css' and self.command in ('GET', 'HEAD'):
-                self.respond(200, Path(__file__).with_name('preparation.css').read_bytes(), 'text/css; charset=utf-8')
+                self.respond(200, views.STYLESHEET_PATH.read_bytes(), 'text/css; charset=utf-8')
                 return
             wants_json = 'application/json' in self.headers.get('Accept', '')
             try:
@@ -227,18 +110,18 @@ def serve_web(address, port, public, socket_path, source):
                             target = '/preparation/dossiers/' + result['value']['dossier_id']
                             result = preparation_request(socket_path, 'GET', target, token)
                             view_path = target
-                    page = preparation.render(result['value'], csrf, view_path, error=result['status'] >= 400)
-                    script = preparation.COMPARISON_FOCUS_SCRIPT if result['value'].get('kind') == 'comparison' else None
+                    page = views.render(result['value'], csrf, view_path, error=result['status'] >= 400)
+                    script = views.COMPARISON_FOCUS_SCRIPT if result['value'].get('kind') == 'comparison' else None
                     self.respond(result['status'], page, 'text/html; charset=utf-8', headers, script=script)
             except (ValueError, TypeError, KeyError, CookieError):
                 value = {'error': 'Formulaire invalide. Aucun nouvel appel admis.'}
-                self.respond(400, value if wants_json else preparation.render(value, '', error=True),
+                self.respond(400, value if wants_json else views.render(value, '', error=True),
                              'application/json' if wants_json else 'text/html; charset=utf-8')
             except OSError:
                 value = {'error': 'Service temporairement indisponible : l’état de votre demande ne peut pas être vérifié. '
                          'Aucune nouvelle soumission disponible. Consultez le dossier avant tout nouvel envoi ; '
                          'un envoi précédent peut avoir été enregistré.', 'unavailable': True}
-                self.respond(503, value if wants_json else preparation.render(value, '', error=True),
+                self.respond(503, value if wants_json else views.render(value, '', error=True),
                              'application/json' if wants_json else 'text/html; charset=utf-8')
 
         def do_POST(self):
@@ -251,12 +134,12 @@ def serve_web(address, port, public, socket_path, source):
             self.do_GET()
 
         def do_GET(self):
+            from benchmark import restitution
             if self.path == '/preparation' or self.path.startswith('/preparation/'):
                 self.preparation()
                 return
             if self.path == '/':
-                from . import preparation
-                self.respond(200, preparation.render({'kind': 'home'}, ''), 'text/html; charset=utf-8')
+                self.respond(200, views.render({'kind': 'home'}, ''), 'text/html; charset=utf-8')
                 return
             if self.path == '/healthz':
                 self.respond(200, {'web': 'ok', 'source_sha': source})
@@ -270,7 +153,6 @@ def serve_web(address, port, public, socket_path, source):
                     self.respond(503, {'web': 'ok', 'executor': 'unavailable', 'storage': 'unknown', 'source_sha': source})
                 return
             if self.path.startswith('/publications/'):
-                from . import restitution
                 match = re.fullmatch(r'/publications/([0-9a-f]{64})/([A-Za-z0-9_-]+\.(?:html|css|txt))', self.path)
                 if not match:
                     self.respond(404, {'error': 'NOT_FOUND'})
@@ -305,7 +187,6 @@ def serve_web(address, port, public, socket_path, source):
                 if sha256(manifest_bytes).hexdigest() != publication:
                     raise ValueError('Manifeste public altéré')
                 manifest = json.loads(manifest_bytes)
-                from . import restitution
                 if manifest.get('schema_version') == restitution.SCHEMA:
                     restitution.public_bytes(public, publication, name)
                     self.respond(303, b'', 'text/plain; charset=utf-8',
@@ -322,8 +203,7 @@ def serve_web(address, port, public, socket_path, source):
                 self.respond(200, raw, media_type)
             except (OSError, ValueError, KeyError):
                 if name == 'index.html' and 'text/html' in self.headers.get('Accept', '') and 'application/json' not in self.headers.get('Accept', ''):
-                    from . import preparation
-                    self.respond(404, preparation.render({'kind': 'publication_unavailable'}, ''), 'text/html; charset=utf-8')
+                    self.respond(404, views.render({'kind': 'publication_unavailable'}, ''), 'text/html; charset=utf-8')
                 else:
                     self.respond(404, {'error': 'NO_VERIFIED_PUBLICATION'})
 

@@ -5,7 +5,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from benchmark_lab_x import preparation as prep, storage
+from benchmark import preparation as prep, storage
+from benchmark_web import views
 from tests.test_s2_review_regressions import response_for
 
 
@@ -36,7 +37,7 @@ class InlineExampleTests(unittest.TestCase):
                 self.assertEqual(200, code)
                 self.assertIsNone(start)
                 self.assertEqual([content], list(view['example_contents'].values()))
-                page = prep.render(view, csrf).decode()
+                page = views.render(view, csrf).decode()
                 self.assertIn('<details class="example-content"><summary>Voir le contenu</summary>', page)
                 self.assertIn('<div class="example-text">' + escape(content, quote=True) + '</div>', page)
                 self.assertNotIn('<script>', page)

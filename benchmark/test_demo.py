@@ -44,7 +44,7 @@ def _start_supervisor(case, fixture, variant="good", inherited_ignore=False, ext
         **(extra_env or {}),
     }
     process = subprocess.Popen(
-        [sys.executable, "-B", "-m", "benchmark_lab_x", "collect", "--run-dir", str(run), "--authority", str(authority)],
+        [sys.executable, "-B", "-m", "benchmark", "collect", "--run-dir", str(run), "--authority", str(authority)],
         cwd=demo.PACKAGE_DIR.parent, env=env, pass_fds=(child.fileno(),),
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         preexec_fn=(lambda: signal.signal(signal.SIGTERM, signal.SIG_IGN)) if inherited_ignore else None,
@@ -1029,7 +1029,7 @@ raise SystemExit(7 if {variant!r} == "nonzero" else 0)
         self.assertIs(signal.getsignal(signal.SIGTERM), previous)
 
     def test_19_help_and_offline_commands_never_launch_candidate(self):
-        completed = subprocess.run([sys.executable, "-B", "-m", "benchmark_lab_x", "--help"], cwd=demo.PACKAGE_DIR.parent, capture_output=True, text=True)
+        completed = subprocess.run([sys.executable, "-B", "-m", "benchmark", "--help"], cwd=demo.PACKAGE_DIR.parent, capture_output=True, text=True)
         self.assertEqual(completed.returncode, 0)
         for command in ["prepare", "collect", "review", "build", "present", "show"]:
             self.assertIn(command, completed.stdout)
@@ -1088,7 +1088,7 @@ class IsolatedSupervisorSigtermTests(unittest.TestCase):
             "BENCHMARK_LAB_X_TEST_REPO_ROOT": str(self.fixture.root),
         }
         process = subprocess.Popen(
-            [sys.executable, "-B", "-m", "benchmark_lab_x", "collect", "--run-dir", str(run), "--authority", str(authority)],
+            [sys.executable, "-B", "-m", "benchmark", "collect", "--run-dir", str(run), "--authority", str(authority)],
             cwd=demo.PACKAGE_DIR.parent, env=env, pass_fds=(child.fileno(),),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
@@ -1758,7 +1758,7 @@ class IsolatedSupervisorFailureTests(unittest.TestCase):
         temporary.mkdir()
         env = {**os.environ, "TMPDIR": str(temporary), "BENCHMARK_LAB_X_TEST_SOCKET_FD": str(child.fileno()), "BENCHMARK_LAB_X_TEST_REPO_ROOT": str(self.root)}
         process = subprocess.run(
-            [sys.executable, "-B", "-m", "benchmark_lab_x", "collect", "--run-dir", str(run), "--authority", str(authority)],
+            [sys.executable, "-B", "-m", "benchmark", "collect", "--run-dir", str(run), "--authority", str(authority)],
             cwd=demo.PACKAGE_DIR.parent, env=env, pass_fds=(child.fileno(),), capture_output=True, text=True, timeout=5,
         )
         parent.close()
@@ -1792,7 +1792,7 @@ class R13UnsupervisedKeyboardInterruptCleanupTests(unittest.TestCase):
         process = subprocess.Popen(
             [
                 sys.executable, "-B", "-c",
-                "from benchmark_lab_x import __main__ as d; import sys; d.collect(*sys.argv[1:])",
+                "from benchmark import __main__ as d; import sys; d.collect(*sys.argv[1:])",
                 str(run), str(authority), str(self.fixture.root),
             ],
             cwd=demo.PACKAGE_DIR.parent, env=env, pass_fds=(child.fileno(),),
@@ -1900,7 +1900,7 @@ signal.pause()
         }
         env.pop("BENCHMARK_LAB_X_LAUNCH_SOCKET_FD", None)
         program = '''
-from benchmark_lab_x import __main__ as d
+from benchmark import __main__ as d
 import os, sys
 original = d._wait_pgid_gone
 def observed(*args):
@@ -2045,7 +2045,7 @@ class IsolatedSupervisorImmutabilityTests(unittest.TestCase):
         parent, child = socket.socketpair()
         env = {**os.environ, "BENCHMARK_LAB_X_TEST_SOCKET_FD": str(child.fileno()), "BENCHMARK_LAB_X_TEST_REPO_ROOT": str(self.root)}
         process = subprocess.run(
-            [sys.executable, "-B", "-m", "benchmark_lab_x", "collect", "--run-dir", str(run), "--authority", str(auth)],
+            [sys.executable, "-B", "-m", "benchmark", "collect", "--run-dir", str(run), "--authority", str(auth)],
             cwd=demo.PACKAGE_DIR.parent, env=env, pass_fds=(child.fileno(),), capture_output=True, text=True, timeout=5,
         )
         parent.close()

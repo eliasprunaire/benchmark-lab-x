@@ -12,7 +12,9 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark_lab_x import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, service
+from benchmark import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r
+from benchmark_web import projection, views
+from benchmark_web.server import serve_web
 from tests.test_s4_regressions import inputs, manifest, response
 from tests.test_s5_regressions import EVALUATION_AUTHORITY, RESPONSIBLE, findings
 from tests.test_s6_regressions import Markup, build
@@ -55,7 +57,7 @@ class S10ProofTests(unittest.TestCase):
         record = detail['history'][-1]
         self.assertEqual(len(record['proof_links']), guarded.call_count)
         self.assertEqual(self.output, record['proof_contents'][record['output_piece_id']])
-        page = p.render(detail, '')
+        page = views.render(detail, '')
         self.assertIn(('<div class="proof-text">' + escape(self.output, quote=True) + '</div>').encode(), page)
         parsed = Markup(page)
         self.assertFalse(any(tag in ('script', 'img') or any(k.startswith('on') for k in attrs)
@@ -88,8 +90,8 @@ class S10ProofTests(unittest.TestCase):
     def test_summary_keeps_full_population_and_readable_fields_without_changing_evidence(self):
         value = r.comparison(self.store, self.sid, 'fixture', 'comparison')
         before = deepcopy(value)
-        page = p.render(value, '').decode()
-        filtered = p.render(r.comparison(self.store, self.sid, 'fixture', 'comparison',
+        page = views.render(value, '').decode()
+        filtered = views.render(r.comparison(self.store, self.sid, 'fixture', 'comparison',
                                         query={'verdict': 'NE SATISFAIT PAS', 'sort': 'cost'}), '').decode()
         summary = lambda html: html.split('aria-label="Conclusion de la campagne">', 1)[1].split('</div>', 1)[0]
         self.assertEqual(summary(page), summary(filtered))
@@ -108,7 +110,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertNotIn('True bool', page)
         self.assertIn('>Oui</span>', page)
         self.assertEqual(before, value)
-        hostile = p.readable_fields({'parameters': {'<img src=x onerror=alert(1)>': '<script>bad()</script>'}})
+        hostile = views.readable_fields({'parameters': {'<img src=x onerror=alert(1)>': '<script>bad()</script>'}})
         self.assertNotIn('<script>', hostile)
         self.assertFalse(any(tag == 'img' for tag, _ in Markup(hostile.encode()).tags))
 
@@ -118,7 +120,7 @@ class S10ProofTests(unittest.TestCase):
             with socket.socket() as probe:
                 probe.bind(('127.0.0.1', 0))
                 port = probe.getsockname()[1]
-            process = multiprocessing.get_context('spawn').Process(target=service.serve_web,
+            process = multiprocessing.get_context('spawn').Process(target=serve_web,
                 args=('127.0.0.1', port, public, public / 'absent.sock', 'a' * 40))
             process.start()
             try:
@@ -149,7 +151,7 @@ class S10ProofTests(unittest.TestCase):
                         else:
                             self.assertEqual({'error': 'NO_VERIFIED_PUBLICATION'}, json.loads(raw))
                 self.assertFalse((public / 'active.json').exists())
-                bundle = r.preview(self.store, self.sid, 'fixture', 'comparison', piece_ids=[])
+                bundle = r.preview(self.store, self.sid, 'fixture', 'comparison', piece_ids=[], presentation=projection)
                 r.materialize(bundle, dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
                     projection_sha256=bundle['projection_sha256'], catalogue=False), public)
                 with urlopen(Request(base + '/index.html', headers={'Accept': 'text/html'}), timeout=2) as response:

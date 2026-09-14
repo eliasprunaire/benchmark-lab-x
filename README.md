@@ -28,18 +28,18 @@ L’outillage Python prépare un scénario figé, recueille les sorties après a
 Depuis la racine du dépôt, avec Python 3 :
 
 ```bash
-python3 -B -m benchmark_lab_x --help
+python3 -B -m benchmark --help
 ```
 
 Pour consulter une campagne locale déjà construite et scellée, remplacez le chemin d’exemple par le sien :
 
 ```bash
-python3 -B -m benchmark_lab_x show --run-dir runs/ma-campagne
+python3 -B -m benchmark show --run-dir runs/ma-campagne
 ```
 
-Cette commande vérifie l’intégrité puis ouvre la page sur macOS. Le [guide local](benchmark_lab_x/README.md) détaille les étapes, les prérequis et les autorisations nécessaires. Les [tests hors ligne](benchmark_lab_x/verify.md) utilisent un faux Pi et n’appellent aucun modèle.
+Cette commande vérifie l’intégrité puis ouvre la page sur macOS. Le [guide local](benchmark/README.md) détaille les étapes, les prérequis et les autorisations nécessaires. Les [tests hors ligne](benchmark/verify.md) utilisent un faux Pi et n’appellent aucun modèle.
 
-Ce moteur historique reste attaché à un scénario et à son panel figés. Le runtime du service fournit séparément la préparation privée, les dossiers versionnés, les campagnes et leur restitution. Le [guide opérateur](benchmark_lab_x/README.md#première-comparaison-privée--pi-et-jugement-opérateur) décrit le raccordement candidat Pi/OpenRouter et l’évaluation locale ou humaine ; leurs tests simulés ne remplacent ni les campagnes réelles ni leur autorisation. Le [périmètre produit](docs/PRD.md#5-périmètre-produit) définit ces capacités attendues.
+Ce moteur historique reste attaché à un scénario et à son panel figés. Le runtime du service fournit séparément la préparation privée, les dossiers versionnés, les campagnes et leur restitution. Le [guide opérateur](benchmark/README.md#première-comparaison-privée--pi-et-jugement-opérateur) décrit le raccordement candidat Pi/OpenRouter et l’évaluation locale ou humaine ; leurs tests simulés ne remplacent ni les campagnes réelles ni leur autorisation. Le [périmètre produit](docs/PRD.md#5-périmètre-produit) définit ces capacités attendues.
 
 ## Préparer une tâche de benchmark
 
