@@ -346,7 +346,22 @@ def render(value, csrf, path='/preparation', *, error=False):
                    for href, label in (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/index.html', 'Comparaisons publiées')))
     if error:
         title = 'Préparation indisponible' if value.get('unavailable') else 'Action non aboutie'
-        content = '<p role="alert">' + text(value['error']) + '</p><p><a href="/preparation">Retrouver mes cas d’usage</a></p>'
+        content = '<p role="alert">' + text(value['error']) + '</p>'
+        submitted = value.get('form')
+        if type(submitted) is dict and 'request' in submitted:
+            content += form(path, {key: submitted[key] for key in ('dossier_id', 'action_id')},
+                '<label for="request">Une tâche de votre travail</label>'
+                '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5">' + text(submitted['request']) + '</textarea>'
+                '<label for="useful">Résultat attendu</label><textarea id="useful" name="useful" maxlength="800" rows="3">' + text(submitted.get('useful', '')) + '</textarea>'
+                '<label for="context">Contexte utile</label><textarea id="context" name="context" maxlength="200" rows="2">' + text(submitted.get('context', '')) + '</textarea>'
+                '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>'
+                '<button type="submit">Corriger et renvoyer</button>')
+        elif type(submitted) is dict and 'message' in submitted:
+            content += form(path, {key: submitted[key] for key in ('action_id', 'revision', 'kind')},
+                '<label for="message">Votre précision ou correction</label>'
+                '<textarea id="message" name="message" required maxlength="1000" rows="4">' + text(submitted['message']) + '</textarea>'
+                '<button type="submit">Corriger et renvoyer</button>')
+        content += '<p><a href="/preparation">Retrouver mes cas d’usage</a></p>'
     elif value.get('kind') == 'campaign_launch':
         campaign = value['campaign']
         base = '/preparation/dossiers/' + value['dossier_id'] + '/campaigns/' + campaign['campaign_id']
@@ -405,6 +420,9 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<p>Vos cas d’usage et leurs résultats restent privés. Leur consultation ne publie aucune pièce.</p>'
         content += '<div class="actions"><a class="button" href="/">Revenir à l’accueil</a>'
         content += '<a class="button sec" href="/preparation">Retrouver mes cas d’usage</a></div>'
+    elif value.get('kind') == 'honeypot_ack':
+        title = 'Demande enregistrée'
+        content = '<p role="status">Votre demande a bien été reçue.</p>'
     elif value.get('kind') == 'catalogue':
         title = 'Versions et comparaisons'
         content = '<p class="lead">Index privé de cette session : chaque cas d’usage validé, ses versions d’épreuve et les comparaisons lancées.</p>'
@@ -449,7 +467,10 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += section('Décrire un nouveau cas d’usage', form('/preparation/dossiers',
             {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16)},
             '<label for="request">Une tâche de votre travail</label><p id="request-help" class="hint">Décrivez le travail et le résultat utile, sans donnée personnelle ni information confidentielle. Aucun dossier réel, même anonymisé.</p>'
-            '<textarea id="request" name="request" required rows="5" aria-describedby="request-help"' + disabled + '></textarea>'
+            '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5" aria-describedby="request-help"' + disabled + '></textarea>'
+            '<label for="useful">Résultat attendu</label><textarea id="useful" name="useful" maxlength="800" rows="3"' + disabled + '></textarea>'
+            '<label for="context">Contexte utile</label><textarea id="context" name="context" maxlength="200" rows="2"' + disabled + '></textarea>'
+            '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>'
             '<button type="submit"' + disabled + '>' + icon('i-pen') + 'Préparer cet exemple</button>'), 'besoin')
         content += section('Mes cas d’usage dans ce navigateur', dossiers)
     elif 'operation_id' in value:
@@ -499,7 +520,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         if editable and value['package'] is None:
             content += section('Votre réponse', form(url + '/messages',
                 {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
-                '<label for="message">Votre précision</label><textarea id="message" name="message" rows="3" required' + disabled + '></textarea><button type="submit"' + disabled + '>Envoyer ma réponse</button>'))
+                '<label for="message">Votre précision</label><textarea id="message" name="message" rows="3" required maxlength="1000"' + disabled + '></textarea><button type="submit"' + disabled + '>Envoyer ma réponse</button>'))
         payload = value['payload']
         content += section('Besoin conservé', '<p>' + text(payload['request']) + '</p>', 'besoin')
         if value.get('task_index'):
@@ -585,7 +606,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                 '<option value="clarify">Répondre à la clarification ou confirmer le périmètre</option>'
                 '<option value="correct"' + (' selected' if package else '') + '>Modifier cet exemple</option></select>'
                 '<label for="message">Votre précision ou correction</label>'
-                '<textarea id="message" name="message" rows="4" required' + disabled + '></textarea><button type="submit"' + disabled + '>Envoyer ce message</button>') + '</div></details>'
+                '<textarea id="message" name="message" rows="4" required maxlength="1000"' + disabled + '></textarea><button type="submit"' + disabled + '>Envoyer ce message</button>') + '</div></details>'
         qualification = value.get('qualification', {})
         labels = {'PENDING': 'En attente', 'QUALIFIED': 'Contrôles requis prouvés',
                   'BLOCKED': 'Bloquée : référence ou contrôles insuffisamment prouvés',

@@ -1,7 +1,8 @@
 """HTTP simulations only; usage fixtures are not evidence of provider access."""
 from base64 import b64decode
-from contextlib import closing, redirect_stdout
+from contextlib import closing, nullcontext, redirect_stdout
 from copy import deepcopy
+from datetime import datetime, timezone
 from hashlib import sha256
 import io
 import json
@@ -97,7 +98,7 @@ def http_body(value=None, **updates):
                   'prompt_tokens_details': {'cached_tokens': 400}}, **updates}).encode()
 
 
-def executor_process(data, sock, entered=None):
+def executor_process(data, sock, entered=None, clock=None):
     connection = Mock()
     connection.getresponse.return_value.status = 200
     connection.getresponse.return_value.length = 0
@@ -108,7 +109,9 @@ def executor_process(data, sock, entered=None):
             while True:
                 time.sleep(1)
         connection.getresponse.side_effect = interrupted_response
-    with patch.dict(os.environ, {'OPENROUTER_API_KEY': KEY}), patch.object(assistant, 'HTTPSConnection', return_value=connection), \
+    time_patch = (patch.object(prep, '_now', side_effect=lambda: datetime.fromtimestamp(clock.value, timezone.utc))
+                  if clock is not None else nullcontext())
+    with time_patch, patch.dict(os.environ, {'OPENROUTER_API_KEY': KEY}), patch.object(assistant, 'HTTPSConnection', return_value=connection), \
             patch.object(service, 'release_identity', return_value='a' * 40):
         runtime.main(['executor', '--data', str(data), '--socket', str(sock),
                       '--preparation-assistant', assistant.ASSISTANT])
@@ -563,7 +566,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
                     process.kill()
                     process.join()
         self.addCleanup(stop_children)
-        for target, args in [(executor_process, (self.data, sock)),
+        clock = context.Value('d', time.time())
+        for target, args in [(executor_process, (self.data, sock, None, clock)),
                              (serve_web, ('127.0.0.1', port, public, sock, 'a' * 40))]:
             process = context.Process(target=target, args=args)
             process.start()
@@ -588,6 +592,9 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertIsNone(prep.admission(self.store))
         prep.admit(self.store, self.authority)
         body = dict(csrf_token=self.csrf, dossier_id='d', action_id='http', request=NEED)
+        missing_source = service.preparation_request(sock, 'POST', '/preparation/dossiers', self.token, body)
+        self.assertEqual((400, 'SOURCE_MISSING'),
+                         (missing_source['status'], missing_source['value']['error_code']))
         self.assertEqual(400, call('/preparation/dossiers', {
             **body, 'dossier_id': 'too-large', 'action_id': 'large', 'request': 'x' * 65536})[0])
         self.assertEqual([], self.store.inspect_operations())
@@ -608,6 +615,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('UNKNOWN', view['observed_cost']['status'])
         self.assertEqual(202, call('/preparation/dossiers', body)[0])
         self.assertEqual(1, len(self.store.inspect_operations()))
+        clock.value += 30
         code, _ = call('/preparation/dossiers/d/messages', dict(csrf_token=self.csrf, action_id='next', revision=2,
                                                               kind='clarify', message=CLARIFICATION))
         self.assertEqual(202, code)
@@ -748,7 +756,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
         first = start(entered)
         prep.admit(self.store, self.authority)
         accepted = service.preparation_request(sock, 'POST', '/preparation/dossiers', self.token,
-            dict(csrf_token=self.csrf, dossier_id='d', action_id='interrupted', request=NEED))
+            dict(csrf_token=self.csrf, dossier_id='d', action_id='interrupted', request=NEED,
+                 source_sha256='a' * 64))
         self.assertEqual(202, accepted['status'])
         self.assertTrue(entered.wait(5))
         pending = self.store.inspect_operations()[0]

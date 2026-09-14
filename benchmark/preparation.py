@@ -1,7 +1,7 @@
 """Private fictional preparation on S1 with an operator-injected transport."""
 from contextlib import closing
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from hashlib import sha256
 import hmac
@@ -9,6 +9,7 @@ import json
 import os
 import re
 import secrets
+import unicodedata
 from urllib.parse import urlsplit, parse_qsl
 
 from .storage import (Store, SchemaError, IntegrityError, ConflictError, BudgetError,
@@ -16,8 +17,106 @@ from .storage import (Store, SchemaError, IntegrityError, ConflictError, BudgetE
                       _identity, _money, _sum_money, _unique_object, _payload_json)
 
 
+REQUEST_MIN = 40
+REQUEST_MAX = 1_500
+USEFUL_MAX = 800
+CONTEXT_MAX = 200
+MESSAGE_MAX = 1_000
+SESSION_INTERVAL = timedelta(seconds=30)
+SESSION_DAILY_DOSSIERS = 2
+PREPARATION_DAILY_CAP_USD = Decimal('20')
+SOURCE_RATE_LIMIT = 20
+SOURCE_RATE_WINDOW = timedelta(hours=1)
+_SOURCE_ACCEPTED = {}
+
+
 class Denied(ValueError):
-    pass
+    def __init__(self, message, field=None):
+        super().__init__(message)
+        self.code = message if re.fullmatch(r'[A-Z_]+', message) else None
+        self.field = field
+
+
+def _now():
+    return datetime.now(timezone.utc)
+
+
+def _normalized_text(value, field, minimum, maximum):
+    if type(value) is not str:
+        raise ValueError('Texte requis')
+    value = unicodedata.normalize('NFC', value.replace('\r\n', '\n').replace('\r', '\n'))
+    value = ''.join(character for character in value
+                    if character in ('\n', '\t') or unicodedata.category(character) != 'Cc').rstrip()
+    if len(value) < minimum:
+        raise Denied('TEXT_TOO_SHORT', field)
+    if len(value) > maximum:
+        raise Denied('TEXT_TOO_LONG', field)
+    return value
+
+
+def _normalized_submission(body, create):
+    required = {'dossier_id', 'action_id', 'request'} if create else {'action_id', 'revision', 'kind', 'message'}
+    optional = {'useful', 'context'} if create else set()
+    source_sha256 = body.get('source_sha256') if type(body) is dict else None
+    if type(source_sha256) is not str or re.fullmatch(r'[0-9a-f]{64}', source_sha256) is None:
+        raise Denied('SOURCE_MISSING', 'source_sha256')
+    if not required <= body.keys() or not body.keys() <= required | optional | {'source_sha256'}:
+        raise ValueError('Formulaire invalide')
+    result = {key: value for key, value in body.items() if key != 'source_sha256'}
+    if create:
+        result['request'] = _normalized_text(result['request'], 'request', REQUEST_MIN, REQUEST_MAX)
+        for field, maximum in (('useful', USEFUL_MAX), ('context', CONTEXT_MAX)):
+            result[field] = _normalized_text(result.get(field, ''), field, 0, maximum)
+    else:
+        result['message'] = _normalized_text(result['message'], 'message', 1, MESSAGE_MAX)
+    return result, source_sha256
+
+
+def _source_limit(source_sha256, now):
+    threshold = now - SOURCE_RATE_WINDOW
+    # ponytail: balayage global en mémoire, partitionner seulement si le débit le justifie
+    for key in tuple(_SOURCE_ACCEPTED):
+        retained = [date for date in _SOURCE_ACCEPTED[key] if date > threshold]
+        if retained:
+            _SOURCE_ACCEPTED[key] = retained
+        else:
+            del _SOURCE_ACCEPTED[key]
+    accepted = _SOURCE_ACCEPTED.get(source_sha256, [])
+    if len(accepted) >= SOURCE_RATE_LIMIT:
+        raise Denied('SOURCE_RATE_LIMIT')
+    _SOURCE_ACCEPTED[source_sha256] = accepted
+
+
+def _daily_preparation_reserved(connection, now):
+    start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc).isoformat()
+    amounts = connection.execute(
+        "SELECT r.amount FROM operations o JOIN reservations r USING(operation_id) "
+        "JOIN budgets b USING(budget_id) WHERE o.phase IN ('preparation','correction') "
+        "AND o.created_at>=? AND b.currency='USD'", (start,)).fetchall()
+    return _sum_money(_money(row[0]) for row in amounts)
+
+
+def _submission_limits(connection, session_id, create, now, authority):
+    if connection.execute(
+            "SELECT 1 FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) "
+            "JOIN operations o USING(operation_id) WHERE d.session_id=? AND o.state!='RECEIVED' LIMIT 1",
+            (session_id,)).fetchone():
+        raise Denied('PREPARATION_IN_PROGRESS')
+    rows = connection.execute(
+        "SELECT o.created_at,a.kind FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) "
+        "JOIN operations o USING(operation_id) WHERE d.session_id=? ORDER BY o.created_at DESC",
+        (session_id,)).fetchall()
+    dates = [(datetime.fromisoformat(created), kind) for created, kind in rows]
+    if dates and now - dates[0][0] < SESSION_INTERVAL:
+        raise Denied('TOO_SOON')
+    if create:
+        today = now.date()
+        if sum(kind == 'create' and created.astimezone(timezone.utc).date() == today
+               for created, kind in dates) >= SESSION_DAILY_DOSSIERS:
+            raise Denied('DAILY_SESSION_LIMIT')
+    if (_daily_preparation_reserved(connection, now) + _money(authority['reserve_amount'])
+            > PREPARATION_DAILY_CAP_USD):
+        raise Denied('DAILY_CAP')
 
 
 def identifier(value):
@@ -72,6 +171,9 @@ def availability(store, transport):
                 reason = 'unresolved'
             elif _money(authority['reserve_amount']) > Decimal(budget['available']):
                 reason = 'budget'
+            elif (_daily_preparation_reserved(connection, _now()) + _money(authority['reserve_amount'])
+                  > PREPARATION_DAILY_CAP_USD):
+                reason = 'daily_cap'
         return {'assistant_configured': configured, 'admission_open': authority is not None,
                 'can_submit': reason == 'open', 'reason': reason}
 
@@ -278,8 +380,10 @@ def _closed_preparation_operation(operation, *, conserved_wire=None, state=None)
     return value
 
 
-def submit(store, session_id, dossier_id, body, source, transport):
+def submit(store, session_id, dossier_id, body, source, transport, *, enforce_limits=False,
+           source_sha256=None):
     connection = connection_for(store)
+    now = _now() if enforce_limits else None
     identifier(dossier_id)
     identifier(body['action_id'])
     create = 'request' in body
@@ -314,9 +418,13 @@ def submit(store, session_id, dossier_id, body, source, transport):
         authority = admission(store, connection)
         if not authority or not transport or os.path.lexists(store._root / 'restore.json'):
             raise Denied('Admission fermée ou transport absent')
+        if enforce_limits:
+            _submission_limits(connection, session_id, create, now, authority)
+            _source_limit(source_sha256, now)
         # S2 admits one effect at a time; no restart drains a durable queue
-        if connection.execute("SELECT 1 FROM s2_actions a JOIN operations o USING(operation_id) "
-                              "WHERE o.state != 'RECEIVED' LIMIT 1").fetchone():
+        if not enforce_limits and connection.execute(
+                "SELECT 1 FROM s2_actions a JOIN operations o USING(operation_id) "
+                "WHERE o.state != 'RECEIVED' LIMIT 1").fetchone():
             raise ConflictError('Préparation active ou suspendue')
         budget = store._budget(connection, authority['budget_id'], store._operations(connection))
         _usd_budget(authority['reserve_amount'], authority['requested_configuration'], budget)
@@ -346,6 +454,9 @@ def submit(store, session_id, dossier_id, body, source, transport):
                          dossier_id=dossier_id, revision=revision, authority=authority['authority_id'],
                          engine_version=source, requested_configuration=authority['requested_configuration'], resources=resources)
         store._reserve_intent(connection, operation, authority['budget_id'], authority['reserve_amount'])
+        if enforce_limits:
+            connection.execute('UPDATE operations SET created_at=? WHERE operation_id=?',
+                               (now.isoformat(), operation_id))
         if callable(getattr(transport, 'prepare', None)):
             # A refused body rolls back the dossier, intention and reserve together
             operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
@@ -356,6 +467,8 @@ def submit(store, session_id, dossier_id, body, source, transport):
                                (encode(operation['resources']), operation_id))
         connection.execute('INSERT INTO s2_actions VALUES (?,?,?,?,?,?)',
                            (dossier_id, body['action_id'], revision, kind, request_json, operation_id))
+        if enforce_limits:
+            _SOURCE_ACCEPTED[source_sha256].append(now)
         return operation_id, True
 
 
@@ -620,8 +733,9 @@ def dispatch(store, method, path, token, body, source, transport, *, candidate_t
             return 200, value, None, None
         raise Denied('Action inaccessible')
     if method == 'POST' and path == '/preparation/dossiers':
-        _fields(body, ('dossier_id', 'action_id', 'request'), 'create')
-        operation_id, start = submit(store, session_id, body['dossier_id'], body, source, transport)
+        body, source_sha256 = _normalized_submission(body, True)
+        operation_id, start = submit(store, session_id, body['dossier_id'], body, source, transport,
+                                     enforce_limits=True, source_sha256=source_sha256)
         return 202, {'operation_id': operation_id, 'dossier_id': body['dossier_id']}, None, operation_id if start else None
     proof = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/evaluations/([A-Za-z0-9_-]{1,128})/pieces/([A-Za-z0-9_-]{1,128})', path)
     if method == 'GET' and proof:
@@ -644,8 +758,9 @@ def dispatch(store, method, path, token, body, source, transport, *, candidate_t
         # The CSRF token travels independently in HTML rendering through the web's session query
         return 200, result, None, None
     if method == 'POST' and action == 'messages':
-        _fields(body, ('action_id', 'revision', 'kind', 'message'), 'message')
-        operation_id, start = submit(store, session_id, dossier_id, body, source, transport)
+        body, source_sha256 = _normalized_submission(body, False)
+        operation_id, start = submit(store, session_id, dossier_id, body, source, transport,
+                                     enforce_limits=True, source_sha256=source_sha256)
         return 202, {'operation_id': operation_id, 'dossier_id': dossier_id}, None, operation_id if start else None
     if method == 'POST' and action == 'validation':
         _fields(body, ('dossier_id', 'revision', 'package_sha256'), 'validation')
