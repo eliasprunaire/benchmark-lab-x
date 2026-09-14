@@ -176,7 +176,7 @@ class CustomNeedEngineTests(unittest.TestCase):
                     result = response_for(op)
                     package = result['receipt']['result']['package']
                     package['candidate']['instruction'] = task
-                    package['candidate']['pieces'][0]['content'] = 'Action fictive : relire\n\n' + mail
+                    package['candidate']['pieces'][0]['content'] = 'Action : relire\n\n' + mail
                     result['receipt']['result']['reformulation'] = 'Synthétiser le fil fictif Atelier Boisclair'
                     return result
 

@@ -24,8 +24,9 @@ from benchmark import openrouter_preparation as assistant
 
 
 KEY = 'fixture-key-never-a-credential'
-ESTIMATE = {'channel': 'OpenRouter', 'model_id': assistant.MODEL, 'context_length': 1000000, 'canonical_slug': assistant.MODEL + '-20260826',
-            'assumptions': {'input_tokens': 1000000, 'cached_input_tokens': 0, 'output_tokens': 16384},
+ESTIMATE = {'channel': 'OpenRouter', 'model_id': assistant.MODEL, 'context_length': 1050000,
+            'canonical_slug': assistant.DEFAULT_PROFILE['revision'],
+            'assumptions': {'input_tokens': 1050000, 'cached_input_tokens': 0, 'output_tokens': 16384},
             'sources': {key: {'url': 'https://openrouter.ai/api/v1/' + path,
                               'retrieved_at': '2026-09-10T00:00:00+00:00', 'body_sha256': 'b' * 64}
                         for key, path in [('model', 'model/' + assistant.MODEL),
@@ -37,7 +38,8 @@ ESTIMATE = {'channel': 'OpenRouter', 'model_id': assistant.MODEL, 'context_lengt
                           for tag, provider in assistant.PROVIDERS.items()]}
 RESERVE = assistant.reservation(ESTIMATE)
 ROUTE = {'requested': assistant.MODEL, 'strategy': 'direct', 'attempt': 1,
-         'endpoints': {'available': [{'provider': 'Modal', 'model': assistant.MODEL, 'selected': True}]}}
+         'endpoints': {'available': [{'provider': next(iter(assistant.PROVIDERS.values())),
+                                      'model': assistant.MODEL, 'selected': True}]}}
 SYNTHETIC_PROFILE = Path(__file__).resolve().parent / 'fixtures' / 'synthetic-preparation.profile.json'
 
 
@@ -60,7 +62,7 @@ def estimate_for(profile):
 NEED = 'Je passe trop de temps à retrouver ce qui a été décidé en réunion et qui doit faire quoi. Je voudrais comparer des modèles pour m’aider.'
 CLARIFICATION = 'Association entièrement fictive organisant un événement ; notes françaises ; décisions, actions, responsables, échéances et informations à confirmer.'
 CORRECTION = 'Garde les mêmes notes et distingue clairement les propositions des décisions validées. Pour les responsables absents, indique à confirmer.'
-NOTES = ('Association fictive Les Lanternes, réunion du 3 octobre 2027.\n'
+NOTES = ('Association Les Lanternes, réunion du 3 octobre 2027.\n'
          'P1 : Mila propose un concert ; aucune décision prise.\n'
          'D1 : Le comité valide un atelier le 20 novembre.\n'
          'A1 : Noé prépare les affiches. Échéance initiale : 10 octobre.\n'
@@ -167,10 +169,10 @@ class OpenRouterPreparationTests(unittest.TestCase):
             self.assertNotIn('tools', sent)
             self.assertNotIn('thinking', sent)
             self.assertNotIn('request_id', sent)
-            self.assertEqual({'effort': 'low'}, sent['reasoning'])
+            self.assertEqual({'effort': 'medium'}, sent['reasoning'])
             self.assertEqual(16384, sent['max_tokens'])
             self.assertNotIn('max_tokens', sent['reasoning'])
-            self.assertTrue(sent['provider']['allow_fallbacks'])
+            self.assertFalse(sent['provider']['allow_fallbacks'])
             self.assertEqual(list(assistant.PROVIDERS), sent['provider']['only'])
             self.assertEqual(sent['provider']['only'], sent['provider']['order'])
             self.assertTrue(sent['provider']['require_parameters'])
@@ -189,7 +191,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual(assistant.MODEL, observed['model'])
         self.assertIsNone(observed['parameters'])
         self.assertEqual(ROUTE, observed['route'])
-        self.assertEqual('Modal', observed['provider'])
+        self.assertEqual('OpenAI', observed['provider'])
         self.assertEqual('OpenRouter', operation['requested_configuration']['provider'])
         self.assertEqual('0.000202', observed['consumption']['amount'])
         self.assertFalse(observed['consumption']['invoice'])
@@ -817,6 +819,55 @@ class OpenRouterPreparationTests(unittest.TestCase):
             self.http.request.reset_mock()
         self.assertEqual([historical['model'], synthetic['model']], sent_models)
 
+    def test_story_14_loads_production_profiles_and_keeps_glm_historical(self):
+        preparation_profile = assistant.load_profile(assistant.ASSISTANT)
+        qualification_profile = assistant.load_profile(str(
+            Path(assistant.__file__).with_name('qualification.profile.json')))
+        historical = assistant.load_profile(assistant.HISTORICAL_ASSISTANT)
+        self.assertEqual('openai/gpt-6-astra', preparation_profile['model'])
+        self.assertEqual({'effort': 'medium'}, preparation_profile['parameters']['reasoning'])
+        self.assertEqual('anthropic/claude-fable-5.1', qualification_profile['model'])
+        self.assertEqual({'effort': 'medium'}, qualification_profile['parameters']['reasoning'])
+        self.assertEqual('z-ai/glm-5.3-flash', historical['model'])
+        self.assertEqual(preparation_profile, assistant.frozen_profile())
+
+    def test_story_14_stops_repeated_scope_confirmations(self):
+        for expected, action_id in (('scope_confirmation', 'create'),
+                                    ('clarification', 'scope-2'),
+                                    ('suspended', 'scope-3')):
+            self.http.getresponse.return_value.read.return_value = http_body(result('scope_confirmation'))
+            if action_id == 'create':
+                _, view = self.execute()
+            else:
+                current = prep.view(self.store, self.session, 'd')['revision']
+                _, view = self.execute(action_id=action_id, revision=current, kind='clarify',
+                                       message='Le périmètre textuel proposé me convient.')
+            self.assertEqual(expected, view['stage'])
+        self.assertEqual(3, view['checks']['scope_confirmation_count'])
+        self.assertTrue(view['explanation'].startswith('SCOPE_LOOP :'))
+
+    def test_story_14_rejects_fiction_markers_from_candidate_content(self):
+        for dossier, field, marker in (('bad-instruction', 'instruction', 'Dossier fictif à analyser'),
+                                       ('bad-piece', 'piece', 'Organisation inventée')):
+            with self.subTest(field=field):
+                value = result()
+                if field == 'instruction':
+                    value['package']['candidate']['instruction'] = marker
+                else:
+                    value['package']['candidate']['pieces'][0]['content'] = marker
+                prep.admit(self.store, self.authority)
+                self.http.getresponse.return_value.read.return_value = http_body(value)
+                operation_id, _ = prep.submit(self.store, self.session, dossier,
+                    dict(action_id='create', request=NEED), 'a' * 40, self.transport)
+                prep.execute(self.data, operation_id, self.transport)
+                operation = next(item for item in self.store.inspect_operations()
+                                 if item['operation_id'] == operation_id)
+                view = prep.view(self.store, self.session, dossier)
+                self.assertEqual('RECEIVED', operation['state'])
+                self.assertEqual('FORMAT_ERROR', operation['receipt']['observed_configuration']['incident'])
+                self.assertEqual('suspended', view['stage'])
+                self.assertIsNone(view['package'])
+
     def test_profile_object_and_file_mutations_do_not_change_prepared_bytes(self):
         source = self.home / 'synthetic.profile.json'
         source.write_bytes(SYNTHETIC_PROFILE.read_bytes())
@@ -874,7 +925,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
                     self.assertEqual(KEY, os.environ.get('OPENROUTER_API_KEY'))
                     self.http.request.assert_not_called()
         alias = assistant.load_profile(assistant.ASSISTANT)
-        from_file = assistant.load_profile(str(Path(assistant.__file__).with_name(assistant.HISTORICAL_PROFILE_NAME)))
+        from_file = assistant.load_profile(str(Path(assistant.__file__).with_name(assistant.DEFAULT_PROFILE_NAME)))
         self.assertEqual(alias, from_file)
         self.assertEqual(assistant.MODEL, alias['model'])
         self.assertEqual(assistant.SYSTEM_PROMPT, alias['system'])
@@ -912,8 +963,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual(profile['system'], sent['messages'][0]['content'])
 
     def test_glm_profile_keeps_historical_system_parameters_and_http_bytes(self):
-        historical = json.loads(Path(assistant.__file__).with_name(assistant.HISTORICAL_PROFILE_NAME).read_text())
-        self.assertEqual(historical['system'], assistant.SYSTEM_PROMPT)
+        historical = assistant.load_profile(assistant.HISTORICAL_ASSISTANT)
         self.assertEqual(historical['system'], assistant.HISTORICAL_PROFILE['system'])
         self.assertEqual({
             'temperature': 1, 'top_p': 0.95, 'reasoning': {'effort': 'low'},
@@ -921,18 +971,19 @@ class OpenRouterPreparationTests(unittest.TestCase):
                          'order': ['modal/fp8', 'coreweave/fp8', 'novita/fp8'],
                          'allow_fallbacks': True, 'require_parameters': True},
             'max_tokens': 16384, 'stream': False, 'response_format': {'type': 'json_object'},
-        }, assistant.PARAMETERS)
+        }, historical['parameters'])
         request = prep._closed_preparation_request(dict(
             message='x', kind='create', payload=dict(request='x', reformulation='', clarifications=[],
                                                      validated_assumptions=[], fictional_parameters={}), package=None))
-        operation = {'operation_id': 'fixture', 'requested_configuration': assistant.configuration(ESTIMATE),
+        estimate = estimate_for(historical)
+        operation = {'operation_id': 'fixture', 'requested_configuration': assistant.configuration(estimate, historical),
                      'phase': 'preparation', 'state': 'INTENT_RECORDED'}
-        wire = self.transport.prepare(operation, request)
+        wire = assistant.OpenRouterPreparation(KEY, historical).prepare(operation, request)
         sent = json.loads(wire)
         self.assertEqual('3b593371788005829e4e83df9b783df6e7f4a807bc3a46da22f15a0bfd64ed1c',
                          sha256(wire.encode()).hexdigest())
-        self.assertEqual(assistant.SYSTEM_PROMPT, sent['messages'][0]['content'])
-        self.assertEqual(assistant.PARAMETERS, {key: sent[key] for key in assistant.PARAMETERS})
+        self.assertEqual(historical['system'], sent['messages'][0]['content'])
+        self.assertEqual(historical['parameters'], {key: sent[key] for key in historical['parameters']})
         for key in ('temperature', 'top_p', 'reasoning', 'response_format'):
             self.assertIn(key, sent)
         self.http.request.assert_not_called()
@@ -945,10 +996,10 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual(['fixture/synthetic-prep', 'fixture/synthetic-prep-rev'], configured['model_identities'])
         self.assertEqual(loaded['revision'], configured['revision'])
         self.assertNotIn('authorized_identities', loaded)
-        glm = assistant.load_profile(assistant.ASSISTANT)
+        glm = assistant.load_profile(assistant.HISTORICAL_ASSISTANT)
         self.assertEqual('z-ai/glm-5.3-flash', glm['model'])
         self.assertEqual('z-ai/glm-5.3-flash-20260826', glm['revision'])
-        self.assertEqual([glm['model'], glm['revision']], assistant.configuration(ESTIMATE, glm)['model_identities'])
+        self.assertEqual([glm['model'], glm['revision']], assistant.configuration(estimate_for(glm), glm)['model_identities'])
         document = json.loads(SYNTHETIC_PROFILE.read_text())
         old_list = dict(document)
         del old_list['revision']
