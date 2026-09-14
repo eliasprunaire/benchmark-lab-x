@@ -89,7 +89,7 @@ Le contrat figé dans `campaign.json`, les données d’entrée et la carte du s
 
 Une préparation antérieure au changement de moteur n’est pas réutilisable pour acquérir, revoir ou construire : ses empreintes de sources ne correspondent plus. Il faut une nouvelle préparation et les autorités correspondantes. Aucun ancien reçu ou témoin d’autorité n’est converti automatiquement. Cette migration de noms ne constitue pas la livraison du périmètre produit.
 
-Le workflow [GitHub Pages](../.github/workflows/pages.yml) publie `pages/` lors des changements configurés sur `main`. Construire une page locale et l’intégrer dans cette publication sont deux actions d’autorités distinctes.
+Les comparaisons publiées sont servies par le service web sous `/publications/` ; la publication GitHub Pages est retirée. Construire une page locale et l’intégrer dans cette publication sont deux actions d’autorités distinctes.
 
 ## Interfaces locales du service Linux en construction
 

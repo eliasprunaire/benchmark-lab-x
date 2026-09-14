@@ -7,7 +7,7 @@ from pathlib import Path
 
 from benchmark.storage import _strict_json as encode
 
-STYLESHEET_PATH = Path(__file__).with_name('static') / 'preparation.css'
+STYLESHEET_PATH = Path(__file__).with_name('static') / 'projection.css'
 
 
 def stylesheet():
