@@ -28,7 +28,7 @@ class OfficialTransportTests(unittest.TestCase):
         'tokenhub': 'hy4-preview',
     }
     DASHSCOPE_BASE_URL = 'https://workspace.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'
-    TOKENHUB_BASE_URL = 'https://tokenhub-intl.tencentmaas.com'
+    TOKENHUB_BASE_URL = 'https://tokenhub-intl.tencentcloudmaas.com'
 
     @classmethod
     def setUpClass(cls):
@@ -341,15 +341,17 @@ class OfficialTransportTests(unittest.TestCase):
         self.assertEqual('workspace.ap-southeast-1.maas.aliyuncs.com', host)
 
     def test_tokenhub_base_url_is_explicitly_regional(self):
-        for base in ('https://tokenhub.tencentmaas.com',
-                     'https://tokenhub-intl.tencentmaas.com'):
+        for base in ('https://tokenhub.tencentcloudmaas.com',
+                     'https://tokenhub-intl.tencentcloudmaas.com',
+                     'https://tokenhub-us.tencentcloudmaas.com',
+                     'https://tokenhub-intl.tencentcloudmaas.tech'):
             provider, host, path, _ = native.resolve_channel('tokenhub', base)
             self.assertEqual('Tencent TokenHub', provider)
             self.assertEqual(base.removeprefix('https://'), host)
             self.assertEqual('/v1/chat/completions', path)
             endpoint = base + path
             self.assertEqual('tokenhub', native.kind_for_endpoint(endpoint))
-        for value in ('', 'http://tokenhub-intl.tencentmaas.com',
+        for value in ('', 'http://tokenhub-intl.tencentcloudmaas.com',
                       'https://example.org', 'https://tokenhub.tencentmaas.com/v1'):
             with self.subTest(value=value), self.assertRaisesRegex(
                     ValueError, 'HTTPS officiel Tencent'):

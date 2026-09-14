@@ -55,7 +55,10 @@ def _dashscope_endpoint(base_url):
 def _tokenhub_endpoint(base_url):
     parsed = urlsplit(base_url)
     hosts = {'tokenhub.tencentmaas.com', 'tokenhub-intl.tencentmaas.com',
-             'tokenhub.tencentmaas.cn', 'tokenhub-intl.tencentmaas.cn'}
+             'tokenhub.tencentmaas.cn', 'tokenhub-intl.tencentmaas.cn',
+             'tokenhub.tencentcloudmaas.com', 'tokenhub-intl.tencentcloudmaas.com',
+             'tokenhub-us.tencentcloudmaas.com', 'tokenhub.tencentcloudmaas.tech',
+             'tokenhub-intl.tencentcloudmaas.tech', 'tokenhub-us.tencentcloudmaas.tech'}
     if (parsed.scheme != 'https' or parsed.hostname not in hosts or parsed.username or parsed.password
             or parsed.port not in (None, 443) or parsed.path.rstrip('/') or parsed.query or parsed.fragment):
         raise ValueError('TENCENT_TOKENHUB_BASE_URL HTTPS officiel Tencent requis')
