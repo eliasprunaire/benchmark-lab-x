@@ -21,6 +21,7 @@ from . import views
 
 def serve_web(address, port, public, socket_path, source):
     public = Path(public)
+    views.SOURCE_SHA = source or ''
 
     class Handler(BaseHTTPRequestHandler):
         server_version = 'Benchmark'
@@ -41,7 +42,7 @@ def serve_web(address, port, public, socket_path, source):
             self.send_header('Content-Length', str(len(raw)))
             self.send_header('Cache-Control', 'no-store')
             self.send_header('X-Content-Type-Options', 'nosniff')
-            policy = "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+            policy = "default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
             if script is not None:
                 policy += "; script-src 'sha256-" + b64encode(sha256(script.encode()).digest()).decode() + "'"
             self.send_header('Content-Security-Policy', policy)
@@ -55,6 +56,13 @@ def serve_web(address, port, public, socket_path, source):
         def preparation(self):
             if self.path == '/preparation/style.css' and self.command in ('GET', 'HEAD'):
                 self.respond(200, views.STYLESHEET_PATH.read_bytes(), 'text/css; charset=utf-8')
+                return
+            font = re.fullmatch(r'/preparation/fonts/([A-Za-z]+)\.woff2', self.path)
+            if font and self.command in ('GET', 'HEAD'):
+                try:
+                    self.respond(200, (views.FONTS_PATH / (font.group(1) + '.woff2')).read_bytes(), 'font/woff2')
+                except OSError:
+                    self.respond(404, {'error': 'NOT_FOUND'})
                 return
             wants_json = 'application/json' in self.headers.get('Accept', '')
             try:

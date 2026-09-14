@@ -231,7 +231,7 @@ class S6Regressions(unittest.TestCase):
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(.02)
-        policy = "default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+        policy = "default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
         paths = [(self.base, 'text/html'), (self.base, 'application/json'),
                  (self.base + '/attempts/attempt-error', 'text/html'),
                  (self.base + '/preview', 'text/html'),

@@ -10,9 +10,9 @@ Le cap de 0.1.0 est un parcours public : décrire un besoin, le préciser avec u
 
 ## Découvrir les résultats
 
-[Ouvrir la comparaison publique](https://ayoahha.github.io/benchmark-lab-x/).
+Les comparaisons publiées sont servies par le service web sous `/publications/` ; la publication GitHub Pages est retirée.
 
-Le site actuel présente une restitution statique sur un scénario et trois configurations, sous son contrat historique. Son parcours reste :
+La restitution historique présentait un scénario et trois configurations, sous son contrat historique. Son parcours reste :
 
 1. Lisez le besoin, l’entrée et le résultat attendu pour vérifier que la tâche ressemble à votre usage.
 2. Examinez le verdict de chaque configuration et les constats qui le justifient.
