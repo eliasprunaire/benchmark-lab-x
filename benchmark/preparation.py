@@ -275,6 +275,32 @@ def package_check(store, dossier_id, revision, package, digest):
     return sorted(ids)
 
 
+def _package_changes(store, connection, dossier_id, revision, package):
+    empty_pieces = {'added': [], 'removed': [], 'modified': []}
+    if revision == 1 or package is None:
+        return [], empty_pieces
+    row = connection.execute(
+        'SELECT package_json,package_sha256 FROM s2_revisions WHERE dossier_id=? AND revision=?',
+        (dossier_id, revision - 1)).fetchone()
+    if row is None or row[0] is None:
+        return [], empty_pieces
+    previous = json.loads(row[0], object_pairs_hook=_unique_object)
+    package_check(store, dossier_id, revision - 1, previous, row[1])
+    changes = [field for field in ('instruction', 'deliverables', 'criteria', 'acceptable_ambiguities')
+               if package[field] != previous[field]]
+    old_pieces = {piece['name']: piece['sha256'] for piece in previous['pieces']}
+    new_pieces = {piece['name']: piece['sha256'] for piece in package['pieces']}
+    piece_changes = {
+        'added': [name for name in new_pieces if name not in old_pieces],
+        'removed': [name for name in old_pieces if name not in new_pieces],
+        'modified': [name for name in new_pieces
+                     if name in old_pieces and new_pieces[name] != old_pieces[name]],
+    }
+    if any(piece_changes.values()):
+        changes.append('pieces')
+    return changes, piece_changes
+
+
 def view(store, session_id, dossier_id, revision=None):
     connection = connection_for(store)
     with store.read_snapshot() as connection:
@@ -286,17 +312,19 @@ def view(store, session_id, dossier_id, revision=None):
                                  'FROM s2_revisions WHERE dossier_id=? AND revision=?', (dossier_id, revision)).fetchone()
         if not row:
             raise Denied('Révision inaccessible')
-        stage, explanation, raw, digest, changes, checks = row
-        package = None if raw is None else json.loads(raw)
+        stage, explanation, raw, digest, _, checks = row
+        package = None if raw is None else json.loads(raw, object_pairs_hook=_unique_object)
         if package is not None:
             package_check(store, dossier_id, revision, package, digest)
+        changes, piece_changes = _package_changes(store, connection, dossier_id, revision, package)
         validated = connection.execute('SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? '
                                        'AND package_sha256=? AND session_id=?',
                                        (dossier_id, revision, digest, session_id)).fetchone()
         result = dict(dossier_id=dossier_id, revision=revision, payload=store.get_dossier(dossier_id, revision),
                       stage=stage, explanation=explanation, package=package, package_sha256=digest,
                       fictional=True, validation=binding(dossier_id, revision, digest) if validated else None,
-                      qualified=False, changes=json.loads(changes), checks=json.loads(checks))
+                      qualified=False, changes=changes, piece_changes=piece_changes,
+                      checks=json.loads(checks, object_pairs_hook=_unique_object))
         result['example_contents'] = {piece['id']: store.read_piece(piece['id']).decode('utf-8')
                                       for piece in (package or {}).get('pieces', [])}
         result['rechecked'] = result['checks'].get('fields', [])
@@ -554,7 +582,7 @@ def execute(data, operation_id, transport):
                                        (dossier_id, revision, 'suspended',
                                         'Résultat reçu non utilisable : préparation suspendue. '
                                         'Reçu et coût conservés ; aucune reprise automatique.',
-                                        encode(['stage', 'explanation']), encode({'result_verified': False})))
+                                        encode([]), encode({'result_verified': False})))
                     connection.execute('UPDATE s2_dossiers SET current_revision=? WHERE dossier_id=?',
                                        (revision, dossier_id))
                     connection.execute('UPDATE s2_control SET admission_json=NULL WHERE singleton=1')
@@ -651,14 +679,14 @@ def publish(store, operation, request, response):
                       'pieces': [item for item in checked if item['id'] in {p['id'] for p in package['pieces']}],
                       'reference_bytes_verified': True, 'reference_qualification': 'NON VÉRIFIÉ'}
         old_package = request['package'] or {}
-        changes = [key for key in (package or {}) if (package or {})[key] != old_package.get(key)]
+        rechecked = [key for key in (package or {}) if (package or {})[key] != old_package.get(key)]
         if package is None:
-            changes = ['stage', 'explanation']
-        checks['fields'] = changes
+            rechecked = ['stage', 'explanation']
+        checks['fields'] = rechecked
         checks['scope_confirmation_count'] = scope_count
         connection.execute('INSERT INTO s2_revisions VALUES (?,?,?,?,?,?,?,?)',
                            (dossier_id, revision, stage, explanation, None if package is None else encode(package),
-                            digest, encode(changes), encode(checks)))
+                            digest, encode([]), encode(checks)))
         if (operation['requested_configuration'].get('provider') == 'OpenRouter'
                 and type(response['receipt']['observed_configuration']) is dict):
             from .openrouter_prices import indication
