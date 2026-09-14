@@ -14,7 +14,8 @@ from .storage import _strict_json as encode, _unique_object, _money
 from . import openrouter_prices, outgoing
 
 
-ASSISTANT = 'glm-5.3-flash'
+ASSISTANT = 'preparation'
+HISTORICAL_ASSISTANT = 'glm-5.3-flash'
 HOST = 'openrouter.ai'
 PATH = '/api/v1/chat/completions'
 ENDPOINT = 'https://' + HOST + PATH
@@ -25,6 +26,7 @@ USAGE_METHOD = {
                 'https://openrouter.ai/docs/faq'],
 }
 HISTORICAL_PROFILE_NAME = 'glm-5.3-flash.profile.json'
+DEFAULT_PROFILE_NAME = 'preparation.profile.json'
 MAX_PROFILE_BYTES = 65536
 MAX_REQUEST_BYTES = 65536
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -187,6 +189,8 @@ def _load_profile_file(path):
 
 def load_profile(source):
     if source == ASSISTANT:
+        return deepcopy(DEFAULT_PROFILE)
+    if source == HISTORICAL_ASSISTANT:
         return deepcopy(HISTORICAL_PROFILE)
     if type(source) is not str or not source:
         raise ValueError('Profil de préparation invalide')
@@ -195,7 +199,7 @@ def load_profile(source):
 
 def frozen_profile(profile=None):
     if profile is None:
-        return deepcopy(HISTORICAL_PROFILE)
+        return deepcopy(DEFAULT_PROFILE)
     if type(profile) is dict:
         return _validated_profile(profile)
     if type(profile) is str:
@@ -212,10 +216,11 @@ def providers(profile):
 
 
 HISTORICAL_PROFILE = _load_profile_file(Path(__file__).with_name(HISTORICAL_PROFILE_NAME))
-MODEL = HISTORICAL_PROFILE['model']
-PROVIDERS = providers(HISTORICAL_PROFILE)
-PARAMETERS = deepcopy(HISTORICAL_PROFILE['parameters'])
-SYSTEM_PROMPT = HISTORICAL_PROFILE['system']
+DEFAULT_PROFILE = _load_profile_file(Path(__file__).with_name(DEFAULT_PROFILE_NAME))
+MODEL = DEFAULT_PROFILE['model']
+PROVIDERS = providers(DEFAULT_PROFILE)
+PARAMETERS = deepcopy(DEFAULT_PROFILE['parameters'])
+SYSTEM_PROMPT = DEFAULT_PROFILE['system']
 
 
 def reservation(estimate, profile=None):

@@ -570,12 +570,25 @@ def publish(store, operation, request, response):
     result = response['receipt']['result']
     _fields(result, ('stage', 'explanation', 'reformulation', 'fictional_parameters', 'package'), 'preparation result')
     stage = result['stage']
+    explanation = result['explanation']
     if stage not in ('clarification', 'preview', 'scope_confirmation', 'suspended'):
         raise ValueError('État inconnu')
     if type(result['explanation']) is not str or (stage != 'preview' and not result['explanation']):
         raise ValueError('Explication requise')
     if (stage == 'preview') != (result['package'] is not None):
         raise ValueError('Paquet incohérent avec l’état')
+    candidate = (result['package'] or {}).get('candidate', {})
+    exposed = [candidate.get('instruction', '')]
+    exposed.extend(piece.get('content', '') for piece in candidate.get('pieces', [])
+                   if type(piece) is dict)
+    if any(type(text) is str and re.search(r'\b(?:ficti(?:f|fs|ve|ves)|inventé(?:e|s|es)?)\b', text, re.IGNORECASE)
+           for text in exposed):
+        observed = response['receipt'].get('observed_configuration')
+        if observed is None:
+            response['receipt']['observed_configuration'] = {'incident': 'FORMAT_ERROR'}
+        elif type(observed) is dict:
+            observed['incident'] = 'FORMAT_ERROR'
+        raise ValueError('Marqueur de fiction interdit dans le paquet candidat')
     dossier_id, before = operation['dossier_id'], operation['revision']
     payload = deepcopy(request['payload'])
     if request['kind'] == 'clarify':
@@ -594,6 +607,19 @@ def publish(store, operation, request, response):
         current = connection.execute('SELECT current_revision FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
         if current != before:
             raise ConflictError('Révision changée pendant la préparation')
+        previous_checks = json.loads(connection.execute(
+            'SELECT checks_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
+            (dossier_id, before)).fetchone()[0])
+        scope_count = previous_checks.get('scope_confirmation_count', 0)
+        if type(scope_count) is not int or scope_count < 0:
+            raise IntegrityError('Compteur de confirmation de périmètre invalide')
+        if stage == 'scope_confirmation':
+            scope_count += 1
+            if scope_count == 2:
+                stage = 'clarification'
+            elif scope_count >= 3:
+                stage = 'suspended'
+                explanation = 'SCOPE_LOOP : ' + explanation
         revision = before + 1
         store.save_dossier(dossier_id, revision, payload)
         package, digest, checks = None, None, {}
@@ -629,8 +655,9 @@ def publish(store, operation, request, response):
         if package is None:
             changes = ['stage', 'explanation']
         checks['fields'] = changes
+        checks['scope_confirmation_count'] = scope_count
         connection.execute('INSERT INTO s2_revisions VALUES (?,?,?,?,?,?,?,?)',
-                           (dossier_id, revision, stage, result['explanation'], None if package is None else encode(package),
+                           (dossier_id, revision, stage, explanation, None if package is None else encode(package),
                             digest, encode(changes), encode(checks)))
         if (operation['requested_configuration'].get('provider') == 'OpenRouter'
                 and type(response['receipt']['observed_configuration']) is dict):

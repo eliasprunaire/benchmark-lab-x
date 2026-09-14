@@ -12,7 +12,7 @@ from tests.test_s2_review_regressions import response_for
 
 class InlineExampleTests(unittest.TestCase):
     def test_exact_inert_content_without_download_or_emission(self):
-        content = '\nNotes inventées\n<script>alert("test")</script>\n& fin'
+        content = '\nNotes de test\n<script>alert("test")</script>\n& fin'
         with tempfile.TemporaryDirectory() as temporary:
             data = Path(temporary).resolve() / 'private'
             storage.initialize(data)
@@ -60,5 +60,5 @@ class InlineExampleTests(unittest.TestCase):
                 current = prep.view(store, session, 'inline')
                 historical = prep.view(store, session, 'inline', view['revision'])
                 self.assertEqual([content], list(historical['example_contents'].values()))
-                self.assertEqual(['Action fictive : relire'], list(current['example_contents'].values()))
+                self.assertEqual(['Action : relire'], list(current['example_contents'].values()))
                 self.assertIsNone(current['validation'])

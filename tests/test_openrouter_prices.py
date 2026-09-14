@@ -68,18 +68,19 @@ class OpenRouterPricesTests(unittest.TestCase):
         self.assertEqual(2, self.http.close.call_count)
 
     def test_runtime_prepares_s2_configuration_from_the_public_forecast(self):
+        historical = assistant.load_profile(assistant.HISTORICAL_ASSISTANT)
         self.responses([{**ENDPOINT, 'tag': tag, 'provider_name': provider,
                          'supported_parameters': ['temperature', 'top_p', 'reasoning', 'max_tokens', 'response_format']}
-                        for tag, provider in assistant.PROVIDERS.items()],
+                        for tag, provider in assistant.providers(historical).items()],
                        summary={**SUMMARY, 'pricing': {'prompt': '0.000001', 'completion': '0.000002'}})
         with redirect_stdout(io.StringIO()) as output, patch.object(runtime, 'Store') as store:
             self.assertEqual(0, runtime.main(['forecast-prices', '--model', MODEL, '--input-tokens', '1000',
-                                              '--output-tokens', '16384', '--preparation-assistant', assistant.ASSISTANT]))
+                                              '--output-tokens', '16384', '--preparation-assistant', assistant.HISTORICAL_ASSISTANT]))
         value = json.loads(output.getvalue())['preparation']
         self.assertEqual('0.033768', value['reserve_amount'])
         self.assertEqual(MODEL, value['requested_configuration']['model'])
         self.assertEqual('OpenRouter', value['requested_configuration']['provider'])
-        self.assertEqual(assistant.ASSISTANT, value['requested_configuration']['profile_id'])
+        self.assertEqual(assistant.HISTORICAL_ASSISTANT, value['requested_configuration']['profile_id'])
         self.assertEqual(assistant.profile_digest(assistant.HISTORICAL_PROFILE),
                          value['requested_configuration']['profile_sha256'])
         self.assertIn('reservation_estimate', value['requested_configuration'])
@@ -90,7 +91,7 @@ class OpenRouterPricesTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as output, patch.object(assistant, 'HTTPSConnection') as inference:
             self.assertEqual(78, runtime.main(['forecast-prices', '--model', 'openrouter/auto',
                                               '--input-tokens', '1000', '--output-tokens', '16384',
-                                              '--preparation-assistant', assistant.ASSISTANT]))
+                                              '--preparation-assistant', assistant.HISTORICAL_ASSISTANT]))
         self.assertEqual('HOLD', json.loads(output.getvalue())['state'])
         self.http.request.assert_not_called()
         inference.assert_not_called()
