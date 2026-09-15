@@ -70,7 +70,9 @@ class ServiceProcessesTests(unittest.TestCase):
                 try:
                     with urlopen(request, timeout=2) as response:
                         self.assertEqual(200, response.status)
-                        self.assertIn('Votre demande a bien été reçue', response.read().decode())
+                        page = response.read().decode()
+                        self.assertIn('<title>Demande enregistrée', page)
+                        self.assertIn('L’envoi a été enregistré', page)
                     break
                 except OSError:
                     if time.monotonic() >= deadline:

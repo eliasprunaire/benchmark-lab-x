@@ -26,7 +26,7 @@ MESSAGE_MAX = 1_000
 SESSION_INTERVAL = timedelta(seconds=30)
 SESSION_DAILY_DOSSIERS = 2
 PREPARATION_DAILY_CAP_USD = Decimal('20')
-SOURCE_RATE_LIMIT = 20
+SOURCE_HOURLY_MAX = 20
 SOURCE_RATE_WINDOW = timedelta(hours=1)
 _SOURCE_ACCEPTED = {}
 
@@ -47,7 +47,7 @@ def _normalized_text(value, field, minimum, maximum):
         raise ValueError('Texte requis')
     value = unicodedata.normalize('NFC', value.replace('\r\n', '\n').replace('\r', '\n'))
     value = ''.join(character for character in value
-                    if character in ('\n', '\t') or unicodedata.category(character) != 'Cc').rstrip()
+                    if character in ('\n', '\t') or unicodedata.category(character) != 'Cc').rstrip(' ')
     if len(value) < minimum:
         raise Denied('TEXT_TOO_SHORT', field)
     if len(value) > maximum:
@@ -75,7 +75,7 @@ def _normalized_submission(body, create):
 
 def _source_limit(source_sha256, now):
     threshold = now - SOURCE_RATE_WINDOW
-    # ponytail: balayage global en mémoire, partitionner seulement si le débit le justifie
+    # Balayage global en mémoire, à partitionner seulement si le débit le justifie
     for key in tuple(_SOURCE_ACCEPTED):
         retained = [date for date in _SOURCE_ACCEPTED[key] if date > threshold]
         if retained:
@@ -83,7 +83,7 @@ def _source_limit(source_sha256, now):
         else:
             del _SOURCE_ACCEPTED[key]
     accepted = _SOURCE_ACCEPTED.get(source_sha256, [])
-    if len(accepted) >= SOURCE_RATE_LIMIT:
+    if len(accepted) >= SOURCE_HOURLY_MAX:
         raise Denied('SOURCE_RATE_LIMIT')
     _SOURCE_ACCEPTED[source_sha256] = accepted
 
@@ -433,6 +433,11 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
     if kind not in ('create', 'clarify', 'correct'):
         raise ValueError('Action inconnue')
     message = body['request'] if create else body['message']
+    if create:
+        if body.get('useful'):
+            message += '\n\nRésultat attendu :\n' + body['useful']
+        if body.get('context'):
+            message += '\n\nContexte :\n' + body['context']
     _text(message, 'message')
     if not message.strip():
         raise ValueError('Message vide')
@@ -462,17 +467,18 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
             raise Denied('Admission fermée ou transport absent')
         if enforce_limits:
             _submission_limits(connection, session_id, create, now, authority)
-            _source_limit(source_sha256, now)
         # S2 admits one effect at a time; no restart drains a durable queue
-        if not enforce_limits and connection.execute(
+        if connection.execute(
                 "SELECT 1 FROM s2_actions a JOIN operations o USING(operation_id) "
                 "WHERE o.state != 'RECEIVED' LIMIT 1").fetchone():
-            raise ConflictError('Préparation active ou suspendue')
+            raise Denied('PREPARATION_IN_PROGRESS')
+        if enforce_limits:
+            _source_limit(source_sha256, now)
         budget = store._budget(connection, authority['budget_id'], store._operations(connection))
         _usd_budget(authority['reserve_amount'], authority['requested_configuration'], budget)
         revision = existing[1] if existing else 1
         if create:
-            payload = dict(request=message, clarifications=[], reformulation='', validated_assumptions=[],
+            payload = dict(request=body['request'], clarifications=[], reformulation='', validated_assumptions=[],
                            fictional_parameters={}, state='EN_ATTENTE')
             store.save_dossier(dossier_id, revision, payload)
             connection.execute('INSERT INTO s2_dossiers VALUES (?,?,?)', (dossier_id, session_id, revision))
@@ -495,10 +501,8 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
         operation = dict(operation_id=operation_id, phase='correction' if kind == 'correct' else 'preparation',
                          dossier_id=dossier_id, revision=revision, authority=authority['authority_id'],
                          engine_version=source, requested_configuration=authority['requested_configuration'], resources=resources)
-        store._reserve_intent(connection, operation, authority['budget_id'], authority['reserve_amount'])
-        if enforce_limits:
-            connection.execute('UPDATE operations SET created_at=? WHERE operation_id=?',
-                               (now.isoformat(), operation_id))
+        store._reserve_intent(connection, operation, authority['budget_id'], authority['reserve_amount'],
+                              created_at=now)
         if callable(getattr(transport, 'prepare', None)):
             # A refused body rolls back the dossier, intention and reserve together
             operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
