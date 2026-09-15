@@ -92,6 +92,12 @@ def denied_response(error):
         'ACCESS_EXCHANGE_FAILED': 'OpenRouter a refusé ou interrompu l’autorisation.',
         'ACCESS_REQUIRED': 'Un accès OpenRouter connecté est requis avant le lancement.',
         'NOT_QUALIFIED': 'Ce dossier doit être qualifié avant le lancement.',
+        'STEP_INCOMPLETE': 'Terminez l’étape précédente avant de poursuivre.',
+        'example_validated': 'Validez l’exemple présenté avant le lancement.',
+        'example_qualified': 'La qualification de l’exemple est requise avant le lancement.',
+        'configurations_available': 'Choisissez de nouveau les modèles indisponibles avant le lancement.',
+        'access_connected': 'Connectez votre accès OpenRouter avant le lancement.',
+        'estimate_under_cap': 'Augmentez le plafond ou choisissez d’autres configurations avant le lancement.',
         'QUALIFICATION_UNAVAILABLE': 'Qualification indisponible',
         'ADMISSION_CLOSED': 'Admission fermée',
     }
@@ -100,6 +106,8 @@ def denied_response(error):
               'error_code': error.code, 'error_field': error.field}}
     if error.findings is not None:
         result['value']['findings'] = error.findings
+    if error.step is not None:
+        result['value']['step'] = error.step
     if hasattr(error, 'provider_status'):
         result['value']['provider_status'] = error.provider_status
     return result

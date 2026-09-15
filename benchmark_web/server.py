@@ -158,9 +158,14 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                         body = json.loads(raw, object_pairs_hook=_unique_object)
                     elif media == 'application/x-www-form-urlencoded':
                         values = parse_qs(raw.decode('utf-8'), keep_blank_values=True, strict_parsing=True)
-                        if any(len(v) != 1 for v in values.values()):
+                        configurations = re.fullmatch(
+                            r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/configurations',
+                            self.path)
+                        if any(len(v) != 1 and not (configurations and k == 'models')
+                               for k, v in values.items()):
                             raise ValueError('Champ répété')
-                        body = {k: v[0] for k, v in values.items()}
+                        body = {k: (v if configurations and k == 'models' else v[0])
+                                for k, v in values.items()}
                         if 'revision' in body:
                             if not re.fullmatch('[1-9][0-9]*', body['revision']):
                                 raise ValueError('Révision invalide')
@@ -208,6 +213,16 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                 if self.command == 'POST' and self.path == '/preparation/access/disconnect' and result['status'] < 400:
                     self.respond(303, b'', 'text/html; charset=utf-8', {'Location': '/preparation/access'})
                     return
+                if (self.command == 'POST' and self.path.endswith('/configurations')
+                        and result['status'] < 400 and not wants_json):
+                    headers['Location'] = self.path
+                    self.respond(303, b'', 'text/html; charset=utf-8', headers)
+                    return
+                if (self.command == 'POST' and self.path.endswith('/cap')
+                        and result['status'] < 400 and not wants_json):
+                    headers['Location'] = self.path[:-3] + 'conditions'
+                    self.respond(303, b'', 'text/html; charset=utf-8', headers)
+                    return
                 if self.command == 'POST' and self.path.endswith('/start') and result['status'] < 400 and not wants_json:
                     headers['Location'] = self.path[:-5] + 'conditions'
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
@@ -225,9 +240,6 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                         csrf = home['value']['csrf_token']
                         if self.path == '/preparation/access':
                             result['value']['kind'] = 'access'
-                        elif result['value'].get('kind') == 'campaign_launch':
-                            access = preparation_request(socket_path, 'GET', '/preparation/access', token)
-                            result['value']['access'] = access['value']
                         if 'operation_id' in result['value']:
                             result['value']['availability'] = home['value']['availability']
                         if self.command == 'POST' and self.path.endswith('/validation'):

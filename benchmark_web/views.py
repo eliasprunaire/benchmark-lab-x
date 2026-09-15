@@ -395,6 +395,91 @@ def render(value, csrf, path='/preparation', *, error=False):
             content = state_block('err', 'Accès OpenRouter', 'Connexion indisponible',
                                   '<p>Connexion OpenRouter indisponible.</p>')
         content += '<p><a href="/preparation">Revenir à mes cas d’usage</a></p>'
+    elif value.get('kind') == 'configurations':
+        title = 'Choisir les configurations'
+        dossier_url = '/preparation/dossiers/' + value['dossier_id']
+        content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
+        content += '<p>Relevé des modèles du ' + text(value['fetched_at']) + '.</p>'
+        choices = ''
+        for model in value['models']:
+            checked = ' checked' if model['selected'] else ''
+            choices += '<label><input type="checkbox" name="models" value="' + text(
+                model['id']) + '"' + checked + '> ' + text(model['name'])
+            if model['not_adjustable']:
+                choices += ' · palier de raisonnement non réglable'
+            choices += '</label>'
+        tiers = ''.join(
+            '<label><input type="radio" name="tier" value="' + tier + '"' +
+            (' checked' if value['current_tier'] == tier else '') + '> ' +
+            ('Standard' if tier == 'standard' else 'Enhanced') + '</label>'
+            for tier in value['available_tiers'])
+        content += ('<form method="post" action="' + text(dossier_url + '/configurations') + '">' +
+                    hidden('csrf_token', csrf) + '<fieldset><legend>Modèles à comparer</legend>' +
+                    choices + '</fieldset><fieldset><legend>Palier</legend>' + tiers +
+                    '</fieldset><button type="submit">Enregistrer les configurations</button></form>')
+        if value['configurations']:
+            items = []
+            for configuration in value['configurations']:
+                amount = configuration['estimate']['amount_usd']
+                detail = configuration['model'] + ' · estimation ' + (
+                    'non calculable' if amount is None else amount + ' USD')
+                if configuration.get('effort_limit') == 'not_adjustable':
+                    detail += ' · palier de raisonnement non réglable'
+                items.append(detail)
+            summary = listing(items)
+            summary += '<p>Estimation totale : ' + text(
+                'non calculable' if value['estimate_total_usd'] is None else
+                value['estimate_total_usd'] + ' USD') + '.</p>'
+            summary += '<p>Plafond : ' + text(value['cap_usd']) + ' USD.</p>'
+            summary += '<p><a class="button" href="' + text(
+                dossier_url + '/campaigns/' + value['current_campaign_id'] +
+                '/conditions') + '">Voir le récapitulatif</a></p>'
+            content += section('Sélection courante', summary)
+    elif value.get('kind') == 'campaign_launch' and 'checks' in value:
+        campaign = value['campaign']
+        dossier_url = '/preparation/dossiers/' + value['dossier_id']
+        base = dossier_url + '/campaigns/' + campaign['campaign_id']
+        title = 'Vérifier puis lancer la comparaison'
+        content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
+        check_items = []
+        for check in value['checks']:
+            detail = check['detail']
+            if type(detail) is dict:
+                detail = ('Crédit restant : ' + str(detail.get('limit_remaining_usd')
+                          if detail.get('limit_remaining_usd') is not None else 'INCONNU') +
+                          ' USD ; limite du compte : ' + str(detail.get('limit_usd')
+                          if detail.get('limit_usd') is not None else 'INCONNU') + ' USD')
+            check_items.append(('✓ ' if check['ok'] else '✕ ') + str(detail))
+        content += section('Contrôles avant lancement', listing(check_items))
+        content += section('Plafond',
+            '<p>Plafond actuel : ' + text(value['cap_usd']) + ' USD.</p>' +
+            '<form method="post" action="' + text(base + '/cap') + '">' +
+            hidden('csrf_token', csrf) +
+            '<label for="cap_usd">Plafond en USD, de 0,10 à 100</label>' +
+            '<input id="cap_usd" name="cap_usd" type="number" min="0.10" max="100.00" step="0.01" value="' +
+            text(value['cap_usd']) + '" required><button type="submit">Modifier le plafond</button></form>')
+        failed = next((check for check in value['checks'] if not check['ok']), None)
+        if value['launchable']:
+            content += form(base + '/start', {
+                'manifest_version': campaign['version'],
+                'frozen_at': campaign['conditions']['frozen_at']},
+                '<label><input type="checkbox" name="confirm" value="yes" required> '
+                'Je confirme le lancement de cette comparaison.</label>'
+                '<button type="submit">Lancer la comparaison</button>')
+        elif failed:
+            links = {
+                'example_validated': dossier_url + '#validation',
+                'example_qualified': dossier_url,
+                'configurations_available': dossier_url + '/configurations',
+                'access_connected': '/preparation/access',
+                'estimate_under_cap': dossier_url + '/configurations',
+            }
+            content += '<p role="status">Lancement indisponible : ' + text(
+                failed['detail'] if type(failed['detail']) is str else
+                'connectez votre accès OpenRouter') + '. <a href="' + text(
+                links[failed['key']]) + '">Compléter cette étape</a></p>'
+        else:
+            content += '<p role="status">Lancement enregistré.</p>'
     elif value.get('kind') == 'campaign_launch':
         campaign = value['campaign']
         base = '/preparation/dossiers/' + value['dossier_id'] + '/campaigns/' + campaign['campaign_id']
@@ -689,6 +774,9 @@ def render(value, csrf, path='/preparation', *, error=False):
             'Aucun appel ni publication n’est autorisé par cet état. Les preuves, la référence '
             'et les limites de jugement sont réservées à l’inspection locale du responsable.</p>')
         content += '</details>'
+        if value.get('qualified'):
+            content += '<p><a class="button" href="' + text(
+                url + '/configurations') + '">Choisir les modèles</a></p>'
         if 'campaigns' in value:
             campaigns = '<p>Suivi privé des comparaisons fictives de ce cas d’usage. '
             campaigns += 'L’acquisition conserve des reçus ; elle ne juge pas le contenu des sorties.</p>'
