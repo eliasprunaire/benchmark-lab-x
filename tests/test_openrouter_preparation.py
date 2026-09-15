@@ -26,12 +26,17 @@ from benchmark import openrouter_preparation as assistant
 KEY = 'fixture-key-never-a-credential'
 ESTIMATE = {'channel': 'OpenRouter', 'model_id': assistant.MODEL, 'context_length': 1050000,
             'canonical_slug': assistant.DEFAULT_PROFILE['revision'],
-            'assumptions': {'input_tokens': 1050000, 'cached_input_tokens': 0, 'output_tokens': 16384},
+            'assumptions': {'input_tokens': 64000, 'cached_input_tokens': 0, 'output_tokens': 16384},
             'sources': {key: {'url': 'https://openrouter.ai/api/v1/' + path,
                               'retrieved_at': '2026-09-10T00:00:00+00:00', 'body_sha256': 'b' * 64}
                         for key, path in [('model', 'model/' + assistant.MODEL),
                                           ('endpoints', 'models/' + assistant.MODEL + '/endpoints')]},
-            'model_summary': {'pricing_raw': {'prompt': '0.0000002', 'completion': '0.0000008'}},
+            'model_summary': {'pricing_raw': {
+                'prompt': '0.00001', 'completion': '0.00005', 'web_search': '0.01',
+                'input_cache_read': '0.000001', 'input_cache_write': '0.0000125',
+                'overrides': [{'min_prompt_tokens': 272000, 'prompt': '0.00002',
+                               'completion': '0.000075', 'input_cache_read': '0.000002',
+                               'input_cache_write': '0.000025'}]}},
             'endpoints': [{'model_id': assistant.MODEL, 'tag': tag, 'provider_name': provider,
                            'supported_parameters': ['temperature', 'top_p', 'reasoning', 'max_tokens', 'response_format'],
                            'pricing_raw': {'prompt': '0.0000002', 'completion': '0.0000008'}}
@@ -46,8 +51,9 @@ SYNTHETIC_PROFILE = Path(__file__).resolve().parent / 'fixtures' / 'synthetic-pr
 def estimate_for(profile):
     model = profile['model']
     canonical = profile['revision']
+    input_tokens = profile.get('reserve_input_tokens', 1000000)
     return {'channel': 'OpenRouter', 'model_id': model, 'context_length': 1000000, 'canonical_slug': canonical,
-            'assumptions': {'input_tokens': 1000000, 'cached_input_tokens': 0,
+            'assumptions': {'input_tokens': input_tokens, 'cached_input_tokens': 0,
                             'output_tokens': profile['parameters']['max_tokens']},
             'sources': {key: {'url': 'https://openrouter.ai/api/v1/' + path,
                               'retrieved_at': '2026-09-10T00:00:00+00:00', 'body_sha256': 'b' * 64}
@@ -477,6 +483,21 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual(RESERVE, operation['reserved_amount'])
         self.assertEqual('KNOWN', operation['observed_cost']['status'])
 
+    def test_reservation_uses_named_base_and_applicable_astra_tier(self):
+        self.assertEqual(64000, assistant.DEFAULT_PROFILE['reserve_input_tokens'])
+        self.assertEqual('1.45920', assistant.reservation(ESTIMATE))
+        self.assertEqual(64000, assistant.configuration(ESTIMATE)['reserve_input_tokens'])
+        base = assistant.openrouter_prices.indication(ESTIMATE, {
+            'prompt_tokens': 64000, 'completion_tokens': 16384})
+        self.assertTrue(base['conditional_pricing_unresolved'])
+        self.assertEqual({'prompt': '0.64000', 'completion': '0.81920'}, base['components_usd'])
+
+        tier_profile = deepcopy(assistant.DEFAULT_PROFILE)
+        tier_profile['reserve_input_tokens'] = 300000
+        tier_estimate = deepcopy(ESTIMATE)
+        tier_estimate['assumptions']['input_tokens'] = 300000
+        self.assertEqual('7.228800', assistant.reservation(tier_estimate, tier_profile))
+
 
     def test_native_fallback_after_429_is_accepted_without_another_http_call(self):
         self.http.getresponse.return_value.read.return_value = http_body(openrouter_metadata={**ROUTE, 'strategy': 'fallback', 'attempt': 2,
@@ -629,7 +650,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.http.getresponse.return_value.read.return_value = http_body(usage=usage)
         operation, view = self.execute()
         estimate = view['indicative_cost']
-        self.assertEqual('0.0003600', estimate['token_subtotal_usd'])
+        self.assertEqual('0.02000', estimate['token_subtotal_usd'])
         self.assertEqual({'prompt': 1000, 'completion': 200}, estimate['quantities'])
         self.assertEqual({key: value for key, value in ESTIMATE['sources']['model'].items()
                           if key != 'body_sha256'}, estimate['source'])
@@ -638,7 +659,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         page = views.render(view, self.csrf).decode()
         self.assertIn('Estimation indicative', page)
         self.assertIn('ce montant n’est pas une facture', page)
-        self.assertIn('0.0003600 USD', page)
+        self.assertIn('0.02000 USD', page)
         self.assertIn('0.009 USD', page)
         for invalid in (None, {}, {'prompt_tokens': 0},
                         {'prompt_tokens': False, 'completion_tokens': 1},
@@ -670,7 +691,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         response.read.return_value = http_body(result('clarification'), usage={'prompt_tokens': 1000, 'completion_tokens': 200})
         second, view = self.execute(action_id='new', revision=2, kind='clarify', message=CLARIFICATION)
         self.assertEqual('UNKNOWN', second['observed_cost']['status'])
-        self.assertEqual('0.0003600', view['indicative_cost']['token_subtotal_usd'])
+        self.assertEqual('0.02000', view['indicative_cost']['token_subtotal_usd'])
         response.read.return_value = http_body(usage=None)
         third, view = self.execute(action_id='correct', revision=3, kind='correct', message=CORRECTION)
         self.assertEqual('preview', view['stage'])
@@ -822,15 +843,24 @@ class OpenRouterPreparationTests(unittest.TestCase):
 
     def test_story_14_loads_production_profiles_and_keeps_glm_historical(self):
         preparation_profile = assistant.load_profile(assistant.ASSISTANT)
+        fallback_profile = assistant.load_profile(assistant.FALLBACK_ASSISTANT)
         qualification_profile = assistant.load_profile(str(
             Path(assistant.__file__).with_name('qualification.profile.json')))
         historical = assistant.load_profile(assistant.HISTORICAL_ASSISTANT)
         self.assertEqual('openai/gpt-6-astra', preparation_profile['model'])
         self.assertEqual({'effort': 'medium'}, preparation_profile['parameters']['reasoning'])
+        self.assertEqual('deepseek/deepseek-v4.1-flash', fallback_profile['model'])
+        self.assertEqual({'effort': 'medium'}, fallback_profile['parameters']['reasoning'])
+        self.assertEqual(preparation_profile['system'], fallback_profile['system'])
+        self.assertEqual(64000, fallback_profile['reserve_input_tokens'])
         self.assertEqual('anthropic/claude-fable-5.1', qualification_profile['model'])
         self.assertEqual({'effort': 'medium'}, qualification_profile['parameters']['reasoning'])
         self.assertEqual('z-ai/glm-5.3-flash', historical['model'])
         self.assertEqual(preparation_profile, assistant.frozen_profile())
+        self.assertEqual(assistant.SINGLE_ROUTE_NO_FALLBACK_TEXT,
+                         assistant.configuration(profile=preparation_profile)['route'])
+        self.assertEqual(assistant.THREE_ROUTE_TEXT,
+                         assistant.configuration(profile=historical)['route'])
 
     def test_story_14_stops_repeated_scope_confirmations(self):
         for expected, action_id in (('scope_confirmation', 'create'),
@@ -849,13 +879,17 @@ class OpenRouterPreparationTests(unittest.TestCase):
 
     def test_story_14_rejects_fiction_markers_from_candidate_content(self):
         for dossier, field, marker in (('bad-instruction', 'instruction', 'Dossier fictif à analyser'),
-                                       ('bad-piece', 'piece', 'Organisation inventée')):
+                                       ('bad-piece', 'piece', 'Organisation inventée'),
+                                       ('bad-feminine', 'piece', 'Organisation fictive'),
+                                       ('bad-candidate', 'candidate', [])):
             with self.subTest(field=field):
                 value = result()
                 if field == 'instruction':
                     value['package']['candidate']['instruction'] = marker
-                else:
+                elif field == 'piece':
                     value['package']['candidate']['pieces'][0]['content'] = marker
+                else:
+                    value['package']['candidate'] = marker
                 prep.admit(self.store, self.authority)
                 self.http.getresponse.return_value.read.return_value = http_body(value)
                 operation_id, _ = prep.submit(self.store, self.session, dossier,
@@ -868,6 +902,33 @@ class OpenRouterPreparationTests(unittest.TestCase):
                 self.assertEqual('FORMAT_ERROR', operation['receipt']['observed_configuration']['incident'])
                 self.assertEqual('suspended', view['stage'])
                 self.assertIsNone(view['package'])
+
+    def test_story_14_accepts_marker_in_judgment(self):
+        value = result()
+        value['package']['judgment']['pieces'][0]['content'] = 'Piège fictif réservé au jugement'
+        self.http.getresponse.return_value.read.return_value = http_body(value)
+        _, view = self.execute()
+        self.assertEqual('preview', view['stage'])
+
+    def test_story_14_keeps_scope_count_after_format_error(self):
+        self.http.getresponse.return_value.read.return_value = http_body(result('scope_confirmation'))
+        _, view = self.execute()
+        self.assertEqual(1, view['checks']['scope_confirmation_count'])
+
+        invalid = result()
+        invalid['package']['candidate'] = []
+        self.http.getresponse.return_value.read.return_value = http_body(invalid)
+        operation, view = self.execute(action_id='invalid', revision=view['revision'], kind='clarify',
+                                       message='Le périmètre me convient.')
+        self.assertEqual('FORMAT_ERROR', operation['receipt']['observed_configuration']['incident'])
+        self.assertEqual(1, view['checks']['scope_confirmation_count'])
+
+        prep.admit(self.store, self.authority)
+        self.http.getresponse.return_value.read.return_value = http_body(result('scope_confirmation'))
+        _, view = self.execute(action_id='scope-2-after-error', revision=view['revision'], kind='clarify',
+                               message='Poursuis avec ce périmètre.')
+        self.assertEqual('clarification', view['stage'])
+        self.assertEqual(2, view['checks']['scope_confirmation_count'])
 
     def test_profile_object_and_file_mutations_do_not_change_prepared_bytes(self):
         source = self.home / 'synthetic.profile.json'

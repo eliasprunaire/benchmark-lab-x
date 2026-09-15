@@ -129,7 +129,8 @@ class OpenRouterPricesTests(unittest.TestCase):
         row = prices.forecast(MODEL, 100, 50)['endpoints'][0]
         self.assertEqual(endpoint['pricing'], row['pricing_raw'])
         self.assertTrue(row['forecast']['conditional_pricing_unresolved'])
-        self.assertIsNone(row['forecast']['token_subtotal_usd'])
+        self.assertEqual('0.000500', row['forecast']['token_subtotal_usd'])
+        self.assertEqual('0.000004', row['rates']['prompt']['amount'])
 
     def test_bad_identity_quantities_prices_and_responses_are_rejected_without_retry(self):
         for model, inp, out, cache in [('https://example.org', 1, 1, 0), (MODEL, -1, 1, 0),

@@ -594,13 +594,20 @@ def execute(data, operation_id, transport):
                     if current != before:
                         raise ConflictError('Révision changée pendant la préparation')
                     revision = before + 1
+                    previous_checks = json.loads(connection.execute(
+                        'SELECT checks_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
+                        (dossier_id, before)).fetchone()[0])
+                    scope_count = previous_checks.get('scope_confirmation_count', 0)
+                    if type(scope_count) is not int or scope_count < 0:
+                        raise IntegrityError('Compteur de confirmation de périmètre invalide')
                     store._record_receipt(connection, operation_id, response['receipt'], response['cost'])
                     store.save_dossier(dossier_id, revision, request['payload'])
                     connection.execute('INSERT INTO s2_revisions VALUES (?,?,?,?,NULL,NULL,?,?)',
                                        (dossier_id, revision, 'suspended',
                                         'Résultat reçu non utilisable : préparation suspendue. '
                                         'Reçu et coût conservés ; aucune reprise automatique.',
-                                        encode([]), encode({'result_verified': False})))
+                                        encode([]), encode({'result_verified': False,
+                                                            'scope_confirmation_count': scope_count})))
                     connection.execute('UPDATE s2_dossiers SET current_revision=? WHERE dossier_id=?',
                                        (revision, dossier_id))
                     connection.execute('UPDATE s2_control SET admission_json=NULL WHERE singleton=1')
@@ -624,17 +631,21 @@ def publish(store, operation, request, response):
     if (stage == 'preview') != (result['package'] is not None):
         raise ValueError('Paquet incohérent avec l’état')
     candidate = (result['package'] or {}).get('candidate', {})
-    exposed = [candidate.get('instruction', '')]
-    exposed.extend(piece.get('content', '') for piece in candidate.get('pieces', [])
-                   if type(piece) is dict)
-    if any(type(text) is str and re.search(r'\b(?:ficti(?:f|fs|ve|ves)|inventé(?:e|s|es)?)\b', text, re.IGNORECASE)
-           for text in exposed):
+    invalid_candidate = type(candidate) is not dict
+    exposed = [] if invalid_candidate else [candidate.get('instruction', '')]
+    if not invalid_candidate:
+        exposed.extend(piece.get('content', '') for piece in candidate.get('pieces', [])
+                       if type(piece) is dict)
+    forbidden = any(type(text) is str and re.search(
+        r'\b(?:ficti(?:f|fs|ve|ves)|inventé(?:e|s|es)?)\b', text, re.IGNORECASE) for text in exposed)
+    if invalid_candidate or forbidden:
         observed = response['receipt'].get('observed_configuration')
         if observed is None:
             response['receipt']['observed_configuration'] = {'incident': 'FORMAT_ERROR'}
         elif type(observed) is dict:
             observed['incident'] = 'FORMAT_ERROR'
-        raise ValueError('Marqueur de fiction interdit dans le paquet candidat')
+        raise ValueError('Paquet candidat invalide' if invalid_candidate
+                         else 'Marqueur de fiction interdit dans le paquet candidat')
     dossier_id, before = operation['dossier_id'], operation['revision']
     payload = deepcopy(request['payload'])
     if request['kind'] == 'clarify':
