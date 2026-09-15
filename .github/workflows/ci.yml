@@ -66,6 +66,7 @@ jobs:
   pi-version:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Récupérer le dépôt
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,8 +76,8 @@ jobs:
       - name: Vérifier la dernière version Pi publiée
         run: |
           attendue="$(python3 -c 'from benchmark.pi_openrouter import VERSION; print(VERSION)')"
-          publiée="$(npm view @earendil-works/pi-coding-agent version)"
-          test "$attendue" = "$publiée" || {
-            echo "::error::Pi $publiée est publié, mais le produit épingle $attendue"
+          publiee="$(npm view @earendil-works/pi-coding-agent version)"
+          test "$attendue" = "$publiee" || {
+            echo "::error::Pi $publiee est publié, mais le produit épingle $attendue"
             exit 1
           }
