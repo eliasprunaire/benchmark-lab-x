@@ -77,6 +77,19 @@ _S2_SCHEMA = (
     validated_at TEXT NOT NULL,
     PRIMARY KEY(dossier_id, revision, package_sha256),
     FOREIGN KEY(dossier_id, revision) REFERENCES s2_revisions(dossier_id, revision)
+    )""",
+    """CREATE TABLE s2_qualifications (
+    dossier_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    operation_id TEXT UNIQUE NOT NULL REFERENCES operations(operation_id),
+    qualified INTEGER NOT NULL CHECK(qualified IN (0, 1)),
+    findings_json TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    model TEXT NOT NULL,
+    cost_usd TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(dossier_id, revision),
+    FOREIGN KEY(dossier_id, revision) REFERENCES s2_revisions(dossier_id, revision)
 )""",
     """CREATE TABLE s2_control (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
@@ -142,7 +155,7 @@ _S1_SCHEMA = (
     """CREATE TABLE operations (
         operation_id TEXT PRIMARY KEY NOT NULL,
         phase TEXT NOT NULL CHECK(phase IN
-            ('preparation', 'correction', 'judgment', 'acquisition')),
+            ('preparation', 'correction', 'qualification', 'judgment', 'acquisition')),
         dossier_id TEXT NOT NULL,
         revision INTEGER NOT NULL,
         authority TEXT NOT NULL,
@@ -237,7 +250,7 @@ def _operation(value):
     _identity(value['dossier_id'], value['revision'])
     for key in ('operation_id', 'authority', 'engine_version'):
         _text(value[key], key)
-    if value['phase'] not in ('preparation', 'correction', 'judgment', 'acquisition'):
+    if value['phase'] not in ('preparation', 'correction', 'qualification', 'judgment', 'acquisition'):
         raise ValueError('unsupported operation phase')
     if type(value['requested_configuration']) is not dict or not value['requested_configuration']:
         raise ValueError('requested_configuration must be a nonempty object')
@@ -479,11 +492,11 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
         s2 = extended + [("table", name, name, statement)
                          for name, statement in zip(
                              ('s2_sessions', 's2_dossiers', 's2_revisions', 's2_actions',
-                              's2_validations', 's2_control'), _S2_SCHEMA)]
+                              's2_validations', 's2_qualifications', 's2_control'), _S2_SCHEMA)]
         s2 += [("index", f"sqlite_autoindex_{name}_{number}", name, None)
                for name, count in (('s2_sessions', 2), ('s2_dossiers', 1),
                                    ('s2_revisions', 1), ('s2_actions', 2),
-                                   ('s2_validations', 1))
+                                   ('s2_validations', 1), ('s2_qualifications', 2))
                for number in range(1, count + 1)]
         s3 = s4 = s5 = s6 = None
         if any(name == 's3_control' for _, name, _, _ in rows):
@@ -900,8 +913,9 @@ class Store:
         # Received preparation costs remain unknown and reserved without blocking the next exchange
         return [row['operation_id'] for row in operations
                 if row['operation_id'] in budget['unknown_cost_operations']
-                and not (phase in ('preparation', 'correction')
-                         and row['phase'] in ('preparation', 'correction') and row['state'] == 'RECEIVED')]
+                and not (phase in ('preparation', 'correction', 'qualification')
+                         and row['phase'] in ('preparation', 'correction', 'qualification')
+                         and row['state'] == 'RECEIVED')]
 
     def inspect_budget(self, budget_id: str) -> dict:
         _text(budget_id, 'budget_id')

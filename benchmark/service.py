@@ -68,7 +68,8 @@ def executor_health(path):
         return result
 
 
-def serve_executor(data, socket_path, source, *, transport=None, candidate_transport=None, candidate_transport_factory=None,
+def serve_executor(data, socket_path, source, *, transport=None, qualification_transport=None,
+                   candidate_transport=None, candidate_transport_factory=None,
                    access_secret=None, access_transport=None, presentation=None):
     data, socket_path = Path(data), Path(socket_path)
     with closing(Store(data)) as store:
@@ -104,14 +105,20 @@ def serve_executor(data, socket_path, source, *, transport=None, candidate_trans
                                 code, value, cookie, start = preparation.dispatch(
                                     store, message['method'], message['path'], message['token'], message['body'],
                                     source, transport, candidate_transport=candidate_transport or candidate_transport_factory,
+                                    qualification_transport=qualification_transport,
                                     access_secret=access_secret, access_transport=access_transport,
                                     presentation=presentation)
                                 if isinstance(start, dict):
-                                    from .campaigns import execute_launch
-                                    threading.Thread(target=execute_launch, args=(data, start['candidate_attempts'], candidate_transport),
-                                                     kwargs={'transport_factory': candidate_transport_factory,
-                                                             'access_secret': access_secret,
-                                                             'access_transport': access_transport}, daemon=True).start()
+                                    if 'qualification_operation' in start:
+                                        threading.Thread(target=preparation.execute_qualification,
+                                                         args=(data, start['qualification_operation'], qualification_transport),
+                                                         daemon=True).start()
+                                    else:
+                                        from .campaigns import execute_launch
+                                        threading.Thread(target=execute_launch, args=(data, start['candidate_attempts'], candidate_transport),
+                                                         kwargs={'transport_factory': candidate_transport_factory,
+                                                                 'access_secret': access_secret,
+                                                                 'access_transport': access_transport}, daemon=True).start()
                                 elif start:
                                     threading.Thread(target=preparation.execute, args=(data, start, transport), daemon=True).start()
                                 result = {'status': code, 'value': value.hex() if isinstance(value, bytes) else value,
@@ -130,11 +137,14 @@ def serve_executor(data, socket_path, source, *, transport=None, candidate_trans
                                         'ACCESS_NO_PENDING': 'Aucune autorisation OpenRouter n’est en attente.',
                                         'ACCESS_EXCHANGE_FAILED': 'OpenRouter a refusé ou interrompu l’autorisation.',
                                         'ACCESS_REQUIRED': 'Un accès OpenRouter connecté est requis avant le lancement.',
+                                        'NOT_QUALIFIED': 'Ce dossier doit être qualifié avant le lancement.',
                                     }
                                     response_status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG',
                                                                             'SOURCE_MISSING') else 403
                                     result = {'status': response_status, 'value': {'error': messages[error.code],
                                               'error_code': error.code, 'error_field': error.field}}
+                                    if error.findings is not None:
+                                        result['value']['findings'] = error.findings
                                     if hasattr(error, 'provider_status'):
                                         result['value']['provider_status'] = error.provider_status
                                 else:
