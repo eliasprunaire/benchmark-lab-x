@@ -187,7 +187,7 @@ def _specification(spec, *, legacy=False):
         raise ValueError('Témoins reliés aux contrôles requis')
     measures = spec['secondary_criteria']
     if type(measures) is not list or len(measures) > 2:
-        raise ValueError('Zéro à deux critères secondaires')
+        raise ValueError('QUALITY_LIMIT')
     for measure in measures:
         _fields(measure, ('id', 'measure', 'proof', 'unit', 'favorable', 'aggregation'), 'secondary criterion')
         for key in ('id', 'measure', 'proof', 'unit', 'favorable'):

@@ -25,6 +25,29 @@ def texts(values):
     return [text(value) for value in values]
 
 
+def criteria(value, *, normalize_legacy=False):
+    if type(value) is list:
+        checked = texts(value)
+        return {'eliminatory': [], 'obligations': checked, 'quality': []} if normalize_legacy else checked
+    if type(value) is not dict or set(value) != {'eliminatory', 'obligations', 'quality'}:
+        raise ValueError('Critères par gravité requis')
+    quality = value['quality']
+    if type(quality) is not list:
+        raise ValueError('Liste de critères de qualité requise')
+    if len(quality) > 2:
+        raise ValueError('QUALITY_LIMIT')
+    checked = []
+    for item in quality:
+        if (type(item) is not dict or set(item) != {'label', 'scale', 'favorable'}
+                or item['scale'] != ['excellent', 'acceptable', 'faible']
+                or item['favorable'] != 'excellent'):
+            raise ValueError('Critère de qualité fermé requis')
+        checked.append({'label': text(item['label']), 'scale': list(item['scale']),
+                        'favorable': item['favorable']})
+    return {'eliminatory': texts(value['eliminatory']), 'obligations': texts(value['obligations']),
+            'quality': checked}
+
+
 def agreements(values):
     if type(values) is not list:
         raise ValueError('Liste d’accords requise')
@@ -68,7 +91,7 @@ def closed_candidate(content):
     if type(content) is not dict or set(content) != set(CANDIDATE_FIELDS):
         raise ValueError('Vue candidate fermée requise')
     return dict(instruction=text(content['instruction']), deliverables=texts(content['deliverables']),
-                criteria=texts(content['criteria']), acceptable_ambiguities=texts(content['acceptable_ambiguities']),
+                criteria=criteria(content['criteria']), acceptable_ambiguities=texts(content['acceptable_ambiguities']),
                 pieces=named_contents(content['pieces']))
 
 
@@ -124,7 +147,10 @@ def closed_generation(package):
     if type(package) is not dict or set(package) != {'candidate', 'internal', 'judgment'}:
         raise ValueError('Paquet de génération fermé requis')
     candidate_view = closed_candidate(package['candidate'])
-    if not candidate_view['deliverables'] or not candidate_view['criteria'] or not candidate_view['pieces']:
+    has_criteria = (any(candidate_view['criteria'].values()) if type(candidate_view['criteria']) is dict
+                    else bool(candidate_view['criteria']))
+    if (not candidate_view['deliverables'] or not has_criteria
+            or not candidate_view['pieces']):
         raise ValueError('Paquet incomplet')
     internal = package['internal']
     if type(internal) is not dict or set(internal) != {'human_work', 'limits'}:
@@ -165,7 +191,7 @@ def closed_review_task(content):
     if not pieces:
         raise ValueError('Pièces candidates requises')
     return dict(instruction=text(content['instruction']), deliverables=texts(content['deliverables']),
-                criteria=texts(content['criteria']), acceptable_ambiguities=texts(content['acceptable_ambiguities']),
+                criteria=criteria(content['criteria']), acceptable_ambiguities=texts(content['acceptable_ambiguities']),
                 pieces=pieces)
 
 

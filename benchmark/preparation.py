@@ -257,12 +257,15 @@ def package_check(store, dossier_id, revision, package, digest):
             raise IntegrityError('Format sortant inconnu')
     for field in ('instruction', 'human_work'):
         _text(package[field], field)
-    for field in ('deliverables', 'criteria', 'acceptable_ambiguities', 'limits'):
+    for field in ('deliverables', 'acceptable_ambiguities', 'limits'):
         if type(package[field]) is not list:
             raise IntegrityError('Liste de présentation requise')
         for text in package[field]:
             _text(text, field)
-    if not package['deliverables'] or not package['criteria'] or not package['pieces']:
+    from .outgoing import criteria
+    checked_criteria = criteria(package['criteria'])
+    has_criteria = any(checked_criteria.values()) if type(checked_criteria) is dict else bool(checked_criteria)
+    if not package['deliverables'] or not has_criteria or not package['pieces']:
         raise IntegrityError('Paquet incomplet')
     ids, names = set(), set()
     for piece in package['pieces']:
@@ -388,6 +391,12 @@ def view(store, session_id, dossier_id, revision=None):
                 for campaign in result['campaigns']:
                     campaign['evaluations'] = evaluations(store, connection, dossier_id, campaign['campaign_id'])
         projected = page_view(result)
+        if projected['package'] is not None:
+            from .outgoing import criteria
+            projected['criteria'] = criteria(projected['package']['criteria'], normalize_legacy=True)
+            projected['criteria_rule'] = (
+                'satisfait = aucune faute éliminatoire et toutes les obligations prouvées ; '
+                'la qualité départage, sans note')
         projected['package_sha256'] = digest
         return projected
 
@@ -687,7 +696,7 @@ def publish(store, operation, request, response):
             from .outgoing import FORMAT
             package = dict(instruction=generated['candidate']['instruction'],
                            deliverables=list(generated['candidate']['deliverables']),
-                           criteria=list(generated['candidate']['criteria']),
+                           criteria=deepcopy(result['package']['candidate']['criteria']),
                            acceptable_ambiguities=list(generated['candidate']['acceptable_ambiguities']),
                            human_work=generated['internal']['human_work'],
                            limits=list(generated['internal']['limits']), outgoing_format=FORMAT, pieces=[])

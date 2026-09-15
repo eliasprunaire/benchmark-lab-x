@@ -40,6 +40,14 @@ class S2ReviewTest(unittest.TestCase):
                      {'name': 'obsolète.txt', 'content': 'Action : retirer'}]))
                 first = preparation.view(store, session, 'dossier')
                 self.assertEqual([], first['changes'])
+                self.assertEqual({'eliminatory': [], 'obligations': ['Toutes les actions présentes'],
+                                  'quality': []}, first['criteria'])
+                self.assertEqual('satisfait = aucune faute éliminatoire et toutes les obligations prouvées ; '
+                                 'la qualité départage, sans note', first['criteria_rule'])
+                stored = json.loads(store._connection.execute(
+                    'SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
+                    ('dossier', first['revision'])).fetchone()[0])
+                self.assertEqual(['Toutes les actions présentes'], stored['criteria'])
                 duplicate = json.loads(store._connection.execute(
                     'SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
                     ('dossier', first['revision'])).fetchone()[0])
