@@ -264,13 +264,17 @@ def package_check(store, dossier_id, revision, package, digest):
             _text(text, field)
     if not package['deliverables'] or not package['criteria'] or not package['pieces']:
         raise IntegrityError('Paquet incomplet')
-    ids = set()
+    ids, names = set(), set()
     for piece in package['pieces']:
         _fields(piece, ('id', 'name', 'sha256', 'size_bytes'), 'piece')
         identifier(piece['id'])
         if piece['id'] in ids:
             raise IntegrityError('Pièce répétée')
         ids.add(piece['id'])
+        _text(piece['name'], 'name')
+        if piece['name'] in names:
+            raise IntegrityError('Nom de pièce répété')
+        names.add(piece['name'])
         meta = store.get_piece(piece['id'])
         if (meta['dossier_id'], meta['revision'], meta['role']) != (dossier_id, revision, 'candidate'):
             raise IntegrityError('Pièce étrangère ou réservée')
@@ -295,7 +299,8 @@ def _package_changes(store, connection, dossier_id, revision, package):
     if row is None or row[0] is None:
         return [], empty_pieces
     previous = json.loads(row[0], object_pairs_hook=_unique_object)
-    package_check(store, dossier_id, revision - 1, previous, row[1])
+    if sha256(encode(previous).encode()).hexdigest() != row[1]:
+        raise IntegrityError('Empreinte du paquet précédent divergente')
     changes = [field for field in ('instruction', 'deliverables', 'criteria', 'acceptable_ambiguities')
                if package[field] != previous[field]]
     old_pieces = {piece['name']: piece['sha256'] for piece in previous['pieces']}

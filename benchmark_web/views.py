@@ -569,11 +569,15 @@ def render(value, csrf, path='/preparation', *, error=False):
                 limits += '<h3>Limites de l’exemple</h3>' + listing(package['limits'])
             content += section('Ce qui restera à faire', limits)
             change_labels = {'instruction': 'Consigne', 'deliverables': 'Livrables', 'criteria': 'Critères',
-                'acceptable_ambiguities': 'Ambiguïtés recevables', 'human_work': 'Travail humain restant',
-                'limits': 'Limites', 'pieces': 'Pièces', 'stage': 'Étape de préparation',
-                'explanation': 'Explication', 'reformulation': 'Reformulation', 'fictional_parameters': 'Paramètres fictifs'}
+                'acceptable_ambiguities': 'Ambiguïtés recevables', 'pieces': 'Pièces'}
             if value['changes']:
-                content += section('Changements à relire', listing(change_labels.get(c, c) for c in value['changes']))
+                changes = listing(change_labels[change] for change in value['changes'])
+                for kind, label in (('added', 'Pièces ajoutées'), ('removed', 'Pièces retirées'),
+                                    ('modified', 'Pièces modifiées')):
+                    names = value['piece_changes'][kind]
+                    if names:
+                        changes += '<h3>' + label + '</h3>' + listing(names)
+                content += section('Changements à relire', changes)
         if 'indicative_cost' in value:
             estimate = value['indicative_cost']
             amount = estimate.get('token_subtotal_usd') if estimate else None
