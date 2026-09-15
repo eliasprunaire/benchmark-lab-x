@@ -62,6 +62,48 @@ class TemplateTests(unittest.TestCase):
 
 
 class DossierPageTests(unittest.TestCase):
+    def test_criteria_groups_render_new_and_legacy_packages(self):
+        def render(criteria):
+            with tempfile.TemporaryDirectory() as temporary:
+                data = Path(temporary).resolve() / 'private'
+                storage.initialize(data)
+                storage.initialize_preparation(data)
+                with closing(storage.Store(data)) as store:
+                    store.create_budget('criteria', '10', 'TEST')
+                    prep.admit(store, dict(authority_id='TEST_ONLY_CRITERIA', budget_id='criteria',
+                        reserve_amount='7', requested_configuration={'model': 'fictional'}))
+                    session, csrf, _ = prep.session(store, None, create=True)
+                    operation, _ = prep.submit(store, session, 'criteria',
+                        dict(action_id='create', request='Examiner les critères de cet exemple'), 'test', True)
+
+                    def response(operation, request):
+                        result = response_for(operation)
+                        result['receipt']['result']['package']['candidate']['criteria'] = criteria
+                        return result
+
+                    prep.execute(data, operation, response)
+                    return views.render(prep.view(store, session, 'criteria'), csrf).decode()
+
+        rule = ('satisfait = aucune faute éliminatoire et toutes les obligations prouvées ; '
+                'la qualité départage, sans note')
+        page = render({'eliminatory': ['Erreur bloquante'], 'obligations': ['Action présente'],
+                       'quality': [{'label': 'Clarté', 'scale': ['excellent', 'acceptable', 'faible'],
+                                    'favorable': 'excellent'}]})
+        for expected in ('class="grp elim"', '<h3>Éliminatoires</h3>', 'Erreur bloquante',
+                         'class="grp oblig"', '<h3>Obligations</h3>', 'Action présente',
+                         'class="grp sec"', '<h3>Qualité</h3>', 'Clarté', rule):
+            self.assertIn(expected, page)
+        for raw_key in ('<li>eliminatory</li>', '<li>obligations</li>', '<li>quality</li>'):
+            self.assertNotIn(raw_key, page)
+        self.assertNotIn('<li>faible</li>', page)
+
+        legacy = render(['Toutes les actions présentes'])
+        self.assertIn('<h3>Obligations</h3>', legacy)
+        self.assertIn('<li>Toutes les actions présentes</li>', legacy)
+        self.assertNotIn('<h3>Éliminatoires</h3>', legacy)
+        self.assertNotIn('<h3>Qualité</h3>', legacy)
+        self.assertIn(rule, legacy)
+
     def test_state_block_steps_and_hidden_correction_without_digests(self):
         with tempfile.TemporaryDirectory() as temporary:
             data = Path(temporary).resolve() / 'private'

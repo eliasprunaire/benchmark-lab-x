@@ -186,7 +186,9 @@ def _specification(spec, *, legacy=False):
     if type(witnesses) is not dict or not witnesses or not set(witnesses) <= controls:
         raise ValueError('Témoins reliés aux contrôles requis')
     measures = spec['secondary_criteria']
-    if type(measures) is not list or len(measures) > 2:
+    if type(measures) is not list:
+        raise ValueError('Zéro à deux critères secondaires')
+    if len(measures) > 2:
         raise ValueError('QUALITY_LIMIT')
     for measure in measures:
         _fields(measure, ('id', 'measure', 'proof', 'unit', 'favorable', 'aggregation'), 'secondary criterion')

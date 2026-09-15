@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from benchmark import preparation, storage
+from benchmark import outgoing, preparation, storage
 from benchmark_web import views
 
 
@@ -23,6 +24,42 @@ def response(operation, instruction, pieces):
 
 
 class S2ReviewTest(unittest.TestCase):
+    def test_publish_stores_closed_criteria(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data = Path(temporary).resolve() / 'private'
+            storage.initialize(data)
+            storage.initialize_preparation(data)
+            with closing(storage.Store(data)) as store:
+                store.create_budget('closed', '10', 'TEST')
+                preparation.admit(store, {'authority_id': 'TEST_ONLY_CLOSED', 'budget_id': 'closed',
+                    'reserve_amount': '1', 'requested_configuration': {'model': 'fictional'}})
+                session, _, _ = preparation.session(store, None, create=True)
+                operation, _ = preparation.submit(store, session, 'closed',
+                    {'action_id': 'create', 'request': 'Vérifier la vue fermée des critères'}, 'test', True)
+                received = {}
+                expected = {'eliminatory': ['Aucune invention'], 'obligations': ['Action présente'],
+                            'quality': []}
+                original = outgoing.closed_generation
+
+                def closed(package):
+                    generated = original(package)
+                    generated['candidate']['criteria'] = expected
+                    return generated
+
+                def transport(operation, request):
+                    received.update(response(operation, 'Organiser les notes',
+                        [{'name': 'notes.txt', 'content': 'Action : relire'}]))
+                    return received
+
+                with patch.object(outgoing, 'closed_generation', side_effect=closed):
+                    preparation.execute(data, operation, transport)
+                stored = json.loads(store._connection.execute(
+                    'SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=2',
+                    ('closed',)).fetchone()[0])
+                self.assertEqual(expected, stored['criteria'])
+                self.assertNotEqual(received['receipt']['result']['package']['candidate']['criteria'],
+                                    stored['criteria'])
+
     def test_changes_compare_les_paquets_sans_ecriture(self):
         with tempfile.TemporaryDirectory() as temporary:
             data = Path(temporary).resolve() / 'private'
