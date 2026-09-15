@@ -4,12 +4,15 @@ on:
   pull_request:
     branches:
       - main
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
 
 jobs:
   tests:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Récupérer le dépôt
@@ -31,12 +34,15 @@ jobs:
           node-version: "26.8.2"
           package-manager-cache: false
 
+      - name: Lire la version Pi du produit
+        run: echo "BENCHMARK_PI_VERSION=$(python3 -c 'from benchmark.pi_openrouter import VERSION; print(VERSION)')" >> "$GITHUB_ENV"
+
       - name: Installer Pi pour les réponses fictives
         run: |
           npm install --prefix "$RUNNER_TEMP/benchmark-pi" --ignore-scripts --no-audit --no-fund --save-exact \
-            @earendil-works/pi-coding-agent@0.85.1 \
-            @earendil-works/pi-agent-core@0.85.1 \
-            @earendil-works/pi-ai@0.85.1
+            "@earendil-works/pi-coding-agent@$BENCHMARK_PI_VERSION" \
+            "@earendil-works/pi-agent-core@$BENCHMARK_PI_VERSION" \
+            "@earendil-works/pi-ai@$BENCHMARK_PI_VERSION"
 
       - name: Vérifier le harnais Linux sans appel modèle
         env:
@@ -56,3 +62,21 @@ jobs:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           uv run --python 3.12 python tools/build_runtime.py --source "$SOURCE_SHA" --output "$RUNNER_TEMP/benchmark-runtime.tar.gz"
+
+  pi-version:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Vérifier la dernière version Pi publiée
+        run: |
+          attendue="$(python3 -c 'from benchmark.pi_openrouter import VERSION; print(VERSION)')"
+          publiée="$(npm view @earendil-works/pi-coding-agent version)"
+          test "$attendue" = "$publiée" || {
+            echo "::error::Pi $publiée est publié, mais le produit épingle $attendue"
+            exit 1
+          }
