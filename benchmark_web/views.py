@@ -8,6 +8,7 @@ from pathlib import Path
 import secrets
 from urllib.parse import urlencode
 
+from benchmark import VERSION
 from benchmark.model_catalog import RETIREMENT_NOTICE
 from benchmark.preparation import binding
 from benchmark.storage import _strict_json as encode
@@ -17,7 +18,6 @@ from .projection import projection_body
 TEMPLATE_PATH = Path(__file__).with_name('templates') / 'preparation.html'
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'preparation.css'
 FONTS_PATH = Path(__file__).with_name('static') / 'fonts'
-VERSION = '0.1.0'
 SOURCE_SHA = ''
 
 VERDICT_BADGES = {'SATISFAIT': ('b-ok', 'i-check', 'Satisfait'), 'NE SATISFAIT PAS': ('b-ko', 'i-cross', 'Ne satisfait pas'),
