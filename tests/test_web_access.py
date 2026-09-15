@@ -32,6 +32,9 @@ class FakeExecutor:
         self.requests = queue.Queue()
         self.stop = threading.Event()
         self.worker = threading.Thread(target=self._serve)
+        self.callback_result = {'status': 200, 'value': {'connected': True, 'status': 'connected'},
+                                'piece': False, 'cookie': None}
+        self.start_cookie = None
 
     def __enter__(self):
         self.worker.start()
@@ -80,10 +83,9 @@ class FakeExecutor:
                                   'piece': False, 'cookie': None}
                     elif request['path'] == '/preparation/access/start':
                         result = {'status': 200, 'value': {'authorize_url': 'https://openrouter.ai/auth?fixture=1'},
-                                  'piece': False, 'cookie': None}
+                                  'piece': False, 'cookie': self.start_cookie}
                     elif request['path'] == '/preparation/access/callback':
-                        result = {'status': 200, 'value': {'connected': True, 'status': 'connected'},
-                                  'piece': False, 'cookie': None}
+                        result = self.callback_result
                     else:
                         result = {'status': 404, 'value': {'error': 'NOT_FOUND'},
                                   'piece': False, 'cookie': None}
@@ -91,6 +93,16 @@ class FakeExecutor:
 
 
 class AccessViewTests(unittest.TestCase):
+    @staticmethod
+    def campaign(access):
+        return {'kind': 'campaign_launch', 'dossier_id': 'd1', 'access': access,
+                'criteria': {'eliminatory_errors': [], 'obligations': [], 'result_expected': 'Résultat'},
+                'estimate': None, 'can_launch': False, 'admission_id': None,
+                'campaign': {'campaign_id': 'c1', 'version': 1, 'panel': [], 'budget': None,
+                             'reserve_amounts': {}, 'cells': [], 'attempts': [],
+                             'conditions': {'frozen_at': '2026-09-15T00:00:00Z',
+                                            'pi': {'package': 'pi', 'version': '1'}}}}
+
     def test_trois_etats(self):
         disconnected = views.render(
             {'kind': 'access', 'connected': False, 'status': 'disconnected'}, 'csrf').decode()
@@ -108,6 +120,20 @@ class AccessViewTests(unittest.TestCase):
                                 'reason': 'KEY_REJECTED'}, 'csrf').decode()
         self.assertIn('Accès invalide', invalid)
         self.assertIn('Motif : KEY_REJECTED', invalid)
+
+    def test_recapitulatif_connecte_ne_propose_pas_une_nouvelle_connexion(self):
+        page = views.render(self.campaign(
+            {'status': 'connected', 'limit_remaining_usd': '12.50'}), 'csrf').decode()
+        self.assertNotIn('action="/preparation/access/start"', page)
+        self.assertIn('action="/preparation/access/disconnect"', page)
+
+    def test_indisponible_ne_propose_aucun_formulaire(self):
+        access = views.render({'kind': 'access', 'status': 'unavailable'}, 'csrf').decode()
+        summary = views.render(self.campaign({'status': 'unavailable'}), 'csrf').decode()
+        for page in (access, summary):
+            self.assertIn('Connexion OpenRouter indisponible.', page)
+            self.assertNotIn('action="/preparation/access/start"', page)
+            self.assertNotIn('action="/preparation/access/disconnect"', page)
 
 
 class AccessServerTests(unittest.TestCase):
@@ -184,12 +210,58 @@ class AccessServerTests(unittest.TestCase):
         self.assertEqual({'code': 'secret-authorization-code'}, callback['body'])
         self.assertEqual('/preparation/access/callback', callback['path'])
 
+    def test_callback_refuse_rend_erreur_et_efface_son_cookie(self):
+        status, headers, _ = self.request('GET', '/preparation/access')
+        session_cookie = headers['Set-Cookie'].split(';', 1)[0]
+        body = urlencode({'csrf_token': 'csrf', 'return': '/preparation/dossiers/d1'}).encode()
+        status, headers, _ = self.request('POST', '/preparation/access/start', body, {
+            'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': session_cookie})
+        callback_cookie = headers['Set-Cookie'].split(';', 1)[0]
+        self.executor.callback_result = {
+            'status': 403,
+            'value': {'error': 'Échange OpenRouter refusé', 'error_code': 'ACCESS_EXCHANGE_FAILED'},
+            'piece': False, 'cookie': None}
+
+        status, headers, raw = self.request(
+            'GET', '/preparation/access/callback?code=code-a-ne-pas-rendre',
+            headers={'Cookie': callback_cookie})
+
+        self.assertEqual(403, status)
+        self.assertIn(b'change OpenRouter refus', raw)
+        self.assertNotIn(b'code-a-ne-pas-rendre', raw)
+        self.assertNotIn('code-a-ne-pas-rendre', str(headers))
+        self.assertNotIn('Location', headers)
+        self.assertIn('Max-Age=0', headers['Set-Cookie'])
+
     def test_refuse_un_retour_exterieur(self):
         body = urlencode({'csrf_token': 'csrf', 'return': 'https://evil.example/preparation'}).encode()
         status, _, _ = self.request('POST', '/preparation/access/start', body, {
             'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': 'benchmark_session=session-token'})
         self.assertEqual(400, status)
         self.assertTrue(self.executor.requests.empty())
+
+    def test_refuse_un_retour_non_normalise_non_ascii_ou_non_texte(self):
+        for value, media in (('/preparation/../x', 'application/x-www-form-urlencoded'),
+                             ('/preparation/échec', 'application/x-www-form-urlencoded'),
+                             (5, 'application/json')):
+            body = (urlencode({'csrf_token': 'csrf', 'return': value}).encode()
+                    if media.endswith('form-urlencoded') else
+                    json.dumps({'csrf_token': 'csrf', 'return': value}).encode())
+            status, _, _ = self.request('POST', '/preparation/access/start', body, {
+                'Content-Type': media, 'Cookie': 'benchmark_session=session-token'})
+            self.assertEqual(400, status, value)
+
+    def test_depart_conserve_le_cookie_de_session_renouvele(self):
+        self.executor.start_cookie = 'session-renouvelee'
+        body = urlencode({'csrf_token': 'csrf', 'return': '/preparation'}).encode()
+        status, headers, _ = self.request('POST', '/preparation/access/start', body, {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': 'benchmark_session=session-token'})
+        self.assertEqual(303, status)
+        cookies = headers.get_all('Set-Cookie')
+        self.assertEqual(2, len(cookies))
+        self.assertTrue(any(value.startswith('benchmark_session=session-renouvelee;') for value in cookies))
+        self.assertTrue(any(value.startswith('benchmark_access_callback=') for value in cookies))
 
     def test_callback_navigateur_post_ne_contourne_pas_csrf(self):
         body = urlencode({'code': 'code-direct'}).encode()

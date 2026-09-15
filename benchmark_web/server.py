@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import ipaddress
 import json
 from pathlib import Path
+import posixpath
 import re
 import secrets
 from urllib.parse import parse_qs, urlsplit
@@ -47,8 +48,11 @@ def _public_callback_url(public_url):
 
 
 def _return_path(value):
+    if type(value) is not str or not value.isascii() or '\\' in value:
+        raise ValueError('Chemin de retour invalide')
     parsed = urlsplit(value)
-    if (type(value) is not str or parsed.scheme or parsed.netloc or parsed.query or parsed.fragment
+    if (parsed.scheme or parsed.netloc or parsed.query or parsed.fragment
+            or posixpath.normpath(parsed.path) != parsed.path
             or not (parsed.path == '/preparation' or parsed.path.startswith('/preparation/'))):
         raise ValueError('Chemin de retour invalide')
     return parsed.path
@@ -96,7 +100,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                 policy += "; script-src 'sha256-" + b64encode(sha256(script.encode()).digest()).decode() + "'"
             self.send_header('Content-Security-Policy', policy)
             self.send_header('Referrer-Policy', 'no-referrer')
-            for name, value in (headers or {}).items():
+            for name, value in (headers.items() if type(headers) is dict else headers or ()):
                 self.send_header(name, value)
             self.end_headers()
             if self.command != 'HEAD':
@@ -129,9 +133,15 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     callback_token, return_path = _callback_state(state.value)
                     result = preparation_request(socket_path, 'POST', parsed.path, callback_token,
                                                  {'code': values['code'][0]})
-                    headers = {'Location': return_path,
-                               'Set-Cookie': 'benchmark_access_callback=; HttpOnly; Secure; SameSite=Lax; Path=/preparation/access/callback; Max-Age=0'}
-                    self.respond(303, b'', 'text/html; charset=utf-8', headers)
+                    expired = ('Set-Cookie',
+                               'benchmark_access_callback=; HttpOnly; Secure; SameSite=Lax; '
+                               'Path=/preparation/access/callback; Max-Age=0')
+                    if result['status'] >= 400:
+                        self.respond(result['status'], views.render(result['value'], '', error=True),
+                                     'text/html; charset=utf-8', [expired])
+                        return
+                    self.respond(303, b'', 'text/html; charset=utf-8',
+                                 [('Location', return_path), expired])
                     return
                 if self.path == '/preparation/access/callback':
                     raise ValueError('Callback OpenRouter réservé au retour GET')
@@ -188,10 +198,12 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     token = result['cookie']
                     headers['Set-Cookie'] = ('benchmark_session=' + token + '; HttpOnly; Secure; SameSite=Strict; Path=/preparation')
                 if self.command == 'POST' and self.path == '/preparation/access/start' and result['status'] < 400:
-                    headers['Location'] = result['value']['authorize_url']
-                    headers['Set-Cookie'] = ('benchmark_access_callback=' + _callback_cookie(token, return_path)
-                                             + '; HttpOnly; Secure; SameSite=Lax; Path=/preparation/access/callback')
-                    self.respond(303, b'', 'text/html; charset=utf-8', headers)
+                    response_headers = list(headers.items())
+                    response_headers += [
+                        ('Location', result['value']['authorize_url']),
+                        ('Set-Cookie', 'benchmark_access_callback=' + _callback_cookie(token, return_path)
+                         + '; HttpOnly; Secure; SameSite=Lax; Path=/preparation/access/callback')]
+                    self.respond(303, b'', 'text/html; charset=utf-8', response_headers)
                     return
                 if self.command == 'POST' and self.path == '/preparation/access/disconnect' and result['status'] < 400:
                     self.respond(303, b'', 'text/html; charset=utf-8', {'Location': '/preparation/access'})
