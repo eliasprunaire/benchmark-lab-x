@@ -4,6 +4,8 @@ style_gate: pass
 
 # Benchmark Lab-X
 
+Licence : [AGPL-3.0-only](LICENSE)
+
 Benchmark Lab-X aide à choisir une configuration de modèle d’IA pour une tâche précise. Il rapproche le travail demandé, les résultats obtenus, leur évaluation et leur coût pour permettre une décision fondée sur des preuves consultables.
 
 Le cap de 0.1.0 est un parcours public : décrire un besoin, le préciser avec une assistance IA, examiner et modifier un dossier entièrement fictif, puis autoriser une comparaison. Les classements par critère et les filtres aideront l’utilisateur à choisir à partir des résultats, des erreurs et des coûts observés. Une conclusion vaut pour la tâche et les conditions testées, sans meilleur modèle universel. Le score pondéré personnalisé appartient à la vision ultérieure, hors 0.1.0.
