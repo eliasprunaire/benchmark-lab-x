@@ -28,7 +28,7 @@ def identity(package, node):
     for name, root in roots.items():
         metadata = json.loads((root / 'package.json').read_text())
         if metadata['name'] != name or metadata['version'] != VERSION:
-            raise ValueError('Installation Pi 0.85.1 cohérente requise')
+            raise ValueError(f'Installation Pi {VERSION} cohérente requise')
         paths = [root / 'package.json', *sorted((root / 'dist').rglob('*'))]
         if not (root / 'dist/index.js').is_file():
             raise ValueError('Module Pi absent')
@@ -48,7 +48,7 @@ def identity(package, node):
 
 
 def system_context(system):
-    # Pi 0.85.1 appends this directory even to an explicit custom system prompt
+    # Pi ajoute ce répertoire même avec un message système explicite
     return system + '\nCurrent working directory: /\n'
 
 
