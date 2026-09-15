@@ -86,6 +86,13 @@ class FakeExecutor:
                                   'piece': False, 'cookie': self.start_cookie}
                     elif request['path'] == '/preparation/access/callback':
                         result = self.callback_result
+                    elif (request['method'] == 'POST'
+                          and request['path'].endswith('/configurations')):
+                        result = {'status': 201, 'value': {'kind': 'configurations'},
+                                  'piece': False, 'cookie': None}
+                    elif request['method'] == 'POST' and request['path'].endswith('/cap'):
+                        result = {'status': 200, 'value': {'kind': 'campaign_launch'},
+                                  'piece': False, 'cookie': None}
                     else:
                         result = {'status': 404, 'value': {'error': 'NOT_FOUND'},
                                   'piece': False, 'cookie': None}
@@ -134,6 +141,66 @@ class AccessViewTests(unittest.TestCase):
             self.assertIn('Connexion OpenRouter indisponible.', page)
             self.assertNotIn('action="/preparation/access/start"', page)
             self.assertNotIn('action="/preparation/access/disconnect"', page)
+
+    def test_page_configurations_et_selection_courante(self):
+        value = {
+            'kind': 'configurations', 'dossier_id': 'd1',
+            'fetched_at': '2026-09-15T12:00:00+00:00',
+            'models': [
+                {'id': 'modele-a', 'name': 'Modèle A', 'selected': True,
+                 'not_adjustable': False},
+                {'id': 'modele-b', 'name': 'Modèle B', 'selected': True,
+                 'not_adjustable': True},
+            ],
+            'current_tier': 'enhanced', 'available_tiers': ['standard', 'enhanced'],
+            'configurations': [
+                {'model': 'modele-a', 'estimate': {'amount_usd': '1.20'}},
+                {'model': 'modele-b', 'estimate': {'amount_usd': '2.30'},
+                 'effort_limit': 'not_adjustable'},
+            ],
+            'current_campaign_id': 'd1-c1', 'estimate_total_usd': '3.50',
+            'cap_usd': '50.00', 'cap_source': 'default', 'superseded': [],
+            'estimate_under_cap': True, 'assumptions': {},
+        }
+        page = views.render(value, 'csrf').decode()
+        self.assertIn('action="/preparation/dossiers/d1/configurations"', page)
+        self.assertEqual(2, page.count('name="models"'))
+        self.assertIn('name="tier" value="enhanced" checked', page)
+        self.assertIn('palier de raisonnement non réglable', page)
+        self.assertIn('Estimation totale : 3.50 USD', page)
+        self.assertIn('Plafond : 50.00 USD', page)
+        self.assertIn('/campaigns/d1-c1/conditions', page)
+
+    def test_recapitulatif_demandeur_passant_et_bloquant(self):
+        base = self.campaign({'status': 'connected', 'limit_remaining_usd': '12.50'})
+        base.update(
+            checks=[
+                {'key': 'example_validated', 'ok': True, 'detail': 'Exemple validé'},
+                {'key': 'example_qualified', 'ok': True, 'detail': 'Exemple qualifié'},
+                {'key': 'configurations_available', 'ok': True,
+                 'detail': 'Tous les modèles sont disponibles'},
+                {'key': 'access_connected', 'ok': True,
+                 'detail': {'limit_remaining_usd': '12.50', 'limit_usd': '20'}},
+                {'key': 'estimate_under_cap', 'ok': True,
+                 'detail': 'Estimation totale : 3.50 USD'},
+            ],
+            launchable=True, cap_usd='50.00', cap_source='default',
+            estimate_total_usd='3.50')
+        page = views.render(base, 'csrf').decode()
+        self.assertIn('✓ Exemple validé', page)
+        self.assertIn('Crédit restant : 12.50 USD ; limite du compte : 20 USD', page)
+        self.assertIn('action="/preparation/dossiers/d1/campaigns/c1/cap"', page)
+        self.assertIn('min="0.10" max="100.00" step="0.01"', page)
+        self.assertIn('>Lancer la comparaison</button>', page)
+
+        blocked = dict(base, launchable=False,
+                       checks=[dict(check) for check in base['checks']])
+        blocked['checks'][2] = {'key': 'configurations_available', 'ok': False,
+                                'detail': 'Modèle à choisir de nouveau'}
+        page = views.render(blocked, 'csrf').decode()
+        self.assertIn('✕ Modèle à choisir de nouveau', page)
+        self.assertIn('/preparation/dossiers/d1/configurations', page)
+        self.assertNotIn('>Lancer la comparaison</button>', page)
 
 
 class AccessServerTests(unittest.TestCase):
@@ -276,6 +343,25 @@ class AccessServerTests(unittest.TestCase):
                          _public_callback_url('https://benchmark.example/'))
         with self.assertRaises(ValueError):
             _public_callback_url('http://benchmark.example')
+
+    def test_post_configurations_et_plafond_redirigent(self):
+        path = '/preparation/dossiers/d1/configurations'
+        body = urlencode([('csrf_token', 'csrf'), ('models', 'modele-a'),
+                          ('models', 'modele-b'), ('tier', 'standard')]).encode()
+        status, headers, _ = self.request('POST', path, body, {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': 'benchmark_session=session-token'})
+        self.assertEqual((303, path), (status, headers['Location']))
+        request = self.executor.requests.get_nowait()
+        self.assertEqual(['modele-a', 'modele-b'], request['body']['models'])
+
+        cap_path = '/preparation/dossiers/d1/campaigns/d1-c1/cap'
+        body = urlencode({'csrf_token': 'csrf', 'cap_usd': '75.00'}).encode()
+        status, headers, _ = self.request('POST', cap_path, body, {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': 'benchmark_session=session-token'})
+        self.assertEqual((303, '/preparation/dossiers/d1/campaigns/d1-c1/conditions'),
+                         (status, headers['Location']))
 
 
 if __name__ == '__main__':

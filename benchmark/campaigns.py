@@ -12,6 +12,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 
@@ -56,6 +57,11 @@ _TABLES = {
         CHECK((stop_reason IS NULL AND stopped_at IS NULL) OR
               (admission_id IS NULL AND stop_reason IS NOT NULL AND stopped_at IS NOT NULL))
     )""",
+    's4_caps': """CREATE TABLE s4_caps (
+        campaign_id TEXT PRIMARY KEY NOT NULL REFERENCES s4_campaigns(campaign_id),
+        cap_usd TEXT NOT NULL,
+        cap_source TEXT NOT NULL CHECK(cap_source IN ('default', 'requester'))
+    )""",
     's4_attempts': """CREATE TABLE s4_attempts (
         operation_id TEXT PRIMARY KEY NOT NULL REFERENCES operations(operation_id),
         execution_id TEXT UNIQUE NOT NULL,
@@ -85,7 +91,7 @@ _TABLES = {
 # The mutable admission pointer never rewrites its immutable authority history
 _TRIGGERS = {}
 for _table in _TABLES:
-    if _table == 's4_status':
+    if _table in ('s4_status', 's4_caps'):
         continue
     for _action in ('UPDATE', 'DELETE'):
         _TRIGGERS[f'{_table}_{_action.lower()}'] = (
@@ -128,7 +134,8 @@ def schema_objects():
     return ([("table", name, name, sql) for name, sql in _TABLES.items()]
             + [("index", f'sqlite_autoindex_{name}_{i}', name, None)
                for name, count in (('s4_campaigns', 2), ('s4_cells', 1), ('s4_admissions', 2),
-                                   ('s4_status', 1), ('s4_attempts', 3), ('s4_emissions', 1), ('s4_results', 2))
+                                   ('s4_status', 1), ('s4_caps', 1), ('s4_attempts', 3),
+                                   ('s4_emissions', 1), ('s4_results', 2))
                for i in range(1, count + 1)]
             + [("trigger", name, name.rsplit('_', 1)[0], sql) for name, sql in _TRIGGERS.items()])
 
@@ -424,28 +431,49 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
 
 
 def configurations_view(store, session_id, dossier_id):
+    from . import model_catalogue
     from .preparation import owner, page_view
     connection = connection_for(store)
     with _transaction(connection):
         owner(connection, session_id, dossier_id)
+        catalogue = model_catalogue.selection(store)
+        tier_table = model_catalogue.tiers()
         prepared = [snapshot for snapshot in _requester_campaigns(store, connection, dossier_id)
                     if not snapshot['admissions'] and not snapshot['attempts']]
+        selected = set() if not prepared else {
+            item['model'] for item in prepared[-1]['manifest']['panel']}
+        models = []
+        for model in catalogue['models']:
+            if model['excluded'] is not None or model['route'] is None:
+                continue
+            levels = [level for level in model['reasoning_levels']
+                      if level in _EFFORT_ORDER and level != 'low']
+            models.append({'id': model['id'], 'name': model['name'] or model['id'],
+                           'selected': model['id'] in selected,
+                           'not_adjustable': not levels and model['maker'] not in tier_table})
         if not prepared:
-            return page_view({'current_campaign_id': None, 'configurations': [], 'superseded': [],
+            return page_view({'kind': 'configurations', 'dossier_id': dossier_id,
+                              'current_campaign_id': None, 'configurations': [], 'models': models,
+                              'current_tier': 'standard', 'superseded': [],
                               'available_tiers': ['standard', 'enhanced'], 'cap_usd': str(DEFAULT_CAP_USD),
                               'cap_source': 'default', 'estimate_total_usd': None,
-                              'estimate_under_cap': False, 'assumptions': None, 'fetched_at': None})
+                              'estimate_under_cap': False, 'assumptions': None,
+                              'fetched_at': catalogue['fetched_at']})
         current = prepared[-1]
         estimates = [config['estimate']['amount_usd'] for config in current['manifest']['panel']]
         total = None if any(value is None for value in estimates) else str(_sum_money(_money(value) for value in estimates))
         first = current['manifest']['panel'][0]['estimate']
         return page_view({
+            'kind': 'configurations', 'dossier_id': dossier_id, 'models': models,
             'current_campaign_id': current['manifest']['campaign_id'],
             'configurations': current['manifest']['panel'],
+            'current_tier': ('enhanced' if any(item['effort'] != 'off' or
+                                               item.get('effort_limit') == 'not_adjustable'
+                                               for item in current['manifest']['panel']) else 'standard'),
             'superseded': [snapshot['manifest']['campaign_id'] for snapshot in prepared[:-1]],
-            'available_tiers': ['standard', 'enhanced'], 'cap_usd': str(DEFAULT_CAP_USD),
-            'cap_source': 'default', 'estimate_total_usd': total,
-            'estimate_under_cap': total is not None and _money(total) <= DEFAULT_CAP_USD,
+            'available_tiers': ['standard', 'enhanced'], 'cap_usd': current['cap_usd'],
+            'cap_source': current['cap_source'], 'estimate_total_usd': total,
+            'estimate_under_cap': total is not None and _money(total) <= _money(current['cap_usd']),
             'assumptions': first['assumptions'], 'fetched_at': first['fetched_at']})
 
 
@@ -467,6 +495,8 @@ def _create(store, connection, value):
             connection.execute('INSERT INTO s4_cells VALUES (?,?,?,?)',
                                (value['campaign_id'], cell['cell_id'], cell['case_id'], cell['configuration_id']))
         connection.execute('INSERT INTO s4_status VALUES (?,NULL,NULL,NULL)', (value['campaign_id'],))
+        connection.execute('INSERT INTO s4_caps VALUES (?,?,?)',
+                           (value['campaign_id'], str(DEFAULT_CAP_USD), 'default'))
         return dict(manifest=value, manifest_sha256=fingerprint)
     except sqlite3.IntegrityError as error:
         raise ConflictError('Identité de campagne déjà utilisée') from error
@@ -671,6 +701,13 @@ def _inspect(store, connection, campaign_id):
     admissions = _admissions(store, connection, manifest, fingerprint)
     status = connection.execute('SELECT admission_id, stop_reason, stopped_at FROM s4_status WHERE campaign_id=?',
                                 (campaign_id,)).fetchone()
+    cap = connection.execute('SELECT cap_usd, cap_source FROM s4_caps WHERE campaign_id=?',
+                             (campaign_id,)).fetchone()
+    if cap is None or cap[1] not in ('default', 'requester'):
+        raise IntegrityError('Plafond de campagne absent ou invalide')
+    cap_usd = _money(cap[0])
+    if not Decimal('0.10') <= cap_usd <= Decimal('100.00'):
+        raise IntegrityError('Plafond de campagne hors bornes')
     if status is None or (status[0] is not None and status[0] not in admissions):
         raise IntegrityError('État de campagne sans admission liée')
     if status[0] is not None and status[0] != next(reversed(admissions)):
@@ -757,6 +794,7 @@ def _inspect(store, connection, campaign_id):
                 revision=contract['revision'], version=contract['version'], package_sha256=contract['package_sha256']),
                 state=state, admission=active, admissions=list(admissions.values()),
                 stop_reason=status[1], stopped_at=status[2], cells=cells, attempts=attempts, budget=budget,
+                cap_usd=str(cap_usd), cap_source=cap[1],
                 restore_pending=os.path.lexists(store._root / 'restore.json'))
 
 
@@ -891,6 +929,13 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
     engine = _engine()
     digest = q.digest(request)
     authority = admission['authority']
+    if manifest.get('funding') == 'requester':
+        spent = _sum_money(_money(attempt['operation']['observed_cost']['amount'])
+                           for attempt in snapshot['attempts']
+                           if attempt['operation']['observed_cost'] is not None
+                           and attempt['operation']['observed_cost']['status'] == 'KNOWN')
+        if _money(authority['reserve_amounts'][cell_id]) > _money(snapshot['cap_usd']) - spent:
+            raise BudgetError('Réserve supérieure au plafond restant')
     operation = dict(operation_id=attempt_id, phase='acquisition', dossier_id=contract['dossier_id'], revision=contract['revision'],
                      authority=authority['authority_id'], engine_version=FORMAT_IDENTITY + ':' + q.digest(engine),
                      requested_configuration=request['requested_configuration'], resources=[digest])
@@ -901,7 +946,89 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
                        (attempt_id, execution_id, campaign_id, cell_id, admission['admission_id'], encode(request), digest, encode(engine)))
     return dict(operation_id=attempt_id, execution_id=execution_id, cell_id=cell_id, output_piece_id=None)
 
-def launch_view(store, session_id, dossier_id, campaign_id):
+
+def _estimate_total(snapshot):
+    values = [configuration.get('estimate', {}).get('amount_usd')
+              for configuration in snapshot['manifest']['panel']]
+    return None if any(value is None for value in values) else _sum_money(_money(value) for value in values)
+
+
+def _requester_checks(store, connection, snapshot, session_id, access):
+    from . import model_catalogue
+    from .preparation import Denied, require_qualification
+    task = snapshot['task']
+    validated = connection.execute(
+        'SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? '
+        'AND package_sha256=? AND session_id=?',
+        (task['dossier_id'], task['revision'], task['package_sha256'], session_id)).fetchone() is not None
+    qualified = False
+    if validated:
+        try:
+            require_qualification(store, connection, task['dossier_id'], task['revision'])
+            qualified = True
+        except Denied:
+            pass
+    try:
+        catalogue = model_catalogue.selection(store)
+        selectable = {model['id'] for model in catalogue['models']
+                      if model['excluded'] is None and model['route'] is not None}
+        missing = [configuration['model'] for configuration in snapshot['manifest']['panel']
+                   if configuration['model'] not in selectable]
+    except LookupError:
+        missing = [configuration['model'] for configuration in snapshot['manifest']['panel']]
+    total = _estimate_total(snapshot)
+    cap = _money(snapshot['cap_usd'])
+    access_detail = {
+        'limit_remaining_usd': access.get('limit_remaining_usd'),
+        'limit_usd': access.get('limit_usd'),
+    }
+    return [
+        {'key': 'example_validated', 'ok': validated,
+         'detail': 'Exemple validé' if validated else 'Validez l’exemple présenté'},
+        {'key': 'example_qualified', 'ok': qualified,
+         'detail': 'Exemple qualifié' if qualified else 'La qualification de l’exemple est requise'},
+        {'key': 'configurations_available', 'ok': not missing,
+         'detail': ('Tous les modèles sélectionnés sont disponibles' if not missing else
+                    'Modèles à choisir de nouveau : ' + ', '.join(missing))},
+        {'key': 'access_connected', 'ok': access.get('status') == 'connected',
+         'detail': access_detail},
+        {'key': 'estimate_under_cap', 'ok': total is not None and total <= cap,
+         'detail': ('Estimation totale : non calculable' if total is None else
+                    f'Estimation totale : {total} USD pour un plafond de {cap} USD')},
+    ]
+
+
+def set_cap(store, session_id, dossier_id, campaign_id, body, *, access_secret=None,
+            access_transport=None):
+    from .preparation import owner
+    _fields(body, ('cap_usd',), 'plafond')
+    raw = body['cap_usd']
+    try:
+        if type(raw) is not str or re.fullmatch(r'[0-9]+(?:\.[0-9]{1,2})?', raw) is None:
+            raise ValueError
+        cap = Decimal(raw)
+        if not Decimal('0.10') <= cap <= Decimal('100.00'):
+            raise ValueError
+    except (ValueError, ArithmeticError):
+        raise ValueError('Plafond hors bornes : 0,10 à 100 USD') from None
+    _intact(store)
+    connection = connection_for(store)
+    with _transaction(connection, write=True):
+        owner(connection, session_id, dossier_id)
+        snapshot = _inspect(store, connection, campaign_id)
+        if (snapshot['task']['dossier_id'] != dossier_id
+                or snapshot['manifest'].get('funding') != 'requester'):
+            raise ValueError('Campagne demandeur requise')
+        if snapshot['admissions'] or snapshot['attempts']:
+            raise ConflictError('Plafond figé au lancement')
+        connection.execute('UPDATE s4_caps SET cap_usd=?, cap_source=? WHERE campaign_id=?',
+                           (str(cap.quantize(Decimal('0.01'))), 'requester', campaign_id))
+    return launch_view(store, session_id, dossier_id, campaign_id,
+                       access_secret=access_secret, access_transport=access_transport)
+
+
+def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=None,
+                access_transport=None):
     from .preparation import owner, page_view
     connection = connection_for(store)
     with _transaction(connection):
@@ -909,7 +1036,27 @@ def launch_view(store, session_id, dossier_id, campaign_id):
         snapshot = _inspect(store, connection, campaign_id)
         if snapshot['task']['dossier_id'] != dossier_id:
             raise ValueError('Campagne étrangère au dossier')
+        requester = snapshot['manifest'].get('funding') == 'requester'
+    access = {'connected': False, 'status': 'unavailable'}
+    if requester:
+        from .provider_access import view as access_view
+        access = access_view(store, session_id, access_secret, access_transport, refresh=False)
+    with _transaction(connection):
+        snapshot = _inspect(store, connection, campaign_id)
         projected = next(row for row in projection(store, connection, dossier_id) if row['campaign_id'] == campaign_id)
+        contract = _approved(store, connection, snapshot['manifest']['contract_sha256'])
+        criteria = {key: contract['specification'][key]
+                    for key in ('result_expected', 'obligations', 'eliminatory_errors', 'limits')}
+        if requester:
+            checks = _requester_checks(store, connection, snapshot, session_id, access)
+            total = _estimate_total(snapshot)
+            return page_view(dict(
+                kind='campaign_launch', dossier_id=dossier_id, campaign=projected,
+                criteria=criteria, checks=checks,
+                launchable=all(check['ok'] for check in checks)
+                and not snapshot['admissions'] and not snapshot['attempts'],
+                cap_usd=snapshot['cap_usd'], cap_source=snapshot['cap_source'],
+                estimate_total_usd=None if total is None else str(total), access=access))
         admission = snapshot['admission']
         grant = admission['authority'].get('browser_launch') if admission else None
         eligible = False
@@ -922,32 +1069,105 @@ def launch_view(store, session_id, dossier_id, campaign_id):
                 eligible = not snapshot['restore_pending'] and not snapshot['attempts']
             except (ValueError, ConflictError, BudgetError):
                 pass
-        contract = _approved(store, connection, snapshot['manifest']['contract_sha256'])
         return page_view(dict(kind='campaign_launch', dossier_id=dossier_id, campaign=projected,
-                         criteria={key: contract['specification'][key] for key in ('result_expected', 'obligations', 'eliminatory_errors', 'limits')}, can_launch=eligible,
+                         criteria=criteria, can_launch=eligible,
                          admission_id=admission['admission_id'] if grant else None,
                          estimate=grant['estimate'] if grant else None))
 
 
 def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=None, access_transport=None):
     from .preparation import owner, Denied
-    _fields(body, ('manifest_version', 'frozen_at', 'admission_id', 'confirm'), 'lancement')
-    if body['confirm'] != 'yes':
-        raise ValueError('Confirmation requise')
     _intact(store)
     connection = connection_for(store)
     with _transaction(connection):
         owner(connection, session_id, dossier_id)
         preview = _inspect(store, connection, campaign_id)
-    if (not preview['attempts']
-            and preview['manifest'].get('funding', 'operator') == 'requester'):
+    requester_funding = preview['manifest'].get('funding', 'operator') == 'requester'
+    requester = requester_funding and not preview['admissions']
+    fields = ('manifest_version', 'frozen_at', 'confirm') if requester else (
+        'manifest_version', 'frozen_at', 'admission_id', 'confirm')
+    _fields(body, fields, 'lancement')
+    if body['confirm'] != 'yes':
+        raise ValueError('Confirmation requise')
+    access = None
+    if requester:
+        from .provider_access import view as access_view
+        access = access_view(store, session_id, access_secret, access_transport, refresh=False)
+        with _transaction(connection):
+            snapshot = _inspect(store, connection, campaign_id)
+            failed = next((check for check in _requester_checks(
+                store, connection, snapshot, session_id, access) if not check['ok']), None)
+        if failed:
+            raise Denied(failed['key'])
+    if requester_funding:
         from .provider_access import key_for_session
         key_for_session(store, session_id, access_secret, access_transport)
+    if requester:
+        access = access_view(store, session_id, access_secret, access_transport, refresh=False)
     with _transaction(connection, write=True):
         owner(connection, session_id, dossier_id)
         snapshot = _inspect(store, connection, campaign_id)
+        if snapshot['task']['dossier_id'] != dossier_id:
+            raise Denied('Campagne non autorisée')
+        if requester:
+            if (body['manifest_version'], body['frozen_at']) != (
+                    snapshot['manifest']['version'], snapshot['manifest']['conditions']['frozen_at']):
+                raise ConflictError('Conditions périmées')
+            checks = _requester_checks(store, connection, snapshot, session_id, access)
+            failed = next((check for check in checks if not check['ok']), None)
+            if failed:
+                raise Denied(failed['key'])
+            if snapshot['admissions'] or snapshot['attempts']:
+                raise ConflictError('Lancement déjà enregistré')
+            cap = snapshot['cap_usd']
+            try:
+                connection.execute('INSERT INTO budgets VALUES (?,?,?)',
+                                   (campaign_id, cap, 'USD'))
+            except sqlite3.IntegrityError as error:
+                raise ConflictError('Enveloppe demandeur déjà créée') from error
+            reserve_amounts = {
+                cell['cell_id']: next(configuration['estimate']['amount_usd']
+                                      for configuration in snapshot['manifest']['panel']
+                                      if configuration['id'] == cell['configuration_id'])
+                for cell in snapshot['manifest']['plan']}
+            identity = 'requester:' + session_id
+            authority = dict(
+                actor='Ayo', authority_id=identity, purpose='start',
+                manifest_sha256=snapshot['manifest_sha256'],
+                execution_authority=identity, candidate_authority=identity,
+                budget_authority=identity, budget_id=campaign_id,
+                allowed_cells=list(snapshot['manifest']['attempt_policy']['order']),
+                reserve_amounts=reserve_amounts)
+            fetched_at = snapshot['manifest']['panel'][0]['estimate']['fetched_at']
+            channels = {}
+            for configuration in snapshot['manifest']['panel']:
+                channel = {key: configuration[key]
+                           for key in {'revision', 'channel_id', 'route'}
+                           | set(configuration['required_observations'])}
+                channel.update(available=True, proof='Relevé de modèles conservé du ' + fetched_at)
+                channels[configuration['id']] = channel
+            evidence = dict(
+                pi_sha256=snapshot['manifest']['conditions']['pi']['sha256'],
+                context_sha256=snapshot['manifest']['conditions']['context_sha256'],
+                channels=channels,
+                confinement=dict(code_execution=False,
+                                 proof='Campagne sans outil, paquet ni compétence exécutable'))
+            total = _estimate_total(snapshot)
+            estimate = dict(amount=str(total), currency='USD',
+                            assumptions='Somme des estimations figées de chaque configuration',
+                            source='Relevé de modèles conservé du ' + fetched_at)
+            admission = _admit(store, connection, campaign_id, authority, evidence,
+                               owner_launch=True, estimate=estimate)
+            snapshot = _inspect(store, connection, campaign_id)
+            attempts = []
+            for cell in snapshot['manifest']['attempt_policy']['order']:
+                attempt_id = 'web-' + q.digest(
+                    [campaign_id, cell, admission['admission_id']])[:40]
+                _reserve(store, connection, snapshot, cell, attempt_id)
+                attempts.append(attempt_id)
+            return attempts
         admission = snapshot['admission']
-        if snapshot['task']['dossier_id'] != dossier_id or not admission:
+        if not admission:
             raise Denied('Campagne non autorisée')
         grant = admission['authority'].get('browser_launch')
         if not grant or grant['session_id'] != session_id:
@@ -1113,9 +1333,28 @@ def execute(data, attempt_id, transport=None, *, transport_factory=None,
                                      name='Sortie brute ' + attempt_id, role='judge', media_type='text/plain; charset=utf-8', content=output.encode('utf-8'))
                 connection.execute('INSERT INTO s4_results VALUES (?,?,?,?,?)',
                                    (attempt_id, output_id, q.digest(receipt), q.digest(cost), _now()))
-                if _attribution(receipt, request['requested_configuration']) or (cost['status'] == 'UNKNOWN' and snapshot['manifest'].get('financial_cost_policy') != 'retain_reserve') or receipt['result']['emission'] != 'ESTABLISHED':
+                incomplete = (_attribution(receipt, request['requested_configuration'])
+                              or (cost['status'] == 'UNKNOWN'
+                                  and snapshot['manifest'].get('financial_cost_policy') != 'retain_reserve')
+                              or receipt['result']['emission'] != 'ESTABLISHED')
+                if incomplete:
                     connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
                                        ('ACQUISITION_EVIDENCE_INCOMPLETE', _now(), snapshot['manifest']['campaign_id']))
+                elif (snapshot['manifest'].get('funding') == 'requester'
+                      and receipt['result']['incident'] is None):
+                    operation_ids = {row[0] for row in connection.execute(
+                        'SELECT operation_id FROM s4_attempts WHERE campaign_id=?',
+                        (snapshot['manifest']['campaign_id'],))}
+                    spent = _sum_money(_money(operation['observed_cost']['amount'])
+                                       for operation in store._operations(
+                                           connection, operation_ids=operation_ids)
+                                       if operation['observed_cost'] is not None
+                                       and operation['observed_cost']['status'] == 'KNOWN')
+                    if spent >= _money(snapshot['cap_usd']):
+                        connection.execute(
+                            'UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? '
+                            'WHERE campaign_id=?',
+                            ('CAP_REACHED', _now(), snapshot['manifest']['campaign_id']))
             received = True
         except Exception:
             # Exception text can contain private bytes. Preserve a fixed technical

@@ -4,9 +4,13 @@ from contextlib import closing
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from benchmark import campaigns as c, preparation as p, qualification as q, storage
+from benchmark import (campaigns as c, evaluation, model_catalogue,
+                       preparation as p, provider_access, qualification as q, storage)
 from benchmark_web import views
+from tests.test_configurations import NOW, model
+from tests.test_provider_access import AccessTransport, SECRET
 from tests.test_s3_regressions import fixture, specification, check, ACTOR, AUTHORITY
 from tests.test_s4_regressions import inputs, manifest, response
 
@@ -159,6 +163,183 @@ class CampaignLaunch(unittest.TestCase):
             self.assertEqual(2, len(result[3]['candidate_attempts']))
             repeated = p.dispatch(self.store, 'POST', path, 'token', dict(body, csrf_token='csrf'), 'a'*40, True, candidate_transport=response)
             self.assertIsNone(repeated[3])
+
+
+class RequesterCampaignLaunch(unittest.TestCase):
+    def setUp(self):
+        network = patch('socket.socket.connect', side_effect=AssertionError('No network'))
+        network.start()
+        self.addCleanup(network.stop)
+        temporary = tempfile.TemporaryDirectory(prefix='requester-launch-')
+        self.addCleanup(temporary.cleanup)
+        self.data = Path(temporary.name).resolve() / 'private'
+        self.sid, preview, reference = fixture(self.data)
+        self.revision = preview['revision']
+        q.initialize(self.data)
+        self.store = storage.Store(self.data)
+        self.addCleanup(self.store.close)
+        spec = specification(reference)
+        spec['cost_basis'] = dict(scope='Par tentative', attempts='Tentatives autorisées',
+                                  unit='USD', conversion=None)
+        candidate = q.draft(self.store, 'fixture', preview['revision'], spec)
+        qualified = q.qualify(self.store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
+        q.approve(self.store, candidate['contract_sha256'], qualified['qualification_id'],
+                  actor=ACTOR, authority=AUTHORITY)
+        c.initialize(self.data)
+        evaluation.initialize(self.data)
+        provider_access.initialize(self.data)
+        rows = [
+            model('openai/gpt-5.6-sol', 'openai', ['low', 'high'],
+                  prompt='0.0000001', completion='0.0000001'),
+            model('deepseek/deepseek-v4.1-flash', 'deepseek', [],
+                  prompt='0.0000001', completion='0.0000001'),
+        ]
+        document = {'models': [row[0] for row in rows],
+                    'endpoints': {row[0]['id']: row[1] for row in rows}}
+        self.store._connection.execute(model_catalogue.TABLE_SQL)
+        self.store._connection.execute(
+            'INSERT INTO s2_model_catalogue VALUES (?,?)',
+            (NOW.isoformat(), storage._strict_json(document)))
+        identity = {'package': '@earendil-works/pi-coding-agent', 'version': '0.85.1',
+                    'sha256': '1' * 64, 'bridge_sha256': '2' * 64,
+                    'node_version': 'v24.0.0', 'node_sha256': '3' * 64,
+                    'scope': 'Fixture Pi locale'}
+        with patch.object(model_catalogue, '_now', return_value=NOW):
+            current = c.prepare_configurations(
+                self.store, self.sid, 'fixture',
+                {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+                 'tier': 'standard'}, identity)
+        self.campaign_id = current['current_campaign_id']
+        self.access = AccessTransport()
+
+    def connect(self):
+        provider_access.start(self.store, self.sid, SECRET,
+                              'https://example.test/preparation/access/callback')
+        provider_access.callback(self.store, self.sid, SECRET, 'code', self.access)
+
+    def body(self):
+        snapshot = c.inspect(self.store, self.campaign_id)
+        return {'manifest_version': snapshot['manifest']['version'],
+                'frozen_at': snapshot['manifest']['conditions']['frozen_at'],
+                'confirm': 'yes'}
+
+    def test_recapitulatif_plafond_admission_et_gel(self):
+        self.connect()
+        summary = c.launch_view(self.store, self.sid, 'fixture', self.campaign_id,
+                                access_secret=SECRET, access_transport=self.access)
+        self.assertEqual(['example_validated', 'example_qualified',
+                          'configurations_available', 'access_connected',
+                          'estimate_under_cap'], [check['key'] for check in summary['checks']])
+        self.assertTrue(summary['launchable'])
+        self.assertEqual({'limit_remaining_usd': '18.5', 'limit_usd': '20'},
+                         summary['checks'][3]['detail'])
+        for invalid in ('0.09', '100.01', '1.001', '1e1', 1):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                    ValueError, 'Plafond hors bornes : 0,10 à 100 USD'):
+                c.set_cap(self.store, self.sid, 'fixture', self.campaign_id,
+                          {'cap_usd': invalid})
+        changed = c.set_cap(self.store, self.sid, 'fixture', self.campaign_id,
+                            {'cap_usd': '100'})
+        self.assertEqual(('100.00', 'requester'),
+                         (changed['cap_usd'], changed['cap_source']))
+        attempts = c.launch(self.store, self.sid, 'fixture', self.campaign_id,
+                            self.body(), access_secret=SECRET,
+                            access_transport=self.access)
+        snapshot = c.inspect(self.store, self.campaign_id)
+        self.assertEqual(2, len(attempts))
+        self.assertEqual('requester:' + self.sid,
+                         snapshot['admission']['authority']['authority_id'])
+        self.assertEqual(('100.00', 'USD'),
+                         (snapshot['budget']['limit'], snapshot['budget']['currency']))
+        with self.assertRaisesRegex(storage.ConflictError, 'Plafond figé au lancement'):
+            c.set_cap(self.store, self.sid, 'fixture', self.campaign_id,
+                      {'cap_usd': '10'})
+
+    def test_chaque_controle_bloque_avec_sa_cle(self):
+        with self.assertRaises(p.Denied) as disconnected:
+            c.launch(self.store, self.sid, 'fixture', self.campaign_id,
+                     self.body(), access_secret=SECRET,
+                     access_transport=self.access)
+        self.assertEqual('access_connected', disconnected.exception.code)
+        self.connect()
+        keys = ['example_validated', 'example_qualified', 'configurations_available',
+                'access_connected', 'estimate_under_cap']
+        for key in keys:
+            checks = [{'key': current, 'ok': current != key, 'detail': current}
+                      for current in keys]
+            with self.subTest(key=key), patch.object(c, '_requester_checks',
+                                                    return_value=checks), \
+                    self.assertRaises(p.Denied) as caught:
+                c.launch(self.store, self.sid, 'fixture', self.campaign_id,
+                         self.body(), access_secret=SECRET,
+                         access_transport=self.access)
+            self.assertEqual(key, caught.exception.code)
+
+    def test_ordre_des_etapes(self):
+        connection = self.store._connection_checked()
+        with self.assertRaises(p.Denied) as missing_validation:
+            p.require_requester_steps(
+                self.store, connection, 'session-etrangere', 'fixture', 1)
+        self.assertEqual(('STEP_INCOMPLETE', 'example_validated'),
+                         (missing_validation.exception.code, missing_validation.exception.step))
+        with patch.object(p, 'require_qualification', side_effect=p.Denied('NOT_QUALIFIED')), \
+                self.assertRaises(p.Denied) as missing_qualification:
+            p.require_requester_steps(self.store, connection, self.sid, 'fixture', self.revision)
+        self.assertEqual(('STEP_INCOMPLETE', 'example_qualified'),
+                         (missing_qualification.exception.code,
+                          missing_qualification.exception.step))
+
+    def test_arret_au_plafond_et_incident_fournisseur_distinct(self):
+        self.connect()
+        c.set_cap(self.store, self.sid, 'fixture', self.campaign_id, {'cap_usd': '0.10'})
+        attempts = c.launch(self.store, self.sid, 'fixture', self.campaign_id,
+                            self.body(), access_secret=SECRET,
+                            access_transport=self.access)
+        calls = []
+
+        def transport(operation, request):
+            calls.append(operation['operation_id'])
+            result = response(operation, request)
+            result['cost'].update(amount='0.10', currency='USD')
+            return result
+
+        c.execute_launch(self.data, attempts, transport, access_secret=SECRET,
+                         access_transport=self.access)
+        snapshot = c.inspect(self.store, self.campaign_id)
+        self.assertEqual(1, len(calls))
+        self.assertEqual('CAP_REACHED', snapshot['stop_reason'])
+        self.assertEqual('INTENT_RECORDED', snapshot['attempts'][1]['state'])
+
+        second = c.prepare_configurations(
+            self.store, self.sid, 'fixture',
+            {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+             'tier': 'standard'},
+            {'package': '@earendil-works/pi-coding-agent', 'version': '0.85.1',
+             'sha256': '1' * 64, 'bridge_sha256': '2' * 64,
+             'node_version': 'v24.0.0', 'node_sha256': '3' * 64,
+             'scope': 'Fixture Pi locale'})
+        second_id = second['current_campaign_id']
+        c.set_cap(self.store, self.sid, 'fixture', second_id, {'cap_usd': '0.10'})
+        second_attempts = c.launch(self.store, self.sid, 'fixture', second_id,
+                                   self.body_for(second_id), access_secret=SECRET,
+                                   access_transport=self.access)
+
+        def limited(operation, request):
+            result = transport(operation, request)
+            result['receipt']['result'].update(incident='OPENROUTER_LIMIT',
+                                               emission='UNKNOWN', output=None)
+            return result
+
+        c.execute_launch(self.data, second_attempts, limited, access_secret=SECRET,
+                         access_transport=self.access)
+        self.assertEqual('ACQUISITION_EVIDENCE_INCOMPLETE',
+                         c.inspect(self.store, second_id)['stop_reason'])
+
+    def body_for(self, campaign_id):
+        snapshot = c.inspect(self.store, campaign_id)
+        return {'manifest_version': snapshot['manifest']['version'],
+                'frozen_at': snapshot['manifest']['conditions']['frozen_at'],
+                'confirm': 'yes'}
 
 
 if __name__ == '__main__':

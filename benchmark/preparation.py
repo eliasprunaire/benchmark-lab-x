@@ -31,11 +31,12 @@ _SOURCE_ACCEPTED = {}
 
 
 class Denied(ValueError):
-    def __init__(self, message, field=None, findings=None):
+    def __init__(self, message, field=None, findings=None, step=None):
         super().__init__(message)
-        self.code = message if re.fullmatch(r'[A-Z_]+', message) else None
+        self.code = message if re.fullmatch(r'[A-Za-z_]+', message) else None
         self.field = field
         self.findings = findings
+        self.step = step
 
 
 def _now():
@@ -383,6 +384,25 @@ def require_qualification(store, connection, dossier_id, revision):
     qualification = _automatic_qualification(store, connection, dossier_id, revision)
     if qualification is None or not qualification['qualified']:
         raise Denied('NOT_QUALIFIED', findings=[] if qualification is None else qualification['findings'])
+
+
+def require_requester_steps(store, connection, session_id, dossier_id, revision):
+    row = connection.execute(
+        'SELECT r.package_sha256 FROM s2_revisions r JOIN s2_dossiers d USING(dossier_id) '
+        'WHERE r.dossier_id=? AND r.revision=? AND d.session_id=?',
+        (dossier_id, revision, session_id)).fetchone()
+    validated = row and row[0] and connection.execute(
+        'SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? '
+        'AND package_sha256=? AND session_id=?',
+        (dossier_id, revision, row[0], session_id)).fetchone()
+    if not validated:
+        raise Denied('STEP_INCOMPLETE', step='example_validated')
+    try:
+        require_qualification(store, connection, dossier_id, revision)
+    except Denied as error:
+        if error.code != 'NOT_QUALIFIED':
+            raise
+        raise Denied('STEP_INCOMPLETE', step='example_qualified') from None
 
 
 def view(store, session_id, dossier_id, revision=None):
@@ -1053,13 +1073,12 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
     if configuration_route:
         from . import campaigns
         dossier_id = configuration_route.group(1)
-        owner(connection_for(store), session_id, dossier_id)
+        revision = owner(connection_for(store), session_id, dossier_id)
+        require_requester_steps(store, connection_for(store), session_id, dossier_id, revision)
         if candidate_identity is None:
             return 503, {'error': 'Harnais candidat indisponible',
                          'error_code': 'CANDIDATE_PI_UNAVAILABLE'}, None, None
         if method == 'POST':
-            require_qualification(store, connection_for(store), dossier_id,
-                                  owner(connection_for(store), session_id, dossier_id))
             return 201, campaigns.prepare_configurations(
                 store, session_id, dossier_id, body, candidate_identity), None, None
         if method == 'GET':
@@ -1083,7 +1102,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
             _fields(body, (), 'access disconnect')
             return 200, provider_access.disconnect(store, session_id, access_secret), None, None
         raise Denied('Action inaccessible')
-    launch_route = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/campaigns/([A-Za-z0-9_-]{1,128})/(conditions|start)', path)
+    launch_route = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/campaigns/([A-Za-z0-9_-]{1,128})/(conditions|cap|start)', path)
     if launch_route:
         from . import campaigns
         dossier_id, campaign_id, action = launch_route.groups()
@@ -1091,18 +1110,39 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         snapshot = campaigns.inspect(store, campaign_id)
         if snapshot['task']['dossier_id'] != dossier_id:
             raise Denied('Ressource inaccessible')
-        require_qualification(store, connection_for(store), dossier_id, snapshot['task']['revision'])
+        requester = snapshot.get('manifest', {}).get('funding') == 'requester'
+        if requester:
+            require_requester_steps(store, connection_for(store), session_id, dossier_id,
+                                    snapshot['task']['revision'])
+        else:
+            require_qualification(store, connection_for(store), dossier_id,
+                                  snapshot['task']['revision'])
+        if method == 'POST' and action == 'cap':
+            value = campaigns.set_cap(
+                store, session_id, dossier_id, campaign_id, body,
+                access_secret=access_secret, access_transport=access_transport)
+            return 200, value, None, None
         if method == 'POST' and action == 'start':
             if not callable(candidate_transport):
                 raise Denied('Acquisition indisponible')
             attempts = campaigns.launch(store, session_id, dossier_id, campaign_id, body,
                                         access_secret=access_secret, access_transport=access_transport)
-            value = campaigns.launch_view(store, session_id, dossier_id, campaign_id)
-            value['can_launch'] = False
+            value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
+                                          access_secret=access_secret,
+                                          access_transport=access_transport)
+            if requester:
+                value['launchable'] = False
+            else:
+                value['can_launch'] = False
             return 202, value, None, {'candidate_attempts': attempts} if attempts else None
         if method == 'GET' and action == 'conditions':
-            value = campaigns.launch_view(store, session_id, dossier_id, campaign_id)
-            value['can_launch'] = value['can_launch'] and callable(candidate_transport)
+            value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
+                                          access_secret=access_secret,
+                                          access_transport=access_transport)
+            if requester:
+                value['launchable'] = value['launchable'] and callable(candidate_transport)
+            else:
+                value['can_launch'] = value['can_launch'] and callable(candidate_transport)
             return 200, value, None, None
         raise Denied('Action inaccessible')
     if method == 'POST' and path == '/preparation/dossiers':
