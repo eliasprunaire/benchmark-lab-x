@@ -90,10 +90,16 @@ class PiOpenRouter:
         if any(conditions[k] for k in ('tools', 'packages', 'skills')):
             raise ValueError('Ce transport Pi ne fournit aucun outil ni extension')
         defaults = conditions['defaults']
-        storage._fields(defaults, ('system_prompt', 'timeout_seconds', 'context_window'), 'Pi defaults')
+        fields = ('system_prompt', 'timeout_seconds', 'context_window')
+        if 'max_output_tokens' in defaults or 'defaults_source' in defaults:
+            fields += ('max_output_tokens', 'defaults_source')
+        storage._fields(defaults, fields, 'Pi defaults')
         if (type(defaults['system_prompt']) is not str or not defaults['system_prompt'].strip()
                 or type(defaults['timeout_seconds']) is not int or defaults['timeout_seconds'] <= 0
-                or type(defaults['context_window']) is not int or defaults['context_window'] <= 0):
+                or type(defaults['context_window']) is not int or defaults['context_window'] <= 0
+                or ('max_output_tokens' in defaults and
+                    (type(defaults['max_output_tokens']) is not int or defaults['max_output_tokens'] <= 0
+                     or defaults['defaults_source'] != 'DEFAULT_MAX_OUTPUT_TOKENS'))):
             raise ValueError('Contexte Pi et durée décidés requis')
         if sha256(system_context(defaults['system_prompt']).encode()).hexdigest() != conditions['context_sha256']:
             raise ValueError('Contexte système Pi divergent')
@@ -135,9 +141,15 @@ class PiOpenRouter:
                 raise ValueError('Paramètre numérique invalide')
         reasoning = parameters.get('reasoning')
         if reasoning is not None:
-            storage._fields(reasoning, ('effort',), 'reasoning')
-            q._texts([reasoning['effort']], 'effort', required=True)
-        if config['effort'] != (reasoning['effort'] if reasoning else 'off'):
+            if 'effort' in reasoning:
+                storage._fields(reasoning, ('effort',), 'reasoning')
+                q._texts([reasoning['effort']], 'effort', required=True)
+            else:
+                storage._fields(reasoning, ('enabled',), 'reasoning')
+                if reasoning['enabled'] is not True:
+                    raise ValueError('Activation du raisonnement requise')
+        requested_effort = reasoning.get('effort', 'on') if reasoning else 'off'
+        if config['effort'] != requested_effort:
             raise ValueError('Effort demandé divergent des paramètres émis')
         provider = parameters['provider']
         storage._fields(provider, ('only', 'order', 'allow_fallbacks', 'require_parameters'), 'OpenRouter routing')

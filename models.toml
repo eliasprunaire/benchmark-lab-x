@@ -247,6 +247,11 @@ baseline_models = [
   "z-ai/glm-5v-turbo",
 ]
 
+[tiers]
+
+[tiers.deepseek]
+enhanced = { enabled = true }
+
 # reasoning_max_tokens a été retiré des candidats de base le 2026-08-05 : le
 # paramètre était limitant chez Alibaba et ignoré chez Novita. Toute valeur
 # qualifiée vit désormais sous un alias distinct ; elle ne se mélange jamais au

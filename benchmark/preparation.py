@@ -986,6 +986,7 @@ def verify_preparation(store, connection):
 
 
 def dispatch(store, method, path, token, body, source, transport, *, qualification_transport=None, candidate_transport=None,
+             candidate_identity=None,
              access_secret=None, access_transport=None, presentation=None):
     """Executor-side authorization: HTTP fields can never claim an operator role."""
     if method == 'GET' and path == '/preparation':
@@ -1042,6 +1043,23 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
             if type(supplied) is not str or not hmac.compare_digest(supplied.encode(), csrf.encode()):
                 raise Denied('Protection CSRF requise')
             body = {key: value for key, value in body.items() if key != 'csrf_token'}
+    configuration_route = re.fullmatch(
+        r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/configurations', path)
+    if configuration_route:
+        from . import campaigns
+        dossier_id = configuration_route.group(1)
+        owner(connection_for(store), session_id, dossier_id)
+        if candidate_identity is None:
+            return 503, {'error': 'Harnais candidat indisponible',
+                         'error_code': 'CANDIDATE_PI_UNAVAILABLE'}, None, None
+        if method == 'POST':
+            require_qualification(store, connection_for(store), dossier_id,
+                                  owner(connection_for(store), session_id, dossier_id))
+            return 201, campaigns.prepare_configurations(
+                store, session_id, dossier_id, body, candidate_identity), None, None
+        if method == 'GET':
+            return 200, campaigns.configurations_view(store, session_id, dossier_id), None, None
+        raise Denied('Action inaccessible')
     if path in access_paths:
         from . import provider_access
         unavailable = access_secret is None or not provider_access.available(store)

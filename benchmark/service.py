@@ -70,6 +70,7 @@ def executor_health(path):
 
 def serve_executor(data, socket_path, source, *, transport=None, qualification_transport=None,
                    candidate_transport=None, candidate_transport_factory=None,
+                   candidate_identity=None,
                    access_secret=None, access_transport=None, presentation=None):
     data, socket_path = Path(data), Path(socket_path)
     with closing(Store(data)) as store:
@@ -105,6 +106,7 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                                 code, value, cookie, start = preparation.dispatch(
                                     store, message['method'], message['path'], message['token'], message['body'],
                                     source, transport, candidate_transport=candidate_transport or candidate_transport_factory,
+                                    candidate_identity=candidate_identity,
                                     qualification_transport=qualification_transport,
                                     access_secret=access_secret, access_transport=access_transport,
                                     presentation=presentation)

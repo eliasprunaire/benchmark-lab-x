@@ -111,9 +111,14 @@ _MANIFEST = ('campaign_id', 'version', 'contract_sha256', 'cases', 'panel',
 _MANIFEST_OPTIONAL = ('financial_cost_policy', 'recovery_of', 'official_fallback', 'funding')
 _CONFIGURATION = ('id', 'provider', 'model', 'revision', 'access', 'channel_id',
                   'route', 'parameters', 'effort', 'required_observations')
+_CONFIGURATION_OPTIONAL = ('effort_limit', 'estimate')
 _AUTHORITY = ('actor', 'authority_id', 'purpose', 'manifest_sha256', 'execution_authority',
               'candidate_authority', 'budget_authority', 'budget_id', 'allowed_cells', 'reserve_amounts')
 _OBSERVED = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters', 'effort')
+DEFAULT_MAX_OUTPUT_TOKENS = 4096
+HARNESS_INPUT_TOKENS = 1500
+DEFAULT_CAP_USD = Decimal('5.00')
+_EFFORT_ORDER = ('minimal', 'low', 'medium', 'high', 'xhigh')
 
 
 def schema_objects():
@@ -173,12 +178,12 @@ def _present(value, label):
         raise ValueError('Preuve requise : ' + label)
 
 
-def _entries(values, fields, label):
+def _entries(values, fields, label, optional=()):
     if type(values) is not list or not values:
         raise ValueError('Liste non vide requise : ' + label)
     seen = set()
     for value in values:
-        _fields(value, fields, label)
+        _fields(value, fields + tuple(key for key in optional if key in value), label)
         key = identifier(value[fields[0]])
         if key in seen:
             raise ValueError('Identité répétée : ' + label)
@@ -208,7 +213,7 @@ def _manifest(value, contract):
     for case in value['cases']:
         if case['package_sha256'] != contract['package_sha256']:
             raise ValueError('Cas sans paquet contractuel exact')
-    panel = _entries(value['panel'], _CONFIGURATION, 'panel')
+    panel = _entries(value['panel'], _CONFIGURATION, 'panel', _CONFIGURATION_OPTIONAL)
     from .pi_official import provider_for_endpoint
     if any(provider_for_endpoint(config['channel_id']) for config in value['panel']) and 'official_fallback' not in value:
         raise ValueError('Secours officiel lié aux reçus OpenRouter requis')
@@ -221,6 +226,10 @@ def _manifest(value, contract):
             _text(config[field], field)
         if config['access'] not in ('API', 'direct') or type(config['parameters']) is not dict:
             raise ValueError('Configuration demandée invalide')
+        if config.get('effort_limit') not in (None, 'not_adjustable'):
+            raise ValueError('Limite d’effort inconnue')
+        if 'estimate' in config:
+            encode(config['estimate'])
         q._texts(config['required_observations'], 'required_observations', required=True, unique=True)
         required = set(config['required_observations'])
         if not {'revision', 'channel_id'} <= required <= set(_OBSERVED):
@@ -279,6 +288,157 @@ def create(store, manifest):
     connection = connection_for(store)
     with _transaction(connection, write=True):
         return _create(store, connection, value)
+
+
+def _current_contract(store, connection, dossier_id):
+    row = connection.execute(
+        'SELECT c.contract_sha256 FROM s3_contracts c JOIN s3_approvals a USING(contract_sha256) '
+        'WHERE c.dossier_id=? ORDER BY c.version DESC LIMIT 1', (dossier_id,)).fetchone()
+    if row is None:
+        raise ValueError('Contrat qualifié et approuvé requis')
+    return _approved(store, connection, row[0], current=True)
+
+
+def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
+    from . import openrouter_prices
+    parameters = {
+        'max_tokens': DEFAULT_MAX_OUTPUT_TOKENS,
+        'provider': {'only': [model['route']], 'order': [model['route']],
+                     'allow_fallbacks': False, 'require_parameters': True},
+    }
+    effort = 'off'
+    effort_limit = None
+    if tier == 'enhanced':
+        levels = [level for level in model['reasoning_levels']
+                  if level in _EFFORT_ORDER and level != 'low']
+        if 'high' in levels:
+            effort = 'high'
+            parameters['reasoning'] = {'effort': effort}
+        elif levels:
+            effort = max(levels, key=_EFFORT_ORDER.index)
+            parameters['reasoning'] = {'effort': effort}
+        elif model['maker'] in tier_table:
+            effort = 'on'
+            parameters['reasoning'] = deepcopy(tier_table[model['maker']]['enhanced'])
+        else:
+            effort_limit = 'not_adjustable'
+    pricing = {
+        'prompt': (None if model['input_price_per_million'] is None else
+                   str(_money(model['input_price_per_million']) / Decimal(1_000_000))),
+        'completion': (None if model['output_price_per_million'] is None else
+                       str(_money(model['output_price_per_million']) / Decimal(1_000_000))),
+    }
+    forecast = openrouter_prices.price_row(
+        pricing, {'prompt': assumptions['input_tokens'], 'completion': assumptions['output_tokens']})['forecast']
+    estimate = {'amount_usd': forecast['token_subtotal_usd'], 'forecast': forecast,
+                'fetched_at': fetched_at, 'assumptions': deepcopy(assumptions)}
+    configuration = dict(
+        id=f'configuration-{index}', provider='OpenRouter', model=model['id'], revision=model['id'],
+        access='API', channel_id='https://openrouter.ai/api/v1/chat/completions',
+        route='OpenRouter pinned endpoint: ' + model['route'], parameters=parameters, effort=effort,
+        required_observations=['revision', 'channel_id'], estimate=estimate)
+    if effort_limit is not None:
+        configuration['effort_limit'] = effort_limit
+    return configuration
+
+
+def prepare_configurations(store, session_id, dossier_id, body, candidate_identity):
+    from . import model_catalogue
+    from .pi_openrouter import system_context
+    _fields(body, ('models', 'tier'), 'configurations')
+    if (type(body['models']) is not list or len(body['models']) < 2
+            or len(set(body['models'])) != len(body['models'])
+            or any(type(model_id) is not str for model_id in body['models'])):
+        raise ValueError('Au moins deux modèles distincts sont requis')
+    if body['tier'] not in ('standard', 'enhanced'):
+        raise ValueError('Palier inconnu')
+    if type(candidate_identity) is not dict:
+        raise LookupError('CANDIDATE_PI_UNAVAILABLE')
+    _intact(store)
+    connection = connection_for(store)
+    with _transaction(connection, write=True):
+        from .preparation import owner
+        owner(connection, session_id, dossier_id)
+        contract = _current_contract(store, connection, dossier_id)
+        catalogue = model_catalogue.selection(store)
+        by_id = {model['id']: model for model in catalogue['models']}
+        try:
+            selected = [by_id[model_id] for model_id in body['models']]
+        except KeyError as error:
+            raise ValueError('Modèle absent du catalogue') from error
+        if any(model['excluded'] is not None or model['route'] is None for model in selected):
+            raise ValueError('Modèle exclu du catalogue')
+        context_lengths = [model['context_length'] for model in selected]
+        if any(type(value) is not int or value <= 0 for value in context_lengths):
+            raise ValueError('Fenêtre de contexte absente du relevé')
+        system_prompt = contract['package']['instruction']
+        candidate_bytes = system_prompt.encode('utf-8')
+        candidate_bytes += b''.join(store.read_piece(piece['id']) for piece in contract['package']['pieces'])
+        candidate_bytes += system_prompt.encode('utf-8')
+        assumptions = {'bytes_per_token': 4, 'harness_input_tokens': HARNESS_INPUT_TOKENS,
+                       'input_tokens': HARNESS_INPUT_TOKENS + (len(candidate_bytes) + 3) // 4,
+                       'output_tokens': DEFAULT_MAX_OUTPUT_TOKENS, 'cached_input_tokens': 0,
+                       'requests_per_cell': 1}
+        tier_table = model_catalogue.tiers()
+        panel = [_configuration(model, body['tier'], index, tier_table, assumptions,
+                                catalogue['fetched_at'])
+                 for index, model in enumerate(selected, 1)]
+        count = connection.execute(
+            'SELECT count(*) FROM s4_campaigns c JOIN s3_contracts q USING(contract_sha256) '
+            'WHERE q.dossier_id=?', (dossier_id,)).fetchone()[0]
+        campaign_id = f'{dossier_id}-c{count + 1}'
+        case = {'id': 'case-1', 'package_sha256': contract['package_sha256']}
+        plan = [dict(cell_id=f'cell-{index}', case_id=case['id'], configuration_id=config['id'])
+                for index, config in enumerate(panel, 1)]
+        manifest = dict(
+            campaign_id=campaign_id, version=1, contract_sha256=q.digest(contract), cases=[case], panel=panel,
+            conditions=dict(
+                pi=dict(package=candidate_identity['package'], version=candidate_identity['version'],
+                        sha256=candidate_identity['sha256'], status='active', proof=candidate_identity['scope']),
+                packages=[], tools=[], skills=[], context_sha256=sha256(system_context(system_prompt).encode()).hexdigest(),
+                defaults=dict(system_prompt=system_prompt, timeout_seconds=300,
+                              context_window=min(context_lengths), max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+                              defaults_source='DEFAULT_MAX_OUTPUT_TOKENS'),
+                environment={key: candidate_identity[key] for key in ('node_version', 'node_sha256', 'bridge_sha256')},
+                frozen_at=_now()),
+            plan=plan,
+            attempt_policy=dict(retries=False, order=[cell['cell_id'] for cell in plan],
+                                reason='Ordre de sélection du demandeur'),
+            cost_basis=contract['specification']['cost_basis'], funding='requester')
+        _create(store, connection, manifest)
+    return configurations_view(store, session_id, dossier_id)
+
+
+def configurations_view(store, session_id, dossier_id):
+    from .preparation import owner, page_view
+    connection = connection_for(store)
+    with _transaction(connection):
+        owner(connection, session_id, dossier_id)
+        rows = connection.execute(
+            'SELECT c.campaign_id FROM s4_campaigns c JOIN s3_contracts q USING(contract_sha256) '
+            'WHERE q.dossier_id=? ORDER BY c.rowid', (dossier_id,)).fetchall()
+        prepared = []
+        for (campaign_id,) in rows:
+            snapshot = _inspect(store, connection, campaign_id)
+            if not snapshot['admissions'] and not snapshot['attempts']:
+                prepared.append(snapshot)
+        if not prepared:
+            return page_view({'current_campaign_id': None, 'configurations': [], 'superseded': [],
+                              'available_tiers': ['standard', 'enhanced'], 'cap_usd': str(DEFAULT_CAP_USD),
+                              'cap_source': 'default', 'estimate_total_usd': None,
+                              'estimate_under_cap': False, 'assumptions': None, 'fetched_at': None})
+        current = prepared[-1]
+        estimates = [config['estimate']['amount_usd'] for config in current['manifest']['panel']]
+        total = None if any(value is None for value in estimates) else str(_sum_money(_money(value) for value in estimates))
+        first = current['manifest']['panel'][0]['estimate']
+        return page_view({
+            'current_campaign_id': current['manifest']['campaign_id'],
+            'configurations': current['manifest']['panel'],
+            'superseded': [snapshot['manifest']['campaign_id'] for snapshot in prepared[:-1]],
+            'available_tiers': ['standard', 'enhanced'], 'cap_usd': str(DEFAULT_CAP_USD),
+            'cap_source': 'default', 'estimate_total_usd': total,
+            'estimate_under_cap': total is not None and _money(total) <= DEFAULT_CAP_USD,
+            'assumptions': first['assumptions'], 'fetched_at': first['fetched_at']})
 
 
 def _create(store, connection, value):
@@ -462,7 +622,8 @@ def _transport_view(request):
             pi=dict(package=pi['package'], version=pi['version'], sha256=pi['sha256']),
             packages=list(conditions['packages']), tools=list(conditions['tools']),
             skills=list(conditions['skills']), context_sha256=conditions['context_sha256'],
-            defaults={key: defaults[key] for key in ('system_prompt', 'timeout_seconds', 'context_window') if key in defaults},
+            defaults={key: defaults[key] for key in ('system_prompt', 'timeout_seconds', 'context_window',
+                                                     'max_output_tokens', 'defaults_source') if key in defaults},
             environment={key: environment[key] for key in ('node_version', 'node_sha256', 'bridge_sha256') if key in environment},
             frozen_at=conditions['frozen_at']))
 

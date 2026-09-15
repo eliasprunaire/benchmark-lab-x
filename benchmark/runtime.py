@@ -304,6 +304,7 @@ def main(argv=None):
                 transport = None
                 qualification_transport = None
                 candidate_factory = None
+                candidate_identity = None
                 profile = None
                 if args.preparation_assistant is not None:
                     from .openrouter_preparation import OpenRouterPreparation, load_profile
@@ -315,7 +316,7 @@ def main(argv=None):
                     from .pi_openrouter import identity
                     if args.pi_package is None or args.node is None:
                         raise ValueError('Installation Pi et Node explicites requis')
-                    identity(args.pi_package, args.node)
+                    candidate_identity = identity(args.pi_package, args.node)
                     candidate_factory = candidate_transport_factory(
                         args.pi_package, args.node, key)
                     candidate_factory()
@@ -327,6 +328,7 @@ def main(argv=None):
                 serve_executor(args.data, args.socket, release_identity(), transport=transport,
                                qualification_transport=qualification_transport,
                                candidate_transport_factory=candidate_factory,
+                               candidate_identity=candidate_identity,
                                access_secret=access_secret, access_transport=OpenRouterAccess(),
                                presentation=import_module(args.presentation))
             return 0
