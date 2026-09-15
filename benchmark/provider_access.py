@@ -31,6 +31,7 @@ _TABLES = {
         key_cipher TEXT,
         created_at TEXT NOT NULL,
         verified_at TEXT,
+        checked_at TEXT,
         limit_usd TEXT,
         limit_remaining_usd TEXT,
         is_free_tier INTEGER NOT NULL DEFAULT 0 CHECK(is_free_tier IN (0, 1)),
@@ -190,8 +191,8 @@ def start(store, session_id, secret, callback_url, now=None):
     with _transaction(connection, write=True):
         _delete(connection, session_id)
         connection.execute('INSERT INTO s2_provider_access '
-                           '(session_id,verifier_cipher,key_cipher,created_at,verified_at,limit_usd,limit_remaining_usd,is_free_tier,status,status_reason) '
-                           "VALUES (?,?,NULL,?,NULL,NULL,NULL,0,'pending',NULL)",
+                           '(session_id,verifier_cipher,key_cipher,created_at,verified_at,checked_at,limit_usd,limit_remaining_usd,is_free_tier,status,status_reason) '
+                           "VALUES (?,?,NULL,?,NULL,NULL,NULL,NULL,0,'pending',NULL)",
                            (session_id, encrypt(secret, verifier), now.isoformat()))
     query = urlencode({'callback_url': callback_url, 'code_challenge': challenge(verifier),
                        'code_challenge_method': 'S256'})
@@ -293,8 +294,11 @@ def _verify(store, session_id, transport, key, now):
     try:
         status, raw = transport.verify(key)
     except Exception:
+        observed = _now()
         with _transaction(connection, write=True):
-            _event_result(connection, event_id, 'FAILED', _now(), sensitive=(key,))
+            _event_result(connection, event_id, 'FAILED', observed, sensitive=(key,))
+            connection.execute('UPDATE s2_provider_access SET checked_at=? WHERE session_id=?',
+                               (observed.isoformat(), session_id))
         return
     state = 'RECEIVED'
     update = None
@@ -303,18 +307,22 @@ def _verify(store, session_id, transport, key, now):
             document = _decode(raw)
             if type(document['is_free_tier']) is not bool:
                 raise ValueError('Statut de palier invalide')
-            update = (_now().isoformat(), _money(document.get('limit')),
+            update = (_money(document.get('limit')),
                       _money(document.get('limit_remaining')), int(document['is_free_tier']))
         except (ValueError, KeyError, TypeError):
             state = 'FAILED'
     with _transaction(connection, write=True):
-        _event_result(connection, event_id, state, _now(), status, raw, (key,))
+        observed = _now()
+        _event_result(connection, event_id, state, observed, status, raw, (key,))
         if update is not None:
-            connection.execute("UPDATE s2_provider_access SET verified_at=?,limit_usd=?,limit_remaining_usd=?,is_free_tier=?,status='connected',status_reason=NULL WHERE session_id=?",
-                               (*update, session_id))
+            connection.execute("UPDATE s2_provider_access SET verified_at=?,checked_at=?,limit_usd=?,limit_remaining_usd=?,is_free_tier=?,status='connected',status_reason=NULL WHERE session_id=?",
+                               (observed.isoformat(), observed.isoformat(), *update, session_id))
         elif status in (401, 403):
-            connection.execute("UPDATE s2_provider_access SET status='invalid',status_reason='KEY_REJECTED' WHERE session_id=?",
-                               (session_id,))
+            connection.execute("UPDATE s2_provider_access SET checked_at=?,status='invalid',status_reason='KEY_REJECTED' WHERE session_id=?",
+                               (observed.isoformat(), session_id))
+        else:
+            connection.execute('UPDATE s2_provider_access SET checked_at=? WHERE session_id=?',
+                               (observed.isoformat(), session_id))
 
 
 def callback(store, session_id, secret, code, transport=None, now=None):
@@ -324,6 +332,7 @@ def callback(store, session_id, secret, code, transport=None, now=None):
         raise ValueError('Code d’autorisation requis')
     transport = transport or OpenRouterAccess()
     now = now or _now()
+    expire(store, now)
     connection = store._connection_checked()
     row = connection.execute("SELECT verifier_cipher FROM s2_provider_access WHERE session_id=? AND status='pending'",
                              (session_id,)).fetchone()
@@ -361,10 +370,13 @@ def callback(store, session_id, secret, code, transport=None, now=None):
     return view(store, session_id, secret, transport, now=now, refresh=False)
 
 
-def _row_view(row):
+def _row_view(row, reason=None):
     if row is None:
-        return {'connected': False, 'verified_at': None, 'limit_usd': None,
-                'limit_remaining_usd': None, 'is_free_tier': False, 'status': 'disconnected'}
+        value = {'connected': False, 'verified_at': None, 'limit_usd': None,
+                 'limit_remaining_usd': None, 'is_free_tier': False, 'status': 'disconnected'}
+        if reason is not None:
+            value['reason'] = reason
+        return value
     return {'connected': row[0] == 'connected', 'verified_at': row[2], 'limit_usd': row[3],
             'limit_remaining_usd': row[4], 'is_free_tier': bool(row[5]), 'status': row[0]}
 
@@ -376,12 +388,19 @@ def view(store, session_id, secret, transport=None, now=None, *, refresh=True):
     now = now or _now()
     expire(store, now)
     connection = store._connection_checked()
-    row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier '
+    row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier,checked_at '
                              'FROM s2_provider_access WHERE session_id=?', (session_id,)).fetchone()
+    if row and row[0] in ('connected', 'invalid'):
+        try:
+            key = decrypt(secret, row[1])
+        except IntegrityError:
+            with _transaction(connection, write=True):
+                _delete(connection, session_id)
+            return _row_view(None, 'SECRET_CHANGED')
     if (refresh and row and row[0] in ('connected', 'invalid')
-            and (row[2] is None or now - _date(row[2]) > REFRESH_INTERVAL)):
-        _verify(store, session_id, transport, decrypt(secret, row[1]), now)
-        row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier '
+            and (row[6] is None or now - _date(row[6]) > REFRESH_INTERVAL)):
+        _verify(store, session_id, transport, key, now)
+        row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier,checked_at '
                                  'FROM s2_provider_access WHERE session_id=?', (session_id,)).fetchone()
     return _row_view(row)
 
@@ -391,9 +410,12 @@ def key_for_session(store, session_id, secret, transport=None, now=None):
     if not state.get('connected'):
         from .preparation import Denied
         raise Denied('ACCESS_REQUIRED')
-    row = store._connection_checked().execute('SELECT key_cipher FROM s2_provider_access WHERE session_id=?',
-                                              (session_id,)).fetchone()
-    return decrypt(secret, row[0])
+    row = store._connection_checked().execute(
+        'SELECT status,key_cipher FROM s2_provider_access WHERE session_id=?', (session_id,)).fetchone()
+    if row is None or row[0] != 'connected':
+        from .preparation import Denied
+        raise Denied('ACCESS_REQUIRED')
+    return decrypt(secret, row[1])
 
 
 def disconnect(store, session_id, secret):
@@ -406,13 +428,15 @@ def disconnect(store, session_id, secret):
 
 
 def verify_provider_access(store, connection):
-    for row in connection.execute('SELECT session_id,verifier_cipher,key_cipher,created_at,verified_at,status,status_reason FROM s2_provider_access'):
-        session_id, verifier, key, created, verified, status, reason = row
+    for row in connection.execute('SELECT session_id,verifier_cipher,key_cipher,created_at,verified_at,checked_at,status,status_reason FROM s2_provider_access'):
+        session_id, verifier, key, created, verified, checked, status, reason = row
         if not connection.execute('SELECT 1 FROM s2_sessions WHERE session_id=?', (session_id,)).fetchone():
             raise IntegrityError('Accès sans session')
         _date(created)
         if verified is not None:
             _date(verified)
+        if checked is not None:
+            _date(checked)
         if (status == 'pending') != (verifier is not None) or (status != 'pending') != (key is not None):
             raise IntegrityError('État d’accès divergent')
         if (status == 'invalid') != (reason is not None):

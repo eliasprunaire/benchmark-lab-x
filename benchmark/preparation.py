@@ -775,6 +775,8 @@ def dispatch(store, method, path, token, body, source, transport, *, candidate_t
             return 503, {'connected': False, 'status': 'unavailable',
                          'error_code': 'ACCESS_UNAVAILABLE'}, None, None
         value = provider_access.view(store, session_id, access_secret, access_transport)
+        if value['status'] == 'unavailable':
+            value['error_code'] = 'ACCESS_UNAVAILABLE'
         return (200 if value['status'] != 'unavailable' else 503), value, None, None
     if method == 'GET':
         from . import restitution

@@ -1,5 +1,5 @@
 """Accès OpenRouter délégué sans appel réseau réel"""
-from contextlib import closing, redirect_stdout
+from contextlib import closing, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 import io
 import json
@@ -65,6 +65,8 @@ class ProviderAccessTests(unittest.TestCase):
                                         self.transport)
 
     def test_pkce_chiffrement_et_vue_expurgee(self):
+        self.assertEqual('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', provider_access.challenge(
+            'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'))
         result = provider_access.start(self.store, self.session, SECRET,
                                        'http://127.0.0.1:8080/preparation/access/callback')
         query = parse_qs(urlsplit(result['authorize_url']).query)
@@ -88,13 +90,20 @@ class ProviderAccessTests(unittest.TestCase):
                          {key: connected[key] for key in connected if key != 'verified_at'})
         verified_at = connected['verified_at']
         old = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
-        self.store._connection.execute('UPDATE s2_provider_access SET verified_at=? WHERE session_id=?',
-                                       (old, self.session))
+        self.store._connection.execute(
+            'UPDATE s2_provider_access SET verified_at=?,checked_at=? WHERE session_id=?',
+            (old, old, self.session))
         self.store._connection.commit()
         self.transport.verify_result = OSError('panne transitoire')
         transient = provider_access.view(self.store, self.session, SECRET, self.transport)
         self.assertEqual('connected', transient['status'])
         self.assertEqual(old, transient['verified_at'])
+        verification_count = len(self.transport.verifications)
+        provider_access.view(self.store, self.session, SECRET, self.transport)
+        self.assertEqual(verification_count, len(self.transport.verifications))
+        self.store._connection.execute('UPDATE s2_provider_access SET checked_at=? WHERE session_id=?',
+                                       (old, self.session))
+        self.store._connection.commit()
         self.transport.verify_result = (401, b'{"error":"rejected"}')
         rejected = provider_access.view(self.store, self.session, SECRET, self.transport)
         self.assertEqual('invalid', rejected['status'])
@@ -104,7 +113,31 @@ class ProviderAccessTests(unittest.TestCase):
             (self.session,)).fetchone()
         self.assertEqual(KEY, provider_access.decrypt(SECRET, key_cipher))
         self.assertEqual('KEY_REJECTED', reason)
+        verification_count = len(self.transport.verifications)
+        self.assertEqual('invalid', provider_access.view(
+            self.store, self.session, SECRET, self.transport)['status'])
+        self.assertEqual(verification_count, len(self.transport.verifications))
+        with self.assertRaisesRegex(preparation.Denied, 'ACCESS_REQUIRED'):
+            provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
         self.assertNotEqual(verified_at, old)
+
+    def test_secret_change_efface_acces_et_evenements(self):
+        self.connect()
+        changed_secret = bytes.fromhex('22' * 32)
+        value = provider_access.view(self.store, self.session, changed_secret, self.transport)
+        self.assertEqual(('disconnected', 'SECRET_CHANGED'), (value['status'], value['reason']))
+        self.assertEqual(0, self.store._connection.execute(
+            'SELECT count(*) FROM s2_provider_access').fetchone()[0])
+        self.assertEqual(0, self.store._connection.execute(
+            'SELECT count(*) FROM s6_access_events').fetchone()[0])
+
+    def test_callback_expire_avant_echange(self):
+        old = datetime.now(timezone.utc) - timedelta(days=31)
+        provider_access.start(self.store, self.session, SECRET,
+                              'https://example.test/preparation/access/callback', now=old)
+        with self.assertRaisesRegex(preparation.Denied, 'ACCESS_NO_PENDING'):
+            provider_access.callback(self.store, self.session, SECRET, 'code', self.transport)
+        self.assertEqual([], self.transport.exchanges)
 
     def test_evenements_expurges_et_effaces_avec_acces(self):
         observed = []
@@ -177,7 +210,8 @@ class ProviderAccessTests(unittest.TestCase):
             code, value, _, _ = preparation.dispatch(
                 self.store, 'GET', '/preparation/access', 'token', None, 'a' * 40, None)
         self.assertEqual(503, code)
-        self.assertEqual({'connected': False, 'status': 'unavailable'}, value)
+        self.assertEqual({'connected': False, 'status': 'unavailable',
+                          'error_code': 'ACCESS_UNAVAILABLE'}, value)
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', None)):
             for path, body in (
                     ('/preparation/access/start', {'callback_url': 'https://example.test/preparation/access/callback'}),
@@ -190,11 +224,13 @@ class ProviderAccessTests(unittest.TestCase):
     def test_secret_invalide_bloque_le_demarrage(self):
         socket_path = self.data.parent / 'executor.sock'
         with patch.dict('os.environ', {'BENCHMARK_ACCESS_SECRET': 'invalide'}, clear=True), \
-                patch('benchmark.service.serve_executor') as serve, redirect_stdout(io.StringIO()) as output:
+                patch('benchmark.service.serve_executor') as serve, \
+                redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()) as errors:
             self.assertEqual(78, runtime.main(['executor', '--data', str(self.data),
                                                '--socket', str(socket_path)]))
         serve.assert_not_called()
         self.assertNotIn('invalide', output.getvalue())
+        self.assertNotIn('invalide', errors.getvalue())
 
     def test_funding_requester_refuse_avant_reservation(self):
         candidate = qualification.draft(
