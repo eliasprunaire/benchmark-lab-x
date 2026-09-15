@@ -107,6 +107,18 @@ def _registered_routes(registry):
     return routes
 
 
+def tiers():
+    value = _registry().get('tiers', {})
+    if type(value) is not dict:
+        raise ValueError('Configuration [tiers] invalide')
+    for maker, tier in value.items():
+        if (type(maker) is not str or not maker or type(tier) is not dict
+                or tier.keys() != {'enhanced'} or type(tier['enhanced']) is not dict):
+            raise ValueError('Palier de raisonnement invalide')
+        storage._strict_json(tier['enhanced'])
+    return value
+
+
 def _compliant(model_id, endpoints, routes):
     allowed = routes.get(model_id, ())
     for endpoint in endpoints:
@@ -220,6 +232,8 @@ def selection(store):
         'input_price_per_million': None,
         'output_price_per_million': None,
         'reasoning_levels': [],
+        'context_length': None,
+        'route': None,
         'max_output_tokens': None,
         'variant': _variant(model_id),
         'excluded': 'malformed',
@@ -244,6 +258,11 @@ def selection(store):
         max_output = top_provider.get('max_completion_tokens') if type(top_provider) is dict else None
         if max_output is not None and type(max_output) is not int:
             raise ValueError('Limite de sortie invalide')
+        available_routes = sorted(endpoint['tag'] for endpoint in detail['endpoints']
+                                  if type(endpoint) is dict and endpoint.get('tag') in routes.get(model_id, ()))
+        context_length = model.get('context_length')
+        if context_length is not None and (type(context_length) is not int or context_length <= 0):
+            raise ValueError('Fenêtre de contexte invalide')
         view.append({
             'id': model_id,
             'name': model['name'],
@@ -253,9 +272,11 @@ def selection(store):
             'input_price_per_million': _million_price(pricing.get('prompt')),
             'output_price_per_million': _million_price(pricing.get('completion')),
             'reasoning_levels': levels,
+            'context_length': context_length,
+            'route': available_routes[0] if available_routes else None,
             'max_output_tokens': max_output,
             'variant': _variant(model_id),
-            'excluded': None if _compliant(model_id, detail['endpoints'], routes)
+            'excluded': None if available_routes
             else 'no_compliant_provider',
         })
     return {'fetched_at': fetched_at.isoformat(),
