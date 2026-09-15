@@ -209,7 +209,8 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
 def comparison(store, session_id, dossier_id, campaign_id, *, query=None):
     connection = e.connection_for(store)
     with store.read_snapshot() as connection:
-        return _comparison(store, connection, session_id, dossier_id, campaign_id, {} if query is None else query)
+        return p.page_view(_comparison(store, connection, session_id, dossier_id, campaign_id,
+                                      {} if query is None else query))
 
 
 def detail(store, session_id, dossier_id, campaign_id, attempt_id, *, query=None):
@@ -224,11 +225,11 @@ def detail(store, session_id, dossier_id, campaign_id, attempt_id, *, query=None
                                            record['evaluation_id'], link['piece_id']).decode('utf-8')
             for link in record['proof_links']
         }
-    return dict(kind='attempt_detail', campaign_id=campaign_id, task=value['task'],
-                need=value['need'], conclusion=value['conclusion'], history=history,
-                filter_scope=value['filter_scope'], dossier_href=value['dossier_href'],
-                back_href=value['href'] + ('?' + urlencode(value['filter_scope']) if value['filter_scope'] else '') +
-                          '#attempt-' + attempt_id)
+    return p.page_view(dict(kind='attempt_detail', campaign_id=campaign_id, task=value['task'],
+                       need=value['need'], conclusion=value['conclusion'], history=history,
+                       filter_scope=value['filter_scope'], dossier_href=value['dossier_href'],
+                       back_href=value['href'] + ('?' + urlencode(value['filter_scope']) if value['filter_scope'] else '') +
+                                 '#attempt-' + attempt_id))
 
 
 def catalogue(store, session_id):
@@ -248,13 +249,13 @@ def catalogue(store, session_id):
                                               (dossier_id,)).fetchall() if has_contracts else []
             for fingerprint, in fingerprints:
                 contract = q._contract(store, connection, fingerprint)
-                versions.append(dict(version=contract['version'], revision=contract['revision'], contract_sha256=fingerprint,
+                versions.append(dict(version=contract['version'], revision=contract['revision'],
                     campaigns=[dict(campaign_id=v['campaign_id'], href=campaign_url(dossier_id, v['campaign_id']))
                                for v in campaigns if v['contract_sha256'] == fingerprint]))
             tasks.append(dict(dossier_id=dossier_id, need=store.get_dossier(dossier_id, current)['request'],
                               revision=current, revisions=revisions, versions=versions,
                               href='/preparation/dossiers/' + dossier_id))
-        return dict(kind='catalogue', visibility='private', catalogue_admission=False, tasks=tasks)
+        return p.page_view(dict(kind='catalogue', visibility='private', catalogue_admission=False, tasks=tasks))
 
 
 def _preview(store, value, piece_ids, presentation):
@@ -292,7 +293,7 @@ def preview_view(store, session_id, dossier_id, campaign_id, *, piece_ids, prese
         value = _comparison(store, connection, session_id, dossier_id, campaign_id, {})
         bundle = _preview(store, value, piece_ids, presentation)
         links = {link['piece_id']: link for row in value['rows'] for link in row['proof_links']}
-        return dict(kind='projection_preview', comparison=value, pieces=list(links.values()),
+        return dict(kind='projection_preview', comparison=p.page_view(value), pieces=list(links.values()),
                     selected_links={pid: links[pid]['href'] for pid in piece_ids},
                     manifest=_decode(bundle['manifest']), projection_sha256=bundle['projection_sha256'])
 

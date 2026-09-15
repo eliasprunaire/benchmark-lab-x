@@ -74,6 +74,11 @@ class CampaignLaunch(unittest.TestCase):
         self.assertEqual([], self.launch(body))
         self.assertEqual(['RECEIVED'] * 2, [a['state'] for a in c.inspect(self.store, 'local-comparison')['attempts']])
 
+    def test_page_confirmation_needs_only_readable_identifiers(self):
+        body = self.admit()
+        del body['manifest_sha256']
+        self.assertEqual(2, len(self.launch(body)))
+
     def test_reservations_roll_back_together(self):
         from unittest.mock import patch
         body = self.admit()

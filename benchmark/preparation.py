@@ -238,6 +238,16 @@ def binding(dossier_id, revision, digest):
     return {'dossier_id': dossier_id, 'revision': revision, 'package_sha256': digest}
 
 
+def page_view(value):
+    """Retirer les empreintes des projections destinées aux pages"""
+    if type(value) is dict:
+        return {key: page_view(item) for key, item in value.items()
+                if key != 'sha256' and key not in ('fingerprint', 'digest') and not key.endswith('_sha256')}
+    if type(value) is list:
+        return [page_view(item) for item in value]
+    return deepcopy(value)
+
+
 def package_check(store, dossier_id, revision, package, digest):
     if sha256(encode(package).encode()).hexdigest() != digest:
         raise IntegrityError('Empreinte du paquet divergente')
@@ -374,7 +384,9 @@ def view(store, session_id, dossier_id, revision=None):
                 from .evaluation import projection as evaluations
                 for campaign in result['campaigns']:
                     campaign['evaluations'] = evaluations(store, connection, dossier_id, campaign['campaign_id'])
-        return result
+        projected = page_view(result)
+        projected['package_sha256'] = digest
+        return projected
 
 
 def piece_bytes(store, session_id, dossier_id, revision, piece_id):

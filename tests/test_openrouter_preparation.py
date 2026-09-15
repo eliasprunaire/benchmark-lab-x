@@ -631,7 +631,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
         estimate = view['indicative_cost']
         self.assertEqual('0.0003600', estimate['token_subtotal_usd'])
         self.assertEqual({'prompt': 1000, 'completion': 200}, estimate['quantities'])
-        self.assertEqual(ESTIMATE['sources']['model'], estimate['source'])
+        self.assertEqual({key: value for key, value in ESTIMATE['sources']['model'].items()
+                          if key != 'body_sha256'}, estimate['source'])
         self.assertEqual('0.009', operation['observed_cost']['amount'])
         self.assertEqual('0.009', self.store.inspect_budget('fixture')['spent'])
         page = views.render(view, self.csrf).decode()
