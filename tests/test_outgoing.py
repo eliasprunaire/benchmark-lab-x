@@ -263,7 +263,7 @@ class ReviewProjection(unittest.TestCase):
             self.assertNotIn(limit,raw)
         self.assertEqual(package['instruction'],review['content']['task']['instruction'])
         self.assertEqual(package['deliverables'],review['content']['task']['deliverables'])
-        self.assertEqual(package['criteria'],review['content']['task']['criteria'])
+        self.assertEqual(out.criteria(package['criteria']), review['content']['task']['criteria'])
         self.assertEqual(package['acceptable_ambiguities'],review['content']['task']['acceptable_ambiguities'])
         self.assertEqual(['Contrôle local fictif des notes seulement'],review['content']['limits'])
         self.assertEqual('local-comparison',review['binding']['campaign_id'])
@@ -278,7 +278,7 @@ class ReviewProjection(unittest.TestCase):
         package=f.fixture.view['package']
         self.assertEqual(package['instruction'],content['task']['instruction'])
         self.assertEqual(package['deliverables'],content['task']['deliverables'])
-        self.assertEqual(package['criteria'],content['task']['criteria'])
+        self.assertEqual(out.criteria(package['criteria']), content['task']['criteria'])
         self.assertEqual(package['acceptable_ambiguities'],content['task']['acceptable_ambiguities'])
         attempt=c.inspect(f.store,'local-comparison')['attempts'][0]
         self.assertEqual(attempt['output_piece_id'],content['output']['piece_id'])

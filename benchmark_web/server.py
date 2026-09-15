@@ -73,7 +73,7 @@ def _callback_state(value):
 def serve_web(address, port, public, socket_path, source, public_url=None):
     public = Path(public)
     callback_url = _public_callback_url(public_url)
-    views.SOURCE_SHA = source or ''
+    views.SOURCE_SHA = '' if source == 'inconnu' else source or ''
     source_salt = secrets.token_bytes(32)
 
     class Handler(BaseHTTPRequestHandler):

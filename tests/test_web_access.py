@@ -93,6 +93,9 @@ class FakeExecutor:
                     elif request['method'] == 'POST' and request['path'].endswith('/cap'):
                         result = {'status': 200, 'value': {'kind': 'campaign_launch'},
                                   'piece': False, 'cookie': None}
+                    elif request['method'] == 'POST' and request['path'].endswith('/start'):
+                        result = {'status': 202, 'value': {'kind': 'campaign_launch'},
+                                  'piece': False, 'cookie': None}
                     else:
                         result = {'status': 404, 'value': {'error': 'NOT_FOUND'},
                                   'piece': False, 'cookie': None}
@@ -176,7 +179,9 @@ class AccessViewTests(unittest.TestCase):
         base.update(
             checks=[
                 {'key': 'example_validated', 'ok': True, 'detail': 'Exemple validé'},
-                {'key': 'example_qualified', 'ok': True, 'detail': 'Exemple qualifié'},
+                {'key': 'example_qualified', 'ok': True, 'detail': 'Exemple qualifié',
+                 'findings': [{'kind': 'cohérence', 'severity': 'note',
+                               'text': 'Quantité à confirmer'}]},
                 {'key': 'configurations_available', 'ok': True,
                  'detail': 'Tous les modèles sont disponibles'},
                 {'key': 'access_connected', 'ok': True,
@@ -188,6 +193,8 @@ class AccessViewTests(unittest.TestCase):
             estimate_total_usd='3.50')
         page = views.render(base, 'csrf').decode()
         self.assertIn('✓ Exemple validé', page)
+        self.assertIn('Constats de qualification', page)
+        self.assertIn('Quantité à confirmer', page)
         self.assertIn('Crédit restant : 12.50 USD ; limite du compte : 20 USD', page)
         self.assertIn('action="/preparation/dossiers/d1/campaigns/c1/cap"', page)
         self.assertIn('min="0.10" max="100.00" step="0.01"', page)
@@ -362,6 +369,26 @@ class AccessServerTests(unittest.TestCase):
             'Cookie': 'benchmark_session=session-token'})
         self.assertEqual((303, '/preparation/dossiers/d1/campaigns/d1-c1/conditions'),
                          (status, headers['Location']))
+        self.assertEqual(cap_path, self.executor.requests.get_nowait()['path'])
+
+        start_path = '/preparation/dossiers/d1/campaigns/d1-c1/start'
+        body = urlencode({'csrf_token': 'csrf', 'manifest_version': '1',
+                          'frozen_at': '2026-09-15T00:00:00Z', 'confirm': 'yes'}).encode()
+        status, headers, _ = self.request('POST', start_path, body, {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': 'benchmark_session=session-token'})
+        self.assertEqual((303, '/preparation/dossiers/d1/campaigns/d1-c1/conditions'),
+                         (status, headers['Location']))
+        request = self.executor.requests.get_nowait()
+        self.assertEqual(1, request['body']['manifest_version'])
+
+        invalid = urlencode({'csrf_token': 'csrf', 'manifest_version': 'abc',
+                             'frozen_at': '2026-09-15T00:00:00Z', 'confirm': 'yes'}).encode()
+        status, _, _ = self.request('POST', start_path, invalid, {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': 'benchmark_session=session-token'})
+        self.assertEqual(400, status)
+        self.assertTrue(self.executor.requests.empty())
 
 
 if __name__ == '__main__':

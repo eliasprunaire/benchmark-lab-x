@@ -18,7 +18,7 @@ TABLE_SQL = """CREATE TABLE s2_model_catalogue (
     raw_json TEXT NOT NULL
 )"""
 CONFIG_PATH = Path(__file__).resolve().parents[1] / 'models.toml'
-MODEL_ID = re.compile(r'^[a-z0-9.-]+/[a-z0-9.:\_-]+$')
+MODEL_ID = re.compile(r'^[a-z0-9.-]+/[a-z0-9.:_-]+$')
 
 
 def schema_objects():
@@ -44,7 +44,7 @@ def _registry(path=None):
 def _settings(registry):
     value = registry.get('catalogue')
     required = {'makers', 'max_per_family', 'max_age_days', 'cache_hours'}
-    optional = {'baseline_families', 'baseline_models'}
+    optional = {'baseline_families', 'baseline_models', 'baseline_fetched_at'}
     if (type(value) is not dict or not required <= value.keys()
             or value.keys() - required - optional):
         raise ValueError('Configuration [catalogue] incomplète')
@@ -68,7 +68,8 @@ def _data(document, expected):
 def _model_id(model):
     if type(model) is not dict or type(model.get('id')) is not str:
         return None
-    return model['id'] if MODEL_ID.fullmatch(model['id']) else None
+    return (model['id'] if MODEL_ID.fullmatch(model['id'])
+            and all(part not in ('.', '..') for part in model['id'].split('/')) else None)
 
 
 def _malformed(model):
@@ -121,17 +122,6 @@ def tiers():
     return value
 
 
-def _compliant(model_id, endpoints, routes):
-    allowed = routes.get(model_id, ())
-    for endpoint in endpoints:
-        if type(endpoint) is not dict or endpoint.get('model_id') != model_id:
-            raise ValueError('Identité endpoint divergente')
-        tag = endpoint.get('tag')
-        if type(tag) is str and tag in allowed:
-            return True
-    return False
-
-
 def _latest(store):
     connection = store._connection_checked()
     if not connection.execute(
@@ -176,6 +166,8 @@ def refresh(store, fetch):
             endpoint_documents[model_id] = detail
         document = {'models': models, 'endpoints': endpoint_documents}
         raw = storage._strict_json(document)
+    except (storage.SchemaError, storage.IntegrityError):
+        raise
     except (OSError, HTTPException, ValueError):
         if previous:
             return selection(store)
@@ -290,12 +282,12 @@ def report(models, registry=None, now=None):
     registry = _registry() if registry is None else registry
     settings = _settings(registry)
     now = _now() if now is None else now
-    current_ids = set()
+    current_ids, malformed_ids = set(), set()
     for model in models:
         model_id = _model_id(model)
-        if model_id is None or _malformed(model):
+        if model_id is None:
             continue
-        current_ids.add(model_id)
+        (malformed_ids if _malformed(model) else current_ids).add(model_id)
     configured_baseline = settings.get('baseline_models')
     if configured_baseline is not None and (
             type(configured_baseline) is not list
@@ -314,7 +306,8 @@ def report(models, registry=None, now=None):
     baseline_families = (set(configured_families) if configured_families is not None
                          else {family(model_id) for model_id in baseline_ids})
     return {'new_families': sorted(current_families - baseline_families),
-            'missing_models': sorted(baseline_ids - current_ids)}
+            'missing_models': sorted(baseline_ids - current_ids - malformed_ids),
+            'malformed_models': sorted(baseline_ids & (malformed_ids - current_ids))}
 
 
 def main(argv=None):
@@ -323,7 +316,7 @@ def main(argv=None):
     arguments = parser.parse_args(argv)
     if not arguments.report:
         parser.error('--report requis')
-    document, _ = openrouter_prices.fetch_public(
+    document = openrouter_prices.fetch_public(
         '/api/v1/models', max_response_bytes=MAX_RESPONSE_BYTES)
     result = report(_data(document, list))
     print(storage._strict_json(result))

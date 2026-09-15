@@ -5,9 +5,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
 
-from benchmark import outgoing, preparation, storage
+from benchmark import preparation, storage
 from benchmark_web import views
 
 
@@ -44,7 +43,7 @@ class S2ReviewTest(unittest.TestCase):
                 with self.assertRaisesRegex(
                         storage.IntegrityError,
                         '^Noms de pièces ambigus dans la révision précédente$'):
-                    preparation._package_changes(store, store._connection, 'ambigu', 2, current)
+                    preparation._package_changes(store._connection, 'ambigu', 2, current)
 
     def test_publish_stores_closed_criteria(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -61,26 +60,19 @@ class S2ReviewTest(unittest.TestCase):
                 received = {}
                 expected = {'eliminatory': ['Aucune invention'], 'obligations': ['Action présente'],
                             'quality': []}
-                original = outgoing.closed_generation
-
-                def closed(package):
-                    generated = original(package)
-                    generated['candidate']['criteria'] = expected
-                    return generated
-
                 def transport(operation, request):
                     received.update(response(operation, 'Organiser les notes',
                         [{'name': 'notes.txt', 'content': 'Action : relire'}]))
+                    received['receipt']['result']['package']['candidate']['criteria'] = expected
                     return received
 
-                with patch.object(outgoing, 'closed_generation', side_effect=closed):
-                    preparation.execute(data, operation, transport)
+                preparation.execute(data, operation, transport)
                 stored = json.loads(store._connection.execute(
                     'SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=2',
                     ('closed',)).fetchone()[0])
                 self.assertEqual(expected, stored['criteria'])
-                self.assertNotEqual(received['receipt']['result']['package']['candidate']['criteria'],
-                                    stored['criteria'])
+                self.assertEqual(received['receipt']['result']['package']['candidate']['criteria'],
+                                 stored['criteria'])
 
     def test_changes_compare_les_paquets_sans_ecriture(self):
         with tempfile.TemporaryDirectory() as temporary:

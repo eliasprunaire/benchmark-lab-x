@@ -1,6 +1,7 @@
 """Version Pi unique pour le runtime et la CI"""
 import os
 from pathlib import Path
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -8,17 +9,20 @@ import unittest
 from benchmark.pi_openrouter import VERSION
 
 
+ROOT = Path(__file__).parents[1]
+
+
 class PiVersionTests(unittest.TestCase):
     def setUp(self):
-        self.workflow = (Path(__file__).parents[1] / '.github/workflows/ci.yml').read_text()
+        self.workflow = (ROOT / '.github/workflows/ci.yml').read_text()
 
     def script(self):
         step = self.workflow.split('      - name: Vérifier la dernière version Pi publiée\n', 1)[1]
         script = []
         for line in step.split('        run: |\n', 1)[1].splitlines():
-            if not line.startswith('          '):
+            if line and not line.startswith('          '):
                 break
-            script.append(line[10:])
+            script.append(line[10:] if line else '')
         return '\n'.join(script)
 
     def execute(self, version):
@@ -30,14 +34,25 @@ class PiVersionTests(unittest.TestCase):
                 'FAKE_NPM_VERSION': version,
                 'PATH': directory + os.pathsep + os.environ['PATH'],
             }
-            return subprocess.run(['bash', '-e', '-c', self.script()], env=environment,
-                                  capture_output=True, text=True)
+            group = Path(directory) / 'groupe'
+            script = 'printf \'%s\' "$$" > "$GROUPE_PROCESSUS_TEST"\n' + self.script()
+            try:
+                return subprocess.run(['bash', '-e', '-c', script], env=environment | {
+                    'GROUPE_PROCESSUS_TEST': str(group)}, capture_output=True, text=True,
+                    timeout=30, start_new_session=True, cwd=ROOT)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(int(group.read_text()), signal.SIGKILL)
+                except (FileNotFoundError, ProcessLookupError):
+                    pass
+                raise
 
     def test_ci_lit_la_version_du_runtime(self):
         self.assertNotIn(f'@{VERSION}', self.workflow)
         self.assertGreaterEqual(self.workflow.count('from benchmark.pi_openrouter import VERSION'), 2)
-        self.assertIn("if: github.event_name == 'schedule'", self.workflow)
-        self.assertIn('timeout-minutes: 5', self.workflow)
+        job = self.workflow.split('  pi-version:\n', 1)[1]
+        self.assertIn("if: github.event_name == 'schedule'", job)
+        self.assertIn('timeout-minutes: 5', job)
         self.assertIn('npm view @earendil-works/pi-coding-agent version', self.workflow)
 
     def test_veille_accepte_la_version_epinglee_et_refuse_un_ecart(self):
@@ -48,7 +63,7 @@ class PiVersionTests(unittest.TestCase):
                       mismatch.stdout)
 
     def test_chaque_checkout_des_workflows_oublie_les_identifiants(self):
-        workflows = Path(__file__).parents[1] / '.github/workflows'
+        workflows = ROOT / '.github/workflows'
         for path in workflows.glob('*.yml'):
             lines = path.read_text().splitlines()
             for index, line in enumerate(lines):

@@ -266,8 +266,11 @@ def package_check(store, dossier_id, revision, package, digest):
         for text in package[field]:
             _text(text, field)
     from .outgoing import criteria
-    checked_criteria = criteria(package['criteria'])
-    has_criteria = any(checked_criteria.values()) if type(checked_criteria) is dict else bool(checked_criteria)
+    try:
+        checked_criteria = criteria(package['criteria'])
+    except ValueError as error:
+        raise IntegrityError('Critères du paquet invalides') from error
+    has_criteria = any(checked_criteria.values())
     if not package['deliverables'] or not has_criteria or not package['pieces']:
         raise IntegrityError('Paquet incomplet')
     ids, names = set(), set()
@@ -295,7 +298,7 @@ def package_check(store, dossier_id, revision, package, digest):
     return sorted(ids)
 
 
-def _package_changes(store, connection, dossier_id, revision, package):
+def _package_changes(connection, dossier_id, revision, package):
     empty_pieces = {'added': [], 'removed': [], 'modified': []}
     if revision == 1 or package is None:
         return [], empty_pieces
@@ -420,7 +423,7 @@ def view(store, session_id, dossier_id, revision=None):
         package = None if raw is None else json.loads(raw, object_pairs_hook=_unique_object)
         if package is not None:
             package_check(store, dossier_id, revision, package, digest)
-        changes, piece_changes = _package_changes(store, connection, dossier_id, revision, package)
+        changes, piece_changes = _package_changes(connection, dossier_id, revision, package)
         validated = connection.execute('SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? '
                                        'AND package_sha256=? AND session_id=?',
                                        (dossier_id, revision, digest, session_id)).fetchone()
@@ -488,7 +491,7 @@ def view(store, session_id, dossier_id, revision=None):
         projected = page_view(result)
         if projected['package'] is not None:
             from .outgoing import criteria
-            projected['criteria'] = criteria(projected['package']['criteria'], normalize_legacy=True)
+            projected['criteria'] = criteria(projected['package']['criteria'])
             projected['criteria_rule'] = (
                 'satisfait = aucune faute éliminatoire et toutes les obligations prouvées ; '
                 'la qualité départage, sans note')
@@ -669,7 +672,7 @@ def _qualification_input(store, connection, dossier_id, revision):
     if not references:
         raise IntegrityError('Référence de jugement absente')
     return dict(instruction=package['instruction'], deliverables=package['deliverables'],
-                criteria=criteria(package['criteria'], normalize_legacy=True),
+                criteria=criteria(package['criteria']),
                 acceptable_ambiguities=package['acceptable_ambiguities'], candidate_pieces=candidates,
                 judgment_reference=references, reformulated_need=payload['reformulation'],
                 clarifications=payload['clarifications'])
@@ -936,7 +939,7 @@ def publish(store, operation, request, response):
             from .outgoing import FORMAT
             package = dict(instruction=generated['candidate']['instruction'],
                            deliverables=list(generated['candidate']['deliverables']),
-                           criteria=generated['candidate']['criteria'],
+                           criteria=deepcopy(result['package']['candidate']['criteria']),
                            acceptable_ambiguities=list(generated['candidate']['acceptable_ambiguities']),
                            human_work=generated['internal']['human_work'],
                            limits=list(generated['internal']['limits']), outgoing_format=FORMAT, pieces=[])
@@ -1071,6 +1074,8 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
     configuration_route = re.fullmatch(
         r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/configurations', path)
     if configuration_route:
+        if method not in ('GET', 'POST'):
+            raise Denied('Action inaccessible')
         from . import campaigns
         dossier_id = configuration_route.group(1)
         revision = owner(connection_for(store), session_id, dossier_id)

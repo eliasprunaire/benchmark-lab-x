@@ -18,7 +18,7 @@ UNITS = {'prompt': 'USD/input_token', 'completion': 'USD/output_token',
 DISCOUNT_SOURCE = 'https://github.com/OpenRouterTeam/terraform-provider-openrouter/blob/main/docs/data-sources/model.md#nested-schema-for-datapricing'
 
 
-def fetch_public(path, max_response_bytes=MAX_RESPONSE_BYTES):
+def fetch_public(path, max_response_bytes=MAX_RESPONSE_BYTES, with_source=False):
     connection = HTTPSConnection(HOST, timeout=20)
     try:
         connection.request('GET', path, headers={'Accept': 'application/json'})
@@ -32,13 +32,15 @@ def fetch_public(path, max_response_bytes=MAX_RESPONSE_BYTES):
         connection.close()
     document = json.loads(raw, object_pairs_hook=_unique_object)
     encode(document)
+    if not with_source:
+        return document
     return document, {'url': 'https://' + HOST + path,
                       'retrieved_at': datetime.now(timezone.utc).isoformat(),
                       'body_sha256': sha256(raw).hexdigest()}
 
 
 def read_public(path):
-    document, source = fetch_public(path)
+    document, source = fetch_public(path, with_source=True)
     if type(document) is not dict or type(document.get('data')) is not dict:
         raise ValueError('Objet modèle requis')
     return document['data'], source
