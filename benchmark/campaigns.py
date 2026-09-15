@@ -302,6 +302,17 @@ def _current_contract(store, connection, dossier_id):
     return _approved(store, connection, row[0], current=True)
 
 
+def _requester_campaigns(store, connection, dossier_id):
+    prefix = f'{dossier_id}-c'
+    rows = connection.execute(
+        'SELECT c.campaign_id FROM s4_campaigns c JOIN s3_contracts q USING(contract_sha256) '
+        'WHERE q.dossier_id=? ORDER BY c.rowid', (dossier_id,)).fetchall()
+    snapshots = [_inspect(store, connection, campaign_id) for (campaign_id,) in rows]
+    return [snapshot for snapshot in snapshots
+            if snapshot['manifest'].get('funding') == 'requester'
+            and snapshot['manifest']['campaign_id'].startswith(prefix)]
+
+
 def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
     from . import openrouter_prices
     parameters = {
@@ -387,9 +398,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
         panel = [_configuration(model, body['tier'], index, tier_table, assumptions,
                                 catalogue['fetched_at'])
                  for index, model in enumerate(selected, 1)]
-        count = connection.execute(
-            'SELECT count(*) FROM s4_campaigns c JOIN s3_contracts q USING(contract_sha256) '
-            'WHERE q.dossier_id=?', (dossier_id,)).fetchone()[0]
+        count = len(_requester_campaigns(store, connection, dossier_id))
         campaign_id = f'{dossier_id}-c{count + 1}'
         case = {'id': 'case-1', 'package_sha256': contract['package_sha256']}
         plan = [dict(cell_id=f'cell-{index}', case_id=case['id'], configuration_id=config['id'])
@@ -419,14 +428,8 @@ def configurations_view(store, session_id, dossier_id):
     connection = connection_for(store)
     with _transaction(connection):
         owner(connection, session_id, dossier_id)
-        rows = connection.execute(
-            'SELECT c.campaign_id FROM s4_campaigns c JOIN s3_contracts q USING(contract_sha256) '
-            'WHERE q.dossier_id=? ORDER BY c.rowid', (dossier_id,)).fetchall()
-        prepared = []
-        for (campaign_id,) in rows:
-            snapshot = _inspect(store, connection, campaign_id)
-            if not snapshot['admissions'] and not snapshot['attempts']:
-                prepared.append(snapshot)
+        prepared = [snapshot for snapshot in _requester_campaigns(store, connection, dossier_id)
+                    if not snapshot['admissions'] and not snapshot['attempts']]
         if not prepared:
             return page_view({'current_campaign_id': None, 'configurations': [], 'superseded': [],
                               'available_tiers': ['standard', 'enhanced'], 'cap_usd': str(DEFAULT_CAP_USD),
