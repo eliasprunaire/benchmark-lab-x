@@ -281,7 +281,10 @@ class OpenRouterPreparationTests(unittest.TestCase):
             outgoing.closed_generation(value['package'])
         from tests.test_s3_regressions import specification
         contract = specification('reference')
-        contract['secondary_criteria'] = [{}, {}, {}]
+        contract['secondary_criteria'] = [
+            dict(id=criterion_id, measure='Durée fictive', proof='Sortie conservée', unit='s',
+                 favorable='lower', aggregation=None)
+            for criterion_id in ('duration', 'present', 'clarity')]
         with self.assertRaisesRegex(ValueError, '^QUALITY_LIMIT$'):
             qualification._specification(contract)
         prep.admit(self.store, self.authority)

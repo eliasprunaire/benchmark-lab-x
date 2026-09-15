@@ -911,7 +911,7 @@ def publish(store, operation, request, response):
             from .outgoing import FORMAT
             package = dict(instruction=generated['candidate']['instruction'],
                            deliverables=list(generated['candidate']['deliverables']),
-                           criteria=deepcopy(result['package']['candidate']['criteria']),
+                           criteria=generated['candidate']['criteria'],
                            acceptable_ambiguities=list(generated['candidate']['acceptable_ambiguities']),
                            human_work=generated['internal']['human_work'],
                            limits=list(generated['internal']['limits']), outgoing_format=FORMAT, pieces=[])

@@ -591,7 +591,18 @@ def render(value, csrf, path='/preparation', *, error=False):
                 + '<div class="example-text">' + text(value['example_contents'][piece['id']]) + '</div></details>'
                 for index, piece in enumerate(package['pieces'], start=1)))
             content += '<div class="two">' + section('Livrables attendus', listing(package['deliverables']))
-            content += section('Critères de réussite', listing(package['criteria'])) + '</div>'
+            criteria = value['criteria']
+            groups = ''
+            for key, tone, title in (('eliminatory', 'elim', 'Éliminatoires'),
+                                     ('obligations', 'oblig', 'Obligations'),
+                                     ('quality', 'sec', 'Qualité')):
+                items = criteria[key]
+                if items:
+                    labels = (item['label'] for item in items) if key == 'quality' else items
+                    groups += '<div class="grp ' + tone + '"><h3>' + title + '</h3>' + listing(labels) + '</div>'
+            groups = '<div class="crit">' + groups + '</div><p class="rule"><span>Règle</span><span>' \
+                     + text(value['criteria_rule']) + '</span></p>'
+            content += section('Critères de réussite', groups) + '</div>'
             limits = '<h3>Travail humain restant</h3><p>' + text(package['human_work']) + '</p>'
             if package['acceptable_ambiguities']:
                 limits += '<h3>Ambiguïtés recevables</h3>' + listing(package['acceptable_ambiguities'])
