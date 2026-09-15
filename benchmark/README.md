@@ -154,6 +154,8 @@ exige une décision distincte de migration ou d'initialisation dans un nouvel
 emplacement, en préservant la base d'origine. Cette intégration ne migre aucune
 donnée et ne déploie aucun service.
 
+Aucune migration de stockage n’existe pour 0.1.0 ; une base créée avant la vague 2 doit être recréée.
+
 ## Parcours fictif de préparation S2
 
 Le module fournit `/preparation` : saisie du besoin, clarification, consultation des pièces, correction et validation du dossier, de sa révision et de l’empreinte exacte du paquet. Les preuves historiques de ce parcours utilisent les services locaux et un transport fictif de test. L’assistant réel, l’ouverture du service et la publication gardent leurs qualifications et autorités distinctes.

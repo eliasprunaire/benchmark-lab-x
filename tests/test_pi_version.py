@@ -47,6 +47,18 @@ class PiVersionTests(unittest.TestCase):
         self.assertIn('::error::Pi 9.9.9 est publié, mais le produit épingle ' + VERSION,
                       mismatch.stdout)
 
+    def test_chaque_checkout_des_workflows_oublie_les_identifiants(self):
+        workflows = Path(__file__).parents[1] / '.github/workflows'
+        for path in workflows.glob('*.yml'):
+            lines = path.read_text().splitlines()
+            for index, line in enumerate(lines):
+                if 'uses: actions/checkout@' not in line:
+                    continue
+                end = next((position for position in range(index + 1, len(lines))
+                            if lines[position].startswith('      - ')), len(lines))
+                with self.subTest(workflow=path.name, ligne=index + 1):
+                    self.assertIn('persist-credentials: false', '\n'.join(lines[index + 1:end]))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -309,6 +309,8 @@ def _package_changes(store, connection, dossier_id, revision, package):
     changes = [field for field in ('instruction', 'deliverables', 'criteria', 'acceptable_ambiguities')
                if package[field] != previous[field]]
     old_pieces = {piece['name']: piece['sha256'] for piece in previous['pieces']}
+    if len(previous['pieces']) != len(old_pieces):
+        raise IntegrityError('Noms de pièces ambigus dans la révision précédente')
     new_pieces = {piece['name']: piece['sha256'] for piece in package['pieces']}
     piece_changes = {
         'added': [name for name in new_pieces if name not in old_pieces],

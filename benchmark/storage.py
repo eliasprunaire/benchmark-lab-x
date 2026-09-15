@@ -460,6 +460,14 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
             return False
         if version != SCHEMA_VERSION:
             raise SchemaError("unsupported storage schema version")
+        names = {name for kind, name, _, _ in rows if kind == 'table'}
+        before_wave_2 = ('s2_control' in names and 's2_qualifications' not in names)
+        if 's6_control' in names:
+            before_wave_2 = before_wave_2 or 's2_provider_access' not in names or not any(
+                column[1] == 'checked_at'
+                for column in connection.execute('PRAGMA table_info(s2_provider_access)'))
+        if before_wave_2:
+            raise SchemaError('Base antérieure à la vague 2 : à recréer')
         reconciliation = [row for row in rows if row[2] == 'cost_reconciliations']
         if reconciliation:
             objects = [('table', 'cost_reconciliations', 'cost_reconciliations', _RECONCILIATION_SCHEMA),

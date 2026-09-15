@@ -52,7 +52,9 @@ def price_row(pricing, quantities):
     effective = {key: pricing.get(key) for key in UNITS}
     for override in pricing.get('overrides', []) if type(pricing.get('overrides')) is list else []:
         minimum = override.get('min_prompt_tokens', 0) if type(override) is dict else None
-        if (type(minimum) is int and not isinstance(minimum, bool) and minimum >= 0
+        conditions_known = (type(override) is dict
+                            and override.keys() - UNITS.keys() <= {'min_prompt_tokens'})
+        if (conditions_known and type(minimum) is int and not isinstance(minimum, bool) and minimum >= 0
                 and quantities.get('prompt', 0) >= minimum):
             for key in UNITS.keys() & override.keys():
                 if override[key] is not None and (effective[key] is None

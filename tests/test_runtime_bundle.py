@@ -7,11 +7,35 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
+from benchmark import service
 from tools.build_runtime import build
 
 
 class RuntimeBundleTests(unittest.TestCase):
+    def test_identite_absente_se_replie_sur_git_et_invalide_est_refusee(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            package = root / 'benchmark'
+            package.mkdir()
+            module = package / 'service.py'
+            module.write_text('')
+            subprocess.run(['git', '-C', str(root), 'init'], check=True, capture_output=True)
+            subprocess.run(['git', '-C', str(root), 'add', 'benchmark/service.py'], check=True)
+            tree = subprocess.check_output(['git', '-C', str(root), 'write-tree']).decode().strip()
+            commit = subprocess.check_output(
+                ['git', '-C', str(root), '-c', 'user.name=Test', '-c', 'user.email=test@invalid',
+                 'commit-tree', tree, '-m', 'Fixture contrôlée']).decode().strip()
+            subprocess.run(['git', '-C', str(root), 'update-ref', 'HEAD', commit], check=True)
+            with patch.object(service, '__file__', str(module)):
+                self.assertEqual(commit, service.release_identity())
+                for source in (42, 'pas-hexadécimal'):
+                    with self.subTest(source=source):
+                        (root / 'release.json').write_text(json.dumps({'source_sha': source}))
+                        with self.assertRaisesRegex(ValueError, '^Identité de release invalide$'):
+                            service.release_identity()
+
     def test_build_is_commit_bound_reproducible_and_runtime_initializes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -85,7 +109,8 @@ class RuntimeBundleTests(unittest.TestCase):
                            cwd=unpacked, check=True)
             (unpacked / 'release.json').write_text('{')
             subprocess.run([sys.executable, '-c',
-                            'from benchmark.service import release_identity; assert release_identity() == "' + fallback + '"'],
+                            'from benchmark.service import release_identity; '
+                            'exec("try:\\n release_identity()\\nexcept ValueError:\\n pass\\nelse:\\n raise AssertionError")'],
                            cwd=unpacked, check=True)
 
 

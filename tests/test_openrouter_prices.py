@@ -132,6 +132,15 @@ class OpenRouterPricesTests(unittest.TestCase):
         self.assertEqual('0.000500', row['forecast']['token_subtotal_usd'])
         self.assertEqual('0.000004', row['rates']['prompt']['amount'])
 
+    def test_palier_horaire_inconnu_conserve_le_tarif_de_base(self):
+        pricing = {'prompt': '0.000001', 'completion': '0.000002', 'overrides': [{
+            'utc_days': [1, 2, 3, 4, 5], 'utc_start': '08:00', 'utc_end': '18:00',
+            'prompt': '0.000004', 'completion': '0.000008'}]}
+        row = prices.price_row(pricing, {'prompt': 100, 'completion': 50})
+        self.assertEqual('0.000001', row['rates']['prompt']['amount'])
+        self.assertEqual('0.000002', row['rates']['completion']['amount'])
+        self.assertTrue(row['forecast']['conditional_pricing_unresolved'])
+
     def test_bad_identity_quantities_prices_and_responses_are_rejected_without_retry(self):
         for model, inp, out, cache in [('https://example.org', 1, 1, 0), (MODEL, -1, 1, 0),
                                       (MODEL, 1, 1, 2), (MODEL, True, 1, 0), (MODEL, None, 1, 0)]:
