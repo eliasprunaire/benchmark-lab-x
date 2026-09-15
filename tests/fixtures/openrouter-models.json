@@ -170,9 +170,8 @@
       }
     },
     {
-      "id": "other/model-0",
-      "name": "Other 0",
-      "created": 1780000000,
+      "id": "openai/malformed-created",
+      "name": "Sans date",
       "architecture": {
         "output_modalities": [
           "text"
@@ -184,8 +183,7 @@
       }
     },
     {
-      "id": "other/model-1",
-      "name": "Other 1",
+      "id": "anthropic/malformed-name",
       "created": 1780000001,
       "architecture": {
         "output_modalities": [
@@ -198,9 +196,19 @@
       }
     },
     {
-      "id": "other/model-2",
-      "name": "Other 2",
+      "id": "google/malformed-architecture",
+      "name": "Architecture nulle",
       "created": 1780000002,
+      "architecture": null,
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "openai/gpt-5.3-sol:free",
+      "name": "GPT 5.3 Sol Free",
+      "created": 1765000000,
       "architecture": {
         "output_modalities": [
           "text"
@@ -212,22 +220,8 @@
       }
     },
     {
-      "id": "other/model-3",
-      "name": "Other 3",
-      "created": 1780000003,
-      "architecture": {
-        "output_modalities": [
-          "text"
-        ]
-      },
-      "pricing": {},
-      "top_provider": {
-        "max_completion_tokens": 1000
-      }
-    },
-    {
-      "id": "other/model-4",
-      "name": "Other 4",
+      "id": "OpenAI/uppercase",
+      "name": "Identifiant majuscule",
       "created": 1780000004,
       "architecture": {
         "output_modalities": [
@@ -240,8 +234,8 @@
       }
     },
     {
-      "id": "other/model-5",
-      "name": "Other 5",
+      "id": "openai/unsafe/model",
+      "name": "Identifiant avec sous-chemin",
       "created": 1780000005,
       "architecture": {
         "output_modalities": [
@@ -254,8 +248,8 @@
       }
     },
     {
-      "id": "other/model-6",
-      "name": "Other 6",
+      "id": "openai/model space",
+      "name": "Identifiant avec espace",
       "created": 1780000006,
       "architecture": {
         "output_modalities": [
@@ -268,8 +262,8 @@
       }
     },
     {
-      "id": "other/model-7",
-      "name": "Other 7",
+      "id": "anthropic/fixture:batch",
+      "name": "Variante batch",
       "created": 1780000007,
       "architecture": {
         "output_modalities": [
@@ -282,8 +276,8 @@
       }
     },
     {
-      "id": "other/model-8",
-      "name": "Other 8",
+      "id": "xiaomi/disallowed-1",
+      "name": "Créateur non autorisé",
       "created": 1780000008,
       "architecture": {
         "output_modalities": [
@@ -296,12 +290,12 @@
       }
     },
     {
-      "id": "other/model-9",
-      "name": "Other 9",
+      "id": "microsoft/non-text-1",
+      "name": "Sortie non textuelle",
       "created": 1780000009,
       "architecture": {
         "output_modalities": [
-          "text"
+          "image"
         ]
       },
       "pricing": {},
