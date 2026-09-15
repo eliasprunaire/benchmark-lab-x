@@ -2,17 +2,16 @@
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import localcontext
-from http.client import HTTPSConnection, HTTPException
+from http.client import HTTPException
 import argparse
 import json
 from pathlib import Path
 import re
 import tomllib
 
-from . import storage
+from . import openrouter_prices, storage
 
 
-HOST = 'openrouter.ai'
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 TABLE_SQL = """CREATE TABLE s2_model_catalogue (
     fetched_at TEXT NOT NULL,
@@ -44,7 +43,7 @@ def _registry(path=CONFIG_PATH):
 def _settings(registry):
     value = registry.get('catalogue')
     required = {'makers', 'max_per_family', 'max_age_days', 'cache_hours'}
-    optional = {'baseline_fetched_at', 'baseline_families', 'baseline_models'}
+    optional = {'baseline_families', 'baseline_models'}
     if (type(value) is not dict or not required <= value.keys()
             or value.keys() - required - optional):
         raise ValueError('Configuration [catalogue] incomplète')
@@ -114,7 +113,7 @@ def _compliant(model_id, endpoints, routes):
         if type(endpoint) is not dict or endpoint.get('model_id') != model_id:
             raise ValueError('Identité endpoint divergente')
         tag = endpoint.get('tag')
-        if type(tag) is str and any(tag == route or tag.startswith(route + '/') for route in allowed):
+        if type(tag) is str and tag in allowed:
             return True
     return False
 
@@ -189,13 +188,14 @@ def _million_price(value):
 
 
 def _variant(model_id):
-    if model_id.endswith(':free'):
-        return 'free'
+    variants = []
     if re.search(r'(^|[-._])preview($|[-._:])', model_id):
-        return 'preview'
-    if re.search(r'(^|[-._])exp($|[-._:])', model_id):
-        return 'exp'
-    return None
+        variants.append('preview')
+    elif re.search(r'(^|[-._])exp($|[-._:])', model_id):
+        variants.append('exp')
+    if model_id.endswith(':free'):
+        variants.append('free')
+    return ':'.join(variants) or None
 
 
 def selection(store):
@@ -263,21 +263,6 @@ def selection(store):
             'models': view}
 
 
-def _fetch(path):
-    connection = HTTPSConnection(HOST, timeout=20)
-    try:
-        connection.request('GET', path, headers={'Accept': 'application/json'})
-        response = connection.getresponse()
-        raw = response.read(MAX_RESPONSE_BYTES + 1)
-        if response.status != 200 or len(raw) > MAX_RESPONSE_BYTES or response.length not in (None, 0):
-            raise ValueError('Métadonnées OpenRouter non vérifiées')
-    except HTTPException as error:
-        raise ValueError('Réponse OpenRouter incomplète') from error
-    finally:
-        connection.close()
-    return json.loads(raw, object_pairs_hook=storage._unique_object)
-
-
 def report(models, registry=None, now=None):
     registry = _registry() if registry is None else registry
     settings = _settings(registry)
@@ -315,7 +300,9 @@ def main(argv=None):
     arguments = parser.parse_args(argv)
     if not arguments.report:
         parser.error('--report requis')
-    result = report(_data(_fetch('/api/v1/models'), list))
+    document, _ = openrouter_prices.fetch_public(
+        '/api/v1/models', max_response_bytes=MAX_RESPONSE_BYTES)
+    result = report(_data(document, list))
     print(storage._strict_json(result))
     return 1 if result['new_families'] else 0
 

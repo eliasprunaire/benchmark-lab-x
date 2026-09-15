@@ -18,13 +18,13 @@ UNITS = {'prompt': 'USD/input_token', 'completion': 'USD/output_token',
 DISCOUNT_SOURCE = 'https://github.com/OpenRouterTeam/terraform-provider-openrouter/blob/main/docs/data-sources/model.md#nested-schema-for-datapricing'
 
 
-def read_public(path):
+def fetch_public(path, max_response_bytes=MAX_RESPONSE_BYTES):
     connection = HTTPSConnection(HOST, timeout=20)
     try:
         connection.request('GET', path, headers={'Accept': 'application/json'})
         response = connection.getresponse()
-        raw = response.read(MAX_RESPONSE_BYTES + 1)
-        if response.status != 200 or len(raw) > MAX_RESPONSE_BYTES or response.length not in (None, 0):
+        raw = response.read(max_response_bytes + 1)
+        if response.status != 200 or len(raw) > max_response_bytes or response.length not in (None, 0):
             raise ValueError('Métadonnées OpenRouter non vérifiées')
     except HTTPException as error:
         raise ValueError('Réponse OpenRouter incomplète') from error
@@ -32,11 +32,16 @@ def read_public(path):
         connection.close()
     document = json.loads(raw, object_pairs_hook=_unique_object)
     encode(document)
+    return document, {'url': 'https://' + HOST + path,
+                      'retrieved_at': datetime.now(timezone.utc).isoformat(),
+                      'body_sha256': sha256(raw).hexdigest()}
+
+
+def read_public(path):
+    document, source = fetch_public(path)
     if type(document) is not dict or type(document.get('data')) is not dict:
         raise ValueError('Objet modèle requis')
-    return document['data'], {'url': 'https://' + HOST + path,
-                              'retrieved_at': datetime.now(timezone.utc).isoformat(),
-                              'body_sha256': sha256(raw).hexdigest()}
+    return document['data'], source
 
 
 def price_row(pricing, quantities):

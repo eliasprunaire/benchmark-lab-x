@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   tests:
-    if: github.event_name == 'pull_request'
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Récupérer le dépôt
