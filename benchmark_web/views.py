@@ -386,11 +386,14 @@ def render(value, csrf, path='/preparation', *, error=False):
                                   '<p>Motif : ' + text(value.get('reason') or 'INCONNU') + '.</p>')
             content += form('/preparation/access/start', {'return': path},
                             '<button type="submit">Reconnecter mon compte OpenRouter</button>')
-        else:
+        elif status == 'disconnected':
             content = state_block('action', 'Accès OpenRouter', 'Compte non connecté',
                                   '<p>Connectez votre compte pour financer les appels candidats de votre comparaison.</p>')
             content += form('/preparation/access/start', {'return': path},
                             '<button type="submit">Connecter mon compte OpenRouter</button>')
+        else:
+            content = state_block('err', 'Accès OpenRouter', 'Connexion indisponible',
+                                  '<p>Connexion OpenRouter indisponible.</p>')
         content += '<p><a href="/preparation">Revenir à mes cas d’usage</a></p>'
     elif value.get('kind') == 'campaign_launch':
         campaign = value['campaign']
@@ -408,15 +411,22 @@ def render(value, csrf, path='/preparation', *, error=False):
             '. Conditions figées le ' + text(campaign['conditions']['frozen_at']) + '.</p>' +
             '<details><summary>Configurations et conditions exactes</summary><pre>' + text(encode(dict(panel=campaign['panel'], conditions=campaign['conditions']))) + '</pre></details>')
         access = value.get('access', {'status': 'unavailable'})
-        if access.get('status') == 'connected':
+        status = access.get('status')
+        if status == 'connected':
             access_content = '<p>Compte OpenRouter connecté. Crédit restant : ' + text(
                 access.get('limit_remaining_usd') if access.get('limit_remaining_usd') is not None else 'INCONNU') + ' USD.</p>'
-        elif access.get('status') == 'invalid':
+            access_content += form('/preparation/access/disconnect', {},
+                                   '<button type="submit">Déconnecter</button>')
+        elif status == 'invalid':
             access_content = '<p>Accès OpenRouter invalide : ' + text(access.get('reason') or 'INCONNU') + '.</p>'
-        else:
+            access_content += form('/preparation/access/start', {'return': base + '/conditions'},
+                                   '<button type="submit">Reconnecter mon compte OpenRouter</button>')
+        elif status == 'disconnected':
             access_content = '<p>Compte OpenRouter non connecté.</p>'
-        access_content += form('/preparation/access/start', {'return': base + '/conditions'},
-                               '<button type="submit">Connecter mon compte OpenRouter</button>')
+            access_content += form('/preparation/access/start', {'return': base + '/conditions'},
+                                   '<button type="submit">Connecter mon compte OpenRouter</button>')
+        else:
+            access_content = '<p>Connexion OpenRouter indisponible.</p>'
         content += section('Accès OpenRouter', access_content)
         estimate = value['estimate']
         content += '<h2>Coût et autorisation</h2><p>Estimation indicative : ' + text(
