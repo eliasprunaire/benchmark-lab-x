@@ -3,11 +3,12 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
 from benchmark import openrouter_qualification as assistant
-from benchmark import campaigns, preparation as prep, storage
+from benchmark import campaigns, preparation as prep, service, storage
 from tests.test_s2_review_regressions import response_for
 
 
@@ -33,6 +34,19 @@ class QualificationTransport:
                             'result': deepcopy(self.result)},
                 'cost': {'status': 'KNOWN', 'amount': '0.15', 'currency': 'USD',
                          'source': 'Reçu synthétique S17'}}
+
+
+class SlowQualificationTransport(QualificationTransport):
+    def __init__(self, result):
+        super().__init__(result)
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(self, operation, request):
+        self.entered.set()
+        if not self.release.wait(5):
+            raise RuntimeError('Qualification factice non libérée')
+        return super().__call__(operation, request)
 
 
 class OpenRouterQualificationTests(unittest.TestCase):
@@ -72,13 +86,13 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.assertEqual('anthropic/claude-fable-5.1', configuration['model'])
         self.assertEqual({'effort': 'medium'}, configuration['parameters']['reasoning'])
         valid = {'qualified': True, 'findings': [], 'summary': 'Paquet cohérent'}
-        self.assertEqual(valid, transport.validate_answer(valid, {'role': 'assistant'}))
+        self.assertEqual(valid, prep._qualification_result(valid))
         for invalid in (
                 {'qualified': True, 'findings': [{'kind': 'coherence', 'severity': 'blocking', 'text': 'Écart'}], 'summary': 'Erreur'},
                 {'qualified': False, 'findings': [], 'summary': 'Incohérent'},
                 {'qualified': True, 'findings': [], 'summary': 'OK', 'authority': 'Ayo'}):
             with self.assertRaises(ValueError):
-                transport.validate_answer(invalid, {'role': 'assistant'})
+                prep._qualification_result(invalid)
         _, operation_id, _ = prep.validate_and_qualify(
             self.store, self.session, 'dossier',
             prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']),
@@ -157,6 +171,63 @@ class OpenRouterQualificationTests(unittest.TestCase):
                 prep.dispatch(self.store, 'POST', path.replace('/conditions', '/start'), self.token,
                               {'csrf_token': self.csrf}, 'b' * 40, True, candidate_transport=lambda *_: None)
             self.assertEqual('NOT_QUALIFIED', refused.exception.code)
+
+    def test_double_validation_ne_relance_pas_et_garde_admission_ouverte(self):
+        transport = SlowQualificationTransport(
+            {'qualified': True, 'findings': [], 'summary': 'Paquet cohérent'})
+        path = '/preparation/dossiers/dossier/validation'
+        body = {**prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']),
+                'csrf_token': self.csrf}
+        first = prep.dispatch(self.store, 'POST', path, self.token, body, 'b' * 40, True,
+                              qualification_transport=transport)
+        second = prep.dispatch(self.store, 'POST', path, self.token, body, 'b' * 40, True,
+                               qualification_transport=transport)
+        workers = [threading.Thread(target=prep.execute_qualification,
+                                    args=(self.data, start['qualification_operation'], transport))
+                   for start in (first[3], second[3]) if start]
+        workers[0].start()
+        self.assertTrue(transport.entered.wait(2))
+        for worker in workers[1:]:
+            worker.start()
+            worker.join(2)
+        observed = prep.availability(self.store, True)
+        transport.release.set()
+        for worker in workers:
+            worker.join(2)
+        self.assertTrue(observed['admission_open'])
+        self.assertEqual(first[1]['operation_id'], second[1]['operation_id'])
+        self.assertIsNone(second[3])
+        self.assertEqual(1, len(transport.calls))
+
+    def test_conflit_initial_execute_ne_ferme_pas_admission(self):
+        _, operation_id = self.validate({'qualified': True, 'findings': [], 'summary': 'OK'})
+        with patch.object(storage.Store, '_operation_for_update',
+                          side_effect=storage.ConflictError('État déjà avancé')):
+            prep.execute_qualification(self.data, operation_id,
+                                       QualificationTransport({'qualified': True, 'findings': [], 'summary': 'OK'}))
+        self.assertIsNotNone(prep.admission(self.store))
+
+    def test_erreurs_de_qualification_exposent_un_code_et_un_texte_francais(self):
+        errors = []
+        try:
+            prep.validate_and_qualify(self.store, self.session, 'dossier',
+                                      prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']),
+                                      'b' * 40, None)
+        except prep.Denied as error:
+            errors.append(error)
+        prep.close_admission(self.store)
+        try:
+            prep.validate_and_qualify(self.store, self.session, 'dossier',
+                                      prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']),
+                                      'b' * 40, QualificationTransport(
+                                          {'qualified': True, 'findings': [], 'summary': 'OK'}))
+        except prep.Denied as error:
+            errors.append(error)
+        responses = [service.denied_response(error) for error in errors]
+        self.assertEqual(['QUALIFICATION_UNAVAILABLE', 'ADMISSION_CLOSED'],
+                         [response['value']['error_code'] for response in responses])
+        self.assertEqual(['Qualification indisponible', 'Admission fermée'],
+                         [response['value']['error'] for response in responses])
 
 
 if __name__ == '__main__':

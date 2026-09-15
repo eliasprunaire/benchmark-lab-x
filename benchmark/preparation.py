@@ -655,7 +655,7 @@ def _qualification_input(store, connection, dossier_id, revision):
 
 def validate_and_qualify(store, session_id, dossier_id, body, source, transport):
     if transport is None or not callable(getattr(transport, 'configuration', None)):
-        raise Denied('Qualification indisponible')
+        raise Denied('QUALIFICATION_UNAVAILABLE')
     _text(source, 'source')
     connection = connection_for(store)
     with _transaction(connection, write=True):
@@ -665,10 +665,10 @@ def validate_and_qualify(store, session_id, dossier_id, body, source, transport)
             "SELECT operation_id,state FROM operations WHERE dossier_id=? AND revision=? AND phase='qualification'",
             (dossier_id, revision)).fetchone()
         if existing:
-            return result, existing[0], existing[1] == 'INTENT_RECORDED'
+            return result, existing[0], False
         authority = admission(store, connection)
         if authority is None or os.path.lexists(store._root / 'restore.json'):
-            raise Denied('Admission fermée')
+            raise Denied('ADMISSION_CLOSED')
         if connection.execute(
                 "SELECT 1 FROM operations WHERE phase IN ('preparation','correction','qualification') "
                 "AND state!='RECEIVED' LIMIT 1").fetchone():
@@ -723,7 +723,10 @@ def execute_qualification(data, operation_id, transport):
                 close_admission(store)
                 return
             with _transaction(connection, write=True):
-                operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
+                try:
+                    operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
+                except ConflictError:
+                    return
                 authority = admission(store, connection)
                 if (transport is None or authority is None or operation['phase'] != 'qualification'
                         or os.path.lexists(store._root / 'restore.json')
@@ -1135,6 +1138,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         if qualification_transport is not None:
             value, operation_id, start = validate_and_qualify(
                 store, session_id, dossier_id, body, source, qualification_transport)
-            return 202, value, None, {'qualification_operation': operation_id} if start else None
+            return 202, {**value, 'operation_id': operation_id}, None, {
+                'qualification_operation': operation_id} if start else None
         return 200, validate(store, session_id, dossier_id, body), None, None
     raise Denied('Action inaccessible')
