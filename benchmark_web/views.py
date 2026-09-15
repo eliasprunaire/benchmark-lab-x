@@ -606,7 +606,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += section('Décrire un nouveau cas d’usage', form('/preparation/dossiers',
             {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16)},
             '<label for="request">Une tâche de votre travail</label><p id="request-help" class="hint">Décrivez le travail et le résultat utile, sans donnée personnelle ni information confidentielle. Aucun dossier réel, même anonymisé.</p>'
-            '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5" aria-describedby="request-help"' + disabled + '></textarea>'
+            '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5" aria-describedby="request-help' + ('"' if can_submit else ' availability" disabled') + '></textarea>'
             '<label for="useful">Résultat attendu</label><textarea id="useful" name="useful" maxlength="800" rows="3"' + disabled + '></textarea>'
             '<label for="context">Contexte utile</label><textarea id="context" name="context" maxlength="200" rows="2"' + disabled + '></textarea>'
             '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>'
@@ -693,13 +693,13 @@ def render(value, csrf, path='/preparation', *, error=False):
             content += '<div class="two">' + section('Livrables attendus', listing(package['deliverables']))
             criteria = value['criteria']
             groups = ''
-            for key, tone, title in (('eliminatory', 'elim', 'Éliminatoires'),
+            for key, tone, group_title in (('eliminatory', 'elim', 'Éliminatoires'),
                                      ('obligations', 'oblig', 'Obligations'),
                                      ('quality', 'sec', 'Qualité')):
                 items = criteria[key]
                 if items:
                     labels = (item['label'] for item in items) if key == 'quality' else items
-                    groups += '<div class="grp ' + tone + '"><h3>' + title + '</h3>' + listing(labels) + '</div>'
+                    groups += '<div class="grp ' + tone + '"><h3>' + group_title + '</h3>' + listing(labels) + '</div>'
             groups = '<div class="crit">' + groups + '</div><p class="rule"><span>Règle</span><span>' \
                      + text(value['criteria_rule']) + '</span></p>'
             content += section('Critères de réussite', groups) + '</div>'

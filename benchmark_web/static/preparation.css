@@ -5,12 +5,12 @@
 
 :root {
   color-scheme: light dark;
-  --paper: #f5f3ec; --surface: #ffffff; --soft: #ebe8df; --line: #d8d4c8; --line-2: #b4ae9e;
+  --paper: #f5f3ec; --surface: #ffffff; --soft: #ebe8df; --line: #d8d4c8; --line-2: #847d6d;
   --ink: #1c1f1a; --ink-2: #3f463c; --muted: #5f665c;
   --accent: #356b3a; --accent-ink: #27522c; --accent-soft: #e3eedf; --accent-soft-2: #cfe2c9;
   --btn: #356b3a; --btn-hover: #27522c; --on-btn: #ffffff;
-  --warm: #b86e12; --warm-soft: #f8ead5;
-  --ok: #167a5a; --ok-soft: #dcf1e7; --ko: #b0392b; --ko-soft: #f8e1dc; --warn: #a26a00; --warn-soft: #f9edd0;
+  --warm: #985a0d; --warm-soft: #f8ead5;
+  --ok: #157454; --ok-soft: #dcf1e7; --ko: #b0392b; --ko-soft: #f8e1dc; --warn: #865700; --warn-soft: #f9edd0;
   --unk: #5b6570; --unk-soft: #e5e9ec; --wait: #3d6a8c; --wait-soft: #e0ecf5;
   --focus: #1a4fb8;
   --display: "Syne", system-ui, sans-serif;
@@ -20,20 +20,22 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #15181a; --surface: #1d2124; --soft: #252a2e; --line: #333a3f; --line-2: #4b545b;
+    --paper: #15181a; --surface: #1d2124; --soft: #252a2e; --line: #333a3f; --line-2: #78828a;
     --ink: #eceee9; --ink-2: #c6cbc4; --muted: #98a099;
     --accent: #8fc283; --accent-ink: #a9d69d; --accent-soft: #233326; --accent-soft-2: #2d4531;
-    --btn: #3f7a45; --btn-hover: #4c8f53; --on-btn: #ffffff;
+    --btn: #3f7a45; --btn-hover: #407b46; --on-btn: #ffffff;
     --warm: #e0a24a; --warm-soft: #3a2c14;
     --ok: #6fcaa6; --ok-soft: #173a2d; --ko: #ec9484; --ko-soft: #43231d; --warn: #e3b45a; --warn-soft: #3a2f12;
     --unk: #aab3bc; --unk-soft: #2a3136; --wait: #8fbde0; --wait-soft: #1d2e3c;
+    --focus: #8ab4f8;
   }
 }
 
 /* Base */
 * { box-sizing: border-box; }
+svg[hidden] { display: none; }
 html { background: var(--paper); }
-body { margin: 0 auto; max-width: 76rem; padding: 0 clamp(16px, 3vw, 32px); color: var(--ink); background: var(--paper); font-family: var(--body); font-size: 16px; line-height: 1.55; }
+body { margin: 0 auto; max-width: 76rem; padding: 0 clamp(16px, 3vw, 32px); color: var(--ink); background: var(--paper); font-family: var(--body); font-size: 16px; line-height: 1.55; overflow-wrap: anywhere; }
 h1, h2, h3, h4, h5, h6 { font-family: var(--display); line-height: 1.15; letter-spacing: -.012em; text-wrap: balance; margin: 0 0 .5rem; }
 h1 { font-size: clamp(1.85rem, 3.6vw, 2.6rem); font-weight: 700; max-width: 24ch; margin: .25rem 0 .9rem; }
 h2 { font-size: 1.25rem; font-weight: 700; }
@@ -84,7 +86,7 @@ aside[aria-label="Modèles disponibles"] p { max-width: none; margin: 0; }
 .steps a, .steps span { display: flex; align-items: center; gap: .6rem; padding: .5rem .8rem; border-left: 2px solid var(--line); color: var(--muted); text-decoration: none; }
 .steps a[aria-current="step"] { border-left-color: var(--accent); color: var(--ink); font-weight: 700; background: linear-gradient(to right, var(--accent-soft), transparent); }
 .steps .n { display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border-radius: 50%; border: 1px solid var(--line-2); font-family: var(--mono); font-size: .74rem; font-weight: 700; flex: none; }
-.steps a[aria-current="step"] .n { background: var(--accent); color: #fff; border-color: var(--accent); }
+.steps a[aria-current="step"] .n { background: var(--accent); color: var(--surface); border-color: var(--accent); }
 .steps .done .n { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
 .steps small { display: block; margin: 1.2rem .8rem 0; }
 
@@ -112,7 +114,7 @@ p[role="status"] { padding: .6rem 1rem; border-left: 4px solid var(--accent); ba
 fieldset { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); padding: .6rem 1rem; }
 label { display: block; font-weight: 600; margin: .9rem 0 .3rem; }
 label:has(> input[type="checkbox"]) { display: flex; align-items: flex-start; gap: .5rem; font-weight: 400; }
-textarea, select, input[type="text"] { font: inherit; width: 100%; max-width: 100%; padding: .65rem .8rem; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+textarea, select, input[type="text"], input[type="number"] { font: inherit; width: 100%; max-width: 100%; padding: .65rem .8rem; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
 textarea { min-height: 6rem; resize: vertical; }
 textarea:focus-visible, select:focus-visible { border-color: var(--accent); }
 textarea:disabled, select:disabled { background: var(--soft); color: var(--muted); cursor: not-allowed; }
