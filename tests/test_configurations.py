@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from benchmark import campaigns, model_catalogue, outgoing, pi_openrouter, preparation, qualification, storage
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
+from tests.test_s4_regressions import manifest
 
 
 NOW = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
@@ -37,6 +38,7 @@ class ConfigurationsTests(unittest.TestCase):
         self.addCleanup(self.store.close)
         candidate = qualification.draft(
             self.store, 'fixture', self.preview['revision'], specification(reference))
+        self.candidate = candidate
         self.contract = candidate['contract']
         qualified = qualification.qualify(
             self.store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
@@ -159,6 +161,24 @@ class ConfigurationsTests(unittest.TestCase):
         self.assertEqual('fixture-c1', created['current_campaign_id'])
         self.assertEqual(200, get_code)
         self.assertEqual(created, current)
+
+    def test_ignore_campagne_operateur_et_numerote_les_selections_du_demandeur(self):
+        campaigns.create(self.store, manifest(self.candidate, 'campagne-operateur'))
+        self.assertEqual([], campaigns.configurations_view(
+            self.store, self.session, 'fixture')['configurations'])
+        selected = self.prepare(
+            ['openai/gpt-5.6-sol', 'mistralai/mistral-medium-3-5'])
+        self.assertEqual('fixture-c1', selected['current_campaign_id'])
+        self.assertEqual([], selected['superseded'])
+
+    def test_refuse_un_palier_factice_inexecutable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'models.toml'
+            path.write_text('[tiers.deepseek]\nenhanced = { effort = "high" }\n',
+                            encoding='utf-8')
+            with patch.object(model_catalogue, 'CONFIG_PATH', path), \
+                    self.assertRaisesRegex(ValueError, 'Palier de raisonnement invalide'):
+                model_catalogue.tiers()
 
 
 if __name__ == '__main__':

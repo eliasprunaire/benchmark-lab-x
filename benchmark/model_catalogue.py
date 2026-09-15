@@ -36,7 +36,8 @@ def family(model_id):
     return re.sub(r'\d+(?:\.\d+)*', '#', base)
 
 
-def _registry(path=CONFIG_PATH):
+def _registry(path=None):
+    path = CONFIG_PATH if path is None else path
     return tomllib.loads(path.read_text(encoding='utf-8'))
 
 
@@ -113,7 +114,8 @@ def tiers():
         raise ValueError('Configuration [tiers] invalide')
     for maker, tier in value.items():
         if (type(maker) is not str or not maker or type(tier) is not dict
-                or tier.keys() != {'enhanced'} or type(tier['enhanced']) is not dict):
+                or tier.keys() != {'enhanced'}
+                or tier['enhanced'] != {'enabled': True}):
             raise ValueError('Palier de raisonnement invalide')
         storage._strict_json(tier['enhanced'])
     return value
