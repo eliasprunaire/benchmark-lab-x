@@ -68,6 +68,36 @@ def executor_health(path):
         return result
 
 
+def denied_response(error):
+    if not error.code:
+        return {'status': 403, 'value': {
+            'error': 'Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier ou demandez au responsable de vérifier son autorisation.'}}
+    messages = {
+        'TEXT_TOO_SHORT': 'Ce texte est trop court.',
+        'TEXT_TOO_LONG': 'Ce texte est trop long.',
+        'PREPARATION_IN_PROGRESS': 'Une préparation est déjà en cours.',
+        'TOO_SOON': 'Attendez avant un nouvel envoi.',
+        'DAILY_SESSION_LIMIT': 'La limite quotidienne de dossiers est atteinte.',
+        'SOURCE_RATE_LIMIT': 'La limite horaire de cette source est atteinte.',
+        'SOURCE_MISSING': 'La source de cet envoi est absente ou invalide.',
+        'DAILY_CAP': 'Le plafond quotidien de préparation est atteint.',
+        'ACCESS_NO_PENDING': 'Aucune autorisation OpenRouter n’est en attente.',
+        'ACCESS_EXCHANGE_FAILED': 'OpenRouter a refusé ou interrompu l’autorisation.',
+        'ACCESS_REQUIRED': 'Un accès OpenRouter connecté est requis avant le lancement.',
+        'NOT_QUALIFIED': 'Ce dossier doit être qualifié avant le lancement.',
+        'QUALIFICATION_UNAVAILABLE': 'Qualification indisponible',
+        'ADMISSION_CLOSED': 'Admission fermée',
+    }
+    status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG', 'SOURCE_MISSING') else 403
+    result = {'status': status, 'value': {'error': messages[error.code],
+              'error_code': error.code, 'error_field': error.field}}
+    if error.findings is not None:
+        result['value']['findings'] = error.findings
+    if hasattr(error, 'provider_status'):
+        result['value']['provider_status'] = error.provider_status
+    return result
+
+
 def serve_executor(data, socket_path, source, *, transport=None, qualification_transport=None,
                    candidate_transport=None, candidate_transport_factory=None,
                    candidate_identity=None,
@@ -126,31 +156,7 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                                 result = {'status': code, 'value': value.hex() if isinstance(value, bytes) else value,
                                           'piece': isinstance(value, bytes), 'cookie': cookie}
                             except preparation.Denied as error:
-                                if error.code:
-                                    messages = {
-                                        'TEXT_TOO_SHORT': 'Ce texte est trop court.',
-                                        'TEXT_TOO_LONG': 'Ce texte est trop long.',
-                                        'PREPARATION_IN_PROGRESS': 'Une préparation est déjà en cours.',
-                                        'TOO_SOON': 'Attendez avant un nouvel envoi.',
-                                        'DAILY_SESSION_LIMIT': 'La limite quotidienne de dossiers est atteinte.',
-                                        'SOURCE_RATE_LIMIT': 'La limite horaire de cette source est atteinte.',
-                                        'SOURCE_MISSING': 'La source de cet envoi est absente ou invalide.',
-                                        'DAILY_CAP': 'Le plafond quotidien de préparation est atteint.',
-                                        'ACCESS_NO_PENDING': 'Aucune autorisation OpenRouter n’est en attente.',
-                                        'ACCESS_EXCHANGE_FAILED': 'OpenRouter a refusé ou interrompu l’autorisation.',
-                                        'ACCESS_REQUIRED': 'Un accès OpenRouter connecté est requis avant le lancement.',
-                                        'NOT_QUALIFIED': 'Ce dossier doit être qualifié avant le lancement.',
-                                    }
-                                    response_status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG',
-                                                                            'SOURCE_MISSING') else 403
-                                    result = {'status': response_status, 'value': {'error': messages[error.code],
-                                              'error_code': error.code, 'error_field': error.field}}
-                                    if error.findings is not None:
-                                        result['value']['findings'] = error.findings
-                                    if hasattr(error, 'provider_status'):
-                                        result['value']['provider_status'] = error.provider_status
-                                else:
-                                    result = {'status': 403, 'value': {'error': 'Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier ou demandez au responsable de vérifier son autorisation.'}}
+                                result = denied_response(error)
                             except (ConflictError, BudgetError):
                                 result = {'status': 409, 'value': {'error': 'Action refusée : révision périmée, opération en attente ou budget indisponible. Consultez le dossier courant.'}}
                             except (ValueError, KeyError, TypeError, sqlite3.Error):
