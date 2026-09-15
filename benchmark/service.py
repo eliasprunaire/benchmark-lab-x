@@ -23,17 +23,34 @@ def release_identity():
     root = Path(__file__).resolve().parents[1]
     try:
         source = json.loads((root / 'release.json').read_text())['source_sha']
-    except FileNotFoundError:
-        try:
-            result = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True, text=True)
-            source = result.stdout.strip() if result.returncode == 0 else 'inconnu'
-        except OSError:
-            source = 'inconnu'
-    if source == 'inconnu':
+        if type(source) is not str or re.fullmatch('[0-9a-f]{40}', source) is None:
+            raise ValueError('Identité de release invalide')
         return source
-    if type(source) is not str or not re.fullmatch('[0-9a-f]{40}', source):
-        raise ValueError('Identité de release invalide')
-    return source
+    except (OSError, ValueError, KeyError):
+        pass
+    environment = dict(os.environ)
+    environment['GIT_TERMINAL_PROMPT'] = '0'
+    try:
+        process = subprocess.Popen(
+            ['git', '-C', str(root), 'rev-parse', '--show-toplevel', 'HEAD'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True, env=environment)
+        try:
+            stdout, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate()
+            return 'inconnu'
+    except OSError:
+        return 'inconnu'
+    lines = stdout.splitlines()
+    if (process.returncode != 0 or len(lines) != 2
+            or Path(lines[0]).resolve() != root or re.fullmatch('[0-9a-f]{40}', lines[1]) is None):
+        return 'inconnu'
+    return lines[1]
 
 
 def executor_health(path):

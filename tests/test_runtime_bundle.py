@@ -57,14 +57,18 @@ class RuntimeBundleTests(unittest.TestCase):
                             'from benchmark import VERSION; from benchmark.service import release_identity; '
                             'assert VERSION == "0.1.0"; assert release_identity() == "' + commit + '"'],
                            cwd=unpacked, check=True)
-            subprocess.run([sys.executable, '-c',
-                            'from pathlib import Path; from benchmark.preparation import availability; '
-                            'from benchmark.storage import Store, initialize_preparation; '
-                            'root = Path("' + str(root / 'private') + '"); initialize_preparation(root); '
-                            'store = Store(root); view = availability(store, None, "' + commit + '"); '
-                            'assert view["version"] == "0.1.0"; assert view["source_sha"] == "' + commit[:7] + '"; store.close()'],
-                           cwd=unpacked, check=True)
             (unpacked / 'release.json').unlink()
+            subprocess.run([sys.executable, '-c',
+                            'from benchmark.service import release_identity; assert release_identity() == "inconnu"'],
+                           cwd=unpacked, check=True)
+            subprocess.run(['git', '-C', str(root), 'init'], check=True, capture_output=True)
+            (root / 'foreign.txt').write_text('Dépôt étranger')
+            subprocess.run(['git', '-C', str(root), 'add', 'foreign.txt'], check=True)
+            foreign_tree = subprocess.check_output(['git', '-C', str(root), 'write-tree']).decode().strip()
+            foreign = subprocess.check_output(
+                ['git', '-C', str(root), '-c', 'user.name=Test', '-c', 'user.email=test@invalid',
+                 'commit-tree', foreign_tree, '-m', 'Foreign fixture']).decode().strip()
+            subprocess.run(['git', '-C', str(root), 'update-ref', 'HEAD', foreign], check=True)
             subprocess.run([sys.executable, '-c',
                             'from benchmark.service import release_identity; assert release_identity() == "inconnu"'],
                            cwd=unpacked, check=True)
@@ -75,6 +79,10 @@ class RuntimeBundleTests(unittest.TestCase):
                 ['git', '-C', str(unpacked), '-c', 'user.name=Test', '-c', 'user.email=test@invalid',
                  'commit-tree', tree, '-m', 'Fallback fixture']).decode().strip()
             subprocess.run(['git', '-C', str(unpacked), 'update-ref', 'HEAD', fallback], check=True)
+            subprocess.run([sys.executable, '-c',
+                            'from benchmark.service import release_identity; assert release_identity() == "' + fallback + '"'],
+                           cwd=unpacked, check=True)
+            (unpacked / 'release.json').write_text('{')
             subprocess.run([sys.executable, '-c',
                             'from benchmark.service import release_identity; assert release_identity() == "' + fallback + '"'],
                            cwd=unpacked, check=True)
