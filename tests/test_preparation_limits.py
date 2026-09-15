@@ -59,7 +59,8 @@ class PreparationLimitTests(unittest.TestCase):
             with self.assertRaises(prep.Denied) as caught:
                 prep._normalized_text('x' * (maximum + 1), field, minimum, maximum)
             self.assertEqual('TEXT_TOO_LONG', caught.exception.code)
-        self.assertEqual('é\nA\tB', prep._normalized_text('e\u0301\r\nA\x00\tB   ', 'request', 1, 20))
+        self.assertEqual('é\nA\tB \t\n',
+                         prep._normalized_text('e\u0301\r\nA\x00\tB \t\n   ', 'request', 1, 20))
 
     def test_refused_text_creates_nothing(self):
         _, store, _, csrf, token = self.fixture()
@@ -101,6 +102,20 @@ class PreparationLimitTests(unittest.TestCase):
         with patch.object(prep, '_now', return_value=start + timedelta(seconds=30)):
             self.assertEqual(202, self.create(store, token, csrf, 'second', 'x' * 40)[0])
 
+    def test_global_operation_blocks_another_session(self):
+        _, store, _, csrf_a, token_a = self.fixture()
+        _, csrf_b, token_b = prep.session(store, None, create=True)
+        start = datetime(2026, 9, 14, 8, tzinfo=timezone.utc)
+        with patch.object(prep, '_now', return_value=start):
+            self.assertEqual(202, self.create(store, token_a, csrf_a, 'a', 'x' * 40)[0])
+            with self.assertRaises(prep.Denied) as caught:
+                self.create(store, token_b, csrf_b, 'b', 'x' * 40, source='b' * 64)
+            availability = prep.availability(store, True)
+        self.assertEqual('PREPARATION_IN_PROGRESS', caught.exception.code)
+        self.assertIsNone(store._connection.execute(
+            'SELECT 1 FROM s2_actions WHERE dossier_id=?', ('b',)).fetchone())
+        self.assertEqual('waiting', availability['reason'])
+
     def test_two_daily_dossiers_per_session(self):
         data, store, _, csrf, token = self.fixture()
         start = datetime(2026, 9, 14, 8, tzinfo=timezone.utc)
@@ -113,6 +128,43 @@ class PreparationLimitTests(unittest.TestCase):
             with self.assertRaises(prep.Denied) as caught:
                 self.create(store, token, csrf, 'd3', 'x' * 40)
         self.assertEqual('DAILY_SESSION_LIMIT', caught.exception.code)
+
+    def test_too_soon_does_not_consume_source_window(self):
+        data, store, _, csrf, token = self.fixture(reserve='0')
+        start = datetime(2026, 9, 14, 8, tzinfo=timezone.utc)
+        source = 'c' * 64
+        prep._SOURCE_ACCEPTED[source] = [start - timedelta(minutes=1)] * 18
+        with patch.object(prep, '_now', return_value=start):
+            operation = self.create(store, token, csrf, 'first', 'x' * 40, source=source)[3]
+        self.receive(data, operation)
+        with patch.object(prep, '_now', return_value=start + timedelta(seconds=1)):
+            with self.assertRaises(prep.Denied) as caught:
+                self.create(store, token, csrf, 'soon', 'x' * 40, source=source)
+        self.assertEqual('TOO_SOON', caught.exception.code)
+        with patch.object(prep, '_now', return_value=start + timedelta(seconds=30)):
+            self.assertEqual(202, self.create(store, token, csrf, 'second', 'x' * 40,
+                                              source=source)[0])
+
+    def test_useful_and_context_are_sent_after_request(self):
+        _, store, _, csrf, token = self.fixture(reserve='0')
+        captured = {}
+
+        class Transport:
+            def prepare(self, operation, request):
+                captured.update(request['outgoing'])
+                return 'requête préparée'
+
+        request = 'x' * 40
+        code, _, _, _ = prep.dispatch(
+            store, 'POST', '/preparation/dossiers', token,
+            {'csrf_token': csrf, 'dossier_id': 'details', 'action_id': 'details',
+             'request': request, 'useful': 'Une synthèse actionnable',
+             'context': 'Équipe francophone', 'source_sha256': 'd' * 64},
+            'a' * 40, Transport())
+        self.assertEqual(202, code)
+        self.assertEqual(request + '\n\nRésultat attendu :\nUne synthèse actionnable'
+                         '\n\nContexte :\nÉquipe francophone', captured['message'])
+        self.assertEqual(request, captured['request'])
 
     def test_daily_cap_blocks_next_reservation_and_availability(self):
         data, store, _, csrf, token = self.fixture(reserve='11')

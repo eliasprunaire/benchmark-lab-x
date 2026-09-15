@@ -30,6 +30,28 @@ class TemplateTests(unittest.TestCase):
         self.assertIn('href="/preparation/dossiers/d1"', listing)
         waiting = views.render({'operation_id': 'op', 'dossier_id': 'd1', 'availability': AVAILABILITY}, 'csrf').decode()
         self.assertIn('class="state wait"', waiting)
+        honeypot = views.render({'kind': 'honeypot_ack'}, 'csrf').decode()
+        for expected in ('<title>Demande enregistrée', 'class="state wait"',
+                         'L’envoi a été enregistré', 'Consulter le cas d’usage et son avancement'):
+            self.assertIn(expected, waiting)
+            self.assertIn(expected, honeypot)
+
+    def test_named_error_is_attached_to_its_field(self):
+        page = views.render(
+            {'error': 'Ce texte est trop court.', 'error_field': 'request',
+             'form': {'dossier_id': 'd', 'action_id': 'a', 'request': 'court',
+                      'useful': '', 'context': ''}}, 'csrf', error=True).decode()
+        self.assertIn('name="request" required minlength="40" maxlength="1500" rows="5" '
+                      'aria-describedby="request-error"', page)
+        self.assertIn('<p id="request-error" role="alert">Ce texte est trop court.</p>', page)
+        self.assertEqual(1, page.count('Ce texte est trop court.'))
+
+        message = views.render(
+            {'error': 'Ce texte est trop long.', 'error_field': 'message',
+             'form': {'action_id': 'a', 'revision': 1, 'kind': 'clarify',
+                      'message': 'long'}}, 'csrf', error=True).decode()
+        self.assertIn('aria-describedby="message-error"', message)
+        self.assertIn('<p id="message-error" role="alert">Ce texte est trop long.</p>', message)
 
     def test_fonts_and_projection_stylesheet_are_local_files(self):
         for name in ('Syne', 'AtkinsonHyperlegibleNext', 'AtkinsonHyperlegibleMono'):
@@ -63,6 +85,7 @@ class DossierPageTests(unittest.TestCase):
         self.assertIn('<details class="corr"><summary class="button sec">', page)
         self.assertIn('Oui, c’est le travail à tester', page)
         self.assertIn('Actualiser cet état', page)
+        self.assertIn('<div class="website"><label for="website">Site web</label>', page)
         self.assertNotIn(view['package_sha256'], page.replace('name="package_sha256" value="' + view['package_sha256'] + '"', ''))
 
 

@@ -914,7 +914,8 @@ class Store:
         with _transaction(connection, write=True):
             self._reserve_intent(connection, operation, budget_id, amount)
 
-    def _reserve_intent(self, connection, operation, budget_id, amount, *, retained_cost_ids=()):
+    def _reserve_intent(self, connection, operation, budget_id, amount, *, retained_cost_ids=(),
+                        created_at=None):
         """Shared reservation body; caller owns the enclosing transaction."""
         _operation(operation)
         require_current(operation['requested_configuration'])
@@ -942,7 +943,7 @@ class Store:
             'INSERT INTO operations (' + ', '.join(_OPERATION_COLUMNS) + ') '
             'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             (*values, 'INTENT_RECORDED', None, None, None,
-             datetime.now(timezone.utc).isoformat()),
+             (created_at or datetime.now(timezone.utc)).isoformat()),
         )
         # Keep the original reserve as evidence even after a known settlement
         connection.execute('INSERT INTO reservations VALUES (?, ?, ?)',
