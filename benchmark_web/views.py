@@ -372,7 +372,8 @@ def render(value, csrf, path='/preparation', *, error=False):
                 '<textarea id="message" name="message" required maxlength="1000" rows="4"' + field_attributes('message') + '>' + text(submitted['message']) + '</textarea>' + field_error('message') +
                 '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>'
                 '<button type="submit">Corriger et renvoyer</button>')
-        content += '<p><a href="/preparation">Retrouver mes cas d’usage</a></p>'
+        back_class = 'button sec' if type(submitted) is dict and ('request' in submitted or 'message' in submitted) else 'button'
+        content += '<p><a class="' + back_class + '" href="/preparation">Retrouver mes cas d’usage</a></p>'
     elif value.get('kind') == 'access':
         title = 'Accès OpenRouter'
         status = value['status']
@@ -380,7 +381,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             content = state_block('done', 'Accès OpenRouter', 'Compte connecté',
                 '<p>Crédit restant : ' + text(value['limit_remaining_usd'] if value['limit_remaining_usd'] is not None else 'INCONNU')
                 + ' USD. Limite du compte : ' + text(value['limit_usd'] if value['limit_usd'] is not None else 'INCONNU') + ' USD.</p>')
-            content += form('/preparation/access/disconnect', {}, '<button type="submit">Déconnecter</button>')
+            content += form('/preparation/access/disconnect', {}, '<button class="sec" type="submit">Déconnecter</button>')
         elif status == 'invalid':
             content = state_block('err', 'Accès OpenRouter', 'Accès invalide',
                                   '<p>Motif : ' + text(value.get('reason') or 'INCONNU') + '.</p>')
@@ -394,11 +395,12 @@ def render(value, csrf, path='/preparation', *, error=False):
         else:
             content = state_block('err', 'Accès OpenRouter', 'Connexion indisponible',
                                   '<p>Connexion OpenRouter indisponible.</p>')
-        content += '<p><a href="/preparation">Revenir à mes cas d’usage</a></p>'
+        content += '<p><a class="button' + ('' if status in ('connected', 'unavailable') else ' sec') + '" href="/preparation">Revenir à mes cas d’usage</a></p>'
     elif value.get('kind') == 'configurations':
         title = 'Choisir les configurations'
         dossier_url = '/preparation/dossiers/' + value['dossier_id']
         content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
+        content += '<p role="status">Choisissez au moins deux modèles et un palier de raisonnement. Aucun appel candidat ne part à cette étape.</p>'
         content += '<p>Relevé des modèles du ' + text(value['fetched_at']) + '.</p>'
         choices = ''
         for model in value['models']:
@@ -411,7 +413,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         tiers = ''.join(
             '<label><input type="radio" name="tier" value="' + tier + '"' +
             (' checked' if value['current_tier'] == tier else '') + '> ' +
-            ('Standard' if tier == 'standard' else 'Enhanced') + '</label>'
+            ('Standard' if tier == 'standard' else 'Renforcé') + '</label>'
             for tier in value['available_tiers'])
         content += ('<form method="post" action="' + text(dossier_url + '/configurations') + '">' +
                     hidden('csrf_token', csrf) + '<fieldset><legend>Modèles à comparer</legend>' +
@@ -538,7 +540,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<p><a href="' + text(base + '/conditions') + '">Actualiser le suivi</a> · <a href="' + text(base) + '">Comparer les résultats et lire les preuves</a></p>'
     elif value.get('kind') == 'home':
         title = 'Quel modèle pour votre travail ?'
-        content = '<div class="hero"><p class="lead">Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. '
+        content = '<div class="hero"><p class="lead" role="status">Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. '
         content += 'Nous préparons avec vous un exemple entièrement inventé, puis les modèles sont comparés dans les mêmes conditions, '
         content += 'sur des critères vérifiables et leur coût observé.</p>'
         content += '<div class="actions"><a class="button" href="/preparation">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
@@ -546,7 +548,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += section('Le parcours en quatre étapes', '<div class="tiles">'
             '<div class="tile"><h3>Besoin</h3><p>Vous décrivez la tâche et le résultat utile. L’assistant pose des questions si nécessaire.</p></div>'
             '<div class="tile"><h3>Exemple</h3><p>Une consigne et des pièces inventées vous sont proposées. Vous corrigez jusqu’à ce que l’exemple soit fidèle.</p></div>'
-            '<div class="tile"><h3>Validation</h3><p>Vous confirmez que c’est bien le travail à tester. Rien n’est lancé ni publié à cette étape.</p></div>'
+            '<div class="tile"><h3>Validation</h3><p>Vous confirmez le travail à tester. La qualification de l’exemple suit ; aucun candidat n’est lancé et rien n’est publié.</p></div>'
             '<div class="tile"><h3>Comparaison</h3><p>Chaque modèle passe l’épreuve dans les mêmes conditions. Vous lisez les verdicts, les preuves et les coûts.</p></div></div>')
         content += section('Ce qui rend le résultat lisible', '<div class="rule">' + icon('i-scale') + '<span><strong>Le verdict ne fait pas de moyenne.</strong> '
             'Une obligation non prouvée ou une erreur éliminatoire suffit à écarter une configuration, quel que soit le reste.</span></div>'
@@ -554,7 +556,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             '<li>Le coût est observé sur reçu, pas estimé. Un coût inconnu reste inconnu.</li>'
             '<li>Les pièces sont entièrement inventées : aucun dossier réel, même anonymisé.</li></ul>')
         content += section('Comparaisons publiées', '<p>Seules les restitutions approuvées sont accessibles publiquement. '
-            'La validation d’un cas d’usage ne publie rien et ne lance aucun test.</p>'
+            'La validation d’un cas d’usage ne publie rien et ne lance aucun candidat.</p>'
             '<p><a href="/index.html">Ouvrir la comparaison publiée, si disponible</a></p>')
     elif value.get('kind') == 'publication_unavailable':
         title = 'Aucune publication vérifiée disponible'
@@ -596,7 +598,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += render_evaluations(list(reversed(value['history'])), value['back_href'])
     elif 'dossiers' in value:
         title = 'Mes cas d’usage'
-        content = '<p class="lead">Décrivez le travail et le résultat qui vous serait utile. Vous pourrez examiner et corriger l’exemple avant de le valider.</p>'
+        content = '<p class="lead" role="status">Décrivez le travail et le résultat qui vous serait utile. Vous pourrez examiner et corriger l’exemple avant de le valider.</p>'
         dossiers = '<ul class="dossiers">' + ''.join(
             f'<li><a href="/preparation/dossiers/{text(d["dossier_id"])}">{text(d.get("need") or "Cas d’usage " + d["dossier_id"])}</a>'
             f'<small>Révision {d["revision"]}</small><a class="button sec" href="/preparation/dossiers/{text(d["dossier_id"])}">Reprendre</a></li>'
@@ -645,13 +647,24 @@ def render(value, csrf, path='/preparation', *, error=False):
                   'scope_confirmation': ('action', 'Le périmètre est à confirmer', 'Confirmez ou corrigez le périmètre proposé ci-dessous.'),
                   'suspended': ('err', 'Préparation suspendue', 'Une intervention du responsable est nécessaire ; aucun rejeu automatique.')}
         tone, heading, next_step = stages[value['stage']]
+        qualification = value.get('qualification', {})
+        automatic = 'operation_id' in qualification
         if value['validation']:
             tone, heading, next_step = ('done', 'Cas d’usage validé', 'La comparaison est en attente de préparation par le responsable.') if not current_campaigns \
                 else ('done', 'Cas d’usage validé', 'Une comparaison est préparée ou lancée : suivez-la à l’étape 4.')
+        if value['validation'] and automatic:
+            if value.get('qualified'):
+                tone, heading, next_step = 'done', 'Exemple qualifié', 'Consultez les constats puis choisissez les modèles à comparer.'
+            elif qualification.get('status') == 'BLOCKED':
+                tone, heading, next_step = 'err', 'Qualification à reprendre', qualification['summary']
+            else:
+                tone, heading, next_step = 'wait', 'Qualification en attente', 'Votre validation est enregistrée. Actualisez pour consulter le contrôle de l’exemple.'
         content = '<p class="tag">Cas d’usage inventé · révision ' + text(revision) + '</p>'
         if historical:
             content += '<p class="notice">Révision précédente en lecture seule. Pour modifier ou valider, ouvrez la révision courante.</p>'
-        actions = f'<a class="button sec" href="{text(path)}">Actualiser cet état</a>' if value['stage'] == 'waiting' else ''
+        actions = f'<a class="button" href="{text(path)}">Actualiser cet état</a>' if (value['stage'] == 'waiting' or value['validation'] and automatic and not value.get('qualified')) else ''
+        if historical:
+            actions = f'<a class="button" href="{text(url)}">Revenir à la révision courante</a>'
         content += state_block(tone, 'Où j’en suis', heading, '<p>' + text(value['explanation']) + '</p><p class="hint">' + next_step + '</p>', actions)
         content += f'<p class="hint"><a href="{text(path)}">Actualiser cet état</a> · <a href="{text(url)}">Révision courante</a>'
         if revision > 1:
@@ -739,14 +752,14 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<section id="validation"><h2>Validation du cas d’usage</h2>'
         if value['validation']:
             content += '<p role="status">Votre validation est enregistrée pour ce cas d’usage, cette révision et cet exemple exact.</p>'
-            if not current_campaigns:
+            if not current_campaigns and not automatic:
                 content += '<p>En attente de préparation des conditions par le responsable.</p>'
         elif package:
             content += '<p role="status">Une nouvelle validation est requise pour l’exemple présenté.</p>'
         else:
             content += '<p>La validation sera possible lorsqu’un exemple à examiner sera disponible.</p>'
         if editable and package and value['stage'] == 'preview' and value['validation'] is None:
-            content += '<p>Cette validation concerne uniquement cet exemple. Elle n’approuve ni contrat, ni appel, ni dépense, ni publication.</p>'
+            content += '<p>Cette validation confirme la fidélité de cet exemple à votre besoin. Si la qualification est disponible, elle est financée par l’opérateur sur l’enveloppe de préparation. Aucun appel candidat ni publication n’est autorisé ici.</p>'
             content += '<div class="actionbar">' + form(url + '/validation', binding(dossier_id, revision, value['package_sha256']),
                             '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
         content += '</section>'
@@ -773,6 +786,9 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<details><summary>Qualification et approbation de l’épreuve</summary>'
         content += section('Qualification', '<p>' + text(labels.get(
             qualification.get('qualification_status'), 'En attente')) + '</p>')
+        if automatic:
+            content += '<p>' + text(qualification['summary']) + '</p>'
+            content += listing(finding['text'] for finding in qualification.get('findings', []))
         content += section('Approbation', '<p>' + text(labels.get(
             qualification.get('approval_status'), 'En attente')) + '</p>'
             '<p>La validation du besoin, la qualification et l’approbation restent distinctes. '
@@ -866,7 +882,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         status = '<aside id="availability" class="availability" aria-label="État de la préparation"><p><strong>Assistant '
         status += 'configuré' if state['assistant_configured'] else 'non configuré'
         status += '.</strong> Admission ' + ('ouverte' if state['admission_open'] else 'fermée') + '.</p><p>'
-        status += text(reasons[state['reason']]) + '</p><p class="hint">La consultation et la validation d’un paquet ne lancent aucun appel.</p></aside>'
+        status += text(reasons[state['reason']]) + '</p><p class="hint">La consultation ne lance aucun appel. La préparation et la qualification sont financées par l’opérateur ; les appels candidats demandent un lancement distinct.</p></aside>'
         content = status + content
     content = '<aside aria-label="Modèles disponibles"><p>' + text(RETIREMENT_NOTICE) + '</p></aside>' + content
     template = TEMPLATE_PATH.read_text()
