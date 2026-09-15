@@ -107,6 +107,10 @@ def serve_web(address, port, public, socket_path, source):
                             if not re.fullmatch('[1-9][0-9]*', body['revision']):
                                 raise ValueError('Révision invalide')
                             body['revision'] = int(body['revision'])
+                        if 'manifest_version' in body:
+                            if not re.fullmatch('[1-9][0-9]*', body['manifest_version']):
+                                raise ValueError('Version de manifeste invalide')
+                            body['manifest_version'] = int(body['manifest_version'])
                     else:
                         raise ValueError('Type de formulaire inconnu')
                     submission = (self.path == '/preparation/dossiers' or

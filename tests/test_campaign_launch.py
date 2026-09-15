@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from benchmark import campaigns as c, preparation as p, qualification as q, storage
+from benchmark_web import views
 from tests.test_s3_regressions import fixture, specification, check, ACTOR, AUTHORITY
 from tests.test_s4_regressions import inputs, manifest, response
 
@@ -29,7 +30,9 @@ class CampaignLaunch(unittest.TestCase):
 
     def admit(self, owner=True):
         record = c.admit(self.store, 'local-comparison', *inputs(self.snapshot), owner_launch=owner)
-        return dict(manifest_sha256=self.snapshot['manifest_sha256'], admission_id=record['admission_id'], confirm='yes')
+        return dict(manifest_version=self.snapshot['manifest']['version'],
+                    frozen_at=self.snapshot['manifest']['conditions']['frozen_at'],
+                    admission_id=record['admission_id'], confirm='yes')
 
     def launch(self, body, sid=None):
         return c.launch(self.store, sid or self.sid, 'fixture', 'local-comparison', body)
@@ -74,9 +77,17 @@ class CampaignLaunch(unittest.TestCase):
         self.assertEqual([], self.launch(body))
         self.assertEqual(['RECEIVED'] * 2, [a['state'] for a in c.inspect(self.store, 'local-comparison')['attempts']])
 
-    def test_page_confirmation_needs_only_readable_identifiers(self):
+    def test_page_confirmation_refuses_stale_conditions_then_launches(self):
         body = self.admit()
-        del body['manifest_sha256']
+        page = views.render(c.launch_view(self.store, self.sid, 'fixture', 'local-comparison'), 'csrf').decode()
+        self.assertIn(f'name="manifest_version" value="{body["manifest_version"]}"', page)
+        self.assertIn(f'name="frozen_at" value="{body["frozen_at"]}"', page)
+        self.assertNotIn('manifest_sha256', page)
+        for field, value in (('manifest_version', body['manifest_version'] + 1),
+                             ('frozen_at', '2020-01-01T00:00:00+00:00')):
+            with self.subTest(field=field), self.assertRaises(storage.ConflictError):
+                self.launch(dict(body, **{field: value}))
+            self.assertEqual([], c.inspect(self.store, 'local-comparison')['attempts'])
         self.assertEqual(2, len(self.launch(body)))
 
     def test_reservations_roll_back_together(self):
