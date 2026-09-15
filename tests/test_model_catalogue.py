@@ -39,13 +39,20 @@ class ModelCatalogueTests(unittest.TestCase):
             with patch.object(catalogue, '_now', return_value=NOW):
                 result = catalogue.refresh(store, self.fetch(calls))
             self.assertEqual(6, len(calls))
+            malformed = [model for model in result['models'] if model['excluded'] == 'malformed']
+            self.assertEqual({
+                'openai/malformed-created',
+                'anthropic/malformed-name',
+                'google/malformed-architecture',
+            }, {model['id'] for model in malformed})
+            self.assertNotIn('openai/gpt-5.3-sol:free', [model['id'] for model in result['models']])
             self.assertEqual([
                 'google/gemini-3.0-flash:free',
                 'openai/gpt-5.6-sol-0902',
                 'openai/gpt-5.6-sol',
                 'openai/gpt-5.5-sol',
                 'x-ai/grok-4-preview',
-            ], [model['id'] for model in result['models']])
+            ], [model['id'] for model in result['models'] if model['excluded'] != 'malformed'])
             self.assertNotIn('openai/gpt-5.4-sol', [model['id'] for model in result['models']])
             current = next(model for model in result['models']
                            if model['id'] == 'openai/gpt-5.6-sol')
@@ -78,6 +85,9 @@ class ModelCatalogueTests(unittest.TestCase):
             self.assertEqual(first['fetched_at'], stale['fetched_at'])
             self.assertTrue(stale['stale'])
             self.assertTrue(stale['models'])
+            with patch.object(catalogue, '_now', return_value=NOW + timedelta(hours=26)), \
+                    self.assertRaises(RuntimeError):
+                catalogue.refresh(store, lambda path: (_ for _ in ()).throw(RuntimeError('défaut interne')))
 
     def test_famille_sur_quinze_identifiants(self):
         cases = {
@@ -113,6 +123,8 @@ class ModelCatalogueTests(unittest.TestCase):
         self.assertEqual(
             {'new_families': ['openai/nouveau-#'], 'missing_models': ['openai/ancien-1']},
             catalogue.report(models, registry, NOW))
+        self.assertEqual(catalogue.report(FIXTURE['data'], registry, NOW)['missing_models'],
+                         ['openai/ancien-1'])
 
 
 if __name__ == '__main__':

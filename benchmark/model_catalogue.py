@@ -19,6 +19,7 @@ TABLE_SQL = """CREATE TABLE s2_model_catalogue (
     raw_json TEXT NOT NULL
 )"""
 CONFIG_PATH = Path(__file__).resolve().parents[1] / 'models.toml'
+MODEL_ID = re.compile(r'^[a-z0-9.-]+/[a-z0-9.:\_-]+$')
 
 
 def schema_objects():
@@ -64,19 +65,27 @@ def _data(document, expected):
     return document
 
 
+def _model_id(model):
+    if type(model) is not dict or type(model.get('id')) is not str:
+        return None
+    return model['id'] if MODEL_ID.fullmatch(model['id']) else None
+
+
+def _malformed(model):
+    return (type(model.get('created')) is not int
+            or type(model.get('name')) is not str
+            or type(model.get('architecture')) is not dict)
+
+
 def _candidates(models, settings, now):
     grouped = defaultdict(list)
     for model in models:
-        if type(model) is not dict:
-            raise ValueError('Modèle OpenRouter invalide')
-        model_id = model.get('id')
-        maker = model_id.split('/', 1)[0] if type(model_id) is str and '/' in model_id else None
-        if (maker not in settings['makers'] or model_id.endswith(':batch')
-                or model.get('architecture', {}).get('output_modalities') != ['text']):
+        model_id = _model_id(model)
+        if model_id is None or model_id.split('/', 1)[0] not in settings['makers']:
             continue
-        created = model.get('created')
-        if type(created) is not int or type(model.get('name')) is not str:
-            raise ValueError('Identité ou date de modèle invalide')
+        if (_malformed(model) or model_id.endswith(':batch')
+                or model['architecture'].get('output_modalities') != ['text']):
+            continue
         grouped[family(model_id)].append(model)
     cutoff = int((now - timedelta(days=settings['max_age_days'])).timestamp())
     selected = []
@@ -154,7 +163,7 @@ def refresh(store, fetch):
             endpoint_documents[model_id] = detail
         document = {'models': models, 'endpoints': endpoint_documents}
         raw = storage._strict_json(document)
-    except Exception:
+    except (OSError, HTTPException, ValueError):
         if previous:
             return selection(store)
         raise
@@ -202,7 +211,21 @@ def selection(store):
     if type(endpoint_documents) is not dict:
         raise storage.IntegrityError('Cache des endpoints absent')
     routes = _registered_routes(registry)
-    view = []
+    view = [{
+        'id': model_id,
+        'name': model.get('name') if type(model.get('name')) is str else None,
+        'maker': model_id.split('/', 1)[0],
+        'family': family(model_id),
+        'released': None,
+        'input_price_per_million': None,
+        'output_price_per_million': None,
+        'reasoning_levels': [],
+        'max_output_tokens': None,
+        'variant': _variant(model_id),
+        'excluded': 'malformed',
+    } for model in models
+        if (model_id := _model_id(model)) is not None
+        and model_id.split('/', 1)[0] in settings['makers'] and _malformed(model)]
     for model in _candidates(models, settings, fetched_at):
         model_id = model['id']
         detail = endpoint_documents.get(model_id)
@@ -259,7 +282,12 @@ def report(models, registry=None, now=None):
     registry = _registry() if registry is None else registry
     settings = _settings(registry)
     now = _now() if now is None else now
-    current_ids = {model.get('id') for model in models if type(model) is dict}
+    current_ids = set()
+    for model in models:
+        model_id = _model_id(model)
+        if model_id is None or _malformed(model):
+            continue
+        current_ids.add(model_id)
     configured_baseline = settings.get('baseline_models')
     if configured_baseline is not None and (
             type(configured_baseline) is not list
