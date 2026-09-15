@@ -116,8 +116,11 @@ _AUTHORITY = ('actor', 'authority_id', 'purpose', 'manifest_sha256', 'execution_
               'candidate_authority', 'budget_authority', 'budget_id', 'allowed_cells', 'reserve_amounts')
 _OBSERVED = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters', 'effort')
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
-HARNESS_INPUT_TOKENS = 1500
-DEFAULT_CAP_USD = Decimal('5.00')
+BYTES_PER_TOKEN = 3
+DEFAULT_CAP_USD = Decimal('50.00')
+CANDIDATE_SYSTEM_PROMPT = (
+    'Vous répondez à une tâche de travail décrite dans le message. Répondez en français. '
+    'Produisez exactement les livrables demandés, sans commenter la consigne ni les pièces.')
 _EFFORT_ORDER = ('minimal', 'low', 'medium', 'high', 'xhigh')
 
 
@@ -343,7 +346,7 @@ def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
 
 
 def prepare_configurations(store, session_id, dossier_id, body, candidate_identity):
-    from . import model_catalogue
+    from . import model_catalogue, outgoing
     from .pi_openrouter import system_context
     _fields(body, ('models', 'tier'), 'configurations')
     if (type(body['models']) is not list or len(body['models']) < 2
@@ -371,12 +374,13 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
         context_lengths = [model['context_length'] for model in selected]
         if any(type(value) is not int or value <= 0 for value in context_lengths):
             raise ValueError('Fenêtre de contexte absente du relevé')
-        system_prompt = contract['package']['instruction']
-        candidate_bytes = system_prompt.encode('utf-8')
-        candidate_bytes += b''.join(store.read_piece(piece['id']) for piece in contract['package']['pieces'])
-        candidate_bytes += system_prompt.encode('utf-8')
-        assumptions = {'bytes_per_token': 4, 'harness_input_tokens': HARNESS_INPUT_TOKENS,
-                       'input_tokens': HARNESS_INPUT_TOKENS + (len(candidate_bytes) + 3) // 4,
+        pieces = [dict(id=piece['id'], role='candidate',
+                       content=store.read_piece(piece['id']).decode('utf-8'))
+                  for piece in contract['package']['pieces']]
+        user_message = encode(outgoing.candidate(contract['package'], pieces))
+        candidate_bytes = (system_context(CANDIDATE_SYSTEM_PROMPT) + user_message).encode('utf-8')
+        assumptions = {'bytes_per_token': BYTES_PER_TOKEN,
+                       'input_tokens': (len(candidate_bytes) + BYTES_PER_TOKEN - 1) // BYTES_PER_TOKEN,
                        'output_tokens': DEFAULT_MAX_OUTPUT_TOKENS, 'cached_input_tokens': 0,
                        'requests_per_cell': 1}
         tier_table = model_catalogue.tiers()
@@ -395,8 +399,9 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
             conditions=dict(
                 pi=dict(package=candidate_identity['package'], version=candidate_identity['version'],
                         sha256=candidate_identity['sha256'], status='active', proof=candidate_identity['scope']),
-                packages=[], tools=[], skills=[], context_sha256=sha256(system_context(system_prompt).encode()).hexdigest(),
-                defaults=dict(system_prompt=system_prompt, timeout_seconds=300,
+                packages=[], tools=[], skills=[],
+                context_sha256=sha256(system_context(CANDIDATE_SYSTEM_PROMPT).encode()).hexdigest(),
+                defaults=dict(system_prompt=CANDIDATE_SYSTEM_PROMPT, timeout_seconds=300,
                               context_window=min(context_lengths), max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
                               defaults_source='DEFAULT_MAX_OUTPUT_TOKENS'),
                 environment={key: candidate_identity[key] for key in ('node_version', 'node_sha256', 'bridge_sha256')},

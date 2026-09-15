@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from benchmark import campaigns, model_catalogue, pi_openrouter, preparation, qualification, storage
+from benchmark import campaigns, model_catalogue, outgoing, pi_openrouter, preparation, qualification, storage
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 
 
@@ -37,6 +37,7 @@ class ConfigurationsTests(unittest.TestCase):
         self.addCleanup(self.store.close)
         candidate = qualification.draft(
             self.store, 'fixture', self.preview['revision'], specification(reference))
+        self.contract = candidate['contract']
         qualified = qualification.qualify(
             self.store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
         qualification.approve(
@@ -111,14 +112,29 @@ class ConfigurationsTests(unittest.TestCase):
         self.assertEqual(2, self.store._connection.execute(
             'SELECT count(*) FROM s4_campaigns').fetchone()[0])
         self.assertEqual(NOW.isoformat(), second['fetched_at'])
-        self.assertEqual(1500, second['assumptions']['harness_input_tokens'])
+        self.assertNotIn('harness_input_tokens', second['assumptions'])
+        self.assertEqual(3, second['assumptions']['bytes_per_token'])
         self.assertEqual(4096, second['assumptions']['output_tokens'])
         amounts = [Decimal(item['estimate']['amount_usd'])
                    for item in second['configurations']]
         self.assertEqual(str(sum(amounts)), second['estimate_total_usd'])
-        self.assertEqual('5.00', second['cap_usd'])
+        self.assertEqual('50.00', second['cap_usd'])
         self.assertTrue(second['estimate_under_cap'])
         self.assertEqual('fixture-c1', first['current_campaign_id'])
+        snapshot = campaigns.inspect(self.store, second['current_campaign_id'])
+        defaults = snapshot['manifest']['conditions']['defaults']
+        self.assertEqual(campaigns.CANDIDATE_SYSTEM_PROMPT, defaults['system_prompt'])
+        self.assertNotEqual(self.contract['package']['instruction'], defaults['system_prompt'])
+        pieces = [dict(id=piece['id'], role='candidate',
+                       content=self.store.read_piece(piece['id']).decode('utf-8'))
+                  for piece in self.contract['package']['pieces']]
+        user_message = storage._strict_json(outgoing.candidate(self.contract['package'], pieces))
+        exact_bytes = (pi_openrouter.system_context(campaigns.CANDIDATE_SYSTEM_PROMPT)
+                       + user_message).encode('utf-8')
+        self.assertEqual((len(exact_bytes) + campaigns.BYTES_PER_TOKEN - 1)
+                         // campaigns.BYTES_PER_TOKEN,
+                         second['assumptions']['input_tokens'])
+        self.assertEqual(1, user_message.count(self.contract['package']['instruction']))
 
     def test_route_refuse_pi_indisponible(self):
         token = 'token'
