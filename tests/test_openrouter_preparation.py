@@ -17,7 +17,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark import preparation as prep, runtime, service, storage
+from benchmark import outgoing, preparation as prep, qualification, runtime, service, storage
 from benchmark_web import views
 from benchmark_web.server import serve_web
 from benchmark import openrouter_preparation as assistant
@@ -231,7 +231,11 @@ class OpenRouterPreparationTests(unittest.TestCase):
         _, before = self.execute(action_id='clarify', revision=2, kind='clarify', message=CLARIFICATION)
         prep.validate(self.store, self.session, 'd', prep.binding('d', 3, before['package_sha256']))
         changed = result()
-        changed['package']['candidate']['criteria'].append('Propositions séparées des décisions ; responsable absent à confirmer')
+        changed['package']['candidate']['criteria'] = {
+            'eliminatory': ['Ne pas inventer de décision'],
+            'obligations': ['Respect des notes', 'Propositions séparées des décisions'],
+            'quality': [{'label': 'Clarté', 'scale': ['excellent', 'acceptable', 'faible'],
+                         'favorable': 'excellent'}]}
         self.http.getresponse.return_value.read.return_value = http_body(changed)
         operation, after = self.execute(action_id='correct', revision=3, kind='correct', message=CORRECTION)
         request = json.loads(operation['resources'][0])
@@ -254,6 +258,40 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('0.000808', self.store.inspect_budget('fixture')['spent'])
         self.assertEqual('0', self.store.inspect_budget('fixture')['reserved'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
+
+    def test_story_15_accepts_criteria_by_severity_and_rejects_quality_limit(self):
+        for profile_name in (assistant.ASSISTANT, assistant.FALLBACK_ASSISTANT):
+            system = assistant.load_profile(profile_name)['system']
+            self.assertIn('"criteria":{"eliminatory"', system)
+            self.assertIn('quality contient au plus deux entrées', system)
+        value = result()
+        value['package']['candidate']['criteria'] = {
+            'eliminatory': ['Ne pas inventer de décision'],
+            'obligations': ['Respect des notes'],
+            'quality': [{'label': 'Clarté', 'scale': ['excellent', 'acceptable', 'faible'],
+                         'favorable': 'excellent'}]}
+        self.http.getresponse.return_value.read.return_value = http_body(value)
+        _, view = self.execute()
+        self.assertEqual(value['package']['candidate']['criteria'], view['criteria'])
+        self.assertEqual('satisfait = aucune faute éliminatoire et toutes les obligations prouvées ; '
+                         'la qualité départage, sans note', view['criteria_rule'])
+
+        value['package']['candidate']['criteria']['quality'] *= 3
+        with self.assertRaisesRegex(ValueError, '^QUALITY_LIMIT$'):
+            outgoing.closed_generation(value['package'])
+        from tests.test_s3_regressions import specification
+        contract = specification('reference')
+        contract['secondary_criteria'] = [{}, {}, {}]
+        with self.assertRaisesRegex(ValueError, '^QUALITY_LIMIT$'):
+            qualification._specification(contract)
+        prep.admit(self.store, self.authority)
+        self.http.getresponse.return_value.read.return_value = http_body(value)
+        operation_id, _ = prep.submit(self.store, self.session, 'quality-limit',
+            dict(action_id='create', request=NEED), 'a' * 40, self.transport)
+        prep.execute(self.data, operation_id, self.transport)
+        refused = prep.view(self.store, self.session, 'quality-limit')
+        self.assertEqual('suspended', refused['stage'])
+        self.assertIsNone(refused['package'])
 
     def test_bad_output_keeps_raw_receipt_without_orphan_piece(self):
         broken = result()

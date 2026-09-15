@@ -677,7 +677,7 @@ def _review_content(store, ctx):
     method = spec['method']
     content = outgoing.closed_review(dict(
         task=dict(instruction=package['instruction'], deliverables=list(package['deliverables']),
-                  criteria=list(package['criteria']), acceptable_ambiguities=list(package['acceptable_ambiguities']),
+                  criteria=deepcopy(package['criteria']), acceptable_ambiguities=list(package['acceptable_ambiguities']),
                   pieces=task_pieces),
         result_expected=spec['result_expected'],
         obligations=[dict(id=x['id'], description=x['description'], tolerance=x['tolerance'],

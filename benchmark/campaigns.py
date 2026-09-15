@@ -443,7 +443,7 @@ def _transport_view(request):
     content = request['outgoing']
     outgoing_view = outgoing.closed_candidate(dict(
         instruction=content['instruction'], deliverables=list(content['deliverables']),
-        criteria=list(content['criteria']), acceptable_ambiguities=list(content['acceptable_ambiguities']),
+        criteria=deepcopy(content['criteria']), acceptable_ambiguities=list(content['acceptable_ambiguities']),
         pieces=[dict(name=piece['name'], content=piece['content']) for piece in content['pieces']]))
     config = request['requested_configuration']
     conditions = request['conditions']
