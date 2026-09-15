@@ -43,6 +43,7 @@ class RuntimeBundleTests(unittest.TestCase):
             with tarfile.open(root / 'first.tar.gz') as archive:
                 archive.extractall(unpacked, filter='data')
             manifest = json.loads((unpacked / 'release.json').read_text())
+            self.assertEqual(commit, manifest['source_sha'])
             for name, expected in manifest['files'].items():
                 self.assertEqual(expected, hashlib.sha256((unpacked / name).read_bytes()).hexdigest())
             self.assertEqual(0o755, (unpacked / 'benchmark/benchmark-runtime').stat().st_mode & 0o777)
@@ -52,6 +53,31 @@ class RuntimeBundleTests(unittest.TestCase):
             self.assertTrue(json.loads(result.stdout)['integrity_ok'])
             subprocess.run([sys.executable, '-c', 'from benchmark.service import serve_executor; from benchmark_web.server import serve_web'], cwd=unpacked, check=True)
             subprocess.run([sys.executable, '-c', 'from benchmark.openrouter_prices import forecast; from benchmark.openrouter_preparation import configuration; assert configuration()["model"] == "openai/gpt-6-astra"'], cwd=unpacked, check=True)
+            subprocess.run([sys.executable, '-c',
+                            'from benchmark import VERSION; from benchmark.service import release_identity; '
+                            'assert VERSION == "0.1.0"; assert release_identity() == "' + commit + '"'],
+                           cwd=unpacked, check=True)
+            subprocess.run([sys.executable, '-c',
+                            'from pathlib import Path; from benchmark.preparation import availability; '
+                            'from benchmark.storage import Store, initialize_preparation; '
+                            'root = Path("' + str(root / 'private') + '"); initialize_preparation(root); '
+                            'store = Store(root); view = availability(store, None, "' + commit + '"); '
+                            'assert view["version"] == "0.1.0"; assert view["source_sha"] == "' + commit[:7] + '"; store.close()'],
+                           cwd=unpacked, check=True)
+            (unpacked / 'release.json').unlink()
+            subprocess.run([sys.executable, '-c',
+                            'from benchmark.service import release_identity; assert release_identity() == "inconnu"'],
+                           cwd=unpacked, check=True)
+            subprocess.run(['git', '-C', str(unpacked), 'init'], check=True, capture_output=True)
+            subprocess.run(['git', '-C', str(unpacked), 'add', 'benchmark', 'benchmark_web'], check=True)
+            tree = subprocess.check_output(['git', '-C', str(unpacked), 'write-tree']).decode().strip()
+            fallback = subprocess.check_output(
+                ['git', '-C', str(unpacked), '-c', 'user.name=Test', '-c', 'user.email=test@invalid',
+                 'commit-tree', tree, '-m', 'Fallback fixture']).decode().strip()
+            subprocess.run(['git', '-C', str(unpacked), 'update-ref', 'HEAD', fallback], check=True)
+            subprocess.run([sys.executable, '-c',
+                            'from benchmark.service import release_identity; assert release_identity() == "' + fallback + '"'],
+                           cwd=unpacked, check=True)
 
 
 if __name__ == '__main__':

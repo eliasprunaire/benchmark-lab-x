@@ -12,6 +12,7 @@ import secrets
 import unicodedata
 from urllib.parse import urlsplit, parse_qsl
 
+from . import VERSION
 from .storage import (Store, SchemaError, IntegrityError, ConflictError, BudgetError,
                       _transaction, _strict_json as encode, _fields, _text,
                       _identity, _money, _sum_money, _unique_object, _payload_json)
@@ -142,7 +143,7 @@ def admission(store, connection=None):
     return result
 
 
-def availability(store, transport):
+def availability(store, transport, source='inconnu'):
     """Read-only projection of preparation gates, without configuration or secrets"""
     connection = connection_for(store)
     with _transaction(connection):
@@ -175,7 +176,8 @@ def availability(store, transport):
                   > PREPARATION_DAILY_CAP_USD):
                 reason = 'daily_cap'
         return {'assistant_configured': configured, 'admission_open': authority is not None,
-                'can_submit': reason == 'open', 'reason': reason}
+                'can_submit': reason == 'open', 'reason': reason, 'version': VERSION,
+                'source_sha': source[:7] if re.fullmatch('[0-9a-f]{40}', source or '') else 'inconnu'}
 
 
 def check_authority(value):
@@ -734,7 +736,7 @@ def dispatch(store, method, path, token, body, source, transport, *, candidate_t
         session_id, csrf, token = session(store, token, create=True)
         rows = connection_for(store).execute('SELECT dossier_id,current_revision FROM s2_dossiers WHERE session_id=? ORDER BY dossier_id',
                                             (session_id,)).fetchall()
-        return 200, {'csrf_token': csrf, 'availability': availability(store, transport),
+        return 200, {'csrf_token': csrf, 'availability': availability(store, transport, source),
                      'dossiers': [{'dossier_id': d, 'revision': r,
                                    'need': store.get_dossier(d, r)['request']} for d, r in rows]}, token, None
     session_id, csrf, _ = session(store, token)
@@ -836,7 +838,7 @@ def dispatch(store, method, path, token, body, source, transport, *, candidate_t
             return 200, piece_bytes(store, session_id, dossier_id, revision, piece_id), None, None
         result = view(store, session_id, dossier_id, revision)
         result['current_revision'] = owner(connection_for(store), session_id, dossier_id)
-        result['availability'] = availability(store, transport)
+        result['availability'] = availability(store, transport, source)
         from .restitution import catalogue
         result['task_index'] = next(t for t in catalogue(store, session_id)['tasks'] if t['dossier_id'] == dossier_id)
         # The CSRF token travels independently in HTML rendering through the web's session query

@@ -10,6 +10,7 @@ import socket
 import socketserver
 import sqlite3
 import stat
+import subprocess
 import threading
 
 from .storage import ConflictError, BudgetError, _unique_object
@@ -19,9 +20,18 @@ from .runtime import encode, status, stop, verify
 
 
 def release_identity():
-    manifest = json.loads((Path(__file__).resolve().parents[1] / 'release.json').read_text())
-    source = manifest['source_sha']
-    if not re.fullmatch('[0-9a-f]{40}', source):
+    root = Path(__file__).resolve().parents[1]
+    try:
+        source = json.loads((root / 'release.json').read_text())['source_sha']
+    except FileNotFoundError:
+        try:
+            result = subprocess.run(['git', '-C', str(root), 'rev-parse', 'HEAD'], capture_output=True, text=True)
+            source = result.stdout.strip() if result.returncode == 0 else 'inconnu'
+        except OSError:
+            source = 'inconnu'
+    if source == 'inconnu':
+        return source
+    if type(source) is not str or not re.fullmatch('[0-9a-f]{40}', source):
         raise ValueError('Identité de release invalide')
     return source
 
