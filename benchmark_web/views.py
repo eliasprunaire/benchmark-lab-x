@@ -149,7 +149,7 @@ def render_task_index(task):
         '<a href="' + text(task['href']) + '/revisions/' + str(revision) + '">' + str(revision) + '</a>'
         for revision in task['revisions']) + '.</p>'
     for version in task['versions']:
-        content += '<section id="contract-' + text(version['contract_sha256']) + '"><h3>Version d’épreuve '
+        content += '<section id="version-' + text(version['version']) + '"><h3>Version d’épreuve '
         content += text(version['version']) + '</h3>'
         content += '<p><a href="' + text(task['href']) + '/revisions/' + str(version['revision']) + '">Ouvrir la révision associée</a></p><ul>'
         for campaign in version['campaigns']:
@@ -388,7 +388,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<p>Réserves prévues par essai : ' + text(', '.join(key + ' : ' + amount for key, amount in campaign['reserve_amounts'].items()) if campaign['reserve_amounts'] else 'non autorisées') + '.</p>'
         content += '<p>Estimation, réservation et coût observé sont distincts. La réserve ne garantit pas un plafond de facturation.</p>'
         if value['can_launch']:
-            content += form(base + '/start', {'manifest_sha256': campaign['manifest_sha256'], 'admission_id': value['admission_id']},
+            content += form(base + '/start', {'admission_id': value['admission_id']},
                 '<label><input type="checkbox" name="confirm" value="yes" required> Je confirme le lancement des essais autorisés présentés.</label><button type="submit">Lancer la comparaison autorisée</button>')
         else:
             content += '<p role="status">' + ('Lancement enregistré. Consultez les essais et leurs résultats ci-dessous.' if campaign['attempts'] else 'Lancement indisponible. Le responsable doit vérifier les autorisations et la disponibilité de l’exécution.') + '</p>'
@@ -644,7 +644,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                 campaigns += '<h4>Conditions Pi communes</h4><p>' + text(
                     f'{pi["package"]} {pi["version"]} ; état {pi["status"]} ; gel {conditions["frozen_at"]}') + '</p>'
                 campaigns += '<details><summary>Contexte et environnement communs</summary>' + listing(
-                    f'{k} : {encode(conditions[k])}' for k in ('context_sha256', 'packages', 'tools', 'skills', 'defaults', 'environment')) + '</details>'
+                    f'{k} : {encode(conditions[k])}' for k in ('packages', 'tools', 'skills', 'defaults', 'environment')) + '</details>'
                 campaigns += '<h4>Autorités et budget</h4><p>' + (
                     'Admission opérateur ouverte pour les cellules : ' + text(', '.join(campaign['allowed_cells'])) if campaign['admission_open'] else
                     'Admission fermée. Autorités à fournir ou renouveler par l’opérateur : ' + text(', '.join(campaign['missing_authorities']))) + '.</p>'

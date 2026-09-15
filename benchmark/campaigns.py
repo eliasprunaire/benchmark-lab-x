@@ -733,7 +733,7 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
     return dict(operation_id=attempt_id, execution_id=execution_id, cell_id=cell_id, output_piece_id=None)
 
 def launch_view(store, session_id, dossier_id, campaign_id):
-    from .preparation import owner
+    from .preparation import owner, page_view
     connection = connection_for(store)
     with _transaction(connection):
         owner(connection, session_id, dossier_id)
@@ -754,15 +754,16 @@ def launch_view(store, session_id, dossier_id, campaign_id):
             except (ValueError, ConflictError, BudgetError):
                 pass
         contract = _approved(store, connection, snapshot['manifest']['contract_sha256'])
-        return dict(kind='campaign_launch', dossier_id=dossier_id, campaign=projected,
-                    criteria={key: contract['specification'][key] for key in ('result_expected', 'obligations', 'eliminatory_errors', 'limits')}, can_launch=eligible,
-                    admission_id=admission['admission_id'] if grant else None,
-                    estimate=grant['estimate'] if grant else None)
+        return page_view(dict(kind='campaign_launch', dossier_id=dossier_id, campaign=projected,
+                         criteria={key: contract['specification'][key] for key in ('result_expected', 'obligations', 'eliminatory_errors', 'limits')}, can_launch=eligible,
+                         admission_id=admission['admission_id'] if grant else None,
+                         estimate=grant['estimate'] if grant else None))
 
 
 def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=None, access_transport=None):
     from .preparation import owner, Denied
-    _fields(body, ('manifest_sha256', 'admission_id', 'confirm'), 'launch')
+    _fields(body, ('manifest_sha256', 'admission_id', 'confirm') if type(body) is dict and 'manifest_sha256' in body
+            else ('admission_id', 'confirm'), 'launch')
     if body['confirm'] != 'yes':
         raise ValueError('Confirmation requise')
     _intact(store)
@@ -783,7 +784,7 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
         grant = admission['authority'].get('browser_launch')
         if not grant or grant['session_id'] != session_id:
             raise Denied('Lancement non autorisé')
-        if (body['manifest_sha256'], body['admission_id']) != (snapshot['manifest_sha256'], admission['admission_id']):
+        if (body.get('manifest_sha256', snapshot['manifest_sha256']), body['admission_id']) != (snapshot['manifest_sha256'], admission['admission_id']):
             raise ConflictError('Conditions périmées')
         # Existing intentions are a receipt, never permission to redispatch a worker
         if snapshot['attempts']:

@@ -319,7 +319,10 @@ class S4Regressions(unittest.TestCase):
         self.assertNotIn(attempt['output_piece_id'],raw)
         self.assertEqual(b'  fictional raw output\n',self.store.read_piece(attempt['output_piece_id']))
         with self.assertRaises(ValueError): prep.piece_bytes(self.store,self.session,'fixture',self.view['revision'],attempt['output_piece_id'])
-        self.assertEqual(self.candidate['contract']['package'],view['package'])
+        expected = deepcopy(self.candidate['contract']['package'])
+        for piece in expected['pieces']:
+            del piece['sha256']
+        self.assertEqual(expected,view['package'])
         self.assertIn('INCONNU',views.render(view,'csrf').decode())
 
     def test_foreign_actor_extra_authority_fields_and_executable_tools_refused(self):
