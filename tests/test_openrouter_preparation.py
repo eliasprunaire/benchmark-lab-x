@@ -182,6 +182,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
             self.assertEqual(list(assistant.PROVIDERS), sent['provider']['only'])
             self.assertEqual(sent['provider']['only'], sent['provider']['order'])
             self.assertTrue(sent['provider']['require_parameters'])
+            self.assertEqual('deny', sent['provider']['data_collection'])
             self.assertEqual('enabled', headers['X-OpenRouter-Metadata'])
         self.http.request.side_effect = at_request
         operation_id = self.submit()
@@ -198,6 +199,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertIsNone(observed['parameters'])
         self.assertEqual(ROUTE, observed['route'])
         self.assertEqual('OpenAI', observed['provider'])
+        self.assertEqual('deny', observed['data_collection'])
+        self.assertEqual('request parameter', observed['sources']['data_collection'])
         self.assertEqual('OpenRouter', operation['requested_configuration']['provider'])
         self.assertEqual('0.000202', observed['consumption']['amount'])
         self.assertFalse(observed['consumption']['invoice'])
@@ -871,6 +874,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
                     self.assertNotIn(key, sent)
             self.assertEqual(profile['system'], sent['messages'][0]['content'])
             self.assertEqual([route['tag'] for route in profile['routes']], sent['provider']['only'])
+            self.assertEqual('deny', sent['provider']['data_collection'])
             self.assertNotIn(str(SYNTHETIC_PROFILE), body.decode())
             self.assertNotIn('profile_sha256', body.decode())
             self.assertNotIn(KEY, body.decode())
@@ -1065,6 +1069,19 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual(['fixture/fp8'], sent['provider']['only'])
         self.assertEqual(profile['system'], sent['messages'][0]['content'])
 
+    def test_profile_sans_deny_est_refuse_avant_http(self):
+        document = json.loads(SYNTHETIC_PROFILE.read_text())
+        for value in (None, 'allow'):
+            broken = deepcopy(document)
+            if value is None:
+                del broken['parameters']['provider']['data_collection']
+            else:
+                broken['parameters']['provider']['data_collection'] = value
+            with self.subTest(value=value), \
+                    self.assertRaisesRegex(ValueError, 'DATA_COLLECTION_REQUIRED'):
+                assistant.frozen_profile(broken)
+        self.http.request.assert_not_called()
+
     def test_glm_profile_keeps_historical_system_parameters_and_http_bytes(self):
         historical = assistant.load_profile(assistant.HISTORICAL_ASSISTANT)
         self.assertEqual(historical['system'], assistant.HISTORICAL_PROFILE['system'])
@@ -1072,7 +1089,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
             'temperature': 1, 'top_p': 0.95, 'reasoning': {'effort': 'low'},
             'provider': {'only': ['modal/fp8', 'coreweave/fp8', 'novita/fp8'],
                          'order': ['modal/fp8', 'coreweave/fp8', 'novita/fp8'],
-                         'allow_fallbacks': True, 'require_parameters': True},
+                         'allow_fallbacks': True, 'require_parameters': True,
+                         'data_collection': 'deny'},
             'max_tokens': 16384, 'stream': False, 'response_format': {'type': 'json_object'},
         }, historical['parameters'])
         request = prep._closed_preparation_request(dict(
@@ -1083,7 +1101,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
                      'phase': 'preparation', 'state': 'INTENT_RECORDED'}
         wire = assistant.OpenRouterPreparation(KEY, historical).prepare(operation, request)
         sent = json.loads(wire)
-        self.assertEqual('3b593371788005829e4e83df9b783df6e7f4a807bc3a46da22f15a0bfd64ed1c',
+        self.assertEqual('acf79c827cf6be9cfcae9624256cf24b21b5d1f593d5bf336ff19b0e4a5b4796',
                          sha256(wire.encode()).hexdigest())
         self.assertEqual(historical['system'], sent['messages'][0]['content'])
         self.assertEqual(historical['parameters'], {key: sent[key] for key in historical['parameters']})

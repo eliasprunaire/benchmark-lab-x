@@ -1,6 +1,7 @@
 """Owner launch uses private admission, never authority supplied by HTTP"""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from copy import deepcopy
 from pathlib import Path
 import tempfile
 import unittest
@@ -274,6 +275,48 @@ class RequesterCampaignLaunch(unittest.TestCase):
                          self.body(), access_secret=SECRET,
                          access_transport=self.access)
             self.assertEqual(key, caught.exception.code)
+
+    def test_manifeste_sans_deny_est_refuse_a_l_admission(self):
+        manifest = deepcopy(c.inspect(self.store, self.campaign_id)['manifest'])
+        self.assertTrue(all(config['parameters']['provider']['data_collection'] == 'deny'
+                            for config in manifest['panel']))
+        for value in (None, 'allow'):
+            denied = deepcopy(manifest)
+            denied['campaign_id'] = 'sans-deny-' + str(value)
+            for config in denied['panel']:
+                if value is None:
+                    del config['parameters']['provider']['data_collection']
+                else:
+                    config['parameters']['provider']['data_collection'] = value
+            with self.subTest(value=value), \
+                    self.assertRaisesRegex(ValueError, 'DATA_COLLECTION_REQUIRED'):
+                c.create(self.store, denied)
+
+    def test_manifeste_historique_reste_lisible_mais_inadmissible(self):
+        manifest = deepcopy(c.inspect(self.store, self.campaign_id)['manifest'])
+        manifest['campaign_id'] = 'campagne-historique-sans-deny'
+        for config in manifest['panel']:
+            del config['parameters']['provider']['data_collection']
+        connection = self.store._connection
+        with storage._transaction(connection, write=True):
+            connection.execute('INSERT INTO s4_campaigns VALUES (?,?,?,?)', (
+                manifest['campaign_id'], manifest['contract_sha256'], c.encode(manifest),
+                q.digest(manifest)))
+            for cell in manifest['plan']:
+                connection.execute('INSERT INTO s4_cells VALUES (?,?,?,?)', (
+                    manifest['campaign_id'], cell['cell_id'], cell['case_id'],
+                    cell['configuration_id']))
+            connection.execute('INSERT INTO s4_status VALUES (?,NULL,NULL,NULL)',
+                               (manifest['campaign_id'],))
+            connection.execute('INSERT INTO s4_caps VALUES (?,?,?)',
+                               (manifest['campaign_id'], str(c.DEFAULT_CAP_USD), 'default'))
+        snapshot = c.inspect(self.store, manifest['campaign_id'])
+        self.assertEqual('PREPARED', snapshot['state'])
+        with self.assertRaisesRegex(ValueError, 'DATA_COLLECTION_REQUIRED'):
+            c.admit(self.store, manifest['campaign_id'], {}, {})
+        with self.assertRaisesRegex(ValueError, 'DATA_COLLECTION_REQUIRED'):
+            c.reserve(self.store, manifest['campaign_id'], manifest['plan'][0]['cell_id'],
+                      'tentative-historique-refusee')
 
     def test_ordre_des_etapes(self):
         connection = self.store._connection_checked()

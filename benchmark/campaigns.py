@@ -120,7 +120,8 @@ _CONFIGURATION = ('id', 'provider', 'model', 'revision', 'access', 'channel_id',
 _CONFIGURATION_OPTIONAL = ('effort_limit', 'estimate')
 _AUTHORITY = ('actor', 'authority_id', 'purpose', 'manifest_sha256', 'execution_authority',
               'candidate_authority', 'budget_authority', 'budget_id', 'allowed_cells', 'reserve_amounts')
-_OBSERVED = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters', 'effort')
+_OBSERVED = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters', 'effort',
+             'data_collection')
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
 BYTES_PER_TOKEN = 3
 DEFAULT_CAP_USD = Decimal('50.00')
@@ -201,7 +202,7 @@ def _entries(values, fields, label, optional=()):
     return seen
 
 
-def _manifest(value, contract):
+def _manifest(value, contract, *, require_data_collection=False):
     _fields(value, _MANIFEST + tuple(k for k in _MANIFEST_OPTIONAL if k in value), 'manifest')
     if value.get('funding', 'operator') not in ('operator', 'requester'):
         raise ValueError('Financement de campagne inconnu')
@@ -225,6 +226,7 @@ def _manifest(value, contract):
             raise ValueError('Cas sans paquet contractuel exact')
     panel = _entries(value['panel'], _CONFIGURATION, 'panel', _CONFIGURATION_OPTIONAL)
     from .pi_official import provider_for_endpoint
+    from .openrouter_preparation import ENDPOINT
     if any(provider_for_endpoint(config['channel_id']) for config in value['panel']) and 'official_fallback' not in value:
         raise ValueError('Secours officiel lié aux reçus OpenRouter requis')
     for config in value['panel']:
@@ -236,6 +238,10 @@ def _manifest(value, contract):
             _text(config[field], field)
         if config['access'] not in ('API', 'direct') or type(config['parameters']) is not dict:
             raise ValueError('Configuration demandée invalide')
+        if require_data_collection and config['channel_id'] == ENDPOINT:
+            provider = config['parameters'].get('provider')
+            if type(provider) is not dict or provider.get('data_collection') != 'deny':
+                raise ValueError('DATA_COLLECTION_REQUIRED')
         if config.get('effort_limit') not in (None, 'not_adjustable'):
             raise ValueError('Limite d’effort inconnue')
         if 'estimate' in config:
@@ -247,7 +253,6 @@ def _manifest(value, contract):
         if any(config[field] in (None, 'INCONNU') for field in required):
             raise ValueError('Identité requise inconnue')
     if value.get('funding') == 'requester':
-        from .openrouter_preparation import ENDPOINT
         if any(config['channel_id'] != ENDPOINT for config in value['panel']):
             raise ValueError('Financement demandeur réservé au canal OpenRouter')
     conditions = value['conditions']
@@ -325,7 +330,8 @@ def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
     parameters = {
         'max_tokens': DEFAULT_MAX_OUTPUT_TOKENS,
         'provider': {'only': [model['route']], 'order': [model['route']],
-                     'allow_fallbacks': False, 'require_parameters': True},
+                     'allow_fallbacks': False, 'require_parameters': True,
+                     'data_collection': 'deny'},
     }
     effort = 'off'
     effort_limit = None
@@ -481,7 +487,7 @@ def _create(store, connection, value):
     """Shared creation body; caller owns the enclosing transaction"""
     try:
         contract = _approved(store, connection, value['contract_sha256'], current=True)
-        _manifest(value, contract)
+        _manifest(value, contract, require_data_collection=True)
         from .model_catalog import require_current
         for configuration in value['panel']:
             require_current(configuration)
@@ -873,6 +879,8 @@ def admit(store, campaign_id, authority, evidence, *, owner_launch=False, estima
 def _admit(store, connection, campaign_id, authority, evidence, *, owner_launch=False, estimate=None):
     """Shared admission body; caller owns the enclosing transaction"""
     snapshot = _inspect(store, connection, campaign_id)
+    contract = _approved(store, connection, snapshot['manifest']['contract_sha256'], current=True)
+    _manifest(snapshot['manifest'], contract, require_data_collection=True)
     if owner_launch:
         session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
                                         (snapshot['task']['dossier_id'],)).fetchone()[0]
@@ -916,6 +924,9 @@ def reserve(store, campaign_id, cell_id, attempt_id):
 
 def _reserve(store, connection, snapshot, cell_id, attempt_id):
     campaign_id = snapshot['manifest']['campaign_id']
+    manifest = snapshot['manifest']
+    contract = _approved(store, connection, manifest['contract_sha256'])
+    _manifest(manifest, contract, require_data_collection=True)
     admission = snapshot['admission']
     if admission is None or cell_id not in admission['authority']['allowed_cells']:
         raise ValueError('Admission explicite de cette cellule requise')
@@ -923,8 +934,6 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
     cell = next(c for c in snapshot['cells'] if c['cell_id'] == cell_id)
     if cell['state'] != 'NOT_STARTED':
         raise ConflictError('Tentative déjà enregistrée pour cette cellule')
-    manifest = snapshot['manifest']
-    contract = _approved(store, connection, manifest['contract_sha256'])
     request = _request(store, manifest, snapshot['manifest_sha256'], contract, cell)
     engine = _engine()
     digest = q.digest(request)

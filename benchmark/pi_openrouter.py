@@ -152,7 +152,10 @@ class PiOpenRouter:
         if config['effort'] != requested_effort:
             raise ValueError('Effort demandé divergent des paramètres émis')
         provider = parameters['provider']
-        storage._fields(provider, ('only', 'order', 'allow_fallbacks', 'require_parameters'), 'OpenRouter routing')
+        if type(provider) is not dict or provider.get('data_collection') != 'deny':
+            raise ValueError('DATA_COLLECTION_REQUIRED')
+        storage._fields(provider, ('only', 'order', 'allow_fallbacks', 'require_parameters',
+                                   'data_collection'), 'OpenRouter routing')
         q._texts(provider['only'], 'providers', required=True, unique=True)
         if (provider['order'] != provider['only'] or type(provider['allow_fallbacks']) is not bool
                 or provider['require_parameters'] is not True):
@@ -257,9 +260,11 @@ class PiOpenRouter:
         model = data.get('model') if type(data.get('model')) is str else None
         observed = dict(provider=endpoint.get('provider'), model=model, revision=model,
             access='API', channel_id=http.ENDPOINT, route=endpoint.get('tag'), parameters=None, effort=None,
+            data_collection=payload['provider']['data_collection'],
             sources=dict(provider='OpenRouter selected endpoint' if endpoint.get('provider') else None,
                 model='HTTP response /model' if model else None, revision='HTTP response /model; model slug, not hidden weight revision' if model else None,
-                access='Executor HTTPS request', channel_id='Executor HTTPS endpoint', route='OpenRouter selected endpoint tag' if endpoint.get('tag') else None),
+                access='Executor HTTPS request', channel_id='Executor HTTPS endpoint', route='OpenRouter selected endpoint tag' if endpoint.get('tag') else None,
+                data_collection='request parameter'),
             routing=route, request=payload,
             outgoing=self._wire_proof,
             http=dict(endpoint=http.ENDPOINT, status=status, response_headers=headers, started_at=started,

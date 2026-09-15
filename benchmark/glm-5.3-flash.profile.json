@@ -20,7 +20,8 @@
         "novita/fp8"
       ],
       "allow_fallbacks": true,
-      "require_parameters": true
+      "require_parameters": true,
+      "data_collection": "deny"
     },
     "max_tokens": 16384,
     "stream": false,

@@ -40,7 +40,7 @@ OPTIONAL_PROFILE_FIELDS = ('reserve_input_tokens',)
 PARAMETER_FIELDS = ('temperature', 'top_p', 'reasoning', 'provider', 'max_tokens', 'stream',
                     'response_format')
 REQUIRED_PARAMETERS = ('provider', 'max_tokens', 'stream')
-PROVIDER_FIELDS = ('only', 'order', 'allow_fallbacks', 'require_parameters')
+PROVIDER_FIELDS = ('only', 'order', 'allow_fallbacks', 'require_parameters', 'data_collection')
 ROUTE_FIELDS = ('tag', 'provider_name')
 CAPABILITY_PARAMETERS = ('temperature', 'top_p', 'reasoning', 'max_tokens', 'response_format')
 MODEL_ID = r'[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+'
@@ -111,7 +111,9 @@ def _validated_profile(document):
             or not set(REQUIRED_PARAMETERS) <= set(parameters)):
         raise ValueError('Profil de préparation invalide')
     provider = parameters['provider']
-    if type(provider) is not dict or set(provider) != set(PROVIDER_FIELDS):
+    if type(provider) is not dict or provider.get('data_collection') != 'deny':
+        raise ValueError('DATA_COLLECTION_REQUIRED')
+    if set(provider) != set(PROVIDER_FIELDS):
         raise ValueError('Profil de préparation invalide')
     if parameters['stream'] is not False or provider['require_parameters'] is not True:
         raise ValueError('Profil de préparation invalide')
@@ -155,7 +157,8 @@ def _validated_profile(document):
         raise ValueError('Profil de préparation invalide')
     copied_parameters['provider'] = dict(
         only=list(tags), order=list(tags),
-        allow_fallbacks=provider['allow_fallbacks'], require_parameters=True)
+        allow_fallbacks=provider['allow_fallbacks'], require_parameters=True,
+        data_collection='deny')
     copied_parameters['max_tokens'] = _bounded_int(parameters['max_tokens'], 1, 128000)
     copied_parameters['stream'] = False
     if 'response_format' in parameters:
@@ -470,15 +473,18 @@ class OpenRouterPreparation:
         selected = route.get('endpoints', {}).get('available', []) if type(route) is dict and type(route.get('endpoints')) is dict else []
         found = [row.get('provider') for row in selected if type(row) is dict and row.get('selected') is True] if type(selected) is list else []
         provider = found[0] if len(found) == 1 and type(found[0]) is str and found[0] in authorized.values() else None
+        sent_provider = json.loads(wire).get('provider')
         observed = {'outgoing': outgoing.wire_proof(wire, json.loads(wire)['messages']), 'model': model if type(model) is str else None, 'revision': None,
                     'generation_id': (document.get('id') if type(document) is dict else None) or safe_headers.get('X-Generation-Id'),
                     'provider': provider, 'route': route if type(route) is dict else None,
                     'routing_limit': ('Reported internal attempt exceeds the number of permitted providers; no internal retry cap is documented'
                                       if type(route) is dict and type(route.get('attempt')) is int and route['attempt'] > len(authorized) else None),
                     'parameters': None, 'reasoning_effort': None,
+                    'data_collection': (sent_provider.get('data_collection') if type(sent_provider) is dict else None),
                     'sources': {'model': 'HTTP response JSON /model' if type(model) is str else None,
                                 'route': 'HTTP response JSON /openrouter_metadata' if type(route) is dict else None,
-                                'provider': 'HTTP response JSON /openrouter_metadata/endpoints/available selected' if provider else None},
+                                'provider': 'HTTP response JSON /openrouter_metadata/endpoints/available selected' if provider else None,
+                                'data_collection': 'request parameter'},
                     'http': {'endpoint': ENDPOINT, 'status': status, 'response_headers': safe_headers, 'started_at': started,
                              'received_at': datetime.now(timezone.utc).isoformat(),
                              'elapsed_seconds': time.monotonic() - clock, 'complete': complete,

@@ -8,7 +8,8 @@
       "only": ["deepseek"],
       "order": ["deepseek"],
       "allow_fallbacks": false,
-      "require_parameters": true
+      "require_parameters": true,
+      "data_collection": "deny"
     },
     "max_tokens": 16384,
     "stream": false,

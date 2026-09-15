@@ -265,7 +265,7 @@ class PiTransportTests(unittest.TestCase):
             config.update(provider='Fictional provider', model='fixture/model-fixed', revision='fixture/model-fixed',
                 access='API', channel_id=pi.http.ENDPOINT, route='fixture/route', effort='off',
                 parameters=dict(max_tokens=64, temperature=0, provider=dict(only=['fixture/route'], order=['fixture/route'],
-                    allow_fallbacks=False, require_parameters=True)))
+                    allow_fallbacks=False, require_parameters=True, data_collection='deny')))
         value['panel'][1].update(model='fixture/model-other', revision='fixture/model-other')
         value['conditions'].update(pi={k:self.identity[k] for k in ('package','version','sha256')} | dict(status='configured', proof='Real local module fingerprint'),
             context_sha256=sha256(pi.system_context('Contexte commun fictif').encode()).hexdigest(),
@@ -284,6 +284,7 @@ class PiTransportTests(unittest.TestCase):
             usage=dict(cost='0.00001'))).encode()
 
     def http(self, key, wire, timeout):
+        self.octets_requete = wire.encode()
         self.wire = json.loads(wire)
         return 200, {}, self.raw, True, '2026-09-10T10:00:00+00:00', time.monotonic()
 
@@ -300,6 +301,10 @@ class PiTransportTests(unittest.TestCase):
         self.assertEqual('  Sortie fictive inchangée\n'.encode(), self.store.read_piece(attempt['output_piece_id']))
         observed = attempt['operation']['receipt']['observed_configuration']
         self.assertTrue(observed['pi']['terminal'])
+        self.assertIn(b'"data_collection":"deny"', self.octets_requete)
+        self.assertEqual('deny', self.wire['provider']['data_collection'])
+        self.assertEqual('deny', observed['data_collection'])
+        self.assertEqual('request parameter', observed['sources']['data_collection'])
         self.assertEqual(self.raw, b64decode(observed['http']['body_base64']))
 
         self.assertNotIn('reference', self.wire['messages'][1]['content'])

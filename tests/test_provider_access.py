@@ -263,7 +263,10 @@ class ProviderAccessTests(unittest.TestCase):
         self.store.create_budget('local-comparison', '40', 'TEST')
         value = dict(manifest(candidate), funding='requester')
         for configuration in value['panel']:
-            configuration.update(access='API', channel_id=ENDPOINT, route=ENDPOINT)
+            configuration.update(access='API', channel_id=ENDPOINT, route=ENDPOINT,
+                                 parameters={'provider': dict(only=['fixture'], order=['fixture'],
+                                                              allow_fallbacks=False, require_parameters=True,
+                                                              data_collection='deny')})
         campaigns.create(self.store, value)
         snapshot = campaigns.inspect(self.store, 'local-comparison')
         admission = campaigns.admit(self.store, 'local-comparison', *inputs(snapshot), owner_launch=True)
