@@ -1,0 +1,873 @@
+{
+  "data": [
+    {
+      "id": "openai/gpt-5.6-sol",
+      "name": "GPT 5.6 Sol",
+      "created": 1783590850,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {
+        "prompt": "0.000002",
+        "completion": "0.00001"
+      },
+      "supported_parameters": [
+        "reasoning_effort"
+      ],
+      "reasoning": {
+        "supported_efforts": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "top_provider": {
+        "max_completion_tokens": 128000
+      }
+    },
+    {
+      "id": "openai/gpt-5.6-sol-0902",
+      "name": "GPT 5.6 Sol 0902",
+      "created": 1788307200,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {
+        "prompt": "0.000003",
+        "completion": "0.000012"
+      },
+      "top_provider": {
+        "max_completion_tokens": 64000
+      }
+    },
+    {
+      "id": "openai/gpt-5.5-sol",
+      "name": "GPT 5.5 Sol",
+      "created": 1775000000,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {
+        "prompt": "0.000001",
+        "completion": "0.000005"
+      },
+      "top_provider": {
+        "max_completion_tokens": 32000
+      }
+    },
+    {
+      "id": "openai/gpt-5.4-sol",
+      "name": "GPT 5.4 Sol",
+      "created": 1769000000,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {
+        "prompt": "0.000001",
+        "completion": "0.000004"
+      },
+      "top_provider": {
+        "max_completion_tokens": 16000
+      }
+    },
+    {
+      "id": "google/gemini-3.0-flash:free",
+      "name": "Gemini 3.0 Flash Free",
+      "created": 1780000000,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {
+        "prompt": "0",
+        "completion": "0"
+      },
+      "top_provider": {
+        "max_completion_tokens": 8000
+      }
+    },
+    {
+      "id": "google/gemini-3.0-flash:batch",
+      "name": "Gemini 3.0 Flash Batch",
+      "created": 1780000001,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {
+        "prompt": "0",
+        "completion": "0"
+      },
+      "top_provider": {
+        "max_completion_tokens": 8000
+      }
+    },
+    {
+      "id": "x-ai/grok-4-preview",
+      "name": "Grok 4 Preview",
+      "created": 1781000000,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 12000
+      }
+    },
+    {
+      "id": "anthropic/claude-old-2",
+      "name": "Claude Old 2",
+      "created": 1700000000,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 4000
+      }
+    },
+    {
+      "id": "xiaomi/mimo-v2.5",
+      "name": "MiMo V2.5",
+      "created": 1782000000,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 4000
+      }
+    },
+    {
+      "id": "openai/image-2",
+      "name": "Image 2",
+      "created": 1782000000,
+      "architecture": {
+        "output_modalities": [
+          "text",
+          "image"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 4000
+      }
+    },
+    {
+      "id": "other/model-0",
+      "name": "Other 0",
+      "created": 1780000000,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-1",
+      "name": "Other 1",
+      "created": 1780000001,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-2",
+      "name": "Other 2",
+      "created": 1780000002,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-3",
+      "name": "Other 3",
+      "created": 1780000003,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-4",
+      "name": "Other 4",
+      "created": 1780000004,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-5",
+      "name": "Other 5",
+      "created": 1780000005,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-6",
+      "name": "Other 6",
+      "created": 1780000006,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-7",
+      "name": "Other 7",
+      "created": 1780000007,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-8",
+      "name": "Other 8",
+      "created": 1780000008,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-9",
+      "name": "Other 9",
+      "created": 1780000009,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-10",
+      "name": "Other 10",
+      "created": 1780000010,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-11",
+      "name": "Other 11",
+      "created": 1780000011,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-12",
+      "name": "Other 12",
+      "created": 1780000012,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-13",
+      "name": "Other 13",
+      "created": 1780000013,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-14",
+      "name": "Other 14",
+      "created": 1780000014,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-15",
+      "name": "Other 15",
+      "created": 1780000015,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-16",
+      "name": "Other 16",
+      "created": 1780000016,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-17",
+      "name": "Other 17",
+      "created": 1780000017,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-18",
+      "name": "Other 18",
+      "created": 1780000018,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-19",
+      "name": "Other 19",
+      "created": 1780000019,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-20",
+      "name": "Other 20",
+      "created": 1780000020,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-21",
+      "name": "Other 21",
+      "created": 1780000021,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-22",
+      "name": "Other 22",
+      "created": 1780000022,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-23",
+      "name": "Other 23",
+      "created": 1780000023,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-24",
+      "name": "Other 24",
+      "created": 1780000024,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-25",
+      "name": "Other 25",
+      "created": 1780000025,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-26",
+      "name": "Other 26",
+      "created": 1780000026,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-27",
+      "name": "Other 27",
+      "created": 1780000027,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-28",
+      "name": "Other 28",
+      "created": 1780000028,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-29",
+      "name": "Other 29",
+      "created": 1780000029,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-30",
+      "name": "Other 30",
+      "created": 1780000030,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-31",
+      "name": "Other 31",
+      "created": 1780000031,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-32",
+      "name": "Other 32",
+      "created": 1780000032,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-33",
+      "name": "Other 33",
+      "created": 1780000033,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-34",
+      "name": "Other 34",
+      "created": 1780000034,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-35",
+      "name": "Other 35",
+      "created": 1780000035,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-36",
+      "name": "Other 36",
+      "created": 1780000036,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-37",
+      "name": "Other 37",
+      "created": 1780000037,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-38",
+      "name": "Other 38",
+      "created": 1780000038,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-39",
+      "name": "Other 39",
+      "created": 1780000039,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-40",
+      "name": "Other 40",
+      "created": 1780000040,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-41",
+      "name": "Other 41",
+      "created": 1780000041,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-42",
+      "name": "Other 42",
+      "created": 1780000042,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-43",
+      "name": "Other 43",
+      "created": 1780000043,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-44",
+      "name": "Other 44",
+      "created": 1780000044,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-45",
+      "name": "Other 45",
+      "created": 1780000045,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-46",
+      "name": "Other 46",
+      "created": 1780000046,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-47",
+      "name": "Other 47",
+      "created": 1780000047,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-48",
+      "name": "Other 48",
+      "created": 1780000048,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    },
+    {
+      "id": "other/model-49",
+      "name": "Other 49",
+      "created": 1780000049,
+      "architecture": {
+        "output_modalities": [
+          "text"
+        ]
+      },
+      "pricing": {},
+      "top_provider": {
+        "max_completion_tokens": 1000
+      }
+    }
+  ]
+}
