@@ -44,21 +44,29 @@ def price_row(pricing, quantities):
         pricing = {}
     if type(pricing) is not dict:
         raise ValueError('Tarifs invalides')
-    rates = {key: {'amount': None if pricing.get(key) is None else str(_money(pricing[key])), 'unit': unit}
+    effective = {key: pricing.get(key) for key in UNITS}
+    for override in pricing.get('overrides', []) if type(pricing.get('overrides')) is list else []:
+        minimum = override.get('min_prompt_tokens', 0) if type(override) is dict else None
+        if (type(minimum) is int and not isinstance(minimum, bool) and minimum >= 0
+                and quantities.get('prompt', 0) >= minimum):
+            for key in UNITS.keys() & override.keys():
+                if override[key] is not None and (effective[key] is None
+                        or _money(override[key]) > _money(effective[key])):
+                    effective[key] = override[key]
+    rates = {key: {'amount': None if effective[key] is None else str(_money(effective[key])), 'unit': unit}
              for key, unit in UNITS.items()}
     conditional = bool(pricing.get('overrides')) or bool(pricing.keys() - (UNITS.keys() | {'overrides', 'discount'}))
     components = {}
     for key, count in quantities.items():
         rate = rates[key]['amount']
         amount = None
-        if not conditional:
-            if count == 0:
-                amount = '0'
-            elif rate is not None:
-                value = _money(rate)
-                with localcontext() as context:
-                    context.prec = len(value.as_tuple().digits) + len(str(count)) + 1
-                    amount = str(value * count)
+        if count == 0:
+            amount = '0'
+        elif rate is not None:
+            value = _money(rate)
+            with localcontext() as context:
+                context.prec = len(value.as_tuple().digits) + len(str(count)) + 1
+                amount = str(value * count)
         components[key] = amount
     subtotal = None
     if all(value is not None for value in components.values()):
@@ -82,7 +90,7 @@ def indication(estimate, usage):
         pricing = estimate['model_summary']['pricing_raw']
         for key in quantities:
             _money(pricing[key])
-        forecast = price_row({key: pricing[key] for key in quantities}, quantities)['forecast']
+        forecast = price_row(pricing, quantities)['forecast']
         return {**forecast, 'quantities': quantities, 'model_id': estimate['model_id'],
                 'source': estimate['sources']['model']}
     except (ValueError, TypeError, KeyError):

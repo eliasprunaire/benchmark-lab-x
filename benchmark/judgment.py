@@ -113,7 +113,8 @@ def _bound(store, connection, operation, *, latest=False):
     profile = dict(profile_id=config['profile_id'], model=config['model'], revision=config['revision'],
         parameters=config['parameters'], routes=config['routes'], system=wire['messages'][0]['content'],
         required_capabilities=[k for k in profiles.CAPABILITY_PARAMETERS if k in config['parameters']],
-        **{k: config[k] for k in ('max_request_bytes', 'max_response_bytes', 'timeout_seconds')})
+        **{k: config[k] for k in ('max_request_bytes', 'max_response_bytes', 'timeout_seconds')},
+        **({k: config[k] for k in profiles.OPTIONAL_PROFILE_FIELDS if k in config}))
     if profiles.configuration(config['reservation_estimate'], profile) != config:
         raise IntegrityError('Configuration de jugement divergente')
     if (set(wire) != {'model', 'messages', *config['parameters']}

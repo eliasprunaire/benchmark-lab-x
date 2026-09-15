@@ -15,6 +15,7 @@ from . import openrouter_prices, outgoing
 
 
 ASSISTANT = 'preparation'
+FALLBACK_ASSISTANT = 'preparation-fallback'
 HISTORICAL_ASSISTANT = 'glm-5.3-flash'
 HOST = 'openrouter.ai'
 PATH = '/api/v1/chat/completions'
@@ -27,6 +28,7 @@ USAGE_METHOD = {
 }
 HISTORICAL_PROFILE_NAME = 'glm-5.3-flash.profile.json'
 DEFAULT_PROFILE_NAME = 'preparation.profile.json'
+FALLBACK_PROFILE_NAME = 'preparation-fallback.profile.json'
 MAX_PROFILE_BYTES = 65536
 MAX_REQUEST_BYTES = 65536
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -34,6 +36,7 @@ TIMEOUT_SECONDS = 120
 PROFILE_FIELDS = ('profile_id', 'model', 'revision', 'parameters', 'routes',
                   'required_capabilities', 'system', 'max_request_bytes', 'max_response_bytes',
                   'timeout_seconds')
+OPTIONAL_PROFILE_FIELDS = ('reserve_input_tokens',)
 PARAMETER_FIELDS = ('temperature', 'top_p', 'reasoning', 'provider', 'max_tokens', 'stream',
                     'response_format')
 REQUIRED_PARAMETERS = ('provider', 'max_tokens', 'stream')
@@ -45,6 +48,9 @@ PROFILE_ID = r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}'
 ROUTE_TAG = r'[A-Za-z0-9][A-Za-z0-9._/-]{0,127}'
 THREE_ROUTE_TEXT = 'Native OpenRouter fallback within the three explicit endpoint slugs, in configured order'
 ROUTE_TEXT = 'Native OpenRouter fallback within the explicit endpoint slugs, in configured order'
+SINGLE_ROUTE_TEXT = 'Endpoint OpenRouter explicite unique ; aucun endpoint de secours distinct'
+SINGLE_ROUTE_NO_FALLBACK_TEXT = 'Endpoint OpenRouter explicite unique ; secours natif désactivé'
+NO_FALLBACK_ROUTE_TEXT = 'Endpoints OpenRouter explicites ; secours natif désactivé'
 
 
 def _bounded_int(value, minimum, maximum):
@@ -94,8 +100,9 @@ def _model_identities(frozen):
 
 
 def _validated_profile(document):
-    if type(document) is not dict or set(document) != set(PROFILE_FIELDS):
-        raise ValueError('Champ de profil inconnu' if type(document) is dict and set(document) - set(PROFILE_FIELDS)
+    allowed = set(PROFILE_FIELDS) | set(OPTIONAL_PROFILE_FIELDS)
+    if type(document) is not dict or not set(PROFILE_FIELDS) <= set(document) or set(document) - allowed:
+        raise ValueError('Champ de profil inconnu' if type(document) is dict and set(document) - allowed
                          else 'Profil de préparation invalide')
     model = _plain_text(document['model'], MODEL_ID, 256)
     revision = _plain_text(document['revision'], MODEL_ID, 256)
@@ -172,6 +179,10 @@ def _validated_profile(document):
         max_request_bytes=_bounded_int(document['max_request_bytes'], 1, MAX_REQUEST_BYTES),
         max_response_bytes=_bounded_int(document['max_response_bytes'], 1, MAX_RESPONSE_BYTES),
         timeout_seconds=_bounded_int(document['timeout_seconds'], 1, TIMEOUT_SECONDS))
+    if 'reserve_input_tokens' in document:
+        if type(document['reserve_input_tokens']) is not int or isinstance(document['reserve_input_tokens'], bool) or document['reserve_input_tokens'] <= 0:
+            raise ValueError('Profil de préparation invalide')
+        value['reserve_input_tokens'] = document['reserve_input_tokens']
     encode(value)
     return json.loads(encode(value), object_pairs_hook=_unique_object)
 
@@ -192,6 +203,8 @@ def load_profile(source):
         return deepcopy(DEFAULT_PROFILE)
     if source == HISTORICAL_ASSISTANT:
         return deepcopy(HISTORICAL_PROFILE)
+    if source == FALLBACK_ASSISTANT:
+        return deepcopy(FALLBACK_PROFILE)
     if type(source) is not str or not source:
         raise ValueError('Profil de préparation invalide')
     return _load_profile_file(source)
@@ -217,6 +230,7 @@ def providers(profile):
 
 HISTORICAL_PROFILE = _load_profile_file(Path(__file__).with_name(HISTORICAL_PROFILE_NAME))
 DEFAULT_PROFILE = _load_profile_file(Path(__file__).with_name(DEFAULT_PROFILE_NAME))
+FALLBACK_PROFILE = _load_profile_file(Path(__file__).with_name(FALLBACK_PROFILE_NAME))
 MODEL = DEFAULT_PROFILE['model']
 PROVIDERS = providers(DEFAULT_PROFILE)
 PARAMETERS = deepcopy(DEFAULT_PROFILE['parameters'])
@@ -232,10 +246,13 @@ def reservation(estimate, profile=None):
     _accepted_revision(frozen, estimate)
     assumptions = estimate['assumptions']
     context = estimate['context_length']
-    if (type(context) is not int or context <= 0 or assumptions['input_tokens'] < context
+    reserve_input = frozen.get('reserve_input_tokens')
+    if (type(context) is not int or context <= 0
+            or (reserve_input is None and assumptions['input_tokens'] < context)
+            or (reserve_input is not None and (reserve_input > context or assumptions['input_tokens'] != reserve_input))
             or assumptions['cached_input_tokens'] != 0
             or assumptions['output_tokens'] != frozen['parameters']['max_tokens']):
-        raise ValueError('Prévision sur contexte complet, sans économie de cache, et sortie configurée requise')
+        raise ValueError('Prévision sur base de réserve, sans économie de cache, et sortie configurée requise')
     for key, path in (('model', '/api/v1/model/'), ('endpoints', '/api/v1/models/')):
         source = estimate['sources'][key]
         expected = 'https://' + HOST + path + frozen['model'] + ('/endpoints' if key == 'endpoints' else '')
@@ -263,8 +280,13 @@ def reservation(estimate, profile=None):
 def configuration(estimate=None, profile=None):
     frozen = frozen_profile(profile)
     tags = [route['tag'] for route in frozen['routes']]
+    allow_fallbacks = frozen['parameters']['provider']['allow_fallbacks']
+    route = (SINGLE_ROUTE_NO_FALLBACK_TEXT if len(tags) == 1 and not allow_fallbacks else
+             SINGLE_ROUTE_TEXT if len(tags) == 1 else
+             NO_FALLBACK_ROUTE_TEXT if not allow_fallbacks else
+             THREE_ROUTE_TEXT if tags == ['modal/fp8', 'coreweave/fp8', 'novita/fp8'] else ROUTE_TEXT)
     value = {'provider': 'OpenRouter', 'model': frozen['model'], 'access': 'API', 'endpoint': ENDPOINT,
-             'route': THREE_ROUTE_TEXT if tags == ['modal/fp8', 'coreweave/fp8', 'novita/fp8'] else ROUTE_TEXT,
+             'route': route,
              'reserve_basis': 'Indicative model token reference; explicit admission reserve remains counted, no invoice cap',
              'outgoing_format': outgoing.FORMAT, 'parameters': deepcopy(frozen['parameters']),
              'prompt_sha256': sha256(frozen['system'].encode()).hexdigest(),
@@ -274,6 +296,8 @@ def configuration(estimate=None, profile=None):
              'profile_id': frozen['profile_id'], 'profile_sha256': profile_digest(frozen),
              'revision': frozen['revision'], 'model_identities': _model_identities(frozen),
              'routes': deepcopy(frozen['routes'])}
+    if 'reserve_input_tokens' in frozen:
+        value['reserve_input_tokens'] = frozen['reserve_input_tokens']
     if estimate is not None:
         value['reservation_estimate'] = deepcopy(estimate)
         value['reserve_usd'] = reservation(estimate, frozen)
