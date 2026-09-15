@@ -43,7 +43,7 @@ Demander une autorisation explicite avant toute opération Git destructive, fusi
 
 ## GitHub
 
-GitHub Issues porte les tâches, dépendances, décisions et preuves. Le champ `Status` du [Project #5](https://github.com/users/ayoahha/projects/5) porte l'état de travail. Aucun backlog local ne le duplique.
+GitHub Issues porte les tâches, dépendances, décisions et preuves. Le champ `Status` du [Project #5](https://github.com/users/eliasprunaire/projects/5) porte l'état de travail. Aucun backlog local ne le duplique.
 
 Créer ou redécouper les Issues seulement après décision explicite d’Ayo. Vérifier le parent courant avant toute création ; ne pas rattacher une nouvelle livraison à une initiative historique par défaut. Ne pas redécouper les anciennes cartes pour fabriquer le nouveau backlog. Utiliser les relations natives `Parent issue` et `Sub-issues progress` pour Initiative, Epic et Story ; réserver « graphe » à l’exécution agentique. Le nombre d’Epics et de Stories découle des résultats décidés.
 

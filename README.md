@@ -66,4 +66,4 @@ Remplir cette carte ne l’enregistre pas automatiquement dans un catalogue et n
 - [Glossaire](CONTEXT.md) : vocabulaire partagé
 - [Instructions agents](AGENTS.md) : travail et validation dans le dépôt
 
-Les [Issues GitHub](https://github.com/ayoahha/benchmark-lab-x/issues) et le [Project](https://github.com/users/ayoahha/projects/5) portent le travail de livraison et son avancement.
+Les [Issues GitHub](https://github.com/eliasprunaire/benchmark-lab-x/issues) et le [Project](https://github.com/users/eliasprunaire/projects/5) portent le travail de livraison et son avancement.
