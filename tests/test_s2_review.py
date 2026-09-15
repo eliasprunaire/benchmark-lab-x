@@ -1,10 +1,13 @@
 """Comparaison à la lecture des paquets de préparation conservés"""
 from contextlib import closing
+from hashlib import sha256
+import json
 from pathlib import Path
 import tempfile
 import unittest
 
 from benchmark import preparation, storage
+from benchmark_web import views
 
 
 def response(operation, instruction, pieces):
@@ -29,7 +32,7 @@ class S2ReviewTest(unittest.TestCase):
                 store.create_budget('review', '10', 'TEST')
                 preparation.admit(store, {'authority_id': 'LOCAL_FICTIONAL_REVIEW', 'budget_id': 'review',
                     'reserve_amount': '1', 'requested_configuration': {'model': 'fictional'}})
-                session, _, _ = preparation.session(store, None, create=True)
+                session, csrf, _ = preparation.session(store, None, create=True)
                 operation, _ = preparation.submit(store, session, 'dossier',
                     {'action_id': 'create', 'request': 'Organiser les actions de cet atelier inventé'}, 'test', True)
                 preparation.execute(data, operation, lambda op, request: response(op, 'Organiser les notes',
@@ -37,6 +40,15 @@ class S2ReviewTest(unittest.TestCase):
                      {'name': 'obsolète.txt', 'content': 'Action : retirer'}]))
                 first = preparation.view(store, session, 'dossier')
                 self.assertEqual([], first['changes'])
+                duplicate = json.loads(store._connection.execute(
+                    'SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
+                    ('dossier', first['revision'])).fetchone()[0])
+                duplicate['pieces'][1]['name'] = duplicate['pieces'][0]['name']
+                digest = sha256(storage._strict_json(duplicate).encode()).hexdigest()
+                with self.assertRaisesRegex(storage.IntegrityError, 'Nom de pièce répété'):
+                    preparation.package_check(store, 'dossier', first['revision'], duplicate, digest)
+                removed = next(piece for piece in first['package']['pieces'] if piece['name'] == 'obsolète.txt')
+                removed_path = data / store.get_piece(removed['id'])['relative_path']
 
                 operation, _ = preparation.submit(store, session, 'dossier', {'action_id': 'correct',
                     'revision': first['revision'], 'kind': 'correct', 'message': 'Ajouter le compte rendu'},
@@ -44,6 +56,7 @@ class S2ReviewTest(unittest.TestCase):
                 preparation.execute(data, operation, lambda op, request: response(op, 'Organiser les notes et le compte rendu',
                     [{'name': 'notes.txt', 'content': 'Action : relire et valider'},
                      {'name': 'compte-rendu.txt', 'content': 'Décision : valider'}]))
+                removed_path.unlink()
 
                 before = store._connection.total_changes
                 current = preparation.view(store, session, 'dossier')
@@ -51,6 +64,10 @@ class S2ReviewTest(unittest.TestCase):
                 self.assertEqual(['instruction', 'pieces'], current['changes'])
                 self.assertEqual({'added': ['compte-rendu.txt'], 'removed': ['obsolète.txt'],
                                   'modified': ['notes.txt']}, current['piece_changes'])
+                page = views.render(current, csrf).decode()
+                for expected in ('Pièces ajoutées', 'compte-rendu.txt', 'Pièces retirées', 'obsolète.txt',
+                                 'Pièces modifiées', 'notes.txt'):
+                    self.assertIn(expected, page)
                 self.assertEqual('[]', store._connection.execute(
                     'SELECT changes_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
                     ('dossier', current['revision'])).fetchone()[0])
