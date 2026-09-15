@@ -64,6 +64,16 @@ class ProviderAccessTests(unittest.TestCase):
         return provider_access.callback(self.store, self.session, SECRET, 'authorization-code',
                                         self.transport)
 
+    def test_base_anterieure_a_la_vague_2_refusee_explicitement(self):
+        self.store.close()
+        with closing(storage.sqlite3.connect(self.data / 'metadata.sqlite3')) as connection:
+            connection.execute('PRAGMA foreign_keys=OFF')
+            connection.execute('DROP TABLE s2_qualifications')
+            connection.execute('ALTER TABLE s2_provider_access DROP COLUMN checked_at')
+        with self.assertRaisesRegex(
+                storage.SchemaError, '^Base antérieure à la vague 2 : à recréer$'):
+            storage.Store(self.data)
+
     def test_pkce_chiffrement_et_vue_expurgee(self):
         self.assertEqual('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', provider_access.challenge(
             'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'))

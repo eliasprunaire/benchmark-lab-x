@@ -24,6 +24,28 @@ def response(operation, instruction, pieces):
 
 
 class S2ReviewTest(unittest.TestCase):
+    def test_revision_precedente_aux_noms_ambigus_est_refusee(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data = Path(temporary).resolve() / 'private'
+            storage.initialize(data)
+            storage.initialize_preparation(data)
+            with closing(storage.Store(data)) as store:
+                previous = {'instruction': 'Classer', 'deliverables': ['Liste'], 'criteria': [],
+                            'acceptable_ambiguities': [], 'pieces': [
+                                {'name': 'notes.txt', 'sha256': 'a' * 64},
+                                {'name': 'notes.txt', 'sha256': 'b' * 64}]}
+                encoded = storage._strict_json(previous)
+                store._connection.execute(
+                    'INSERT INTO dossier_revisions VALUES (?, ?, ?)', ('ambigu', 1, '{}'))
+                store._connection.execute(
+                    'INSERT INTO s2_revisions VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    ('ambigu', 1, 'preview', '', encoded, sha256(encoded.encode()).hexdigest(), '[]', '[]'))
+                current = {**previous, 'pieces': [{'name': 'notes.txt', 'sha256': 'c' * 64}]}
+                with self.assertRaisesRegex(
+                        storage.IntegrityError,
+                        '^Noms de pièces ambigus dans la révision précédente$'):
+                    preparation._package_changes(store, store._connection, 'ambigu', 2, current)
+
     def test_publish_stores_closed_criteria(self):
         with tempfile.TemporaryDirectory() as temporary:
             data = Path(temporary).resolve() / 'private'

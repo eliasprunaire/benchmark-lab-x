@@ -17,13 +17,50 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from benchmark.service import executor_health, preparation_request
+from benchmark.service import executor_health, preparation_request, serve_executor
 from benchmark.storage import Store, initialize
 from benchmark_web.server import _source_fingerprint, serve_web
 from tests.test_storage import PAYLOAD, operation
 
 
 class ServiceProcessesTests(unittest.TestCase):
+    def test_deux_identites_inconnues_ne_sont_pas_pretes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            data, public, sock = root / 'private', root / 'public', root / 'executor.sock'
+            public.mkdir()
+            initialize(data)
+            with socket.socket() as probe:
+                probe.bind(('127.0.0.1', 0))
+                port = probe.getsockname()[1]
+            context = multiprocessing.get_context('spawn')
+            children = [context.Process(target=serve_executor, args=(data, sock, 'inconnu')),
+                        context.Process(target=serve_web,
+                                        args=('127.0.0.1', port, public, sock, 'inconnu'))]
+            try:
+                for child in children:
+                    child.start()
+                deadline = time.monotonic() + 5
+                while True:
+                    try:
+                        with urlopen(f'http://127.0.0.1:{port}/readyz', timeout=2) as response:
+                            status = response.status
+                        break
+                    except HTTPError as error:
+                        status = error.code
+                        error.close()
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(.02)
+                self.assertEqual(503, status)
+            finally:
+                for child in children:
+                    if child.is_alive():
+                        child.terminate()
+                    child.join(5)
+
     def test_web_source_fingerprint_precedence_and_invalid_bucket(self):
         salt = b's' * 32
         headers = Message()

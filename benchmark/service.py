@@ -22,12 +22,19 @@ from .runtime import encode, status, stop, verify
 def release_identity():
     root = Path(__file__).resolve().parents[1]
     try:
-        source = json.loads((root / 'release.json').read_text())['source_sha']
+        document = (root / 'release.json').read_text()
+    except FileNotFoundError:
+        document = None
+    except (OSError, UnicodeError) as error:
+        raise ValueError('Identité de release invalide') from error
+    if document is not None:
+        try:
+            source = json.loads(document)['source_sha']
+        except (ValueError, KeyError, TypeError) as error:
+            raise ValueError('Identité de release invalide') from error
         if type(source) is not str or re.fullmatch('[0-9a-f]{40}', source) is None:
             raise ValueError('Identité de release invalide')
         return source
-    except (OSError, ValueError, KeyError):
-        pass
     environment = dict(os.environ)
     environment['GIT_TERMINAL_PROMPT'] = '0'
     try:

@@ -274,7 +274,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
             if self.path == '/readyz':
                 try:
                     health = executor_health(socket_path)
-                    ready = health['source_sha'] == source and health['storage'] == 'ok'
+                    ready = (source != 'inconnu' and health['source_sha'] == source
+                             and health['storage'] == 'ok')
                     self.respond(200 if ready else 503, {'web': 'ok', 'executor': 'ok' if ready else 'unavailable', 'storage': 'ok' if ready else 'unavailable', 'source_sha': source})
                 except (OSError, ValueError):
                     self.respond(503, {'web': 'ok', 'executor': 'unavailable', 'storage': 'unknown', 'source_sha': source})
