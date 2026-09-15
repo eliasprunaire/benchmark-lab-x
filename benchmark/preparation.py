@@ -1037,10 +1037,11 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
     if method == 'POST':
         if type(body) is not dict:
             raise ValueError('Formulaire requis')
-        supplied = body.get('csrf_token')
-        if type(supplied) is not str or not hmac.compare_digest(supplied.encode(), csrf.encode()):
-            raise Denied('Protection CSRF requise')
-        body = {key: value for key, value in body.items() if key != 'csrf_token'}
+        if path != '/preparation/access/callback':
+            supplied = body.get('csrf_token')
+            if type(supplied) is not str or not hmac.compare_digest(supplied.encode(), csrf.encode()):
+                raise Denied('Protection CSRF requise')
+            body = {key: value for key, value in body.items() if key != 'csrf_token'}
     if path in access_paths:
         from . import provider_access
         unavailable = access_secret is None or not provider_access.available(store)

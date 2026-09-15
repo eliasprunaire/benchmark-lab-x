@@ -3,7 +3,7 @@
 Il consomme les vues structurées de l'exécuteur par socket Unix et n'accède ni au
 stockage, ni aux secrets, ni aux fournisseurs.
 """
-from base64 import b64encode
+from base64 import b64encode, urlsafe_b64decode, urlsafe_b64encode
 from hashlib import sha256
 from http.cookies import SimpleCookie, CookieError
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import re
 import secrets
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 from benchmark.runtime import encode
 from benchmark.service import executor_health, preparation_request, run
@@ -36,8 +36,39 @@ def _source_fingerprint(headers, client_address, salt):
     return sha256(salt + b'\n' + normalized.encode()).hexdigest()
 
 
-def serve_web(address, port, public, socket_path, source):
+def _public_callback_url(public_url):
+    if public_url is None:
+        return None
+    parsed = urlsplit(public_url)
+    if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
+            or parsed.query or parsed.fragment or parsed.path not in ('', '/')):
+        raise ValueError('Origine publique HTTPS invalide')
+    return public_url.rstrip('/') + '/preparation/access/callback'
+
+
+def _return_path(value):
+    parsed = urlsplit(value)
+    if (type(value) is not str or parsed.scheme or parsed.netloc or parsed.query or parsed.fragment
+            or not (parsed.path == '/preparation' or parsed.path.startswith('/preparation/'))):
+        raise ValueError('Chemin de retour invalide')
+    return parsed.path
+
+
+def _callback_cookie(token, return_path):
+    return urlsafe_b64encode(encode([token, return_path]).encode()).decode().rstrip('=')
+
+
+def _callback_state(value):
+    raw = urlsafe_b64decode(value + '=' * (-len(value) % 4))
+    token, return_path = json.loads(raw, object_pairs_hook=_unique_object)
+    if type(token) is not str or not token:
+        raise ValueError('Session de retour invalide')
+    return token, _return_path(return_path)
+
+
+def serve_web(address, port, public, socket_path, source, public_url=None):
     public = Path(public)
+    callback_url = _public_callback_url(public_url)
     views.SOURCE_SHA = source or ''
     source_salt = secrets.token_bytes(32)
 
@@ -87,6 +118,23 @@ def serve_web(address, port, public, socket_path, source):
                 cookies = SimpleCookie(self.headers.get('Cookie', ''))
                 cookie = cookies.get('benchmark_session')
                 token = cookie.value if cookie else None
+                if self.command == 'GET' and self.path.startswith('/preparation/access/callback'):
+                    parsed = urlsplit(self.path)
+                    values = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
+                    if parsed.path != '/preparation/access/callback' or set(values) != {'code'} or len(values['code']) != 1 or not values['code'][0]:
+                        raise ValueError('Retour OpenRouter invalide')
+                    state = cookies.get('benchmark_access_callback')
+                    if state is None:
+                        raise ValueError('Session de retour absente')
+                    callback_token, return_path = _callback_state(state.value)
+                    result = preparation_request(socket_path, 'POST', parsed.path, callback_token,
+                                                 {'code': values['code'][0]})
+                    headers = {'Location': return_path,
+                               'Set-Cookie': 'benchmark_access_callback=; HttpOnly; Secure; SameSite=Lax; Path=/preparation/access/callback; Max-Age=0'}
+                    self.respond(303, b'', 'text/html; charset=utf-8', headers)
+                    return
+                if self.path == '/preparation/access/callback':
+                    raise ValueError('Callback OpenRouter réservé au retour GET')
                 body = None
                 if self.command == 'POST':
                     length = self.headers.get('Content-Length', '')
@@ -113,6 +161,15 @@ def serve_web(address, port, public, socket_path, source):
                             body['manifest_version'] = int(body['manifest_version'])
                     else:
                         raise ValueError('Type de formulaire inconnu')
+                    if self.path == '/preparation/access/start':
+                        if callback_url is None:
+                            value = {'kind': 'access', 'connected': False, 'status': 'unavailable',
+                                     'error': 'Connexion OpenRouter indisponible : URL publique non configurée.'}
+                            self.respond(503, value if wants_json else views.render(value, body.get('csrf_token', ''), error=True),
+                                         'application/json' if wants_json else 'text/html; charset=utf-8')
+                            return
+                        return_path = _return_path(body.pop('return'))
+                        body['callback_url'] = callback_url
                     submission = (self.path == '/preparation/dossiers' or
                                   re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/messages', self.path))
                     if submission and body.get('website'):
@@ -130,6 +187,15 @@ def serve_web(address, port, public, socket_path, source):
                 if result.get('cookie'):
                     token = result['cookie']
                     headers['Set-Cookie'] = ('benchmark_session=' + token + '; HttpOnly; Secure; SameSite=Strict; Path=/preparation')
+                if self.command == 'POST' and self.path == '/preparation/access/start' and result['status'] < 400:
+                    headers['Location'] = result['value']['authorize_url']
+                    headers['Set-Cookie'] = ('benchmark_access_callback=' + _callback_cookie(token, return_path)
+                                             + '; HttpOnly; Secure; SameSite=Lax; Path=/preparation/access/callback')
+                    self.respond(303, b'', 'text/html; charset=utf-8', headers)
+                    return
+                if self.command == 'POST' and self.path == '/preparation/access/disconnect' and result['status'] < 400:
+                    self.respond(303, b'', 'text/html; charset=utf-8', {'Location': '/preparation/access'})
+                    return
                 if self.command == 'POST' and self.path.endswith('/start') and result['status'] < 400 and not wants_json:
                     headers['Location'] = self.path[:-5] + 'conditions'
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
@@ -145,6 +211,11 @@ def serve_web(address, port, public, socket_path, source):
                     if result['status'] < 400:
                         home = preparation_request(socket_path, 'GET', '/preparation', token)
                         csrf = home['value']['csrf_token']
+                        if self.path == '/preparation/access':
+                            result['value']['kind'] = 'access'
+                        elif result['value'].get('kind') == 'campaign_launch':
+                            access = preparation_request(socket_path, 'GET', '/preparation/access', token)
+                            result['value']['access'] = access['value']
                         if 'operation_id' in result['value']:
                             result['value']['availability'] = home['value']['availability']
                         if self.command == 'POST' and self.path.endswith('/validation'):

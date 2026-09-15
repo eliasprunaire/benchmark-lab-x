@@ -373,6 +373,25 @@ def render(value, csrf, path='/preparation', *, error=False):
                 '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>'
                 '<button type="submit">Corriger et renvoyer</button>')
         content += '<p><a href="/preparation">Retrouver mes cas d’usage</a></p>'
+    elif value.get('kind') == 'access':
+        title = 'Accès OpenRouter'
+        status = value['status']
+        if status == 'connected':
+            content = state_block('done', 'Accès OpenRouter', 'Compte connecté',
+                '<p>Crédit restant : ' + text(value['limit_remaining_usd'] if value['limit_remaining_usd'] is not None else 'INCONNU')
+                + ' USD. Limite du compte : ' + text(value['limit_usd'] if value['limit_usd'] is not None else 'INCONNU') + ' USD.</p>')
+            content += form('/preparation/access/disconnect', {}, '<button type="submit">Déconnecter</button>')
+        elif status == 'invalid':
+            content = state_block('err', 'Accès OpenRouter', 'Accès invalide',
+                                  '<p>Motif : ' + text(value.get('reason') or 'INCONNU') + '.</p>')
+            content += form('/preparation/access/start', {'return': path},
+                            '<button type="submit">Reconnecter mon compte OpenRouter</button>')
+        else:
+            content = state_block('action', 'Accès OpenRouter', 'Compte non connecté',
+                                  '<p>Connectez votre compte pour financer les appels candidats de votre comparaison.</p>')
+            content += form('/preparation/access/start', {'return': path},
+                            '<button type="submit">Connecter mon compte OpenRouter</button>')
+        content += '<p><a href="/preparation">Revenir à mes cas d’usage</a></p>'
     elif value.get('kind') == 'campaign_launch':
         campaign = value['campaign']
         base = '/preparation/dossiers/' + value['dossier_id'] + '/campaigns/' + campaign['campaign_id']
@@ -388,6 +407,17 @@ def render(value, csrf, path='/preparation', *, error=False):
             '<p>Pi : ' + text(campaign['conditions']['pi']['package']) + ' · ' + text(campaign['conditions']['pi']['version']) +
             '. Conditions figées le ' + text(campaign['conditions']['frozen_at']) + '.</p>' +
             '<details><summary>Configurations et conditions exactes</summary><pre>' + text(encode(dict(panel=campaign['panel'], conditions=campaign['conditions']))) + '</pre></details>')
+        access = value.get('access', {'status': 'unavailable'})
+        if access.get('status') == 'connected':
+            access_content = '<p>Compte OpenRouter connecté. Crédit restant : ' + text(
+                access.get('limit_remaining_usd') if access.get('limit_remaining_usd') is not None else 'INCONNU') + ' USD.</p>'
+        elif access.get('status') == 'invalid':
+            access_content = '<p>Accès OpenRouter invalide : ' + text(access.get('reason') or 'INCONNU') + '.</p>'
+        else:
+            access_content = '<p>Compte OpenRouter non connecté.</p>'
+        access_content += form('/preparation/access/start', {'return': base + '/conditions'},
+                               '<button type="submit">Connecter mon compte OpenRouter</button>')
+        content += section('Accès OpenRouter', access_content)
         estimate = value['estimate']
         content += '<h2>Coût et autorisation</h2><p>Estimation indicative : ' + text(
             estimate['amount'] + ' ' + estimate['currency'] if estimate else 'non fournie par le responsable') + '.</p>'

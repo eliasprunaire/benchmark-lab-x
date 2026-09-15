@@ -107,6 +107,7 @@ class ProviderAccessTests(unittest.TestCase):
         self.transport.verify_result = (401, b'{"error":"rejected"}')
         rejected = provider_access.view(self.store, self.session, SECRET, self.transport)
         self.assertEqual('invalid', rejected['status'])
+        self.assertEqual('KEY_REJECTED', rejected['reason'])
         self.assertFalse(rejected['connected'])
         key_cipher, reason = self.store._connection.execute(
             'SELECT key_cipher,status_reason FROM s2_provider_access WHERE session_id=?',
@@ -218,7 +219,8 @@ class ProviderAccessTests(unittest.TestCase):
                     ('/preparation/access/callback', {'code': 'code'}),
                     ('/preparation/access/disconnect', {})):
                 code, value, _, _ = preparation.dispatch(
-                    self.store, 'POST', path, 'token', dict(body, csrf_token='csrf'), 'a' * 40, None)
+                    self.store, 'POST', path, 'token', (body if path.endswith('/callback') else
+                                                       dict(body, csrf_token='csrf')), 'a' * 40, None)
                 self.assertEqual((503, 'ACCESS_UNAVAILABLE'), (code, value['error_code']))
 
     def test_secret_invalide_bloque_le_demarrage(self):
