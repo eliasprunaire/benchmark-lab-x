@@ -22,7 +22,6 @@ makers = ["openai", "anthropic", "google", "x-ai", "meta-llama", "mistralai", "d
 max_per_family = 3
 max_age_days = 365
 cache_hours = 24
-baseline_fetched_at = "2026-09-14T20:20:25.444430+00:00"
 baseline_families = [
   "amazon/nova-#-lite-v#",
   "amazon/nova-premier-v#",

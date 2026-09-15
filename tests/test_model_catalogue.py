@@ -109,6 +109,15 @@ class ModelCatalogueTests(unittest.TestCase):
         }
         self.assertEqual(cases, {model_id: catalogue.family(model_id) for model_id in cases})
         self.assertEqual('exp', catalogue._variant('openai/gpt-5-exp'))
+        self.assertEqual('preview:free', catalogue._variant('openai/gpt-5-preview:free'))
+        self.assertEqual('exp:free', catalogue._variant('openai/gpt-5-exp:free'))
+
+    def test_route_exige_un_tag_strictement_identique(self):
+        routes = {'openai/modele': {'openai'}}
+        self.assertTrue(catalogue._compliant(
+            'openai/modele', [{'model_id': 'openai/modele', 'tag': 'openai'}], routes))
+        self.assertFalse(catalogue._compliant(
+            'openai/modele', [{'model_id': 'openai/modele', 'tag': 'openai/standard'}], routes))
 
     def test_rapport_signale_une_famille_nouvelle_et_un_modele_disparu(self):
         registry = {

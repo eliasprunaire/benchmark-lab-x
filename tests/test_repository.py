@@ -1,3 +1,5 @@
+"""Vérifications des fichiers fondamentaux du dépôt"""
+
 from pathlib import Path
 import unittest
 

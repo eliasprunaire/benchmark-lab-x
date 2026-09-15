@@ -799,12 +799,12 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('suspended', prep.view(self.store, self.session, 'd')['stage'])
 
     def test_two_profiles_drive_exact_simulated_http_bytes(self):
-        historical = assistant.load_profile(assistant.ASSISTANT)
+        production = assistant.load_profile(assistant.ASSISTANT)
         synthetic = assistant.load_profile(str(SYNTHETIC_PROFILE))
-        self.assertNotEqual(historical['model'], synthetic['model'])
-        self.assertNotEqual(historical['system'], synthetic['system'])
+        self.assertNotEqual(production['model'], synthetic['model'])
+        self.assertNotEqual(production['system'], synthetic['system'])
         sent_models = []
-        for profile, dossier in ((historical, 'glm-profile'), (synthetic, 'synthetic-profile')):
+        for profile, dossier in ((production, 'profil-production'), (synthetic, 'profil-test')):
             estimate = estimate_for(profile)
             prep.admit(self.store, dict(authority_id='FICTIONAL_HTTP_ONLY', budget_id='fixture',
                                         reserve_amount=assistant.reservation(estimate, profile),
@@ -839,7 +839,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
             self.assertNotIn('path', configured)
             sent_models.append(sent['model'])
             self.http.request.reset_mock()
-        self.assertEqual([historical['model'], synthetic['model']], sent_models)
+        self.assertEqual([production['model'], synthetic['model']], sent_models)
 
     def test_story_14_loads_production_profiles_and_keeps_glm_historical(self):
         preparation_profile = assistant.load_profile(assistant.ASSISTANT)
@@ -1114,10 +1114,10 @@ class OpenRouterPreparationTests(unittest.TestCase):
         assistant.frozen_profile(dict(document, max_request_bytes=65536, max_response_bytes=2097152,
                                       timeout_seconds=120))
         assistant.frozen_profile(document)
-        historical = assistant.load_profile(assistant.ASSISTANT)
-        self.assertEqual(65536, historical['max_request_bytes'])
-        self.assertEqual(2097152, historical['max_response_bytes'])
-        self.assertEqual(120, historical['timeout_seconds'])
+        production = assistant.load_profile(assistant.ASSISTANT)
+        self.assertEqual(65536, production['max_request_bytes'])
+        self.assertEqual(2097152, production['max_response_bytes'])
+        self.assertEqual(120, production['timeout_seconds'])
         self.assertEqual((65536, 2097152, 120),
                          (assistant.MAX_REQUEST_BYTES, assistant.MAX_RESPONSE_BYTES, assistant.TIMEOUT_SECONDS))
         sock = self.home / 'executor.sock'
