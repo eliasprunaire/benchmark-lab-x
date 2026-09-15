@@ -4,13 +4,18 @@ from html import escape
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from benchmark import preparation as prep, storage
 from benchmark_web import views
 from tests.test_s2_review_regressions import response_for
+from tests.test_s6_regressions import Markup
 
 
 class InlineExampleTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
+
     def test_exact_inert_content_without_download_or_emission(self):
         content = '\nNotes de test\n<script>alert("test")</script>\n& fin'
         with tempfile.TemporaryDirectory() as temporary:
@@ -44,6 +49,17 @@ class InlineExampleTests(unittest.TestCase):
                 self.assertNotIn('/pieces/', page)
                 self.assertNotIn('notes.txt', page)
                 self.assertNotIn('Attendu fictif réservé', page)
+                parsed = Markup(page.encode())
+                for kind in ('corr', 'example-content'):
+                    details = [attrs for tag, attrs in parsed.tags
+                               if tag == 'details' and attrs.get('class') == kind]
+                    self.assertTrue(details)
+                    self.assertTrue(all('open' not in attrs for attrs in details))
+                self.assertIn('tabindex="-1"', page)
+                self.assertLess(page.index('id="exemple"'), page.index('id="validation"'))
+                self.assertLess(page.index('id="validation"'), page.index('class="corr"'))
+                self.assertTrue(any(tag == 'label' and attrs.get('for') == 'message'
+                                    for tag, attrs in parsed.tags))
                 self.assertEqual(before, store.inspect_operations())
                 other, _, other_token = prep.session(store, None, create=True)
                 with self.assertRaises(prep.Denied):

@@ -21,6 +21,29 @@ from tests.test_s6_regressions import Markup, build
 
 
 class S10ProofTests(unittest.TestCase):
+    def test_retour_de_preuve_et_table_accessibles(self):
+        with patch('socket.socket.connect', side_effect=AssertionError('No network')):
+            detail = r.detail(self.store, self.sid, 'fixture', 'proof', 'long',
+                              query={'case': 'notes', 'sort': 'cost', 'direction': 'desc'})
+            comparison = r.comparison(self.store, self.sid, 'fixture', 'proof',
+                                      query=detail['filter_scope'])
+            page = views.render(comparison, '').decode()
+            proof = Markup(views.render(detail, ''))
+        self.assertIn(detail['back_href'], proof.links)
+        self.assertTrue(detail['back_href'].endswith('#attempt-long'))
+        parsed = Markup(page.encode())
+        row = next(attrs for tag, attrs in parsed.tags if attrs.get('id') == 'attempt-long')
+        self.assertEqual('-1', row['tabindex'])
+        region = next(attrs for tag, attrs in parsed.tags if attrs.get('class') == 'table-scroll')
+        self.assertEqual(('region', '0', 'Observations du cas notes'),
+                         (region['role'], region['tabindex'], region['aria-label']))
+        self.assertEqual(5, sum(tag == 'th' and attrs.get('scope') == 'col' for tag, attrs in parsed.tags))
+        self.assertEqual(1, page.count('<script>'))
+        self.assertIn('<script>' + views.COMPARISON_FOCUS_SCRIPT + '</script>', page)
+        self.assertFalse(any(tag == 'script' for tag, attrs in proof.tags))
+        for verdict, label in (('SATISFAIT', 'Satisfait'), ('NE SATISFAIT PAS', 'Ne satisfait pas'), (None, 'À reprendre')):
+            self.assertIn(label, views.badge(verdict))
+
     @classmethod
     def setUpClass(cls):
         temporary = tempfile.TemporaryDirectory(prefix='s10-proof-')

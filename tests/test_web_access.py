@@ -9,11 +9,13 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlencode
 
 from benchmark.storage import _strict_json
 from benchmark_web import views
 from benchmark_web.server import _public_callback_url, serve_web
+from tests.test_s6_regressions import Markup
 
 
 CSP = ("default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; "
@@ -103,6 +105,9 @@ class FakeExecutor:
 
 
 class AccessViewTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
+
     @staticmethod
     def campaign(access):
         return {'kind': 'campaign_launch', 'dossier_id': 'd1', 'access': access,
@@ -199,6 +204,18 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('action="/preparation/dossiers/d1/campaigns/c1/cap"', page)
         self.assertIn('min="0.10" max="100.00" step="0.01"', page)
         self.assertIn('>Lancer la comparaison</button>', page)
+        parsed = Markup(page.encode())
+        cap = next(attrs for tag, attrs in parsed.tags if attrs.get('id') == 'cap_usd')
+        self.assertEqual('number', cap['type'])
+        self.assertIn('required', cap)
+        self.assertTrue(any(tag == 'label' and attrs.get('for') == 'cap_usd'
+                            for tag, attrs in parsed.tags))
+        css = views.STYLESHEET_PATH.read_text()
+        self.assertIn('input[type="text"], input[type="number"] { font: inherit;', css)
+        for tag, attrs in parsed.tags:
+            if tag == 'form':
+                self.assertEqual('post', attrs['method'])
+                self.assertTrue(attrs['action'].startswith('/preparation/'))
 
         blocked = dict(base, launchable=False,
                        checks=[dict(check) for check in base['checks']])

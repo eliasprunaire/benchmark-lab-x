@@ -1,6 +1,7 @@
 """Habillage du parcours privé : gabarit commun, bloc d'état, badges, polices locales, aucune empreinte affichée"""
 from contextlib import closing
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -8,12 +9,59 @@ from unittest.mock import patch
 from benchmark import preparation as prep, restitution as r, storage
 from benchmark_web import projection, views
 from tests.test_s2_review_regressions import response_for
-from tests.test_s6_regressions import build
+from tests.test_s6_regressions import Markup, build
 
 AVAILABILITY = {'assistant_configured': True, 'admission_open': True, 'can_submit': True, 'reason': 'open'}
 
 
 class TemplateTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
+
+    def test_evitement_et_aide_du_formulaire_indisponible(self):
+        page = views.render({'dossiers': [], 'availability': dict(
+            AVAILABILITY, can_submit=False, reason='closed')}, 'csrf')
+        parsed = Markup(page)
+        self.assertEqual('#main', parsed.links[0])
+        main = next(attrs for tag, attrs in parsed.tags if tag == 'main')
+        self.assertEqual({'id': 'main', 'tabindex': '-1'}, main)
+        request = next(attrs for tag, attrs in parsed.tags if attrs.get('id') == 'request')
+        self.assertEqual('request-help availability', request['aria-describedby'])
+        ids = [attrs['id'] for _, attrs in parsed.tags if 'id' in attrs]
+        self.assertEqual(len(ids), len(set(ids)))
+        for tag, attrs in parsed.tags:
+            if 'aria-describedby' in attrs:
+                self.assertTrue(set(attrs['aria-describedby'].split()) <= set(ids))
+            self.assertLessEqual(int(attrs.get('tabindex', '0')), 0)
+        css = views.STYLESHEET_PATH.read_text()
+        self.assertRegex(css, r'svg\[hidden\]\s*\{\s*display:\s*none;\s*\}')
+        self.assertRegex(css, r'body\s*\{[^}]*overflow-wrap:\s*anywhere;')
+        self.assertIn(':focus-visible { outline: 3px solid var(--focus)', css)
+
+    def test_contrastes_des_deux_themes(self):
+        css = views.STYLESHEET_PATH.read_text()
+        blocks = re.findall(r':root\s*\{([^}]+)\}', css)
+        themes = [dict(re.findall(r'--([\w-]+):\s*(#[0-9a-fA-F]{6})', block))
+                  for block in blocks]
+        self.assertEqual(2, len(themes))
+
+        def luminance(color):
+            channels = [int(color[n:n + 2], 16) / 255 for n in (1, 3, 5)]
+            return sum(weight * (v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4)
+                       for weight, v in zip((.2126, .7152, .0722), channels))
+
+        text_pairs = [(fg, bg) for fg in ('ink', 'ink-2', 'muted', 'accent-ink')
+                      for bg in ('paper', 'surface', 'soft')]
+        text_pairs += [(tone, tone + '-soft') for tone in ('warm', 'ok', 'ko', 'warn', 'unk', 'wait')]
+        text_pairs += [('on-btn', 'btn'), ('on-btn', 'btn-hover'), ('surface', 'accent')]
+        for name, colors in (('clair', themes[0]), ('sombre', themes[0] | themes[1])):
+            pairs = [(fg, bg, 4.5) for fg, bg in text_pairs]
+            pairs += [(fg, bg, 3) for fg in ('focus', 'line-2') for bg in ('paper', 'surface')]
+            for fg, bg, minimum in pairs:
+                with self.subTest(theme=name, texte=fg, fond=bg):
+                    low, high = sorted((luminance(colors[fg]), luminance(colors[bg])))
+                    self.assertGreaterEqual((high + .05) / (low + .05), minimum)
+
     def test_shell_menu_footer_and_version(self):
         with patch.object(views, 'SOURCE_SHA', 'abcdef0123456789'):
             home = views.render({'kind': 'home'}, '').decode()
@@ -62,6 +110,9 @@ class TemplateTests(unittest.TestCase):
 
 
 class DossierPageTests(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
+
     def test_criteria_groups_render_new_and_legacy_packages(self):
         def render(criteria):
             with tempfile.TemporaryDirectory() as temporary:
@@ -96,6 +147,8 @@ class DossierPageTests(unittest.TestCase):
         for raw_key in ('<li>eliminatory</li>', '<li>obligations</li>', '<li>quality</li>'):
             self.assertNotIn(raw_key, page)
         self.assertNotIn('<li>faible</li>', page)
+        self.assertIn('<h1>Est-ce le travail que vous voulez tester ?</h1>', page)
+        self.assertIn('<title>Est-ce le travail que vous voulez tester ?', page)
 
         legacy = render(['Toutes les actions présentes'])
         self.assertIn('<h3>Obligations</h3>', legacy)
@@ -103,6 +156,7 @@ class DossierPageTests(unittest.TestCase):
         self.assertNotIn('<h3>Éliminatoires</h3>', legacy)
         self.assertNotIn('<h3>Qualité</h3>', legacy)
         self.assertIn(rule, legacy)
+        self.assertIn('<h1>Est-ce le travail que vous voulez tester ?</h1>', legacy)
 
     def test_state_block_steps_and_hidden_correction_without_digests(self):
         with tempfile.TemporaryDirectory() as temporary:
