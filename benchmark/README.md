@@ -8,6 +8,8 @@ Cet outil Python utilise la bibliothèque standard. Il prépare une campagne sce
 
 Il utilise le scénario et le panel figés de [campaign.json](campaign.json), Pi `0.84.4`, un plafond historique de 0,50 USD et des fichiers privés sous `runs/`. Ces paramètres appartiennent à ce scénario ; ils ne définissent pas les tâches, le panel ni les budgets du [jalon produit](../docs/PRD.md#51-périmètre-010). La revue et la construction refusent un panel incomplet ; route et effort non observés restent `INCONNU`.
 
+`benchmark/__main__.py` conserve son épingle Pi `0.84.4` hors du parcours produit.
+
 Les commandes ci-dessous décrivent une séquence : obtenir l’autorité d’acquisition avant `collect`, puis les décisions et l’autorité de construction avant `build`. Elles ne constituent pas un script à lancer d’un bloc. Le lancement d’une campagne réelle exige des identités actuellement vérifiées ; le panel historique ne prouve pas la disponibilité des modèles.
 
 Depuis la racine du dépôt, sur macOS, avec Python 3 et le binaire Pi requis :
