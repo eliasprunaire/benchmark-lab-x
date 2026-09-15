@@ -231,6 +231,7 @@ def main(argv=None):
     parser.add_argument('--destination', type=Path)
     parser.add_argument('--socket', type=Path)
     parser.add_argument('--public', type=Path)
+    parser.add_argument('--public-url', help='Origine publique HTTPS utilisée pour le retour OpenRouter')
     parser.add_argument('--presentation', default='benchmark_web.projection', metavar='MODULE',
                         help='Module de présentation injecté dans l’exécuteur pour les projections ; son paquet fournit le serveur web')
     parser.add_argument('--listen', default='127.0.0.1')
@@ -294,7 +295,7 @@ def main(argv=None):
                     raise ValueError('Projection et port requis')
                 # Racine de composition : la présentation dépend du moteur, jamais l'inverse
                 import_module(args.presentation.rsplit('.', 1)[0] + '.server').serve_web(
-                    args.listen, args.port, args.public, args.socket, release_identity())
+                    args.listen, args.port, args.public, args.socket, release_identity(), args.public_url)
             else:
                 if args.data is None:
                     raise ValueError('Données requises')

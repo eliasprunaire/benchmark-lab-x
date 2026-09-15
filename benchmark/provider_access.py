@@ -377,8 +377,11 @@ def _row_view(row, reason=None):
         if reason is not None:
             value['reason'] = reason
         return value
-    return {'connected': row[0] == 'connected', 'verified_at': row[2], 'limit_usd': row[3],
-            'limit_remaining_usd': row[4], 'is_free_tier': bool(row[5]), 'status': row[0]}
+    value = {'connected': row[0] == 'connected', 'verified_at': row[2], 'limit_usd': row[3],
+             'limit_remaining_usd': row[4], 'is_free_tier': bool(row[5]), 'status': row[0]}
+    if row[0] == 'invalid':
+        value['reason'] = row[7]
+    return value
 
 
 def view(store, session_id, secret, transport=None, now=None, *, refresh=True):
@@ -388,7 +391,7 @@ def view(store, session_id, secret, transport=None, now=None, *, refresh=True):
     now = now or _now()
     expire(store, now)
     connection = store._connection_checked()
-    row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier,checked_at '
+    row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier,checked_at,status_reason '
                              'FROM s2_provider_access WHERE session_id=?', (session_id,)).fetchone()
     if row and row[0] in ('connected', 'invalid'):
         try:
@@ -400,7 +403,7 @@ def view(store, session_id, secret, transport=None, now=None, *, refresh=True):
     if (refresh and row and row[0] in ('connected', 'invalid')
             and (row[6] is None or now - _date(row[6]) > REFRESH_INTERVAL)):
         _verify(store, session_id, transport, key, now)
-        row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier,checked_at '
+        row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier,checked_at,status_reason '
                                  'FROM s2_provider_access WHERE session_id=?', (session_id,)).fetchone()
     return _row_view(row)
 
