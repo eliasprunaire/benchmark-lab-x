@@ -31,10 +31,11 @@ _SOURCE_ACCEPTED = {}
 
 
 class Denied(ValueError):
-    def __init__(self, message, field=None):
+    def __init__(self, message, field=None, findings=None):
         super().__init__(message)
         self.code = message if re.fullmatch(r'[A-Z_]+', message) else None
         self.field = field
+        self.findings = findings
 
 
 def _now():
@@ -91,15 +92,16 @@ def _daily_preparation_reserved(connection, now):
     start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc).isoformat()
     amounts = connection.execute(
         "SELECT r.amount FROM operations o JOIN reservations r USING(operation_id) "
-        "JOIN budgets b USING(budget_id) WHERE o.phase IN ('preparation','correction') "
+        "JOIN budgets b USING(budget_id) WHERE o.phase IN ('preparation','correction','qualification') "
         "AND o.created_at>=? AND b.currency='USD'", (start,)).fetchall()
     return _sum_money(_money(row[0]) for row in amounts)
 
 
 def _submission_limits(connection, session_id, create, now, authority):
     if connection.execute(
-            "SELECT 1 FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) "
-            "JOIN operations o USING(operation_id) WHERE d.session_id=? AND o.state!='RECEIVED' LIMIT 1",
+            "SELECT 1 FROM operations o JOIN s2_dossiers d USING(dossier_id) "
+            "WHERE d.session_id=? AND o.phase IN ('preparation','correction','qualification') "
+            "AND o.state!='RECEIVED' LIMIT 1",
             (session_id,)).fetchone():
         raise Denied('PREPARATION_IN_PROGRESS')
     rows = connection.execute(
@@ -150,8 +152,8 @@ def availability(store, transport):
         configured = bool(transport)
         reason = 'open'
         pending = connection.execute(
-            "SELECT o.state FROM s2_actions a JOIN operations o USING(operation_id) "
-            "WHERE o.state != 'RECEIVED'").fetchall()
+            "SELECT state FROM operations WHERE phase IN ('preparation','correction','qualification') "
+            "AND state != 'RECEIVED'").fetchall()
         if os.path.lexists(store._root / 'restore.json'):
             reason = 'restore'
         elif any(row[0] == 'AMBIGUOUS' for row in pending):
@@ -319,6 +321,68 @@ def _package_changes(store, connection, dossier_id, revision, package):
     return changes, piece_changes
 
 
+def _automatic_qualification(store, connection, dossier_id, revision):
+    validated = connection.execute(
+        'SELECT 1 FROM s2_validations v JOIN s2_revisions r USING(dossier_id,revision) '
+        'JOIN s2_dossiers d USING(dossier_id) WHERE v.dossier_id=? AND v.revision=? '
+        'AND v.package_sha256=r.package_sha256 AND v.session_id=d.session_id',
+        (dossier_id, revision)).fetchone()
+    row = connection.execute('SELECT operation_id,qualified,findings_json,summary,model,cost_usd,created_at '
+                             'FROM s2_qualifications WHERE dossier_id=? AND revision=?',
+                             (dossier_id, revision)).fetchone()
+    if row is None:
+        operation = next((item for item in store._operations(connection)
+                          if (item['dossier_id'], item['revision'], item['phase']) ==
+                             (dossier_id, revision, 'qualification')), None)
+        if operation is None:
+            return None
+        if validated is None:
+            raise IntegrityError('Qualification sans validation du besoin')
+        failed = operation['state'] in ('AMBIGUOUS', 'RECEIVED')
+        cost = (operation['observed_cost']['amount'] if operation['state'] == 'RECEIVED'
+                and operation['observed_cost']['status'] == 'KNOWN' else None)
+        status = 'BLOCKED' if failed else 'PENDING'
+        return dict(operation_id=operation['operation_id'], qualified=False, findings=[],
+                    summary=('Résultat de qualification reçu non utilisable' if operation['state'] == 'RECEIVED'
+                             else 'Effets de qualification inconnus' if operation['state'] == 'AMBIGUOUS'
+                             else 'Qualification en attente'),
+                    model=operation['requested_configuration'].get('model'), cost_usd=cost,
+                    created_at=operation['created_at'], status=status,
+                    qualification_status=status, approval_status='PENDING')
+    operation_id, qualified, raw, summary, model, cost, created = row
+    if validated is None:
+        raise IntegrityError('Qualification sans validation du besoin')
+    findings = json.loads(raw, object_pairs_hook=_unique_object)
+    result = _qualification_result({'qualified': bool(qualified), 'findings': findings, 'summary': summary})
+    operation = store._operation_for_update(connection, operation_id, ('RECEIVED',))
+    if ((operation['dossier_id'], operation['revision'], operation['phase']) !=
+            (dossier_id, revision, 'qualification') or operation['requested_configuration'].get('model') != model):
+        raise IntegrityError('Qualification automatisée étrangère')
+    observed = operation['observed_cost']
+    expected_cost = observed['amount'] if observed['status'] == 'KNOWN' else None
+    if cost != expected_cost:
+        raise IntegrityError('Coût de qualification divergent')
+    status = 'QUALIFIED' if result['qualified'] else 'BLOCKED'
+    return dict(operation_id=operation_id, qualified=result['qualified'], findings=findings,
+                summary=summary, model=model, cost_usd=cost, created_at=created,
+                status=status, qualification_status=status, approval_status='PENDING')
+
+
+def require_qualification(store, connection, dossier_id, revision):
+    if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s3_control'").fetchone():
+        row = connection.execute('SELECT contract_sha256 FROM s3_contracts WHERE dossier_id=? AND revision=? '
+                                 'ORDER BY version DESC LIMIT 1', (dossier_id, revision)).fetchone()
+        if row:
+            from .qualification import projection
+            state = projection(store, connection, dossier_id, revision, eligible=True)
+            if state['status'] in ('QUALIFIED', 'APPROVED'):
+                return
+            raise Denied('NOT_QUALIFIED', findings=[])
+    qualification = _automatic_qualification(store, connection, dossier_id, revision)
+    if qualification is None or not qualification['qualified']:
+        raise Denied('NOT_QUALIFIED', findings=[] if qualification is None else qualification['findings'])
+
+
 def view(store, session_id, dossier_id, revision=None):
     connection = connection_for(store)
     with store.read_snapshot() as connection:
@@ -378,11 +442,20 @@ def view(store, session_id, dossier_id, revision=None):
                     'Admission fermée : intention conservée sans émission ni reprise automatique.' if blocked_intent else
                     'Préparation en attente. Actualisez pour consulter son avancement ; aucun appel ne sera relancé.')
                 result['validation'] = None
-        if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s3_control'").fetchone():
+        contract = (connection.execute('SELECT 1 FROM s3_contracts WHERE dossier_id=? AND revision=?',
+                                       (dossier_id, revision)).fetchone()
+                    if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s3_control'").fetchone() else None)
+        if contract:
             from .qualification import projection
             result['qualification'] = projection(store, connection, dossier_id, revision,
                                                   eligible=result['validation'] is not None)
             result['qualified'] = result['qualification']['status'] in ('QUALIFIED', 'APPROVED')
+        else:
+            result['qualification'] = _automatic_qualification(store, connection, dossier_id, revision)
+            if result['qualification'] is None:
+                result['qualification'] = dict(status='PENDING', qualification_status='PENDING',
+                                               approval_status='PENDING', qualified=False)
+            result['qualified'] = bool(result['qualification'] and result['qualification']['qualified'])
         if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_control'").fetchone():
             from .campaigns import projection
             result['campaigns'] = projection(store, connection, dossier_id)
@@ -481,8 +554,8 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
             _submission_limits(connection, session_id, create, now, authority)
         # S2 admits one effect at a time; no restart drains a durable queue
         if connection.execute(
-                "SELECT 1 FROM s2_actions a JOIN operations o USING(operation_id) "
-                "WHERE o.state != 'RECEIVED' LIMIT 1").fetchone():
+                "SELECT 1 FROM operations WHERE phase IN ('preparation','correction','qualification') "
+                "AND state != 'RECEIVED' LIMIT 1").fetchone():
             raise Denied('PREPARATION_IN_PROGRESS')
         if enforce_limits:
             _source_limit(source_sha256, now)
@@ -530,28 +603,170 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
         return operation_id, True
 
 
-def validate(store, session_id, dossier_id, body):
+def _validate(store, connection, session_id, dossier_id, body):
     _identity(dossier_id, body['revision'])
     if body['dossier_id'] != dossier_id:
         raise ConflictError('Dossier divergent')
     if type(body['package_sha256']) is not str or re.fullmatch('[0-9a-f]{64}', body['package_sha256']) is None:
         raise ValueError('Empreinte invalide')
+    revision = owner(connection, session_id, dossier_id)
+    if revision != body['revision']:
+        raise ConflictError('Révision périmée')
+    if connection.execute("SELECT 1 FROM s2_actions a JOIN operations o USING(operation_id) "
+                          "WHERE a.dossier_id=? AND o.state!='RECEIVED'", (dossier_id,)).fetchone():
+        raise ConflictError('Préparation inachevée')
+    stage, raw, digest = connection.execute('SELECT stage,package_json,package_sha256 FROM s2_revisions '
+                                           'WHERE dossier_id=? AND revision=?', (dossier_id, revision)).fetchone()
+    if stage != 'preview' or raw is None or digest != body['package_sha256']:
+        raise ConflictError('Paquet divergent ou non validable')
+    package_check(store, dossier_id, revision, json.loads(raw), digest)
+    connection.execute('INSERT OR IGNORE INTO s2_validations VALUES (?,?,?,?,?)',
+                       (dossier_id, revision, digest, session_id, datetime.now(timezone.utc).isoformat()))
+    return binding(dossier_id, revision, digest)
+
+
+def validate(store, session_id, dossier_id, body):
     connection = connection_for(store)
     with _transaction(connection, write=True):
-        revision = owner(connection, session_id, dossier_id)
-        if revision != body['revision']:
-            raise ConflictError('Révision périmée')
-        if connection.execute("SELECT 1 FROM s2_actions a JOIN operations o USING(operation_id) "
-                              "WHERE a.dossier_id=? AND o.state!='RECEIVED'", (dossier_id,)).fetchone():
-            raise ConflictError('Préparation inachevée')
-        stage, raw, digest = connection.execute('SELECT stage,package_json,package_sha256 FROM s2_revisions '
-                                               'WHERE dossier_id=? AND revision=?', (dossier_id, revision)).fetchone()
-        if stage != 'preview' or raw is None or digest != body['package_sha256']:
-            raise ConflictError('Paquet divergent ou non validable')
-        package_check(store, dossier_id, revision, json.loads(raw), digest)
-        connection.execute('INSERT OR IGNORE INTO s2_validations VALUES (?,?,?,?,?)',
-                           (dossier_id, revision, digest, session_id, datetime.now(timezone.utc).isoformat()))
-        return binding(dossier_id, revision, digest)
+        return _validate(store, connection, session_id, dossier_id, body)
+
+
+def _qualification_input(store, connection, dossier_id, revision):
+    row = connection.execute('SELECT package_json,package_sha256 FROM s2_revisions '
+                             'WHERE dossier_id=? AND revision=?', (dossier_id, revision)).fetchone()
+    package = json.loads(row[0], object_pairs_hook=_unique_object)
+    package_check(store, dossier_id, revision, package, row[1])
+    payload = store.get_dossier(dossier_id, revision)
+    from .outgoing import criteria
+    candidates = [{'name': piece['name'], 'content': store.read_piece(piece['id']).decode('utf-8')}
+                  for piece in package['pieces']]
+    references = [{'name': name, 'content': store.read_piece(piece_id).decode('utf-8')}
+                  for piece_id, name in connection.execute(
+                      "SELECT piece_id,name FROM pieces WHERE dossier_id=? AND revision=? "
+                      "AND role='judge' ORDER BY piece_id", (dossier_id, revision))]
+    if not references:
+        raise IntegrityError('Référence de jugement absente')
+    return dict(instruction=package['instruction'], deliverables=package['deliverables'],
+                criteria=criteria(package['criteria'], normalize_legacy=True),
+                acceptable_ambiguities=package['acceptable_ambiguities'], candidate_pieces=candidates,
+                judgment_reference=references, reformulated_need=payload['reformulation'],
+                clarifications=payload['clarifications'])
+
+
+def validate_and_qualify(store, session_id, dossier_id, body, source, transport):
+    if transport is None or not callable(getattr(transport, 'configuration', None)):
+        raise Denied('Qualification indisponible')
+    _text(source, 'source')
+    connection = connection_for(store)
+    with _transaction(connection, write=True):
+        result = _validate(store, connection, session_id, dossier_id, body)
+        revision = result['revision']
+        existing = connection.execute(
+            "SELECT operation_id,state FROM operations WHERE dossier_id=? AND revision=? AND phase='qualification'",
+            (dossier_id, revision)).fetchone()
+        if existing:
+            return result, existing[0], existing[1] == 'INTENT_RECORDED'
+        authority = admission(store, connection)
+        if authority is None or os.path.lexists(store._root / 'restore.json'):
+            raise Denied('Admission fermée')
+        if connection.execute(
+                "SELECT 1 FROM operations WHERE phase IN ('preparation','correction','qualification') "
+                "AND state!='RECEIVED' LIMIT 1").fetchone():
+            raise Denied('PREPARATION_IN_PROGRESS')
+        if (_daily_preparation_reserved(connection, _now()) + _money(authority['reserve_amount'])
+                > PREPARATION_DAILY_CAP_USD):
+            raise Denied('DAILY_CAP')
+        request = _qualification_input(store, connection, dossier_id, revision)
+        operation_id = secrets.token_hex(16)
+        configuration = transport.configuration()
+        operation = dict(operation_id=operation_id, phase='qualification', dossier_id=dossier_id,
+                         revision=revision, authority=authority['authority_id'], engine_version=source,
+                         requested_configuration=configuration, resources=[])
+        from .outgoing import FORMAT
+        closed = dict(outgoing_format=FORMAT, outgoing=request)
+        wire = transport.prepare(deepcopy(operation), deepcopy(closed))
+        _text(wire, 'qualification préparée')
+        operation['resources'] = [encode(request), wire]
+        budget = store._budget(connection, authority['budget_id'], store._operations(connection))
+        if budget['currency'] != 'USD':
+            raise BudgetError('Enveloppe USD de préparation requise')
+        store._reserve_intent(connection, operation, authority['budget_id'], authority['reserve_amount'])
+        return result, operation_id, True
+
+
+def _qualification_result(result):
+    _fields(result, ('qualified', 'findings', 'summary'), 'qualification automatisée')
+    if type(result['qualified']) is not bool or type(result['findings']) is not list:
+        raise ValueError('Qualification automatisée invalide')
+    _text(result['summary'], 'summary')
+    if not result['summary'].strip():
+        raise ValueError('Résumé de qualification requis')
+    for finding in result['findings']:
+        _fields(finding, ('kind', 'severity', 'text'), 'constat de qualification')
+        if finding['kind'] not in ('coherence', 'fiction', 'decidability', 'leak') or finding['severity'] not in ('blocking', 'note'):
+            raise ValueError('Constat de qualification invalide')
+        _text(finding['text'], 'text')
+        if not finding['text'].strip():
+            raise ValueError('Texte de constat requis')
+    if result['qualified'] != all(row['severity'] != 'blocking' for row in result['findings']):
+        raise ValueError('Verdict de qualification divergent')
+    return result
+
+
+def execute_qualification(data, operation_id, transport):
+    with closing(Store(data)) as store:
+        connection = connection_for(store)
+        emitted = False
+        try:
+            proof = store.verify_storage()
+            if not proof['integrity_ok'] or proof['orphan_files']:
+                close_admission(store)
+                return
+            with _transaction(connection, write=True):
+                operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
+                authority = admission(store, connection)
+                if (transport is None or authority is None or operation['phase'] != 'qualification'
+                        or os.path.lexists(store._root / 'restore.json')
+                        or (operation['authority'], operation['budget_id'], operation['reserved_amount']) !=
+                           (authority['authority_id'], authority['budget_id'], authority['reserve_amount'])
+                        or operation['requested_configuration'] != transport.configuration()):
+                    return
+                request = _qualification_input(store, connection, operation['dossier_id'], operation['revision'])
+                if encode(request) != operation['resources'][0]:
+                    raise ConflictError('Entrée de qualification modifiée depuis la réservation')
+                from .outgoing import FORMAT
+                closed = dict(outgoing_format=FORMAT, outgoing=request)
+                wire = transport.prepare(deepcopy(operation), deepcopy(closed))
+                if len(operation['resources']) != 2 or wire != operation['resources'][1]:
+                    raise ConflictError('Contenu de qualification modifié depuis la réservation')
+                budget = store._budget(connection, operation['budget_id'], store._operations(connection))
+                if (budget['currency'] != 'USD' or store._blocking_costs(
+                        store._operations(connection), budget, 'qualification')):
+                    return
+                connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' WHERE operation_id=?", (operation_id,))
+            emitted = True
+            operation['state'] = 'EMISSION_POSSIBLE'
+            operation['conserved_wire'] = wire
+            response = transport(deepcopy(operation), deepcopy(closed))
+            _fields(response, ('receipt', 'cost'), 'réponse de qualification')
+            result = response['receipt']['result']
+            try:
+                result = _qualification_result(result)
+            except (ValueError, TypeError, KeyError):
+                result = None
+            with _transaction(connection, write=True):
+                store._record_receipt(connection, operation_id, response['receipt'], response['cost'])
+                if result is not None:
+                    cost = response['cost']['amount'] if response['cost']['status'] == 'KNOWN' else None
+                    connection.execute('INSERT INTO s2_qualifications VALUES (?,?,?,?,?,?,?,?,?)',
+                        (operation['dossier_id'], operation['revision'], operation_id, int(result['qualified']),
+                         encode(result['findings']), result['summary'], operation['requested_configuration']['model'],
+                         cost, datetime.now(timezone.utc).isoformat()))
+        except Exception:
+            if emitted:
+                store.mark_ambiguous(operation_id, 'QUALIFICATION_RESULT_NOT_VERIFIED')
+            else:
+                close_admission(store)
 
 
 def execute(data, operation_id, transport):
@@ -759,6 +974,8 @@ def verify_preparation(store, connection):
                                   'WHERE d.dossier_id=? AND d.session_id=? AND r.revision=? AND r.package_sha256=? AND r.stage=?',
                                   (dossier_id, session_id, revision, digest, 'preview')).fetchone():
             raise IntegrityError('Validation étrangère ou divergente')
+    for dossier_id, revision in connection.execute('SELECT dossier_id,revision FROM s2_qualifications').fetchall():
+        _automatic_qualification(store, connection, dossier_id, revision)
     for dossier_id, action_id, revision, kind, raw, operation_id in connection.execute('SELECT * FROM s2_actions').fetchall():
         identifier(action_id)
         if not connection.execute('SELECT 1 FROM operations WHERE operation_id=? AND dossier_id=? AND revision=? '
@@ -768,7 +985,7 @@ def verify_preparation(store, connection):
         encode(json.loads(raw, object_pairs_hook=_unique_object))
 
 
-def dispatch(store, method, path, token, body, source, transport, *, candidate_transport=None,
+def dispatch(store, method, path, token, body, source, transport, *, qualification_transport=None, candidate_transport=None,
              access_secret=None, access_transport=None, presentation=None):
     """Executor-side authorization: HTTP fields can never claim an operator role."""
     if method == 'GET' and path == '/preparation':
@@ -846,6 +1063,11 @@ def dispatch(store, method, path, token, body, source, transport, *, candidate_t
     if launch_route:
         from . import campaigns
         dossier_id, campaign_id, action = launch_route.groups()
+        owner(connection_for(store), session_id, dossier_id)
+        snapshot = campaigns.inspect(store, campaign_id)
+        if snapshot['task']['dossier_id'] != dossier_id:
+            raise Denied('Ressource inaccessible')
+        require_qualification(store, connection_for(store), dossier_id, snapshot['task']['revision'])
         if method == 'POST' and action == 'start':
             if not callable(candidate_transport):
                 raise Denied('Acquisition indisponible')
@@ -891,5 +1113,9 @@ def dispatch(store, method, path, token, body, source, transport, *, candidate_t
         return 202, {'operation_id': operation_id, 'dossier_id': dossier_id}, None, operation_id if start else None
     if method == 'POST' and action == 'validation':
         _fields(body, ('dossier_id', 'revision', 'package_sha256'), 'validation')
+        if qualification_transport is not None:
+            value, operation_id, start = validate_and_qualify(
+                store, session_id, dossier_id, body, source, qualification_transport)
+            return 202, value, None, {'qualification_operation': operation_id} if start else None
         return 200, validate(store, session_id, dossier_id, body), None, None
     raise Denied('Action inaccessible')

@@ -237,6 +237,8 @@ def main(argv=None):
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--preparation-assistant', metavar='ALIAS_OR_PROFILE',
                         help='Alias preparation, alias historique glm-5.3-flash ou chemin d’un profil JSON local')
+    parser.add_argument('--qualification-assistant', metavar='ALIAS_OR_PROFILE',
+                        help='Alias qualification ou chemin du profil JSON local approuvé')
     parser.add_argument('--judgment-profile', metavar='ALIAS_OR_PROFILE')
     parser.add_argument('--candidate-pi', action='store_true', help='Charger le transport candidat Pi/OpenRouter dans l’exécuteur privé')
     parser.add_argument('--candidate-provider', choices=('openrouter', 'anthropic', 'deepseek', 'zai', 'openai', 'moonshot', 'dashscope', 'tokenhub'), default='openrouter',
@@ -258,6 +260,8 @@ def main(argv=None):
             raise ValueError('Transport candidat réservé à l’exécuteur')
         if args.preparation_assistant is not None and args.action not in ('executor', 'forecast-prices'):
             raise ValueError('Assistant réservé à l’exécuteur')
+        if args.qualification_assistant is not None and args.action != 'executor':
+            raise ValueError('Qualificateur réservé à l’exécuteur')
         if args.action == 'inspect-pi':
             from .pi_openrouter import identity
             if args.pi_package is None or args.node is None:
@@ -297,12 +301,15 @@ def main(argv=None):
                 from .provider_access import OpenRouterAccess, parse_secret
                 access_secret = parse_secret(os.environ.pop('BENCHMARK_ACCESS_SECRET', ''))
                 transport = None
+                qualification_transport = None
                 candidate_factory = None
                 profile = None
                 if args.preparation_assistant is not None:
                     from .openrouter_preparation import OpenRouterPreparation, load_profile
                     profile = load_profile(args.preparation_assistant)
-                key = os.environ.pop('OPENROUTER_API_KEY', '') if args.preparation_assistant is not None or args.candidate_pi else ''
+                key = os.environ.pop('OPENROUTER_API_KEY', '') if (
+                    args.preparation_assistant is not None or args.qualification_assistant is not None
+                    or args.candidate_pi) else ''
                 if args.candidate_pi:
                     from .pi_openrouter import identity
                     if args.pi_package is None or args.node is None:
@@ -313,7 +320,12 @@ def main(argv=None):
                     candidate_factory()
                 if args.preparation_assistant is not None:
                     transport = OpenRouterPreparation(key, profile)
-                serve_executor(args.data, args.socket, release_identity(), transport=transport, candidate_transport_factory=candidate_factory,
+                if args.qualification_assistant is not None:
+                    from .openrouter_qualification import OpenRouterQualification
+                    qualification_transport = OpenRouterQualification(key, args.qualification_assistant)
+                serve_executor(args.data, args.socket, release_identity(), transport=transport,
+                               qualification_transport=qualification_transport,
+                               candidate_transport_factory=candidate_factory,
                                access_secret=access_secret, access_transport=OpenRouterAccess(),
                                presentation=import_module(args.presentation))
             return 0

@@ -376,7 +376,7 @@ class OpenRouterPreparation:
         self._validate_key(key)
         requested = operation['requested_configuration']
         expected = configuration(requested.get('reservation_estimate'), self._profile)
-        if ('reserve_usd' not in expected or requested != expected
+        if (('reserve_usd' not in expected and operation['phase'] != 'qualification') or requested != expected
                 or operation['phase'] not in self.phases):
             raise ValueError('Configuration ou réservation OpenRouter divergente')
         if request.get('outgoing_format') != outgoing.FORMAT:
@@ -404,8 +404,10 @@ class OpenRouterPreparation:
                 or sha256(key.encode()).hexdigest() != self._key_sha256):
             raise ValueError('Corps préparé divergent')
         expected_models = operation['requested_configuration']['model_identities']
-        named_providers = {row['provider_name'] for row in operation['requested_configuration']['reservation_estimate']['endpoints']}
         authorized = providers(self._profile)
+        estimate = operation['requested_configuration'].get('reservation_estimate')
+        named_providers = ({row['provider_name'] for row in estimate['endpoints']}
+                           if type(estimate) is dict else set(authorized.values()))
         status, safe_headers, raw, complete, started, clock = post(
             key, wire, timeout=self._profile['timeout_seconds'],
             max_response_bytes=self._profile['max_response_bytes'])
