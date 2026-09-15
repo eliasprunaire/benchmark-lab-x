@@ -215,7 +215,10 @@ def comparison(store, session_id, dossier_id, campaign_id, *, query=None):
 
 def detail(store, session_id, dossier_id, campaign_id, attempt_id, *, query=None):
     p.identifier(attempt_id)
-    value = comparison(store, session_id, dossier_id, campaign_id, query=query)
+    connection = e.connection_for(store)
+    with store.read_snapshot() as connection:
+        value = _comparison(store, connection, session_id, dossier_id, campaign_id,
+                            {} if query is None else query)
     history = [r for r in value['history'] if r['attempt_id'] == attempt_id]
     if not history:
         raise p.Denied('Tentative évaluée inaccessible')

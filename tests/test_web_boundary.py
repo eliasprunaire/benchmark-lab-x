@@ -1,5 +1,6 @@
 """La présentation dépend du moteur ; le moteur ne dépend pas de la présentation."""
 from contextlib import closing
+from html.parser import HTMLParser
 from pathlib import Path
 import re
 import tempfile
@@ -15,16 +16,43 @@ ENGINE = ROOT / 'benchmark'
 WEB = ROOT / 'benchmark_web'
 
 
+class PageContent(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.fragments = []
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        validation_hash = (tag == 'input' and attributes.get('type') == 'hidden'
+                           and attributes.get('name') == 'package_sha256')
+        self.fragments.append(tag)
+        for name, value in attrs:
+            self.fragments.append(name)
+            if value is not None and not (validation_hash and name == 'value'):
+                self.fragments.append(value)
+
+    handle_startendtag = handle_starttag
+
+    def handle_endtag(self, tag):
+        self.fragments.append(tag)
+
+    def handle_data(self, data):
+        self.fragments.append(data)
+
+    def handle_comment(self, data):
+        self.fragments.append(data)
+
+
 class WebBoundaryTests(unittest.TestCase):
     def assert_no_fingerprint_field(self, value, allowed=()):
         if type(value) is dict:
             for key, item in value.items():
                 if key not in allowed:
                     self.assertFalse(key == 'sha256' or key in ('fingerprint', 'digest') or key.endswith('_sha256'), key)
-                self.assert_no_fingerprint_field(item)
+                self.assert_no_fingerprint_field(item, allowed)
         elif type(value) is list:
             for item in value:
-                self.assert_no_fingerprint_field(item)
+                self.assert_no_fingerprint_field(item, allowed)
 
     def test_engine_never_imports_the_web_package(self):
         for path in ENGINE.rglob('*.py'):
@@ -65,10 +93,11 @@ class WebBoundaryTests(unittest.TestCase):
                 for value in values[1:]:
                     self.assert_no_fingerprint_field(value)
                 pages = [views.render(value, '').decode() for value in values]
-        package = values[0]['package_sha256']
-        pages[0] = pages[0].replace(f'name="package_sha256" value="{package}"', '')
         for page in pages:
-            self.assertIsNone(re.search(r'(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])', page))
+            content = PageContent()
+            content.feed(page)
+            self.assertIsNone(re.search(r'(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])',
+                                        '\n'.join(content.fragments), re.IGNORECASE))
 
 
 if __name__ == '__main__':

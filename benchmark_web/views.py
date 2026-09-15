@@ -399,7 +399,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<p>Réserves prévues par essai : ' + text(', '.join(key + ' : ' + amount for key, amount in campaign['reserve_amounts'].items()) if campaign['reserve_amounts'] else 'non autorisées') + '.</p>'
         content += '<p>Estimation, réservation et coût observé sont distincts. La réserve ne garantit pas un plafond de facturation.</p>'
         if value['can_launch']:
-            content += form(base + '/start', {'admission_id': value['admission_id']},
+            content += form(base + '/start', {'manifest_version': campaign['version'],
+                'frozen_at': campaign['conditions']['frozen_at'], 'admission_id': value['admission_id']},
                 '<label><input type="checkbox" name="confirm" value="yes" required> Je confirme le lancement des essais autorisés présentés.</label><button type="submit">Lancer la comparaison autorisée</button>')
         else:
             content += '<p role="status">' + ('Lancement enregistré. Consultez les essais et leurs résultats ci-dessous.' if campaign['attempts'] else 'Lancement indisponible. Le responsable doit vérifier les autorisations et la disponibilité de l’exécution.') + '</p>'

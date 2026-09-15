@@ -399,7 +399,9 @@ class Recovery(unittest.TestCase):
         m['campaign_id']='clickable'
         c.create(self.store,m)
         record=self.admit('clickable',grant=True,owner=True)
-        body=dict(manifest_sha256=c.inspect(self.store,'clickable')['manifest_sha256'],
+        snapshot=c.inspect(self.store,'clickable')
+        body=dict(manifest_version=snapshot['manifest']['version'],
+                  frozen_at=snapshot['manifest']['conditions']['frozen_at'],
                   admission_id=record['admission_id'],confirm='yes')
         attempts=c.launch(self.store,self.sid,'fixture','clickable',body)
         self.assertTrue(attempts)

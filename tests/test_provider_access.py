@@ -210,7 +210,8 @@ class ProviderAccessTests(unittest.TestCase):
         campaigns.create(self.store, value)
         snapshot = campaigns.inspect(self.store, 'local-comparison')
         admission = campaigns.admit(self.store, 'local-comparison', *inputs(snapshot), owner_launch=True)
-        body = {'manifest_sha256': snapshot['manifest_sha256'],
+        body = {'manifest_version': snapshot['manifest']['version'],
+                'frozen_at': snapshot['manifest']['conditions']['frozen_at'],
                 'admission_id': admission['admission_id'], 'confirm': 'yes'}
         with self.assertRaisesRegex(preparation.Denied, 'ACCESS_REQUIRED'):
             campaigns.launch(self.store, self.session, 'fixture', 'local-comparison', body,
