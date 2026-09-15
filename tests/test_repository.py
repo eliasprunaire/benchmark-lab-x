@@ -16,6 +16,7 @@ class RepositoryTest(unittest.TestCase):
             license_path.read_text(encoding="utf-8").splitlines()[0].strip(),
             "GNU AFFERO GENERAL PUBLIC LICENSE",
         )
+        self.assertFalse(license_path.read_bytes().endswith(b"\n\n"))
 
 
 if __name__ == "__main__":

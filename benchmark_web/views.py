@@ -441,7 +441,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         base = dossier_url + '/campaigns/' + campaign['campaign_id']
         title = 'Vérifier puis lancer la comparaison'
         content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
-        check_items = []
+        check_content = '<ul>'
         for check in value['checks']:
             detail = check['detail']
             if type(detail) is dict:
@@ -449,8 +449,13 @@ def render(value, csrf, path='/preparation', *, error=False):
                           if detail.get('limit_remaining_usd') is not None else 'INCONNU') +
                           ' USD ; limite du compte : ' + str(detail.get('limit_usd')
                           if detail.get('limit_usd') is not None else 'INCONNU') + ' USD')
-            check_items.append(('✓ ' if check['ok'] else '✕ ') + str(detail))
-        content += section('Contrôles avant lancement', listing(check_items))
+            check_content += '<li>' + text(('✓ ' if check['ok'] else '✕ ') + str(detail))
+            if check['key'] == 'example_qualified' and check.get('findings'):
+                check_content += '<p>Constats de qualification</p>' + listing(
+                    finding['text'] for finding in check['findings'])
+            check_content += '</li>'
+        check_content += '</ul>'
+        content += section('Contrôles avant lancement', check_content)
         content += section('Plafond',
             '<p>Plafond actuel : ' + text(value['cap_usd']) + ' USD.</p>' +
             '<form method="post" action="' + text(base + '/cap') + '">' +
@@ -707,7 +712,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             change_labels = {'instruction': 'Consigne', 'deliverables': 'Livrables', 'criteria': 'Critères',
                 'acceptable_ambiguities': 'Ambiguïtés recevables', 'pieces': 'Pièces'}
             if value['changes']:
-                changes = listing(change_labels[change] for change in value['changes'])
+                changes = listing(change_labels.get(change, change) for change in value['changes'])
                 for kind, label in (('added', 'Pièces ajoutées'), ('removed', 'Pièces retirées'),
                                     ('modified', 'Pièces modifiées')):
                     names = value['piece_changes'][kind]

@@ -112,28 +112,33 @@ class ModelCatalogueTests(unittest.TestCase):
         self.assertEqual('preview:free', catalogue._variant('openai/gpt-5-preview:free'))
         self.assertEqual('exp:free', catalogue._variant('openai/gpt-5-exp:free'))
 
-    def test_route_exige_un_tag_strictement_identique(self):
-        routes = {'openai/modele': {'openai'}}
-        self.assertTrue(catalogue._compliant(
-            'openai/modele', [{'model_id': 'openai/modele', 'tag': 'openai'}], routes))
-        self.assertFalse(catalogue._compliant(
-            'openai/modele', [{'model_id': 'openai/modele', 'tag': 'openai/standard'}], routes))
+    def test_identifiant_refuse_les_segments_de_chemin(self):
+        self.assertEqual('openai/modele_test', catalogue._model_id({'id': 'openai/modele_test'}))
+        for model_id in ('./modele', '../modele', 'openai/.', 'openai/..'):
+            with self.subTest(model_id=model_id):
+                self.assertIsNone(catalogue._model_id({'id': model_id}))
 
     def test_rapport_signale_une_famille_nouvelle_et_un_modele_disparu(self):
         registry = {
             'catalogue': {'makers': ['openai'], 'max_per_family': 3,
-                          'max_age_days': 365, 'cache_hours': 24},
+                          'max_age_days': 365, 'cache_hours': 24,
+                          'baseline_models': ['openai/ancien-1', 'openai/ancien-2'],
+                          'baseline_fetched_at': '2026-09-01T00:00:00Z'},
             'ancien': {'model': 'openai/ancien-1', 'provider': 'openai'},
         }
         models = [{
             'id': 'openai/nouveau-2', 'name': 'Nouveau', 'created': int(NOW.timestamp()),
             'architecture': {'output_modalities': ['text']},
+        }, {
+            'id': 'openai/ancien-2', 'name': 'Ancien', 'created': 'invalide',
+            'architecture': {'output_modalities': ['text']},
         }]
         self.assertEqual(
-            {'new_families': ['openai/nouveau-#'], 'missing_models': ['openai/ancien-1']},
+            {'new_families': ['openai/nouveau-#'], 'missing_models': ['openai/ancien-1'],
+             'malformed_models': ['openai/ancien-2']},
             catalogue.report(models, registry, NOW))
         self.assertEqual(catalogue.report(FIXTURE['data'], registry, NOW)['missing_models'],
-                         ['openai/ancien-1'])
+                         ['openai/ancien-1', 'openai/ancien-2'])
 
 
 if __name__ == '__main__':

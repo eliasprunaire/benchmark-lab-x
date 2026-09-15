@@ -94,6 +94,7 @@ class ProviderAccessTests(unittest.TestCase):
             provider_access.decrypt(SECRET, damaged)
 
     def test_callback_verification_invalidation_et_panne_transitoire(self):
+        accepted = self.transport.verify_result
         connected = self.connect()
         self.assertEqual({'connected': True, 'limit_usd': '20', 'limit_remaining_usd': '18.5',
                           'is_free_tier': False, 'status': 'connected'},
@@ -114,22 +115,30 @@ class ProviderAccessTests(unittest.TestCase):
         self.store._connection.execute('UPDATE s2_provider_access SET checked_at=? WHERE session_id=?',
                                        (old, self.session))
         self.store._connection.commit()
-        self.transport.verify_result = (401, b'{"error":"rejected"}')
-        rejected = provider_access.view(self.store, self.session, SECRET, self.transport)
-        self.assertEqual('invalid', rejected['status'])
-        self.assertEqual('KEY_REJECTED', rejected['reason'])
-        self.assertFalse(rejected['connected'])
-        key_cipher, reason = self.store._connection.execute(
-            'SELECT key_cipher,status_reason FROM s2_provider_access WHERE session_id=?',
-            (self.session,)).fetchone()
-        self.assertEqual(KEY, provider_access.decrypt(SECRET, key_cipher))
-        self.assertEqual('KEY_REJECTED', reason)
-        verification_count = len(self.transport.verifications)
-        self.assertEqual('invalid', provider_access.view(
-            self.store, self.session, SECRET, self.transport)['status'])
-        self.assertEqual(verification_count, len(self.transport.verifications))
-        with self.assertRaisesRegex(preparation.Denied, 'ACCESS_REQUIRED'):
-            provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
+        for status in (401, 403):
+            with self.subTest(status=status):
+                self.transport.verify_result = accepted
+                self.connect()
+                self.store._connection.execute(
+                    'UPDATE s2_provider_access SET checked_at=? WHERE session_id=?',
+                    (old, self.session))
+                self.store._connection.commit()
+                self.transport.verify_result = (status, b'{"error":"rejected"}')
+                rejected = provider_access.view(self.store, self.session, SECRET, self.transport)
+                self.assertEqual('invalid', rejected['status'])
+                self.assertEqual('KEY_REJECTED', rejected['reason'])
+                self.assertFalse(rejected['connected'])
+                key_cipher, reason = self.store._connection.execute(
+                    'SELECT key_cipher,status_reason FROM s2_provider_access WHERE session_id=?',
+                    (self.session,)).fetchone()
+                self.assertEqual(KEY, provider_access.decrypt(SECRET, key_cipher))
+                self.assertEqual('KEY_REJECTED', reason)
+                verification_count = len(self.transport.verifications)
+                self.assertEqual('invalid', provider_access.view(
+                    self.store, self.session, SECRET, self.transport)['status'])
+                self.assertEqual(verification_count, len(self.transport.verifications))
+                with self.assertRaisesRegex(preparation.Denied, 'ACCESS_REQUIRED'):
+                    provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
         self.assertNotEqual(verified_at, old)
 
     def test_secret_change_efface_acces_et_evenements(self):

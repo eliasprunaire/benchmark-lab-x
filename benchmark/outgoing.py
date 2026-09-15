@@ -25,10 +25,9 @@ def texts(values):
     return [text(value) for value in values]
 
 
-def criteria(value, *, normalize_legacy=False):
+def criteria(value):
     if type(value) is list:
-        checked = texts(value)
-        return {'eliminatory': [], 'obligations': checked, 'quality': []} if normalize_legacy else checked
+        return {'eliminatory': [], 'obligations': texts(value), 'quality': []}
     if type(value) is not dict or set(value) != {'eliminatory', 'obligations', 'quality'}:
         raise ValueError('Critères par gravité requis')
     quality = value['quality']

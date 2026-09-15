@@ -165,6 +165,8 @@ L’exécuteur existant porte les sessions et les opérations ; le web relaie le
 Sans proxy, les envois locaux partagent l’adresse locale et donc la même limite horaire de source.
 Le compteur horaire vit uniquement en mémoire de l’exécuteur et repart de zéro à son redémarrage.
 
+Le verrou global de préparation refuse `submit` avec `Denied` et le statut HTTP 403 `PREPARATION_IN_PROGRESS`, et non avec `ConflictError`.
+
 Le cookie `benchmark_session` est opaque, `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/preparation`, sans `Domain`, `Expires` ou `Max-Age`. Le stockage ne conserve que son SHA-256 et une identité interne. Le même navigateur retrouve ses dossiers tant qu’il conserve ce cookie ; sa survie à la fermeture n’est pas garantie. Perdre le cookie fait perdre l’accès sans effacer les dossiers. Aucun compte, durée de conservation ou récupération n’est ajouté. Chaque action et pièce exige sa session propriétaire ; les POST exigent aussi le jeton CSRF. Les champs d’autorité ne sont pas acceptés dans les formulaires. Les pièces sont du texte inerte, et la référence privée de jugement reste hors du paquet demandeur/candidat.
 
 L’initialisation suivante est une opération locale explicite sur une base S1 intégrée neuve, sans données métier ni pièces résiduelles. Elle refuse une base S1 peuplée, une extension partielle, un schéma inconnu et le schéma distinct de #197 :
@@ -235,6 +237,8 @@ Une campagne avec `funding: "requester"` exige l’accès `connected` de la sess
 Le profil de production utilise `openai/gpt-6-astra`, sa révision `openai/gpt-6-astra-20260903`, `reasoning={"effort":"medium"}`, `max_tokens=16384`, `stream=false` et `response_format={"type":"json_object"}`. Il limite la route à l’endpoint `openai`, sans fallback. Le relevé public du 14 septembre 2026 annonce pour cet endpoint les paramètres requis. L’admission doit être régénérée avec la configuration du runtime livré ; les anciennes opérations restent intactes. Un message système précède le contexte S2 exact.
 
 Le profil historique GLM conserve ses paramètres et sa route native OpenRouter dans `provider.only=["modal/fp8","coreweave/fp8","novita/fp8"]`, avec le même `order`, `allow_fallbacks=true` et `require_parameters=true`. Il n’est plus le profil documenté par défaut. Le produit envoie une seule requête HTTP, sans boucle locale ni recherche d’une autre réponse après succès ; aucun proxy d’environnement ou autre canal n’est utilisé.
+
+Les libellés `ROUTE_TEXT` et `THREE_ROUTE_TEXT` restent en anglais pour préserver les reçus historiques ; les autres libellés de route sont en français.
 
 Avant l’admission, l’opérateur renouvelle la consultation publique décrite ci-dessous, avec la base de réserve et la limite de sortie configurées. Exemple pour le profil de production :
 

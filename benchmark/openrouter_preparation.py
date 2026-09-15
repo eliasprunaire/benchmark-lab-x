@@ -54,7 +54,7 @@ NO_FALLBACK_ROUTE_TEXT = 'Endpoints OpenRouter explicites ; secours natif désac
 
 
 def _bounded_int(value, minimum, maximum):
-    if type(value) is not int or isinstance(value, bool) or not minimum <= value <= maximum:
+    if type(value) is not int or not minimum <= value <= maximum:
         raise ValueError('Profil de préparation invalide')
     return value
 
@@ -180,7 +180,7 @@ def _validated_profile(document):
         max_response_bytes=_bounded_int(document['max_response_bytes'], 1, MAX_RESPONSE_BYTES),
         timeout_seconds=_bounded_int(document['timeout_seconds'], 1, TIMEOUT_SECONDS))
     if 'reserve_input_tokens' in document:
-        if type(document['reserve_input_tokens']) is not int or isinstance(document['reserve_input_tokens'], bool) or document['reserve_input_tokens'] <= 0:
+        if type(document['reserve_input_tokens']) is not int or document['reserve_input_tokens'] <= 0:
             raise ValueError('Profil de préparation invalide')
         value['reserve_input_tokens'] = document['reserve_input_tokens']
     encode(value)

@@ -961,13 +961,13 @@ def _requester_checks(store, connection, snapshot, session_id, access):
         'SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? '
         'AND package_sha256=? AND session_id=?',
         (task['dossier_id'], task['revision'], task['package_sha256'], session_id)).fetchone() is not None
-    qualified = False
+    qualified, qualification_findings = False, []
     if validated:
         try:
             require_qualification(store, connection, task['dossier_id'], task['revision'])
             qualified = True
-        except Denied:
-            pass
+        except Denied as error:
+            qualification_findings = error.findings or []
     try:
         catalogue = model_catalogue.selection(store)
         selectable = {model['id'] for model in catalogue['models']
@@ -986,7 +986,8 @@ def _requester_checks(store, connection, snapshot, session_id, access):
         {'key': 'example_validated', 'ok': validated,
          'detail': 'Exemple validé' if validated else 'Validez l’exemple présenté'},
         {'key': 'example_qualified', 'ok': qualified,
-         'detail': 'Exemple qualifié' if qualified else 'La qualification de l’exemple est requise'},
+         'detail': 'Exemple qualifié' if qualified else 'La qualification de l’exemple est requise',
+         'findings': qualification_findings},
         {'key': 'configurations_available', 'ok': not missing,
          'detail': ('Tous les modèles sélectionnés sont disponibles' if not missing else
                     'Modèles à choisir de nouveau : ' + ', '.join(missing))},
