@@ -25,7 +25,8 @@
           "openai"
         ],
         "allow_fallbacks": false,
-        "require_parameters": true
+        "require_parameters": true,
+        "data_collection": "deny"
       }
     }
   },
@@ -55,7 +56,8 @@
           "openai"
         ],
         "allow_fallbacks": false,
-        "require_parameters": true
+        "require_parameters": true,
+        "data_collection": "deny"
       }
     }
   },
@@ -85,7 +87,8 @@
           "moonshotai/mxfp4"
         ],
         "allow_fallbacks": false,
-        "require_parameters": true
+        "require_parameters": true,
+        "data_collection": "deny"
       }
     }
   },
@@ -115,7 +118,8 @@
           "alibaba"
         ],
         "allow_fallbacks": false,
-        "require_parameters": true
+        "require_parameters": true,
+        "data_collection": "deny"
       }
     }
   },
@@ -145,7 +149,8 @@
           "tencent/fp8"
         ],
         "allow_fallbacks": false,
-        "require_parameters": true
+        "require_parameters": true,
+        "data_collection": "deny"
       }
     }
   }

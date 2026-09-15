@@ -44,14 +44,17 @@ def _registry(path=None):
 def _settings(registry):
     value = registry.get('catalogue')
     required = {'makers', 'max_per_family', 'max_age_days', 'cache_hours'}
-    optional = {'baseline_families', 'baseline_models', 'baseline_fetched_at'}
+    optional = {'baseline_families', 'baseline_models', 'baseline_fetched_at', 'excluded_providers'}
     if (type(value) is not dict or not required <= value.keys()
             or value.keys() - required - optional):
         raise ValueError('Configuration [catalogue] incomplète')
+    excluded_providers = value.get('excluded_providers', [])
     if (type(value['makers']) is not list or not value['makers']
             or any(type(item) is not str or not item for item in value['makers'])
             or any(type(value[key]) is not int or value[key] <= 0
-                   for key in ('max_per_family', 'max_age_days', 'cache_hours'))):
+                   for key in ('max_per_family', 'max_age_days', 'cache_hours'))
+            or type(excluded_providers) is not list
+            or any(type(item) is not str or not item for item in excluded_providers)):
         raise ValueError('Paramètres du catalogue invalides')
     return value
 
@@ -97,16 +100,10 @@ def _candidates(models, settings, now):
     return sorted(selected, key=lambda item: (family(item['id']), -item['created'], item['id']))
 
 
-def _registered_routes(registry):
-    routes = defaultdict(set)
-    for alias, value in registry.items():
-        if alias == 'catalogue' or type(value) is not dict:
-            continue
-        model, provider = value.get('model'), value.get('provider')
-        if (type(model) is str and type(provider) is str
-                and value.get('catalogue_compliant', True) is True):
-            routes[model].add(provider)
-    return routes
+def _provider_slug(endpoint):
+    if type(endpoint) is not dict or type(endpoint.get('tag')) is not str:
+        return None
+    return endpoint['tag'].split('/', 1)[0]
 
 
 def tiers():
@@ -216,7 +213,7 @@ def selection(store):
     endpoint_documents = document.get('endpoints')
     if type(endpoint_documents) is not dict:
         raise storage.IntegrityError('Cache des endpoints absent')
-    routes = _registered_routes(registry)
+    excluded_providers = set(settings.get('excluded_providers', []))
     view = [{
         'id': model_id,
         'name': model.get('name') if type(model.get('name')) is str else None,
@@ -252,8 +249,19 @@ def selection(store):
         max_output = top_provider.get('max_completion_tokens') if type(top_provider) is dict else None
         if max_output is not None and type(max_output) is not int:
             raise ValueError('Limite de sortie invalide')
-        available_routes = sorted(endpoint['tag'] for endpoint in detail['endpoints']
-                                  if type(endpoint) is dict and endpoint.get('tag') in routes.get(model_id, ()))
+        endpoints = detail['endpoints']
+        available_routes = sorted(endpoint['tag'] for endpoint in endpoints
+                                  if type(endpoint) is dict and type(endpoint.get('tag')) is str
+                                  and type(endpoint.get('status')) in (int, float)
+                                  and endpoint['status'] >= 0
+                                  and _provider_slug(endpoint) not in excluded_providers)
+        if available_routes:
+            excluded = None
+        elif endpoints and all(_provider_slug(endpoint) in excluded_providers
+                               for endpoint in endpoints):
+            excluded = 'provider_excluded'
+        else:
+            excluded = 'no_available_endpoint'
         context_length = model.get('context_length')
         if context_length is not None and (type(context_length) is not int or context_length <= 0):
             raise ValueError('Fenêtre de contexte invalide')
@@ -270,8 +278,7 @@ def selection(store):
             'route': available_routes[0] if available_routes else None,
             'max_output_tokens': max_output,
             'variant': _variant(model_id),
-            'excluded': None if available_routes
-            else 'no_compliant_provider',
+            'excluded': excluded,
         })
     return {'fetched_at': fetched_at.isoformat(),
             'stale': _now() - fetched_at >= timedelta(hours=settings['cache_hours']),

@@ -15,7 +15,7 @@ from tests.test_s4_regressions import manifest
 NOW = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
 
 
-def model(model_id, maker, efforts=None, prompt='0.000002', completion='0.00001'):
+def model(model_id, maker, efforts=None, prompt='0.000002', completion='0.00001', status=0):
     value = {
         'id': model_id, 'name': model_id, 'created': int(NOW.timestamp()),
         'architecture': {'output_modalities': ['text']},
@@ -24,7 +24,8 @@ def model(model_id, maker, efforts=None, prompt='0.000002', completion='0.00001'
     }
     if efforts is not None:
         value['reasoning'] = {'supported_efforts': efforts}
-    return value, {'id': model_id, 'endpoints': [{'model_id': model_id, 'tag': maker}]}
+    return value, {'id': model_id, 'endpoints': [
+        {'model_id': model_id, 'tag': maker, 'status': status}]}
 
 
 class ConfigurationsTests(unittest.TestCase):
@@ -50,7 +51,7 @@ class ConfigurationsTests(unittest.TestCase):
             model('openai/gpt-5.6-sol', 'openai', ['low', 'medium', 'high']),
             model('deepseek/deepseek-v4.1-flash', 'deepseek', []),
             model('mistralai/mistral-medium-3-5', 'mistral', ['low']),
-            model('openai/gpt-5.5-sol', 'absent', ['high']),
+            model('openai/gpt-5.5-sol', 'absent', ['high'], status=-1),
         ]
         document = {'models': [row[0] for row in rows],
                     'endpoints': {row[0]['id']: row[1] for row in rows}}
@@ -103,6 +104,24 @@ class ConfigurationsTests(unittest.TestCase):
         transport = object.__new__(pi_openrouter.PiOpenRouter)
         payload = transport._payload(by_model['deepseek/deepseek-v4.1-flash'], [])
         self.assertEqual({'enabled': True}, payload['reasoning'])
+        for item in enhanced['configurations']:
+            self.assertEqual('deny', item['parameters']['provider']['data_collection'])
+        self.assertEqual('deny', payload['provider']['data_collection'])
+
+    def test_payload_refuse_une_configuration_sans_deny(self):
+        prepared = self.prepare(
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'])
+        config = prepared['configurations'][0]
+        transport = object.__new__(pi_openrouter.PiOpenRouter)
+        provider = config['parameters']['provider']
+        saved = provider.pop('data_collection')
+        with self.assertRaisesRegex(ValueError, 'DATA_COLLECTION_REQUIRED'):
+            transport._payload(config, [])
+        provider['data_collection'] = 'allow'
+        with self.assertRaisesRegex(ValueError, 'DATA_COLLECTION_REQUIRED'):
+            transport._payload(config, [])
+        provider['data_collection'] = saved
+        self.assertEqual('deny', transport._payload(config, [])['provider']['data_collection'])
 
     def test_estimation_reproductible_et_remplacement_append_only(self):
         first = self.prepare(

@@ -153,7 +153,8 @@ class OfficialTransportTests(unittest.TestCase):
         config['parameters']['max_tokens'] = 32
         config['parameters'].update(
             provider=dict(only=['fixture/route'], order=['fixture/route'],
-                          allow_fallbacks=False, require_parameters=True),
+                          allow_fallbacks=False, require_parameters=True,
+                          data_collection='deny'),
             reasoning=dict(effort='low'))
         h.store.create_budget(source['campaign_id'], '2', 'USD')
         snapshot = c.create(h.store, source)

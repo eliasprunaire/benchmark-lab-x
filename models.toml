@@ -8,14 +8,12 @@
 # exige un alias distinct
 # Ajouter ou retirer des entrées librement ; le collecteur ne boucle jamais sur ce fichier.
 #
-# Ajouter un modèle : vérifier d'abord ses hébergeurs
+# L’éligibilité au catalogue constate seulement un endpoint disponible et ne
+# présume pas la politique de données de ses hébergeurs
+# Ajouter une configuration future : vérifier ses routes
 #   curl -s https://openrouter.ai/api/v1/models/<id>/endpoints
-# et épingler un hébergeur qui ne s'entraîne pas sur les données des requêtes
-# (RULES R-005). Si tous les hébergeurs s'entraînent, le modèle n'est PAS
-# benchmarkable : garder son entrée ci-dessous, commentée, avec la raison ;
-# ne jamais assouplir la politique du compte.
-#
-# Non benchmarkables (aucun hébergeur sans entraînement) : aucun à ce jour
+# puis épingler celles qui acceptent `data_collection: deny`, imposé à chaque
+# appel candidat au titre de R-005
 
 [catalogue]
 makers = ["openai", "anthropic", "google", "x-ai", "meta-llama", "mistralai", "deepseek", "qwen", "moonshotai", "z-ai", "minimax", "cohere", "ai21", "nvidia", "amazon", "microsoft"]
@@ -447,7 +445,6 @@ model = "deepseek/deepseek-v4-pro"
 nom_public = "DeepSeek V4 Pro"
 provider = "deepseek"
 omit_params = ["seed"]
-catalogue_compliant = false
 
 # Nouvelle configuration scientifique FP8, distincte des acquisitions BF16
 # historiques. AtlasCloud est la route primaire et DeepInfra la secondaire
@@ -559,6 +556,7 @@ provider = "openai"
 expect_provider = "OpenAI"
 omit_params = ["temperature", "top_p"]
 reasoning_effort = "low"
+data_collection = "deny"
 
 [gpt-6-astra-low]
 model = "openai/gpt-6-astra"
@@ -567,6 +565,7 @@ provider = "openai"
 expect_provider = "OpenAI"
 omit_params = ["temperature", "top_p"]
 reasoning_effort = "low"
+data_collection = "deny"
 
 [kimi-k3-low]
 model = "moonshotai/kimi-k3"
@@ -575,6 +574,7 @@ provider = "moonshotai/mxfp4"
 expect_provider = "Moonshot AI"
 omit_params = ["temperature", "top_p", "seed"]
 reasoning_effort = "low"
+data_collection = "deny"
 
 [qwen3-8-max-0902-low]
 model = "qwen/qwen3.8-max-0902"
@@ -583,6 +583,7 @@ provider = "alibaba"
 expect_provider = "Alibaba"
 omit_params = []
 reasoning_effort = "low"
+data_collection = "deny"
 
 [hy4-preview-low]
 model = "tencent/hy4-preview"
@@ -591,3 +592,4 @@ provider = "tencent/fp8"
 expect_provider = "Tencent"
 omit_params = ["top_p", "seed"]
 reasoning_effort = "low"
+data_collection = "deny"

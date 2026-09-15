@@ -11,7 +11,8 @@
         "fixture/fp8"
       ],
       "allow_fallbacks": false,
-      "require_parameters": true
+      "require_parameters": true,
+      "data_collection": "deny"
     },
     "max_tokens": 1024,
     "stream": false

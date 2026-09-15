@@ -21,15 +21,16 @@ class ModelCatalogueTests(unittest.TestCase):
         storage.initialize_preparation(root)
         return storage.Store(root)
 
-    def fetch(self, calls):
+    def fetch(self, calls, statuses=None):
         def fetch(path):
             calls.append(path)
             if path == '/api/v1/models':
                 return FIXTURE
             model_id = path.removeprefix('/api/v1/models/').removesuffix('/endpoints')
             tag = 'openai' if model_id == 'openai/gpt-5.6-sol' else 'fixture'
+            status = (statuses or {}).get(model_id, 0)
             return {'data': {'id': model_id, 'endpoints': [
-                {'model_id': model_id, 'tag': tag}]}}
+                {'model_id': model_id, 'tag': tag, 'status': status}]}}
         return fetch
 
     def test_fixture_exerce_toutes_les_regles_et_la_vue(self):
@@ -37,7 +38,7 @@ class ModelCatalogueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
             calls = []
             with patch.object(catalogue, '_now', return_value=NOW):
-                result = catalogue.refresh(store, self.fetch(calls))
+                result = catalogue.refresh(store, self.fetch(calls, {'x-ai/grok-4-preview': -1}))
             self.assertEqual(6, len(calls))
             malformed = [model for model in result['models'] if model['excluded'] == 'malformed']
             self.assertEqual({
@@ -66,10 +67,49 @@ class ModelCatalogueTests(unittest.TestCase):
             self.assertIsNone(current['excluded'])
             free = next(model for model in result['models'] if model['id'].endswith(':free'))
             self.assertEqual('free', free['variant'])
-            self.assertEqual('no_compliant_provider', free['excluded'])
+            self.assertIsNone(free['excluded'])
             preview = next(model for model in result['models'] if model['id'].endswith('-preview'))
             self.assertEqual('preview', preview['variant'])
+            self.assertEqual('no_available_endpoint', preview['excluded'])
+            self.assertNotIn('no_compliant_provider',
+                             {model['excluded'] for model in result['models']})
             self.assertFalse(result['stale'])
+
+    def test_fournisseurs_exclus_du_catalogue(self):
+        registry = tempfile.NamedTemporaryFile('w', suffix='.toml', delete=False)
+        with registry:
+            registry.write('''[catalogue]
+makers = ["openai", "anthropic", "google", "x-ai"]
+max_per_family = 3
+max_age_days = 365
+cache_hours = 24
+excluded_providers = ["fixture"]
+''')
+        self.addCleanup(Path(registry.name).unlink)
+        with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
+            with patch.object(catalogue, '_now', return_value=NOW), \
+                    patch.object(catalogue, 'CONFIG_PATH', Path(registry.name)):
+                result = catalogue.refresh(store, self.fetch([]))
+        selectable = next(model for model in result['models'] if model['id'] == 'openai/gpt-5.6-sol')
+        self.assertIsNone(selectable['excluded'])
+        excluded = {model['id'] for model in result['models']
+                    if model['excluded'] == 'provider_excluded'}
+        self.assertEqual({'google/gemini-3.0-flash:free', 'openai/gpt-5.6-sol-0902',
+                          'openai/gpt-5.5-sol', 'x-ai/grok-4-preview'}, excluded)
+
+    def test_excluded_providers_invalide(self):
+        registry = tempfile.NamedTemporaryFile('w', suffix='.toml', delete=False)
+        with registry:
+            registry.write('''[catalogue]
+makers = ["openai"]
+max_per_family = 3
+max_age_days = 365
+cache_hours = 24
+excluded_providers = "fixture"
+''')
+        self.addCleanup(Path(registry.name).unlink)
+        with patch.object(catalogue, 'CONFIG_PATH', Path(registry.name)):
+            self.assertRaises(ValueError, catalogue._settings, catalogue._registry())
 
     def test_cache_24_heures_et_releve_indisponible(self):
         with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
