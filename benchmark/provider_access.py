@@ -1,14 +1,30 @@
-"""Accès OpenRouter délégué, chiffré et lié à une session S2"""
+"""Accès OpenRouter délégué, chiffré et lié à une session S2
+
+Budget d'un échange fournisseur. Le chronomètre monotone part avant la résolution DNS et
+vise `REQUEST_BUDGET_SECONDS`. La résolution DNS et l'établissement de la connexion ne sont
+pas interruptibles : ils consomment ce budget et peuvent le dépasser, et le reste est vérifié
+dès la socket établie, avant l'envoi HTTP. À partir de là une garde coupe la socket à
+l'échéance, donc l'envoi, les en-têtes et le corps sont bornés même si le fournisseur répond
+goutte à goutte ; un simple délai d'inactivité par réception ne les bornerait pas. Seule cette
+phase postérieure à la connexion est bornée : la résolution DNS n'a pas de délai propre et un
+hôte à plusieurs adresses enchaîne autant de tentatives de connexion, donc aucune durée totale
+d'échange n'est garantie ici. Un rappel enchaîne l'échange puis la vérification, d'où
+`CALLBACK_BUDGET_SECONDS` dont le relais de `service` dérive son propre délai. Aucun réessai
+n'est ajouté : un budget épuisé est un échec observé, enregistré comme tel.
+"""
 from base64 import urlsafe_b64decode, urlsafe_b64encode
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
-from http.client import HTTPSConnection, IncompleteRead
+from http.client import HTTPException, HTTPSConnection, IncompleteRead
 import hmac
 import json
 import re
 import secrets
+import socket
+import threading
+import time
 from urllib.parse import urlencode, urlsplit
 
 from . import storage
@@ -23,6 +39,13 @@ VERIFY_PATH = '/api/v1/key'
 REFRESH_INTERVAL = timedelta(minutes=10)
 EXPIRATION = timedelta(days=30)
 MAX_RESPONSE_BYTES = 1024 * 1024
+READ_CHUNK_BYTES = 65536
+# Budget visé d'un échange fournisseur : la résolution DNS et la connexion le consomment sans
+# être interruptibles, la garde de socket borne tout ce qui suit
+REQUEST_BUDGET_SECONDS = 30
+# Un rappel enchaîne l'échange puis la vérification sur la même requête entrante
+CALLBACK_REQUESTS = 2
+CALLBACK_BUDGET_SECONDS = REQUEST_BUDGET_SECONDS * CALLBACK_REQUESTS
 
 _TABLES = {
     's2_provider_access': """CREATE TABLE s2_provider_access (
@@ -260,21 +283,82 @@ def _credential(value):
     return value
 
 
+def remaining_budget(deadline):
+    """Reste d'un budget monotone ; épuisé, l'appelant échoue au lieu d'attendre encore"""
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TimeoutError('Budget de délai épuisé')
+    return left
+
+
+@contextmanager
+def _deadline_guard(sock, deadline):
+    """Coupe la socket à l'échéance : un délai par réception ne borne pas une réponse goutte à goutte
+
+    La socket est arrêtée, jamais fermée : `http.client` et l'appelant gardent un objet valide et
+    voient une fin de flux. Le minuteur est annulé puis récolté à la sortie, y compris en erreur.
+    """
+    def cut():
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    timer = threading.Timer(max(deadline - time.monotonic(), 0), cut)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.cancel()
+        timer.join()
+
+
+def _read_bounded(response, sock, deadline, limit=MAX_RESPONSE_BYTES):
+    """Lecture bornée en octets et en temps ; la garde termine une réception qui déborde"""
+    chunks, size = [], 0
+    while size <= limit and not response.isclosed():
+        # La réponse close a relâché la socket : ne plus la régler, seulement sortir
+        sock.settimeout(remaining_budget(deadline))
+        try:
+            chunk = response.read(min(READ_CHUNK_BYTES, limit + 1 - size))
+        except IncompleteRead as error:
+            chunks.append(error.partial)
+            size += len(error.partial)
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+    if size > limit:
+        raise ValueError('Réponse fournisseur hors limites')
+    return b''.join(chunks)
+
+
 class OpenRouterAccess:
     def _request(self, method, path, *, key=None, body=None):
-        connection = HTTPSConnection(HOST, timeout=30)
+        deadline = time.monotonic() + REQUEST_BUDGET_SECONDS
+        connection = HTTPSConnection(HOST, timeout=REQUEST_BUDGET_SECONDS)
         headers = {'Content-Type': 'application/json'} if body is not None else {}
         if key is not None:
             headers['Authorization'] = 'Bearer ' + key
         try:
-            connection.request(method, path, body=body, headers=headers)
-            response = connection.getresponse()
-            try:
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
-            except IncompleteRead as error:
-                raw = error.partial
-            if len(raw) > MAX_RESPONSE_BYTES:
-                raise ValueError('Réponse fournisseur hors limites')
+            # La résolution DNS et la connexion ne sont pas interruptibles : le budget restant
+            # est vérifié une fois la socket établie, avant d'émettre la requête
+            connection.connect()
+            sock = connection.sock
+            sock.settimeout(remaining_budget(deadline))
+            with _deadline_guard(sock, deadline):
+                try:
+                    connection.request(method, path, body=body, headers=headers)
+                    response = connection.getresponse()
+                    # La socket est retenue ici : une réponse fermante la relâche de `connection`
+                    raw = _read_bounded(response, sock, deadline)
+                except (OSError, HTTPException):
+                    # Coupée par la garde, la rupture est un budget épuisé et non un défaut réseau
+                    remaining_budget(deadline)
+                    raise
+            remaining_budget(deadline)
             return response.status, raw
         finally:
             connection.close()

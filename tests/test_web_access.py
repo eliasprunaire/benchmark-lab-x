@@ -36,6 +36,8 @@ class FakeExecutor:
         self.worker = threading.Thread(target=self._serve)
         self.callback_result = {'status': 200, 'value': {'connected': True, 'status': 'connected'},
                                 'piece': False, 'cookie': None}
+        self.home_value = {'csrf_token': 'csrf', 'availability': {}}
+        self.raw_response = None
         self.start_cookie = None
 
     def __enter__(self):
@@ -77,11 +79,15 @@ class FakeExecutor:
                         continue
                     request = json.loads(raw)
                     self.requests.put(request)
+                    if self.raw_response is not None:
+                        # Trame brute imposée par le test : le web doit y voir une panne
+                        connection.sendall(self.raw_response)
+                        continue
                     if request['path'] == '/preparation/access' and request['method'] == 'GET':
                         result = {'status': 200, 'value': {'connected': False, 'status': 'disconnected'},
                                   'piece': False, 'cookie': 'session-token'}
                     elif request['path'] == '/preparation' and request['method'] == 'GET':
-                        result = {'status': 200, 'value': {'csrf_token': 'csrf', 'availability': {}},
+                        result = {'status': 200, 'value': self.home_value,
                                   'piece': False, 'cookie': None}
                     elif request['path'] == '/preparation/access/start':
                         result = {'status': 200, 'value': {'authorize_url': 'https://openrouter.ai/auth?fixture=1'},
@@ -408,6 +414,69 @@ class AccessServerTests(unittest.TestCase):
         self.assertEqual(400, status)
         self.assertNotIn(b'code-direct', raw)
         self.assertTrue(self.executor.requests.empty())
+
+    def test_trame_d_executeur_illisible_annonce_une_panne_et_non_un_formulaire(self):
+        # La réponse est déjà partie quand la trame se révèle illisible : rien n'est non admis
+        for wire in (b'not-json\n', b'{"status":200}\n', b'{"status":200,"value":{}}'):
+            self.executor.raw_response = wire
+            status, _, raw = self.request('GET', '/preparation/access', headers={
+                'Accept': 'application/json'})
+            self.assertEqual(503, status, wire)
+            self.assertTrue(json.loads(raw)['unavailable'])
+            self.assertNotIn('Formulaire invalide', raw.decode())
+            self.assertNotIn('Aucun nouvel appel admis', raw.decode())
+
+            status, _, raw = self.request('GET', '/preparation/access')
+            self.assertEqual(503, status, wire)
+            self.assertNotIn('Formulaire invalide', raw.decode())
+
+    def test_valeur_d_executeur_hors_contrat_annonce_une_panne_et_non_un_succes(self):
+        # Sans contrôle central, la vue JSON rendait 200 avec un corps nul et la page HTML rompait
+        for wire in (b'{"status":200,"value":null,"piece":false,"cookie":null}\n',
+                     b'{"status":200,"value":[1,2],"piece":false,"cookie":null}\n',
+                     b'{"status":200,"value":"texte","piece":false,"cookie":null}\n',
+                     b'{"status":200,"value":"zz","piece":true,"cookie":null}\n',
+                     b'{"status":200,"value":null,"piece":true,"cookie":null}\n',
+                     b'{"status":200,"value":{},"piece":"true","cookie":null}\n',
+                     b'{"status":200,"value":{},"piece":false,"cookie":5}\n',
+                     b'{"status":100,"value":{},"piece":false,"cookie":null}\n',
+                     b'{"status":700,"value":{},"piece":false,"cookie":null}\n'):
+            self.executor.raw_response = wire
+            status, _, raw = self.request('GET', '/preparation/access', headers={
+                'Accept': 'application/json'})
+            self.assertEqual(503, status, wire)
+            self.assertTrue(json.loads(raw)['unavailable'], wire)
+
+            # Sans panne annoncée, la page HTML tomberait sur une connexion coupée sans réponse
+            status, _, raw = self.request('GET', '/preparation/access')
+            self.assertEqual(503, status, wire)
+            self.assertNotIn('Formulaire invalide', raw.decode())
+
+    def test_piece_valide_et_enveloppe_d_erreur_restent_servies(self):
+        self.executor.raw_response = (b'{"status":200,"value":"48656c6c6f","piece":true,'
+                                      b'"cookie":null}\n')
+        status, headers, raw = self.request('GET', '/preparation/dossiers/d1/piece')
+        self.assertEqual((200, b'Hello'), (status, raw))
+        self.assertEqual('inline; filename="piece.txt"', headers['Content-Disposition'])
+
+        # Une enveloppe de refus omet `piece` et `cookie` : elle doit rester rendue telle quelle
+        self.executor.raw_response = b'{"status":403,"value":{"error":"Motif interdit"}}\n'
+        status, _, raw = self.request('GET', '/preparation/access', headers={
+            'Accept': 'application/json'})
+        self.assertEqual((403, {'error': 'Motif interdit'}), (status, json.loads(raw)))
+
+    def test_defaillance_apres_relais_ne_se_presente_pas_comme_un_formulaire_invalide(self):
+        # Une réponse d'exécuteur incomplète est un défaut de protocole, pas une saisie fautive
+        self.executor.home_value = {'availability': {}}
+        status, _, raw = self.request('GET', '/preparation/access',
+                                      headers={'Cookie': 'benchmark_session=session-token'})
+        self.assertEqual(500, status)
+        self.assertIn('Défaillance interne du service', raw.decode())
+        self.assertNotIn('Formulaire invalide', raw.decode())
+
+        status, _, raw = self.request('GET', '/preparation/access', headers={
+            'Cookie': 'benchmark_session=session-token', 'Accept': 'application/json'})
+        self.assertEqual(200, status, 'la vue JSON ne dépend pas du jeton CSRF de la page')
 
     def test_url_publique_requise_pour_activer(self):
         self.assertEqual('https://benchmark.example/preparation/access/callback',

@@ -2,7 +2,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from copy import deepcopy
-from io import BytesIO
 import json
 import multiprocessing
 from pathlib import Path
@@ -348,7 +347,7 @@ class S4Regressions(unittest.TestCase):
                            **runtime.status(self.data, self.store)}
                 with patch('benchmark.service.socket.socket') as socket:
                     connection = socket.return_value.__enter__.return_value
-                    connection.makefile.return_value = BytesIO((runtime.encode(payload) + '\n').encode())
+                    connection.recv.side_effect = [(runtime.encode(payload) + '\n').encode(), b'']
                     observed = executor_health(self.home / 'unused.sock')
                 self.assertEqual(expected, observed['admission'])
                 self.assertEqual('ok', observed['storage'])
