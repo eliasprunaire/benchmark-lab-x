@@ -44,7 +44,7 @@ class RuntimeBundleTests(unittest.TestCase):
             package = repo / 'benchmark'
             package.mkdir()
             source_package = Path(__file__).resolve().parents[1] / 'benchmark'
-            for name in ('__init__.py', 'model_catalog.py', 'model_catalogue.py', 'models.toml', 'storage.py', 'preparation.py', 'web_api.py', 'provider_access.py', 'runtime.py', 'service.py', 'openrouter_preparation.py', 'openrouter_qualification.py', 'openrouter_prices.py', 'outgoing.py', 'preparation.profile.json', 'preparation-fallback.profile.json', 'qualification.profile.json', 'glm-5.3-flash.profile.json', 'benchmark-runtime'):
+            for name in ('__init__.py', 'model_catalog.py', 'model_catalogue.py', 'models.toml', 'storage.py', 'validation.py', 'publications.py', 'preparation.py', 'web_api.py', 'provider_access.py', 'runtime.py', 'service.py', 'openrouter_preparation.py', 'openrouter_qualification.py', 'openrouter_prices.py', 'outgoing.py', 'preparation.profile.json', 'preparation-fallback.profile.json', 'qualification.profile.json', 'glm-5.3-flash.profile.json', 'benchmark-runtime'):
                 shutil.copy2(source_package / name, package / name)
             web = repo / 'benchmark_web'
             source_web = source_package.parent / 'benchmark_web'
@@ -82,6 +82,14 @@ class RuntimeBundleTests(unittest.TestCase):
                             'from benchmark_web.views import render; '
                             'from benchmark_web.campaign_views import render_comparison; '
                             'from benchmark_web.fragments import readable_fields'], cwd=unpacked, check=True)
+            # La lecture publique s'importe depuis l'archive sans charger un flux privé
+            subprocess.run([sys.executable, '-c',
+                            'import sys; '
+                            'from benchmark.publications import public_bytes, materialize, SCHEMA, PRESENTATION_VERSIONS; '
+                            'from benchmark.validation import identifier; '
+                            'private = {"benchmark.campaigns", "benchmark.evaluation", "benchmark.preparation", '
+                            '"benchmark.qualification", "benchmark.restitution"} & set(sys.modules); '
+                            'assert not private, sorted(private)'], cwd=unpacked, check=True)
             subprocess.run([sys.executable, '-c', 'from benchmark.openrouter_prices import forecast; from benchmark.openrouter_preparation import configuration; assert configuration()["model"] == "openai/gpt-6-astra"'], cwd=unpacked, check=True)
             subprocess.run([sys.executable, '-c', 'from benchmark.openrouter_qualification import OpenRouterQualification; assert OpenRouterQualification("fixture").configuration()["model"] == "anthropic/claude-fable-5.1"'], cwd=unpacked, check=True)
             # La configuration active du catalogue doit se charger depuis l'archive,

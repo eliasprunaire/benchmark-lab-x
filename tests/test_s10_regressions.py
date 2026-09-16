@@ -12,7 +12,8 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, web_api
+from benchmark import (campaigns as c, evaluation as e, preparation as p, publications as pub,
+                       qualification as q, restitution as r, web_api)
 from benchmark_web import fragments, projection, views
 from benchmark_web.server import serve_web
 from tests.test_s4_regressions import inputs, manifest, response
@@ -175,7 +176,7 @@ class S10ProofTests(unittest.TestCase):
                             self.assertEqual({'error': 'NO_VERIFIED_PUBLICATION'}, json.loads(raw))
                 self.assertFalse((public / 'active.json').exists())
                 bundle = r.preview(self.store, self.sid, 'fixture', 'comparison', piece_ids=[], presentation=projection)
-                r.materialize(bundle, dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
+                pub.materialize(bundle, dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
                     projection_sha256=bundle['projection_sha256'], catalogue=False), public)
                 with urlopen(Request(base + '/index.html', headers={'Accept': 'text/html'}), timeout=2) as response:
                     self.assertEqual(bundle['files']['index.html'], response.read())

@@ -16,7 +16,8 @@ from urllib.parse import urlencode
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, service, storage, web_api
+from benchmark import (campaigns as c, evaluation as e, preparation as p, publications as pub,
+                       qualification as q, restitution as r, service, storage, web_api)
 from benchmark_web import projection, views
 from benchmark_web.server import serve_web
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
@@ -32,11 +33,13 @@ _VOLATILE_PRESENTATION = re.compile(
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
-    '3': {
+    '4': {
         'index.html': '8eee8a8357dfc8fb4ac00dbbbc5414849c0d6f7fb1d790afc3b771c803013f5f',
-        'style.css': '84dc3d45c36869c42057dc6078b022ca1f9e3cf225b91264b06e9d55e1f91187',
+        'style.css': '247e439218d7036d03dbbd4cfc7bcc2d89af51fa8fbb98fb6b9f6db45f4a1cfb',
     },
 }
+# Feuille antérieure fictive, distincte des octets actifs : aucun actif historique n'est dupliqué
+_PRIOR_STYLESHEET = b':root { color-scheme: light; }\n'
 
 
 class Markup(HTMLParser):
@@ -157,10 +160,18 @@ class S6Regressions(unittest.TestCase):
         return dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
                     projection_sha256=bundle['projection_sha256'], catalogue=False)
 
+    def prior_bundle(self, current, manifest, version='3'):
+        """Paquet antérieur synthétique, complet et approuvable, aux octets distincts"""
+        files = dict(current['files'], **{'style.css': _PRIOR_STYLESHEET})
+        labeled = dict(manifest, presentation_version=version,
+                       files={name: sha256(raw).hexdigest() for name, raw in files.items()})
+        raw = storage._strict_json(labeled).encode()
+        return dict(manifest=raw, files=files, projection_sha256=sha256(raw).hexdigest())
+
     def test_version_de_presentation_liee_aux_octets_de_la_fixture(self):
         current = self.preview()
         manifest = json.loads(current['manifest'])
-        version = r.PRESENTATION_VERSION
+        version = pub.PRESENTATION_VERSION
         self.assertEqual(version, manifest['presentation_version'])
         self.assertEqual({version}, set(_FIXTURE_PRESENTATION))
         html = current['files']['index.html']
@@ -172,21 +183,40 @@ class S6Regressions(unittest.TestCase):
         sections = html.count(b'<section>')
         self.assertEqual(5, sections)
         self.assertEqual(sections + 1, html.count(projection.RESTRICTION_PUBLIQUE.encode()))
-        r.materialize(current, self.approval(current), self.public)
+        pub.materialize(current, self.approval(current), self.public)
         for name, raw in current['files'].items():
-            self.assertEqual(raw, r.public_bytes(
+            self.assertEqual(raw, pub.public_bytes(
                 self.public, current['projection_sha256'], name))
-        readable = tuple(item for item in r.PRESENTATION_VERSIONS if item != version)
+        readable = tuple(item for item in pub.PRESENTATION_VERSIONS if item != version)
         for old in readable:
             with self.subTest(lire=old):
                 labeled = dict(manifest, presentation_version=old)
                 raw = storage._strict_json(labeled).encode()
-                r._manifest(raw, sha256(raw).hexdigest())
-        unknown = dict(manifest, presentation_version='4')
+                pub._manifest(raw, sha256(raw).hexdigest())
+        unknown = dict(manifest, presentation_version='5')
         raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
-            r._manifest(raw, sha256(raw).hexdigest())
+            pub._manifest(raw, sha256(raw).hexdigest())
         self.assertTrue(readable)
+
+    def test_un_paquet_anterieur_reste_lisible_inchange_apres_activation_courante(self):
+        current = self.preview()
+        prior = self.prior_bundle(current, json.loads(current['manifest']))
+        self.assertNotEqual(current['files']['style.css'], prior['files']['style.css'])
+        self.assertNotEqual(current['projection_sha256'], prior['projection_sha256'])
+        pub.materialize(prior, self.approval(prior), self.public)
+        stored = {name: pub.public_bytes(self.public, prior['projection_sha256'], name)
+                  for name in prior['files']}
+        self.assertEqual(prior['files'], stored)
+        pub.materialize(current, self.approval(current), self.public)
+        self.assertEqual(current['projection_sha256'],
+                         json.loads((self.public / 'active.json').read_text())['directory'])
+        self.assertEqual(prior['files'], {name: pub.public_bytes(self.public, prior['projection_sha256'], name)
+                                          for name in prior['files']})
+        # Ni requalification, ni réétiquetage, ni nouveau rendu du paquet conservé
+        self.assertEqual(prior['manifest'],
+                         (self.public / prior['projection_sha256'] / 'publication.json').read_bytes())
+        self.assertEqual('3', json.loads(prior['manifest'])['presentation_version'])
 
     def test_exact_ranks_boolean_scale_corrections_filters_and_empty_campaign(self):
         view = self.compare({'case': 'notes', 'sort': 'cost', 'direction': 'desc'})
@@ -242,7 +272,7 @@ class S6Regressions(unittest.TestCase):
 
     def test_http_authorizes_only_exact_focus_script_on_comparison_html(self):
         bundle = self.preview()
-        r.materialize(bundle, self.approval(bundle), self.public)
+        pub.materialize(bundle, self.approval(bundle), self.public)
         sock = self.home / 'executor.sock'
         with socket.socket() as probe:
             probe.bind(('127.0.0.1', 0))
@@ -401,7 +431,7 @@ class S6Regressions(unittest.TestCase):
     def test_browser_preview_is_private_selected_and_never_activates(self):
         pid = self.records['error']['output_piece_id']
         selected = self.preview([pid])
-        r.materialize(selected, self.approval(selected), self.public)
+        pub.materialize(selected, self.approval(selected), self.public)
         before = {str(f.relative_to(self.public)): f.read_bytes() for f in self.public.rglob('*') if f.is_file()}
         for pieces in ([], [pid]):
             path = self.base + '/preview' + ('?' + urlencode([('piece', p) for p in pieces]) if pieces else '')
@@ -435,49 +465,49 @@ class S6Regressions(unittest.TestCase):
         for fields in ({'actor': 'Ayo'}, {'authority_id': 'real'}, {'catalogue': True}, {'catalogue': 0},
                        {'projection_sha256': '0' * 64}, {'extra': 'not allowed'}):
             with self.subTest(fields=fields), self.assertRaises(ValueError):
-                r.materialize(bundle, dict(authority, **fields), self.public)
+                pub.materialize(bundle, dict(authority, **fields), self.public)
             self.assertEqual([], list(self.public.iterdir()))
         changed = deepcopy(bundle)
         changed['files']['index.html'] += b' changed'
         with self.assertRaises(ValueError):
-            r.materialize(changed, authority, self.public)
-        r.materialize(bundle, authority, self.public)
+            pub.materialize(changed, authority, self.public)
+        pub.materialize(bundle, authority, self.public)
         previous = (self.public / 'active.json').read_bytes()
-        with patch.object(r, '_write', side_effect=OSError('Fictional write failure')):
+        with patch.object(pub, '_write', side_effect=OSError('Fictional write failure')):
             with self.assertRaises(OSError):
-                r.materialize(bundle, authority, self.public)
+                pub.materialize(bundle, authority, self.public)
         self.assertEqual(previous, (self.public / 'active.json').read_bytes())
         self.assertFalse(any(p.name.startswith('.s6-') for p in self.public.iterdir()))
-        r.materialize(bundle, authority, self.public)
+        pub.materialize(bundle, authority, self.public)
         self.assertEqual(previous, (self.public / 'active.json').read_bytes())
 
     def test_public_reader_keeps_identity_and_closes_on_changed_approval_or_bytes(self):
         pid = self.records['error']['output_piece_id']
         bundle = self.preview([pid])
         identity = bundle['projection_sha256']
-        r.materialize(bundle, self.approval(bundle), self.public)
+        pub.materialize(bundle, self.approval(bundle), self.public)
         newer = self.preview()
-        r.materialize(newer, self.approval(newer), self.public)
+        pub.materialize(newer, self.approval(newer), self.public)
         for name, raw in bundle['files'].items():
-            self.assertEqual(raw, r.public_bytes(self.public, identity, name))
+            self.assertEqual(raw, pub.public_bytes(self.public, identity, name))
         with self.assertRaises(ValueError):
-            r.public_bytes(self.public, identity, 'unknown.txt')
+            pub.public_bytes(self.public, identity, 'unknown.txt')
         folder = self.public / identity
         approval_raw = (folder / 'approval.json').read_bytes()
         (folder / 'approval.json').write_text('{}')
         with self.assertRaises(ValueError):
-            r.public_bytes(self.public, identity, 'index.html')
+            pub.public_bytes(self.public, identity, 'index.html')
         (folder / 'approval.json').write_bytes(approval_raw)
         piece = next(name for name in bundle['files'] if name.startswith('piece-'))
         (folder / piece).write_bytes(b'changed')
         with self.assertRaises(ValueError):
-            r.public_bytes(self.public, identity, piece)
-        self.assertEqual(newer['files']['index.html'], r.public_bytes(self.public, newer['projection_sha256'], 'index.html'))
+            pub.public_bytes(self.public, identity, piece)
+        self.assertEqual(newer['files']['index.html'], pub.public_bytes(self.public, newer['projection_sha256'], 'index.html'))
 
     def test_symlinks_traversal_and_forged_manifest_are_refused(self):
         bundle = self.preview()
         authority = self.approval(bundle)
-        r.materialize(bundle, authority, self.public)
+        pub.materialize(bundle, authority, self.public)
         identity = bundle['projection_sha256']
         folder = self.public / identity
         for filename in ('index.html', 'publication.json', 'approval.json'):
@@ -486,18 +516,18 @@ class S6Regressions(unittest.TestCase):
             original.rename(moved)
             original.symlink_to(moved)
             with self.assertRaises((OSError, ValueError)):
-                r.public_bytes(self.public, identity, 'index.html')
+                pub.public_bytes(self.public, identity, 'index.html')
             original.unlink()
             moved.rename(original)
         linked = self.home / 'linked'
         linked.symlink_to(self.public, target_is_directory=True)
         with self.assertRaises((OSError, ValueError)):
-            r.materialize(bundle, authority, linked)
+            pub.materialize(bundle, authority, linked)
         with self.assertRaises((OSError, ValueError)):
-            r.public_bytes(linked, identity, 'index.html')
+            pub.public_bytes(linked, identity, 'index.html')
         for name in ('../index.html', '/index.html', 'approval.json', 'piece-%2f.txt'):
             with self.assertRaises(ValueError):
-                r.public_bytes(self.public, identity, name)
+                pub.public_bytes(self.public, identity, name)
         forged = deepcopy(bundle)
         m = json.loads(forged['manifest'])
         m['files']['../escape.txt'] = sha256(b'escape').hexdigest()
@@ -505,7 +535,7 @@ class S6Regressions(unittest.TestCase):
         forged['manifest'] = json.dumps(m).encode()
         forged['projection_sha256'] = sha256(forged['manifest']).hexdigest()
         with self.assertRaises(ValueError):
-            r.materialize(forged, self.approval(forged), self.public)
+            pub.materialize(forged, self.approval(forged), self.public)
 
 
 class CriterionNames(unittest.TestCase):
