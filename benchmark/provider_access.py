@@ -336,10 +336,15 @@ def callback(store, session_id, secret, code, transport=None, now=None):
     connection = store._connection_checked()
     row = connection.execute("SELECT verifier_cipher FROM s2_provider_access WHERE session_id=? AND status='pending'",
                              (session_id,)).fetchone()
+    from .preparation import Denied
     if row is None:
-        from .preparation import Denied
         raise Denied('ACCESS_NO_PENDING')
-    verifier = decrypt(secret, row[0])
+    try:
+        verifier = decrypt(secret, row[0])
+    except IntegrityError:
+        with _transaction(connection, write=True):
+            _delete(connection, session_id)
+        raise Denied('ACCESS_NO_PENDING') from None
     with _transaction(connection, write=True):
         event_id = _event_intent(connection, session_id, 'exchange', now)
     try:

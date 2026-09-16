@@ -1,6 +1,7 @@
 """Version Pi unique pour le runtime et la CI"""
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import tempfile
@@ -43,14 +44,15 @@ class PiVersionTests(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 try:
                     os.killpg(int(group.read_text()), signal.SIGKILL)
-                except (FileNotFoundError, ProcessLookupError):
+                except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError):
                     pass
                 raise
 
     def test_ci_lit_la_version_du_runtime(self):
         self.assertNotIn(f'@{VERSION}', self.workflow)
         self.assertGreaterEqual(self.workflow.count('from benchmark.pi_openrouter import VERSION'), 2)
-        job = self.workflow.split('  pi-version:\n', 1)[1]
+        job = re.split(r'^  \w+:', self.workflow.split('  pi-version:\n', 1)[1],
+                       maxsplit=1, flags=re.MULTILINE)[0]
         self.assertIn("if: github.event_name == 'schedule'", job)
         self.assertIn('timeout-minutes: 5', job)
         self.assertIn('npm view @earendil-works/pi-coding-agent version', self.workflow)
@@ -64,7 +66,7 @@ class PiVersionTests(unittest.TestCase):
 
     def test_chaque_checkout_des_workflows_oublie_les_identifiants(self):
         workflows = ROOT / '.github/workflows'
-        for path in workflows.glob('*.yml'):
+        for path in workflows.glob('*.y*ml'):
             lines = path.read_text().splitlines()
             for index, line in enumerate(lines):
                 if 'uses: actions/checkout@' not in line:

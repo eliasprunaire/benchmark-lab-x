@@ -146,8 +146,7 @@ def closed_generation(package):
     if type(package) is not dict or set(package) != {'candidate', 'internal', 'judgment'}:
         raise ValueError('Paquet de génération fermé requis')
     candidate_view = closed_candidate(package['candidate'])
-    has_criteria = (any(candidate_view['criteria'].values()) if type(candidate_view['criteria']) is dict
-                    else bool(candidate_view['criteria']))
+    has_criteria = any(candidate_view['criteria'].values())
     if (not candidate_view['deliverables'] or not has_criteria
             or not candidate_view['pieces']):
         raise ValueError('Paquet incomplet')

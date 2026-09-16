@@ -1092,7 +1092,6 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
                 store, session_id, dossier_id, body, candidate_identity), None, None
         if method == 'GET':
             return 200, campaigns.configurations_view(store, session_id, dossier_id), None, None
-        raise Denied('Action inaccessible')
     if path in access_paths:
         from . import provider_access
         unavailable = access_secret is None or not provider_access.available(store)
