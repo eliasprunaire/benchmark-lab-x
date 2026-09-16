@@ -794,6 +794,9 @@ def execute_qualification(data, operation_id, transport):
                         (operation['dossier_id'], operation['revision'], operation_id, int(result['qualified']),
                          encode(result['findings']), result['summary'], operation['requested_configuration']['model'],
                          cost, datetime.now(timezone.utc).isoformat()))
+                    if result['qualified']:
+                        from .campaigns import _record_comparison_contract
+                        _record_comparison_contract(store, connection, operation)
         except Exception:
             if emitted:
                 store.mark_ambiguous(operation_id, 'QUALIFICATION_RESULT_NOT_VERIFIED')
@@ -1008,6 +1011,9 @@ def verify_preparation(store, connection):
             raise IntegrityError('Validation étrangère ou divergente')
     for dossier_id, revision in connection.execute('SELECT dossier_id,revision FROM s2_qualifications').fetchall():
         _automatic_qualification(store, connection, dossier_id, revision)
+    from .campaigns import _comparison_contract
+    for (fingerprint,) in connection.execute('SELECT contract_sha256 FROM s2_comparison_contracts').fetchall():
+        _comparison_contract(store, connection, fingerprint)
     for dossier_id, action_id, revision, kind, raw, operation_id in connection.execute('SELECT * FROM s2_actions').fetchall():
         identifier(action_id)
         if not connection.execute('SELECT 1 FROM operations WHERE operation_id=? AND dossier_id=? AND revision=? '

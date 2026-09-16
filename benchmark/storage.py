@@ -91,6 +91,15 @@ _S2_SCHEMA = (
     PRIMARY KEY(dossier_id, revision),
     FOREIGN KEY(dossier_id, revision) REFERENCES s2_revisions(dossier_id, revision)
 )""",
+    """CREATE TABLE s2_comparison_contracts (
+    contract_sha256 TEXT PRIMARY KEY CHECK(length(contract_sha256) = 64),
+    dossier_id TEXT NOT NULL REFERENCES s2_dossiers(dossier_id),
+    revision INTEGER NOT NULL,
+    version INTEGER NOT NULL CHECK(version > 0),
+    contract_json TEXT NOT NULL,
+    authority_json TEXT NOT NULL,
+    UNIQUE(dossier_id, version)
+)""",
     """CREATE TABLE s2_control (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
     format_identity TEXT NOT NULL CHECK(format_identity = 'benchmark-lab-x/preparation/v1'),
@@ -461,7 +470,12 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
         if version != SCHEMA_VERSION:
             raise SchemaError("unsupported storage schema version")
         names = {name for kind, name, _, _ in rows if kind == 'table'}
-        before_wave_2 = ('s2_control' in names and 's2_qualifications' not in names)
+        before_wave_2 = ('s2_control' in names and not
+                         {'s2_qualifications', 's2_comparison_contracts'} <= names)
+        if 's4_campaigns' in names:
+            before_wave_2 = before_wave_2 or any(
+                row[2] == 's3_contracts' and row[3] == 'contract_sha256'
+                for row in connection.execute('PRAGMA foreign_key_list(s4_campaigns)'))
         if 's6_control' in names:
             before_wave_2 = before_wave_2 or 's2_provider_access' not in names or not any(
                 column[1] == 'checked_at'
@@ -500,11 +514,11 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
         s2 = extended + [("table", name, name, statement)
                          for name, statement in zip(
                              ('s2_sessions', 's2_dossiers', 's2_revisions', 's2_actions',
-                              's2_validations', 's2_qualifications', 's2_control'), _S2_SCHEMA)]
+                              's2_validations', 's2_qualifications', 's2_comparison_contracts', 's2_control'), _S2_SCHEMA)]
         s2 += [("index", f"sqlite_autoindex_{name}_{number}", name, None)
                for name, count in (('s2_sessions', 2), ('s2_dossiers', 1),
                                    ('s2_revisions', 1), ('s2_actions', 2),
-                                   ('s2_validations', 1), ('s2_qualifications', 2))
+                                   ('s2_validations', 1), ('s2_qualifications', 2), ('s2_comparison_contracts', 2))
                for number in range(1, count + 1)]
         s3 = s4 = s5 = s6 = None
         if any(name == 's3_control' for _, name, _, _ in rows):

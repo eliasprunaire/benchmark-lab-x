@@ -36,11 +36,11 @@ def query_parameters(raw):
 
 
 def _orderable(definition):
-    unit = definition['unit'].strip().lower()
-    return (bool(definition['measure'].strip()) and bool(definition['proof'].strip())
+    unit = definition.get('unit', '').strip().lower()
+    return (bool(definition.get('measure', '').strip()) and bool(definition.get('proof', '').strip())
             and bool(unit) and unit not in ('descriptif', 'descriptive', 'texte', 'text', 'description')
-            and definition['favorable'] in ('lower', 'higher', 'yes')
-            and (definition['favorable'] != 'yes' or unit in ('bool', 'boolean', 'booléen')))
+            and definition.get('favorable', '') in ('lower', 'higher', 'yes')
+            and (definition.get('favorable', '') != 'yes' or unit in ('bool', 'boolean', 'booléen')))
 
 
 def _number(value, unit):
@@ -95,7 +95,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     campaign = next((v for v in c.projection(store, connection, dossier_id) if v['campaign_id'] == campaign_id), None)
     if campaign is None:
         raise p.Denied('Campagne inaccessible')
-    contract = q._contract(store, connection, campaign['contract_sha256'])
+    contract = c._approved(store, connection, campaign['contract_sha256'])
     spec = contract['specification']
     basis = campaign['cost_basis']
     columns = [dict(id='cost', definition=deepcopy(basis), unit=basis['unit'], favorable='lower',
@@ -251,6 +251,13 @@ def catalogue(store, session_id):
             for fingerprint, in fingerprints:
                 contract = q._contract(store, connection, fingerprint)
                 versions.append(dict(version=contract['version'], revision=contract['revision'],
+                    campaigns=[dict(campaign_id=v['campaign_id'], href=campaign_url(dossier_id, v['campaign_id']))
+                               for v in campaigns if v['contract_sha256'] == fingerprint]))
+            for fingerprint, version, revision in connection.execute(
+                    'SELECT contract_sha256,version,revision FROM s2_comparison_contracts '
+                    'WHERE dossier_id=? ORDER BY version', (dossier_id,)):
+                c._comparison_contract(store, connection, fingerprint)
+                versions.append(dict(version=version, revision=revision,
                     campaigns=[dict(campaign_id=v['campaign_id'], href=campaign_url(dossier_id, v['campaign_id']))
                                for v in campaigns if v['contract_sha256'] == fingerprint]))
             tasks.append(dict(dossier_id=dossier_id, need=store.get_dossier(dossier_id, current)['request'],

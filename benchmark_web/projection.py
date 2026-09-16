@@ -23,7 +23,7 @@ def _libelles_criteres(row):
     specification = row['qualification']['contract']['specification']
     items = (specification['obligations'] + specification['eliminatory_errors']
              + specification['secondary_criteria'])
-    return {item['id']: item.get('description') or item.get('measure') for item in items}
+    return {item['id']: item.get('description') or item.get('measure') or item.get('label') for item in items}
 
 
 def _remplacer_criteres(value, labels):

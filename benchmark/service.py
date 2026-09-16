@@ -93,6 +93,7 @@ def denied_response(error):
         'ACCESS_EXCHANGE_FAILED': 'OpenRouter a refusé ou interrompu l’autorisation.',
         'ACCESS_REQUIRED': 'Un accès OpenRouter connecté est requis avant le lancement.',
         'NOT_QUALIFIED': 'Ce dossier doit être qualifié avant le lancement.',
+        'CONTRACT_MISSING': "Le contrat de comparaison n'est pas encore établi. Terminez la qualification de l'exemple.",
         'STEP_INCOMPLETE': 'Terminez l’étape précédente avant de poursuivre.',
         'example_validated': 'Validez l’exemple présenté avant le lancement.',
         'example_qualified': 'La qualification de l’exemple est requise avant le lancement.',
