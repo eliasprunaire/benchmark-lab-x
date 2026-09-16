@@ -141,6 +141,27 @@ class S6Regressions(unittest.TestCase):
         return dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
                     projection_sha256=bundle['projection_sha256'], catalogue=False)
 
+    def test_versions_de_presentation_et_octets_historiques(self):
+        current = self.preview()
+        manifest = json.loads(current['manifest'])
+        self.assertEqual('2', manifest['presentation_version'])
+        for version in ('1', '2'):
+            with self.subTest(version=version):
+                bundle = deepcopy(current)
+                manifest['presentation_version'] = version
+                bundle['manifest'] = storage._strict_json(manifest).encode()
+                bundle['projection_sha256'] = sha256(bundle['manifest']).hexdigest()
+                r.materialize(bundle, self.approval(bundle), self.public)
+                for name, raw in bundle['files'].items():
+                    self.assertEqual(raw, r.public_bytes(
+                        self.public, bundle['projection_sha256'], name))
+                self.assertEqual(bundle['manifest'],
+                                 (self.public / bundle['projection_sha256'] / 'publication.json').read_bytes())
+        manifest['presentation_version'] = '3'
+        raw = storage._strict_json(manifest).encode()
+        with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
+            r._manifest(raw, sha256(raw).hexdigest())
+
     def test_exact_ranks_boolean_scale_corrections_filters_and_empty_campaign(self):
         view = self.compare({'case': 'notes', 'sort': 'cost', 'direction': 'desc'})
         rows = {v['configuration_id']: v for v in view['rows']}

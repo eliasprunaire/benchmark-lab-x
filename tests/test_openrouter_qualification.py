@@ -283,7 +283,9 @@ class OpenRouterQualificationTests(unittest.TestCase):
         prep.execute_qualification(self.data, operation_id, transport)
         snapshot = {'task': {'dossier_id': 'dossier', 'revision': self.preview['revision']}}
         path = '/preparation/dossiers/dossier/campaigns/campagne/conditions'
-        with patch.object(campaigns, 'inspect', return_value=snapshot):
+        with patch.object(campaigns, 'inspect', return_value=snapshot), \
+                patch.object(campaigns, 'connection_for') as connection:
+            connection.return_value.execute.return_value.fetchone.return_value = (1,)
             with self.assertRaises(prep.Denied) as refused:
                 prep.dispatch(self.store, 'GET', path, self.token, None, 'b' * 40, True)
             self.assertEqual(('NOT_QUALIFIED', [finding]),

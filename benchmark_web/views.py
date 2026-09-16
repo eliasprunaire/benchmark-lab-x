@@ -459,8 +459,9 @@ def render(value, csrf, path='/preparation', *, error=False):
                     'non calculable' if amount is None else amount + ' USD')
                 if configuration.get('effort_limit') == 'not_adjustable':
                     detail += ' · palier de raisonnement non réglable'
-                summary += '<li><span title="Identifiant technique : ' + text(technical) + '">' + text(
-                    model_names.get(technical, technical)) + '</span>' + text(detail) + '</li>'
+                summary += '<li>' + text(model_names.get(technical, technical)) + text(detail) + (
+                    '<details><summary>Identifiant technique</summary><code>' +
+                    text(technical) + '</code></details></li>')
             summary += '</ul>'
             summary += '<p>Estimation totale : ' + text(
                 'non calculable' if value['estimate_total_usd'] is None else
@@ -500,6 +501,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<p>Plafond actuel : ' + text(value['cap_usd']) + ' USD.</p>'
         if not campaign['attempts']:
             content += section('Modifier le plafond',
+                '<p>L’arrêt intervient après le paiement de l’appel en cours. '
+                'La dépense peut donc dépasser le plafond du montant du dernier appel.</p>'
                 '<form method="post" action="' + text(base + '/cap') + '">' + hidden('csrf_token', csrf) +
                 '<label for="cap_usd">Plafond en USD, de 0,10 à 100</label>' +
                 '<input id="cap_usd" name="cap_usd" type="number" min="0.10" max="100.00" step="0.01" value="' +
