@@ -765,7 +765,7 @@ def _request(store, manifest, fingerprint, contract, cell):
 
 def _engine():
     return {name: sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
-            for name in ('campaigns.py', 'storage.py', 'preparation.py', 'qualification.py', 'runtime.py',
+            for name in ('campaigns.py', 'storage.py', 'preparation.py', 'web_api.py', 'qualification.py', 'runtime.py',
                          'pi_openrouter.py', 'pi_official.py', 'pi_bridge.mjs',
                          'openrouter_preparation.py', 'recovery.py', 'outgoing.py')}
 

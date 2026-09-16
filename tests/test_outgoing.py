@@ -158,14 +158,16 @@ class TransportBoundary(unittest.TestCase):
     def test_changed_transport_engine_identity_blocks_before_transport(self):
         from tests.test_s4_regressions import S4Regressions
         f=S4Regressions();f.setUp();self.addCleanup(f.doCleanups)
-        for name in ('pi_openrouter.py','pi_bridge.mjs','openrouter_preparation.py','outgoing.py','recovery.py'):
+        for name in ('pi_openrouter.py','pi_bridge.mjs','openrouter_preparation.py','outgoing.py','recovery.py','web_api.py'):
             self.assertIn(name, c._engine())
         f.admit(); f.reserve()
         spy=Spy()
-        broken=dict(c._engine()); broken['pi_openrouter.py']='0'*64
-        with patch.object(c,'_engine',return_value=broken):
-            with self.assertRaises(storage.ConflictError):
-                c.execute(f.data,'intent-x',spy)
+        for name in ('pi_openrouter.py','web_api.py'):
+            with self.subTest(source=name):
+                broken=dict(c._engine()); broken[name]='0'*64
+                with patch.object(c,'_engine',return_value=broken):
+                    with self.assertRaises(storage.ConflictError):
+                        c.execute(f.data,'intent-x',spy)
         self.assertEqual([], spy.calls)
 
     def test_body_change_between_prepare_and_emit_blocks_before_network(self):

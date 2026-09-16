@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from benchmark import preparation as prep, storage
+from benchmark import preparation as prep, storage, web_api
 from benchmark_web import views
 from tests.test_s2_review_regressions import response_for
 from tests.test_s6_regressions import Markup
@@ -37,7 +37,7 @@ class InlineExampleTests(unittest.TestCase):
 
                 prep.execute(data, operation, transport)
                 before = store.inspect_operations()
-                code, view, _, start = prep.dispatch(store, 'GET', '/preparation/dossiers/inline',
+                code, view, _, start = web_api.dispatch(store, 'GET', '/preparation/dossiers/inline',
                                                     token, None, 'a' * 40, None)
                 self.assertEqual(200, code)
                 self.assertIsNone(start)
@@ -63,7 +63,7 @@ class InlineExampleTests(unittest.TestCase):
                 self.assertEqual(before, store.inspect_operations())
                 other, _, other_token = prep.session(store, None, create=True)
                 with self.assertRaises(prep.Denied):
-                    prep.dispatch(store, 'GET', '/preparation/dossiers/inline', other_token, None, 'a' * 40, None)
+                    web_api.dispatch(store, 'GET', '/preparation/dossiers/inline', other_token, None, 'a' * 40, None)
                 judge = store._connection.execute("SELECT piece_id FROM pieces WHERE role='judge'").fetchone()[0]
                 with self.assertRaises(prep.Denied):
                     prep.piece_bytes(store, session, 'inline', view['revision'], judge)

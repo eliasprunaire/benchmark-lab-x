@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from benchmark import preparation as prep, restitution as r, storage
+from benchmark import preparation as prep, restitution as r, storage, web_api
 from benchmark_web import projection, views
 from tests.test_s2_review_regressions import response_for
 from tests.test_s6_regressions import Markup, build
@@ -206,7 +206,7 @@ class DossierPageTests(unittest.TestCase):
                 operation, _ = prep.submit(store, session, 'inline',
                     dict(action_id='create', request='Examiner des notes inventées'), 'a' * 40, True)
                 prep.execute(data, operation, lambda op, request: response_for(op))
-                code, view, _, _ = prep.dispatch(store, 'GET', '/preparation/dossiers/inline', token, None, 'a' * 40, None)
+                code, view, _, _ = web_api.dispatch(store, 'GET', '/preparation/dossiers/inline', token, None, 'a' * 40, None)
                 self.assertEqual(200, code)
                 page = views.render(view, csrf).decode()
         self.assertIn('class="state action"', page)

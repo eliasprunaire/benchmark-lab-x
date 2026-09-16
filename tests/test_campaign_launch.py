@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from benchmark import (campaigns as c, evaluation, judgment, model_catalogue,
-                       preparation as p, provider_access, qualification as q, restitution, storage)
+                       preparation as p, provider_access, qualification as q, restitution, storage, web_api)
 from benchmark_web import views
 from benchmark_web import projection
 from tests.test_openrouter_qualification import qualify_fixture
@@ -52,9 +52,9 @@ class CampaignLaunch(unittest.TestCase):
         with patch.object(p, 'session', return_value=(self.sid, 'csrf', 'token')), \
                 patch.object(c, 'inspect', side_effect=KeyError('intégrité interne')), \
                 self.assertRaisesRegex(KeyError, 'intégrité interne'):
-            p.dispatch(self.store, 'GET',
-                       '/preparation/dossiers/fixture/campaigns/local-comparison/conditions',
-                       'token', None, 'a' * 40, True)
+            web_api.dispatch(self.store, 'GET',
+                             '/preparation/dossiers/fixture/campaigns/local-comparison/conditions',
+                             'token', None, 'a' * 40, True)
 
     def test_legacy_and_extra_http_authority_are_denied(self):
         body = self.admit(False)
@@ -170,13 +170,13 @@ class CampaignLaunch(unittest.TestCase):
         path = '/preparation/dossiers/fixture/campaigns/local-comparison/start'
         with patch.object(p, 'session', return_value=(self.sid, 'csrf', None)):
             with self.assertRaises(p.Denied):
-                p.dispatch(self.store, 'POST', path, 'token', body, 'a'*40, True, candidate_transport=response)
+                web_api.dispatch(self.store, 'POST', path, 'token', body, 'a'*40, True, candidate_transport=response)
             with self.assertRaises(p.Denied):
-                p.dispatch(self.store, 'POST', path, 'token', dict(body, csrf_token='csrf'), 'a'*40, True)
-            result = p.dispatch(self.store, 'POST', path, 'token', dict(body, csrf_token='csrf'), 'a'*40, True, candidate_transport=response)
+                web_api.dispatch(self.store, 'POST', path, 'token', dict(body, csrf_token='csrf'), 'a'*40, True)
+            result = web_api.dispatch(self.store, 'POST', path, 'token', dict(body, csrf_token='csrf'), 'a'*40, True, candidate_transport=response)
             self.assertEqual(202, result[0])
             self.assertEqual(2, len(result[3]['candidate_attempts']))
-            repeated = p.dispatch(self.store, 'POST', path, 'token', dict(body, csrf_token='csrf'), 'a'*40, True, candidate_transport=response)
+            repeated = web_api.dispatch(self.store, 'POST', path, 'token', dict(body, csrf_token='csrf'), 'a'*40, True, candidate_transport=response)
             self.assertIsNone(repeated[3])
 
 
@@ -450,8 +450,8 @@ class RequesterCampaignLaunch(unittest.TestCase):
                         patch.object(p, 'require_qualification',
                                      side_effect=p.Denied('NOT_QUALIFIED')), \
                         self.assertRaises(p.Denied) as missing_qualification:
-                    p.dispatch(store, 'GET', configurations_path, token, None,
-                               'a' * 40, True, candidate_identity={})
+                    web_api.dispatch(store, 'GET', configurations_path, token, None,
+                                     'a' * 40, True, candidate_identity={})
                 self.assertEqual(
                     ('STEP_INCOMPLETE', 'example_qualified'),
                     (missing_qualification.exception.code,
@@ -461,8 +461,8 @@ class RequesterCampaignLaunch(unittest.TestCase):
                 with patch.object(p, 'session',
                                   return_value=(session_id, 'csrf', token)), \
                         self.assertRaises(p.Denied) as missing_validation:
-                    p.dispatch(store, 'GET', configurations_path, token, None,
-                               'a' * 40, True, candidate_identity={})
+                    web_api.dispatch(store, 'GET', configurations_path, token, None,
+                                     'a' * 40, True, candidate_identity={})
                 self.assertEqual(
                     ('STEP_INCOMPLETE', 'example_validated'),
                     (missing_validation.exception.code,
@@ -480,8 +480,8 @@ class RequesterCampaignLaunch(unittest.TestCase):
                             patch.object(p, 'session',
                                          return_value=(session_id, 'csrf', token)), \
                             self.assertRaises(p.Denied) as missing_configurations:
-                        p.dispatch(store, method, path, token, body, 'a' * 40, True,
-                                   candidate_transport=response)
+                        web_api.dispatch(store, method, path, token, body, 'a' * 40, True,
+                                         candidate_transport=response)
                     self.assertEqual(
                         ('STEP_INCOMPLETE', 'configurations'),
                         (missing_configurations.exception.code,
@@ -493,8 +493,8 @@ class RequesterCampaignLaunch(unittest.TestCase):
                             patch.object(p, 'session',
                                          return_value=(session_id, 'csrf', token)), \
                             self.assertRaises(p.Denied) as unknown_campaign:
-                        p.dispatch(store, method, path, token, body, 'a' * 40, True,
-                                   candidate_transport=response)
+                        web_api.dispatch(store, method, path, token, body, 'a' * 40, True,
+                                         candidate_transport=response)
                     self.assertEqual(
                         ('Ressource inaccessible', None),
                         (str(unknown_campaign.exception),

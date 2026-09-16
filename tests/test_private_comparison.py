@@ -148,7 +148,7 @@ class PrivateEvaluationTests(unittest.TestCase):
 
 class CustomNeedEngineTests(unittest.TestCase):
     def test_atelier_boisclair_custom_need_crosses_current_engine_without_network(self):
-        from benchmark import preparation as prep, qualification as q
+        from benchmark import preparation as prep, qualification as q, web_api
         from tests.test_s2_review_regressions import response_for
         from tests.test_s3_regressions import ACTOR, AUTHORITY, check, specification
 
@@ -162,13 +162,13 @@ class CustomNeedEngineTests(unittest.TestCase):
                 prep.admit(store, dict(authority_id='TEST_ONLY_ATELIER_PREPARATION',
                     budget_id='atelier-preparation-budget', reserve_amount='7',
                     requested_configuration={'model': 'fictional-local-preview'}))
-                _, home, token, _ = prep.dispatch(store, 'GET', '/preparation', None, None, 'a' * 40, True)
+                _, home, token, _ = web_api.dispatch(store, 'GET', '/preparation', None, None, 'a' * 40, True)
                 task = Path(__file__).parents[1].joinpath('benchmark', 'task.md').read_text()
                 mail = Path(__file__).parents[1].joinpath('benchmark', 'mail-thread.md').read_text()
                 body = dict(dossier_id='atelier-boisclair-custom', action_id='atelier-boisclair-create',
                             request='Synthétiser le fil fictif Atelier Boisclair', csrf_token=home['csrf_token'],
                             source_sha256='a' * 64)
-                code, _, _, operation = prep.dispatch(
+                code, _, _, operation = web_api.dispatch(
                     store, 'POST', '/preparation/dossiers', token, body, 'a' * 40, True)
                 self.assertEqual(202, code)
 
@@ -186,7 +186,7 @@ class CustomNeedEngineTests(unittest.TestCase):
                 self.assertEqual('preview', preview['stage'])
                 validation_body = prep.binding('atelier-boisclair-custom', preview['revision'], preview['package_sha256'])
                 validation_body['csrf_token'] = home['csrf_token']
-                self.assertEqual(200, prep.dispatch(store, 'POST',
+                self.assertEqual(200, web_api.dispatch(store, 'POST',
                     '/preparation/dossiers/atelier-boisclair-custom/validation', token,
                     validation_body, 'a' * 40, True)[0])
 
@@ -244,7 +244,7 @@ class PiTransportTests(unittest.TestCase):
         # The simulated fixture remains; add a separate campaign with actual Pi identity
         # This fixture declares TEST in its frozen cost basis: use a fresh qualified USD fixture
         from tests.test_s3_regressions import fixture, specification, check, ACTOR, AUTHORITY
-        from benchmark import preparation as prep, qualification as q
+        from benchmark import preparation as prep, qualification as q, web_api
         self.realdata = self.fixture.home / 'pi-private'
         session, view, reference = fixture(self.realdata)
         self.session = session

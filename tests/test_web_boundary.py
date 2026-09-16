@@ -60,7 +60,7 @@ class WebBoundaryTests(unittest.TestCase):
             self.assertNotRegex(source, r'^\s*(from|import)\s+benchmark_web\b', path.name)
 
     def test_engine_holds_no_html_markup_for_the_web_journey(self):
-        for name in ('preparation.py', 'restitution.py', 'service.py'):
+        for name in ('preparation.py', 'web_api.py', 'restitution.py', 'service.py'):
             source = (ENGINE / name).read_text()
             self.assertNotRegex(source, r'<(html|body|main|section|table|form|details)\b', name)
 

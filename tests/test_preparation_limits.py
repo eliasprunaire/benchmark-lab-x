@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from benchmark import preparation as prep, storage
+from benchmark import preparation as prep, storage, web_api
 from tests.test_s2_review_regressions import response_for
 
 
@@ -29,9 +29,9 @@ class PreparationLimitTests(unittest.TestCase):
         return data, store, session, csrf, token
 
     def create(self, store, token, csrf, dossier, text, source='a' * 64, **fields):
-        return prep.dispatch(store, 'POST', '/preparation/dossiers', token,
-                             {'csrf_token': csrf, 'dossier_id': dossier, 'action_id': dossier,
-                              'request': text, 'source_sha256': source, **fields}, 'a' * 40, True)
+        return web_api.dispatch(store, 'POST', '/preparation/dossiers', token,
+                                {'csrf_token': csrf, 'dossier_id': dossier, 'action_id': dossier,
+                                 'request': text, 'source_sha256': source, **fields}, 'a' * 40, True)
 
     def receive(self, data, operation):
         def transport(value, request):
@@ -80,7 +80,7 @@ class PreparationLimitTests(unittest.TestCase):
                 body['source_sha256'] = source
             before = self.state(store)
             with self.subTest(source=source), self.assertRaises(prep.Denied) as caught:
-                prep.dispatch(store, 'POST', '/preparation/dossiers', token, body, 'a' * 40, True)
+                web_api.dispatch(store, 'POST', '/preparation/dossiers', token, body, 'a' * 40, True)
             self.assertEqual(('SOURCE_MISSING', 'source_sha256'),
                              (caught.exception.code, caught.exception.field))
             self.assertEqual(before, self.state(store))
@@ -155,7 +155,7 @@ class PreparationLimitTests(unittest.TestCase):
                 return 'requête préparée'
 
         request = 'x' * 40
-        code, _, _, _ = prep.dispatch(
+        code, _, _, _ = web_api.dispatch(
             store, 'POST', '/preparation/dossiers', token,
             {'csrf_token': csrf, 'dossier_id': 'details', 'action_id': 'details',
              'request': request, 'useful': 'Une synthèse actionnable',

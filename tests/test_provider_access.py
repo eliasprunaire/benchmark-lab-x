@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
-from benchmark import campaigns, evaluation, preparation, provider_access, qualification, runtime, storage
+from benchmark import campaigns, evaluation, preparation, provider_access, qualification, runtime, storage, web_api
 from benchmark.openrouter_preparation import ENDPOINT
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 from tests.test_s4_regressions import inputs, manifest, response
@@ -290,7 +290,7 @@ class ProviderAccessTests(unittest.TestCase):
         self.assertNotIn('authorization-code', text)
         self.assertTrue(all(row[1] and len(row[1]) == 64 and len(row[2]) <= 512 for row in rows))
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', None)):
-            code, value, _, _ = preparation.dispatch(
+            code, value, _, _ = web_api.dispatch(
                 self.store, 'GET', '/preparation/access', 'token', None, 'a' * 40, None,
                 access_secret=SECRET, access_transport=self.transport)
         socket_view = storage._strict_json(value)
@@ -337,12 +337,12 @@ class ProviderAccessTests(unittest.TestCase):
         evaluation.initialize(other)
         with closing(storage.Store(other)) as store, patch.object(
                 preparation, 'session', return_value=(session, 'csrf', None)):
-            code, value, _, _ = preparation.dispatch(
+            code, value, _, _ = web_api.dispatch(
                 store, 'GET', '/preparation/access', 'token', None, 'a' * 40, None,
                 access_secret=SECRET)
             self.assertEqual((503, 'ACCESS_UNAVAILABLE'), (code, value['error_code']))
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', None)):
-            code, value, _, _ = preparation.dispatch(
+            code, value, _, _ = web_api.dispatch(
                 self.store, 'GET', '/preparation/access', 'token', None, 'a' * 40, None)
         self.assertEqual(503, code)
         self.assertEqual({'connected': False, 'status': 'unavailable',
@@ -352,7 +352,7 @@ class ProviderAccessTests(unittest.TestCase):
                     ('/preparation/access/start', {'callback_url': 'https://example.test/preparation/access/callback'}),
                     ('/preparation/access/callback', {'code': 'code'}),
                     ('/preparation/access/disconnect', {})):
-                code, value, _, _ = preparation.dispatch(
+                code, value, _, _ = web_api.dispatch(
                     self.store, 'POST', path, 'token', (body if path.endswith('/callback') else
                                                        dict(body, csrf_token='csrf')), 'a' * 40, None)
                 self.assertEqual((503, 'ACCESS_UNAVAILABLE'), (code, value['error_code']))

@@ -254,8 +254,8 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                 return {'source_sha': source, 'storage': 'ok', **status(data, store)}
 
             def handle_message(message):
-                from . import preparation
-                code, value, cookie, start = preparation.dispatch(
+                from . import preparation, web_api
+                code, value, cookie, start = web_api.dispatch(
                     store, message['method'], message['path'], message['token'], message['body'],
                     source, transport, candidate_transport=candidate_transport or candidate_transport_factory,
                     candidate_identity=candidate_identity,

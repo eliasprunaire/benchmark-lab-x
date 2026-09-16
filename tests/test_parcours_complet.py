@@ -17,7 +17,7 @@ from unittest.mock import patch
 from urllib.parse import urlencode, urlsplit
 
 from benchmark import campaigns, evaluation, model_catalogue, preparation as prep
-from benchmark import provider_access, qualification, service, storage
+from benchmark import provider_access, qualification, service, storage, web_api
 from benchmark_web import server, views
 from tests.test_configurations import NOW, model
 from tests.test_openrouter_qualification import QualificationTransport
@@ -119,7 +119,7 @@ class ParcoursComplet(unittest.TestCase):
                 message = json.loads(self.rfile.readline(), object_pairs_hook=storage._unique_object)
                 with closing(storage.Store(test.data)) as store:
                     try:
-                        code, value, cookie, start = prep.dispatch(
+                        code, value, cookie, start = web_api.dispatch(
                             store, message['method'], message['path'], message['token'], message['body'],
                             'a' * 40, test.prepare, qualification_transport=test.qualifier,
                             candidate_identity=test.identity, candidate_transport=test.candidate,
