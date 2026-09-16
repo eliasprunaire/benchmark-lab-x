@@ -411,24 +411,27 @@ def render(value, csrf, path='/preparation', *, error=False):
         dossier_url = '/preparation/dossiers/' + value['dossier_id']
         content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
         content += '<p role="status">Choisissez au moins deux modèles et un palier de raisonnement. Aucun appel candidat ne part à cette étape.</p>'
-        content += '<p>Relevé des modèles du ' + text(value['fetched_at']) + '.</p>'
-        choices = ''
-        for model in value['models']:
-            checked = ' checked' if model['selected'] else ''
-            choices += '<label><input type="checkbox" name="models" value="' + text(
-                model['id']) + '"' + checked + '> ' + text(model['name'])
-            if model['not_adjustable']:
-                choices += ' · palier de raisonnement non réglable'
-            choices += '</label>'
-        tiers = ''.join(
-            '<label><input type="radio" name="tier" value="' + tier + '"' +
-            (' checked' if value['current_tier'] == tier else '') + '> ' +
-            ('Standard' if tier == 'standard' else 'Renforcé') + '</label>'
-            for tier in value['available_tiers'])
-        content += ('<form method="post" action="' + text(dossier_url + '/configurations') + '">' +
-                    hidden('csrf_token', csrf) + '<fieldset><legend>Modèles à comparer</legend>' +
-                    choices + '</fieldset><fieldset><legend>Palier</legend>' + tiers +
-                    '</fieldset><button' + (' class="sec"' if value['configurations'] else '') + ' type="submit">Enregistrer les configurations</button></form>')
+        if not value.get('catalogue_available', True):
+            content += '<p>' + text(value['detail']) + '</p>'
+        else:
+            content += '<p>Relevé des modèles du ' + text(value['fetched_at']) + '.</p>'
+            choices = ''
+            for model in value['models']:
+                checked = ' checked' if model['selected'] else ''
+                choices += '<label><input type="checkbox" name="models" value="' + text(
+                    model['id']) + '"' + checked + '> ' + text(model['name'])
+                if model['not_adjustable']:
+                    choices += ' · palier de raisonnement non réglable'
+                choices += '</label>'
+            tiers = ''.join(
+                '<label><input type="radio" name="tier" value="' + tier + '"' +
+                (' checked' if value['current_tier'] == tier else '') + '> ' +
+                ('Standard' if tier == 'standard' else 'Renforcé') + '</label>'
+                for tier in value['available_tiers'])
+            content += ('<form method="post" action="' + text(dossier_url + '/configurations') + '">' +
+                        hidden('csrf_token', csrf) + '<fieldset><legend>Modèles à comparer</legend>' +
+                        choices + '</fieldset><fieldset><legend>Palier</legend>' + tiers +
+                        '</fieldset><button' + (' class="sec"' if value['configurations'] else '') + ' type="submit">Enregistrer les configurations</button></form>')
         if value['configurations']:
             items = []
             for configuration in value['configurations']:

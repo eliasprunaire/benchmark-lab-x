@@ -13,17 +13,29 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from benchmark.service import executor_health, preparation_request, serve_executor
+from benchmark import preparation
+from benchmark.service import denied_response, executor_health, preparation_request, serve_executor
 from benchmark.storage import Store, initialize
 from benchmark_web.server import _source_fingerprint, serve_web
 from tests.test_storage import PAYLOAD, operation
 
 
 class ServiceProcessesTests(unittest.TestCase):
+    def test_refus_inconnu_reste_generique(self):
+        generic = ('Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier '
+                   'ou demandez au responsable de vérifier son autorisation.')
+        with patch('socket.socket.connect', side_effect=AssertionError('No network')):
+            responses = [denied_response(preparation.Denied(reason))
+                         for reason in ('Motif', 'FUTUR')]
+        self.assertEqual([403, 403], [response['status'] for response in responses])
+        self.assertEqual([generic, generic],
+                         [response['value']['error'] for response in responses])
+
     def test_deux_identites_inconnues_ne_sont_pas_pretes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

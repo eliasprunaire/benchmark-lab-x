@@ -28,12 +28,16 @@ PREPARATION_DAILY_CAP_USD = Decimal('20')
 SOURCE_HOURLY_MAX = 20
 SOURCE_RATE_WINDOW = timedelta(hours=1)
 _SOURCE_ACCEPTED = {}
+_CHECK_CODES = frozenset({
+    'example_validated', 'example_qualified', 'configurations_available',
+    'access_connected', 'estimate_under_cap',
+})
 
 
 class Denied(ValueError):
     def __init__(self, message, field=None, findings=None, step=None):
         super().__init__(message)
-        self.code = message if re.fullmatch(r'[A-Za-z_]+', message) else None
+        self.code = message if re.fullmatch(r'[A-Z_]+', message) or message in _CHECK_CODES else None
         self.field = field
         self.findings = findings
         self.step = step
@@ -1111,8 +1115,14 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
     if launch_route:
         from . import campaigns
         dossier_id, campaign_id, action = launch_route.groups()
-        owner(connection_for(store), session_id, dossier_id)
-        snapshot = campaigns.inspect(store, campaign_id)
+        connection = connection_for(store)
+        owner(connection, session_id, dossier_id)
+        try:
+            snapshot = campaigns.inspect(store, campaign_id)
+        except KeyError:
+            if campaign_id.startswith(dossier_id + '-c'):
+                raise Denied('STEP_INCOMPLETE', step='configurations') from None
+            raise Denied('Ressource inaccessible') from None
         if snapshot['task']['dossier_id'] != dossier_id:
             raise Denied('Ressource inaccessible')
         requester = snapshot.get('manifest', {}).get('funding') == 'requester'

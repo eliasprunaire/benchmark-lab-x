@@ -76,9 +76,10 @@ def executor_health(path):
 
 
 def denied_response(error):
+    generic = ('Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier '
+               'ou demandez au responsable de vérifier son autorisation.')
     if not error.code:
-        return {'status': 403, 'value': {
-            'error': 'Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier ou demandez au responsable de vérifier son autorisation.'}}
+        return {'status': 403, 'value': {'error': generic}}
     messages = {
         'TEXT_TOO_SHORT': 'Ce texte est trop court.',
         'TEXT_TOO_LONG': 'Ce texte est trop long.',
@@ -102,7 +103,7 @@ def denied_response(error):
         'ADMISSION_CLOSED': 'Admission fermée',
     }
     status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG', 'SOURCE_MISSING') else 403
-    result = {'status': status, 'value': {'error': messages[error.code],
+    result = {'status': status, 'value': {'error': messages.get(error.code, generic),
               'error_code': error.code, 'error_field': error.field}}
     if error.findings is not None:
         result['value']['findings'] = error.findings
