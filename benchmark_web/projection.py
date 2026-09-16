@@ -9,6 +9,9 @@ import re
 from benchmark.storage import _strict_json as encode
 
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'projection.css'
+RESTRICTION_PUBLIQUE = (
+    'Vérification publique restreinte : les pièces non sélectionnées et leurs passages restent privés. '
+    'Leur empreinte ne remplace pas une preuve consultable. Les constats qui en dépendent restent invérifiables ici.')
 
 
 def stylesheet():
@@ -51,8 +54,7 @@ def projection_body(value, selected):
     body += '<p>Les descriptions des obligations et des erreurs éliminatoires sont publiées comme libellés. '
     body += 'La référence de jugement et les preuves de qualification restent privées ; '
     body += 'ces descriptions seules ne permettent pas de vérifier publiquement la qualification des critères.</p>'
-    body += '<p>Vérification publique restreinte : les pièces non sélectionnées et leurs passages restent privés. '
-    body += 'Leur empreinte ne remplace pas une preuve consultable. Les constats qui en dépendent restent invérifiables ici.</p>'
+    body += '<p>' + t(RESTRICTION_PUBLIQUE) + '</p>'
     labels = {}
     for row in value['rows']:
         labels.update(_libelles_criteres(row))
@@ -95,7 +97,8 @@ def projection_body(value, selected):
                 body += '<li><a href="' + t(selected[link['piece_id']]) + '">' + t(link['name']) + ' · octets exacts</a></li>'
             else:
                 body += '<li>' + t(link['name']) + ' : pièce restreinte, non sélectionnée.</li>'
-        body += '</ul><p>' + t('; '.join(row['limits'])) + '</p></section>'
+        body += '</ul><p>' + t('; '.join(row['limits'])) + '</p>'
+        body += '<p>' + t(RESTRICTION_PUBLIQUE) + '</p></section>'
     return body
 
 

@@ -14,6 +14,8 @@ from . import campaigns as c, evaluation as e, preparation as p, qualification a
 from .storage import _transaction, _strict_json as encode, _unique_object
 
 SCHEMA = 'benchmark-lab-x/restitution-fictional/v1'
+PRESENTATION_VERSION = '3'
+PRESENTATION_VERSIONS = ('1', '2', '3')
 ATTRIBUTION = (
     'Le verdict porte sur la configuration observée sous les conditions communes déclarées. '
     'Il n’attribue pas au seul modèle les effets du fournisseur, de l’effort, de Pi ou de ses réglages. '
@@ -278,7 +280,7 @@ def _preview(store, value, piece_ids, presentation):
         raise ValueError('Présentation de projection non enregistrée')
     files['index.html'] = presentation.public_page(value, selected)
     files['style.css'] = presentation.stylesheet()
-    manifest = dict(schema_version=SCHEMA, presentation_version='2', conclusion_version='1',
+    manifest = dict(schema_version=SCHEMA, presentation_version=PRESENTATION_VERSION, conclusion_version='1',
                     campaign_id=value['campaign_id'], contract_sha256=value['contract_sha256'], task=value['task'],
                     evaluation_ids=[row['evaluation_id'] for row in value['rows']],
                     limits=value['conclusion']['limits'],
@@ -329,7 +331,7 @@ def _manifest(raw, identity):
             'contract_sha256', 'task', 'evaluation_ids', 'limits', 'pieces', 'files'}
     if type(m) is not dict or set(m) != keys or m['schema_version'] != SCHEMA:
         raise ValueError('Schéma de projection fictive inconnu')
-    if m['presentation_version'] not in ('1', '2') or m['conclusion_version'] != '1':
+    if m['presentation_version'] not in PRESENTATION_VERSIONS or m['conclusion_version'] != '1':
         raise ValueError('Version de restitution inconnue')
     p.identifier(m['campaign_id'])
     q._hash(m['contract_sha256'])
