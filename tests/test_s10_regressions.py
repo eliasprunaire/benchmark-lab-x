@@ -35,7 +35,7 @@ class S10ProofTests(unittest.TestCase):
         row = next(attrs for tag, attrs in parsed.tags if attrs.get('id') == 'attempt-long')
         self.assertEqual('-1', row['tabindex'])
         region = next(attrs for tag, attrs in parsed.tags if attrs.get('class') == 'table-scroll')
-        self.assertEqual(('region', '0', 'Observations du cas notes'),
+        self.assertEqual(('region', '0', 'Observations du cas 1'),
                          (region['role'], region['tabindex'], region['aria-label']))
         self.assertEqual(5, sum(tag == 'th' and attrs.get('scope') == 'col' for tag, attrs in parsed.tags))
         self.assertEqual(1, page.count('<script>'))
