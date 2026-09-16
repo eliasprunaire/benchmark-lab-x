@@ -130,7 +130,7 @@ La sauvegarde bloque les écrivains SQLite pendant la copie des pièces et véri
 python3 tools/build_runtime.py --source <commit-produit-complet> --output /chemin/benchmark-runtime.tar.gz
 ```
 
-Le reçu décrit la construction effectuée ; son authenticité doit être vérifiée depuis le job ou l’opérateur identifié. L’archive utilise le format `release.json` du candidat infra. Elle inclut les deux processus, leur commande et le stockage S1 ; le build refuse une archive sans ces composants. Aucun tag de livraison 0.1.0 n’est créé par ces interfaces.
+Le reçu décrit la construction effectuée ; son authenticité doit être vérifiée depuis le job ou l’opérateur identifié. L’archive utilise le format `release.json` du candidat infra. Elle inclut les deux processus, leur commande, le stockage S1 et la configuration active du catalogue `benchmark/models.toml` ; le build refuse une archive sans ces composants. Aucun tag de livraison 0.1.0 n’est créé par ces interfaces.
 
 Le paquet `benchmark` contient le moteur : stockage, préparation, qualification, campagnes, transports, reprises, jugements, restitution structurée et intégrité. Le paquet `benchmark_web` contient la présentation : serveur HTTP, formulaires, cookies, rendu HTML, gabarits et feuille de style. La dépendance va seulement de `benchmark_web` vers `benchmark` ; le web n’ouvre ni le stockage, ni les secrets, ni les fournisseurs, il consomme les vues structurées de l’exécuteur par socket Unix. L’exécuteur reçoit le module de projection publique par `--presentation` (défaut `benchmark_web.projection`) ; la commande `web` charge le serveur du même paquet. L’archive runtime inclut les deux paquets.
 

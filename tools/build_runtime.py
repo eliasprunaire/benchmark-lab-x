@@ -41,6 +41,7 @@ def build(repo, source, destination):
         blobs[name] = blob
         modes[name] = 0o755 if mode == '100755' else 0o644
     if not {'benchmark/storage.py', 'benchmark/runtime.py', 'benchmark/service.py', 'benchmark/benchmark-runtime', 'benchmark/__init__.py',
+            'benchmark/model_catalogue.py', 'benchmark/models.toml',
             'benchmark_web/__init__.py', 'benchmark_web/server.py', 'benchmark_web/views.py', 'benchmark_web/projection.py'} <= files.keys():
         raise ValueError('Interfaces runtime absentes du commit')
     # Le schéma livré vient du commit construit, sans importer du code non approuvé
