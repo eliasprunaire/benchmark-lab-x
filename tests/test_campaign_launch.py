@@ -1,4 +1,6 @@
 """Owner launch uses private admission, never authority supplied by HTTP"""
+import ast
+from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from copy import deepcopy
@@ -277,8 +279,9 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.assertTrue(summary['launchable'])
         self.assertEqual({'limit_remaining_usd': '18.5', 'limit_usd': '20'},
                          summary['checks'][3]['detail'])
-        self.assertEqual('Estimation totale : 0,00 USD pour un plafond de 50,00 USD',
-                         summary['checks'][4]['detail'])
+        total = c._estimate_total(c.inspect(self.store, self.campaign_id))
+        self.assertEqual('Estimation totale : ' + format(total, 'f').replace('.', ',') +
+                         ' USD pour un plafond de 50,00 USD', summary['checks'][4]['detail'])
         for invalid in ('0.09', '100.01', '1.001', '1e1', 1):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(
                     ValueError, 'Plafond hors bornes : 0,10 à 100 USD'):
@@ -300,6 +303,52 @@ class RequesterCampaignLaunch(unittest.TestCase):
         with self.assertRaisesRegex(storage.ConflictError, 'Plafond figé au lancement'):
             c.set_cap(self.store, self.sid, 'fixture', self.campaign_id,
                       {'cap_usd': '10'})
+
+    def test_estimation_affichee_exacte_pres_de_la_limite(self):
+        snapshot = c.inspect(self.store, self.campaign_id)
+        for amount, allowed in (('24.99999', True), ('25.00000', True), ('25.00001', False)):
+            with self.subTest(amount=amount):
+                snapshot['manifest']['panel'][0]['estimate']['amount_usd'] = amount
+                snapshot['manifest']['panel'][1]['estimate']['amount_usd'] = '25.00000'
+                with patch.object(c, '_requester_campaigns', return_value=[snapshot]):
+                    selection = c.configurations_view(self.store, self.sid, 'fixture')
+                checks = c._requester_checks(self.store, self.store._connection, snapshot,
+                                            self.sid, {'status': 'connected'})
+                budget = next(check for check in checks if check['key'] == 'estimate_under_cap')
+                total = format(Decimal(amount) + Decimal('25.00000'), 'f')
+                self.assertEqual(allowed, selection['estimate_under_cap'])
+                self.assertEqual(allowed, budget['ok'])
+                self.assertEqual(total, selection['estimate_total_usd'])
+                self.assertIn(total + ' USD', views.render(selection, 'csrf').decode())
+                self.assertEqual('Estimation totale : ' + total.replace('.', ',') +
+                                 ' USD pour un plafond de 50,00 USD', budget['detail'])
+
+    def test_cles_controles_alignees_entre_moteur_erreurs_et_liens(self):
+        summary = c.launch_view(self.store, self.sid, 'fixture', self.campaign_id)
+        keys = [check['key'] for check in summary['checks']]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertEqual(set(keys), p._CHECK_CODES)
+        tree = ast.parse(Path(views.__file__).read_text())
+        links = [node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                 and any(isinstance(target, ast.Name) and target.id == 'links'
+                         for target in node.targets) and isinstance(node.value, ast.Dict)]
+        self.assertEqual(1, len(links))
+        self.assertEqual(set(keys), {ast.literal_eval(key) for key in links[0].keys})
+
+    def test_montants_absents_non_estimables_sur_les_pages(self):
+        snapshot = c.inspect(self.store, self.campaign_id)
+        snapshot['manifest']['panel'][0]['estimate']['amount_usd'] = None
+        with patch.object(c, '_requester_campaigns', return_value=[snapshot]):
+            selection = c.configurations_view(self.store, self.sid, 'fixture')
+        page = views.render(selection, 'csrf').decode()
+        self.assertIn('estimation non estimable', page)
+        self.assertIn('Estimation totale : non estimable', page)
+        checks = c._requester_checks(self.store, self.store._connection, snapshot, self.sid, {})
+        self.assertEqual('Estimation totale : non estimable', checks[-1]['detail'])
+        preview = p.view(self.store, self.sid, 'fixture')
+        preview['indicative_cost'] = None
+        self.assertIn('Estimation indicative de cette préparation : non estimable',
+                      views.render(preview, 'csrf').decode())
 
     def test_chaque_controle_bloque_avec_sa_cle(self):
         with self.assertRaises(p.Denied) as disconnected:

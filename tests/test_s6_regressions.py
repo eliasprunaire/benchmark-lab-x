@@ -297,6 +297,19 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual({'comparison', 'empty'}, {v['campaign_id'] for v in view['tasks'][0]['versions'][0]['campaigns']})
         self.assertFalse((self.public / 'active.json').exists())
 
+    def test_filtre_obligations_libelles_lisibles_et_valeurs_stables(self):
+        value = self.compare()
+        value['obligations'][0]['description'] = 'Action <requise> & vérifiée'
+        for rows in (value['rows'], []):
+            with self.subTest(rows=bool(rows)):
+                value['rows'] = rows
+                page = views.render(value, '').decode()
+                for state, label in (('PASS', 'Respectée'), ('FAIL', 'Non respectée'),
+                                     ('INDETERMINE', 'Indéterminée')):
+                    self.assertIn('value="O1:' + state + '">Action &lt;requise&gt; &amp; vérifiée : ' +
+                                  label + '</option>', page)
+                self.assertNotIn('>O1 : PASS</option>', page)
+
     def test_preview_does_not_copy_unselected_passages_or_mutate_storage(self):
         bundle = self.preview()
         raw = b''.join(bundle['files'].values())
@@ -304,6 +317,9 @@ class S6Regressions(unittest.TestCase):
         self.assertNotIn(b'candidate()', raw)
         self.assertNotIn(b'/preparation/', raw)
         self.assertIn('restreinte'.encode(), raw)
+        self.assertIn(('Les descriptions des obligations et des erreurs éliminatoires sont publiées comme libellés. '
+                       'La référence de jugement et les preuves de qualification restent privées ; '
+                       'ces descriptions seules ne permettent pas de vérifier publiquement la qualification des critères.').encode(), raw)
         self.assertIn('Durée fictive'.encode(), raw)
         self.assertIn('Présence fictive'.encode(), raw)
         self.assertNotIn(b'duration :', raw)

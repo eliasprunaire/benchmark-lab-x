@@ -48,6 +48,9 @@ def projection_body(value, selected):
     body += '<p>Comparaison économique : ' + t(value['economic_status']) + '. Coûts candidats et jugement séparés.</p>'
     for pending in value.get('pending_attempts', []):
         body += '<p>Tentative ' + t(pending['attempt_id']) + ' : ' + t(pending['next_action']) + '</p>'
+    body += '<p>Les descriptions des obligations et des erreurs éliminatoires sont publiées comme libellés. '
+    body += 'La référence de jugement et les preuves de qualification restent privées ; '
+    body += 'ces descriptions seules ne permettent pas de vérifier publiquement la qualification des critères.</p>'
     body += '<p>Vérification publique restreinte : les pièces non sélectionnées et leurs passages restent privés. '
     body += 'Leur empreinte ne remplace pas une preuve consultable. Les constats qui en dépendent restent invérifiables ici.</p>'
     labels = {}

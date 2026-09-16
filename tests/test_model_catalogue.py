@@ -84,8 +84,8 @@ class ModelCatalogueTests(unittest.TestCase):
                     patch.object(catalogue, '_now', return_value=NOW):
                 result = catalogue.refresh(
                     store, self.fetch([], {'x-ai/grok-4-preview': status}))
-            preview = next(model for model in result['models'] if model['id'].endswith('-preview'))
-            self.assertEqual(excluded, preview['excluded'])
+                preview = next(model for model in result['models'] if model['id'].endswith('-preview'))
+                self.assertEqual(excluded, preview['excluded'])
 
     def test_fournisseurs_exclus_du_catalogue(self):
         registry = tempfile.NamedTemporaryFile('w', suffix='.toml', delete=False)

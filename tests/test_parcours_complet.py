@@ -403,8 +403,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, len(campaign_links))
         self.assertEqual(1, sum(n['attrs'].get('class') == 'button' for n in campaign_links))
         self.assertEqual(1, sum(n['attrs'].get('class') == 'button sec' for n in campaign_links))
+        with closing(storage.Store(self.data)) as store:
+            previous = campaigns.inspect(store, recap.split('/')[-2])['manifest']
         self.assertEqual({'Examiner les conditions et suivre la comparaison courante',
-                          'Consulter la comparaison précédente 1'},
+                          'Consulter la comparaison du ' + views.date_lisible_utc(previous['conditions']['frozen_at'])},
                          {n['text'] for n in campaign_links})
         with closing(storage.Store(self.data)) as store:
             prep.close_admission(store)

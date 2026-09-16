@@ -54,6 +54,12 @@ class WebBoundaryTests(unittest.TestCase):
             for item in value:
                 self.assert_no_fingerprint_field(item, allowed)
 
+    def test_documentation_collecte_ancree_sur_la_commande(self):
+        readme = (ENGINE / 'README.md').read_text()
+        self.assertIn('La commande `collect` du prototype envoie `data_collection: "deny"` ; '
+                      'les reçus et campagnes antérieurs restent tels quels.', readme)
+        self.assertNotIn('Depuis ce correctif', readme)
+
     def test_engine_never_imports_the_web_package(self):
         for path in ENGINE.rglob('*.py'):
             source = path.read_text()

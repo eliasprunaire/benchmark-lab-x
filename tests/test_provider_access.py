@@ -166,6 +166,7 @@ class ProviderAccessTests(unittest.TestCase):
             provider_access.callback(self.store, self.session, bytes.fromhex('22' * 32),
                                      'code', self.transport)
         self.assertEqual('ACCESS_NO_PENDING', caught.exception.code)
+        self.assertEqual([], self.transport.exchanges)
         self.assertEqual(0, self.store._connection.execute(
             'SELECT count(*) FROM s2_provider_access').fetchone()[0])
 
