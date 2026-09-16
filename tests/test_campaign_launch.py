@@ -324,7 +324,6 @@ class RequesterCampaignLaunch(unittest.TestCase):
                 self.assertEqual('Estimation totale : ' + total.replace('.', ',') +
                                  ' USD pour un plafond de 50,00 USD', budget['detail'])
 
-
     def test_total_tres_petit_reste_en_decimal(self):
         snapshot = c.inspect(self.store, self.campaign_id)
         snapshot['manifest']['panel'][0]['estimate']['amount_usd'] = '1E-8'
@@ -343,11 +342,15 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.assertEqual(len(keys), len(set(keys)))
         self.assertEqual(set(keys), p._CHECK_CODES)
         tree = ast.parse(Path(views.__file__).read_text())
-        links = [node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
-                 and any(isinstance(target, ast.Name) and target.id == 'links'
-                         for target in node.targets) and isinstance(node.value, ast.Dict)]
-        self.assertEqual(1, len(links))
-        self.assertEqual(set(keys), {ast.literal_eval(key) for key in links[0].keys})
+        def literal_keys(node):
+            if not isinstance(node, ast.Dict) or any(key is None for key in node.keys):
+                return None
+            try:
+                return {ast.literal_eval(key) for key in node.keys}
+            except ValueError:
+                return None
+        matching = [node for node in ast.walk(tree) if literal_keys(node) == set(keys)]
+        self.assertEqual(1, len(matching))
 
     def test_montants_absents_non_estimables_sur_les_pages(self):
         snapshot = c.inspect(self.store, self.campaign_id)

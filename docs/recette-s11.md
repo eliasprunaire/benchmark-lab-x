@@ -8,6 +8,28 @@ style_gate: pass
 
 Le correctif CSS intégré à `main` est `d11e531`. Ses règles sont présentes dans [la feuille de style courante](../benchmark_web/static/preparation.css) : retour à la ligne `break-word` sur `body`, `normal` sur `th` et couleur de survol sombre `#285c32`. Cette inspection du code ne constitue pas une preuve visuelle.
 
+Le contrat de recette reste l’[Issue #214](https://github.com/eliasprunaire/benchmark-lab-x/issues/214). Les directives communes et D13 bis à D16 ont été relues dans [S22 #247](https://github.com/eliasprunaire/benchmark-lab-x/issues/247).
+
+## Vues à capturer
+
+Trente-neuf vues, à produire lors de la prochaine campagne de captures. Cette liste ne prouve aucune capture déjà faite.
+
+| Famille | Vues et états | Route produit |
+|---|---|---|
+| 1. Accueil | `01-accueil`, `01-sans-dossier`, `01-avec-dossiers` | `/`, `/preparation` |
+| 2. Préparation | `02-saisie`, `02-clarification`, `02-traitement`, `02-interruption`, `02-indisponible` | `/preparation`, `/preparation/dossiers/fixture` |
+| 3. Exemple | `03-exemple`, `03-piece-longue`, `03-correction-ouverte`, `03-revision-modifiee`, `03-validation` | `/preparation/dossiers/fixture` |
+| 4. Qualification | `04-reussie`, `04-refusee`, `04-a-reprendre` | `/preparation/dossiers/fixture` |
+| 5. OpenRouter | `05-non-connecte`, `05-connecte`, `05-invalide` | `/preparation/access` |
+| 6. Configurations | `06-estimation-connue`, `06-estimation-incomplete`, dont un modèle non réglable | `/preparation/dossiers/fixture/configurations` |
+| 7. Lancement | `07-controles-passants`, puis un `07-bloque-*` par contrôle | `/preparation/dossiers/fixture/campaigns/comparison/conditions` |
+| 8. Campagne | `08-vide`, `08-en-cours`, `08-partielle`, `08-interrompue`, `08-terminee` | `/preparation/dossiers/fixture`, historique ouvert |
+| 9. Comparaison | `09-comparaison`, `09-filtres-ouverts` : satisfait, non satisfait, à reprendre, coûts connus et inconnus | `/preparation/dossiers/fixture/campaigns/comparison` |
+| 10. Preuve | `10-preuve-fermee`, `10-preuve-longue`, `10-retour` | `…/campaigns/comparison/attempts/attempt-error`, puis comparaison |
+| 11. Accès privé | `11-session-perdue`, `11-acces-refuse` | `/preparation`, `/preparation/dossiers/fixture` |
+
+Famille 7 : un `07-bloque-*` pour chacun des cinq contrôles (`example_validated`, `example_qualified`, `configurations_available`, `access_connected`, `estimate_under_cap`), soit six vues de lancement avec `07-controles-passants`. Total : 3 + 5 + 5 + 3 + 3 + 2 + 6 + 5 + 2 + 3 + 2 = 39.
+
 ## Preuves absentes
 
 Les captures avant et après, les zooms, le harnais de capture et les relevés annoncés ne sont pas disponibles. Le répertoire hors dépôt précédemment cité est absent. Les fichiers `matrice.json`, `mesures.json`, `clavier.json`, `structure.json`, `zoom.json` et `apres/source.txt` ne sont donc pas des preuves consultables.
