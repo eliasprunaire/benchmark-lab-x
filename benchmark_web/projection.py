@@ -4,6 +4,7 @@ Le moteur reçoit ce module par injection (`presentation`) ; il ne l'importe pas
 """
 from html import escape
 from pathlib import Path
+import re
 
 from benchmark.storage import _strict_json as encode
 
@@ -16,6 +17,20 @@ def stylesheet():
 
 def _html_text(value):
     return escape(str(value), quote=True)
+
+
+def _libelles_criteres(row):
+    specification = row['qualification']['contract']['specification']
+    items = (specification['obligations'] + specification['eliminatory_errors']
+             + specification['secondary_criteria'])
+    return {item['id']: item.get('description') or item.get('measure') for item in items}
+
+
+def _remplacer_criteres(value, labels):
+    if not labels:
+        return str(value)
+    pattern = r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)'
+    return re.sub(pattern, lambda match: labels[match[0]], str(value))
 
 
 def projection_body(value, selected):
@@ -35,15 +50,24 @@ def projection_body(value, selected):
         body += '<p>Tentative ' + t(pending['attempt_id']) + ' : ' + t(pending['next_action']) + '</p>'
     body += '<p>Vérification publique restreinte : les pièces non sélectionnées et leurs passages restent privés. '
     body += 'Leur empreinte ne remplace pas une preuve consultable. Les constats qui en dépendent restent invérifiables ici.</p>'
-    for column in value['columns']:
-        body += '<details><summary>Critère ' + t(column['id']) + '</summary><pre>' + t(encode(column)) + '</pre></details>'
+    labels = {}
     for row in value['rows']:
+        labels.update(_libelles_criteres(row))
+    for column in value['columns']:
+        label = ('Coût observé' if 'criterion_id' not in column else
+                 labels.get(column['criterion_id'], column['definition']['measure']))
+        displayed = dict(column, id=label)
+        if 'criterion_id' in displayed:
+            displayed['criterion_id'] = label
+        body += '<details><summary>Critère ' + t(label) + '</summary><pre>' + t(encode(displayed)) + '</pre></details>'
+    for row in value['rows']:
+        row_labels = _libelles_criteres(row)
         body += '<section><h2>Cas ' + t(row['case_id']) + ' · ' + t(row['configuration_id']) + '</h2>'
         body += '<p>Tentative ' + t(row['attempt_id']) + ', évaluation ' + t(row['evaluation_id'])
         body += ', date ' + t(row['created_at']) + ', responsable ' + t(row['responsible']) + '.</p>'
         decision = row.get('decision', {})
         label = decision.get('verdict') or ('Évaluation à reprendre' if row['verdict'] in (None, 'INDETERMINE') else row['verdict'])
-        body += '<p><strong>' + t(label) + '</strong> : ' + t(row['reason']) + '</p>'
+        body += '<p><strong>' + t(label) + '</strong> : ' + t(_remplacer_criteres(row['reason'], row_labels)) + '</p>'
         if decision.get('next_action'):
             body += '<p>' + t(decision['next_action']) + '</p>'
         for label, data in (('Configuration demandée', row['requested_configuration']),
@@ -56,9 +80,11 @@ def projection_body(value, selected):
                  else 'Déclarée ; preuve restreinte dans cette projection') + '.</p>'
         body += '<ul>'
         for finding in row['findings']:
-            body += '<li>' + t(finding['criterion_id'] + ' : ' + finding['status'] + ' · ' + finding['finding']) + '</li>'
+            criterion = row_labels.get(finding['criterion_id'], finding['criterion_id'])
+            body += '<li>' + t(criterion + ' : ' + finding['status'] + ' · ' + finding['finding']) + '</li>'
         for measure in row['measures']:
             data = {k: measure[k] for k in ('criterion_id', 'value', 'unit', 'rank', 'reason')}
+            data['criterion_id'] = row_labels.get(data['criterion_id'], data['criterion_id'])
             body += '<li>' + t(encode(data)) + '</li>'
         body += '</ul><ul>'
         for link in row['proof_links']:

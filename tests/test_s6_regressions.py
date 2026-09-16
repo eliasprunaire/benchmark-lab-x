@@ -283,6 +283,10 @@ class S6Regressions(unittest.TestCase):
         self.assertNotIn(b'candidate()', raw)
         self.assertNotIn(b'/preparation/', raw)
         self.assertIn('restreinte'.encode(), raw)
+        self.assertIn('Durée fictive'.encode(), raw)
+        self.assertIn('Présence fictive'.encode(), raw)
+        self.assertNotIn(b'duration :', raw)
+        self.assertNotIn(b'&quot;criterion_id&quot;:&quot;duration&quot;', raw)
         self.assertEqual({'index.html', 'style.css'}, set(bundle['files']))
         with self.assertRaises(p.Denied):
             self.preview(['unlinked'])

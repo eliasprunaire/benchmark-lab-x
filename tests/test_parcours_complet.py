@@ -80,9 +80,9 @@ class Page(HTMLParser):
 
 class ParcoursComplet(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix='s12-', dir=Path(__file__).resolve().parents[2])
+        temporary = tempfile.TemporaryDirectory(prefix='s12-')
         self.addCleanup(temporary.cleanup)
-        root = Path(temporary.name)
+        root = Path(temporary.name).resolve()
         self.data, self.sock = root / 'private', root / 'executor.sock'
         storage.initialize(self.data)
         storage.initialize_preparation(self.data)
@@ -249,6 +249,7 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, '/preparation/dossiers', 'envoi enregistré', 'Consulter le cas d’usage et son avancement')
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'attente', 'Actualiser cet état')
+        self.assertEqual(1, page.visible.count('Actualiser cet état'))
         prep.execute(self.data, self.starts.get_nowait(), self.prepare)
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'clarification', 'Envoyer ma réponse')
@@ -279,6 +280,7 @@ class ParcoursComplet(unittest.TestCase):
         page = self.submit(page, '/validation', {}, status=200)
         self.examine(page, dossier, 'qualification en attente', 'Actualiser cet état')
         self.assertIn('Qualification en attente', page.visible)
+        self.assertEqual(1, page.visible.count('Actualiser cet état'))
         start = self.starts.get_nowait()
         prep.execute_qualification(self.data, start['qualification_operation'], self.qualifier)
         page, _, _ = self.request(dossier)
@@ -290,6 +292,8 @@ class ParcoursComplet(unittest.TestCase):
         configurations = page.link('Choisir les modèles')
         page, _, _ = self.request(configurations)
         self.examine(page, configurations, 'choix des configurations', 'Enregistrer les configurations')
+        self.assertIn('Relevé des modèles du 15 septembre 2026 à 12:00 UTC', page.visible)
+        self.assertNotIn('2026-09-15T12:00:00+00:00', page.visible)
         page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'tier': 'standard'}, status=400)
         self.assertIn('Action non vérifiée', page.visible)
         self.examine(page, configurations, 'contrat S3 absent', 'Retrouver mes cas d’usage')
@@ -298,7 +302,7 @@ class ParcoursComplet(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Contrat qualifié et approuvé requis'):
                 campaigns._current_contract(store, store._connection, dossier.rsplit('/', 1)[1])
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s4_campaigns').fetchone()[0])
-        # Injection S3 factice autorisée par Ayo pour poursuivre la recette uniquement
+        # Intervention du dispositif de recette, en attente de décision d’Ayo
         dossier_id = dossier.rsplit('/', 1)[1]
         with closing(storage.Store(self.data)) as store:
             sid, _, _ = prep.session(store, self.cookies['benchmark_session'].value)
@@ -316,8 +320,13 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(configurations)
         self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
                                              'tier': 'standard'}, status=303)
-        page, _, _ = self.request(configurations)
+        page, _, raw = self.request(configurations)
         self.examine(page, configurations, 'sélection enregistrée', 'Voir le récapitulatif')
+        selection = next(n for n in page.nodes if n['tag'] == 'section' and 'Sélection courante' in n['text'])
+        self.assertIn('Modèle A', selection['text'])
+        self.assertIn('Modèle B', selection['text'])
+        self.assertNotIn('openai/gpt-5.6-sol', selection['text'])
+        self.assertIn(b'title="Identifiant technique : openai/gpt-5.6-sol"', raw)
         recap = page.link('Voir le récapitulatif')
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'accès requis', 'Compléter cette étape')
@@ -332,11 +341,19 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn(KEY.encode(), raw)
         page, _, _ = self.request(page.link('Revenir à mes cas'))
         page, _, _ = self.request(page.link('Transformer des notes'))
-        self.examine(page, dossier, 'comparaison préparée', 'Examiner les conditions et suivre la comparaison')
+        self.examine(page, dossier, 'comparaison préparée', 'Examiner les conditions et suivre la comparaison courante')
         page, _, _ = self.request(page.link('Examiner les conditions'))
         self.examine(page, recap, 'prêt à lancer', 'Lancer la comparaison')
         self.assertIn('Tableau des actions avec responsable', page.visible)
         self.assertIn('Estimation', page.visible)
+        criteria = next(n for n in page.nodes if n['tag'] == 'details' and
+                        'Critères et conditions exactes' in n['text'])
+        for label in ('Critères', 'Obligations', 'Erreurs éliminatoires', 'Résultat attendu',
+                      'Modèles comparés', 'Limites', 'Harnais Pi'):
+            self.assertIn(label, criteria['text'])
+        for key in ('criteria', 'obligations', 'eliminatory_errors', 'result_expected',
+                    'panel', 'limits', 'pi'):
+            self.assertNotRegex(criteria['text'], rf'\b{re.escape(key)}\b')
         with patch.object(self, 'candidate', None):
             closed, _, _ = self.request(recap)
             self.examine(closed, recap, 'appels candidats fermés', 'Revenir au cas d’usage')
@@ -424,6 +441,20 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn(dossier, [n['attrs'].get('href') for n in page.nodes])
         self.assertIn('Perdre ou effacer le cookie fait perdre l’accès',
                       next(n['text'] for n in page.nodes if n['tag'] == 'footer'))
+        page, _, _ = self.request(configurations)
+        self.submit(page, '/configurations', {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+            'tier': 'standard'}, status=303)
+        page, _, _ = self.request(dossier)
+        campaign_links = [n for n in page.nodes if n['tag'] == 'a'
+                          and '/campaigns/' in n['attrs'].get('href', '')
+                          and n['attrs']['href'].endswith('/conditions')]
+        self.assertEqual(2, len(campaign_links))
+        self.assertEqual(1, sum(n['attrs'].get('class') == 'button' for n in campaign_links))
+        self.assertEqual(1, sum(n['attrs'].get('class') == 'button sec' for n in campaign_links))
+        self.assertEqual({'Examiner les conditions et suivre la comparaison courante',
+                          'Consulter la comparaison précédente 1'},
+                         {n['text'] for n in campaign_links})
         with closing(storage.Store(self.data)) as store:
             prep.close_admission(store)
         page, _, _ = self.request('/preparation')
