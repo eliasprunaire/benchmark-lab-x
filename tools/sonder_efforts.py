@@ -48,7 +48,7 @@ def essai(modele: str, provider: str, effort: str | None, jeton: str) -> dict:
         "model": modele,
         "messages": [{"role": "user", "content": QUESTION}],
         "max_tokens": 32768,
-        "provider": {"only": [provider], "allow_fallbacks": False},
+        "provider": {"only": [provider], "allow_fallbacks": False, "data_collection": "deny"},
         "usage": {"include": True},
     }
     if effort is not None:
