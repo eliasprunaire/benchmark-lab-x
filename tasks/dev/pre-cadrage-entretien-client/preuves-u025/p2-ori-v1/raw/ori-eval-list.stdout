@@ -1,9 +1,0 @@
-{
-  "ok": true,
-  "command": "eval",
-  "data": {
-    "files": [
-      "/private/tmp/benchmark-lab-x-m3-10-p2-ori-worktree/tasks/dev/pre-cadrage-entretien-client/preuves-u025/p2-ori-v1/pre-cadrage.eval.ts"
-    ]
-  }
-}

@@ -1,1 +1,0 @@
-Exécute exactement la consigne du message utilisateur. Retourne uniquement le pré-cadrage demandé, sans commentaire introductif ni clôture ajoutée.

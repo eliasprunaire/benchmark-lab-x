@@ -1,4 +1,0 @@
-(node:89899) [PERM0001] SecurityWarning: The flag --allow-addons must be used with extreme caution. It could invalidate the permission model.
-(Use `node --trace-warnings ...` to show where the warning was created)
-(node:89899) Warning: The --allow-fs-write CLI flag has changed. Passing a comma-separated list of paths is no longer valid. Documentation can be found at https://nodejs.org/api/permissions.html#file-system-permissions
-0.122.0

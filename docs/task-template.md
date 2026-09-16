@@ -8,7 +8,7 @@ Ce gabarit prépare le contrat d’une tâche de benchmark, distinct d’une Sto
 
 Le suivi GitHub reste extérieur à la carte : état de l’Issue, `Status` du Project et progrès des sous-Issues ne décrivent pas l’exécution d’une campagne. Une carte approuvée n’autorise ni acquisition, ni dépense, ni publication.
 
-Toute extension suit la [règle KISS](../docs/RULES.md#11-kiss-et-évolution).
+Toute extension suit la [règle KISS](RULES.md#11-kiss-et-évolution).
 
 ## 1. Identité et autorité
 
@@ -72,7 +72,7 @@ Usage du résultat et intervention humaine : `<ce que le destinataire peut en fa
 |---|---|---|---|---|
 | `<id>` | `<texte ou référence>` | `<identité>` | `<quantité et unité pertinentes ; contraintes concrètes et motif du choix>` | `<références>` |
 
-Niveau éventuel : `<définition et dimensions approuvées avant exécution, ou NON DÉFINI>`. Décrire les caractéristiques qui varient entre cas et celles qui restent communes, selon les [règles de charge et de portée](../docs/RULES.md#4-contrat-avant-exécution). Une étiquette ne remplace pas cette description.
+Niveau éventuel : `<définition et dimensions approuvées avant exécution, ou NON DÉFINI>`. Décrire les caractéristiques qui varient entre cas et celles qui restent communes, selon les [règles de charge et de portée](RULES.md#4-contrat-avant-exécution). Une étiquette ne remplace pas cette description.
 
 Couverture et limites : `<motif de sélection, usages couverts et exclus, nature entièrement fictive du dossier 0.1.0, biais connus et limites de généralisation>`. Un cas validé ne prouve pas la réussite sur les dossiers réels de l’utilisateur. Un exemple pédagogique public n’est pas réputé inédit.
 
@@ -133,7 +133,7 @@ Conserver au maximum deux lignes pour 0.1.0, complémentaires aux obligations et
 - `NE SATISFAIT PAS` : erreur éliminatoire ou obligation non remplie établie
 - Évaluation à reprendre, sans verdict métier : preuve insuffisante ou contradictoire, avec cause et prochaine action
 
-Appliquer les [règles de verdict](../docs/RULES.md#6-erreurs-et-verdict), notamment lorsqu’un défaut est prouvé mais qu’un autre contrôle manque.
+Appliquer les [règles de verdict](RULES.md#6-erreurs-et-verdict), notamment lorsqu’un défaut est prouvé mais qu’un autre contrôle manque.
 
 Distinguer défaut candidat et problème de consigne, données, référence, évaluation ou exécution. Ni l’accord de l’utilisateur sur l’exemple ni un consensus de modèles ne prouve la justesse de la référence ; passages, calculs et contrôles adaptés l’étayent. Une ambiguïté de l’épreuve n’est pas un échec du modèle.
 
@@ -145,9 +145,9 @@ Qualification avant approbation, enregistrée hors empreinte du contrat : `<preu
 
 Méthode : `<contrôles automatiques et témoins prévus identifiés et versionnés ; jugement humain ou assisté, configuration et consignes prévues de l’assistance IA éventuelle ; responsable, constats et approbation requis ; visibilité de l’identité et du coût pendant le jugement>`.
 
-Revue de la référence et de la méthode avant approbation, enregistrée hors empreinte du contrat : `<auteurs et pièces ; pour chaque assistance IA, configuration, consignes et sources, critiques, désaccords et arbitrage ; revue professionnelle : phase, périmètre et preuve, ou ABSENTE ; limites restantes>`. Appliquer les [règles de qualification et de revue](../docs/RULES.md#4-contrat-avant-exécution).
+Revue de la référence et de la méthode avant approbation, enregistrée hors empreinte du contrat : `<auteurs et pièces ; pour chaque assistance IA, configuration, consignes et sources, critiques, désaccords et arbitrage ; revue professionnelle : phase, périmètre et preuve, ou ABSENTE ; limites restantes>`. Appliquer les [règles de qualification et de revue](RULES.md#4-contrat-avant-exécution).
 
-Exposition connue avant approbation : `<part de la référence visible au candidat ; connaissance préalable des cas par les modèles ou évaluateurs, si connue ; protections et limites>`. Une référence incertaine suit les [règles de verdict](../docs/RULES.md#6-erreurs-et-verdict).
+Exposition connue avant approbation : `<part de la référence visible au candidat ; connaissance préalable des cas par les modèles ou évaluateurs, si connue ; protections et limites>`. Une référence incertaine suit les [règles de verdict](RULES.md#6-erreurs-et-verdict).
 
 ### Base de coût fixée avant exécution
 
@@ -173,7 +173,7 @@ La liste de modèles à essayer pour l’assistance n’est pas ce panel. Prése
 | Version de tâche et cas retenus | `<références et empreintes>` |
 | Panel figé | `<référence et empreinte>` |
 
-Liens entre l’assistance IA et ce panel : `<modèle ou fournisseur commun à la préparation, au jugement et aux candidats ; exposition connue lors de la campagne, protections et limites>`, selon les [règles de revue](../docs/RULES.md#4-contrat-avant-exécution).
+Liens entre l’assistance IA et ce panel : `<modèle ou fournisseur commun à la préparation, au jugement et aux candidats ; exposition connue lors de la campagne, protections et limites>`, selon les [règles de revue](RULES.md#4-contrat-avant-exécution).
 
 Autorités liées au manifeste : exécution produit `<référence ou ABSENTE>` ; appels candidats et budget `<référence ou ABSENTE>`. Leur preuve, comme celle d’une reprise ultérieure, est conservée séparément des conditions figées. L’autorité de publication est référencée en section 9.
 
@@ -207,7 +207,7 @@ Déclarées et figées dans le manifeste de campagne avant le premier candidat, 
 | Environnement | `<système, matériel, runtimes, dépendances et identités nécessaires à l’attribution>` | `<statut>` |
 | Date de gel | `<date>` | observée |
 
-Chaque valeur référence sa preuve et sa date. Les [règles de gel](../docs/RULES.md#4-contrat-avant-exécution) et l’[identité d’environnement](../docs/ARD.md#31-identité-de-lenvironnement-dexécution) s’appliquent. Les réglages influents non observables et les limites de reproduction sont déclarés.
+Chaque valeur référence sa preuve et sa date. Les [règles de gel](RULES.md#4-contrat-avant-exécution) et l’[identité d’environnement](ARD.md#31-identité-de-lenvironnement-dexécution) s’appliquent. Les réglages influents non observables et les limites de reproduction sont déclarés.
 
 ## 7. Acquisition et incidents
 
@@ -226,7 +226,7 @@ Les opérations de préparation peuvent référencer le brouillon avant qu’une
 | Dépense maximale | `<montant, devise, périmètre et autorité, ou ABSENTE : appel interdit>` |
 | Durée et arrêt | `<limites décidées ou mesurées, sans valeur inventée>` |
 
-Une autorité absente interdit l’opération correspondante. Le manifeste fixe aussi le plan d’ordre, les répétitions éventuelles et leur justification ; aucun nombre n’est imposé par le gabarit. La reprise doit nommer les cellules encore autorisées et les effets acquis, selon les [règles d’admission et de reprise](../docs/RULES.md#9-incidents-et-inconnues).
+Une autorité absente interdit l’opération correspondante. Le manifeste fixe aussi le plan d’ordre, les répétitions éventuelles et leur justification ; aucun nombre n’est imposé par le gabarit. La reprise doit nommer les cellules encore autorisées et les effets acquis, selon les [règles d’admission et de reprise](RULES.md#9-incidents-et-inconnues).
 
 La base de coût est celle du contrat en section 4. Chaque campagne lui associe :
 
@@ -237,11 +237,11 @@ La base de coût est celle du contrat en section 4. Chaque campagne lui associe 
 | Admission | `<preuve des identités, conditions, stockage, autorités et budget avant émission>` |
 | Interruption ou reprise | `<motif, intentions, reçus et effets inconnus conservés ; autorité de reprise éventuelle>` |
 
-Les incidents conservent leur preuve et leur portée. Leur effet sur l’évaluation suit les [règles de verdict](../docs/RULES.md#6-erreurs-et-verdict) ; la couverture manquante reste visible.
+Les incidents conservent leur preuve et leur portée. Leur effet sur l’évaluation suit les [règles de verdict](RULES.md#6-erreurs-et-verdict) ; la couverture manquante reste visible.
 
 ## 8. Verdicts et décision économique
 
-La restitution référence les verdicts par cas, les tentatives et les reçus de la campagne, sans les recopier dans le contrat gelé. Chaque opération conserve son identifiant d’exécution, sa version réelle du moteur, ses entrées, son autorité et sa terminaison. Chaque tentative relie la demande figée aux valeurs observées de fournisseur, modèle, accès, route, paramètres et effort, avec leur source ou `INCONNU`, selon les [objets d’acquisition](../docs/ARD.md#44-acquisition-tentative-et-exécution).
+La restitution référence les verdicts par cas, les tentatives et les reçus de la campagne, sans les recopier dans le contrat gelé. Chaque opération conserve son identifiant d’exécution, sa version réelle du moteur, ses entrées, son autorité et sa terminaison. Chaque tentative relie la demande figée aux valeurs observées de fournisseur, modèle, accès, route, paramètres et effort, avec leur source ou `INCONNU`, selon les [objets d’acquisition](ARD.md#44-acquisition-tentative-et-exécution).
 
 | Cas et tentative | Configuration | Erreurs et obligations | Verdict | Motif et critères concernés | Preuves | Coût observé | Mesures prévues |
 |---|---|---|---|---|---|---|---|
@@ -253,7 +253,7 @@ Une synthèse multi-cas applique uniquement la règle d'agrégation du contrat e
 
 Responsable des verdicts : `<rôle>`.
 
-Appliquer l’[ordre de décision](../docs/RULES.md#7-ordre-de-décision) et les [règles économiques](../docs/RULES.md#8-coût-et-bénéfices). La restitution suit le [parcours public](../docs/PRD.md#10-restitution-publique).
+Appliquer l’[ordre de décision](RULES.md#7-ordre-de-décision) et les [règles économiques](RULES.md#8-coût-et-bénéfices). La restitution suit le [parcours public](PRD.md#10-restitution-publique).
 
 ### Classements par critère et filtres
 
@@ -309,4 +309,4 @@ Limite d’attribution affichée : `<formulation conforme au PRD, section 8, et 
 - [ ] la conclusion est bornée au contrat, aux cas et tentatives couverts, à la campagne, aux conditions communes et à la date
 - [ ] les pièces publiables sont autorisées et les restrictions sont visibles
 
-Un scénario de maquette ou un exemple pédagogique ne devient pas implicitement une tâche exécutable du catalogue. Le score pondéré personnalisé reste une capacité différée du [PRD](../docs/PRD.md#52-extensions), sans formule ni exécution dans ce gabarit 0.1.0.
+Un scénario de maquette ou un exemple pédagogique ne devient pas implicitement une tâche exécutable du catalogue. Le score pondéré personnalisé reste une capacité différée du [PRD](PRD.md#52-extensions), sans formule ni exécution dans ce gabarit 0.1.0.

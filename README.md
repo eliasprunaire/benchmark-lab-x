@@ -47,7 +47,7 @@ Ce moteur historique reste attaché à un scénario et à son panel figés. Le r
 
 Le parcours prévu part d’une description générale, sans donnée personnelle ni information confidentielle. L’assistance pose les questions utiles, construit les pièces fictives puis présente un exemple consultable et modifiable. Une demande non évaluable est expliquée et reformulée avec accord, ou arrêtée. Valider l’exemple ne lance aucune campagne et ne publie rien. Aucun dossier réel, accès à l’ordinateur ou action sur téléphone n’entre dans ce parcours 0.1.0.
 
-Comparer des salles, préparer le suivi d’une réunion et organiser les pièces de l’entreprise fictive Orme & Signal sont des exemples pédagogiques, sans corpus obligatoire ni preuve de couverture métier. Le [PRD](docs/PRD.md#10-restitution-publique) décrit le parcours et l’illustration ; ses fichiers ne sont pas construits par la seule spécification. Le [gabarit de tâche](tasks/TEMPLATE.md) aide à relier :
+Comparer des salles, préparer le suivi d’une réunion et organiser les pièces de l’entreprise fictive Orme & Signal sont des exemples pédagogiques, sans corpus obligatoire ni preuve de couverture métier. Le [PRD](docs/PRD.md#10-restitution-publique) décrit le parcours et l’illustration ; ses fichiers ne sont pas construits par la seule spécification. Le [gabarit de tâche](docs/task-template.md) aide à relier :
 
 - le besoin, le résultat utilisable, ce que l’utilisateur doit encore faire et la décision à éclairer ;
 - les cas d’essai, leurs données et les conditions communes ;

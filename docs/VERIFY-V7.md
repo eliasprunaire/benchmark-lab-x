@@ -15,7 +15,7 @@ Statut : **historique et spécialisé, candidat non officiel**
 
 Ce document reste la source de vérité du seul modèle prospectif spécialisé task-v5 / verify-v7. Dans ce périmètre historique, il gouverne les états de mesure, les classes causales, les verdicts d’axe, les stades, les budgets, les preuves, les métriques, la vue rétroactive et le canari OpenRouter de cette tranche.
 
-Les références `R-*` de ce document renvoient à la [version historique de RULES](https://github.com/ayoahha/benchmark-lab-x/blob/38e226a59020aad517cd0dbb16892ffb87d448ab/docs/RULES.md), conservée par Git, pas aux invariants courants. La carte [pentagone-rotatif task-v5](../tasks/dev/pentagone-rotatif/task-v5.md) porte uniquement le contenu visible par le candidat et les choix propres à cette modalité.
+Les références `R-*` de ce document renvoient à la [version historique de RULES](https://github.com/ayoahha/benchmark-lab-x/blob/38e226a59020aad517cd0dbb16892ffb87d448ab/docs/RULES.md), conservée par Git, pas aux invariants courants. La carte [pentagone-rotatif task-v5](https://github.com/eliasprunaire/benchmark-lab-x/blob/fdd7cba3d96bf56aa987b7e44fdbe9306783f6d5/tasks/dev/pentagone-rotatif/task-v5.md), conservée par Git, porte uniquement le contenu visible par le candidat et les choix propres à cette modalité.
 
 Ce contrat s’applique prospectivement. Il ne modifie aucun fichier task-v4, reçu, lock ou résultat historique. Cette tranche ne produit aucune acquisition, notation, renotation, vue rétroactive ni preuve d’exécution.
 

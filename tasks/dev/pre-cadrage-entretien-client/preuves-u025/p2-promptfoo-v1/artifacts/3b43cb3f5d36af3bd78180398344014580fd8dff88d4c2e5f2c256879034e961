@@ -1,6 +1,0 @@
-{"sequence":1,"ts":"2026-08-17T20:09:56Z","pids":"87960","etat":"AUCUNE_SOCKET","lsof":""}
-{"sequence":2,"ts":"2026-08-17T20:09:56Z","pids":"87960","etat":"AUCUNE_SOCKET","lsof":""}
-{"sequence":3,"ts":"2026-08-17T20:09:56Z","pids":"87960","etat":"SOCKETS_OBSERVEES","lsof":"node    87960  ayo   12u  IPv4 0xd52bebe142221252      0t0  TCP 127.0.0.1:55574->127.0.0.1:12876 (ESTABLISHED)"}
-{"sequence":4,"ts":"2026-08-17T20:09:56Z","pids":"87960","etat":"SOCKETS_OBSERVEES","lsof":"node    87960  ayo   12u  IPv4 0xd52bebe142221252      0t0  TCP 127.0.0.1:55574->127.0.0.1:12876 (ESTABLISHED)"}
-{"sequence":5,"ts":"2026-08-17T20:09:56Z","pids":"87960","etat":"SOCKETS_OBSERVEES","lsof":"node    87960  ayo   12u  IPv4 0xd52bebe142221252      0t0  TCP 127.0.0.1:55574->127.0.0.1:12876 (ESTABLISHED)"}
-{"sequence":6,"ts":"2026-08-17T20:09:57Z","pids":"87960","etat":"AUCUNE_SOCKET","lsof":""}

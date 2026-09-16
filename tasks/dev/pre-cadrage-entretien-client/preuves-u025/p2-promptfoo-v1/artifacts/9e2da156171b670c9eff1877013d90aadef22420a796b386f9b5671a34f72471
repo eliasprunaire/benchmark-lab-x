@@ -1,7 +1,0 @@
-(version 1)
-(allow default)
-(deny network*)
-(deny file-write*)
-(allow file-write* (subpath "/private/tmp/benchmark-lab-x-promptfoo-standard-v1"))
-(allow file-write* (subpath "/private/var/folders"))
-(allow file-write* (subpath "/dev"))
