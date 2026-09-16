@@ -55,8 +55,10 @@ class TemplateTests(unittest.TestCase):
                       for bg in ('paper', 'surface', 'soft')]
         text_pairs += [(tone, tone + '-soft') for tone in ('warm', 'ok', 'ko', 'warn', 'unk', 'wait')]
         text_pairs += [('on-btn', 'btn'), ('on-btn', 'btn-hover'), ('surface', 'accent')]
-        self.assertNotEqual(luminance(themes[0]['btn']), luminance((themes[0] | themes[1])['btn-hover']))
         for name, colors in (('clair', themes[0]), ('sombre', themes[0] | themes[1])):
+            with self.subTest(theme=name, état='survol'):
+                low, high = sorted((luminance(colors['btn']), luminance(colors['btn-hover'])))
+                self.assertGreaterEqual((high + .05) / (low + .05), 1.4)
             pairs = [(fg, bg, 4.5) for fg, bg in text_pairs]
             pairs += [(fg, bg, 3) for fg in ('focus', 'line-2') for bg in ('paper', 'surface')]
             for fg, bg, minimum in pairs:

@@ -4,62 +4,77 @@ style_gate: pass
 
 # Recette visuelle S11
 
-État : **HOLD_VALIDATION_VISUELLE**. La décision visuelle reste celle d’Ayo, à consigner dans l’Issue #214 avec le SHA retenu.
+État : **HOLD_VALIDATION_VISUELLE**. La campagne de captures avant et après reste à produire, puis à soumettre à la décision visuelle d’Ayo.
 
-Base avant : `b4c406ca4b47e75e01044715c3f6e5d73fea9230`. Correctif CSS : `7fc8348`. Les données sont synthétiques, les vues sont rendues par `benchmark_web.views.render` et aucun reçu historique, secret, appel fournisseur, campagne réelle ou publication n’intervient.
+Le correctif CSS intégré à `main` est `d11e531`. Ses règles sont présentes dans [la feuille de style courante](../benchmark_web/static/preparation.css) : retour à la ligne `break-word` sur `body`, `normal` sur `th` et couleur de survol sombre `#285c32`. Cette inspection du code ne constitue pas une preuve visuelle.
 
-Les preuves sont hors dépôt dans `/Users/ayo/Projects/benchmark-lab-x-s11-captures`. Le harnais local `harnais/capturer.py` démarre chaque Chrome dans une nouvelle session, attend `communicate(timeout=60)` et détruit le groupe au dépassement. Le serveur est limité à `127.0.0.1` et arrêté dans un `finally`.
+## Preuves absentes
 
-La sonde utilise `matchMedia('(width: …px)')` après `Emulation.setDeviceMetricsOverride`. La correspondance contrôlée est donc `window-size 1280, 900, 800, 700, 600, 400` vers les mêmes largeurs CSS, et `640` et `200` CSS pour le reflow. Cette sonde évite le faux viewport étroit produit par `--window-size=400,…` seul sur ce Mac.
+Les captures avant et après, les zooms, le harnais de capture et les relevés annoncés ne sont pas disponibles. Le répertoire hors dépôt précédemment cité est absent. Les fichiers `matrice.json`, `mesures.json`, `clavier.json`, `structure.json`, `zoom.json` et `apres/source.txt` ne sont donc pas des preuves consultables.
 
-## Matrice
+Aucune matrice de vues effectivement capturées, aucun compte de PNG ni aucun résultat de parcours clavier ou de géométrie n’est établi par ce document. La correspondance entre `--window-size` et la largeur CSS n’est pas prouvée ; elle devra être mesurée dans le navigateur lors de la future recette.
 
-| Famille | Vues |
-|---|---|
-| 1. Accueil | `01-accueil`, `01-sans-dossier`, `01-avec-dossiers` |
-| 2. Préparation | `02-saisie`, `02-clarification`, `02-traitement`, `02-interruption`, `02-indisponible` |
-| 3. Exemple | `03-exemple`, `03-piece-longue`, `03-correction-ouverte`, `03-revision-modifiee`, `03-validation` |
-| 4. Qualification | `04-reussie`, `04-refusee`, `04-a-reprendre` |
-| 5. OpenRouter | `05-non-connecte`, `05-connecte`, `05-invalide` |
-| 6. Configurations | `06-estimation-connue`, `06-estimation-incomplete` |
-| 7. Lancement | `07-controles-passants`, `07-bloque-*` |
-| 8. Campagne | `08-vide`, `08-en-cours`, `08-partielle`, `08-interrompue`, `08-terminee` |
-| 9. Comparaison | `09-comparaison`, `09-filtres-ouverts` |
-| 10. Preuve | `10-preuve-fermee`, `10-preuve-longue`, `10-retour` |
-| 11. Accès privé | `11-session-perdue`, `11-acces-refuse` |
+## Contrastes courants
 
-La matrice compte 39 vues, chacune en clair et sombre aux six largeurs. `avant/` et `apres/` contiennent chacune 468 PNG. `zoom/` contient 44 PNG, soit deux thèmes et deux largeurs de reflow pour un représentant de chaque famille. `matrice.json`, `mesures.json`, `clavier.json`, `structure.json` et `zoom.json` accompagnent les captures. `apres/source.txt` porte le SHA du commit capturé.
+Les paires du tableau retiré sont recalculées depuis les couleurs hexadécimales de la feuille de style courante, avec héritage des variables du thème clair dans le thème sombre. Les colonnes historiques avant/après sont retirées : les valeurs ci-dessous décrivent uniquement le CSS actuel.
 
-## Défauts constatés et corrections
+Le calcul reprend la conversion sRGB linéaire du [test des contrastes](../tests/test_web_redesign.py), puis le rapport des luminances corrigées. Les rapports sont arrondis à deux décimales pour l’affichage.
 
-| Défaut | Route, état, thème et largeur | Avant | Après |
-|---|---|---|---|
-| F1 à F9 | Correctifs déjà présents dans la base avant de cette reprise | Les anciennes transitions visuelles ne sont pas recréées sans leurs captures d’origine | Les invariants automatisés restent vérifiés ; cette passe ne présente pas une preuve avant/après inventée |
-| F10 | Comparaison et preuve, en-têtes de tableau, clair et sombre, 1280 puis viewport étroit | `overflow-wrap: anywhere` sur `body`, puis sur `th`, coupe « PREUVE / S » et « CONFIGURAT / ION » | `body` utilise `break-word` et `th` reste sans rupture arbitraire |
-| F11 | Boutons principaux, sombre, toutes largeurs | `--btn-hover: #407b46` est visuellement confondu avec `--btn: #3f7a45` | `--btn-hover: #285c32` est distinct et conserve un libellé lisible |
+| Texte ou indicateur / fond | Clair courant | Sombre courant |
+|---|---:|---:|
+| `--ink` / `--paper` | 15,01:1 | 15,26:1 |
+| `--ink` / `--surface` | 16,66:1 | 13,88:1 |
+| `--ink` / `--soft` | 13,60:1 | 12,40:1 |
+| `--ink-2` / `--paper` | 8,79:1 | 10,82:1 |
+| `--ink-2` / `--surface` | 9,76:1 | 9,84:1 |
+| `--ink-2` / `--soft` | 7,96:1 | 8,79:1 |
+| `--muted` / `--paper` | 5,34:1 | 6,64:1 |
+| `--muted` / `--surface` | 5,93:1 | 6,04:1 |
+| `--muted` / `--soft` | 4,84:1 | 5,40:1 |
+| `--accent-ink` / `--paper` | 8,12:1 | 10,86:1 |
+| `--accent-ink` / `--surface` | 9,01:1 | 9,88:1 |
+| `--accent-ink` / `--soft` | 7,36:1 | 8,83:1 |
+| `--accent` / `--paper` | 5,70:1 | 8,67:1 |
+| `--accent` / `--surface` | 6,33:1 | 7,88:1 |
+| `--accent` / `--soft` | 5,17:1 | 7,05:1 |
+| `--ink` / `--accent-soft` | 13,93:1 | 11,43:1 |
+| `--ink-2` / `--accent-soft` | 8,16:1 | 8,10:1 |
+| `--muted` / `--accent-soft` | 4,96:1 | 4,97:1 |
+| `--accent-ink` / `--accent-soft` | 7,54:1 | 8,13:1 |
+| `--ink` / `--warn-soft` | 14,32:1 | 11,27:1 |
+| `--ink` / `--ko-soft` | 13,33:1 | 12,01:1 |
+| `--warm` / `--warm-soft` | 4,66:1 | 6,09:1 |
+| `--ok` / `--ok-soft` | 4,86:1 | 6,36:1 |
+| `--ko` / `--ko-soft` | 4,85:1 | 6,10:1 |
+| `--warn` / `--warn-soft` | 5,35:1 | 6,86:1 |
+| `--unk` / `--unk-soft` | 4,86:1 | 6,21:1 |
+| `--wait` / `--wait-soft` | 4,81:1 | 6,98:1 |
+| `--on-btn` / `--btn` | 6,33:1 | 5,15:1 |
+| `--on-btn` / `--btn-hover` | 9,01:1 | 7,87:1 |
+| `--surface` / `--accent` | 6,33:1 | 7,88:1 |
+| `--focus` / `--paper` | 6,63:1 | 8,46:1 |
+| `--focus` / `--surface` | 7,36:1 | 7,69:1 |
+| `--line-2` / `--paper` | 3,68:1 | 4,55:1 |
+| `--line-2` / `--surface` | 4,09:1 | 4,14:1 |
 
-Le contraste `--on-btn` blanc sur `--btn-hover` sombre `#285c32` est **7,87:1**. Le test vérifie aussi que les luminances de `--btn` et `--btn-hover` diffèrent et que le contraste du libellé reste au moins à 4,5:1.
+La paire `--surface` / `--accent` correspond au chiffre de l’étape active. Les assertions existantes exigent au moins 4,5:1 pour leurs paires de texte et 3:1 pour les contours de champs et le focus ; elles ne couvrent pas toutes les lignes de ce tableau.
 
-## Vérifications
+Le test compare aussi `--btn` et `--btn-hover` au sein de chaque thème. Son seuil de non-régression est 1,4:1 pour éviter un survol presque identique au repos. Ce seuil protège l’écart de couleur ; il ne constitue ni une norme d’accessibilité ni une validation perceptive humaine. Les rapports courants sont 1,42:1 en clair et 1,53:1 en sombre.
 
-La lecture structurée des 39 HTML alimente `structure.json` : identifiants uniques, lien d’évitement en premier et absence de tabulation positive. `clavier.json` conserve ces invariants HTML. Les captures complètes, leurs dimensions PNG et la correspondance de viewport sont dans `mesures.json`.
-
-La validation complète a exécuté :
+## Vérifications reproductibles
 
 ```sh
+uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests -p test_web_redesign.py
 uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests
 ```
 
-Résultat exact :
-
-```text
-Ran 1215 tests in 153.580s
-
-OK
-```
+Ces commandes contrôlent des propriétés automatisées. Leurs résultats ne prouvent ni une campagne de captures ni une validation visuelle. La suite historique `benchmark/test_demo.py` n’est pas découverte par la seconde commande.
 
 ## Limites et décision
 
-- Les états sont simulés et les captures ne prouvent aucune transition du moteur
-- La preuve de structure et les captures ne remplacent pas la décision visuelle d’Ayo
-- Aucun défaut visuel restant n’est déclaré par cette passe avant la décision humaine
+- La campagne de captures avant et après, les mesures de viewport, de reflow et les contrôles clavier dans le navigateur restent à produire
+- L’absence de défaut visuel restant n’est pas établie
+- La validation visuelle d’Ayo reste ouverte
+- Les captures et les essais réels ne sont pas exécutés dans cette correction documentaire et de test
+
+Le [PRD](PRD.md), l’[ARD](ARD.md), les [règles](RULES.md) et le [glossaire](../CONTEXT.md) restent les sources canoniques ; cette recette n’ajoute aucun contrat produit.
