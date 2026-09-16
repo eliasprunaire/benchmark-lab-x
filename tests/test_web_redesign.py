@@ -35,7 +35,8 @@ class TemplateTests(unittest.TestCase):
             self.assertLessEqual(int(attrs.get('tabindex', '0')), 0)
         css = views.STYLESHEET_PATH.read_text()
         self.assertRegex(css, r'svg\[hidden\]\s*\{\s*display:\s*none;\s*\}')
-        self.assertRegex(css, r'body\s*\{[^}]*overflow-wrap:\s*anywhere;')
+        self.assertRegex(css, r'body\s*\{[^}]*overflow-wrap:\s*break-word;')
+        self.assertNotRegex(css, r'body\s*\{[^}]*overflow-wrap:\s*anywhere;')
         self.assertIn(':focus-visible { outline: 3px solid var(--focus)', css)
 
     def test_contrastes_des_deux_themes(self):
@@ -54,6 +55,7 @@ class TemplateTests(unittest.TestCase):
                       for bg in ('paper', 'surface', 'soft')]
         text_pairs += [(tone, tone + '-soft') for tone in ('warm', 'ok', 'ko', 'warn', 'unk', 'wait')]
         text_pairs += [('on-btn', 'btn'), ('on-btn', 'btn-hover'), ('surface', 'accent')]
+        self.assertNotEqual(luminance(themes[0]['btn']), luminance((themes[0] | themes[1])['btn-hover']))
         for name, colors in (('clair', themes[0]), ('sombre', themes[0] | themes[1])):
             pairs = [(fg, bg, 4.5) for fg, bg in text_pairs]
             pairs += [(fg, bg, 3) for fg in ('focus', 'line-2') for bg in ('paper', 'surface')]
