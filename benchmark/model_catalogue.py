@@ -17,7 +17,7 @@ TABLE_SQL = """CREATE TABLE s2_model_catalogue (
     fetched_at TEXT NOT NULL,
     raw_json TEXT NOT NULL
 )"""
-CONFIG_PATH = Path(__file__).resolve().parents[1] / 'models.toml'
+CONFIG_PATH = Path(__file__).resolve().parent / 'models.toml'
 MODEL_ID = re.compile(r'^[a-z0-9.-]+/[a-z0-9.:_-]+$')
 
 

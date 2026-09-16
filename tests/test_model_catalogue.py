@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -75,6 +76,22 @@ class ModelCatalogueTests(unittest.TestCase):
             self.assertTrue(all(model['excluded'] is None for model in result['models']
                                 if model['excluded'] != 'malformed'))
             self.assertFalse(result['stale'])
+
+    def test_configuration_active_livree_avec_le_paquet(self):
+        self.assertEqual(Path(catalogue.__file__).resolve().parent / 'models.toml',
+                         catalogue.CONFIG_PATH)
+        settings = catalogue._settings(catalogue._registry())
+        self.assertEqual(16, len(settings['makers']))
+        self.assertEqual((3, 365, 24), (settings['max_per_family'],
+                                        settings['max_age_days'], settings['cache_hours']))
+        self.assertEqual(81, len(settings['baseline_families']))
+        self.assertEqual(139, len(settings['baseline_models']))
+        self.assertEqual({'deepseek': {'enhanced': {'enabled': True}}}, catalogue.tiers())
+        # Le registre d'alias historique ne porte plus de source concurrente
+        racine = tomllib.loads(
+            (Path(__file__).resolve().parents[1] / 'models.toml').read_text(encoding='utf-8'))
+        self.assertNotIn('catalogue', racine)
+        self.assertNotIn('tiers', racine)
 
     def test_statut_endpoint_exclut_seulement_un_nombre_negatif(self):
         cases = ((0, None), (1, None), (None, None), ('inconnu', None), (True, None), (-1, 'no_available_endpoint'))

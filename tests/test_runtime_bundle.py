@@ -44,7 +44,7 @@ class RuntimeBundleTests(unittest.TestCase):
             package = repo / 'benchmark'
             package.mkdir()
             source_package = Path(__file__).resolve().parents[1] / 'benchmark'
-            for name in ('__init__.py', 'model_catalog.py', 'storage.py', 'preparation.py', 'runtime.py', 'service.py', 'openrouter_preparation.py', 'openrouter_qualification.py', 'openrouter_prices.py', 'outgoing.py', 'preparation.profile.json', 'preparation-fallback.profile.json', 'qualification.profile.json', 'glm-5.3-flash.profile.json', 'benchmark-runtime'):
+            for name in ('__init__.py', 'model_catalog.py', 'model_catalogue.py', 'models.toml', 'storage.py', 'preparation.py', 'runtime.py', 'service.py', 'openrouter_preparation.py', 'openrouter_qualification.py', 'openrouter_prices.py', 'outgoing.py', 'preparation.profile.json', 'preparation-fallback.profile.json', 'qualification.profile.json', 'glm-5.3-flash.profile.json', 'benchmark-runtime'):
                 shutil.copy2(source_package / name, package / name)
             web = repo / 'benchmark_web'
             source_web = source_package.parent / 'benchmark_web'
@@ -68,6 +68,7 @@ class RuntimeBundleTests(unittest.TestCase):
                 archive.extractall(unpacked, filter='data')
             manifest = json.loads((unpacked / 'release.json').read_text())
             self.assertEqual(commit, manifest['source_sha'])
+            self.assertIn('benchmark/models.toml', manifest['files'])
             for name, expected in manifest['files'].items():
                 self.assertEqual(expected, hashlib.sha256((unpacked / name).read_bytes()).hexdigest())
             self.assertEqual(0o755, (unpacked / 'benchmark/benchmark-runtime').stat().st_mode & 0o777)
@@ -78,6 +79,23 @@ class RuntimeBundleTests(unittest.TestCase):
             subprocess.run([sys.executable, '-c', 'from benchmark.service import serve_executor; from benchmark_web.server import serve_web'], cwd=unpacked, check=True)
             subprocess.run([sys.executable, '-c', 'from benchmark.openrouter_prices import forecast; from benchmark.openrouter_preparation import configuration; assert configuration()["model"] == "openai/gpt-6-astra"'], cwd=unpacked, check=True)
             subprocess.run([sys.executable, '-c', 'from benchmark.openrouter_qualification import OpenRouterQualification; assert OpenRouterQualification("fixture").configuration()["model"] == "anthropic/claude-fable-5.1"'], cwd=unpacked, check=True)
+            # La configuration active du catalogue doit se charger depuis l'archive,
+            # sans aucun models.toml à la racine du dépôt source
+            subprocess.run([sys.executable, '-c',
+                            'from pathlib import Path; from benchmark import model_catalogue; '
+                            'assert model_catalogue.CONFIG_PATH == Path("benchmark/models.toml").resolve(), model_catalogue.CONFIG_PATH; '
+                            'settings = model_catalogue._settings(model_catalogue._registry()); '
+                            'assert (settings["max_per_family"], settings["max_age_days"], settings["cache_hours"]) == (3, 365, 24); '
+                            'assert len(settings["makers"]) == 16; '
+                            'assert (len(settings["baseline_families"]), len(settings["baseline_models"])) == (81, 139); '
+                            'assert model_catalogue.tiers() == {"deepseek": {"enhanced": {"enabled": True}}}'],
+                           cwd=unpacked, check=True)
+            # Un commit sans configuration de catalogue ne produit pas d'archive
+            git('rm', '--cached', '--quiet', 'benchmark/models.toml')
+            stripped = git('-c', 'user.name=Test', '-c', 'user.email=test@invalid', 'commit-tree', git('write-tree'), '-m', 'Sans configuration de catalogue')
+            with self.assertRaisesRegex(ValueError, '^Interfaces runtime absentes du commit$'):
+                build(repo, stripped, root / 'stripped.tar.gz')
+            self.assertFalse((root / 'stripped.tar.gz').exists())
             subprocess.run([sys.executable, '-c',
                             'from benchmark import VERSION; from benchmark.service import release_identity; '
                             'assert VERSION == "0.1.0"; assert release_identity() == "' + commit + '"'],
