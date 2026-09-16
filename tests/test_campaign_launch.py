@@ -46,6 +46,14 @@ class CampaignLaunch(unittest.TestCase):
     def launch(self, body, sid=None):
         return c.launch(self.store, sid or self.sid, 'fixture', 'local-comparison', body)
 
+    def test_route_ne_masque_pas_une_keyerror_interne(self):
+        with patch.object(p, 'session', return_value=(self.sid, 'csrf', 'token')), \
+                patch.object(c, 'inspect', side_effect=KeyError('intégrité interne')), \
+                self.assertRaisesRegex(KeyError, 'intégrité interne'):
+            p.dispatch(self.store, 'GET',
+                       '/preparation/dossiers/fixture/campaigns/local-comparison/conditions',
+                       'token', None, 'a' * 40, True)
+
     def test_legacy_and_extra_http_authority_are_denied(self):
         body = self.admit(False)
         with self.assertRaises(p.Denied):
@@ -409,8 +417,8 @@ class RequesterCampaignLaunch(unittest.TestCase):
                         p.dispatch(store, method, path, token, body, 'a' * 40, True,
                                    candidate_transport=response)
                     self.assertEqual(
-                        ('STEP_INCOMPLETE', 'configurations'),
-                        (missing_configurations.exception.code,
+                        ('Ressource inaccessible', None),
+                        (str(missing_configurations.exception),
                          missing_configurations.exception.step))
 
     def test_gel_date_refuse_les_conditions_perimees(self):

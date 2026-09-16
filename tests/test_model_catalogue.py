@@ -28,7 +28,7 @@ class ModelCatalogueTests(unittest.TestCase):
                 return FIXTURE
             model_id = path.removeprefix('/api/v1/models/').removesuffix('/endpoints')
             tag = 'openai' if model_id == 'openai/gpt-5.6-sol' else 'fixture'
-            endpoint = {'model_id': model_id, 'tag': tag}
+            endpoint = {'model_id': model_id, 'tag': tag, 'status': 0}
             if statuses is not None and model_id in statuses:
                 endpoint['status'] = statuses[model_id]
             return {'data': {'id': model_id, 'endpoints': [endpoint]}}
@@ -77,7 +77,7 @@ class ModelCatalogueTests(unittest.TestCase):
             self.assertFalse(result['stale'])
 
     def test_statut_endpoint_exclut_seulement_un_nombre_negatif(self):
-        cases = ((None, None), ('inconnu', None), (True, None), (-1, 'no_available_endpoint'))
+        cases = ((0, None), (1, None), (None, None), ('inconnu', None), (True, None), (-1, 'no_available_endpoint'))
         for status, excluded in cases:
             with self.subTest(status=status), tempfile.TemporaryDirectory() as directory, \
                     closing(self.store(directory)) as store, \

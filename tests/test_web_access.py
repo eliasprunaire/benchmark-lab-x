@@ -175,6 +175,9 @@ class AccessViewTests(unittest.TestCase):
         self.assertEqual(2, page.count('name="models"'))
         self.assertIn('name="tier" value="enhanced" checked', page)
         self.assertIn('palier de raisonnement non réglable', page)
+        for technical in ('modele-a', 'modele-b'):
+            self.assertIn('<details><summary>Identifiant technique</summary><code>' +
+                          technical + '</code></details>', page)
         self.assertIn('Estimation totale : 3.50 USD', page)
         self.assertIn('Plafond : 50.00 USD', page)
         self.assertIn('/campaigns/d1-c1/conditions', page)
@@ -211,6 +214,8 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('Quantité à confirmer', page)
         self.assertIn('Crédit restant : 12.50 USD ; limite du compte : 20 USD', page)
         self.assertIn('action="/preparation/dossiers/d1/campaigns/c1/cap"', page)
+        self.assertIn('L’arrêt intervient après le paiement de l’appel en cours.', page)
+        self.assertIn('La dépense peut donc dépasser le plafond du montant du dernier appel.', page)
         self.assertIn('min="0.10" max="100.00" step="0.01"', page)
         self.assertIn('>Lancer la comparaison</button>', page)
         parsed = Markup(page.encode())

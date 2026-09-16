@@ -58,11 +58,11 @@ class S2ReviewTest(unittest.TestCase):
                 operation, _ = preparation.submit(store, session, 'closed',
                     {'action_id': 'create', 'request': 'Vérifier la vue fermée des critères'}, 'test', True)
                 received = {}
-                expected = ['Action présente']
+                expected = {'eliminatory': [], 'obligations': ['Action présente'], 'quality': []}
                 def transport(operation, request):
                     received.update(response(operation, 'Organiser les notes',
                         [{'name': 'notes.txt', 'content': 'Action : relire'}]))
-                    received['receipt']['result']['package']['candidate']['criteria'] = expected
+                    received['receipt']['result']['package']['candidate']['criteria'] = ['Action présente']
                     return received
 
                 preparation.execute(data, operation, transport)
@@ -70,8 +70,8 @@ class S2ReviewTest(unittest.TestCase):
                     'SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=2',
                     ('closed',)).fetchone()[0])
                 self.assertEqual(expected, stored['criteria'])
-                self.assertEqual(received['receipt']['result']['package']['candidate']['criteria'],
-                                 stored['criteria'])
+                self.assertEqual(['Action présente'],
+                                 received['receipt']['result']['package']['candidate']['criteria'])
 
     def test_changes_compare_les_paquets_sans_ecriture(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -97,7 +97,8 @@ class S2ReviewTest(unittest.TestCase):
                 stored = json.loads(store._connection.execute(
                     'SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
                     ('dossier', first['revision'])).fetchone()[0])
-                self.assertEqual(['Toutes les actions présentes'], stored['criteria'])
+                self.assertEqual({'eliminatory': [], 'obligations': ['Toutes les actions présentes'],
+                                  'quality': []}, stored['criteria'])
                 duplicate = json.loads(store._connection.execute(
                     'SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
                     ('dossier', first['revision'])).fetchone()[0])

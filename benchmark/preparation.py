@@ -946,7 +946,7 @@ def publish(store, operation, request, response):
             from .outgoing import FORMAT
             package = dict(instruction=generated['candidate']['instruction'],
                            deliverables=list(generated['candidate']['deliverables']),
-                           criteria=deepcopy(result['package']['candidate']['criteria']),
+                           criteria=deepcopy(generated['candidate']['criteria']),
                            acceptable_ambiguities=list(generated['candidate']['acceptable_ambiguities']),
                            human_work=generated['internal']['human_work'],
                            limits=list(generated['internal']['limits']), outgoing_format=FORMAT, pieces=[])
@@ -1122,12 +1122,10 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         dossier_id, campaign_id, action = launch_route.groups()
         connection = connection_for(store)
         owner(connection, session_id, dossier_id)
-        try:
-            snapshot = campaigns.inspect(store, campaign_id)
-        except KeyError:
-            if campaign_id.startswith(dossier_id + '-c'):
-                raise Denied('STEP_INCOMPLETE', step='configurations') from None
-            raise Denied('Ressource inaccessible') from None
+        if not campaigns.connection_for(store).execute(
+                'SELECT 1 FROM s4_campaigns WHERE campaign_id=?', (campaign_id,)).fetchone():
+            raise Denied('Ressource inaccessible')
+        snapshot = campaigns.inspect(store, campaign_id)
         if snapshot['task']['dossier_id'] != dossier_id:
             raise Denied('Ressource inaccessible')
         requester = snapshot.get('manifest', {}).get('funding') == 'requester'
