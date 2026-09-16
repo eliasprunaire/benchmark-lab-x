@@ -10,6 +10,8 @@ from unittest.mock import patch
 from benchmark import campaigns, model_catalogue, outgoing, pi_openrouter, preparation, qualification, storage
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 from tests.test_s4_regressions import manifest
+from tests.test_openrouter_qualification import qualify_fixture
+from tests.test_s2_review_regressions import response_for
 
 
 NOW = datetime(2026, 9, 15, 12, tzinfo=timezone.utc)
@@ -30,6 +32,7 @@ def model(model_id, maker, efforts=None, prompt='0.000002', completion='0.00001'
 
 class ConfigurationsTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
         temporary = tempfile.TemporaryDirectory(prefix='configurations-')
         self.addCleanup(temporary.cleanup)
         self.data = Path(temporary.name).resolve() / 'private'
@@ -70,6 +73,33 @@ class ConfigurationsTests(unittest.TestCase):
         with patch.object(model_catalogue, '_now', return_value=NOW):
             return campaigns.prepare_configurations(
                 self.store, self.session, 'fixture', {'models': models, 'tier': tier}, self.identity)
+
+    def test_configurations_sur_la_seule_qualification_automatique(self):
+        operation_id, _ = preparation.submit(self.store, self.session, 'public',
+            {'action_id': 'create', 'request': 'Organiser les actions de cette réunion'}, 'a' * 40, True)
+        preparation.execute(self.data, operation_id, lambda operation, _: response_for(operation))
+        preview = preparation.view(self.store, self.session, 'public')
+        qualify_fixture(self.data, self.store, self.session, 'public', preview)
+        body = {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+                'tier': 'standard', 'csrf_token': 'csrf'}
+        with patch.object(preparation, 'session', return_value=(self.session, 'csrf', 'token')), \
+                patch.object(model_catalogue, '_now', return_value=NOW):
+            code, created, _, _ = preparation.dispatch(
+                self.store, 'POST', '/preparation/dossiers/public/configurations', 'token', body,
+                'a' * 40, True, candidate_identity=self.identity)
+        self.assertEqual(201, code)
+        contract = campaigns._current_contract(self.store, self.store._connection, 'public')
+        snapshot = campaigns.inspect(self.store, created['current_campaign_id'])
+        self.assertEqual([], contract['specification']['eliminatory_errors'])
+        self.assertEqual(campaigns.COMPARISON_COST_BASIS, snapshot['manifest']['cost_basis'])
+        self.assertEqual(0, self.store._connection.execute(
+            "SELECT count(*) FROM s3_contracts WHERE dossier_id='public'").fetchone()[0])
+
+    def test_empreinte_de_contrat_absente_refusee(self):
+        value = manifest(self.candidate)
+        value['contract_sha256'] = 'a' * 64
+        with self.assertRaisesRegex(storage.IntegrityError, 'Contrat de campagne introuvable'):
+            campaigns.create(self.store, value)
 
     def test_refuse_moins_de_deux_modeles_et_modele_exclu(self):
         with self.assertRaisesRegex(ValueError, 'Au moins deux modèles'):

@@ -7,9 +7,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from benchmark import (campaigns as c, evaluation, model_catalogue,
-                       preparation as p, provider_access, qualification as q, storage)
+from benchmark import (campaigns as c, evaluation, judgment, model_catalogue,
+                       preparation as p, provider_access, qualification as q, restitution, storage)
 from benchmark_web import views
+from benchmark_web import projection
+from tests.test_openrouter_qualification import qualify_fixture
+from tests.test_s2_review_regressions import response_for
+from tests.test_s5_regressions import RESPONSIBLE, EVALUATION_AUTHORITY, findings
 from tests.test_configurations import NOW, model
 from tests.test_provider_access import AccessTransport, SECRET
 from tests.test_s3_regressions import fixture, specification, check, ACTOR, AUTHORITY
@@ -174,18 +178,20 @@ class RequesterCampaignLaunch(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix='requester-launch-')
         self.addCleanup(temporary.cleanup)
         self.data = Path(temporary.name).resolve() / 'private'
-        self.sid, preview, reference = fixture(self.data)
+        def with_quality(operation):
+            value = response_for(operation)
+            value['receipt']['result']['package']['candidate']['criteria'] = {
+                'eliminatory': [], 'obligations': ['Toutes les actions présentes'],
+                'quality': [{'label': 'Clarté', 'scale': ['excellent', 'acceptable', 'faible'],
+                             'favorable': 'excellent'}]}
+            return value
+        with patch('tests.test_s3_regressions.response_for', side_effect=with_quality):
+            self.sid, preview, reference = fixture(self.data)
         self.revision = preview['revision']
         q.initialize(self.data)
         self.store = storage.Store(self.data)
         self.addCleanup(self.store.close)
-        spec = specification(reference)
-        spec['cost_basis'] = dict(scope='Par tentative', attempts='Tentatives autorisées',
-                                  unit='USD', conversion=None)
-        candidate = q.draft(self.store, 'fixture', preview['revision'], spec)
-        qualified = q.qualify(self.store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
-        q.approve(self.store, candidate['contract_sha256'], qualified['qualification_id'],
-                  actor=ACTOR, authority=AUTHORITY)
+        qualify_fixture(self.data, self.store, self.sid, 'fixture', preview)
         c.initialize(self.data)
         evaluation.initialize(self.data)
         provider_access.initialize(self.data)
@@ -217,6 +223,35 @@ class RequesterCampaignLaunch(unittest.TestCase):
         provider_access.start(self.store, self.sid, SECRET,
                               'https://example.test/preparation/access/callback')
         provider_access.callback(self.store, self.sid, SECRET, 'code', self.access)
+
+    def test_restitution_sans_colonne_qualitative_et_refus_du_jugement_expert(self):
+        self.connect()
+        attempts = c.launch(self.store, self.sid, 'fixture', self.campaign_id,
+                            self.body(), access_secret=SECRET, access_transport=self.access)
+        def received(operation, request):
+            value = response(operation, request)
+            value['cost'].update(currency='USD', amount='0.001')
+            return value
+        c.execute_launch(self.data, attempts, received, access_secret=SECRET, access_transport=self.access)
+        result = restitution.comparison(self.store, self.sid, 'fixture', self.campaign_id)
+        self.assertEqual(['cost'], [column['id'] for column in result['columns']])
+        self.assertEqual([], result['rows'])
+        self.assertEqual(2, len(result['pending_attempts']))
+        self.assertIn('Aucune tentative évaluée', views.render(result, 'csrf').decode())
+        contract = c._current_contract(self.store, self.store._connection, 'fixture')
+        self.assertEqual('Clarté', projection._libelles_criteres({'qualification': {'contract': contract}})['Q1'])
+        message = 'Contrat de comparaison non évaluable par le jugement expert'
+        with self.assertRaisesRegex(ValueError, message):
+            evaluation.evaluate(self.store, self.campaign_id, attempts[0], responsible=RESPONSIBLE,
+                                authority=EVALUATION_AUTHORITY, check=findings)
+        request = dict(operation_id='jugement', campaign_id=self.campaign_id, attempt_id=attempts[0],
+                       review_sha256='a' * 64, previous_evaluation_id=None,
+                       authority={'actor': 'Ayo', 'authority_id': 'revue-locale'}, budget_id='qualification',
+                       reserve_amount='1', requested_configuration={})
+        with self.assertRaisesRegex(ValueError, message):
+            judgment.reserve(self.store, request, None)
+        self.assertEqual(0, self.store._connection.execute('SELECT count(*) FROM s5_evaluations').fetchone()[0])
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
     def body(self):
         snapshot = c.inspect(self.store, self.campaign_id)

@@ -155,7 +155,7 @@ exige une décision distincte de migration ou d'initialisation dans un nouvel
 emplacement, en préservant la base d'origine. Cette intégration ne migre aucune
 donnée et ne déploie aucun service.
 
-Aucune migration de stockage n’existe pour 0.1.0 ; une base créée avant la vague 2 doit être recréée.
+Aucune migration de stockage n’existe pour 0.1.0 ; une base sans `s2_comparison_contracts`, ou dont `s4_campaigns.contract_sha256` référence encore exclusivement `s3_contracts`, est refusée avec « Base antérieure à la vague 2 : à recréer ». Le nouveau DDL S4 conserve la vérification d’existence du contrat dans le moteur avant insertion, sur les deux sources ; la clé étrangère S5 vers S3 reste inchangée.
 
 ## Parcours fictif de préparation S2
 
@@ -361,6 +361,13 @@ Pour inspecter, le fichier contient `contract_sha256`. Pour approuver, il contie
 La vue du demandeur présente séparément validation, qualification et approbation. Sur une base S3, `qualification` expose `status`, `contract_sha256`, `qualification_status` et `approval_status`. `qualified` ne remplace pas l’approbation : celle-ci est indiquée par `APPROVED`. Attente, blocage et nouvelle validation requise restent distincts ; aucune référence, sortie de contrôle ou limite privée n’est projetée. Les formulaires, les pièces autorisées et les liens de retour S2 sont réutilisés. Leur HTML ne prouve pas à lui seul le parcours clavier, le focus visible, le petit écran ou le texte agrandi : une observation sur ce candidat reste requise, distincte des preuves historiques S2 et des tests HTTP.
 
 Les régressions complémentaires sont dans [test_s3_regressions.py](../tests/test_s3_regressions.py). La découverte CI les inclut ; l’acceptation privée S3 et la suite demo restent séparées. Une évaluation empêchée par le sandbox de l’écrivain n’est pas un succès : les tests de sockets doivent être exécutés par le juge local Graph autorisé. Les preuves macOS restent distinctes d’une validation Linux. Cette construction ne réalise aucune intégration Git, migration opérationnelle, campagne ou publication.
+
+## Contrat de comparaison du parcours public
+
+Une qualification automatique réussie crée, dans la même transaction, un contrat de comparaison dérivé du paquet validé, sauf si un contrat S3 approuvé existe déjà pour cette révision.
+Son autorité est `assistant:<modèle du transport de qualification>`.
+Sa preuve associe l’identifiant de l’opération de qualification au SHA-256 de son reçu conservé.
+Ce contrat est distinct du contrat S3 et n’ouvre aucun jugement expert ; ses critères qualitatifs restent hors des colonnes triables.
 
 ## Campagnes privées locales S4
 

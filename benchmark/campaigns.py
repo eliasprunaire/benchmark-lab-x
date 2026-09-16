@@ -30,7 +30,7 @@ _TABLES = {
     )""",
     's4_campaigns': """CREATE TABLE s4_campaigns (
         campaign_id TEXT PRIMARY KEY NOT NULL,
-        contract_sha256 TEXT NOT NULL REFERENCES s3_contracts(contract_sha256),
+        contract_sha256 TEXT NOT NULL,
         manifest_json TEXT NOT NULL,
         manifest_sha256 TEXT UNIQUE NOT NULL CHECK(length(manifest_sha256) = 64)
     )""",
@@ -123,6 +123,8 @@ _AUTHORITY = ('actor', 'authority_id', 'purpose', 'manifest_sha256', 'execution_
 _OBSERVED = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters', 'effort',
              'data_collection')
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
+COMPARISON_COST_BASIS = {'scope': 'Une tentative par cellule', 'attempts': 'Sans reprise',
+                         'unit': 'USD', 'conversion': None}
 BYTES_PER_TOKEN = 3
 DEFAULT_CAP_USD = Decimal('50.00')
 CANDIDATE_SYSTEM_PROMPT = (
@@ -285,7 +287,114 @@ def _manifest(value, contract, *, require_data_collection=False):
         raise ValueError('Base de coût divergente')
 
 
+def _comparison_specification(spec):
+    from .outgoing import criteria
+    _fields(spec, ('result_expected', 'obligations', 'eliminatory_errors',
+                   'secondary_criteria', 'limits', 'cost_basis'), 'Spécification de comparaison')
+    _text(spec['result_expected'], 'Résultat attendu')
+    q._texts(spec['limits'], 'Limites')
+    ids = set()
+    for kind in ('obligations', 'eliminatory_errors', 'secondary_criteria'):
+        entries = spec[kind]
+        if type(entries) is not list:
+            raise ValueError('Liste de critères requise')
+        if kind == 'secondary_criteria' and len(entries) > 2:
+            raise ValueError('QUALITY_LIMIT')
+        for entry in entries:
+            keys = ('id', 'label', 'scale', 'favorable') if kind == 'secondary_criteria' else ('id', 'description')
+            _fields(entry, keys, 'Critère de comparaison')
+            identifier(entry['id'])
+            if entry['id'] in ids:
+                raise ValueError('Identifiant de critère répété')
+            ids.add(entry['id'])
+            if kind == 'secondary_criteria':
+                criteria({'eliminatory': [], 'obligations': [],
+                          'quality': [{key: entry[key] for key in ('label', 'scale', 'favorable')}]})
+            else:
+                _text(entry['description'], 'Description du critère')
+    _fields(spec['cost_basis'], COMPARISON_COST_BASIS, 'Base de coût')
+    if spec['cost_basis'] != COMPARISON_COST_BASIS:
+        raise ValueError('Base de coût de comparaison divergente')
+
+
+def _comparison_spec(package):
+    from .outgoing import criteria
+    grouped = criteria(package['criteria'])
+    return dict(result_expected=package['instruction'],
+                obligations=[dict(id=f'O{i}', description=text) for i, text in enumerate(grouped['obligations'], 1)],
+                eliminatory_errors=[dict(id=f'E{i}', description=text) for i, text in enumerate(grouped['eliminatory'], 1)],
+                secondary_criteria=[dict(id=f'Q{i}', **item) for i, item in enumerate(grouped['quality'], 1)],
+                limits=deepcopy(package['acceptable_ambiguities']), cost_basis=deepcopy(COMPARISON_COST_BASIS))
+
+
+def _record_comparison_contract(store, connection, operation):
+    dossier_id, revision = operation['dossier_id'], operation['revision']
+    if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s3_control'").fetchone():
+        if connection.execute('SELECT 1 FROM s3_contracts JOIN s3_approvals USING(contract_sha256) '
+                              'WHERE dossier_id=? AND revision=?', (dossier_id, revision)).fetchone():
+            return
+    package, package_hash = q._package(store, connection, dossier_id, revision)
+    spec = _comparison_spec(package)
+    _comparison_specification(spec)
+    version = connection.execute('SELECT COALESCE(MAX(version), 0)+1 FROM s2_comparison_contracts '
+                                 'WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
+    contract = dict(dossier_id=dossier_id, revision=revision, version=version, package=package,
+                    package_sha256=package_hash, reference_pieces=[], specification=spec)
+    q._validated(connection, contract)
+    received = store._operation_for_update(connection, operation['operation_id'], ('RECEIVED',))
+    authority = dict(authority_id='assistant:' + received['requested_configuration']['model'],
+                     operation_id=received['operation_id'], receipt_sha256=q.digest(received['receipt']))
+    connection.execute('INSERT INTO s2_comparison_contracts VALUES (?,?,?,?,?,?)',
+                       (q.digest(contract), dossier_id, revision, version, encode(contract), encode(authority)))
+
+
+def _comparison_contract(store, connection, fingerprint):
+    from .preparation import _automatic_qualification, _qualification_result
+    q._hash(fingerprint)
+    row = connection.execute('SELECT dossier_id,revision,version,contract_json,authority_json '
+                             'FROM s2_comparison_contracts WHERE contract_sha256=?', (fingerprint,)).fetchone()
+    if row is None:
+        raise KeyError(fingerprint)
+    contract = q._decode(row[3], fingerprint)
+    _fields(contract, ('dossier_id', 'revision', 'version', 'package', 'package_sha256',
+                       'reference_pieces', 'specification'), 'Contrat de comparaison')
+    storage._identity(contract['dossier_id'], contract['revision'])
+    if (tuple(contract[key] for key in ('dossier_id', 'revision', 'version')) != row[:3]
+            or type(contract['version']) is not int or contract['version'] < 1
+            or contract['reference_pieces'] != []):
+        raise IntegrityError('Identité du contrat de comparaison divergente')
+    _comparison_specification(contract['specification'])
+    package, package_hash = q._package(store, connection, *row[:2])
+    if ((contract['package'], contract['package_sha256']) != (package, package_hash)
+            or contract['specification'] != _comparison_spec(package)):
+        raise IntegrityError('Contrat de comparaison divergent du paquet')
+    qualified = _automatic_qualification(store, connection, *row[:2])
+    if qualified is None or not qualified['qualified']:
+        raise IntegrityError('Contrat de comparaison sans qualification réussie')
+    operation = store._operation_for_update(connection, qualified['operation_id'], ('RECEIVED',))
+    result = _qualification_result(operation['receipt']['result'])
+    authority = json.loads(row[4], object_pairs_hook=storage._unique_object)
+    if (encode(authority) != row[4]
+            or authority != dict(authority_id='assistant:' + qualified['model'],
+                                 operation_id=qualified['operation_id'], receipt_sha256=q.digest(operation['receipt']))
+            or result != {key: qualified[key] for key in ('qualified', 'findings', 'summary')}):
+        raise IntegrityError('Autorité ou reçu du contrat de comparaison divergent')
+    q._validated(connection, contract)
+    return contract
+
+
 def _approved(store, connection, fingerprint, *, current=False):
+    has_s3 = connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s3_control'").fetchone()
+    if not has_s3 or not connection.execute('SELECT 1 FROM s3_contracts WHERE contract_sha256=?', (fingerprint,)).fetchone():
+        contract = _comparison_contract(store, connection, fingerprint)
+        if current:
+            q._current(store, connection, contract['dossier_id'], contract['revision'])
+            latest = connection.execute('SELECT contract_sha256 FROM s2_comparison_contracts '
+                                        'WHERE dossier_id=? ORDER BY version DESC LIMIT 1',
+                                        (contract['dossier_id'],)).fetchone()
+            if latest != (fingerprint,):
+                raise ConflictError('Version contractuelle périmée')
+        return contract
     snapshot = q._inspect(store, connection, fingerprint)
     if snapshot['approval'] is None:
         raise ValueError('Contrat S3 approuvé requis')
@@ -306,18 +415,26 @@ def create(store, manifest):
 
 
 def _current_contract(store, connection, dossier_id):
+    has_s3 = connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s3_control'").fetchone()
     row = connection.execute(
         'SELECT c.contract_sha256 FROM s3_contracts c JOIN s3_approvals a USING(contract_sha256) '
-        'WHERE c.dossier_id=? ORDER BY c.version DESC LIMIT 1', (dossier_id,)).fetchone()
+        'WHERE c.dossier_id=? ORDER BY c.version DESC LIMIT 1', (dossier_id,)).fetchone() if has_s3 else None
     if row is None:
-        raise ValueError('Contrat qualifié et approuvé requis')
+        row = connection.execute('SELECT c.contract_sha256 FROM s2_comparison_contracts c JOIN s2_dossiers d '
+                                 'ON c.dossier_id=d.dossier_id AND c.revision=d.current_revision '
+                                 'WHERE c.dossier_id=? ORDER BY c.version DESC LIMIT 1', (dossier_id,)).fetchone()
+    if row is None:
+        from .preparation import Denied
+        raise Denied('CONTRACT_MISSING')
     return _approved(store, connection, row[0], current=True)
 
 
 def _requester_campaigns(store, connection, dossier_id):
     prefix = f'{dossier_id}-c'
     rows = connection.execute(
-        'SELECT c.campaign_id FROM s4_campaigns c JOIN s3_contracts q USING(contract_sha256) '
+        'SELECT c.campaign_id FROM s4_campaigns c JOIN '
+        '(SELECT contract_sha256,dossier_id FROM s3_contracts UNION ALL '
+        'SELECT contract_sha256,dossier_id FROM s2_comparison_contracts) q USING(contract_sha256) '
         'WHERE q.dossier_id=? ORDER BY c.rowid', (dossier_id,)).fetchall()
     snapshots = [_inspect(store, connection, campaign_id) for (campaign_id,) in rows]
     return [snapshot for snapshot in snapshots
@@ -494,6 +611,10 @@ def configurations_view(store, session_id, dossier_id):
 def _create(store, connection, value):
     """Shared creation body; caller owns the enclosing transaction"""
     try:
+        if not connection.execute('SELECT 1 FROM s3_contracts WHERE contract_sha256=? UNION ALL '
+                                  'SELECT 1 FROM s2_comparison_contracts WHERE contract_sha256=?',
+                                  (value['contract_sha256'], value['contract_sha256'])).fetchone():
+            raise IntegrityError('Contrat de campagne introuvable')
         contract = _approved(store, connection, value['contract_sha256'], current=True)
         _manifest(value, contract, require_data_collection=True)
         from .model_catalog import require_current
@@ -1393,7 +1514,9 @@ def execute(data, attempt_id, transport=None, *, transport_factory=None,
 def projection(store, connection, dossier_id):
     """Allowlisted session-owner view; no raw output, authority evidence or judge pieces."""
     result = []
-    for (cid,) in connection.execute('SELECT c.campaign_id FROM s4_campaigns c JOIN s3_contracts q USING(contract_sha256) '
+    for (cid,) in connection.execute('SELECT c.campaign_id FROM s4_campaigns c JOIN '
+                                     '(SELECT contract_sha256,dossier_id FROM s3_contracts UNION ALL '
+                                     'SELECT contract_sha256,dossier_id FROM s2_comparison_contracts) q USING(contract_sha256) '
                                      'WHERE q.dossier_id=? ORDER BY c.rowid', (dossier_id,)).fetchall():
         snapshot = _inspect(store, connection, cid)
         manifest = snapshot['manifest']

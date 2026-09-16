@@ -23,9 +23,7 @@ from tests.test_configurations import NOW, model
 from tests.test_openrouter_qualification import QualificationTransport
 from tests.test_provider_access import AccessTransport, KEY, SECRET
 from tests.test_s2_review_regressions import response_for
-from tests.test_s3_regressions import specification, check, ACTOR, AUTHORITY
 from tests.test_s4_regressions import response
-from tests.test_s5_regressions import findings, RESPONSIBLE, EVALUATION_AUTHORITY
 
 
 class Page(HTMLParser):
@@ -191,12 +189,17 @@ class ParcoursComplet(unittest.TestCase):
                              currency='USD', source='Reçu candidat simulé S12')
         return value
 
-    def request(self, path, fields=None, *, cookies=None, status=200):
+    def request(self, path, fields=None, *, cookies=None, status=200, json_response=False):
         self.clock += timedelta(minutes=1)
         headers = {'Cookie': (self.cookies if cookies is None else cookies).output(header='', sep=';').strip()}
         body = None if fields is None else urlencode(fields, doseq=True).encode()
         if body is not None:
             headers['Content-Type'] = 'application/x-www-form-urlencoded'
+        if json_response:
+            headers['Accept'] = 'application/json'
+            if fields is not None:
+                body = storage._strict_json(fields).encode()
+                headers['Content-Type'] = 'application/json'
         with closing(HTTPConnection(*self.address, timeout=3)) as connection:
             connection.request('GET' if fields is None else 'POST', urlsplit(path).path +
                                ('?' + urlsplit(path).query if urlsplit(path).query else ''), body, headers)
@@ -294,32 +297,14 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, configurations, 'choix des configurations', 'Enregistrer les configurations')
         self.assertIn('Relevé des modèles du 15 septembre 2026 à 12:00 UTC', page.visible)
         self.assertNotIn('2026-09-15T12:00:00+00:00', page.visible)
-        page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'tier': 'standard'}, status=400)
-        self.assertIn('Action non vérifiée', page.visible)
-        self.examine(page, configurations, 'contrat S3 absent', 'Retrouver mes cas d’usage')
+        form = page.form('/configurations')
+        _, _, raw = self.request(form['action'], form['fields'] | {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+            'tier': 'standard'}, status=201, json_response=True)
+        self.assertEqual('configurations', json.loads(raw)['kind'])
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s3_contracts').fetchone()[0])
-            with self.assertRaisesRegex(ValueError, 'Contrat qualifié et approuvé requis'):
-                campaigns._current_contract(store, store._connection, dossier.rsplit('/', 1)[1])
-            self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s4_campaigns').fetchone()[0])
-        # Intervention du dispositif de recette, en attente de décision d’Ayo
-        dossier_id = dossier.rsplit('/', 1)[1]
-        with closing(storage.Store(self.data)) as store:
-            sid, _, _ = prep.session(store, self.cookies['benchmark_session'].value)
-            current = prep.view(store, sid, dossier_id)
-            reference = store._connection.execute(
-                "SELECT piece_id FROM pieces WHERE dossier_id=? AND revision=? AND role='judge'",
-                (dossier_id, current['revision'])).fetchone()[0]
-            spec = specification(reference)
-            spec['result_expected'] = 'Tableau des actions avec responsable'
-            spec['cost_basis']['unit'] = 'USD'
-            contract = qualification.draft(store, dossier_id, current['revision'], spec)
-            proof = qualification.qualify(store, contract['contract_sha256'], reviewer=ACTOR, check=check)
-            qualification.approve(store, contract['contract_sha256'], proof['qualification_id'],
-                                  actor=ACTOR, authority=AUTHORITY)
-        page, _, _ = self.request(configurations)
-        self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
-                                             'tier': 'standard'}, status=303)
+            self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_comparison_contracts').fetchone()[0])
         page, _, raw = self.request(configurations)
         self.examine(page, configurations, 'sélection enregistrée', 'Voir le récapitulatif')
         selection = next(n for n in page.nodes if n['tag'] == 'section' and 'Sélection courante' in n['text'])
@@ -344,7 +329,7 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, dossier, 'comparaison préparée', 'Examiner les conditions et suivre la comparaison courante')
         page, _, _ = self.request(page.link('Examiner les conditions'))
         self.examine(page, recap, 'prêt à lancer', 'Lancer la comparaison')
-        self.assertIn('Tableau des actions avec responsable', page.visible)
+        self.assertIn('Relever toutes les actions dans les notes', page.visible)
         self.assertIn('Estimation', page.visible)
         criteria = next(n for n in page.nodes if n['tag'] == 'details' and
                         'Critères et conditions exactes' in n['text'])
@@ -385,45 +370,11 @@ class ParcoursComplet(unittest.TestCase):
         empty, _, _ = self.request(comparison)
         self.examine(empty, comparison, 'jugements absents', 'Revenir au cas d’usage')
         self.assertIn('Aucune tentative évaluée', empty.visible)
-        campaign_id = comparison.rsplit('/', 1)[1]
         with closing(storage.Store(self.data)) as store:
-            for index, attempt in enumerate(attempts):
-                def judge(context, resources):
-                    result = findings(context, resources)
-                    if index:
-                        result['findings'][0].update(status='FAIL', attribution='candidate', finding='Action absente du tableau')
-                    return result
-                evaluation.evaluate(store, campaign_id, attempt, responsible=RESPONSIBLE,
-                                    authority=EVALUATION_AUTHORITY, check=judge)
-        page, _, _ = self.request(comparison)
-        self.examine(page, comparison, 'résultats évalués', 'Revenir au cas d’usage')
-        for label in ('Satisfait', 'Ne satisfait pas', 'INCONNU', 'Comparaison des coûts incomplète',
-                      'Verdicts par cas et tentative, sans conclusion globale'):
-            self.assertIn(label, page.visible)
-        sort = next(f for f in page.forms if any(n['attrs'].get('name') == 'sort' for n in f['nodes']))
-        filtered_url = sort['action'] + '?' + urlencode(sort['fields'] | {'sort': 'cost'})
-        page, _, _ = self.request(filtered_url)
-        self.examine(page, filtered_url, 'tri du coût observé', 'Revenir au cas d’usage')
-        detail_url = page.link('Détail et preuves')
-        detail, _, raw = self.request(detail_url)
-        self.examine(detail, detail_url, 'preuves', 'Revenir à la comparaison avec ses filtres')
-        self.assertIn(b'&lt;script&gt;', raw)
-        self.assertFalse(any(n['tag'] in ('script', 'img') for n in detail.nodes))
-        proofs = [n for n in detail.nodes if n['tag'] == 'details' and n['attrs'].get('class') == 'proof-content']
-        self.assertTrue(proofs)
-        self.assertTrue(all('open' not in n['attrs'] for n in proofs))
-        self.assertTrue(any('Note de recette' in n['text'] for n in proofs))
-        back = detail.link('Revenir à la comparaison avec ses filtres')
-        self.assertIn('sort=cost', back)
-        page, _, _ = self.request(back)
-        self.examine(page, back, 'retour depuis les preuves', 'Revenir au cas d’usage')
-        anchor = urlsplit(back).fragment
-        self.assertTrue(any(n['attrs'].get('id') == anchor and n['attrs'].get('tabindex') == '-1'
-                            for n in page.nodes))
-        self.assertIn(views.COMPARISON_FOCUS_SCRIPT, next(n['text'] for n in page.nodes if n['tag'] == 'script'))
+            self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s5_evaluations').fetchone()[0])
         _, headers, _ = self.request('/preparation', cookies=SimpleCookie())
         foreign = SimpleCookie(headers['Set-Cookie'])
-        for private_path in (recap, comparison, detail_url):
+        for private_path in (recap, comparison):
             _, _, raw = self.request(private_path, cookies=foreign, status=403)
             self.assertNotIn(b'Note de recette', raw)
             self.assertNotIn(b'Transformer des notes', raw)

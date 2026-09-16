@@ -113,6 +113,9 @@ def _context(store, connection, campaign_id, attempt_id):
     cached = store._verified_contexts.get(campaign_id) if snapshot else None
     if cached is None:
         campaign = c._inspect(store, connection, campaign_id)
+        if connection.execute('SELECT 1 FROM s2_comparison_contracts WHERE contract_sha256=?',
+                              (campaign['manifest']['contract_sha256'],)).fetchone():
+            raise ValueError('Contrat de comparaison non évaluable par le jugement expert')
         qualification = q._inspect(store, connection, campaign['manifest']['contract_sha256'])
         if snapshot:
             store._verified_contexts[campaign_id] = deepcopy((campaign, qualification))

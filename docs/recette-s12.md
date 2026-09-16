@@ -4,9 +4,9 @@ style_gate: pass
 
 # Recette du parcours S12
 
-État : **HOLD_VALIDATION_UX**. Le scénario HTTP complet passe sur données contrôlées, avec une intervention du dispositif de recette, en attente de décision d’Ayo. La rupture du parcours réel entre qualification automatique et contrat S3 approuvé reste bloquante ; la recette la reproduit avant cette intervention. La validation UX appartient à Ayo et ne vaut pas étude de représentativité.
+État : **HOLD_VALIDATION_UX**. Le scénario HTTP passe sur données contrôlées jusqu’aux reçus candidats, par la seule qualification automatique. S29 crée le contrat de comparaison nécessaire aux configurations ; aucun contrat S3 ni verdict n’est injecté. La validation UX appartient à Ayo et ne vaut pas étude de représentativité.
 
-Base : `main` à jour au départ, `bcd9231158e636ea527e49fbb839e443e816d01b`, branche `fix/s12-corrections-recette`. Le contrat vient de [S12 #215](https://github.com/eliasprunaire/benchmark-lab-x/issues/215) et de la demande de recette ; les directives communes, D13 bis à D16 et la correction des bornes du plafond ont été relues dans [S22 #247](https://github.com/eliasprunaire/benchmark-lab-x/issues/247).
+Base de la correction S29 : `main` à jour au départ, `f8bdd37`, branche `feat/s29-contrat-comparaison`. Le contrat vient de [S12 #215](https://github.com/eliasprunaire/benchmark-lab-x/issues/215) et de la demande de recette ; les directives communes, D13 bis à D16 et la correction des bornes du plafond ont été relues dans [S22 #247](https://github.com/eliasprunaire/benchmark-lab-x/issues/247).
 
 ## Nature de la preuve
 
@@ -14,13 +14,13 @@ L’inspection experte porte sur le HTML reçu en jouant les actions du scénari
 
 Le [scénario rejouable](../tests/test_parcours_complet.py) démarre le serveur HTTP du produit sur `127.0.0.1`, avec un port attribué par le système. Le web communique par socket Unix avec un exécuteur factice qui appelle réellement `benchmark.preparation.dispatch`. Celui-ci conserve les travaux dans une file de test ; le scénario les exécute entre deux consultations pour rendre l’attente déterministe. Les vues, validations, sessions, reçus et gardes du moteur utilisent une base temporaire neuve créée dans le répertoire temporaire du système. Elle est nettoyée à la fin du test.
 
-Les réponses de préparation, qualification, accès OpenRouter, candidats et jugement sont contrôlées. Le catalogue et l’horloge de préparation sont figés. Le garde de connexion autorise seulement le port HTTP attribué et la socket Unix de cette instance ; toute autre destination et tout `connect_ex` lèvent `AssertionError('No network')`. La redirection OpenRouter est inspectée sans être suivie ; seul le retour local reçoit un code factice. Aucune clé réelle, aucun appel fournisseur, aucune dépense ni donnée historique n’est utilisé.
+Les réponses de préparation, qualification, accès OpenRouter et candidats sont contrôlées. Le catalogue et l’horloge de préparation sont figés. Le garde de connexion autorise seulement le port HTTP attribué et la socket Unix de cette instance ; toute autre destination et tout `connect_ex` lèvent `AssertionError('No network')`. La redirection OpenRouter est inspectée sans être suivie ; seul le retour local reçoit un code factice. Aucune clé réelle, aucun appel fournisseur, aucune dépense ni donnée historique n’est utilisé.
 
-Après avoir prouvé l’absence de contrat S3 et le refus HTTP 400, le test crée, qualifie et approuve un contrat synthétique avec les primitives et autorités `TEST_ONLY` des fixtures S3 existantes, sur la révision validée. Cette intervention appartient au dispositif de recette : elle n’est pas une étape web et ne répare pas le parcours réel. Les deux acquisitions passent ensuite par `campaigns.execute_launch`, avec un callback factice. Les verdicts sont produits séparément par les contrôles S5 factices existants ; le scénario constate aussi l’absence de résultats évalués avant cette intervention. Il ne prouve pas une orchestration autonome du jugement en production.
+Avant correction, la reproduction sur `f8bdd37` donne `qualified=true`, zéro contrat S3 et HTTP 400 avec « Action non vérifiée. Vérifiez les champs ou consultez le dossier courant. ». Le test courant exige HTTP 201 en JSON au premier enregistrement des configurations, après qualification automatique, avec un contrat de comparaison et toujours zéro contrat S3. Les deux acquisitions passent ensuite par `campaigns.execute_launch`, avec un callback factice. La comparaison affiche l’absence d’évaluation et aucune ligne S5 n’est créée. Le jugement expert refuse ce contrat ; son raccordement au parcours public reste hors du périmètre S29.
 
 ## Parcours effectivement exécuté
 
-Dans les routes ci-dessous, `{d}`, `{c}` et `{t}` désignent le dossier, la campagne et la tentative créés pendant le test. Les actions HTTP utilisent les liens et les champs cachés des pages reçues.
+Dans les routes ci-dessous, `{d}` et `{c}` désignent le dossier et la campagne créés pendant le test. Les actions HTTP utilisent les liens et les champs cachés des pages reçues.
 
 | Route | État et vérification |
 |---|---|
@@ -31,22 +31,20 @@ Dans les routes ci-dessous, `{d}`, `{c}` et `{t}` désignent le dossier, la camp
 | `POST …/{d}/messages` | Précision, exemple avec consigne et pièce intégrée, correction demandant un tableau avec responsable |
 | `…/{d}/revisions/3` puis `…/{d}` | Ancienne révision en lecture seule ; retour explicite à la révision courante ; livrable antérieur conservé |
 | `POST …/{d}/validation` puis `…/{d}` | Validation enregistrée, qualification en attente puis réussie ; résumé consultable |
-| `GET` et `POST …/{d}/configurations` | Deux modèles et un palier choisis ; premier enregistrement refusé sans contrat S3, puis accepté après intervention contrôlée du dispositif de recette |
+| `GET` et `POST …/{d}/configurations` | Deux modèles et un palier choisis ; premier enregistrement accepté en HTTP 201 après qualification automatique, sans injection de contrat S3 |
 | `…/campaigns/{c}/conditions` | Sélection enregistrée, accès requis ; lien vers la connexion |
 | `/preparation/access`, `/start`, `/callback` | Autorisation et crédit simulés ; retour à la liste, au dossier, puis au récapitulatif |
 | `…/campaigns/{c}/conditions` | Travail, configurations, estimation et plafond relus ; lancement indisponible si le transport candidat manque, sans faux accusé d’enregistrement |
 | `POST …/campaigns/{c}/start`, puis `/conditions` | Confirmation unique, deux intentions réservées ; attente, première réponse reçue avec seconde en attente, puis deux réponses reçues ; plafond désormais figé |
-| `…/campaigns/{c}` | Aucune évaluation avant les constats factices ; ensuite un verdict satisfait, un non satisfait, coût connu de 0,10 USD et coût inconnu ; comparaison économique incomplète |
-| `…/campaigns/{c}?sort=cost` | Tri du coût observé, verdicts et portée par cas conservés ; accès au détail |
-| `…/campaigns/{c}/attempts/{t}?sort=cost` | Pièces complètes présentes dans les dépliants, sortie longue échappée, absence de script actif ; retour conservant le tri et ciblant une ligne focalisable |
-| Dossier, récapitulatif, comparaison et détail avec une autre session valide | HTTP 403 sans besoin ni contenu de preuve ; contrôle supplémentaire avec cookie absent ou inconnu sur le dossier |
+| `…/campaigns/{c}` | Comparaison consultable, aucune tentative évaluée ; reçus conservés sans verdict |
+| Dossier, récapitulatif et comparaison avec une autre session valide | HTTP 403 sans besoin ni contenu de preuve ; contrôle supplémentaire avec cookie absent ou inconnu sur le dossier |
 | `/preparation` puis `…/{d}` avec le cookie initial | Dossier retrouvable et lecture conservée après fermeture de la préparation ; formulaire désactivé et envoi forcé refusé |
 | `/preparation/access`, `/callback`, `/disconnect` | Test complémentaire indépendant : échange refusé, reconnexion réussie puis déconnexion ; code et clé absents des réponses |
 | `/preparation/style.css` | Feuille servie ; règles de colonne unique sous `40rem`, en-tête vertical, focus visible, boutons à retour à la ligne et tableau à défilement horizontal |
 
 Le scénario principal conserve trois réponses de préparation, une qualification et deux réponses candidates factices. Les lectures et retours n’ajoutent aucun travail à la file. Les identifiants nécessaires aux formulaires, URL et ancres restent présents ; ceux du stockage et de l’exécution ne sont plus affichés dans le texte hors dépliants. Les identités des modèles comparés restent lisibles.
 
-## Incompréhensions constatées et corrections
+## Constats et corrections de la recette S12 initiale
 
 | Route et état | Constat de l’inspection | Résultat |
 |---|---|---|
@@ -63,12 +61,14 @@ Le scénario principal conserve trois réponses de préparation, une qualificati
 | Comparaison et détail des preuves | Identifiants de campagne, tentative, configuration et évaluation dans les titres ou textes ; retour sans hiérarchie ; dernier lien de détail annonçant à tort un retour au dossier | Identifiants conservés sous dépliants, cas numérotés, liens de preuves lisibles ; codes de critères remplacés par leurs libellés dans les motifs affichés ; retour principal et destination correctement nommée |
 | Toutes les pages parcourues | Révision technique du logiciel dans le pied de page | Version conservée sous « Version du site » |
 
+Les contrôles de détail et de verdict de la recette S12 initiale utilisaient un contrat S3 et des constats factices. Le parcours S29 ci-dessus se termine aux reçus ; les tests S5 et S6 conservent la couverture du jugement expert et de ses preuves.
+
 ## Limites et décisions ouvertes
 
-- **Parcours réel bloqué à S3** : `POST …/{d}/configurations` exige un contrat approuvé que la qualification automatique ne construit pas. L’intervention du dispositif de recette reste en attente de décision d’Ayo. La rupture S17 → S3 est traitée par une story distincte, S29, sans préjuger de son contrat.
+- **Stockage à recréer** : le nouveau schéma S2 et le retrait de la clé étrangère S4 rendent les bases antérieures incompatibles ; aucune migration ni réécriture n’est exécutée par cette correction.
 - **Retour OpenRouter indirect** : après connexion depuis `/preparation/access`, le scénario revient à la liste puis au dossier avant le récapitulatif. Aucune perte de données constatée ; la conservation directe du contexte de campagne reste à décider.
-- **Jugement contrôlé** : les résultats sont obtenus par un contrôleur factice injecté via les primitives S5, sans participant ni jugement réel. Le test démontre leur restitution, pas la justesse métier d’une épreuve ni le fonctionnement réel des modèles.
-- **Clavier et petit écran** : ordre lu dans le HTML, lien d’évitement, absence de tabulation positive, correction repliée, région de tableau focalisable, ancres de retour et règles CSS vérifiés. Aucun événement clavier physique, ouverture interactive de dépliant ou mesure de mise en page dans un navigateur n’est revendiqué pour S12. Le script de focus existant reste inchangé ; sa présence ne prouve pas son exécution.
+- **Aucun verdict dans le parcours public** : `evaluation.evaluate` reste accessible par le runtime opérateur et refuse le contrat de comparaison, comme le jugement assisté. La clé étrangère S5 vers S3 reste en place ; aucune ligne S5 n’est créée pour ce contrat.
+- **Clavier et petit écran** : ordre lu dans le HTML, lien d’évitement, absence de tabulation positive, correction repliée et règles CSS vérifiés ; la région de tableau et les ancres de détail relevaient de la recette S12 initiale. Aucun événement clavier physique, ouverture interactive de dépliant ou mesure de mise en page dans un navigateur n’est revendiqué pour S12. Le script de focus existant reste inchangé ; sa présence ne prouve pas son exécution.
 - **HOLD_VALIDATION_UX** : Ayo doit valider le parcours démontré. Les assertions portent sur les indications disponibles, pas sur la compréhension d’une personne ni sur la représentativité des usages.
 
 ## Rejeu et validations
@@ -77,9 +77,8 @@ Le scénario principal conserve trois réponses de préparation, une qualificati
 uv run --with requests --with mpmath==1.3.0 python -m unittest tests.test_parcours_complet
 ```
 
-Résultat final ciblé : `Ran 3 tests in 1.317s`, `OK`. `test_parcours_complet` couvre la chaîne entière avec l’intervention du dispositif de recette, en conservant la preuve de la rupture S17 → S3 préalable.
-
-Les tests de recette et les suites web demandées ont passé ensemble : `Ran 48 tests in 22.045s`, `OK`. Le contrôle S10 de région accessible suit le libellé « Observations du cas 1 » ; sa focalisation et ses autres exigences sont conservées.
+Les six modules demandés, dont le parcours HTTP, passent ensemble : `Ran 74 tests in 6.740s`, `OK`.
+Les huit nouveaux tests et deux régressions adaptées ont aussi été exécutés avec les sources produit de `f8bdd37` dans une copie temporaire : `Ran 10 tests in 0.524s`, `FAILED (failures=2, errors=9)` ; les sous-tests de compatibilité expliquent le nombre de constats supérieur à celui des tests.
 
 Validation complète obligatoire, sous macOS avec Python 3.12.13 :
 
@@ -87,16 +86,12 @@ Validation complète obligatoire, sous macOS avec Python 3.12.13 :
 uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests
 ```
 
-Résultat exact après la dernière correction :
+Résultat exact S29 :
 
 ```text
-Ran 1216 tests in 157.533s
+Ran 1224 tests in 158.530s
 
 OK
 ```
 
-Cette découverte exclut `benchmark.test_demo`. La suite historique séparée `uv run python -B -m unittest benchmark.test_demo` a passé `Ran 69 tests in 38.765s`, `OK`, pendant cette reprise. Les corrections suivantes concernent seulement les motifs du rendu web et leur assertion ; le contexte de cette preuve historique reste inchangé.
-
-Les liens locaux du rapport et `git diff --check` passent aussi.
-
-Les preuves locales restent distinctes d’une CI Linux, d’une intégration sur `main` et d’un déploiement. Aucun push ni PR n’est demandé.
+Cette découverte exclut `benchmark.test_demo` ; la commande séparée `uv run python -B -m unittest benchmark.test_demo` passe avec `Ran 69 tests in 40.124s`, `OK`. Le scan des accents et des commentaires ajoutés, les liens locaux et `git diff --check` passent aussi. Les preuves locales restent distinctes d’une CI Linux, d’une intégration sur `main` et d’un déploiement. Aucun push ni PR n’est demandé.
