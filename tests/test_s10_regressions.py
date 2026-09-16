@@ -13,7 +13,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from benchmark import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, web_api
-from benchmark_web import projection, views
+from benchmark_web import fragments, projection, views
 from benchmark_web.server import serve_web
 from tests.test_s4_regressions import inputs, manifest, response
 from tests.test_s5_regressions import EVALUATION_AUTHORITY, RESPONSIBLE, findings
@@ -42,7 +42,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn('<script>' + views.COMPARISON_FOCUS_SCRIPT + '</script>', page)
         self.assertFalse(any(tag == 'script' for tag, attrs in proof.tags))
         for verdict, label in (('SATISFAIT', 'Satisfait'), ('NE SATISFAIT PAS', 'Ne satisfait pas'), (None, 'À reprendre')):
-            self.assertIn(label, views.badge(verdict))
+            self.assertIn(label, fragments.badge(verdict))
 
     @classmethod
     def setUpClass(cls):
@@ -133,7 +133,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertNotIn('True bool', page)
         self.assertIn('>Oui</span>', page)
         self.assertEqual(before, value)
-        hostile = views.readable_fields({'parameters': {'<img src=x onerror=alert(1)>': '<script>bad()</script>'}})
+        hostile = fragments.readable_fields({'parameters': {'<img src=x onerror=alert(1)>': '<script>bad()</script>'}})
         self.assertNotIn('<script>', hostile)
         self.assertFalse(any(tag == 'img' for tag, _ in Markup(hostile.encode()).tags))
 
