@@ -252,8 +252,8 @@ def selection(store):
         endpoints = detail['endpoints']
         available_routes = sorted(endpoint['tag'] for endpoint in endpoints
                                   if type(endpoint) is dict and type(endpoint.get('tag')) is str
-                                  and type(endpoint.get('status')) in (int, float)
-                                  and endpoint['status'] >= 0
+                                  and not (type(endpoint.get('status')) in (int, float)
+                                           and endpoint['status'] < 0)
                                   and _provider_slug(endpoint) not in excluded_providers)
         if available_routes:
             excluded = None

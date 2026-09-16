@@ -248,8 +248,8 @@ def _manifest(value, contract, *, require_data_collection=False):
             encode(config['estimate'])
         q._texts(config['required_observations'], 'required_observations', required=True, unique=True)
         required = set(config['required_observations'])
-        if not {'revision', 'channel_id'} <= required <= set(_OBSERVED):
-            raise ValueError('Révision et canal exacts requis')
+        if not {'revision', 'channel_id'} <= required <= set(_OBSERVED) & set(_CONFIGURATION):
+            raise ValueError('required_observations invalide')
         if any(config[field] in (None, 'INCONNU') for field in required):
             raise ValueError('Identité requise inconnue')
     if value.get('funding') == 'requester':
