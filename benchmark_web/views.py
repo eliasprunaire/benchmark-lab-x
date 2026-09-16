@@ -256,8 +256,9 @@ def render_comparison(value):
         'sort': ('Critère de tri', [(v['id'], 'Coût observé' if 'criterion_id' not in v else v['definition']['measure']) for v in value['columns']]),
         'direction': ('Ordre d’affichage', [('asc', 'Croissant'), ('desc', 'Décroissant')]),
         'verdict': ('Décision ou travail restant', [('SATISFAIT', 'SATISFAIT'), ('NE SATISFAIT PAS', 'NE SATISFAIT PAS'), ('A_REPRENDRE', 'À reprendre')]),
-        'obligation': ('Constat par obligation', [(v['id'] + ':' + s, v['id'] + ' : ' + s)
-                        for v in value['obligations'] for s in ('PASS', 'FAIL', 'INDETERMINE')]),
+        'obligation': ('Constat par obligation', [(v['id'] + ':' + state, v['description'] + ' : ' + label)
+                        for v in value['obligations'] for state, label in
+                        (('PASS', 'Respectée'), ('FAIL', 'Non respectée'), ('INDETERMINE', 'Indéterminée'))]),
         'configuration': ('Configuration', [(v['id'], v['model'] + ' · ' + v['id']) for v in value['panel']]),
     }
     if query:
@@ -456,7 +457,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                 amount = configuration['estimate']['amount_usd']
                 technical = configuration['model']
                 detail = ' · estimation ' + (
-                    'non calculable' if amount is None else amount + ' USD')
+                    'non estimable' if amount is None else amount + ' USD')
                 if configuration.get('effort_limit') == 'not_adjustable':
                     detail += ' · palier de raisonnement non réglable'
                 summary += '<li>' + text(model_names.get(technical, technical)) + text(detail) + (
@@ -464,7 +465,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                     text(technical) + '</code></details></li>')
             summary += '</ul>'
             summary += '<p>Estimation totale : ' + text(
-                'non calculable' if value['estimate_total_usd'] is None else
+                'non estimable' if value['estimate_total_usd'] is None else
                 value['estimate_total_usd'] + ' USD') + '.</p>'
             summary += '<p>Plafond : ' + text(value['cap_usd']) + ' USD.</p>'
             summary += '<p><a class="button" href="' + text(
@@ -828,8 +829,8 @@ def render(value, csrf, path='/preparation', *, error=False):
             content += '<section id="comparaison"><h2>Comparaison</h2>'
             current_campaign = current_campaigns[-1]
             content += '<p><a class="button" href="' + text(url + '/campaigns/' + current_campaign['campaign_id'] + '/conditions') + '">Examiner les conditions et suivre la comparaison courante</a></p>'
-            for number, campaign in enumerate(reversed(current_campaigns[:-1]), 1):
-                content += '<p><a class="button sec" href="' + text(url + '/campaigns/' + campaign['campaign_id'] + '/conditions') + '">Consulter la comparaison précédente ' + str(number) + '</a></p>'
+            for campaign in reversed(current_campaigns[:-1]):
+                content += '<p><a class="button sec" href="' + text(url + '/campaigns/' + campaign['campaign_id'] + '/conditions') + '">Consulter la comparaison du ' + text(date_lisible_utc(campaign['conditions']['frozen_at'])) + '</a></p>'
             content += '</section>'
         if editable and value['package'] is not None:
             content += '<details class="corr"><summary class="button sec">' + icon('i-pen') + 'Préciser ou corriger cet exemple</summary><div>' + form(url + '/messages',

@@ -225,6 +225,28 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.connection.assert_called_with(assistant.HOST, timeout=assistant.TIMEOUT_SECONDS)
         self.assertNotIn(KEY, storage._strict_json(operation))
 
+    def test_source_collecte_absente_sans_parametre_envoye(self):
+        self.submit()
+        operation = self.store.inspect_operations()[0]
+        wire = json.loads(operation['resources'][1])
+        for provider in (None, {}, {'data_collection': None}):
+            with self.subTest(provider=provider):
+                sent = deepcopy(wire)
+                if provider is None:
+                    sent.pop('provider')
+                else:
+                    sent['provider'] = provider
+                conserved = storage._strict_json(sent)
+                self.transport._wire_sha256 = sha256(conserved.encode()).hexdigest()
+                self.transport._key_sha256 = sha256(KEY.encode()).hexdigest()
+                reply = self.transport(dict(operation, state='EMISSION_POSSIBLE',
+                                            conserved_wire=conserved), {})
+                observed = reply['receipt']['observed_configuration']
+                self.assertIsNone(observed['data_collection'])
+                self.assertIsNone(observed['sources']['data_collection'])
+                self.assertEqual(conserved, self.http.request.call_args.kwargs['body'].decode())
+        self.assertEqual(3, self.http.request.call_count)
+
     def test_full_scenario_same_budget_preserves_notes_agreements_and_validation(self):
         self.http.getresponse.return_value.read.return_value = http_body(result('clarification'))
         _, clarified = self.execute()

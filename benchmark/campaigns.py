@@ -1132,8 +1132,8 @@ def _requester_checks(store, connection, snapshot, session_id, access):
         {'key': 'access_connected', 'ok': access.get('status') == 'connected',
          'detail': access_detail},
         {'key': 'estimate_under_cap', 'ok': total is not None and total <= cap,
-         'detail': ('Estimation totale : non calculable' if total is None else
-                    'Estimation totale : ' + format(total, '.2f').replace('.', ',') +
+         'detail': ('Estimation totale : non estimable' if total is None else
+                    'Estimation totale : ' + format(total, 'f').replace('.', ',') +
                     ' USD pour un plafond de ' + format(cap, '.2f').replace('.', ',') + ' USD')},
     ]
 
