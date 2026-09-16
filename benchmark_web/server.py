@@ -5,10 +5,12 @@ stockage, ni aux secrets, ni aux fournisseurs.
 """
 from base64 import b64encode, urlsafe_b64decode, urlsafe_b64encode
 from hashlib import sha256
+from html import escape
 from http.cookies import SimpleCookie, CookieError
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import ipaddress
 import json
+import logging
 from pathlib import Path
 import posixpath
 import re
@@ -56,6 +58,13 @@ def _return_path(value):
             or not (parsed.path == '/preparation' or parsed.path.startswith('/preparation/'))):
         raise ValueError('Chemin de retour invalide')
     return parsed.path
+
+
+def _failure_document(message):
+    """Page de repli sans rendu : ne pas redemander la page au composant qui vient d'échouer"""
+    return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Erreur</title>'
+            '</head><body><main><h1>Erreur</h1><p>' + escape(message)
+            + '</p></main></body></html>').encode()
 
 
 def _callback_cookie(token, return_path):
@@ -118,6 +127,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     self.respond(404, {'error': 'NOT_FOUND'})
                 return
             wants_json = 'application/json' in self.headers.get('Accept', '')
+            # Après le relais, une erreur ne vient plus du formulaire mais du rendu ou du protocole
+            relayed = False
             try:
                 cookies = SimpleCookie(self.headers.get('Cookie', ''))
                 cookie = cookies.get('benchmark_session')
@@ -133,6 +144,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     callback_token, return_path = _callback_state(state.value)
                     result = preparation_request(socket_path, 'POST', parsed.path, callback_token,
                                                  {'code': values['code'][0]})
+                    relayed = True
                     expired = ('Set-Cookie',
                                'benchmark_access_callback=; HttpOnly; Secure; SameSite=Lax; '
                                'Path=/preparation/access/callback; Max-Age=0')
@@ -198,6 +210,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                         body['source_sha256'] = _source_fingerprint(self.headers, self.client_address, source_salt)
                 result = preparation_request(socket_path, 'GET' if self.command == 'HEAD' else self.command,
                                              self.path, token, body)
+                relayed = True
                 headers = {}
                 if result.get('cookie'):
                     token = result['cookie']
@@ -252,7 +265,21 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     page = views.render(result['value'], csrf, view_path, error=result['status'] >= 400)
                     script = views.COMPARISON_FOCUS_SCRIPT if result['value'].get('kind') == 'comparison' else None
                     self.respond(result['status'], page, 'text/html; charset=utf-8', headers, script=script)
-            except (ValueError, TypeError, KeyError, CookieError):
+            except (ValueError, TypeError, KeyError, CookieError) as error:
+                if relayed:
+                    logging.getLogger(__name__).error('WEB_INTERNAL RENDER %s', type(error).__name__)
+                    value = {'error': 'Défaillance interne du service : cette page n’a pas pu être '
+                             'construite. L’état de votre demande n’est pas confirmé ; consultez le '
+                             'dossier avant tout nouvel envoi.'}
+                    if wants_json:
+                        self.respond(500, value)
+                        return
+                    try:
+                        page = views.render(value, '', error=True)
+                    except Exception:
+                        page = _failure_document(value['error'])
+                    self.respond(500, page, 'text/html; charset=utf-8')
+                    return
                 value = {'error': 'Formulaire invalide. Aucun nouvel appel admis.'}
                 self.respond(400, value if wants_json else views.render(value, '', error=True),
                              'application/json' if wants_json else 'text/html; charset=utf-8')

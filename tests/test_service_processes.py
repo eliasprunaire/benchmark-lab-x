@@ -1,5 +1,5 @@
 """Preuve avec deux vrais processus et une socket locale, sans fournisseur."""
-from contextlib import closing
+from contextlib import closing, contextmanager
 from email.message import Message
 from hashlib import sha256
 import json
@@ -7,6 +7,7 @@ import multiprocessing
 from pathlib import Path
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -18,11 +19,36 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from benchmark import preparation
+from benchmark import preparation, provider_access, service
 from benchmark.service import denied_response, executor_health, preparation_request, serve_executor
-from benchmark.storage import Store, initialize
+from benchmark.storage import BudgetError, ConflictError, IntegrityError, Store, initialize, _strict_json
 from benchmark_web.server import _source_fingerprint, serve_web
 from tests.test_storage import PAYLOAD, operation
+
+
+@contextmanager
+def fake_executor(path, respond):
+    """Exécuteur fictif d'une seule requête : le test décide du rythme de la réponse"""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+        server.bind(str(path))
+        server.listen(1)
+        server.settimeout(5)
+
+        def serve():
+            try:
+                with server.accept()[0] as connection:
+                    connection.recv(65536)
+                    respond(connection)
+            except OSError:
+                pass
+
+        worker = threading.Thread(target=serve)
+        worker.start()
+        try:
+            yield
+        finally:
+            worker.join(5)
+            Path(path).unlink(missing_ok=True)
 
 
 class ServiceProcessesTests(unittest.TestCase):
@@ -166,6 +192,200 @@ class ServiceProcessesTests(unittest.TestCase):
                 finally:
                     worker.join(5)
                 self.assertFalse(worker.is_alive())
+
+    def test_budget_de_relais_derive_du_budget_fournisseur(self):
+        # Un rappel enchaîne échange puis vérification : le relais doit couvrir les deux
+        self.assertEqual(provider_access.CALLBACK_BUDGET_SECONDS + service.LOCAL_BUDGET_SECONDS,
+                         service.RELAY_BUDGET_SECONDS)
+        self.assertGreater(service.RELAY_BUDGET_SECONDS, provider_access.CALLBACK_BUDGET_SECONDS)
+
+    def test_relais_tolere_un_echange_lent_puis_expire_hors_budget(self):
+        def slow(connection):
+            time.sleep(.3)
+            connection.sendall(b'{"status":200,"value":{}}\n')
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'executor.sock'
+            with patch.object(service, 'RELAY_BUDGET_SECONDS', 1.5), fake_executor(path, slow):
+                self.assertEqual(200, preparation_request(path, 'GET', '/preparation', None)['status'])
+            with patch.object(service, 'RELAY_BUDGET_SECONDS', .1), fake_executor(path, slow):
+                started = time.monotonic()
+                with self.assertRaises(OSError):
+                    preparation_request(path, 'GET', '/preparation', None)
+                self.assertLess(time.monotonic() - started, 1)
+
+    def test_le_budget_de_relais_borne_un_total_et_non_une_inactivite(self):
+        def drip(connection):
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                connection.sendall(b'x')
+                time.sleep(.05)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'executor.sock'
+            with patch.object(service, 'RELAY_BUDGET_SECONDS', .4), fake_executor(path, drip):
+                started = time.monotonic()
+                with self.assertRaises(TimeoutError):
+                    preparation_request(path, 'GET', '/preparation', None)
+                self.assertLess(time.monotonic() - started, 2)
+
+    def test_reponse_d_executeur_illisible_est_une_panne_de_transport(self):
+        # Une trame fautive n'est pas une saisie fautive : l'appelant doit voir une panne
+        wires = (b'not-json\n', b'{"status":200,"value":{}}', b'[1,2]\n',
+                 b'{"value":{}}\n', b'{"status":"200","value":{}}\n', b'{"status":200}\n',
+                 # Valeur ordinaire non objet : le web la rendrait en 200 nul ou romprait la page
+                 b'{"status":200,"value":null}\n', b'{"status":200,"value":[1,2]}\n',
+                 b'{"status":200,"value":"texte"}\n', b'{"status":200,"value":7}\n',
+                 # Pièce annoncée sans chaîne hexadécimale exploitable
+                 b'{"status":200,"value":null,"piece":true}\n',
+                 b'{"status":200,"value":"zz","piece":true}\n',
+                 b'{"status":200,"value":"abc","piece":true}\n',
+                 b'{"status":200,"value":"61 62","piece":true}\n',
+                 b'{"status":200,"value":{},"piece":true}\n',
+                 # Champs facultatifs mal typés
+                 b'{"status":200,"value":{},"piece":"true"}\n',
+                 b'{"status":200,"value":{},"piece":null}\n',
+                 b'{"status":200,"value":{},"cookie":5}\n',
+                 b'{"status":200,"value":{},"cookie":{"a":1}}\n',
+                 # Statut hors de la plage des réponses finales
+                 b'{"status":100,"value":{}}\n', b'{"status":0,"value":{}}\n',
+                 b'{"status":-200,"value":{}}\n', b'{"status":600,"value":{}}\n',
+                 b'{"status":999,"value":{}}\n')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'executor.sock'
+            for wire in wires:
+                with fake_executor(path, lambda connection: connection.sendall(wire)):
+                    with self.assertRaises(ConnectionError, msg=wire):
+                        preparation_request(path, 'GET', '/preparation', None)
+
+    def test_reponse_d_executeur_conforme_est_rendue_telle_quelle(self):
+        # Les champs facultatifs omis par une enveloppe d'erreur le restent après validation
+        wires = (
+            b'{"status":404,"value":{"error":"NOT_FOUND"},"piece":false,"cookie":null}\n',
+            b'{"status":403,"value":{"error":"Motif","error_code":"TOO_SOON"}}\n',
+            b'{"status":500,"value":{"error":"Panne"}}\n',
+            b'{"status":200,"value":"48656c6c6f","piece":true,"cookie":null}\n',
+            b'{"status":200,"value":"48656C6C6F","piece":true}\n',
+            b'{"status":200,"value":"","piece":true}\n',
+            b'{"status":201,"value":{"kind":"configurations"},"cookie":"jeton"}\n',
+            b'{"status":599,"value":{"error":"Panne"}}\n')
+        expected = (
+            {'status': 404, 'value': {'error': 'NOT_FOUND'}, 'piece': False, 'cookie': None},
+            {'status': 403, 'value': {'error': 'Motif', 'error_code': 'TOO_SOON'}},
+            {'status': 500, 'value': {'error': 'Panne'}},
+            {'status': 200, 'value': '48656c6c6f', 'piece': True, 'cookie': None},
+            {'status': 200, 'value': '48656C6C6F', 'piece': True},
+            {'status': 200, 'value': '', 'piece': True},
+            {'status': 201, 'value': {'kind': 'configurations'}, 'cookie': 'jeton'},
+            {'status': 599, 'value': {'error': 'Panne'}})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'executor.sock'
+            for wire, result in zip(wires, expected):
+                with fake_executor(path, lambda connection: connection.sendall(wire)):
+                    self.assertEqual(result, preparation_request(path, 'GET', '/preparation', None),
+                                     msg=wire)
+
+    def test_frontiere_separe_refus_validation_et_defaillance_interne(self):
+        canary = 'sk-or-canari-a-ne-jamais-sortir'
+        envelope = b'{"method":"GET","path":"/preparation","token":null,"body":null}\n'
+        health = {'source_sha': 'a' * 40, 'storage': 'ok', 'admission': False,
+                  'restore_pending': False, 'operations': {}}
+
+        def raising(error):
+            def handle(message):
+                raise error
+            return handle
+
+        def refused(raw, error):
+            return service.executor_result(raw, lambda: health, raising(error))
+
+        self.assertEqual(health, service.executor_result(b'health\n', lambda: health, raising(
+            AssertionError('jamais appelé'))))
+        self.assertEqual(403, refused(envelope, preparation.Denied('Motif'))['status'])
+        self.assertEqual(400, refused(envelope, preparation.Denied('TEXT_TOO_SHORT'))['status'])
+        for error in (ConflictError(canary), BudgetError(canary)):
+            self.assertEqual(409, refused(envelope, error)['status'])
+        # Validation de domaine : la requête est recevable, son contenu non
+        result = refused(envelope, ValueError(canary))
+        self.assertEqual(400, result['status'])
+        self.assertEqual(service.BAD_REQUEST_MESSAGE, result['value']['error'])
+        self.assertNotIn(canary, _strict_json(result))
+        # Enveloppe : structure, puis type de chaque champ du contrat
+        for raw in (b'{"method":"GET"}\n', b'ceci n\'est pas du json\n', b'[1,2]\n', b'\n',
+                    b'{"method":"GET","path":"/p","token":null,"body":null}',
+                    b'{"method":1,"path":"/p","token":null,"body":null}\n',
+                    b'{"method":"GET","path":["/p"],"token":null,"body":null}\n',
+                    b'{"method":"GET","path":"/p","token":7,"body":null}\n',
+                    b'{"method":"GET","path":"/p","token":null,"body":"texte"}\n',
+                    b'{"method":"GET","path":"/p","token":null,"body":[1]}\n'):
+            result = refused(raw, AssertionError('jamais appelé'))
+            self.assertEqual(400, result['status'], raw)
+            self.assertEqual(service.BAD_REQUEST_MESSAGE, result['value']['error'])
+        # Après une enveloppe valide, une erreur de programmation n'est plus une entrée fautive
+        for error, code in ((sqlite3.OperationalError(canary), 'STORAGE'),
+                            (IntegrityError(canary), 'STORAGE'),
+                            (OSError(canary), 'UNEXPECTED'),
+                            (KeyError(canary), 'UNEXPECTED'),
+                            (TypeError(canary), 'UNEXPECTED'),
+                            (AttributeError(canary), 'UNEXPECTED')):
+            with self.assertLogs('benchmark.service', level='ERROR') as logs:
+                result = refused(envelope, error)
+            self.assertEqual(500, result['status'])
+            self.assertEqual(service.INTERNAL_MESSAGE, result['value']['error'])
+            self.assertNotIn(canary, _strict_json(result))
+            self.assertNotIn(canary, '\n'.join(logs.output))
+            self.assertIn('EXECUTOR_INTERNAL ' + code + ' ' + type(error).__name__, logs.output[0])
+        # Le contrôle de santé n'a pas d'entrée à mettre en cause : toute rupture y est interne
+        for error in (ValueError(canary), KeyError(canary), sqlite3.OperationalError(canary)):
+            def failing():
+                raise error
+
+            with self.assertLogs('benchmark.service', level='ERROR') as logs:
+                result = service.executor_result(b'health\n', failing, raising(
+                    AssertionError('jamais appelé')))
+            self.assertEqual(500, result['status'])
+            self.assertEqual(service.INTERNAL_MESSAGE, result['value']['error'])
+            self.assertNotIn(canary, _strict_json(result))
+            self.assertNotIn(canary, '\n'.join(logs.output))
+            self.assertIn('EXECUTOR_INTERNAL HEALTH ' + type(error).__name__, logs.output[0])
+
+    def test_message_interne_n_affirme_aucun_resultat(self):
+        # L'effet peut être enregistré avant la défaillance : n'annoncer qu'un état non confirmé
+        self.assertNotIn('abouti', service.INTERNAL_MESSAGE)
+        self.assertIn('n’est pas confirmé', service.INTERNAL_MESSAGE)
+        self.assertIn('Consultez le dossier', service.INTERNAL_MESSAGE)
+
+    def test_enveloppe_malformee_recoit_un_refus_explicite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            data, sock = root / 'private', root / 'executor.sock'
+            initialize(data)
+            child = multiprocessing.get_context('spawn').Process(
+                target=serve_executor, args=(data, sock, 'a' * 40))
+            child.start()
+            try:
+                deadline = time.monotonic() + 5
+                while True:
+                    try:
+                        executor_health(sock)
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(.02)
+                for raw in (b'{"method":"GET"}\n', b'ceci n\'est pas du json\n', b'[1,2]\n'):
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                        connection.settimeout(5)
+                        connection.connect(str(sock))
+                        connection.sendall(raw)
+                        with connection.makefile('rb') as stream:
+                            answer = json.loads(stream.readline())
+                    self.assertEqual(400, answer['status'], raw)
+                    self.assertEqual(service.BAD_REQUEST_MESSAGE, answer['value']['error'])
+                self.assertEqual('ok', executor_health(sock)['storage'])
+            finally:
+                child.terminate()
+                child.join(5)
 
     def test_health_restart_and_private_boundary(self):
         with tempfile.TemporaryDirectory() as directory:

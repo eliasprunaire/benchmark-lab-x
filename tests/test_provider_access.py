@@ -1,10 +1,14 @@
 """Accès OpenRouter délégué sans appel réseau réel"""
-from contextlib import closing, redirect_stderr, redirect_stdout
+from contextlib import closing, contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
+from http.client import HTTPConnection
 import io
 import json
 from pathlib import Path
+import socket
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
@@ -42,6 +46,106 @@ class AccessTransport:
         if isinstance(self.verify_result, Exception):
             raise self.verify_result
         return self.verify_result
+
+
+@contextmanager
+def http_fixture(respond):
+    """Serveur HTTP local d'une seule requête : le test écrit la réponse brute au rythme voulu
+
+    L'échange traverse l'analyse réelle de `http.client` ; une connexion fictive masquerait le
+    cycle de vie socket-réponse et la mise en mémoire tampon de `HTTPResponse.read`.
+    """
+    with socket.socket() as server:
+        server.bind(('127.0.0.1', 0))
+        server.listen(1)
+        server.settimeout(5)
+
+        def serve():
+            try:
+                with server.accept()[0] as connection:
+                    connection.recv(65536)
+                    respond(connection)
+            except OSError:
+                pass
+
+        worker = threading.Thread(target=serve)
+        worker.start()
+        try:
+            yield server.getsockname()[1]
+        finally:
+            worker.join(10)
+            assert not worker.is_alive(), 'serveur de test encore vivant'
+
+
+class ProviderBudgetTests(unittest.TestCase):
+    @staticmethod
+    @contextmanager
+    def provider(respond, budget=30):
+        with http_fixture(respond) as port:
+            def connect(host, timeout=None):
+                return HTTPConnection('127.0.0.1', port, timeout=timeout)
+
+            with patch.object(provider_access, 'HTTPSConnection', connect), \
+                    patch.object(provider_access, 'REQUEST_BUDGET_SECONDS', budget):
+                yield
+
+    def test_budget_du_rappel_enchaine_echange_puis_verification(self):
+        self.assertEqual(2, provider_access.CALLBACK_REQUESTS)
+        self.assertEqual(provider_access.REQUEST_BUDGET_SECONDS * 2,
+                         provider_access.CALLBACK_BUDGET_SECONDS)
+
+    def test_reponse_fermante_est_lue_jusqu_a_la_fin(self):
+        # Une réponse fermante relâche la socket de la connexion : la lecture doit rester valide
+        def respond(connection):
+            connection.sendall(b'HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\n{}')
+
+        with self.provider(respond):
+            self.assertEqual((200, b'{}'), provider_access.OpenRouterAccess().verify(KEY))
+
+    def test_reponse_fermante_en_http_1_1_est_lue_jusqu_a_la_fin(self):
+        def respond(connection):
+            connection.sendall(b'HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}')
+
+        with self.provider(respond):
+            self.assertEqual((200, b'{}'), provider_access.OpenRouterAccess().verify(KEY))
+
+    def test_corps_goutte_a_goutte_coupe_au_budget(self):
+        # Sans garde, `HTTPResponse.read` enchaîne les réceptions et dépasse le budget
+        def respond(connection):
+            connection.sendall(b'HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n')
+            for _ in range(40):
+                connection.sendall(b'x')
+                time.sleep(.05)
+
+        with self.provider(respond, budget=.2):
+            started = time.monotonic()
+            with self.assertRaises(TimeoutError):
+                provider_access.OpenRouterAccess().verify(KEY)
+            self.assertLess(time.monotonic() - started, 1)
+
+    def test_entetes_goutte_a_goutte_coupent_au_budget(self):
+        def respond(connection):
+            for part in (b'HTTP/1.1 ', b'200 OK\r\n', b'Content-Type: application/json\r\n',
+                         b'Content-Length: 2\r\n', b'\r\n', b'{}'):
+                connection.sendall(part)
+                time.sleep(.2)
+
+        with self.provider(respond, budget=.2):
+            started = time.monotonic()
+            with self.assertRaises(TimeoutError):
+                provider_access.OpenRouterAccess().verify(KEY)
+            self.assertLess(time.monotonic() - started, 1)
+
+    def test_lecture_fournisseur_bornee_en_octets(self):
+        size = provider_access.MAX_RESPONSE_BYTES + 1
+
+        def respond(connection):
+            connection.sendall(('HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n' % size).encode()
+                               + b'y' * size)
+
+        with self.provider(respond):
+            with self.assertRaisesRegex(ValueError, 'hors limites'):
+                provider_access.OpenRouterAccess().verify(KEY)
 
 
 class ProviderAccessTests(unittest.TestCase):

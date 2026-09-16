@@ -44,7 +44,7 @@ class RuntimeBundleTests(unittest.TestCase):
             package = repo / 'benchmark'
             package.mkdir()
             source_package = Path(__file__).resolve().parents[1] / 'benchmark'
-            for name in ('__init__.py', 'model_catalog.py', 'model_catalogue.py', 'models.toml', 'storage.py', 'preparation.py', 'runtime.py', 'service.py', 'openrouter_preparation.py', 'openrouter_qualification.py', 'openrouter_prices.py', 'outgoing.py', 'preparation.profile.json', 'preparation-fallback.profile.json', 'qualification.profile.json', 'glm-5.3-flash.profile.json', 'benchmark-runtime'):
+            for name in ('__init__.py', 'model_catalog.py', 'model_catalogue.py', 'models.toml', 'storage.py', 'preparation.py', 'provider_access.py', 'runtime.py', 'service.py', 'openrouter_preparation.py', 'openrouter_qualification.py', 'openrouter_prices.py', 'outgoing.py', 'preparation.profile.json', 'preparation-fallback.profile.json', 'qualification.profile.json', 'glm-5.3-flash.profile.json', 'benchmark-runtime'):
                 shutil.copy2(source_package / name, package / name)
             web = repo / 'benchmark_web'
             source_web = source_package.parent / 'benchmark_web'
