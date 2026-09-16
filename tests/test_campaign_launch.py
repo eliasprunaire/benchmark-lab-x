@@ -459,16 +459,29 @@ class RequesterCampaignLaunch(unittest.TestCase):
                 for method, action, body in routes:
                     path = ('/preparation/dossiers/fixture/campaigns/'
                             'fixture-c1/' + action)
-                    with self.subTest(action=action), \
+                    with self.subTest(action=action, campaign='attendue'), \
                             patch.object(p, 'session',
                                          return_value=(session_id, 'csrf', token)), \
                             self.assertRaises(p.Denied) as missing_configurations:
                         p.dispatch(store, method, path, token, body, 'a' * 40, True,
                                    candidate_transport=response)
                     self.assertEqual(
-                        ('Ressource inaccessible', None),
-                        (str(missing_configurations.exception),
+                        ('STEP_INCOMPLETE', 'configurations'),
+                        (missing_configurations.exception.code,
                          missing_configurations.exception.step))
+                for method, action, body in routes:
+                    path = ('/preparation/dossiers/fixture/campaigns/'
+                            'fixture-x1/' + action)
+                    with self.subTest(action=action, campaign='hors-forme'), \
+                            patch.object(p, 'session',
+                                         return_value=(session_id, 'csrf', token)), \
+                            self.assertRaises(p.Denied) as unknown_campaign:
+                        p.dispatch(store, method, path, token, body, 'a' * 40, True,
+                                   candidate_transport=response)
+                    self.assertEqual(
+                        ('Ressource inaccessible', None),
+                        (str(unknown_campaign.exception),
+                         unknown_campaign.exception.step))
 
     def test_gel_date_refuse_les_conditions_perimees(self):
         self.connect()
