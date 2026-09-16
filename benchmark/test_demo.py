@@ -295,7 +295,7 @@ raise SystemExit(7 if {variant!r} == "nonzero" else 0)
         self.assertTrue(all(item["compat"]["maxTokensField"] == "max_tokens" for item in overrides.values()))
         routes = {model: item["compat"]["openRouterRouting"] for model, item in overrides.items()}
         self.assertEqual({model: route["only"] for model, route in routes.items()}, {"openai/gpt-5.6-sol": ["openai"], "anthropic/claude-fable-5": ["anthropic"], "x-ai/grok-4.6": ["xai"]})
-        self.assertTrue(all(route["allow_fallbacks"] is False and route["require_parameters"] is True and route["data_collection"] == "allow" for route in routes.values()))
+        self.assertTrue(all(route["allow_fallbacks"] is False and route["require_parameters"] is True and route["data_collection"] == "deny" for route in routes.values()))
         settings = json.loads((run / "settings.json").read_text())
         self.assertEqual(settings["retry"], {"enabled": False, "maxRetries": 0, "provider": {"maxRetries": 0, "timeoutMs": 300000}})
         self.assertFalse(settings["compaction"]["enabled"])
