@@ -23,6 +23,9 @@ from tests.test_configurations import NOW, model
 from tests.test_openrouter_qualification import QualificationTransport
 from tests.test_provider_access import AccessTransport, KEY, SECRET
 from tests.test_s2_review_regressions import response_for
+from tests.test_s3_regressions import specification, check, ACTOR, AUTHORITY
+from tests.test_s4_regressions import response
+from tests.test_s5_regressions import findings, RESPONSIBLE, EVALUATION_AUTHORITY
 
 
 class Page(HTMLParser):
@@ -179,7 +182,14 @@ class ParcoursComplet(unittest.TestCase):
         return value
 
     def candidate(self, operation, request):
-        raise AssertionError('Aucun candidat attendu avant le contrat approuvé')
+        self.calls.append(('candidat', operation['operation_id']))
+        value = response(operation, request)
+        second = request['requested_configuration']['model'] == 'deepseek/deepseek-v4.1-flash'
+        value['receipt']['result']['output'] = ('Action omise' if second else
+            'Action : relire | Responsable : Camille\n<script>contenu inerte</script>\n' + 'Note de recette\n' * 80)
+        value['cost'].update(status='UNKNOWN' if second else 'KNOWN', amount=None if second else '0.10',
+                             currency='USD', source='Reçu candidat simulé S12')
+        return value
 
     def request(self, path, fields=None, *, cookies=None, status=200):
         self.clock += timedelta(minutes=1)
@@ -213,7 +223,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual([primary], [n['text'].strip() for n in actions])
             self.assertTrue(any(n['attrs'].get('role') in ('status', 'alert') and n['text'].strip()
                                 for n in page.nodes), 'Phrase d’état absente')
-            self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b|\b(?:configuration|cell|attempt|case)-\d+\b|python -m|package_sha256')
+            self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b|\b(?:configuration|cell|attempt|case)-\d+\b|\b(?:O1|E1)\b|python -m|package_sha256')
             self.assertNotIn('v0.1.0+aaaaaaa', page.visible)
             self.assertNotIn(KEY, page.visible)
             focus = [n for n in page.nodes if not n['hidden'] and not n['details']
@@ -224,7 +234,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual('#main', focus[0]['attrs'].get('href'))
             self.assertTrue(all(int(n['attrs'].get('tabindex', '0')) <= 0 for n in page.nodes))
 
-    def test_parcours_jusqua_la_rupture_du_contrat(self):
+    def test_parcours_complet(self):
         page, _, _ = self.request('/')
         self.examine(page, '/', 'accueil', 'Décrire mon cas d’usage')
         page, _, _ = self.request(page.link('Décrire mon cas'))
@@ -288,7 +298,121 @@ class ParcoursComplet(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Contrat qualifié et approuvé requis'):
                 campaigns._current_contract(store, store._connection, dossier.rsplit('/', 1)[1])
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s4_campaigns').fetchone()[0])
-        for cookies in (SimpleCookie(), SimpleCookie('benchmark_session=' + 'f' * 64)):
+        # Injection S3 factice autorisée par Ayo pour poursuivre la recette uniquement
+        dossier_id = dossier.rsplit('/', 1)[1]
+        with closing(storage.Store(self.data)) as store:
+            sid, _, _ = prep.session(store, self.cookies['benchmark_session'].value)
+            current = prep.view(store, sid, dossier_id)
+            reference = store._connection.execute(
+                "SELECT piece_id FROM pieces WHERE dossier_id=? AND revision=? AND role='judge'",
+                (dossier_id, current['revision'])).fetchone()[0]
+            spec = specification(reference)
+            spec['result_expected'] = 'Tableau des actions avec responsable'
+            spec['cost_basis']['unit'] = 'USD'
+            contract = qualification.draft(store, dossier_id, current['revision'], spec)
+            proof = qualification.qualify(store, contract['contract_sha256'], reviewer=ACTOR, check=check)
+            qualification.approve(store, contract['contract_sha256'], proof['qualification_id'],
+                                  actor=ACTOR, authority=AUTHORITY)
+        page, _, _ = self.request(configurations)
+        self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+                                             'tier': 'standard'}, status=303)
+        page, _, _ = self.request(configurations)
+        self.examine(page, configurations, 'sélection enregistrée', 'Voir le récapitulatif')
+        recap = page.link('Voir le récapitulatif')
+        page, _, _ = self.request(recap)
+        self.examine(page, recap, 'accès requis', 'Compléter cette étape')
+        page, _, _ = self.request(page.link('Compléter cette étape'))
+        self.examine(page, '/preparation/access', 'accès déconnecté', 'Connecter mon compte OpenRouter')
+        form = page.form('/access/start')
+        _, headers, _ = self.request(form['action'], form['fields'], status=303)
+        self.assertEqual('openrouter.ai', urlsplit(headers['Location']).hostname)
+        _, headers, _ = self.request('/preparation/access/callback?code=code-s12', status=303)
+        page, _, raw = self.request(headers['Location'])
+        self.examine(page, '/preparation/access', 'accès connecté', 'Revenir à mes cas d’usage')
+        self.assertNotIn(KEY.encode(), raw)
+        page, _, _ = self.request(page.link('Revenir à mes cas'))
+        page, _, _ = self.request(page.link('Transformer des notes'))
+        self.examine(page, dossier, 'comparaison préparée', 'Examiner les conditions et suivre la comparaison')
+        page, _, _ = self.request(page.link('Examiner les conditions'))
+        self.examine(page, recap, 'prêt à lancer', 'Lancer la comparaison')
+        self.assertIn('Tableau des actions avec responsable', page.visible)
+        self.assertIn('Estimation', page.visible)
+        with patch.object(self, 'candidate', None):
+            closed, _, _ = self.request(recap)
+            self.examine(closed, recap, 'appels candidats fermés', 'Revenir au cas d’usage')
+            self.assertIn('Lancement indisponible', closed.visible)
+            self.assertNotIn('Lancement enregistré', closed.visible)
+            self.assertFalse(any(f['action'].endswith('/start') for f in closed.forms))
+        start_form = page.form('/start')
+        self.assertEqual(['confirm'], [n['attrs'].get('name') for n in start_form['nodes']
+                                      if n['tag'] == 'input' and n['attrs'].get('type') != 'hidden'])
+        self.submit(page, '/start', {'confirm': 'yes'}, status=303)
+        attempts = self.starts.get_nowait()['candidate_attempts']
+        self.assertEqual(2, len(attempts))
+        page, _, _ = self.request(recap)
+        self.examine(page, recap, 'essais en attente', 'Actualiser le suivi')
+        self.assertIn('en attente', page.visible)
+        self.assertFalse(any(f['action'].endswith('/cap') for f in page.forms))
+        self.assertEqual(3, len(self.calls))
+        campaigns.execute_launch(self.data, attempts[:1], self.candidate,
+                                 access_secret=SECRET, access_transport=self.access)
+        page, _, _ = self.request(recap)
+        self.examine(page, recap, 'réception partielle', 'Actualiser le suivi')
+        self.assertIn('réponse reçue', page.visible)
+        self.assertIn('en attente', page.visible)
+        campaigns.execute_launch(self.data, attempts[1:], self.candidate,
+                                 access_secret=SECRET, access_transport=self.access)
+        page, _, _ = self.request(recap)
+        self.examine(page, recap, 'réponses reçues', 'Comparer les résultats et lire les preuves')
+        comparison = page.link('Comparer les résultats')
+        empty, _, _ = self.request(comparison)
+        self.examine(empty, comparison, 'jugements absents', 'Revenir au cas d’usage')
+        self.assertIn('Aucune tentative évaluée', empty.visible)
+        campaign_id = comparison.rsplit('/', 1)[1]
+        with closing(storage.Store(self.data)) as store:
+            for index, attempt in enumerate(attempts):
+                def judge(context, resources):
+                    result = findings(context, resources)
+                    if index:
+                        result['findings'][0].update(status='FAIL', attribution='candidate', finding='Action absente du tableau')
+                    return result
+                evaluation.evaluate(store, campaign_id, attempt, responsible=RESPONSIBLE,
+                                    authority=EVALUATION_AUTHORITY, check=judge)
+        page, _, _ = self.request(comparison)
+        self.examine(page, comparison, 'résultats évalués', 'Revenir au cas d’usage')
+        for label in ('Satisfait', 'Ne satisfait pas', 'INCONNU', 'Comparaison des coûts incomplète',
+                      'Verdicts par cas et tentative, sans conclusion globale'):
+            self.assertIn(label, page.visible)
+        sort = next(f for f in page.forms if any(n['attrs'].get('name') == 'sort' for n in f['nodes']))
+        filtered_url = sort['action'] + '?' + urlencode(sort['fields'] | {'sort': 'cost'})
+        page, _, _ = self.request(filtered_url)
+        self.examine(page, filtered_url, 'tri du coût observé', 'Revenir au cas d’usage')
+        detail_url = page.link('Détail et preuves')
+        detail, _, raw = self.request(detail_url)
+        self.examine(detail, detail_url, 'preuves', 'Revenir à la comparaison avec ses filtres')
+        self.assertIn(b'&lt;script&gt;', raw)
+        self.assertFalse(any(n['tag'] in ('script', 'img') for n in detail.nodes))
+        proofs = [n for n in detail.nodes if n['tag'] == 'details' and n['attrs'].get('class') == 'proof-content']
+        self.assertTrue(proofs)
+        self.assertTrue(all('open' not in n['attrs'] for n in proofs))
+        self.assertTrue(any('Note de recette' in n['text'] for n in proofs))
+        back = detail.link('Revenir à la comparaison avec ses filtres')
+        self.assertIn('sort=cost', back)
+        page, _, _ = self.request(back)
+        self.examine(page, back, 'retour depuis les preuves', 'Revenir au cas d’usage')
+        anchor = urlsplit(back).fragment
+        self.assertTrue(any(n['attrs'].get('id') == anchor and n['attrs'].get('tabindex') == '-1'
+                            for n in page.nodes))
+        self.assertIn(views.COMPARISON_FOCUS_SCRIPT, next(n['text'] for n in page.nodes if n['tag'] == 'script'))
+        _, headers, _ = self.request('/preparation', cookies=SimpleCookie())
+        foreign = SimpleCookie(headers['Set-Cookie'])
+        for private_path in (recap, comparison, detail_url):
+            _, _, raw = self.request(private_path, cookies=foreign, status=403)
+            self.assertNotIn(b'Note de recette', raw)
+            self.assertNotIn(b'Transformer des notes', raw)
+        self.assertEqual(5, len(self.calls))
+        self.assertTrue(self.starts.empty())
+        for cookies in (SimpleCookie(), SimpleCookie('benchmark_session=' + 'f' * 64), foreign):
             lost, _, raw = self.request(dossier, cookies=cookies, status=403)
             self.examine(lost, dossier, 'accès refusé', 'Retrouver mes cas d’usage')
             self.assertNotIn(b'Transformer des notes', raw)
@@ -311,7 +435,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Cette action n’est pas autorisée', denied.visible)
         page, _, _ = self.request(dossier)
         self.assertIn('Tableau des actions avec responsable', page.visible)
-        self.assertEqual(3, len(self.calls))
+        self.assertEqual(5, len(self.calls))
         self.assertEqual(1, len(self.qualifier.calls))
 
     def test_acces_openrouter_factice_et_retours(self):
