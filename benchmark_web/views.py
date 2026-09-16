@@ -4,6 +4,7 @@ Ce module ne touche ni au stockage, ni aux secrets, ni aux fournisseurs : il met
 forme les vues structurées renvoyées par l'exécuteur.
 """
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 import re
@@ -52,7 +53,16 @@ def date_lisible_utc(value):
         moment = datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc)
     except (AttributeError, TypeError, ValueError):
         return str(value)
-    return f'{moment.day} {MOIS[moment.month - 1]} {moment.year} à {moment:%H:%M} UTC'
+    return f'{moment.day} {MOIS[moment.month - 1]} {moment.year} à {moment:%H:%M:%S} UTC'
+
+
+def montant_lisible(value):
+    if value is None:
+        return 'non estimable'
+    try:
+        return format(Decimal(str(value)), 'f').replace('.', ',')
+    except (InvalidOperation, ArithmeticError, ValueError):
+        return str(value)
 
 COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
   const link = event.target.closest('tr[id] a[href]');
@@ -457,7 +467,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                 amount = configuration['estimate']['amount_usd']
                 technical = configuration['model']
                 detail = ' · estimation ' + (
-                    'non estimable' if amount is None else amount + ' USD')
+                    'non estimable' if amount is None else montant_lisible(amount) + ' USD')
                 if configuration.get('effort_limit') == 'not_adjustable':
                     detail += ' · palier de raisonnement non réglable'
                 summary += '<li>' + text(model_names.get(technical, technical)) + text(detail) + (
@@ -466,8 +476,8 @@ def render(value, csrf, path='/preparation', *, error=False):
             summary += '</ul>'
             summary += '<p>Estimation totale : ' + text(
                 'non estimable' if value['estimate_total_usd'] is None else
-                value['estimate_total_usd'] + ' USD') + '.</p>'
-            summary += '<p>Plafond : ' + text(value['cap_usd']) + ' USD.</p>'
+                montant_lisible(value['estimate_total_usd']) + ' USD') + '.</p>'
+            summary += '<p>Plafond : ' + text(montant_lisible(value['cap_usd'])) + ' USD.</p>'
             summary += '<p><a class="button" href="' + text(
                 dossier_url + '/campaigns/' + value['current_campaign_id'] +
                 '/conditions') + '">Voir le récapitulatif</a></p>'
@@ -499,11 +509,11 @@ def render(value, csrf, path='/preparation', *, error=False):
             check_content += '</li>'
         check_content += '</ul>'
         content += section('Contrôles avant lancement', check_content)
-        content += '<p>Plafond actuel : ' + text(value['cap_usd']) + ' USD.</p>'
+        content += '<p>Plafond actuel : ' + text(montant_lisible(value['cap_usd'])) + ' USD.</p>'
+        content += ('<p>L’arrêt intervient après le paiement de l’appel en cours. '
+                    'La dépense peut donc dépasser le plafond du montant du dernier appel.</p>')
         if not campaign['attempts']:
             content += section('Modifier le plafond',
-                '<p>L’arrêt intervient après le paiement de l’appel en cours. '
-                'La dépense peut donc dépasser le plafond du montant du dernier appel.</p>'
                 '<form method="post" action="' + text(base + '/cap') + '">' + hidden('csrf_token', csrf) +
                 '<label for="cap_usd">Plafond en USD, de 0,10 à 100</label>' +
                 '<input id="cap_usd" name="cap_usd" type="number" min="0.10" max="100.00" step="0.01" value="' +

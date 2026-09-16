@@ -178,8 +178,10 @@ class AccessViewTests(unittest.TestCase):
         for technical in ('modele-a', 'modele-b'):
             self.assertIn('<details><summary>Identifiant technique</summary><code>' +
                           technical + '</code></details>', page)
-        self.assertIn('Estimation totale : 3.50 USD', page)
-        self.assertIn('Plafond : 50.00 USD', page)
+        self.assertIn('Estimation totale : 3,50 USD', page)
+        self.assertIn('Plafond : 50,00 USD', page)
+        self.assertIn('estimation 1,20 USD', page)
+        self.assertIn('estimation 2,30 USD', page)
         self.assertIn('/campaigns/d1-c1/conditions', page)
 
     def test_page_configurations_sans_releve(self):
@@ -239,6 +241,37 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('✕ Modèle à choisir de nouveau', page)
         self.assertIn('/preparation/dossiers/d1/configurations', page)
         self.assertNotIn('>Lancer la comparaison</button>', page)
+
+    def test_mention_depassement_reste_apres_lancement(self):
+        value = self.campaign({'status': 'connected', 'limit_remaining_usd': '12.50'})
+        value.update(
+            checks=[
+                {'key': 'example_validated', 'ok': True, 'detail': 'Exemple validé'},
+                {'key': 'example_qualified', 'ok': True, 'detail': 'Exemple qualifié'},
+                {'key': 'configurations_available', 'ok': True,
+                 'detail': 'Tous les modèles sont disponibles'},
+                {'key': 'access_connected', 'ok': True,
+                 'detail': {'limit_remaining_usd': '12.50', 'limit_usd': '20'}},
+                {'key': 'estimate_under_cap', 'ok': True,
+                 'detail': 'Estimation totale : 3,50 USD'},
+            ],
+            launchable=False, cap_usd='50.00')
+        value['campaign'] = dict(
+            value['campaign'], attempts=[{'state': 'INTENT_RECORDED'}],
+            cells=[{'configuration_id': 'x', 'state': 'INTENT_RECORDED'}],
+            panel=[{'id': 'x', 'model': 'Modèle A'}], admission_open=True)
+        page = views.render(value, 'csrf').decode()
+        self.assertIn('La dépense peut donc dépasser le plafond du montant du dernier appel.', page)
+        self.assertNotIn('id="cap_usd"', page)
+        self.assertIn('Lancement enregistré', page)
+
+    def test_dates_lisibles_distinctes_dans_la_meme_minute(self):
+        first = views.date_lisible_utc('2026-09-16T12:00:01+00:00')
+        second = views.date_lisible_utc('2026-09-16T12:00:02+00:00')
+        self.assertEqual('16 septembre 2026 à 12:00:01 UTC', first)
+        self.assertEqual('16 septembre 2026 à 12:00:02 UTC', second)
+        self.assertEqual('15 septembre 2026 à 12:00:00 UTC',
+                         views.date_lisible_utc('2026-09-15T12:00:00+00:00'))
 
 
 class AccessServerTests(unittest.TestCase):

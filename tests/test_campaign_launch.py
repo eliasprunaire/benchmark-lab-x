@@ -319,9 +319,23 @@ class RequesterCampaignLaunch(unittest.TestCase):
                 self.assertEqual(allowed, selection['estimate_under_cap'])
                 self.assertEqual(allowed, budget['ok'])
                 self.assertEqual(total, selection['estimate_total_usd'])
-                self.assertIn(total + ' USD', views.render(selection, 'csrf').decode())
+                self.assertIn(total.replace('.', ',') + ' USD',
+                              views.render(selection, 'csrf').decode())
                 self.assertEqual('Estimation totale : ' + total.replace('.', ',') +
                                  ' USD pour un plafond de 50,00 USD', budget['detail'])
+
+
+    def test_total_tres_petit_reste_en_decimal(self):
+        snapshot = c.inspect(self.store, self.campaign_id)
+        snapshot['manifest']['panel'][0]['estimate']['amount_usd'] = '1E-8'
+        snapshot['manifest']['panel'][1]['estimate']['amount_usd'] = '1E-8'
+        with patch.object(c, '_requester_campaigns', return_value=[snapshot]):
+            selection = c.configurations_view(self.store, self.sid, 'fixture')
+        self.assertEqual('0.00000002', selection['estimate_total_usd'])
+        self.assertNotIn('E', selection['estimate_total_usd'])
+        page = views.render(selection, 'csrf').decode()
+        self.assertIn('0,00000002 USD', page)
+        self.assertNotIn('E-', page)
 
     def test_cles_controles_alignees_entre_moteur_erreurs_et_liens(self):
         summary = c.launch_view(self.store, self.sid, 'fixture', self.campaign_id)
