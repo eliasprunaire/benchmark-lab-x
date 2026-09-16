@@ -1,7 +1,6 @@
 """Retirement blocks new calls without rewriting historical operations"""
 from pathlib import Path
 import tempfile
-import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -12,9 +11,6 @@ from tests.test_storage import operation, PAYLOAD
 
 class ModelRetirementTests(unittest.TestCase):
     def test_catalog_and_visible_replacement(self):
-        registry = tomllib.loads((Path(__file__).resolve().parents[1] / 'models.toml').read_text())
-        self.assertNotIn('deepseek-v4-flash', registry)
-        self.assertEqual(model_catalog.DEEPSEEK_REPLACEMENT, registry['deepseek-v4-1-flash']['model'])
         page = views.render(dict(error='Fictional error'), 'csrf', error=True).decode()
         self.assertIn(model_catalog.RETIREMENT_NOTICE, page)
         model_catalog.require_current(dict(model='deepseek-flash'))

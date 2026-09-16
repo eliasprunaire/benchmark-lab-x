@@ -570,7 +570,7 @@ Les [régressions S6](../tests/test_s6_regressions.py) utilisent les primitives 
 
 ## Outillage des premières campagnes
 
-Les outils sous `tools/` conservent leurs contrats historiques et ne sont pas les commandes décrites ci-dessus. Dans `tools/campagne_v1.py`, le rendu et sa vérification calculent encore les empreintes des canons du checkout courant sous des libellés historiques ; les tests rétablissent au contraire les contrats du commit `38e226a59020aad517cd0dbb16892ffb87d448ab`. Leur réussite ne valide pas une restitution historique régénérée contre les canons courants. Toute opération sur ces campagnes doit identifier ses sources d’origine avant exécution.
+Les scripts de campagne historiques sous `tools/` sont retirés du dépôt courant ; seul `tools/build_runtime.py` subsiste. Leur dernier état et les dossiers `tasks/dev/` associés restent consultables par Git au commit [fdd7cba](https://github.com/eliasprunaire/benchmark-lab-x/tree/fdd7cba3d96bf56aa987b7e44fdbe9306783f6d5/tools). Ils n’ont jamais été les commandes décrites ci-dessus. Les campagnes, reçus et restitutions historiques conservent leurs sources d’origine ; ce retrait ne les requalifie pas.
 
 
 ## Première comparaison privée : Pi et jugement opérateur
@@ -698,11 +698,11 @@ Cette option charge les variables pour la commande opérateur concernée ; le ru
 
 ## Modèle DeepSeek courant
 
-DeepSeek V4.1 Flash remplace 0731 dans le panel et les assistants à sélectionner. Le registre propose `deepseek-v4-1-flash`, identifiant OpenRouter `deepseek/deepseek-v4.1-flash`. L’ancien modèle et son alias redirigé sont refusés pour les nouvelles campagnes, réservations et émissions, y compris depuis un ancien profil ou une intention déjà enregistrée. Le parcours de préparation affiche ce retrait. Les lectures et preuves historiques gardent leurs identités ; aucun résultat 0731 n’est renommé en V4.1.
+DeepSeek V4.1 Flash remplace 0731 dans le panel et les assistants à sélectionner. Son identifiant OpenRouter est `deepseek/deepseek-v4.1-flash`. L’ancien modèle et son alias redirigé sont refusés pour les nouvelles campagnes, réservations et émissions, y compris depuis un ancien profil ou une intention déjà enregistrée. Le parcours de préparation affiche ce retrait. Les lectures et preuves historiques gardent leurs identités ; aucun résultat 0731 n’est renommé en V4.1.
 
 ## Configurations candidates supplémentaires via OpenRouter
 
-[openrouter-expanded-panel.json](openrouter-expanded-panel.json) contient cinq configurations à intégrer au champ `panel` d’un nouveau manifeste : GPT 5.6 Sol, GPT 6 Astra, Kimi K3, Qwen3.8 Max 0902 et Hy4 preview. Les identifiants et routes ont été vérifiés dans le catalogue OpenRouter le 12 septembre 2026. Les alias correspondants, suffixés `low`, figurent dans [models.toml](../models.toml) pour le collecteur historique ; les anciens alias restent inchangés.
+[openrouter-expanded-panel.json](openrouter-expanded-panel.json) contient cinq configurations à intégrer au champ `panel` d’un nouveau manifeste : GPT 5.6 Sol, GPT 6 Astra, Kimi K3, Qwen3.8 Max 0902 et Hy4 preview. Les identifiants et routes ont été vérifiés dans le catalogue OpenRouter le 12 septembre 2026. Les alias correspondants, suffixés `low`, figuraient dans [models.toml](https://github.com/eliasprunaire/benchmark-lab-x/blob/fdd7cba3d96bf56aa987b7e44fdbe9306783f6d5/models.toml) pour le collecteur historique, retiré du dépôt courant avec ce registre ; les anciens alias restent inchangés.
 
 Ces configurations reprennent l’effort demandé `low` et la limite de sortie de 16 384 jetons de la recette précédente. Ces valeurs sont déclarées, sans preuve qu’un effort identique représente le même calcul entre modèles. Les routes sont épinglées et le repli automatique désactivé. Le fichier est une sélection opérationnelle, sans campagne, admission ni appel implicite. Revalider les routes, les tarifs et les réserves avant exécution ; un catalogue disponible ne prouve pas un appel réussi.
 

@@ -89,7 +89,7 @@ Rôle qui prépare et approuve le contrat de réussite avant les appels candidat
 La validation confirme que le dossier présenté représente le besoin de l’utilisateur. La qualification vérifie la consigne, les cas, la référence et les contrôles. L’approbation du responsable lie le contrat exact aux preuves de qualification. Ces actes ne se remplacent pas et n’accordent ni autorisation d’appel ou de dépense ni publication.
 
 ### Contrat de réussite
-Contrat préparé et approuvé avant les appels candidats, reliant le besoin aux critères vérifiables, aux cas, à l’évaluation et à la base de coût. Son contenu normatif est défini dans les [règles](docs/RULES.md#4-contrat-avant-exécution) et renseigné dans le [gabarit](tasks/TEMPLATE.md). La préparation assistée préalable exige son autorité et son budget propres.
+Contrat préparé et approuvé avant les appels candidats, reliant le besoin aux critères vérifiables, aux cas, à l’évaluation et à la base de coût. Son contenu normatif est défini dans les [règles](docs/RULES.md#4-contrat-avant-exécution) et renseigné dans le [gabarit](docs/task-template.md). La préparation assistée préalable exige son autorité et son budget propres.
 
 ### Résultat attendu
 Artefact ou état précis que la tâche doit produire pour servir le besoin déclaré.

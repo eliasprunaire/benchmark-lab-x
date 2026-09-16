@@ -3,8 +3,6 @@ from base64 import b64decode
 from copy import deepcopy
 from hashlib import sha256
 import json
-from pathlib import Path
-import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -50,29 +48,6 @@ class Projection(unittest.TestCase):
                           ('fictional_parameters',{'location':{'internal':'CANARY'}})]:
             bad=deepcopy(req);bad['payload'][key]=value
             with self.assertRaises(ValueError):out.preparation(bad)
-
-    def test_collector_without_manifest_never_discovers_markdown(self):
-        from tools import collect
-        with tempfile.TemporaryDirectory() as tmp:
-            p=Path(tmp);(p/'internal.md').write_text('CANARY')
-            with patch.object(Path,'glob',side_effect=AssertionError('discovery forbidden')):
-                with self.assertRaises(SystemExit):collect.assemble_prompt(p)
-
-
-    def test_explicit_manifest_excludes_internal_markdown(self):
-        from tools.protocole_v2 import assembler_prompt_verrouille
-        with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);task=root/'task';task.mkdir()
-            files={'task.md':('instructions','## Consignes visibles par le modèle\n> Travail utile\n\n## Interne\nCANARY_STATUS'),
-                   'input.md':('input','Données utiles\r\n'), 'internal.md':('control','CANARY_INTERNAL')}
-            entries=[]
-            for name,(role,content) in files.items():
-                raw=content.encode();(task/name).write_bytes(raw)
-                entries.append(dict(path=name,role=role,sha256=sha256(raw).hexdigest(),bytes=len(raw)))
-            expected='Travail utile\n\n--- FILE: input.md ---\nDonnées utiles\r\n'
-            prompt,inputs=assembler_prompt_verrouille(root,dict(task_dir='task',task_file='task.md',task_tree=entries,
-                                                    prompt_sha256=sha256(expected.encode()).hexdigest()))
-            self.assertEqual(expected,prompt);self.assertEqual(['input.md'],list(inputs));self.assertNotIn('CANARY',prompt)
 
 
 class PreparationHTTP(unittest.TestCase):

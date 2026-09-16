@@ -8,7 +8,7 @@ style_gate: pass
 
 Cet ARD fixe les objets, frontières, flux et contraintes de l'architecture retenue. Il prescrit ce que l'implémentation doit garantir, sans attester sa construction ou son déploiement. Les versions et états livrés se vérifient dans le code et les reçus, hors de ce document.
 
-Le [PRD](PRD.md) gouverne le besoin et le périmètre. Les [règles](RULES.md) portent les invariants. Le [glossaire](../CONTEXT.md) fixe le sens des termes. Le [gabarit de carte](../tasks/TEMPLATE.md) prépare le contrat d'une tâche.
+Le [PRD](PRD.md) gouverne le besoin et le périmètre. Les [règles](RULES.md) portent les invariants. Le [glossaire](../CONTEXT.md) fixe le sens des termes. Le [gabarit de carte](task-template.md) prépare le contrat d'une tâche.
 
 Le produit du monorepo partage une version ; les contrats de compatibilité et les versions de schéma suivent les [règles de versionnement](RULES.md#14-versionnement-du-produit).
 

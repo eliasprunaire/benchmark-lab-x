@@ -18,7 +18,7 @@ Lire les documents utiles avant de modifier leur domaine :
 - `docs/ARD.md` pour les objets, frontières et flux
 - `docs/RULES.md` pour les invariants de décision et de preuve, ainsi que le versionnement SemVer
 - `CONTEXT.md` pour le vocabulaire
-- `tasks/TEMPLATE.md` pour le contrat minimal d'une future tâche
+- `docs/task-template.md` pour le contrat minimal d'une future tâche
 
 Ces chemins sont uniques. Ne jamais créer de copie, variante datée ou dossier d'archives. Git porte l'historique. Une Issue, une PR, un ancien résultat ou une branche ne remplace pas la spécification courante.
 
@@ -47,7 +47,7 @@ GitHub Issues porte les tâches, dépendances, décisions et preuves. Le champ `
 
 Créer ou redécouper les Issues seulement après décision explicite d’Ayo. Vérifier le parent courant avant toute création ; ne pas rattacher une nouvelle livraison à une initiative historique par défaut. Ne pas redécouper les anciennes cartes pour fabriquer le nouveau backlog. Utiliser les relations natives `Parent issue` et `Sub-issues progress` pour Initiative, Epic et Story ; réserver « graphe » à l’exécution agentique. Le nombre d’Epics et de Stories découle des résultats décidés.
 
-Aucune Story de tâche, campagne ou candidat tant que son contenu, son panel et son budget ne sont pas décidés. Une Issue se ferme avec sa preuve de résultat ou une décision explicite de remplacement. Distinguer l’état ouvert ou fermé de l’Issue, le champ `Status` du Project et le progrès de ses sous-Issues. Aucun ne prouve l’état d’exécution d’une campagne. `tasks/TEMPLATE.md` décrit une tâche de benchmark, pas une Story de livraison.
+Aucune Story de tâche, campagne ou candidat tant que son contenu, son panel et son budget ne sont pas décidés. Une Issue se ferme avec sa preuve de résultat ou une décision explicite de remplacement. Distinguer l’état ouvert ou fermé de l’Issue, le champ `Status` du Project et le progrès de ses sous-Issues. Aucun ne prouve l’état d’exécution d’une campagne. `docs/task-template.md` décrit une tâche de benchmark, pas une Story de livraison.
 
 ## Validation
 

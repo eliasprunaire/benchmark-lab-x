@@ -94,7 +94,7 @@ La tâche annonce ce qu’elle mesure et le travail qui reste à l’utilisateur
 
 Les cas explicitent les difficultés qu’ils couvrent. La tâche annonce la portée de sa conclusion et la base de coût nécessaire à la décision : une réussite sur un exemple ne suffit pas à promettre une fiabilité générale. L’absence de règle d’agrégation limite la restitution aux verdicts par cas.
 
-Le [gabarit de carte](../tasks/TEMPLATE.md) matérialise ce contrat. La méthode de contrôle, les données et leur provenance rendent chaque obligation vérifiable.
+Le [gabarit de carte](task-template.md) matérialise ce contrat. La méthode de contrôle, les données et leur provenance rendent chaque obligation vérifiable.
 
 ## 7. Ordre de décision
 

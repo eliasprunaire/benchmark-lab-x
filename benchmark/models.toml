@@ -4,9 +4,6 @@
 # hors du dépôt source, dans l'archive runtime
 #
 # [catalogue].excluded_providers : slugs de fournisseurs, liste vide par défaut, inférés du préfixe du tag
-#
-# Les alias de campagne du collecteur historique restent dans models.toml à la
-# racine ; ce fichier ne porte aucun alias
 
 [catalogue]
 makers = ["openai", "anthropic", "google", "x-ai", "meta-llama", "mistralai", "deepseek", "qwen", "moonshotai", "z-ai", "minimax", "cohere", "ai21", "nvidia", "amazon", "microsoft"]
