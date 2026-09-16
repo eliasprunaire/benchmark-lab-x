@@ -207,7 +207,7 @@ def _manifest(
                 "only": ["atlas-cloud", "deepinfra"],
                 "allow_fallbacks": True,
                 "require_parameters": True,
-                "data_collection": "allow",
+                "data_collection": "deny",
             },
             "usage": {"include": True},
         },

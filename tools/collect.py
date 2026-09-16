@@ -979,7 +979,7 @@ def main() -> None:
             "only": [args.provider],
             "allow_fallbacks": False,
             "require_parameters": True,
-            "data_collection": "allow" if args.regime == "expose" else "deny",
+            "data_collection": "deny",
         },
         "usage": {"include": True},
     }

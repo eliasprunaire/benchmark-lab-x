@@ -82,6 +82,8 @@ Ces règles préservent les contrats historiques et n'autorisent aucune exécuti
 
 **Pas de fallback silencieux dans les preuves.** Un secours préautorisé peut rester sans interaction dans le parcours utilisateur, mais son changement de fournisseur, route ou paramètres crée une configuration et un reçu distincts visibles dans le résultat. Les valeurs demandées et observées de fournisseur, modèle, route et effort sont relevées par candidat. Une valeur non prouvée reste `INCONNU`. Un changement de Pi, paquet, outil, skill, contexte ou environnement modifie les conditions communes.
 
+**Politique de données exigée.** Tout appel candidat émis par le produit demande explicitement le refus de collecte au fournisseur, et le reçu conserve la valeur demandée avec l'identité servie. Une route qui n'accepte pas ce refus est hors du périmètre mesurable ; une politique inconnue n'est jamais présumée conforme. Les campagnes antérieures à cette règle gardent leur régime et leurs reçus, sans requalification.
+
 ## 6. Erreurs et verdict
 
 **Erreurs éliminatoires d'abord.** Une erreur éliminatoire établie interdit `SATISFAIT`, quel que soit le coût.

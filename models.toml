@@ -15,7 +15,7 @@
 # Ajouter une configuration future : vérifier ses routes
 #   curl -s https://openrouter.ai/api/v1/models/<id>/endpoints
 # puis épingler celles qui acceptent `data_collection: deny`, imposé à chaque
-# appel candidat au titre de R-005
+# appel candidat par la règle « Politique de données exigée » de docs/RULES.md
 
 [catalogue]
 makers = ["openai", "anthropic", "google", "x-ai", "meta-llama", "mistralai", "deepseek", "qwen", "moonshotai", "z-ai", "minimax", "cohere", "ai21", "nvidia", "amazon", "microsoft"]
@@ -439,9 +439,9 @@ nom_public = "MiniMax M3"
 provider = "minimax"
 omit_params = ["seed"]
 
-# Route de premier rang DeepSeek, refusée sous le régime `retenu` : elle
-# s'entraîne sur les données des requêtes. Accessible sous `--regime expose`,
-# le seul régime des cartes déjà publiques (R-005 scindée le 2026-08-05)
+# Route de premier rang DeepSeek : elle s'entraîne sur les données des requêtes.
+# Les campagnes d'août l'ont mesurée sous le régime exposé, alors autorisé ; le
+# refus de collecte étant désormais exigé, elle reste hors du périmètre mesurable
 [deepseek-v4-pro]
 model = "deepseek/deepseek-v4-pro"
 nom_public = "DeepSeek V4 Pro"
