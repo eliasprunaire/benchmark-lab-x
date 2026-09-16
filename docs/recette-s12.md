@@ -4,15 +4,15 @@ style_gate: pass
 
 # Recette du parcours S12
 
-État : **HOLD_VALIDATION_UX**. Le scénario HTTP complet passe sur données contrôlées, avec l’injection explicite d’un contrat S3 factice autorisée par Ayo dans cette session. La rupture du parcours réel entre qualification automatique et contrat S3 approuvé reste bloquante ; la recette la reproduit avant l’injection. La validation UX appartient à Ayo et ne vaut pas étude de représentativité.
+État : **HOLD_VALIDATION_UX**. Le scénario HTTP complet passe sur données contrôlées, avec une intervention du dispositif de recette, en attente de décision d’Ayo. La rupture du parcours réel entre qualification automatique et contrat S3 approuvé reste bloquante ; la recette la reproduit avant cette intervention. La validation UX appartient à Ayo et ne vaut pas étude de représentativité.
 
-Base : `main` à jour au départ, `8099cbdf7356f87cd5c775c21432d07afe86e8f3`, branche `fix/s12-recette-ux`. L’[acceptation de S11](https://github.com/eliasprunaire/benchmark-lab-x/issues/214#issuecomment-5689010138) est conservée sur cette révision. Le contrat vient de [S12 #215](https://github.com/eliasprunaire/benchmark-lab-x/issues/215) et de la demande de recette ; les directives communes, D13 bis à D16 et la correction des bornes du plafond ont été relues dans [S22 #247](https://github.com/eliasprunaire/benchmark-lab-x/issues/247).
+Base : `main` à jour au départ, `bcd9231158e636ea527e49fbb839e443e816d01b`, branche `fix/s12-corrections-recette`. Le contrat vient de [S12 #215](https://github.com/eliasprunaire/benchmark-lab-x/issues/215) et de la demande de recette ; les directives communes, D13 bis à D16 et la correction des bornes du plafond ont été relues dans [S22 #247](https://github.com/eliasprunaire/benchmark-lab-x/issues/247).
 
 ## Nature de la preuve
 
 L’inspection experte porte sur le HTML reçu en jouant les actions du scénario et sur le code qui explique les refus. Les ambiguïtés ci-dessous sont des constats de lecture de cette inspection. Aucun participant, entretien, temps d’hésitation ou comportement humain n’a été observé. Aucun test avec une personne réelle n’a été effectué.
 
-Le [scénario rejouable](../tests/test_parcours_complet.py) démarre le serveur HTTP du produit sur `127.0.0.1`, avec un port attribué par le système. Le web communique par socket Unix avec un exécuteur factice qui appelle réellement `benchmark.preparation.dispatch`. Celui-ci conserve les travaux dans une file de test ; le scénario les exécute entre deux consultations pour rendre l’attente déterministe. Les vues, validations, sessions, reçus et gardes du moteur utilisent une base temporaire neuve sous `~/Projects`, hors des sources du dépôt. Elle est nettoyée à la fin du test.
+Le [scénario rejouable](../tests/test_parcours_complet.py) démarre le serveur HTTP du produit sur `127.0.0.1`, avec un port attribué par le système. Le web communique par socket Unix avec un exécuteur factice qui appelle réellement `benchmark.preparation.dispatch`. Celui-ci conserve les travaux dans une file de test ; le scénario les exécute entre deux consultations pour rendre l’attente déterministe. Les vues, validations, sessions, reçus et gardes du moteur utilisent une base temporaire neuve créée dans le répertoire temporaire du système. Elle est nettoyée à la fin du test.
 
 Les réponses de préparation, qualification, accès OpenRouter, candidats et jugement sont contrôlées. Le catalogue et l’horloge de préparation sont figés. Le garde de connexion autorise seulement le port HTTP attribué et la socket Unix de cette instance ; toute autre destination et tout `connect_ex` lèvent `AssertionError('No network')`. La redirection OpenRouter est inspectée sans être suivie ; seul le retour local reçoit un code factice. Aucune clé réelle, aucun appel fournisseur, aucune dépense ni donnée historique n’est utilisé.
 
@@ -31,7 +31,7 @@ Dans les routes ci-dessous, `{d}`, `{c}` et `{t}` désignent le dossier, la camp
 | `POST …/{d}/messages` | Précision, exemple avec consigne et pièce intégrée, correction demandant un tableau avec responsable |
 | `…/{d}/revisions/3` puis `…/{d}` | Ancienne révision en lecture seule ; retour explicite à la révision courante ; livrable antérieur conservé |
 | `POST …/{d}/validation` puis `…/{d}` | Validation enregistrée, qualification en attente puis réussie ; résumé consultable |
-| `GET` et `POST …/{d}/configurations` | Deux modèles et un palier choisis ; premier enregistrement refusé sans contrat S3, puis accepté après injection factice explicite |
+| `GET` et `POST …/{d}/configurations` | Deux modèles et un palier choisis ; premier enregistrement refusé sans contrat S3, puis accepté après intervention contrôlée du dispositif de recette |
 | `…/campaigns/{c}/conditions` | Sélection enregistrée, accès requis ; lien vers la connexion |
 | `/preparation/access`, `/start`, `/callback` | Autorisation et crédit simulés ; retour à la liste, au dossier, puis au récapitulatif |
 | `…/campaigns/{c}/conditions` | Travail, configurations, estimation et plafond relus ; lancement indisponible si le transport candidat manque, sans faux accusé d’enregistrement |
@@ -65,7 +65,7 @@ Le scénario principal conserve trois réponses de préparation, une qualificati
 
 ## Limites et décisions ouvertes
 
-- **Parcours réel bloqué à S3** : `POST …/{d}/configurations` exige un contrat approuvé que la qualification automatique ne construit pas. L’injection factice est autorisée pour S12 seulement. Le refus générique et l’intervention requise restent à résoudre dans le produit sous contrat distinct.
+- **Parcours réel bloqué à S3** : `POST …/{d}/configurations` exige un contrat approuvé que la qualification automatique ne construit pas. L’intervention du dispositif de recette reste en attente de décision d’Ayo. La rupture S17 → S3 est traitée par une story distincte, S29, sans préjuger de son contrat.
 - **Retour OpenRouter indirect** : après connexion depuis `/preparation/access`, le scénario revient à la liste puis au dossier avant le récapitulatif. Aucune perte de données constatée ; la conservation directe du contexte de campagne reste à décider.
 - **Jugement contrôlé** : les résultats sont obtenus par un contrôleur factice injecté via les primitives S5, sans participant ni jugement réel. Le test démontre leur restitution, pas la justesse métier d’une épreuve ni le fonctionnement réel des modèles.
 - **Clavier et petit écran** : ordre lu dans le HTML, lien d’évitement, absence de tabulation positive, correction repliée, région de tableau focalisable, ancres de retour et règles CSS vérifiés. Aucun événement clavier physique, ouverture interactive de dépliant ou mesure de mise en page dans un navigateur n’est revendiqué pour S12. Le script de focus existant reste inchangé ; sa présence ne prouve pas son exécution.
@@ -74,12 +74,12 @@ Le scénario principal conserve trois réponses de préparation, une qualificati
 ## Rejeu et validations
 
 ```sh
-uv run python -m unittest tests.test_parcours_complet
+uv run --with requests --with mpmath==1.3.0 python -m unittest tests.test_parcours_complet
 ```
 
-Résultat final ciblé : `Ran 3 tests in 1.108s`, `OK`. `test_parcours_complet` couvre la chaîne entière avec le contrat S3 injecté, en conservant la preuve de la rupture préalable.
+Résultat final ciblé : `Ran 3 tests in 1.317s`, `OK`. `test_parcours_complet` couvre la chaîne entière avec l’intervention du dispositif de recette, en conservant la preuve de la rupture S17 → S3 préalable.
 
-Les tests de recette et les suites web existantes ont passé ensemble : `Ran 35 tests in 7.896s`, `OK`. Le contrôle S10 de région accessible suit désormais le libellé « Observations du cas 1 » ; sa focalisation et ses autres exigences sont conservées.
+Les tests de recette et les suites web demandées ont passé ensemble : `Ran 48 tests in 22.045s`, `OK`. Le contrôle S10 de région accessible suit le libellé « Observations du cas 1 » ; sa focalisation et ses autres exigences sont conservées.
 
 Validation complète obligatoire, sous macOS avec Python 3.12.13 :
 
@@ -90,7 +90,7 @@ uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests
 Résultat exact après la dernière correction :
 
 ```text
-Ran 1208 tests in 149.892s
+Ran 1216 tests in 157.533s
 
 OK
 ```

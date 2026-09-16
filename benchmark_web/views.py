@@ -3,6 +3,7 @@
 Ce module ne touche ni au stockage, ni aux secrets, ni aux fournisseurs : il met en
 forme les vues structurées renvoyées par l'exécuteur.
 """
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 import re
@@ -20,6 +21,9 @@ TEMPLATE_PATH = Path(__file__).with_name('templates') / 'preparation.html'
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'preparation.css'
 FONTS_PATH = Path(__file__).with_name('static') / 'fonts'
 SOURCE_SHA = ''
+
+MOIS = ('janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+        'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre')
 
 VERDICT_BADGES = {'SATISFAIT': ('b-ok', 'i-check', 'Satisfait'), 'NE SATISFAIT PAS': ('b-ko', 'i-cross', 'Ne satisfait pas'),
                   None: ('b-ind', 'i-help', 'À reprendre')}
@@ -42,6 +46,14 @@ def state_block(tone, eyebrow, heading, body, actions=''):
             '<p class="eyebrow">' + escape(eyebrow, quote=True) + '</p><h2>' + escape(heading, quote=True) + '</h2>'
             + body + (('<div class="actions">' + actions + '</div>') if actions else '') + '</div>')
 
+
+def date_lisible_utc(value):
+    try:
+        moment = datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc)
+    except (AttributeError, TypeError, ValueError):
+        return str(value)
+    return f'{moment.day} {MOIS[moment.month - 1]} {moment.year} à {moment:%H:%M} UTC'
+
 COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
   const link = event.target.closest('tr[id] a[href]');
   if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -62,7 +74,11 @@ def readable_fields(value):
               'temperature': 'Température', 'source': 'Source', 'unit': 'Unité', 'value': 'Valeur',
               'measure': 'Mesure', 'proof': 'Preuve', 'favorable': 'Sens favorable', 'aggregation': 'Agrégation',
               'scope': 'Périmètre', 'attempts': 'Tentatives', 'conversion': 'Conversion', 'frozen_at': 'Date de gel',
-              'environment': 'Environnement', 'package': 'Paquet', 'version': 'Version', 'status': 'État'}
+              'environment': 'Environnement', 'package': 'Paquet', 'version': 'Version', 'status': 'État',
+              'criteria': 'Critères', 'obligations': 'Obligations',
+              'eliminatory_errors': 'Erreurs éliminatoires', 'result_expected': 'Résultat attendu',
+              'panel': 'Modèles comparés', 'limits': 'Limites', 'pi': 'Harnais Pi',
+              'conditions': 'Conditions'}
     if isinstance(value, dict):
         return ('<dl class="evidence-fields">' + ''.join(
             '<dt>' + escape(labels.get(key, key.replace('_', ' ')), quote=True) + '</dt><dd>' + readable_fields(item) + '</dd>'
@@ -235,7 +251,8 @@ def render_comparison(value):
     content += '<p>Ordre actuel : ' + text(sort_label)
     content += (', ' + ('décroissant' if query.get('direction') == 'desc' else 'croissant') if 'sort' in query else '') + '.</p>'
     options = {
-        'case': ('Cas', [(v['id'], v['id']) for v in value['cases']]),
+        'case': ('Cas', [(v['id'], 'Cas ' + str(number))
+                         for number, v in enumerate(value['cases'], 1)]),
         'sort': ('Critère de tri', [(v['id'], 'Coût observé' if 'criterion_id' not in v else v['definition']['measure']) for v in value['columns']]),
         'direction': ('Ordre d’affichage', [('asc', 'Croissant'), ('desc', 'Décroissant')]),
         'verdict': ('Décision ou travail restant', [('SATISFAIT', 'SATISFAIT'), ('NE SATISFAIT PAS', 'NE SATISFAIT PAS'), ('A_REPRENDRE', 'À reprendre')]),
@@ -414,7 +431,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         if not value.get('catalogue_available', True):
             content += '<p>' + text(value['detail']) + '</p>'
         else:
-            content += '<p>Relevé des modèles du ' + text(value['fetched_at']) + '.</p>'
+            content += '<p>Relevé des modèles du ' + text(date_lisible_utc(value['fetched_at'])) + '.</p>'
             choices = ''
             for model in value['models']:
                 checked = ' checked' if model['selected'] else ''
@@ -433,15 +450,18 @@ def render(value, csrf, path='/preparation', *, error=False):
                         choices + '</fieldset><fieldset><legend>Palier</legend>' + tiers +
                         '</fieldset><button' + (' class="sec"' if value['configurations'] else '') + ' type="submit">Enregistrer les configurations</button></form>')
         if value['configurations']:
-            items = []
+            model_names = {model['id']: model['name'] for model in value['models']}
+            summary = '<ul>'
             for configuration in value['configurations']:
                 amount = configuration['estimate']['amount_usd']
-                detail = configuration['model'] + ' · estimation ' + (
+                technical = configuration['model']
+                detail = ' · estimation ' + (
                     'non calculable' if amount is None else amount + ' USD')
                 if configuration.get('effort_limit') == 'not_adjustable':
                     detail += ' · palier de raisonnement non réglable'
-                items.append(detail)
-            summary = listing(items)
+                summary += '<li><span title="Identifiant technique : ' + text(technical) + '">' + text(
+                    model_names.get(technical, technical)) + '</span>' + text(detail) + '</li>'
+            summary += '</ul>'
             summary += '<p>Estimation totale : ' + text(
                 'non calculable' if value['estimate_total_usd'] is None else
                 value['estimate_total_usd'] + ' USD') + '.</p>'
@@ -703,7 +723,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         if historical:
             actions = f'<a class="button" href="{text(url)}">Revenir à la révision courante</a>'
         content += state_block(tone, 'Où j’en suis', heading, '<p>' + text(value['explanation']) + '</p><p class="hint">' + next_step + '</p>', actions)
-        content += f'<p class="hint"><a href="{text(path)}">Actualiser cet état</a> · <a href="{text(url)}">Révision courante</a>'
+        refresh = '' if 'Actualiser cet état' in actions else f'<a href="{text(path)}">Actualiser cet état</a> · '
+        content += f'<p class="hint">{refresh}<a href="{text(url)}">Révision courante</a>'
         if revision > 1:
             content += f' · <a href="{text(url)}/revisions/{revision - 1}">Révision précédente</a>'
         content += '</p>'
@@ -802,8 +823,10 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '</section>'
         if current_campaigns:
             content += '<section id="comparaison"><h2>Comparaison</h2>'
-            for campaign in current_campaigns:
-                content += '<p><a class="button" href="' + text(url + '/campaigns/' + campaign['campaign_id'] + '/conditions') + '">Examiner les conditions et suivre la comparaison</a></p>'
+            current_campaign = current_campaigns[-1]
+            content += '<p><a class="button" href="' + text(url + '/campaigns/' + current_campaign['campaign_id'] + '/conditions') + '">Examiner les conditions et suivre la comparaison courante</a></p>'
+            for number, campaign in enumerate(reversed(current_campaigns[:-1]), 1):
+                content += '<p><a class="button sec" href="' + text(url + '/campaigns/' + campaign['campaign_id'] + '/conditions') + '">Consulter la comparaison précédente ' + str(number) + '</a></p>'
             content += '</section>'
         if editable and value['package'] is not None:
             content += '<details class="corr"><summary class="button sec">' + icon('i-pen') + 'Préciser ou corriger cet exemple</summary><div>' + form(url + '/messages',

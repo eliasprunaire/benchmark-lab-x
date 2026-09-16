@@ -201,6 +201,18 @@ class ComparisonPageTests(unittest.TestCase):
         self.assertIn('Le verdict ne fait pas de moyenne', page)
         self.assertNotIn('SHA-256', page)
 
+    def test_libelles_du_filtre_correspondent_aux_titres_des_cas(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data = Path(temporary).resolve() / 'private'
+            with patch('socket.socket.connect', side_effect=AssertionError('No network')):
+                store, sid, _, _, _ = build(data)
+            with closing(store):
+                page = views.render(r.comparison(store, sid, 'fixture', 'comparison'), '').decode()
+        options = dict(re.findall(r'<option value="([^"]+)"(?: selected)?>(Cas [0-9]+)</option>', page))
+        titles = set(re.findall(r'<h2>(Cas [0-9]+)</h2>', page))
+        self.assertEqual({'notes': 'Cas 1', 'distinct': 'Cas 2'}, options)
+        self.assertEqual(set(options.values()), titles)
+
 
 if __name__ == '__main__':
     unittest.main()
