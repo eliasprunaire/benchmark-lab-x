@@ -13,6 +13,7 @@ import unicodedata
 from .storage import (Store, SchemaError, IntegrityError, ConflictError, BudgetError,
                       _transaction, _strict_json as encode, _fields, _text,
                       _identity, _money, _sum_money, _unique_object, _payload_json)
+from .validation import identifier
 
 
 REQUEST_MIN = 40
@@ -122,12 +123,6 @@ def _submission_limits(connection, session_id, create, now, authority):
     if (_daily_preparation_reserved(connection, now) + _money(authority['reserve_amount'])
             > PREPARATION_DAILY_CAP_USD):
         raise Denied('DAILY_CAP')
-
-
-def identifier(value):
-    if type(value) is not str or re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) is None:
-        raise ValueError('Identifiant invalide')
-    return value
 
 
 def connection_for(store):

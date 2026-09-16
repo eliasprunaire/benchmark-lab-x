@@ -300,7 +300,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
             self.do_GET()
 
         def do_GET(self):
-            from benchmark import restitution
+            from benchmark import publications
             if self.path == '/preparation' or self.path.startswith('/preparation/'):
                 self.preparation()
                 return
@@ -326,7 +326,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     return
                 identity, name = match.groups()
                 try:
-                    raw = restitution.public_bytes(public, identity, name)
+                    raw = publications.public_bytes(public, identity, name)
                     media = {'.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
                              '.txt': 'text/plain; charset=utf-8'}[Path(name).suffix]
                     self.respond(200, raw, media, {'X-Benchmark-Publication': 'APPROVED_FICTIONAL_S6',
@@ -354,8 +354,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                 if sha256(manifest_bytes).hexdigest() != publication:
                     raise ValueError('Manifeste public altéré')
                 manifest = json.loads(manifest_bytes)
-                if manifest.get('schema_version') == restitution.SCHEMA:
-                    restitution.public_bytes(public, publication, name)
+                if manifest.get('schema_version') == publications.SCHEMA:
+                    publications.public_bytes(public, publication, name)
                     self.respond(303, b'', 'text/plain; charset=utf-8',
                                  {'Location': '/publications/' + publication + '/' + name})
                     return

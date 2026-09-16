@@ -158,7 +158,7 @@ class TransportBoundary(unittest.TestCase):
     def test_changed_transport_engine_identity_blocks_before_transport(self):
         from tests.test_s4_regressions import S4Regressions
         f=S4Regressions();f.setUp();self.addCleanup(f.doCleanups)
-        for name in ('pi_openrouter.py','pi_bridge.mjs','openrouter_preparation.py','outgoing.py','recovery.py','web_api.py'):
+        for name in ('pi_openrouter.py','pi_bridge.mjs','openrouter_preparation.py','outgoing.py','recovery.py','web_api.py','validation.py'):
             self.assertIn(name, c._engine())
         f.admit(); f.reserve()
         spy=Spy()
