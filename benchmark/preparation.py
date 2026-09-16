@@ -1124,6 +1124,8 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         owner(connection, session_id, dossier_id)
         if not campaigns.connection_for(store).execute(
                 'SELECT 1 FROM s4_campaigns WHERE campaign_id=?', (campaign_id,)).fetchone():
+            if campaign_id.startswith(dossier_id + '-c'):
+                raise Denied('STEP_INCOMPLETE', step='configurations')
             raise Denied('Ressource inaccessible')
         snapshot = campaigns.inspect(store, campaign_id)
         if snapshot['task']['dossier_id'] != dossier_id:
