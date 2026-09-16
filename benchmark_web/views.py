@@ -736,7 +736,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         actions = f'<a class="button" href="{text(path)}">Actualiser cet état</a>' if (value['stage'] == 'waiting' or value['validation'] and automatic and not value.get('qualified')) else ''
         if historical:
             actions = f'<a class="button" href="{text(url)}">Revenir à la révision courante</a>'
-        content += state_block(tone, 'Où j’en suis', heading, '<p>' + text(value['explanation']) + '</p><p class="hint">' + next_step + '</p>', actions)
+        content += state_block(tone, 'Où j’en suis', heading, '<p>' + text(value['explanation']) + '</p><p class="hint">' + text(next_step) + '</p>', actions)
         refresh = '' if 'Actualiser cet état' in actions else f'<a href="{text(path)}">Actualiser cet état</a> · '
         content += f'<p class="hint">{refresh}<a href="{text(url)}">Révision courante</a>'
         if revision > 1:
@@ -952,7 +952,8 @@ def render(value, csrf, path='/preparation', *, error=False):
             'interrupted': 'Appels fermés : préparation interrompue ou suspendue. Une intervention du responsable est nécessaire ; aucun rejeu automatique.',
             'restore': 'Appels fermés : restauration à vérifier par le responsable.',
             'unresolved': 'Appels fermés : effets ou coûts non résolus dans l’enveloppe de préparation.',
-            'budget': 'Appels fermés : enveloppe insuffisante pour un nouvel échange.'}
+            'budget': 'Appels fermés : enveloppe insuffisante pour un nouvel échange.',
+            'daily_cap': 'Appels fermés : plafond quotidien de préparation atteint.'}
         status = '<aside id="availability" class="availability" aria-label="État de la préparation"><p><strong>Assistant '
         status += 'configuré' if state['assistant_configured'] else 'non configuré'
         status += '.</strong> Admission ' + ('ouverte' if state['admission_open'] else 'fermée') + '.</p><p>'

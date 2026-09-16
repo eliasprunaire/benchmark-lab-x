@@ -1,5 +1,6 @@
 """Habillage du parcours privé : gabarit commun, bloc d'état, badges, polices locales, aucune empreinte affichée"""
 from contextlib import closing
+import inspect
 from pathlib import Path
 import re
 import tempfile
@@ -38,6 +39,18 @@ class TemplateTests(unittest.TestCase):
         self.assertRegex(css, r'body\s*\{[^}]*overflow-wrap:\s*break-word;')
         self.assertNotRegex(css, r'body\s*\{[^}]*overflow-wrap:\s*anywhere;')
         self.assertIn(':focus-visible { outline: 3px solid var(--focus)', css)
+
+    def test_chaque_motif_de_disponibilite_a_son_libelle(self):
+        motifs = set(re.findall(r"reason = '(\w+)'", inspect.getsource(prep.availability)))
+        self.assertIn('daily_cap', motifs)
+        for motif in motifs:
+            page = views.render({'dossiers': [], 'availability': dict(
+                AVAILABILITY, can_submit=motif == 'open', reason=motif)}, 'csrf').decode()
+            aside = re.search(r'<aside id="availability".*?</aside>', page, re.S).group()
+            self.assertRegex(aside, r'<p>[^<]{20,}</p>', motif)
+        cap = views.render({'dossiers': [], 'availability': dict(
+            AVAILABILITY, can_submit=False, reason='daily_cap')}, 'csrf').decode()
+        self.assertIn('plafond quotidien de préparation', cap)
 
     def test_contrastes_des_deux_themes(self):
         css = views.STYLESHEET_PATH.read_text()
@@ -161,6 +174,24 @@ class DossierPageTests(unittest.TestCase):
         self.assertNotIn('<h3>Qualité</h3>', legacy)
         self.assertIn(rule, legacy)
         self.assertIn('<h1>Est-ce le travail que vous voulez tester ?</h1>', legacy)
+
+    def test_resume_de_qualification_bloquee_reste_du_texte(self):
+        summary = '<img src=x onerror="alert(1)">Correction requise'
+        page = views.render({
+            'dossier_id': 'd1', 'revision': 1, 'stage': 'preview', 'package': None,
+            'validation': {'validated_at': '2026-09-16T08:00:00Z'}, 'qualified': False,
+            'qualification': {'operation_id': 'op', 'status': 'BLOCKED', 'summary': summary,
+                              'findings': [], 'qualification_status': 'BLOCKED',
+                              'approval_status': 'PENDING'},
+            'explanation': 'Contrôle automatique de l’exemple',
+            'payload': {'request': 'Trier des notes inventées', 'clarifications': [],
+                        'validated_assumptions': [], 'reformulation': '',
+                        'fictional_parameters': {}},
+            'availability': AVAILABILITY}, 'csrf').decode()
+        self.assertIn('Qualification à reprendre', page)
+        self.assertNotIn('<img src=x', page)
+        self.assertEqual(2, page.count(
+            '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;Correction requise'))
 
     def test_state_block_steps_and_hidden_correction_without_digests(self):
         with tempfile.TemporaryDirectory() as temporary:
