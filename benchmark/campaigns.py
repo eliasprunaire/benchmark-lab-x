@@ -442,14 +442,17 @@ def configurations_view(store, session_id, dossier_id):
     connection = connection_for(store)
     with _transaction(connection):
         owner(connection, session_id, dossier_id)
-        catalogue = model_catalogue.selection(store)
-        tier_table = model_catalogue.tiers()
+        try:
+            catalogue = model_catalogue.selection(store)
+        except LookupError:
+            catalogue = None
+        tier_table = model_catalogue.tiers() if catalogue is not None else {}
         prepared = [snapshot for snapshot in _requester_campaigns(store, connection, dossier_id)
                     if not snapshot['admissions'] and not snapshot['attempts']]
         selected = set() if not prepared else {
             item['model'] for item in prepared[-1]['manifest']['panel']}
         models = []
-        for model in catalogue['models']:
+        for model in [] if catalogue is None else catalogue['models']:
             if model['excluded'] is not None or model['route'] is None:
                 continue
             levels = [level for level in model['reasoning_levels']
@@ -464,7 +467,10 @@ def configurations_view(store, session_id, dossier_id):
                               'available_tiers': ['standard', 'enhanced'], 'cap_usd': str(DEFAULT_CAP_USD),
                               'cap_source': 'default', 'estimate_total_usd': None,
                               'estimate_under_cap': False, 'assumptions': None,
-                              'fetched_at': catalogue['fetched_at']})
+                              'fetched_at': None if catalogue is None else catalogue['fetched_at'],
+                              'catalogue_available': catalogue is not None,
+                              'detail': ('Relevé de modèles indisponible'
+                                         if catalogue is None else None)})
         current = prepared[-1]
         estimates = [config['estimate']['amount_usd'] for config in current['manifest']['panel']]
         total = None if any(value is None for value in estimates) else str(_sum_money(_money(value) for value in estimates))
@@ -480,7 +486,9 @@ def configurations_view(store, session_id, dossier_id):
             'available_tiers': ['standard', 'enhanced'], 'cap_usd': current['cap_usd'],
             'cap_source': current['cap_source'], 'estimate_total_usd': total,
             'estimate_under_cap': total is not None and _money(total) <= _money(current['cap_usd']),
-            'assumptions': first['assumptions'], 'fetched_at': first['fetched_at']})
+            'assumptions': first['assumptions'], 'fetched_at': first['fetched_at'],
+            'catalogue_available': catalogue is not None,
+            'detail': 'Relevé de modèles indisponible' if catalogue is None else None})
 
 
 def _create(store, connection, value):
@@ -1004,7 +1012,8 @@ def _requester_checks(store, connection, snapshot, session_id, access):
          'detail': access_detail},
         {'key': 'estimate_under_cap', 'ok': total is not None and total <= cap,
          'detail': ('Estimation totale : non calculable' if total is None else
-                    f'Estimation totale : {total} USD pour un plafond de {cap} USD')},
+                    'Estimation totale : ' + format(total, '.2f').replace('.', ',') +
+                    ' USD pour un plafond de ' + format(cap, '.2f').replace('.', ',') + ' USD')},
     ]
 
 
@@ -1350,8 +1359,7 @@ def execute(data, attempt_id, transport=None, *, transport_factory=None,
                 if incomplete:
                     connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
                                        ('ACQUISITION_EVIDENCE_INCOMPLETE', _now(), snapshot['manifest']['campaign_id']))
-                elif (snapshot['manifest'].get('funding') == 'requester'
-                      and receipt['result']['incident'] is None):
+                elif snapshot['manifest'].get('funding') == 'requester':
                     operation_ids = {row[0] for row in connection.execute(
                         'SELECT operation_id FROM s4_attempts WHERE campaign_id=?',
                         (snapshot['manifest']['campaign_id'],))}

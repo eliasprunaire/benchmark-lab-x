@@ -181,6 +181,20 @@ class ConfigurationsTests(unittest.TestCase):
         self.assertEqual(200, get_code)
         self.assertEqual(created, current)
 
+    def test_vue_sans_releve_de_modeles(self):
+        self.store._connection.execute('DELETE FROM s2_model_catalogue')
+        token = 'token'
+        with patch('socket.socket.connect', side_effect=AssertionError('No network')), \
+                patch.object(preparation, 'session',
+                             return_value=(self.session, 'csrf', token)):
+            code, view, _, _ = preparation.dispatch(
+                self.store, 'GET', '/preparation/dossiers/fixture/configurations',
+                token, None, 'a' * 40, True, candidate_identity=self.identity)
+        self.assertEqual(200, code)
+        self.assertFalse(view['catalogue_available'])
+        self.assertEqual([], view['models'])
+        self.assertEqual('Relevé de modèles indisponible', view['detail'])
+
     def test_ignore_campagne_operateur_et_numerote_les_selections_du_demandeur(self):
         campaigns.create(self.store, manifest(self.candidate, 'campagne-operateur'))
         self.assertEqual([], campaigns.configurations_view(

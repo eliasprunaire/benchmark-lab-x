@@ -179,6 +179,15 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('Plafond : 50.00 USD', page)
         self.assertIn('/campaigns/d1-c1/conditions', page)
 
+    def test_page_configurations_sans_releve(self):
+        page = views.render({
+            'kind': 'configurations', 'dossier_id': 'd1',
+            'catalogue_available': False, 'models': [],
+            'detail': 'Relevé de modèles indisponible', 'configurations': [],
+        }, 'csrf').decode()
+        self.assertIn('Relevé de modèles indisponible', page)
+        self.assertNotIn('<form', page)
+
     def test_recapitulatif_demandeur_passant_et_bloquant(self):
         base = self.campaign({'status': 'connected', 'limit_remaining_usd': '12.50'})
         base.update(

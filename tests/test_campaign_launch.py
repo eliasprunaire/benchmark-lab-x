@@ -234,6 +234,8 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.assertTrue(summary['launchable'])
         self.assertEqual({'limit_remaining_usd': '18.5', 'limit_usd': '20'},
                          summary['checks'][3]['detail'])
+        self.assertEqual('Estimation totale : 0,00 USD pour un plafond de 50,00 USD',
+                         summary['checks'][4]['detail'])
         for invalid in ('0.09', '100.01', '1.001', '1e1', 1):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(
                     ValueError, 'Plafond hors bornes : 0,10 à 100 USD'):
@@ -326,18 +328,70 @@ class RequesterCampaignLaunch(unittest.TestCase):
                       'tentative-historique-refusee')
 
     def test_ordre_des_etapes(self):
-        connection = self.store._connection_checked()
-        with self.assertRaises(p.Denied) as missing_validation:
-            p.require_requester_steps(
-                self.store, connection, 'session-etrangere', 'fixture', 1)
-        self.assertEqual(('STEP_INCOMPLETE', 'example_validated'),
-                         (missing_validation.exception.code, missing_validation.exception.step))
-        with patch.object(p, 'require_qualification', side_effect=p.Denied('NOT_QUALIFIED')), \
-                self.assertRaises(p.Denied) as missing_qualification:
-            p.require_requester_steps(self.store, connection, self.sid, 'fixture', self.revision)
-        self.assertEqual(('STEP_INCOMPLETE', 'example_qualified'),
-                         (missing_qualification.exception.code,
-                          missing_qualification.exception.step))
+        with tempfile.TemporaryDirectory(prefix='requester-step-') as directory:
+            data = Path(directory).resolve() / 'private'
+            session_id, _, _ = fixture(data)
+            q.initialize(data)
+            c.initialize(data)
+            with closing(storage.Store(data)) as store:
+                token = 'token'
+                configurations_path = '/preparation/dossiers/fixture/configurations'
+                with patch.object(p, 'session',
+                                  return_value=(session_id, 'csrf', token)), \
+                        patch.object(p, 'require_qualification',
+                                     side_effect=p.Denied('NOT_QUALIFIED')), \
+                        self.assertRaises(p.Denied) as missing_qualification:
+                    p.dispatch(store, 'GET', configurations_path, token, None,
+                               'a' * 40, True, candidate_identity={})
+                self.assertEqual(
+                    ('STEP_INCOMPLETE', 'example_qualified'),
+                    (missing_qualification.exception.code,
+                     missing_qualification.exception.step))
+
+                store._connection.execute('DELETE FROM s2_validations')
+                with patch.object(p, 'session',
+                                  return_value=(session_id, 'csrf', token)), \
+                        self.assertRaises(p.Denied) as missing_validation:
+                    p.dispatch(store, 'GET', configurations_path, token, None,
+                               'a' * 40, True, candidate_identity={})
+                self.assertEqual(
+                    ('STEP_INCOMPLETE', 'example_validated'),
+                    (missing_validation.exception.code,
+                     missing_validation.exception.step))
+
+                routes = (
+                    ('GET', 'conditions', None),
+                    ('POST', 'cap', {'csrf_token': 'csrf', 'cap_usd': '10'}),
+                    ('POST', 'start', {'csrf_token': 'csrf', 'confirm': 'yes'}),
+                )
+                for method, action, body in routes:
+                    path = ('/preparation/dossiers/fixture/campaigns/'
+                            'fixture-c1/' + action)
+                    with self.subTest(action=action), \
+                            patch.object(p, 'session',
+                                         return_value=(session_id, 'csrf', token)), \
+                            self.assertRaises(p.Denied) as missing_configurations:
+                        p.dispatch(store, method, path, token, body, 'a' * 40, True,
+                                   candidate_transport=response)
+                    self.assertEqual(
+                        ('STEP_INCOMPLETE', 'configurations'),
+                        (missing_configurations.exception.code,
+                         missing_configurations.exception.step))
+
+    def test_gel_date_refuse_les_conditions_perimees(self):
+        self.connect()
+        body = self.body()
+        stale = (
+            dict(body, frozen_at='2026-09-14T00:00:00+00:00'),
+            dict(body, manifest_version=body['manifest_version'] + 1),
+        )
+        for invalid in stale:
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                    storage.ConflictError, 'Conditions périmées'):
+                c.launch(self.store, self.sid, 'fixture', self.campaign_id,
+                         invalid, access_secret=SECRET,
+                         access_transport=self.access)
+            self.assertEqual([], c.inspect(self.store, self.campaign_id)['attempts'])
 
     def test_arret_au_plafond_et_incident_fournisseur_distinct(self):
         self.connect()
@@ -350,15 +404,16 @@ class RequesterCampaignLaunch(unittest.TestCase):
         def transport(operation, request):
             calls.append(operation['operation_id'])
             result = response(operation, request)
-            result['cost'].update(amount='0.10', currency='USD')
+            result['receipt']['result']['incident'] = 'CONTENT_REFUSAL'
+            result['cost'].update(amount='0.06', currency='USD')
             return result
 
         c.execute_launch(self.data, attempts, transport, access_secret=SECRET,
                          access_transport=self.access)
         snapshot = c.inspect(self.store, self.campaign_id)
-        self.assertEqual(1, len(calls))
+        self.assertEqual(2, len(calls))
         self.assertEqual('CAP_REACHED', snapshot['stop_reason'])
-        self.assertEqual('INTENT_RECORDED', snapshot['attempts'][1]['state'])
+        self.assertIsNone(snapshot['admission'])
 
         second = c.prepare_configurations(
             self.store, self.sid, 'fixture',
