@@ -292,6 +292,13 @@ class RequesterCampaignLaunch(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, 'DATA_COLLECTION_REQUIRED'):
                 c.create(self.store, denied)
 
+    def test_required_observations_refuse_data_collection(self):
+        manifest = deepcopy(c.inspect(self.store, self.campaign_id)['manifest'])
+        manifest['campaign_id'] = 'observations-invalides'
+        manifest['panel'][0]['required_observations'].append('data_collection')
+        with self.assertRaisesRegex(ValueError, 'required_observations invalide'):
+            c.create(self.store, manifest)
+
     def test_manifeste_historique_reste_lisible_mais_inadmissible(self):
         manifest = deepcopy(c.inspect(self.store, self.campaign_id)['manifest'])
         manifest['campaign_id'] = 'campagne-historique-sans-deny'

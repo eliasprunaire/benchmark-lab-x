@@ -484,7 +484,8 @@ class OpenRouterPreparation:
                     'sources': {'model': 'HTTP response JSON /model' if type(model) is str else None,
                                 'route': 'HTTP response JSON /openrouter_metadata' if type(route) is dict else None,
                                 'provider': 'HTTP response JSON /openrouter_metadata/endpoints/available selected' if provider else None,
-                                'data_collection': 'request parameter'},
+                                'data_collection': ('request parameter' if type(sent_provider) is dict
+                                                    and sent_provider.get('data_collection') is not None else None)},
                     'http': {'endpoint': ENDPOINT, 'status': status, 'response_headers': safe_headers, 'started_at': started,
                              'received_at': datetime.now(timezone.utc).isoformat(),
                              'elapsed_seconds': time.monotonic() - clock, 'complete': complete,

@@ -6,6 +6,8 @@
 # expect_provider optionnel (nom d'affichage servi quand il diffère du slug),
 # reasoning_effort ou reasoning_max_tokens optionnel. Une valeur différente
 # exige un alias distinct
+# data_collection : "deny" sur les alias destinés aux campagnes futures
+# [catalogue].excluded_providers : slugs de fournisseurs, liste vide par défaut, inférés du préfixe du tag
 # Ajouter ou retirer des entrées librement ; le collecteur ne boucle jamais sur ce fichier.
 #
 # L’éligibilité au catalogue constate seulement un endpoint disponible et ne

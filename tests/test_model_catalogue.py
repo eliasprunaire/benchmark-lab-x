@@ -28,9 +28,10 @@ class ModelCatalogueTests(unittest.TestCase):
                 return FIXTURE
             model_id = path.removeprefix('/api/v1/models/').removesuffix('/endpoints')
             tag = 'openai' if model_id == 'openai/gpt-5.6-sol' else 'fixture'
-            status = (statuses or {}).get(model_id, 0)
-            return {'data': {'id': model_id, 'endpoints': [
-                {'model_id': model_id, 'tag': tag, 'status': status}]}}
+            endpoint = {'model_id': model_id, 'tag': tag}
+            if statuses is not None and model_id in statuses:
+                endpoint['status'] = statuses[model_id]
+            return {'data': {'id': model_id, 'endpoints': [endpoint]}}
         return fetch
 
     def test_fixture_exerce_toutes_les_regles_et_la_vue(self):
@@ -38,7 +39,7 @@ class ModelCatalogueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
             calls = []
             with patch.object(catalogue, '_now', return_value=NOW):
-                result = catalogue.refresh(store, self.fetch(calls, {'x-ai/grok-4-preview': -1}))
+                result = catalogue.refresh(store, self.fetch(calls))
             self.assertEqual(6, len(calls))
             malformed = [model for model in result['models'] if model['excluded'] == 'malformed']
             self.assertEqual({
@@ -70,10 +71,21 @@ class ModelCatalogueTests(unittest.TestCase):
             self.assertIsNone(free['excluded'])
             preview = next(model for model in result['models'] if model['id'].endswith('-preview'))
             self.assertEqual('preview', preview['variant'])
-            self.assertEqual('no_available_endpoint', preview['excluded'])
-            self.assertNotIn('no_compliant_provider',
-                             {model['excluded'] for model in result['models']})
+            self.assertIsNone(preview['excluded'])
+            self.assertTrue(all(model['excluded'] is None for model in result['models']
+                                if model['excluded'] != 'malformed'))
             self.assertFalse(result['stale'])
+
+    def test_statut_endpoint_exclut_seulement_un_nombre_negatif(self):
+        cases = ((None, None), ('inconnu', None), (True, None), (-1, 'no_available_endpoint'))
+        for status, excluded in cases:
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory, \
+                    closing(self.store(directory)) as store, \
+                    patch.object(catalogue, '_now', return_value=NOW):
+                result = catalogue.refresh(
+                    store, self.fetch([], {'x-ai/grok-4-preview': status}))
+            preview = next(model for model in result['models'] if model['id'].endswith('-preview'))
+            self.assertEqual(excluded, preview['excluded'])
 
     def test_fournisseurs_exclus_du_catalogue(self):
         registry = tempfile.NamedTemporaryFile('w', suffix='.toml', delete=False)
