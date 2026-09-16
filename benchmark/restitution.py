@@ -94,7 +94,7 @@ def _rank(rows, columns):
 def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     p.owner(connection, session_id, dossier_id)
     p.identifier(campaign_id)
-    campaign = next((v for v in c.projection(store, connection, dossier_id) if v['campaign_id'] == campaign_id), None)
+    campaign = next(iter(c.projection(store, connection, dossier_id, campaign_id)), None)
     if campaign is None:
         raise p.Denied('Campagne inaccessible')
     contract = c._approved(store, connection, campaign['contract_sha256'])

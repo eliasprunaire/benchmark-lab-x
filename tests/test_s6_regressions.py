@@ -323,6 +323,47 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual({'comparison', 'empty'}, {v['campaign_id'] for v in view['tasks'][0]['versions'][0]['campaigns']})
         self.assertFalse((self.public / 'active.json').exists())
 
+    def test_projection_ciblee_identique_et_limitee_a_la_campagne_demandee(self):
+        connection = c.connection_for(self.store)
+        complete = c.projection(self.store, connection, 'fixture')
+        self.assertEqual(['comparison', 'empty'], [v['campaign_id'] for v in complete])
+        inspected, assembled = [], []
+        with patch.object(c, '_inspect', side_effect=c._inspect) as inspect, \
+                patch.object(c, '_projected', side_effect=c._projected) as assemble:
+            targeted = c.projection(self.store, connection, 'fixture', 'comparison')
+            inspected = [call.args[2] for call in inspect.call_args_list]
+            assembled = [call.args[2] for call in assemble.call_args_list]
+        self.assertEqual([v for v in complete if v['campaign_id'] == 'comparison'], targeted)
+        self.assertEqual(['comparison'], inspected)
+        self.assertEqual(['comparison'], assembled)
+        self.assertEqual([], c.projection(self.store, connection, 'fixture', 'inconnue'))
+        self.assertEqual([], c.projection(self.store, connection, 'foreign', 'comparison'))
+
+    def test_lancement_reutilise_son_instantane_sans_projection_globale(self):
+        connection = c.connection_for(self.store)
+        expected = next(v for v in c.projection(self.store, connection, 'fixture')
+                        if v['campaign_id'] == 'comparison')
+        inspected, assembled = [], []
+        real_inspect, real_projected = c._inspect, c._projected
+
+        def inspect(store, connection, campaign_id):
+            snapshot = real_inspect(store, connection, campaign_id)
+            inspected.append((campaign_id, snapshot))
+            return snapshot
+
+        def assemble(store, connection, campaign_id, snapshot):
+            assembled.append((campaign_id, snapshot))
+            return real_projected(store, connection, campaign_id, snapshot)
+
+        with patch.object(c, '_inspect', inspect), patch.object(c, '_projected', assemble), \
+                patch.object(c, 'projection', side_effect=AssertionError('Projection globale interdite')):
+            view = c.launch_view(self.store, self.sid, 'fixture', 'comparison')
+        # deux transactions distinctes, donc deux inspections, mais un seul assemblage
+        self.assertEqual(['comparison', 'comparison'], [cid for cid, _ in inspected])
+        self.assertEqual(1, len(assembled))
+        self.assertIs(inspected[-1][1], assembled[0][1])
+        self.assertEqual(p.page_view(expected), view['campaign'])
+
     def test_filtre_obligations_libelles_lisibles_et_valeurs_stables(self):
         value = self.compare()
         value['obligations'][0]['description'] = 'Action <requise> & vérifiée'

@@ -1184,7 +1184,9 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
         access = access_view(store, session_id, access_secret, access_transport, refresh=False)
     with _transaction(connection):
         snapshot = _inspect(store, connection, campaign_id)
-        projected = next(row for row in projection(store, connection, dossier_id) if row['campaign_id'] == campaign_id)
+        if snapshot['task']['dossier_id'] != dossier_id:
+            raise ValueError('Campagne étrangère au dossier')
+        projected = _projected(store, connection, campaign_id, snapshot)
         contract = _approved(store, connection, snapshot['manifest']['contract_sha256'])
         criteria = {key: contract['specification'][key]
                     for key in ('result_expected', 'obligations', 'eliminatory_errors', 'limits')}
@@ -1512,46 +1514,52 @@ def execute(data, attempt_id, transport=None, *, transport_factory=None,
                                transport_factory=transport_factory)
 
 
-def projection(store, connection, dossier_id):
+def _projected(store, connection, campaign_id, snapshot):
+    """Allowlisted session-owner view of one already verified snapshot"""
+    manifest = snapshot['manifest']
+    admission = snapshot['admission']
+    latest = snapshot['admissions'][-1] if snapshot['admissions'] else None
+    attempts = []
+    for attempt in snapshot['attempts']:
+        op = attempt['operation']
+        receipt = op['receipt']
+        observed = receipt['observed_configuration'] if receipt else None
+        sources = (observed or {}).get('sources', {})
+        attempts.append({key: attempt[key] for key in ('operation_id', 'execution_id', 'cell_id', 'state', 'created_at', 'emitted_at', 'received_at', 'attribution_incident')} | dict(
+            observed_configuration={field: (observed or {}).get(field) if (observed or {}).get(field) is not None else 'INCONNU' for field in _OBSERVED},
+            observation_sources={field: sources.get(field, 'INCONNU') if type(sources) is dict else 'INCONNU' for field in _OBSERVED},
+            observed_cost=op['observed_cost'], receipt_id=receipt['receipt_id'] if receipt else None,
+            incident=receipt['result']['incident'] if receipt else None,
+            emission=receipt['result']['emission'] if receipt else 'INCONNU'))
+    budget = deepcopy(snapshot['budget'])
+    if budget:
+        # S1 retains its arithmetic remainder as evidence. It is not a known
+        # balance when a receipt/cost is missing or a call may be active
+        unresolved = budget['unknown_cost_operations'] or any(
+            op['budget_id'] == budget['budget_id'] and op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS')
+            for op in store._operations(connection))
+        budget['balance_status'] = 'INCONNU' if unresolved else 'KNOWN'
+        if unresolved:
+            budget['available'] = None
+    return dict(recovery_of=manifest.get('recovery_of'), campaign_id=campaign_id, manifest_sha256=snapshot['manifest_sha256'],
+                contract_sha256=manifest['contract_sha256'], task=snapshot['task'], version=manifest['version'],
+                panel=manifest['panel'], conditions=manifest['conditions'], cases=manifest['cases'],
+                cost_basis=manifest['cost_basis'], cells=snapshot['cells'], attempts=attempts, budget=budget,
+                state=snapshot['state'], admission_open=admission is not None and not snapshot['restore_pending'],
+                allowed_cells=admission['authority']['allowed_cells'] if admission else [],
+                reserve_amounts=latest['authority']['reserve_amounts'] if latest else None,
+                missing_authorities=[] if admission else ['exécution', 'appels candidats', 'budget'],
+                stop_reason=snapshot['stop_reason'], restore_pending=snapshot['restore_pending'])
+
+
+def projection(store, connection, dossier_id, campaign_id=None):
     """Allowlisted session-owner view; no raw output, authority evidence or judge pieces."""
-    result = []
-    for (cid,) in connection.execute('SELECT c.campaign_id FROM s4_campaigns c JOIN '
-                                     '(SELECT contract_sha256,dossier_id FROM s3_contracts UNION ALL '
-                                     'SELECT contract_sha256,dossier_id FROM s2_comparison_contracts) q USING(contract_sha256) '
-                                     'WHERE q.dossier_id=? ORDER BY c.rowid', (dossier_id,)).fetchall():
-        snapshot = _inspect(store, connection, cid)
-        manifest = snapshot['manifest']
-        admission = snapshot['admission']
-        latest = snapshot['admissions'][-1] if snapshot['admissions'] else None
-        attempts = []
-        for attempt in snapshot['attempts']:
-            op = attempt['operation']
-            receipt = op['receipt']
-            observed = receipt['observed_configuration'] if receipt else None
-            sources = (observed or {}).get('sources', {})
-            attempts.append({key: attempt[key] for key in ('operation_id', 'execution_id', 'cell_id', 'state', 'created_at', 'emitted_at', 'received_at', 'attribution_incident')} | dict(
-                observed_configuration={field: (observed or {}).get(field) if (observed or {}).get(field) is not None else 'INCONNU' for field in _OBSERVED},
-                observation_sources={field: sources.get(field, 'INCONNU') if type(sources) is dict else 'INCONNU' for field in _OBSERVED},
-                observed_cost=op['observed_cost'], receipt_id=receipt['receipt_id'] if receipt else None,
-                incident=receipt['result']['incident'] if receipt else None,
-                emission=receipt['result']['emission'] if receipt else 'INCONNU'))
-        budget = deepcopy(snapshot['budget'])
-        if budget:
-            # S1 retains its arithmetic remainder as evidence. It is not a known
-            # balance when a receipt/cost is missing or a call may be active
-            unresolved = budget['unknown_cost_operations'] or any(
-                op['budget_id'] == budget['budget_id'] and op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS')
-                for op in store._operations(connection))
-            budget['balance_status'] = 'INCONNU' if unresolved else 'KNOWN'
-            if unresolved:
-                budget['available'] = None
-        result.append(dict(recovery_of=manifest.get('recovery_of'), campaign_id=cid, manifest_sha256=snapshot['manifest_sha256'],
-                           contract_sha256=manifest['contract_sha256'], task=snapshot['task'], version=manifest['version'],
-                           panel=manifest['panel'], conditions=manifest['conditions'], cases=manifest['cases'],
-                           cost_basis=manifest['cost_basis'], cells=snapshot['cells'], attempts=attempts, budget=budget,
-                           state=snapshot['state'], admission_open=admission is not None and not snapshot['restore_pending'],
-                           allowed_cells=admission['authority']['allowed_cells'] if admission else [],
-                           reserve_amounts=latest['authority']['reserve_amounts'] if latest else None,
-                           missing_authorities=[] if admission else ['exécution', 'appels candidats', 'budget'],
-                           stop_reason=snapshot['stop_reason'], restore_pending=snapshot['restore_pending']))
-    return result
+    query = ('SELECT c.campaign_id FROM s4_campaigns c JOIN '
+             '(SELECT contract_sha256,dossier_id FROM s3_contracts UNION ALL '
+             'SELECT contract_sha256,dossier_id FROM s2_comparison_contracts) q USING(contract_sha256) '
+             'WHERE q.dossier_id=?')
+    parameters = (dossier_id,) if campaign_id is None else (dossier_id, campaign_id)
+    if campaign_id is not None:
+        query += ' AND c.campaign_id=?'
+    rows = connection.execute(query + ' ORDER BY c.rowid', parameters).fetchall()
+    return [_projected(store, connection, cid, _inspect(store, connection, cid)) for (cid,) in rows]
