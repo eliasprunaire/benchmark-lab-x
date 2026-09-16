@@ -58,8 +58,7 @@ class S2ReviewTest(unittest.TestCase):
                 operation, _ = preparation.submit(store, session, 'closed',
                     {'action_id': 'create', 'request': 'Vérifier la vue fermée des critères'}, 'test', True)
                 received = {}
-                expected = {'eliminatory': ['Aucune invention'], 'obligations': ['Action présente'],
-                            'quality': []}
+                expected = ['Action présente']
                 def transport(operation, request):
                     received.update(response(operation, 'Organiser les notes',
                         [{'name': 'notes.txt', 'content': 'Action : relire'}]))

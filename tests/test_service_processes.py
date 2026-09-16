@@ -55,11 +55,22 @@ class ServiceProcessesTests(unittest.TestCase):
                 deadline = time.monotonic() + 5
                 while True:
                     try:
+                        health = executor_health(sock)
+                        if health['storage'] == 'ok':
+                            break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise
+                        time.sleep(.02)
+                while True:
+                    try:
                         with urlopen(f'http://127.0.0.1:{port}/readyz', timeout=2) as response:
                             status = response.status
+                            body = json.load(response)
                         break
                     except HTTPError as error:
                         status = error.code
+                        body = json.load(error)
                         error.close()
                         break
                     except OSError:
@@ -67,6 +78,7 @@ class ServiceProcessesTests(unittest.TestCase):
                             raise
                         time.sleep(.02)
                 self.assertEqual(503, status)
+                self.assertEqual('inconnu', body['source_sha'])
             finally:
                 for child in children:
                     if child.is_alive():

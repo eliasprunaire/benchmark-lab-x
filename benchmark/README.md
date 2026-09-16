@@ -241,6 +241,8 @@ Le profil historique GLM conserve ses paramètres et sa route native OpenRouter 
 
 Les libellés `ROUTE_TEXT` et `THREE_ROUTE_TEXT` restent en anglais pour préserver les reçus historiques ; les autres libellés de route sont en français.
 
+À l’envoi, les critères hérités conservés sous forme de liste plate sont normalisés dans `obligations` ; une reprise produit donc des octets sortants différents de ceux du reçu d’origine.
+
 Avant l’admission, l’opérateur renouvelle la consultation publique décrite ci-dessous, avec la base de réserve et la limite de sortie configurées. Exemple pour le profil de production :
 
 ```sh

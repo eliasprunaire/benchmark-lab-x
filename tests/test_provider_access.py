@@ -159,6 +159,16 @@ class ProviderAccessTests(unittest.TestCase):
             provider_access.callback(self.store, self.session, SECRET, 'code', self.transport)
         self.assertEqual([], self.transport.exchanges)
 
+    def test_callback_secret_change_efface_pending(self):
+        provider_access.start(self.store, self.session, SECRET,
+                              'https://example.test/preparation/access/callback')
+        with self.assertRaisesRegex(preparation.Denied, '^ACCESS_NO_PENDING$') as caught:
+            provider_access.callback(self.store, self.session, bytes.fromhex('22' * 32),
+                                     'code', self.transport)
+        self.assertEqual('ACCESS_NO_PENDING', caught.exception.code)
+        self.assertEqual(0, self.store._connection.execute(
+            'SELECT count(*) FROM s2_provider_access').fetchone()[0])
+
     def test_evenements_expurges_et_effaces_avec_acces(self):
         observed = []
         self.transport.observe = lambda kind: observed.append(self.store._connection.execute(
