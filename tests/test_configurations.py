@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from benchmark import campaigns, model_catalogue, outgoing, pi_openrouter, preparation, qualification, storage
+from benchmark import campaigns, model_catalogue, outgoing, pi_openrouter, preparation, qualification, storage, web_api
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 from tests.test_s4_regressions import manifest
 from tests.test_openrouter_qualification import qualify_fixture
@@ -84,7 +84,7 @@ class ConfigurationsTests(unittest.TestCase):
                 'tier': 'standard', 'csrf_token': 'csrf'}
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', 'token')), \
                 patch.object(model_catalogue, '_now', return_value=NOW):
-            code, created, _, _ = preparation.dispatch(
+            code, created, _, _ = web_api.dispatch(
                 self.store, 'POST', '/preparation/dossiers/public/configurations', 'token', body,
                 'a' * 40, True, candidate_identity=self.identity)
         self.assertEqual(201, code)
@@ -193,17 +193,17 @@ class ConfigurationsTests(unittest.TestCase):
                                                  'mistralai/mistral-medium-3-5'],
                 'tier': 'standard'}
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', token)):
-            code, view, _, _ = preparation.dispatch(
+            code, view, _, _ = web_api.dispatch(
                 self.store, 'POST', '/preparation/dossiers/fixture/configurations',
                 token, deepcopy(body), 'a' * 40, True)
         self.assertEqual(503, code)
         self.assertEqual('CANDIDATE_PI_UNAVAILABLE', view['error_code'])
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', token)), \
                 patch.object(model_catalogue, '_now', return_value=NOW):
-            code, created, _, _ = preparation.dispatch(
+            code, created, _, _ = web_api.dispatch(
                 self.store, 'POST', '/preparation/dossiers/fixture/configurations',
                 token, deepcopy(body), 'a' * 40, True, candidate_identity=self.identity)
-            get_code, current, _, _ = preparation.dispatch(
+            get_code, current, _, _ = web_api.dispatch(
                 self.store, 'GET', '/preparation/dossiers/fixture/configurations',
                 token, None, 'a' * 40, True, candidate_identity=self.identity)
         self.assertEqual(201, code)
@@ -217,7 +217,7 @@ class ConfigurationsTests(unittest.TestCase):
         with patch('socket.socket.connect', side_effect=AssertionError('No network')), \
                 patch.object(preparation, 'session',
                              return_value=(self.session, 'csrf', token)):
-            code, view, _, _ = preparation.dispatch(
+            code, view, _, _ = web_api.dispatch(
                 self.store, 'GET', '/preparation/dossiers/fixture/configurations',
                 token, None, 'a' * 40, True, candidate_identity=self.identity)
         self.assertEqual(200, code)

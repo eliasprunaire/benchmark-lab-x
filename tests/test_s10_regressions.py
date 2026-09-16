@@ -12,7 +12,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r
+from benchmark import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, web_api
 from benchmark_web import projection, views
 from benchmark_web.server import serve_web
 from tests.test_s4_regressions import inputs, manifest, response
@@ -93,7 +93,7 @@ class S10ProofTests(unittest.TestCase):
             self.assertNotIn(link['href'], parsed.links)
             anchor = 'proof-' + record['evaluation_id'] + '-' + link['piece_id']
             self.assertTrue(any(attrs.get('id') == anchor for _, attrs in parsed.tags))
-            code, raw, cookie, start = p.dispatch(self.store, 'GET', link['href'], self.token, None, 'a' * 40, None)
+            code, raw, cookie, start = web_api.dispatch(self.store, 'GET', link['href'], self.token, None, 'a' * 40, None)
             self.assertEqual((200, None, None), (code, cookie, start))
             self.assertEqual(raw.decode(), record['proof_contents'][link['piece_id']])
         self.assertNotIn(b'PRIVATE_UNSELECTED', page)

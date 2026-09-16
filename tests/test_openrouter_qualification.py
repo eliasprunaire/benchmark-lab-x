@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from benchmark import openrouter_qualification as assistant
-from benchmark import campaigns, preparation as prep, qualification, service, storage
+from benchmark import campaigns, preparation as prep, qualification, service, storage, web_api
 from tests.test_s2_review_regressions import response_for
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, specification
 
@@ -287,12 +287,12 @@ class OpenRouterQualificationTests(unittest.TestCase):
                 patch.object(campaigns, 'connection_for') as connection:
             connection.return_value.execute.return_value.fetchone.return_value = (1,)
             with self.assertRaises(prep.Denied) as refused:
-                prep.dispatch(self.store, 'GET', path, self.token, None, 'b' * 40, True)
+                web_api.dispatch(self.store, 'GET', path, self.token, None, 'b' * 40, True)
             self.assertEqual(('NOT_QUALIFIED', [finding]),
                              (refused.exception.code, refused.exception.findings))
             with self.assertRaises(prep.Denied) as refused:
-                prep.dispatch(self.store, 'POST', path.replace('/conditions', '/start'), self.token,
-                              {'csrf_token': self.csrf}, 'b' * 40, True, candidate_transport=lambda *_: None)
+                web_api.dispatch(self.store, 'POST', path.replace('/conditions', '/start'), self.token,
+                                 {'csrf_token': self.csrf}, 'b' * 40, True, candidate_transport=lambda *_: None)
             self.assertEqual('NOT_QUALIFIED', refused.exception.code)
 
     def test_double_validation_ne_relance_pas_et_garde_admission_ouverte(self):
@@ -301,10 +301,10 @@ class OpenRouterQualificationTests(unittest.TestCase):
         path = '/preparation/dossiers/dossier/validation'
         body = {**prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']),
                 'csrf_token': self.csrf}
-        first = prep.dispatch(self.store, 'POST', path, self.token, body, 'b' * 40, True,
-                              qualification_transport=transport)
-        second = prep.dispatch(self.store, 'POST', path, self.token, body, 'b' * 40, True,
-                               qualification_transport=transport)
+        first = web_api.dispatch(self.store, 'POST', path, self.token, body, 'b' * 40, True,
+                                 qualification_transport=transport)
+        second = web_api.dispatch(self.store, 'POST', path, self.token, body, 'b' * 40, True,
+                                  qualification_transport=transport)
         workers = [threading.Thread(target=prep.execute_qualification,
                                     args=(self.data, start['qualification_operation'], transport))
                    for start in (first[3], second[3]) if start]

@@ -44,7 +44,7 @@ class RuntimeBundleTests(unittest.TestCase):
             package = repo / 'benchmark'
             package.mkdir()
             source_package = Path(__file__).resolve().parents[1] / 'benchmark'
-            for name in ('__init__.py', 'model_catalog.py', 'model_catalogue.py', 'models.toml', 'storage.py', 'preparation.py', 'provider_access.py', 'runtime.py', 'service.py', 'openrouter_preparation.py', 'openrouter_qualification.py', 'openrouter_prices.py', 'outgoing.py', 'preparation.profile.json', 'preparation-fallback.profile.json', 'qualification.profile.json', 'glm-5.3-flash.profile.json', 'benchmark-runtime'):
+            for name in ('__init__.py', 'model_catalog.py', 'model_catalogue.py', 'models.toml', 'storage.py', 'preparation.py', 'web_api.py', 'provider_access.py', 'runtime.py', 'service.py', 'openrouter_preparation.py', 'openrouter_qualification.py', 'openrouter_prices.py', 'outgoing.py', 'preparation.profile.json', 'preparation-fallback.profile.json', 'qualification.profile.json', 'glm-5.3-flash.profile.json', 'benchmark-runtime'):
                 shutil.copy2(source_package / name, package / name)
             web = repo / 'benchmark_web'
             source_web = source_package.parent / 'benchmark_web'
@@ -76,7 +76,7 @@ class RuntimeBundleTests(unittest.TestCase):
             self.assertEqual('INITIALIZED_ADMISSION_BLOCKED', json.loads(result.stdout)['state'])
             result = subprocess.run([sys.executable, str(unpacked / 'benchmark/benchmark-runtime'), 'verify', '--data', str(root / 'private')], cwd=root, check=True, capture_output=True, text=True)
             self.assertTrue(json.loads(result.stdout)['integrity_ok'])
-            subprocess.run([sys.executable, '-c', 'from benchmark.service import serve_executor; from benchmark_web.server import serve_web'], cwd=unpacked, check=True)
+            subprocess.run([sys.executable, '-c', 'from benchmark.service import serve_executor; from benchmark.web_api import dispatch; from benchmark_web.server import serve_web'], cwd=unpacked, check=True)
             subprocess.run([sys.executable, '-c', 'from benchmark.openrouter_prices import forecast; from benchmark.openrouter_preparation import configuration; assert configuration()["model"] == "openai/gpt-6-astra"'], cwd=unpacked, check=True)
             subprocess.run([sys.executable, '-c', 'from benchmark.openrouter_qualification import OpenRouterQualification; assert OpenRouterQualification("fixture").configuration()["model"] == "anthropic/claude-fable-5.1"'], cwd=unpacked, check=True)
             # La configuration active du catalogue doit se charger depuis l'archive,

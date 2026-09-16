@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, service, storage
+from benchmark import campaigns as c, evaluation as e, preparation as p, qualification as q, restitution as r, service, storage, web_api
 from benchmark_web import projection, views
 from benchmark_web.server import serve_web
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
@@ -216,7 +216,7 @@ class S6Regressions(unittest.TestCase):
 
     def test_native_dispatch_context_proofs_and_inert_html(self):
         query = '?case=notes&sort=cost&direction=asc&obligation=O1%3AFAIL'
-        code, value, cookie, start = p.dispatch(self.store, 'GET', self.base + query, self.token, None, 'a' * 40, False)
+        code, value, cookie, start = web_api.dispatch(self.store, 'GET', self.base + query, self.token, None, 'a' * 40, False)
         self.assertEqual((200, None, None), (code, cookie, start))
         comparison_html = views.render(value, '')
         markup = Markup(comparison_html)
@@ -226,7 +226,7 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual('UYVwhfSrYOHss9ut/0sNyZev/f+WGn1ovpct7BS3gkA=',
                          b64encode(sha256(views.COMPARISON_FOCUS_SCRIPT.encode()).digest()).decode())
         detail = next(link for link in markup.links if '/attempts/attempt-error' in link)
-        code, value, _, _ = p.dispatch(self.store, 'GET', detail, self.token, None, 'a' * 40, False)
+        code, value, _, _ = web_api.dispatch(self.store, 'GET', detail, self.token, None, 'a' * 40, False)
         raw = views.render(value, '')
         self.assertEqual(200, code)
         self.assertIn(self.first['evaluation_id'].encode(), raw)
@@ -236,7 +236,7 @@ class S6Regressions(unittest.TestCase):
         self.assertIn(self.base + query + '#attempt-attempt-error', parsed.links)
         for link in parsed.links:
             if '/pieces/' in link:
-                code, proof, _, _ = p.dispatch(self.store, 'GET', link, self.token, None, 'a' * 40, False)
+                code, proof, _, _ = web_api.dispatch(self.store, 'GET', link, self.token, None, 'a' * 40, False)
                 self.assertEqual(200, code)
                 self.assertEqual(self.store.read_piece(link.rsplit('/', 1)[1]), proof)
 
@@ -309,7 +309,7 @@ class S6Regressions(unittest.TestCase):
         for query in ('sort=cost&sort=duration', 'case=unknown', 'sort=O1', 'sort=unknown', 'direction=wrong',
                       'configuration=foreign', 'obligation=O1:wrong', 'obligation=E1:PASS', 'winner=error', 'sort='):
             with self.subTest(query=query), self.assertRaises(ValueError):
-                p.dispatch(self.store, 'GET', self.base + '?' + query, self.token, None, 'a' * 40, False)
+                web_api.dispatch(self.store, 'GET', self.base + '?' + query, self.token, None, 'a' * 40, False)
         for did, cid in (('foreign', 'comparison'), ('fixture', 'foreign')):
             with self.assertRaises(p.Denied):
                 r.comparison(self.store, self.sid, did, cid)
@@ -364,7 +364,7 @@ class S6Regressions(unittest.TestCase):
         before = {str(f.relative_to(self.public)): f.read_bytes() for f in self.public.rglob('*') if f.is_file()}
         for pieces in ([], [pid]):
             path = self.base + '/preview' + ('?' + urlencode([('piece', p) for p in pieces]) if pieces else '')
-            code, value, cookie, start = p.dispatch(self.store, 'GET', path, self.token, None, 'a' * 40, False, presentation=projection)
+            code, value, cookie, start = web_api.dispatch(self.store, 'GET', path, self.token, None, 'a' * 40, False, presentation=projection)
             self.assertEqual((200, None, None), (code, cookie, start))
             self.assertEqual('projection_preview', value['kind'])
             bundle = self.preview(pieces)
@@ -378,14 +378,14 @@ class S6Regressions(unittest.TestCase):
             links = [link for link in parsed.links if '/pieces/' in link]
             self.assertEqual(set(pieces), {link.rsplit('/', 1)[1] for link in links})
             for link in links:
-                self.assertEqual(self.store.read_piece(pid), p.dispatch(self.store, 'GET', link, self.token, None, 'a' * 40, False)[1])
+                self.assertEqual(self.store.read_piece(pid), web_api.dispatch(self.store, 'GET', link, self.token, None, 'a' * 40, False)[1])
             with self.assertRaises(p.Denied):
-                p.dispatch(self.store, 'GET', path, None, None, 'a' * 40, False, presentation=projection)
+                web_api.dispatch(self.store, 'GET', path, None, None, 'a' * 40, False, presentation=projection)
             with self.assertRaises(p.Denied):
                 r.preview_view(self.store, 'foreign', 'fixture', 'comparison', piece_ids=pieces, presentation=projection)
         for query in ('?piece=unlinked', '?piece=', '?extra=1', '?piece=' + pid + '&piece=' + pid):
             with self.subTest(query=query), self.assertRaises(ValueError):
-                p.dispatch(self.store, 'GET', self.base + '/preview' + query, self.token, None, 'a' * 40, False, presentation=projection)
+                web_api.dispatch(self.store, 'GET', self.base + '/preview' + query, self.token, None, 'a' * 40, False, presentation=projection)
         self.assertEqual(before, {str(f.relative_to(self.public)): f.read_bytes() for f in self.public.rglob('*') if f.is_file()})
 
     def test_exact_approval_and_files_no_partial_activation(self):
