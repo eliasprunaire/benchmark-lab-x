@@ -590,7 +590,8 @@ def configurations_view(store, session_id, dossier_id):
                                          if catalogue is None else None)})
         current = prepared[-1]
         estimates = [config['estimate']['amount_usd'] for config in current['manifest']['panel']]
-        total = None if any(value is None for value in estimates) else str(_sum_money(_money(value) for value in estimates))
+        total = None if any(value is None for value in estimates) else format(
+            _sum_money(_money(value) for value in estimates), 'f')
         first = current['manifest']['panel'][0]['estimate']
         return page_view({
             'kind': 'configurations', 'dossier_id': dossier_id, 'models': models,

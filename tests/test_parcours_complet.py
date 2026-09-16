@@ -295,7 +295,7 @@ class ParcoursComplet(unittest.TestCase):
         configurations = page.link('Choisir les modèles')
         page, _, _ = self.request(configurations)
         self.examine(page, configurations, 'choix des configurations', 'Enregistrer les configurations')
-        self.assertIn('Relevé des modèles du 15 septembre 2026 à 12:00 UTC', page.visible)
+        self.assertIn('Relevé des modèles du 15 septembre 2026 à 12:00:00 UTC', page.visible)
         self.assertNotIn('2026-09-15T12:00:00+00:00', page.visible)
         form = page.form('/configurations')
         _, _, raw = self.request(form['action'], form['fields'] | {
@@ -405,9 +405,13 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(1, sum(n['attrs'].get('class') == 'button sec' for n in campaign_links))
         with closing(storage.Store(self.data)) as store:
             previous = campaigns.inspect(store, recap.split('/')[-2])['manifest']
+        texts = [n['text'] for n in campaign_links]
+        hrefs = [n['attrs']['href'] for n in campaign_links]
+        self.assertEqual(len(texts), len(set(texts)))
+        self.assertEqual(len(hrefs), len(set(hrefs)))
         self.assertEqual({'Examiner les conditions et suivre la comparaison courante',
                           'Consulter la comparaison du ' + views.date_lisible_utc(previous['conditions']['frozen_at'])},
-                         {n['text'] for n in campaign_links})
+                         set(texts))
         with closing(storage.Store(self.data)) as store:
             prep.close_admission(store)
         page, _, _ = self.request('/preparation')
