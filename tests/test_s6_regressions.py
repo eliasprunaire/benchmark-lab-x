@@ -4,6 +4,7 @@ from copy import deepcopy
 from hashlib import sha256
 from html.parser import HTMLParser
 import json
+import re
 import multiprocessing
 from pathlib import Path
 import socket
@@ -21,6 +22,21 @@ from benchmark_web.server import serve_web
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 from tests.test_s4_regressions import inputs, manifest, response
 from tests.test_s5_regressions import RESPONSIBLE, EVALUATION_AUTHORITY, findings
+
+# Empreintes de la page S6, identités et horodatages ramenés à une forme fixe
+# Un changement d'octets de présentation sans incrément de PRESENTATION_VERSION échoue
+_VOLATILE_PRESENTATION = re.compile(
+    rb'\d{4}-\d{2}-\d{2}T[0-9:.+-]+|'
+    rb'\b[0-9a-f]{64}\b|'
+    rb'\b[0-9a-f]{32}\b|'
+    rb'output-[0-9a-f]+'
+)
+_FIXTURE_PRESENTATION = {
+    '3': {
+        'index.html': '8eee8a8357dfc8fb4ac00dbbbc5414849c0d6f7fb1d790afc3b771c803013f5f',
+        'style.css': '84dc3d45c36869c42057dc6078b022ca1f9e3cf225b91264b06e9d55e1f91187',
+    },
+}
 
 
 class Markup(HTMLParser):
@@ -141,26 +157,36 @@ class S6Regressions(unittest.TestCase):
         return dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
                     projection_sha256=bundle['projection_sha256'], catalogue=False)
 
-    def test_versions_de_presentation_et_octets_historiques(self):
+    def test_version_de_presentation_liee_aux_octets_de_la_fixture(self):
         current = self.preview()
         manifest = json.loads(current['manifest'])
-        self.assertEqual('2', manifest['presentation_version'])
-        for version in ('1', '2'):
-            with self.subTest(version=version):
-                bundle = deepcopy(current)
-                manifest['presentation_version'] = version
-                bundle['manifest'] = storage._strict_json(manifest).encode()
-                bundle['projection_sha256'] = sha256(bundle['manifest']).hexdigest()
-                r.materialize(bundle, self.approval(bundle), self.public)
-                for name, raw in bundle['files'].items():
-                    self.assertEqual(raw, r.public_bytes(
-                        self.public, bundle['projection_sha256'], name))
-                self.assertEqual(bundle['manifest'],
-                                 (self.public / bundle['projection_sha256'] / 'publication.json').read_bytes())
-        manifest['presentation_version'] = '3'
-        raw = storage._strict_json(manifest).encode()
+        version = r.PRESENTATION_VERSION
+        self.assertEqual(version, manifest['presentation_version'])
+        self.assertEqual({version}, set(_FIXTURE_PRESENTATION))
+        html = current['files']['index.html']
+        css = current['files']['style.css']
+        self.assertEqual(
+            _FIXTURE_PRESENTATION[version],
+            {'index.html': sha256(_VOLATILE_PRESENTATION.sub(b'#', html)).hexdigest(),
+             'style.css': sha256(css).hexdigest()})
+        sections = html.count(b'<section>')
+        self.assertEqual(5, sections)
+        self.assertEqual(sections + 1, html.count(projection.RESTRICTION_PUBLIQUE.encode()))
+        r.materialize(current, self.approval(current), self.public)
+        for name, raw in current['files'].items():
+            self.assertEqual(raw, r.public_bytes(
+                self.public, current['projection_sha256'], name))
+        readable = tuple(item for item in r.PRESENTATION_VERSIONS if item != version)
+        for old in readable:
+            with self.subTest(lire=old):
+                labeled = dict(manifest, presentation_version=old)
+                raw = storage._strict_json(labeled).encode()
+                r._manifest(raw, sha256(raw).hexdigest())
+        unknown = dict(manifest, presentation_version='4')
+        raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
             r._manifest(raw, sha256(raw).hexdigest())
+        self.assertTrue(readable)
 
     def test_exact_ranks_boolean_scale_corrections_filters_and_empty_campaign(self):
         view = self.compare({'case': 'notes', 'sort': 'cost', 'direction': 'desc'})
