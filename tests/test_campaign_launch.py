@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from benchmark import (campaigns as c, evaluation, judgment, model_catalogue,
                        preparation as p, provider_access, qualification as q, restitution, storage, web_api)
-from benchmark_web import views
+from benchmark_web import campaign_views, views
 from benchmark_web import projection
 from tests.test_openrouter_qualification import qualify_fixture
 from tests.test_s2_review_regressions import response_for
@@ -341,7 +341,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
         keys = [check['key'] for check in summary['checks']]
         self.assertEqual(len(keys), len(set(keys)))
         self.assertEqual(set(keys), p._CHECK_CODES)
-        tree = ast.parse(Path(views.__file__).read_text())
+        tree = ast.parse(Path(campaign_views.__file__).read_text())
         def literal_keys(node):
             if not isinstance(node, ast.Dict) or any(key is None for key in node.keys):
                 return None

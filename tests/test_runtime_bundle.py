@@ -48,7 +48,7 @@ class RuntimeBundleTests(unittest.TestCase):
                 shutil.copy2(source_package / name, package / name)
             web = repo / 'benchmark_web'
             source_web = source_package.parent / 'benchmark_web'
-            for name in ('__init__.py', 'server.py', 'views.py', 'projection.py', 'templates/preparation.html', 'static/preparation.css'):
+            for name in ('__init__.py', 'server.py', 'views.py', 'campaign_views.py', 'fragments.py', 'projection.py', 'templates/preparation.html', 'static/preparation.css'):
                 (web / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_web / name, web / name)
             (repo / 'tools').mkdir()
@@ -77,6 +77,11 @@ class RuntimeBundleTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(unpacked / 'benchmark/benchmark-runtime'), 'verify', '--data', str(root / 'private')], cwd=root, check=True, capture_output=True, text=True)
             self.assertTrue(json.loads(result.stdout)['integrity_ok'])
             subprocess.run([sys.executable, '-c', 'from benchmark.service import serve_executor; from benchmark.web_api import dispatch; from benchmark_web.server import serve_web'], cwd=unpacked, check=True)
+            # Les modules de rendu extraits doivent s'importer depuis l'archive, sans cycle
+            subprocess.run([sys.executable, '-c',
+                            'from benchmark_web.views import render; '
+                            'from benchmark_web.campaign_views import render_comparison; '
+                            'from benchmark_web.fragments import readable_fields'], cwd=unpacked, check=True)
             subprocess.run([sys.executable, '-c', 'from benchmark.openrouter_prices import forecast; from benchmark.openrouter_preparation import configuration; assert configuration()["model"] == "openai/gpt-6-astra"'], cwd=unpacked, check=True)
             subprocess.run([sys.executable, '-c', 'from benchmark.openrouter_qualification import OpenRouterQualification; assert OpenRouterQualification("fixture").configuration()["model"] == "anthropic/claude-fable-5.1"'], cwd=unpacked, check=True)
             # La configuration active du catalogue doit se charger depuis l'archive,
