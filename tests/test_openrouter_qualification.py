@@ -101,8 +101,22 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.assertTrue(start)
         return transport, operation_id
 
+    def test_qualification_quote_is_frozen_before_serving_requests(self):
+        from tests.test_openrouter_preparation import estimate_for
+        transport = assistant.OpenRouterQualification(KEY)
+        estimate = estimate_for(transport._profile)
+        with patch('benchmark.transports.prices.read_public', return_value=({'context_length': 1000000}, {})), \
+                patch('benchmark.transports.prices.forecast', return_value=estimate) as forecast:
+            first = transport.quote()
+            first['reserve_usd'] = '0'
+            self.assertEqual('0.2131072', transport.quote()['reserve_usd'])
+            forecast.assert_called_once()
+
     def test_profile_frozen_and_strict_answer(self):
         transport = assistant.OpenRouterQualification(KEY)
+        from tests.test_openrouter_preparation import estimate_for
+        quoted = assistant.configuration(estimate_for(transport._profile), transport._profile)
+        self.enterContext(patch.object(transport, 'quote', return_value=quoted))
         configuration = transport.configuration()
         self.assertEqual('anthropic/claude-fable-5.1', configuration['model'])
         self.assertEqual({'effort': 'medium'}, configuration['parameters']['reasoning'])
@@ -123,6 +137,28 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.assertEqual(configuration['model'], wire['model'])
         self.assertEqual(transport._profile['system'], wire['messages'][0]['content'])
         self.assertNotIn(KEY, storage._strict_json(wire))
+
+    def test_qualification_reserves_its_own_quote(self):
+        transport = QualificationTransport({'qualified': True, 'findings': [], 'summary': 'OK'})
+        transport.quote = lambda: {**transport.configuration(), 'reserve_usd': '10.8192'}
+        _, operation_id, _ = prep.validate_and_qualify(
+            self.store, self.session, 'dossier',
+            prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']),
+            'b' * 40, transport)
+        self.assertEqual('10.8192', self.store.inspect_budget('preparation')['reserved'])
+        operation = next(row for row in self.store.inspect_operations() if row['operation_id'] == operation_id)
+        self.assertEqual('10.8192', operation['requested_configuration']['reserve_usd'])
+
+    def test_qualification_quote_cannot_exceed_remaining_daily_cap(self):
+        transport = QualificationTransport({'qualified': True, 'findings': [], 'summary': 'OK'})
+        transport.quote = lambda: {**transport.configuration(), 'reserve_usd': '20'}
+        with self.assertRaisesRegex(prep.Denied, 'DAILY_CAP'):
+            prep.validate_and_qualify(
+                self.store, self.session, 'dossier',
+                prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']),
+                'b' * 40, transport)
+        self.assertEqual('0', self.store.inspect_budget('preparation')['reserved'])
+        self.assertFalse(any(row['phase'] == 'qualification' for row in self.store.inspect_operations()))
 
     def test_validation_reserves_then_executes_outside_request(self):
         result = {'qualified': True, 'findings': [{'kind': 'fiction', 'severity': 'note',

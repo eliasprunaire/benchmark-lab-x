@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import sys
 
 from .storage import IntegrityError, Store, initialize, initialize_preparation, _unique_object, _private, _strict_json as encode
 
@@ -225,7 +226,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     campaign_actions = ('create-campaign', 'inspect-campaign', 'admit-campaign', 'stop-campaign', 'resume-campaign')
     campaign_actions += ('inspect-attempt-status',)
-    parser.add_argument('action', choices=campaign_actions + ('reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'admit-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
+    parser.add_argument('action', choices=campaign_actions + ('reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'inspect-preparation', 'close-preparation', 'admit-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
     parser.add_argument('--data', type=Path)
     parser.add_argument('--authority', type=Path)
     parser.add_argument('--allow-owner-launch', action='store_true', help='Autoriser explicitement le propriétaire à déclencher les cellules admises')
@@ -260,7 +261,7 @@ def main(argv=None):
             raise ValueError('Profil réservé au jugement privé')
         if args.candidate_pi and args.action != 'executor':
             raise ValueError('Transport candidat réservé à l’exécuteur')
-        if args.preparation_assistant is not None and args.action not in ('executor', 'forecast-prices'):
+        if args.preparation_assistant is not None and args.action not in ('executor', 'forecast-prices', 'admit-preparation'):
             raise ValueError('Assistant réservé à l’exécuteur')
         if args.qualification_assistant is not None and args.action != 'executor':
             raise ValueError('Qualificateur réservé à l’exécuteur')
@@ -326,6 +327,7 @@ def main(argv=None):
                 if args.qualification_assistant is not None:
                     from .transports.openrouter import OpenRouterQualification
                     qualification_transport = OpenRouterQualification(key, args.qualification_assistant)
+                    qualification_transport.quote()
                 serve_executor(args.data, args.socket, release_identity(), transport=transport,
                                qualification_transport=qualification_transport,
                                candidate_transport_factory=candidate_factory,
@@ -518,13 +520,28 @@ def main(argv=None):
                             raise ValueError('Requête opérateur invalide')
                         result = approve(store, request['contract_sha256'], request['qualification_id'],
                                          actor=request['actor'], authority=request['authority'])
+                elif args.action == 'close-preparation':
+                    from .preparation import close_admission
+                    close_admission(store)
+                    result = {'state': 'PREPARATION_CLOSED'}
+                elif args.action == 'inspect-preparation':
+                    from .preparation import admission
+                    result = {'authority': admission(store)}
                 elif args.action == 'admit-preparation':
                     from .preparation import admit
                     if args.authority is None:
                         raise ValueError('Autorité requise')
-                    private_path(args.authority)
-                    authority = json.loads(args.authority.read_text(), object_pairs_hook=_unique_object)
-                    admit(store, authority)
+                    if str(args.authority) == '-':
+                        raw = sys.stdin.read()
+                    else:
+                        private_path(args.authority)
+                        raw = args.authority.read_text()
+                    authority = json.loads(raw, object_pairs_hook=_unique_object)
+                    from .transports.openrouter import load_profile
+                    if args.preparation_assistant is None:
+                        raise ValueError('Profil de préparation requis pour ouvrir')
+                    verify(store)
+                    admit(store, authority, profile=load_profile(args.preparation_assistant))
                     result = status(args.data, store)
                 elif args.action == 'verify':
                     result = verify(store)
