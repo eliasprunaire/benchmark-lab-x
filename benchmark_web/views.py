@@ -45,17 +45,17 @@ def personal_key_form(csrf, access):
     connected = access.get('connected', False)
     content = '<details class="corr personal-key"><summary class="button sec">Ajouter ma clé Openrouter</summary><div>'
     if connected:
-        content += '<p>Plafond OpenRouter : ' + text(access.get('limit_usd') or 'inconnu') + ' USD. Solde annoncé : ' + text(access.get('limit_remaining_usd') or 'inconnu') + ' USD.</p>'
-    content += '<p>Cette clé finance uniquement vos essais dans ce navigateur. Elle est conservée chiffrée sur le serveur, jamais réaffichée.</p>'
+        content += '<p>Plafond Openrouter : ' + text(access.get('limit_usd') or 'inconnu') + ' USD. Solde annoncé : ' + text(access.get('limit_remaining_usd') or 'inconnu') + ' USD.</p>'
+    content += '<p>Votre clé est conservée chiffrée sur le serveur.</p>'
     content += form(csrf, '/preparation/access/key', {'assistance_cap': '20'},
-        '<label for="openrouter-key">Clé API OpenRouter</label>'
+        '<label for="openrouter-key">Clé API Openrouter</label>'
         '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help">'
-        '<p id="key-help">Utilisez une clé dédiée avec un plafond OpenRouter non renouvelable de 50 USD maximum.</p>'
+        '<p id="key-help">Utilisez une clé dédiée avec un plafond non renouvelable de 50 USD maximum.</p>'
         '<button type="submit">Enregistrer la clé</button>')
     if access.get('status') in ('connected', 'invalid'):
         content += form(csrf, '/preparation/access/disconnect', {},
             '<button type="submit" class="sec">Retirer la clé de ce navigateur</button>')
-        content += '<p>Terminez la préparation ou qualification en cours avant de changer la clé. Le retrait bloque les nouveaux appels, sans révoquer la clé chez OpenRouter ni annuler une comparaison engagée.</p>'
+        content += '<p>Terminez la préparation ou qualification en cours avant de changer la clé. Le retrait bloque les nouveaux appels, sans révoquer la clé chez Openrouter ni annuler une comparaison engagée.</p>'
     return content + '</div></details>'
 
 
@@ -101,26 +101,26 @@ def render(value, csrf, path='/preparation', *, error=False):
         back_class = 'button sec' if type(submitted) is dict and ('request' in submitted or 'message' in submitted) else 'button'
         content += '<p><a class="' + back_class + '" href="/preparation">Retrouver mes cas d’usage</a></p>'
     elif value.get('kind') == 'access':
-        title = 'Accès OpenRouter'
+        title = 'Accès Openrouter'
         status = value['status']
         if status == 'connected':
-            content = state_block('done', 'Accès OpenRouter', 'Compte connecté',
+            content = state_block('done', 'Accès Openrouter', 'Compte connecté',
                 '<p>Crédit restant : ' + text(value['limit_remaining_usd'] if value['limit_remaining_usd'] is not None else 'INCONNU')
                 + ' USD. Limite du compte : ' + text(value['limit_usd'] if value['limit_usd'] is not None else 'INCONNU') + ' USD.</p>')
             content += form(csrf, '/preparation/access/disconnect', {}, '<button class="sec" type="submit">Déconnecter</button>')
         elif status == 'invalid':
-            content = state_block('err', 'Accès OpenRouter', 'Accès invalide',
+            content = state_block('err', 'Accès Openrouter', 'Accès invalide',
                                   '<p>Motif : ' + text(value.get('reason') or 'INCONNU') + '.</p>')
             content += form(csrf, '/preparation/access/start', {'return': path},
-                            '<button type="submit">Reconnecter mon compte OpenRouter</button>')
+                            '<button type="submit">Reconnecter mon compte Openrouter</button>')
         elif status == 'disconnected':
-            content = state_block('action', 'Accès OpenRouter', 'Compte non connecté',
+            content = state_block('action', 'Accès Openrouter', 'Compte non connecté',
                                   '<p>Connectez votre compte pour financer les appels candidats de votre comparaison.</p>')
             content += form(csrf, '/preparation/access/start', {'return': path},
-                            '<button type="submit">Connecter mon compte OpenRouter</button>')
+                            '<button type="submit">Connecter mon compte Openrouter</button>')
         else:
-            content = state_block('err', 'Accès OpenRouter', 'Connexion indisponible',
-                                  '<p>Connexion OpenRouter indisponible.</p>')
+            content = state_block('err', 'Accès Openrouter', 'Connexion indisponible',
+                                  '<p>Connexion Openrouter indisponible.</p>')
         content += '<p><a class="button' + ('' if status in ('connected', 'unavailable') else ' sec') + '" href="/preparation">Revenir à mes cas d’usage</a></p>'
     elif value.get('kind') == 'configurations':
         title = 'Choisir les configurations'
@@ -398,7 +398,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += personal_key_form(csrf, value.get('personal_access', {}))
     if state and s9:
         reasons = {
-            'access': 'Ajoutez votre clé OpenRouter pour préparer un exemple avec votre propre accès.',
+            'access': 'Ajoutez votre clé Openrouter pour préparer un exemple avec votre propre accès.',
             'open': 'Échanges disponibles. Chaque envoi reste vérifié par le serveur avant admission.',
             'closed': 'Appels fermés : aucune admission de préparation ouverte.',
             'unconfigured': 'Appels fermés : aucun assistant configuré pour la préparation.',

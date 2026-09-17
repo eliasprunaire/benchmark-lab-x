@@ -137,7 +137,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     parsed = urlsplit(self.path)
                     values = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
                     if parsed.path != '/preparation/access/callback' or set(values) != {'code'} or len(values['code']) != 1 or not values['code'][0]:
-                        raise ValueError('Retour OpenRouter invalide')
+                        raise ValueError('Retour Openrouter invalide')
                     state = cookies.get('benchmark_access_callback')
                     if state is None:
                         raise ValueError('Session de retour absente')
@@ -156,7 +156,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                                  [('Location', return_path), expired])
                     return
                 if self.path == '/preparation/access/callback':
-                    raise ValueError('Callback OpenRouter réservé au retour GET')
+                    raise ValueError('Callback Openrouter réservé au retour GET')
                 body = None
                 return_path = None
                 if self.command == 'POST':
@@ -196,7 +196,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     if self.path == '/preparation/access/start':
                         if callback_url is None:
                             value = {'kind': 'access', 'connected': False, 'status': 'unavailable',
-                                     'error': 'Connexion OpenRouter indisponible : URL publique non configurée.'}
+                                     'error': 'Connexion Openrouter indisponible : URL publique non configurée.'}
                             self.respond(503, value if wants_json else views.render(value, body.get('csrf_token', ''), error=True),
                                          'application/json' if wants_json else 'text/html; charset=utf-8')
                             return

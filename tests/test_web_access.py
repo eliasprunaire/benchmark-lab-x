@@ -1,4 +1,4 @@
-"""Connexion OpenRouter relayée par le web, sans appel fournisseur."""
+"""Connexion Openrouter relayée par le web, sans appel fournisseur."""
 from http.client import HTTPConnection
 import json
 import multiprocessing
@@ -128,7 +128,7 @@ class AccessViewTests(unittest.TestCase):
         disconnected = views.render(
             {'kind': 'access', 'connected': False, 'status': 'disconnected'}, 'csrf').decode()
         self.assertIn('Compte non connecté', disconnected)
-        self.assertIn('Connecter mon compte OpenRouter', disconnected)
+        self.assertIn('Connecter mon compte Openrouter', disconnected)
 
         connected = views.render({'kind': 'access', 'connected': True, 'status': 'connected',
                                   'limit_usd': '25', 'limit_remaining_usd': '12.50'}, 'csrf').decode()
@@ -152,7 +152,7 @@ class AccessViewTests(unittest.TestCase):
         access = views.render({'kind': 'access', 'status': 'unavailable'}, 'csrf').decode()
         summary = views.render(self.campaign({'status': 'unavailable'}), 'csrf').decode()
         for page in (access, summary):
-            self.assertIn('Connexion OpenRouter indisponible.', page)
+            self.assertIn('Connexion Openrouter indisponible.', page)
             self.assertNotIn('action="/preparation/access/start"', page)
             self.assertNotIn('action="/preparation/access/disconnect"', page)
 
@@ -379,7 +379,7 @@ class AccessServerTests(unittest.TestCase):
         callback_cookie = headers['Set-Cookie'].split(';', 1)[0]
         self.executor.callback_result = {
             'status': 403,
-            'value': {'error': 'Échange OpenRouter refusé', 'error_code': 'ACCESS_EXCHANGE_FAILED'},
+            'value': {'error': 'Échange Openrouter refusé', 'error_code': 'ACCESS_EXCHANGE_FAILED'},
             'piece': False, 'cookie': None}
 
         status, headers, raw = self.request(
@@ -387,7 +387,7 @@ class AccessServerTests(unittest.TestCase):
             headers={'Cookie': callback_cookie})
 
         self.assertEqual(403, status)
-        self.assertIn(b'change OpenRouter refus', raw)
+        self.assertIn(b'change Openrouter refus', raw)
         self.assertNotIn(b'code-a-ne-pas-rendre', raw)
         self.assertNotIn('code-a-ne-pas-rendre', str(headers))
         self.assertNotIn('Location', headers)

@@ -81,7 +81,7 @@ section h3 { margin-top: 1rem; }
 
 /* Étapes */
 .steps { padding-top: 1.8rem; position: sticky; top: 0; align-self: start; font-size: .92rem; font-family: var(--display); }
-.steps a, .steps span { display: flex; align-items: center; gap: .6rem; padding: .5rem .8rem; border-left: 2px solid var(--line); color: var(--muted); text-decoration: none; }
+.steps > a, .steps > span { display: flex; align-items: center; gap: .6rem; padding: .5rem .8rem; border-left: 2px solid var(--line); color: var(--muted); text-decoration: none; }
 .steps a[aria-current="step"] { border-left-color: var(--accent); color: var(--ink); font-weight: 700; background: linear-gradient(to right, var(--accent-soft), transparent); }
 .steps .n { display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border-radius: 50%; border: 1px solid var(--line-2); font-family: var(--mono); font-size: .74rem; font-weight: 700; flex: none; }
 .steps a[aria-current="step"] .n { background: var(--accent); color: var(--surface); border-color: var(--accent); }
@@ -231,7 +231,7 @@ footer.site details > :not(summary) { margin: .4rem 0 0; }
 @media (max-width: 52rem) {
   .layout { grid-template-columns: 1fr; gap: .5rem; }
   .steps { position: static; padding: .8rem 0 0; display: flex; flex-wrap: wrap; gap: .3rem; }
-  .steps a, .steps span { border: 1px solid var(--line); border-radius: 999px; padding: .3rem .7rem .3rem .4rem; background: var(--surface); font-size: .82rem; }
+  .steps > a, .steps > span { border: 1px solid var(--line); border-radius: 999px; padding: .3rem .7rem .3rem .4rem; background: var(--surface); font-size: .82rem; }
   .steps a[aria-current="step"] { background: var(--accent-soft); border-color: var(--accent); }
   .steps small { display: none; }
   .tiles { grid-template-columns: 1fr 1fr; }
