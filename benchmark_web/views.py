@@ -7,7 +7,6 @@ from pathlib import Path
 import secrets
 
 from benchmark import VERSION
-from benchmark.model_catalog import RETIREMENT_NOTICE
 from benchmark.preparation import binding
 from benchmark.storage import _strict_json as encode
 
@@ -391,7 +390,6 @@ def render(value, csrf, path='/preparation', *, error=False):
         status += '.</strong> Admission ' + ('ouverte' if state['admission_open'] else 'fermée') + '.</p><p>'
         status += text(reasons[state['reason']]) + '</p><p class="hint">La consultation ne lance aucun appel. La préparation et la qualification sont financées par l’opérateur ; les appels candidats demandent un lancement distinct.</p></aside>'
         content = status + content
-    content = '<aside aria-label="Modèles disponibles"><p>' + text(RETIREMENT_NOTICE) + '</p></aside>' + content
     template = TEMPLATE_PATH.read_text()
     body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''
     version = 'v' + VERSION + ('+' + SOURCE_SHA[:7] if SOURCE_SHA else '')

@@ -11,9 +11,9 @@ from tests.test_storage import operation, PAYLOAD
 
 
 class ModelRetirementTests(unittest.TestCase):
-    def test_catalog_and_visible_replacement(self):
+    def test_catalog_replacement_without_sitewide_notice(self):
         page = views.render(dict(error='Fictional error'), 'csrf', error=True).decode()
-        self.assertIn(model_catalog.RETIREMENT_NOTICE, page)
+        self.assertNotIn('DeepSeek V4 Flash 0731 est retiré', page)
         model_catalog.require_current(dict(model='deepseek-flash'))
         model_catalog.require_current(dict(model=model_catalog.DEEPSEEK_REPLACEMENT))
 

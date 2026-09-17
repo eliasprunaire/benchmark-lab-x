@@ -229,7 +229,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertTrue(any(n['attrs'].get('role') in ('status', 'alert') and n['text'].strip()
                                 for n in page.nodes), 'Phrase d’état absente')
             self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b|\b(?:configuration|cell|attempt|case)-\d+\b|\b(?:O1|E1)\b|python -m|package_sha256')
-            self.assertNotIn('v0.1.0+aaaaaaa', page.visible)
+            self.assertIn('Version : v0.1.0+aaaaaaa', page.visible)
             self.assertNotIn(KEY, page.visible)
             focus = [n for n in page.nodes if not n['hidden'] and not n['details']
                      and 'disabled' not in n['attrs'] and n['attrs'].get('type') != 'hidden'
