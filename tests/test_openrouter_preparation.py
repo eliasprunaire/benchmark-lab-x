@@ -183,6 +183,65 @@ class OpenRouterPreparationTests(unittest.TestCase):
         prep.execute(self.data, operation, self.transport)
         return next(op for op in self.store.inspect_operations() if op['operation_id'] == operation), prep.view(self.store, self.session, 'd')
 
+    def personal_transport(self):
+        from benchmark import provider_access, evaluation
+        from benchmark.acquisition import campaigns
+        from tests.test_provider_access import AccessTransport, SECRET, KEY as PERSONAL_KEY
+        qualification.initialize(self.data)
+        campaigns.initialize(self.data)
+        evaluation.initialize(self.data)
+        provider_access.initialize(self.data)
+        access = AccessTransport()
+        provider_access.import_key(self.store, self.session, SECRET, PERSONAL_KEY, access)
+        bound, _ = service.personal_transports(self.store, self.token, self.transport, None, SECRET, access)
+        return bound, SECRET, PERSONAL_KEY
+
+    def test_personal_preparation_and_qualification_never_charge_operator(self):
+        bound, secret, key = self.personal_transport()
+        operation, _ = prep.submit(self.store, self.session, 'personal',
+            dict(action_id='create', request=NEED), 'a' * 40, bound)
+        prep.execute(self.data, operation, bound)
+        self.assertEqual('Bearer ' + key, self.http.request.call_args.kwargs['headers']['Authorization'])
+        self.assertEqual('0', self.store.inspect_budget('fixture')['spent'])
+        self.assertEqual('0.000202', self.store.inspect_budget(bound.preparation_budget_id)['spent'])
+        preview = prep.view(self.store, self.session, 'personal')
+        qualifier = assistant.OpenRouterQualification(None).for_session(key, self.session, secret)
+        estimate = estimate_for(qualifier._profile)
+        estimate['model_summary']['pricing_raw'] = {'prompt': '0.00001', 'completion': '0.00005'}
+        qualifier._quote = assistant.configuration(estimate, qualifier._profile)
+        _, operation, _ = prep.validate_and_qualify(self.store, self.session, 'personal',
+            prep.binding('personal', preview['revision'], preview['package_sha256']), 'a' * 40, qualifier)
+        self.assertEqual('10.81920', self.store.inspect_budget(bound.preparation_budget_id)['reserved'])
+        model = qualifier._profile['model']
+        route = {'requested': model, 'strategy': 'direct', 'attempt': 1,
+                 'endpoints': {'available': [{'provider': 'Anthropic', 'model': model, 'selected': True}]}}
+        self.http.getresponse.return_value.read.return_value = http_body(
+            {'qualified': True, 'findings': [], 'summary': 'Paquet cohérent'}, model=model, openrouter_metadata=route)
+        prep.execute_qualification(self.data, operation, qualifier)
+        self.assertTrue(prep.view(self.store, self.session, 'personal')['qualified'])
+        self.assertEqual('Bearer ' + key, self.http.request.call_args.kwargs['headers']['Authorization'])
+        self.assertEqual('0', self.store.inspect_budget('fixture')['spent'])
+        from benchmark import provider_access
+        from tests.test_provider_access import AccessTransport
+        before = self.store.inspect_budget(bound.preparation_budget_id)
+        provider_access.import_key(self.store, self.session, secret, key + '-replacement', AccessTransport())
+        self.assertEqual(before, self.store.inspect_budget(bound.preparation_budget_id))
+        self.assertFalse(bound.authorized(self.store))
+
+    def test_personal_key_change_waits_for_pending_preparation(self):
+        from benchmark import provider_access
+        bound, secret, _ = self.personal_transport()
+        operation, _ = prep.submit(self.store, self.session, 'personal',
+            dict(action_id='create', request=NEED), 'a' * 40, bound)
+        with self.assertRaisesRegex(prep.Denied, 'PREPARATION_IN_PROGRESS'):
+            provider_access.disconnect(self.store, self.session, secret)
+        self.http.request.assert_not_called()
+        prep.execute(self.data, operation, bound)
+        provider_access.disconnect(self.store, self.session, secret)
+        self.assertFalse(bound.authorized(self.store))
+        self.assertEqual((None, None), service.personal_transports(
+            self.store, self.token, self.transport, None, secret, None))
+
     def test_exact_wire_is_durable_before_http_and_unknown_cost_keeps_reserve(self):
         def at_request(method, path, *, body, headers):
             with closing(storage.Store(self.data)) as reader:

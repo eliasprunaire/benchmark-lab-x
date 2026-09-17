@@ -150,6 +150,8 @@ def denied_response(error):
         'SOURCE_RATE_LIMIT': 'La limite horaire de cette source est atteinte.',
         'SOURCE_MISSING': 'La source de cet envoi est absente ou invalide.',
         'DAILY_CAP': 'Le plafond quotidien de préparation est atteint.',
+        'ACCESS_KEY_REJECTED': 'Cette clé OpenRouter n’a pas pu être vérifiée. La clé précédente est conservée.',
+        'ACCESS_CAP_REQUIRED': 'Utilisez une clé OpenRouter avec un plafond non renouvelable de 50 USD maximum et un solde disponible.',
         'ACCESS_NO_PENDING': 'Aucune autorisation OpenRouter n’est en attente.',
         'ACCESS_EXCHANGE_FAILED': 'OpenRouter a refusé ou interrompu l’autorisation.',
         'ACCESS_REQUIRED': 'Un accès OpenRouter connecté est requis avant le lancement.',
@@ -230,10 +232,26 @@ def executor_result(raw, health, handle):
         return _internal_result(error, 'UNEXPECTED')
 
 
+def personal_transports(store, token, preparation_transport, qualification_transport, secret, access_transport):
+    from . import preparation, provider_access
+    if secret is None or not provider_access.available(store):
+        return None, None
+    try:
+        session_id, _, _ = preparation.session(store, token)
+        budget_id = provider_access.preparation_budget_id(session_id)
+        if not store._connection.execute('SELECT 1 FROM budgets WHERE budget_id=?', (budget_id,)).fetchone():
+            return None, None
+        key = provider_access.key_for_session(store, session_id, secret, access_transport)
+    except preparation.Denied:
+        return None, None
+    return tuple(t.for_session(key, session_id, secret) if t is not None else None
+                 for t in (preparation_transport, qualification_transport))
+
+
 def serve_executor(data, socket_path, source, *, transport=None, qualification_transport=None,
                    candidate_transport=None, candidate_transport_factory=None,
                    candidate_identity=None,
-                   access_secret=None, access_transport=None, presentation=None):
+                   access_secret=None, access_transport=None, presentation=None, personal_preparation=False):
     data, socket_path = Path(data), Path(socket_path)
     with closing(Store(data)) as store:
         lock_fd = os.open(data / 'executor.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -254,18 +272,31 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                 return {'source_sha': source, 'storage': 'ok', **status(data, store)}
 
             def handle_message(message):
-                from . import preparation, web_api
+                from . import preparation, provider_access, web_api
+                active_transport, active_qualification = transport, qualification_transport
+                if personal_preparation:
+                    active_transport, active_qualification = personal_transports(
+                        store, message['token'], transport, qualification_transport, access_secret, access_transport)
                 code, value, cookie, start = web_api.dispatch(
                     store, message['method'], message['path'], message['token'], message['body'],
-                    source, transport, candidate_transport=candidate_transport or candidate_transport_factory,
+                    source, active_transport, candidate_transport=candidate_transport or candidate_transport_factory,
                     candidate_identity=candidate_identity,
-                    qualification_transport=qualification_transport,
+                    qualification_transport=active_qualification,
                     access_secret=access_secret, access_transport=access_transport,
-                    presentation=presentation)
+                    presentation=presentation, personal_preparation=personal_preparation)
+                if personal_preparation and isinstance(value, dict):
+                    value['personal_preparation'] = True
+                    if 'availability' in value and active_transport is None:
+                        value['availability'].update(can_submit=False, reason='access',
+                                                     assistant_configured=transport is not None)
+                    if code < 400:
+                        session_id, _, _ = preparation.session(store, cookie or message['token'])
+                        value['personal_access'] = provider_access.view(
+                            store, session_id, access_secret, access_transport, refresh=False)
                 if isinstance(start, dict):
                     if 'qualification_operation' in start:
                         threading.Thread(target=preparation.execute_qualification,
-                                         args=(data, start['qualification_operation'], qualification_transport),
+                                         args=(data, start['qualification_operation'], active_qualification),
                                          daemon=True).start()
                     else:
                         from .acquisition.execution import execute_launch
@@ -274,7 +305,7 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                                                  'access_secret': access_secret,
                                                  'access_transport': access_transport}, daemon=True).start()
                 elif start:
-                    threading.Thread(target=preparation.execute, args=(data, start, transport), daemon=True).start()
+                    threading.Thread(target=preparation.execute, args=(data, start, active_transport), daemon=True).start()
                 return {'status': code, 'value': value.hex() if isinstance(value, bytes) else value,
                         'piece': isinstance(value, bytes), 'cookie': cookie}
 

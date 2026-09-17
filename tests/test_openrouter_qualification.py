@@ -148,6 +148,9 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.assertEqual('10.8192', self.store.inspect_budget('preparation')['reserved'])
         operation = next(row for row in self.store.inspect_operations() if row['operation_id'] == operation_id)
         self.assertEqual('10.8192', operation['requested_configuration']['reserve_usd'])
+        prep.execute_qualification(self.data, operation_id, transport)
+        self.assertEqual(1, len(transport.calls))
+        self.assertTrue(prep.view(self.store, self.session, 'dossier')['qualified'])
 
     def test_qualification_quote_cannot_exceed_remaining_daily_cap(self):
         transport = QualificationTransport({'qualified': True, 'findings': [], 'summary': 'OK'})

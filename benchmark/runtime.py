@@ -240,6 +240,8 @@ def main(argv=None):
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--preparation-assistant', metavar='ALIAS_OR_PROFILE',
                         help='Alias preparation, alias historique glm-5.3-flash ou chemin d’un profil JSON local')
+    parser.add_argument('--personal-preparation', action='store_true',
+                        help='Exiger la clé personnelle de la session pour préparer et qualifier')
     parser.add_argument('--qualification-assistant', metavar='ALIAS_OR_PROFILE',
                         help='Alias qualification ou chemin du profil JSON local approuvé')
     parser.add_argument('--judgment-profile', metavar='ALIAS_OR_PROFILE')
@@ -259,6 +261,10 @@ def main(argv=None):
             raise ValueError('Canal officiel réservé à une acquisition opérateur explicitement admise')
         if args.judgment_profile is not None and args.action not in ('reserve-judgment', 'execute-judgment'):
             raise ValueError('Profil réservé au jugement privé')
+        if args.personal_preparation and not (args.preparation_assistant and args.qualification_assistant):
+            raise ValueError('Préparateur et qualificateur requis pour le financement personnel')
+        if args.personal_preparation and args.action != 'executor':
+            raise ValueError('Financement personnel réservé à l’exécuteur')
         if args.candidate_pi and args.action != 'executor':
             raise ValueError('Transport candidat réservé à l’exécuteur')
         if args.preparation_assistant is not None and args.action not in ('executor', 'forecast-prices', 'admit-preparation'):
@@ -323,13 +329,13 @@ def main(argv=None):
                         args.pi_package, args.node, key)
                     candidate_factory()
                 if args.preparation_assistant is not None:
-                    transport = OpenRouterPreparation(key, profile)
+                    transport = OpenRouterPreparation(None if args.personal_preparation else key, profile)
                 if args.qualification_assistant is not None:
                     from .transports.openrouter import OpenRouterQualification
-                    qualification_transport = OpenRouterQualification(key, args.qualification_assistant)
+                    qualification_transport = OpenRouterQualification(None if args.personal_preparation else key, args.qualification_assistant)
                     qualification_transport.quote()
                 serve_executor(args.data, args.socket, release_identity(), transport=transport,
-                               qualification_transport=qualification_transport,
+                               qualification_transport=qualification_transport, personal_preparation=args.personal_preparation,
                                candidate_transport_factory=candidate_factory,
                                candidate_identity=candidate_identity,
                                access_secret=access_secret, access_transport=OpenRouterAccess(),

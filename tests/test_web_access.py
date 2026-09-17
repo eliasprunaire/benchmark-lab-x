@@ -281,6 +281,22 @@ class AccessViewTests(unittest.TestCase):
 
 
 class AccessServerTests(unittest.TestCase):
+    def test_personal_key_is_never_reflected_and_success_redirects(self):
+        key = 'sk-or-v1-private-fixture'
+        body = urlencode({'csrf_token': 'csrf', 'key': key, 'assistance_cap': '20'}).encode()
+        for code in (200, 403):
+            self.executor.raw_response = json.dumps({'status': code,
+                'value': {'error': 'Clé refusée'} if code == 403 else {'connected': True},
+                'piece': False, 'cookie': None}).encode() + b'\n'
+            status, headers, raw = self.request('POST', '/preparation/access/key', body,
+                {'Content-Type': 'application/x-www-form-urlencoded',
+                 'Cookie': 'benchmark_session=session-token'})
+            self.assertEqual(303 if code == 200 else 403, status)
+            self.assertNotIn(key.encode(), raw)
+            self.assertNotIn(key, str(headers))
+            if code == 200:
+                self.assertEqual('/preparation', headers['Location'])
+
     def request(self, method, path, body=None, headers=None):
         connection = HTTPConnection('127.0.0.1', self.port, timeout=3)
         connection.request(method, path, body=body, headers=headers or {})

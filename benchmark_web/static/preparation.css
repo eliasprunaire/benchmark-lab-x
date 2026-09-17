@@ -112,7 +112,7 @@ p[role="status"] { padding: .6rem 1rem; border-left: 4px solid var(--accent); ba
 fieldset { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); padding: .6rem 1rem; }
 label { display: block; font-weight: 600; margin: .9rem 0 .3rem; }
 label:has(> input[type="checkbox"]) { display: flex; align-items: flex-start; gap: .5rem; font-weight: 400; }
-textarea, select, input[type="text"], input[type="number"] { font: inherit; width: 100%; max-width: 100%; padding: .65rem .8rem; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+textarea, select, input[type="password"], input[type="text"], input[type="number"] { font: inherit; width: 100%; max-width: 100%; padding: .65rem .8rem; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
 textarea { min-height: 6rem; resize: vertical; }
 textarea:focus-visible, select:focus-visible { border-color: var(--accent); }
 textarea:disabled, select:disabled { background: var(--soft); color: var(--muted); cursor: not-allowed; }

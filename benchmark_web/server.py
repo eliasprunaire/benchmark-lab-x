@@ -228,6 +228,9 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                          + '; HttpOnly; Secure; SameSite=Lax; Path=/preparation/access/callback')]
                     self.respond(303, b'', 'text/html; charset=utf-8', response_headers)
                     return
+                if self.command == 'POST' and self.path == '/preparation/access/key' and result['status'] < 400 and not wants_json:
+                    self.respond(303, b'', 'text/html; charset=utf-8', {'Location': '/preparation'})
+                    return
                 if self.command == 'POST' and self.path == '/preparation/access/disconnect' and result['status'] < 400:
                     self.respond(303, b'', 'text/html; charset=utf-8', {'Location': '/preparation/access'})
                     return
@@ -266,7 +269,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                             view_path = target
                     elif self.command == 'POST' and type(body) is dict:
                         result['value']['form'] = {key: value for key, value in body.items()
-                                                   if key not in ('csrf_token', 'source_sha256', 'website')}
+                                                   if key not in ('csrf_token', 'source_sha256', 'website', 'key')}
                     page = views.render(result['value'], csrf, view_path, error=result['status'] >= 400)
                     script = views.COMPARISON_FOCUS_SCRIPT if result['value'].get('kind') == 'comparison' else None
                     self.respond(result['status'], page, 'text/html; charset=utf-8', headers, script=script)

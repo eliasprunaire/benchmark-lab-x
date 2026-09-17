@@ -41,6 +41,27 @@ def render_task_index(task):
     return content
 
 
+def personal_key_form(csrf, access):
+    connected = access.get('connected', False)
+    status = 'Clé vérifiée' if connected else 'Ajouter ma clé'
+    content = '<details class="corr"><summary class="button sec">Ma clé OpenRouter · ' + status + '</summary><div>'
+    if connected:
+        content += '<p>Plafond OpenRouter : ' + text(access.get('limit_usd') or 'inconnu') + ' USD. Solde annoncé : ' + text(access.get('limit_remaining_usd') or 'inconnu') + ' USD.</p>'
+    content += '<p>Cette clé finance uniquement vos essais dans ce navigateur. Elle est conservée chiffrée sur le serveur, jamais réaffichée.</p>'
+    content += form(csrf, '/preparation/access/key', {'assistance_cap': '20'},
+        '<label for="openrouter-key">Clé API OpenRouter</label>'
+        '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help">'
+        '<p id="key-help">Utilisez une clé dédiée avec un plafond OpenRouter non renouvelable de 50 USD maximum. '
+        'Préparation et qualification : plafond local de 20 USD pour ce navigateur. Les comparaisons demandent une autorisation distincte. '
+        'Enregistrer vérifie la clé sans lancer de modèle ; remplacer la clé ne réinitialise pas le budget.</p>'
+        '<button type="submit">Enregistrer la clé</button>')
+    if access.get('status') in ('connected', 'invalid'):
+        content += form(csrf, '/preparation/access/disconnect', {},
+            '<button type="submit" class="sec">Retirer la clé de ce navigateur</button>')
+        content += '<p>Terminez la préparation ou qualification en cours avant de changer la clé. Le retrait bloque les nouveaux appels, sans révoquer la clé chez OpenRouter ni annuler une comparaison engagée.</p>'
+    return content + '</div></details>'
+
+
 def render(value, csrf, path='/preparation', *, error=False):
     """Native HTML forms, inert evidence and a fixed comparison focus script"""
     def field_attributes(name):
@@ -331,7 +352,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         else:
             content += '<p>La validation sera possible lorsqu’un exemple à examiner sera disponible.</p>'
         if editable and package and value['stage'] == 'preview' and value['validation'] is None:
-            content += '<p>Cette validation confirme la fidélité de cet exemple à votre besoin. Si la qualification est disponible, elle est financée par l’opérateur sur l’enveloppe de préparation. Aucun appel candidat ni publication n’est autorisé ici.</p>'
+            content += '<p>Cette validation confirme la fidélité de cet exemple à votre besoin. Si la qualification est disponible, ' + ('elle utilise votre clé sur votre enveloppe de préparation' if value.get('personal_preparation') else 'elle est financée par l’opérateur sur l’enveloppe de préparation') + '. Aucun appel candidat ni publication n’est autorisé ici.</p>'
             content += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
                             '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
         content += '</section>'
@@ -374,8 +395,11 @@ def render(value, csrf, path='/preparation', *, error=False):
                 url + '/configurations') + '">Choisir les modèles</a></p>'
         if 'campaigns' in value:
             content += render_campaign_history(value['campaigns'], url)
+    if value.get('personal_preparation') and s9:
+        content = personal_key_form(csrf, value.get('personal_access', {})) + content
     if state and s9:
         reasons = {
+            'access': 'Ajoutez votre clé OpenRouter pour préparer un exemple avec votre propre accès.',
             'open': 'Échanges disponibles. Chaque envoi reste vérifié par le serveur avant admission.',
             'closed': 'Appels fermés : aucune admission de préparation ouverte.',
             'unconfigured': 'Appels fermés : aucun assistant configuré pour la préparation.',
@@ -385,10 +409,15 @@ def render(value, csrf, path='/preparation', *, error=False):
             'unresolved': 'Appels fermés : effets ou coûts non résolus dans l’enveloppe de préparation.',
             'budget': 'Appels fermés : enveloppe insuffisante pour un nouvel échange.',
             'daily_cap': 'Appels fermés : plafond quotidien de préparation atteint.'}
-        status = '<aside id="availability" class="availability" aria-label="État de la préparation"><p><strong>Assistant '
-        status += 'configuré' if state['assistant_configured'] else 'non configuré'
-        status += '.</strong> Admission ' + ('ouverte' if state['admission_open'] else 'fermée') + '.</p><p>'
-        status += text(reasons[state['reason']]) + '</p><p class="hint">La consultation ne lance aucun appel. La préparation et la qualification sont financées par l’opérateur ; les appels candidats demandent un lancement distinct.</p></aside>'
+        status = '<aside id="availability" class="availability" aria-label="État de la préparation"><p><strong>'
+        if value.get('personal_preparation'):
+            status += ('Préparation disponible' if can_submit else 'Préparation en attente') + '.</strong></p><p>'
+        else:
+            status += 'Assistant ' + ('configuré' if state['assistant_configured'] else 'non configuré')
+            status += '.</strong> Admission ' + ('ouverte' if state['admission_open'] else 'fermée') + '.</p><p>'
+        funding = ('Préparation et qualification utilisent votre clé personnelle' if value.get('personal_preparation')
+                   else 'La préparation et la qualification sont financées par l’opérateur')
+        status += text(reasons[state['reason']]) + '</p><p class="hint">La consultation ne lance aucun appel. ' + funding + ' ; les appels candidats demandent un lancement distinct.</p></aside>'
         content = status + content
     template = TEMPLATE_PATH.read_text()
     body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''

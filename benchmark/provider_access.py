@@ -212,6 +212,7 @@ def start(store, session_id, secret, callback_url, now=None):
     verifier = secrets.token_urlsafe(32)
     connection = store._connection_checked()
     with _transaction(connection, write=True):
+        _no_preparation_in_progress(connection, session_id)
         _delete(connection, session_id)
         connection.execute('INSERT INTO s2_provider_access '
                            '(session_id,verifier_cipher,key_cipher,created_at,verified_at,checked_at,limit_usd,limit_remaining_usd,is_free_tier,status,status_reason) '
@@ -371,6 +372,79 @@ class OpenRouterAccess:
         return self._request('GET', VERIFY_PATH, key=_credential(key))
 
 
+def _no_preparation_in_progress(connection, session_id):
+    if connection.execute(
+            "SELECT 1 FROM operations o JOIN s2_dossiers d USING(dossier_id) "
+            "WHERE d.session_id=? AND o.phase IN ('preparation','correction','qualification') "
+            "AND o.state!='RECEIVED' LIMIT 1", (session_id,)).fetchone():
+        from .preparation import Denied
+        raise Denied('PREPARATION_IN_PROGRESS')
+
+
+def preparation_budget_id(session_id):
+    return 'personal-preparation-' + session_id
+
+
+def _key_details(raw):
+    document = _decode(raw)
+    document = document.get('data', document)
+    if type(document) is not dict or type(document.get('is_free_tier')) is not bool:
+        raise ValueError('Métadonnées de clé invalides')
+    return document
+
+
+def _personal_amounts(document):
+    limit, remaining = _money(document.get('limit')), _money(document.get('limit_remaining'))
+    if (limit is None or remaining is None or Decimal(limit) > 50
+            or not 0 < Decimal(remaining) <= Decimal(limit) or document.get('limit_reset') is not None):
+        raise ValueError('Plafond personnel requis')
+    return limit, remaining
+
+
+def import_key(store, session_id, secret, key, transport=None):
+    from .preparation import Denied
+    if secret is None or not available(store):
+        raise Denied('ACCESS_UNAVAILABLE')
+    if type(key) is not str or len(key) > 512 or not key.startswith('sk-or-v1-'):
+        raise Denied('ACCESS_KEY_REJECTED')
+    _credential(key)
+    connection = store._connection_checked()
+    now = _now()
+    with _transaction(connection, write=True):
+        _no_preparation_in_progress(connection, session_id)
+        event_id = _event_intent(connection, session_id, 'verify', now)
+    try:
+        status, raw = (transport or OpenRouterAccess()).verify(key)
+        if status != 200:
+            raise ValueError('Clé refusée')
+        document = _key_details(raw)
+        try:
+            limit, remaining = _personal_amounts(document)
+        except ValueError:
+            raise Denied('ACCESS_CAP_REQUIRED') from None
+    except Exception as error:
+        with _transaction(connection, write=True):
+            _event_result(connection, event_id, 'FAILED', _now(), sensitive=(key,))
+        if isinstance(error, Denied):
+            raise
+        raise Denied('ACCESS_KEY_REJECTED') from None
+    budget_id = preparation_budget_id(session_id)
+    if not connection.execute('SELECT 1 FROM budgets WHERE budget_id=?', (budget_id,)).fetchone():
+        store.create_budget(budget_id, '20', 'USD')
+    with _transaction(connection, write=True):
+        _no_preparation_in_progress(connection, session_id)
+        _event_result(connection, event_id, 'RECEIVED', _now(), status, raw, (key,))
+        connection.execute('INSERT INTO s2_provider_access '
+            '(session_id,verifier_cipher,key_cipher,created_at,verified_at,checked_at,limit_usd,limit_remaining_usd,is_free_tier,status,status_reason) '
+            "VALUES (?,NULL,?,?,?,?,?,?,?,'connected',NULL) "
+            'ON CONFLICT(session_id) DO UPDATE SET verifier_cipher=NULL,key_cipher=excluded.key_cipher,'
+            'created_at=excluded.created_at,verified_at=excluded.verified_at,checked_at=excluded.checked_at,'
+            "limit_usd=excluded.limit_usd,limit_remaining_usd=excluded.limit_remaining_usd,is_free_tier=excluded.is_free_tier,status='connected',status_reason=NULL",
+            (session_id, encrypt(secret, key), now.isoformat(), now.isoformat(), now.isoformat(),
+             limit, remaining, int(document['is_free_tier'])))
+    return view(store, session_id, secret, transport, refresh=False)
+
+
 def _verify(store, session_id, transport, key, now):
     connection = store._connection_checked()
     with _transaction(connection, write=True):
@@ -386,21 +460,30 @@ def _verify(store, session_id, transport, key, now):
         return
     state = 'RECEIVED'
     update = None
+    invalid_reason = None
+    personal = connection.execute('SELECT 1 FROM budgets WHERE budget_id=?',
+                                  (preparation_budget_id(session_id),)).fetchone() is not None
     if status == 200:
         try:
-            document = _decode(raw)
+            document = _key_details(raw)
             if type(document['is_free_tier']) is not bool:
                 raise ValueError('Statut de palier invalide')
-            update = (_money(document.get('limit')),
-                      _money(document.get('limit_remaining')), int(document['is_free_tier']))
+            amounts = (_personal_amounts(document) if personal else
+                       (_money(document.get('limit')), _money(document.get('limit_remaining'))))
+            update = (*amounts, int(document['is_free_tier']))
         except (ValueError, KeyError, TypeError):
             state = 'FAILED'
+            if personal:
+                invalid_reason = 'ACCESS_CAP_REQUIRED'
     with _transaction(connection, write=True):
         observed = _now()
         _event_result(connection, event_id, state, observed, status, raw, (key,))
         if update is not None:
             connection.execute("UPDATE s2_provider_access SET verified_at=?,checked_at=?,limit_usd=?,limit_remaining_usd=?,is_free_tier=?,status='connected',status_reason=NULL WHERE session_id=?",
                                (observed.isoformat(), observed.isoformat(), *update, session_id))
+        elif invalid_reason is not None:
+            connection.execute("UPDATE s2_provider_access SET checked_at=?,status='invalid',status_reason=? WHERE session_id=?",
+                               (observed.isoformat(), invalid_reason, session_id))
         elif status in (401, 403):
             connection.execute("UPDATE s2_provider_access SET checked_at=?,status='invalid',status_reason='KEY_REJECTED' WHERE session_id=?",
                                (observed.isoformat(), session_id))
@@ -514,6 +597,7 @@ def disconnect(store, session_id, secret):
         return None
     connection = store._connection_checked()
     with _transaction(connection, write=True):
+        _no_preparation_in_progress(connection, session_id)
         _delete(connection, session_id)
     return _row_view(None)
 
