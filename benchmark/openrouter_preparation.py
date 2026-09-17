@@ -354,13 +354,14 @@ def post(api_key, wire, timeout=TIMEOUT_SECONDS, max_response_bytes=MAX_RESPONSE
 class OpenRouterPreparation:
     phases = ('preparation', 'correction')
 
-    def content(self, request):
+    def content(self, request) -> dict:
         return outgoing.closed_preparation(request['outgoing'])
 
     def validate_document(self, document):
         pass
 
-    def validate_answer(self, result, message):
+    @staticmethod
+    def validate_answer(result, message):
         return result
 
     def __init__(self, api_key, profile=None):

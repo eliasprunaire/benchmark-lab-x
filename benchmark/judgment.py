@@ -140,7 +140,7 @@ def _proposal(store, connection, operation, ctx, answer):
         raise ValueError('Verdict proposé inconnu')
     resources = e._resources(store, ctx)
     instructions = json.loads(operation['resources'][1])['messages'][0]['content']
-    report = dict(findings=deepcopy(answer['findings']), measures=deepcopy(answer['measures']),
+    report: dict = dict(findings=deepcopy(answer['findings']), measures=deepcopy(answer['measures']),
         limits=deepcopy(answer['limits']), judgment=dict(mode='human', instructions=instructions,
             resources_seen=list(resources), assistance_operation_id=None, model_links='INCONNU',
             disagreements=[], professional_review='ABSENTE'))
@@ -268,7 +268,7 @@ def _retained_proposal(store, connection, operation, ctx):
         message = document['choices'][0]['message']
         answer = json.loads(message['content'], object_pairs_hook=storage._unique_object)
         from .openrouter_judgment import OpenRouterJudgment
-        OpenRouterJudgment.validate_answer(None, answer, message)
+        OpenRouterJudgment.validate_answer(answer, message)
         if (observed['incident'] is not None or not observed['http']['complete']
                 or observed['http']['status'] != 200
                 or document['model'] not in operation['requested_configuration']['model_identities']

@@ -766,7 +766,8 @@ raise SystemExit(7 if {variant!r} == "nonzero" else 0)
         self.assertEqual(collection["stop_reason"], "PROVENANCE_OU_ROUTE_DIVERGENTE")
         self.assertFalse(demo._safe_satisfied(receipt))
         built = self.built()
-        results = json.loads((built / "index.html").exists() and (built / "results.json").read_text())
+        self.assertTrue((built / "index.html").exists())
+        results = json.loads((built / "results.json").read_text())
         item = results["configurations"][0]
         item["observed"].update({"provider": "INCONNU", "model": "INCONNU", "responseModel": "INCONNU", "stopReason": "INCONNU"})
         item["unknowns"] = ["provider", "model", "responseModel", "stopReason", "route", "effort"]
@@ -1377,6 +1378,7 @@ class SigtermRaceTests(unittest.TestCase):
 
 
 class FinalSigtermHandoffTests(unittest.TestCase):
+    fixture: DemoTest
     setUp = SigtermRaceTests.setUp
     tearDown = SigtermRaceTests.tearDown
 
@@ -1398,6 +1400,7 @@ class FinalSigtermHandoffTests(unittest.TestCase):
 
 
 class MultithreadedFinalSigtermHandoffTests(unittest.TestCase):
+    fixture: DemoTest
     setUp = SigtermRaceTests.setUp
     tearDown = SigtermRaceTests.tearDown
 
@@ -1741,6 +1744,7 @@ class R11PgidRetentionAtomicIoTests(unittest.TestCase):
 
 
 class IsolatedSupervisorFailureTests(unittest.TestCase):
+    root: Path
     setUp = DemoTest.setUp
     tearDown = DemoTest.tearDown
     write_json = DemoTest.write_json
@@ -2031,6 +2035,7 @@ d.collect(*sys.argv[1:])
 
 
 class IsolatedSupervisorImmutabilityTests(unittest.TestCase):
+    root: Path
     setUp = DemoTest.setUp
     tearDown = DemoTest.tearDown
     write_json = DemoTest.write_json

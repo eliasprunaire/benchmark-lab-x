@@ -369,6 +369,61 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual([], c.projection(self.store, connection, 'fixture', 'inconnue'))
         self.assertEqual([], c.projection(self.store, connection, 'foreign', 'comparison'))
 
+    def test_dossier_courant_et_historique_partagent_une_projection_ciblee(self):
+        from tests.test_s2_review_regressions import response_for
+
+        connection = self.store._connection
+        previous = p.owner(connection, self.sid, 'fixture')
+        foreign, _, foreign_token = p.session(self.store, None, create=True)
+        p.admit(self.store, dict(authority_id='TEST_ONLY_PREPARATION_S3', budget_id='fictional',
+                                reserve_amount='7', requested_configuration={'model': 'fictional'}))
+        for sid, did, body in (
+                (self.sid, 'second', dict(action_id='create', request='Autre dossier fictif')),
+                (foreign, 'foreign', dict(action_id='create', request='Dossier privé étranger')),
+                (self.sid, 'fixture', dict(action_id='correct', revision=previous,
+                                           kind='correct', message='Modifier les notes fictives'))):
+            operation, _ = p.submit(self.store, sid, did, body, 'a' * 40, True)
+            p.execute(self.home / 'private', operation, lambda op, _: response_for(op))
+        self.before = list(connection.iterdump())
+        current = p.owner(connection, self.sid, 'fixture')
+        catalogue = r.catalogue(self.store, self.sid)
+        self.assertEqual(['fixture', 'second'], [task['dossier_id'] for task in catalogue['tasks']])
+        index = catalogue['tasks'][0]
+        self.assertEqual(current, index['revision'])
+        self.assertEqual({'comparison', 'empty'},
+                         {campaign['campaign_id'] for campaign in index['versions'][0]['campaigns']})
+        for suffix, revision in (('', current), ('/revisions/' + str(previous), previous)):
+            with self.subTest(revision=revision):
+                expected = dict(p.view(self.store, self.sid, 'fixture', revision),
+                                current_revision=current, task_index=index,
+                                availability=p.availability(self.store, False))
+                transaction, reads = 0, []
+
+                def trace(sql):
+                    nonlocal transaction
+                    if sql == 'BEGIN':
+                        transaction += 1
+                    if sql.startswith(('SELECT stage,explanation,package_json',
+                                       'SELECT revision FROM s2_revisions')):
+                        reads.append(transaction)
+
+                connection.set_trace_callback(trace)
+                try:
+                    with patch.object(c, 'projection', wraps=c.projection) as project:
+                        code, actual, _, _ = web_api.dispatch(
+                            self.store, 'GET', '/preparation/dossiers/fixture' + suffix,
+                            self.token, None, 'a' * 40, False)
+                finally:
+                    connection.set_trace_callback(None)
+                self.assertEqual(200, code)
+                self.assertEqual(expected, actual)
+                self.assertEqual(['fixture'], [call.args[2] for call in project.call_args_list])
+                self.assertEqual(2, len(reads))
+                self.assertEqual(reads[0], reads[1])
+                with self.assertRaises(p.Denied):
+                    web_api.dispatch(self.store, 'GET', '/preparation/dossiers/fixture' + suffix,
+                                     foreign_token, None, 'a' * 40, False)
+
     def test_lancement_reutilise_son_instantane_sans_projection_globale(self):
         connection = c.connection_for(self.store)
         expected = next(v for v in c.projection(self.store, connection, 'fixture')

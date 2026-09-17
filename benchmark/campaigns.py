@@ -3,6 +3,7 @@
 The local operator supplies authority and availability evidence. No provider,
 plugin loader, queue drainer or content evaluator belongs to this module.
 """
+from collections.abc import Callable
 from contextlib import closing
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -374,8 +375,9 @@ def _comparison_contract(store, connection, fingerprint):
     operation = store._operation_for_update(connection, qualified['operation_id'], ('RECEIVED',))
     result = _qualification_result(operation['receipt']['result'])
     authority = json.loads(row[4], object_pairs_hook=storage._unique_object)
-    if (encode(authority) != row[4]
-            or authority != dict(authority_id='assistant:' + qualified['model'],
+    model = qualified['model']
+    if (not isinstance(model, str) or encode(authority) != row[4]
+            or authority != dict(authority_id='assistant:' + model,
                                  operation_id=qualified['operation_id'], receipt_sha256=q.digest(operation['receipt']))
             or result != {key: qualified[key] for key in ('qualified', 'findings', 'summary')}):
         raise IntegrityError('Autorité ou reçu du contrat de comparaison divergent')
@@ -748,7 +750,7 @@ def _admissions(store, connection, manifest, fingerprint):
 
 def _request(store, manifest, fingerprint, contract, cell):
     config = next(c for c in manifest['panel'] if c['id'] == cell['configuration_id'])
-    request = dict(campaign_id=manifest['campaign_id'], manifest_sha256=fingerprint,
+    request: dict = dict(campaign_id=manifest['campaign_id'], manifest_sha256=fingerprint,
                 contract_sha256=manifest['contract_sha256'], cell_id=cell['cell_id'], case_id=cell['case_id'],
                 requested_configuration=config, conditions=manifest['conditions'], package=contract['package'],
                 pieces=[dict(id=p['id'], sha256=p['sha256'], content=store.read_piece(p['id']).decode('utf-8'))
@@ -771,7 +773,7 @@ def _engine():
                          'openrouter_preparation.py', 'recovery.py', 'outgoing.py')}
 
 
-def _transport_view(request):
+def _transport_view(request) -> dict:
     from . import outgoing
     if request.get('outgoing_format') != outgoing.FORMAT:
         raise ValueError('Ancien format sortant : nouvelle version de tâche requise')
@@ -1221,6 +1223,7 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
 
 def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=None, access_transport=None):
     from .preparation import owner, Denied
+    from .provider_access import view as access_view
     _intact(store)
     connection = connection_for(store)
     with _transaction(connection):
@@ -1235,7 +1238,6 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
         raise ValueError('Confirmation requise')
     access = None
     if requester:
-        from .provider_access import view as access_view
         access = access_view(store, session_id, access_secret, access_transport, refresh=False)
         with _transaction(connection):
             snapshot = _inspect(store, connection, campaign_id)
@@ -1393,7 +1395,8 @@ def close_admission(store, reason):
         connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE admission_id IS NOT NULL', (reason, _now()))
 
 
-def execute(data, attempt_id, transport=None, *, transport_factory=None,
+def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
+            transport_factory: Callable[..., Callable[..., dict]] | None = None,
             access_secret=None, access_transport=None):
     """One explicit worker, one durable boundary, one callback; never an implicit retry."""
     if not callable(transport) and not callable(transport_factory):
@@ -1404,6 +1407,7 @@ def execute(data, attempt_id, transport=None, *, transport_factory=None,
         _intact(store)
         connection = connection_for(store)
         requester_key = None
+        session_id = None
         with _transaction(connection):
             row = connection.execute('SELECT campaign_id FROM s4_attempts WHERE operation_id=?',
                                      (attempt_id,)).fetchone()
@@ -1413,7 +1417,7 @@ def execute(data, attempt_id, transport=None, *, transport_factory=None,
             if preview['manifest'].get('funding', 'operator') == 'requester':
                 session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
                                                 (preview['task']['dossier_id'],)).fetchone()[0]
-        if preview['manifest'].get('funding', 'operator') == 'requester':
+        if session_id is not None:
             from .provider_access import key_for_session
             requester_key = key_for_session(store, session_id, access_secret, access_transport)
         with _transaction(connection, write=True):
@@ -1441,7 +1445,7 @@ def execute(data, attempt_id, transport=None, *, transport_factory=None,
                     from .provider_access import decrypt
                     row = connection.execute("SELECT key_cipher FROM s2_provider_access WHERE session_id=? AND status='connected'",
                                              (session_id,)).fetchone()
-                    if (row is None or not hmac.compare_digest(
+                    if (row is None or requester_key is None or not hmac.compare_digest(
                             decrypt(access_secret, row[0]).encode(), requester_key.encode())):
                         from .preparation import Denied
                         raise Denied('ACCESS_REQUIRED')
@@ -1453,7 +1457,7 @@ def execute(data, attempt_id, transport=None, *, transport_factory=None,
             if not callable(transport):
                 raise ValueError('Transport injecté par le lanceur de confiance requis')
             if hasattr(transport, 'prepare'):
-                transport.prepare(deepcopy(closed_operation), deepcopy(closed_request))
+                getattr(transport, 'prepare')(deepcopy(closed_operation), deepcopy(closed_request))
             connection.execute('INSERT INTO s4_emissions VALUES (?,?,?)', (attempt_id, admission['admission_id'], _now()))
             # Same S1 transition as mark_emission_possible, in the transaction that
             # also freezes the admission actually used by this worker
@@ -1515,7 +1519,7 @@ def execute(data, attempt_id, transport=None, *, transport_factory=None,
                                transport_factory=transport_factory)
 
 
-def _projected(store, connection, campaign_id, snapshot):
+def _projected(store, connection, campaign_id, snapshot) -> dict:
     """Allowlisted session-owner view of one already verified snapshot"""
     manifest = snapshot['manifest']
     admission = snapshot['admission']

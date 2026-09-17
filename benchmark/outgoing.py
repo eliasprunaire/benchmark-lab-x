@@ -1,5 +1,6 @@
 """Closed, role-specific outgoing content; authorization stays with the caller"""
 from hashlib import sha256
+from typing import Any
 
 from .storage import IntegrityError, _strict_json as encode
 
@@ -85,7 +86,7 @@ def named_contents(values):
     return visible
 
 
-def closed_candidate(content):
+def closed_candidate(content) -> dict[str, Any]:
     """Copy a candidate view field by field; reject extra keys and host-like names"""
     if type(content) is not dict or set(content) != set(CANDIDATE_FIELDS):
         raise ValueError('Vue candidate fermée requise')
@@ -141,7 +142,7 @@ def preparation(request):
                                    fictional_parameters=parameters, previous_candidate=previous))
 
 
-def closed_generation(package):
+def closed_generation(package) -> dict[str, Any]:
     """Containers assign roles; the model must not send a role field"""
     if type(package) is not dict or set(package) != {'candidate', 'internal', 'judgment'}:
         raise ValueError('Paquet de génération fermé requis')

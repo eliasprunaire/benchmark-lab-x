@@ -177,6 +177,8 @@ class PiOpenRouter:
                 env={'HOME': directory, 'PI_OFFLINE': '1'}, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, start_new_session=True)
             try:
+                if process.stdin is None or process.stdout is None:
+                    raise ValueError('Canaux Pi absents')
                 process.stdin.write((storage._strict_json(self._input) + '\n').encode())
                 process.stdin.flush()
                 event = _read_line(process, self._timeout)
@@ -214,12 +216,13 @@ class PiOpenRouter:
                     except ProcessLookupError:
                         pass
                     process.wait()
-                if not process.stdin.closed:
+                if process.stdin is not None and not process.stdin.closed:
                     try:
                         process.stdin.close()
                     except OSError:
                         pass
-                process.stdout.close()
+                if process.stdout is not None:
+                    process.stdout.close()
 
     def _exchange(self, operation, request):
         wire = self._wire_bytes

@@ -93,7 +93,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
             self.request.settimeout(2)
             super().setup()
 
-        def log_message(self, *args):
+        def log_message(self, format, *args):
             # Les URL peuvent contenir une saisie privée ; ne pas les journaliser
             pass
 
@@ -158,6 +158,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                 if self.path == '/preparation/access/callback':
                     raise ValueError('Callback OpenRouter réservé au retour GET')
                 body = None
+                return_path = None
                 if self.command == 'POST':
                     length = self.headers.get('Content-Length', '')
                     if not length.isdecimal() or not 0 < int(length) <= 524288 or self.headers.get('Transfer-Encoding'):
@@ -176,16 +177,20 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                         if any(len(v) != 1 and not (configurations and k == 'models')
                                for k, v in values.items()):
                             raise ValueError('Champ répété')
-                        body = {k: (v if configurations and k == 'models' else v[0])
-                                for k, v in values.items()}
-                        if 'revision' in body:
-                            if not re.fullmatch('[1-9][0-9]*', body['revision']):
+                        form_body: dict[str, str | list[str] | int] = {
+                            k: (v if configurations and k == 'models' else v[0])
+                            for k, v in values.items()}
+                        if 'revision' in form_body:
+                            revision = values['revision'][0]
+                            if not re.fullmatch('[1-9][0-9]*', revision):
                                 raise ValueError('Révision invalide')
-                            body['revision'] = int(body['revision'])
-                        if 'manifest_version' in body:
-                            if not re.fullmatch('[1-9][0-9]*', body['manifest_version']):
+                            form_body['revision'] = int(revision)
+                        if 'manifest_version' in form_body:
+                            manifest_version = values['manifest_version'][0]
+                            if not re.fullmatch('[1-9][0-9]*', manifest_version):
                                 raise ValueError('Version de manifeste invalide')
-                            body['manifest_version'] = int(body['manifest_version'])
+                            form_body['manifest_version'] = int(manifest_version)
+                        body = form_body
                     else:
                         raise ValueError('Type de formulaire inconnu')
                     if self.path == '/preparation/access/start':
@@ -215,7 +220,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                 if result.get('cookie'):
                     token = result['cookie']
                     headers['Set-Cookie'] = ('benchmark_session=' + token + '; HttpOnly; Secure; SameSite=Strict; Path=/preparation')
-                if self.command == 'POST' and self.path == '/preparation/access/start' and result['status'] < 400:
+                if return_path is not None and result['status'] < 400:
                     response_headers = list(headers.items())
                     response_headers += [
                         ('Location', result['value']['authorize_url']),

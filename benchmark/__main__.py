@@ -566,8 +566,6 @@ def collect(run_dir, authority, repo_root=None, _collection_path=None, _own_sigt
             argv = [seal["pi"]["path"], "--provider", "openrouter", "--model", config["model"], *COMMON_ARGS[2:], "--", (run / "prompt.txt").read_text()]
             process_incident = None
             if active["sigterm"]:
-                marker.unlink()
-                marker = None
                 stop_reason, interrupted = "INTERRUPTION_SIGTERM", RuntimeError("collect interrompu par SIGTERM")
                 break
             try:
@@ -759,7 +757,7 @@ def _validate_collection(run, run_id, seal, panel, collection_path=None):
             raise ValueError("matrice et reçus divergents")
     known = all(receipt["cost"] != "INCONNU" for _, receipt in receipts)
     spent = sum((_number(receipt["cost"], "coût reçu") for _, receipt in receipts), Decimal(0)) if known else None
-    if collection.get("budget_known") is not known or collection.get("spent") != (float(spent) if known else "INCONNU"):
+    if collection.get("budget_known") is not known or collection.get("spent") != (float(spent) if spent is not None else "INCONNU"):
         raise ValueError("réconciliation budgétaire de collection invalide")
     return collection, receipts
 
@@ -1479,7 +1477,7 @@ def _interruption_collection(run, run_id, seal, panel, authority_raw, stop_reaso
         "schema": "benchmark-lab-x-collection-1", "run": run_id,
         "seal_sha256": _sha(run / "seal.json"), "authority_sha256": authority_sha,
         "receipts": receipts, "matrix": matrix,
-        "spent": float(spent) if known else "INCONNU", "budget_known": known,
+        "spent": float(spent) if spent is not None else "INCONNU", "budget_known": known,
         "stop_reason": stop_reason, "created_at": _now(),
     }
 

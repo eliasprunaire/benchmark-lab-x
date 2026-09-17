@@ -271,9 +271,9 @@ def main(argv=None):
             return 0
         if args.action == 'forecast-prices':
             from .openrouter_prices import forecast
+            from .openrouter_preparation import configuration, load_profile
             profile = None
             if args.preparation_assistant is not None:
-                from .openrouter_preparation import configuration, load_profile
                 profile = load_profile(args.preparation_assistant)
                 if args.model != profile['model']:
                     raise ValueError('Modèle distinct du profil de préparation')
@@ -300,6 +300,7 @@ def main(argv=None):
                 if args.data is None:
                     raise ValueError('Données requises')
                 from .provider_access import OpenRouterAccess, parse_secret
+                from .openrouter_preparation import OpenRouterPreparation, load_profile
                 access_secret = parse_secret(os.environ.pop('BENCHMARK_ACCESS_SECRET', ''))
                 transport = None
                 qualification_transport = None
@@ -307,7 +308,6 @@ def main(argv=None):
                 candidate_identity = None
                 profile = None
                 if args.preparation_assistant is not None:
-                    from .openrouter_preparation import OpenRouterPreparation, load_profile
                     profile = load_profile(args.preparation_assistant)
                 key = os.environ.pop('OPENROUTER_API_KEY', '') if (
                     args.preparation_assistant is not None or args.qualification_assistant is not None
@@ -538,7 +538,7 @@ def main(argv=None):
                 else:
                     result = status(args.data, store)
         print(encode(result))
-        return 78 if args.action == 'execute-candidate' and result['state'] != 'RECEIVED' else 0
+        return 78 if args.action == 'execute-candidate' and (result is None or result['state'] != 'RECEIVED') else 0
     except (OSError, ValueError, KeyError, sqlite3.Error):
         # Ne pas copier le contenu d'une saisie ou un chemin privé dans les journaux
         print(encode({'state': 'HOLD', 'reason': 'OPERATION_NOT_VERIFIED'}))

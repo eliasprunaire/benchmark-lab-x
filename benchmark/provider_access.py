@@ -489,11 +489,10 @@ def view(store, session_id, secret, transport=None, now=None, *, refresh=True):
             with _transaction(connection, write=True):
                 _delete(connection, session_id)
             return _row_view(None, 'SECRET_CHANGED')
-    if (refresh and row and row[0] in ('connected', 'invalid')
-            and (row[6] is None or now - _date(row[6]) > REFRESH_INTERVAL)):
-        _verify(store, session_id, transport, key, now)
-        row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier,checked_at,status_reason '
-                                 'FROM s2_provider_access WHERE session_id=?', (session_id,)).fetchone()
+        if refresh and (row[6] is None or now - _date(row[6]) > REFRESH_INTERVAL):
+            _verify(store, session_id, transport, key, now)
+            row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier,checked_at,status_reason '
+                                     'FROM s2_provider_access WHERE session_id=?', (session_id,)).fetchone()
     return _row_view(row)
 
 
