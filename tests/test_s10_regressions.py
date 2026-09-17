@@ -85,8 +85,10 @@ class S10ProofTests(unittest.TestCase):
         page = views.render(detail, '')
         self.assertIn(('<div class="proof-text">' + escape(self.output, quote=True) + '</div>').encode(), page)
         parsed = Markup(page)
-        self.assertFalse(any(tag in ('script', 'img') or any(k.startswith('on') for k in attrs)
+        self.assertFalse(any(tag == 'script' or any(k.startswith('on') for k in attrs)
                              for tag, attrs in parsed.tags))
+        self.assertEqual([{'src': '/bench-x.svg', 'width': '32', 'height': '32', 'alt': ''}] * 2,
+                         [attrs for tag, attrs in parsed.tags if tag == 'img'])
         self.assertIn(detail['back_href'], parsed.links)
         self.assertTrue(detail['back_href'].endswith('#attempt-long'))
         self.assertEqual(query, detail['filter_scope'])

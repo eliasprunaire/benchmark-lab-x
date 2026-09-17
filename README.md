@@ -1,8 +1,5 @@
----
-style_gate: pass
----
-
 <div align="center">
+  <img src="benchmark_web/static/bench-x.svg" width="96" height="96" alt="Logo Bench-X : trois barres de comparaison">
   <h1 id="bench-x">Bench-X</h1>
   <p><strong>by Le Lab-X</strong></p>
   <p>Choisir une configuration de modèle d’IA à partir d’une tâche précise, de résultats observés, de preuves consultables et de leur coût.</p>
@@ -119,7 +116,6 @@ Les identifiants techniques historiques conservent le préfixe `benchmark-lab-x`
 - [PRD](docs/PRD.md) : besoin, utilisateurs, parcours et périmètre ;
 - [ARD](docs/ARD.md) : objets, responsabilités, flux et exploitation ;
 - [Règles](docs/RULES.md) : contrats, preuves, coûts, autorités et versions ;
-- [Glossaire](CONTEXT.md) : vocabulaire partagé ;
 - [Gabarit de tâche](docs/task-template.md) : contenu minimal d’une future tâche ;
 - [Guide opérateur](benchmark/README.md) : commandes et parcours locaux ;
 - [Vérification locale](benchmark/verify.md) : portée des tests et limites des preuves.
@@ -128,7 +124,7 @@ Les [Issues GitHub](https://github.com/eliasprunaire/benchmark-lab-x/issues) et 
 
 ## Contribuer
 
-Une contribution doit préserver les preuves historiques, les frontières d’autorité et la distinction entre simulation et résultat réel. Commencez par les [instructions du dépôt](AGENTS.md), puis exécutez le test le plus proche du changement et la suite complète avant livraison.
+Une contribution doit préserver les preuves historiques, les frontières d’autorité et la distinction entre simulation et résultat réel. Consultez le PRD, l’ARD et les règles, puis exécutez le test le plus proche du changement et la suite complète avant livraison.
 
 ## Licence
 
