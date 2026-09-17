@@ -105,6 +105,7 @@ section h3 { margin-top: 1rem; }
 .notice { padding: .6rem 1rem; border-left: 4px solid var(--warn); background: var(--warn-soft); border-radius: 0 var(--radius) var(--radius) 0; }
 [role="alert"] { padding: .75rem 1rem; border-left: 4px solid var(--ko); background: var(--ko-soft); border-radius: 0 var(--radius) var(--radius) 0; }
 p[role="status"] { padding: .6rem 1rem; border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 var(--radius) var(--radius) 0; }
+.custom-model-forms [role="status"]:empty { margin: 0; padding: 0; border: 0; }
 .availability { padding: .6rem 1rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); margin: .4rem 0 1rem; font-size: .92rem; }
 .availability p { margin: .2rem 0; max-width: none; }
 
