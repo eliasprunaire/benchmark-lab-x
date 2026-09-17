@@ -24,6 +24,24 @@ from benchmark.service import denied_response, executor_health, preparation_requ
 from benchmark.storage import BudgetError, ConflictError, IntegrityError, Store, initialize, _strict_json
 from benchmark_web.server import _source_fingerprint, serve_web
 from tests.test_storage import PAYLOAD, operation
+from tests import test_model_catalogue as catalogue_fixture
+
+
+def catalogue_executor(data, sock, fetching, release, completed):
+    from benchmark import model_catalogue
+    calls = []
+    fixture_fetch = catalogue_fixture.ModelCatalogueTests().fetch(calls)
+
+    def fetch(path):
+        if path == '/api/v1/models':
+            fetching.set()
+            if not release.wait(5):
+                raise TimeoutError('Relevé factice non libéré')
+        return fixture_fetch(path)
+
+    with patch.object(model_catalogue, '_now', return_value=catalogue_fixture.NOW):
+        serve_executor(data, sock, 'a' * 40, catalogue_fetch=fetch)
+    completed.put(calls)
 
 
 @contextmanager
@@ -52,6 +70,91 @@ def fake_executor(path, respond):
 
 
 class ServiceProcessesTests(unittest.TestCase):
+    def test_catalogue_outage_waits_before_retry_and_stops_between_requests(self):
+        from benchmark import model_catalogue
+        from benchmark.storage import initialize_preparation
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory).resolve() / 'private'
+            initialize(data)
+            initialize_preparation(data)
+            stopping = threading.Event()
+            delays, calls = [], []
+            fixture_fetch = catalogue_fixture.ModelCatalogueTests().fetch(calls)
+            attempts = 0
+
+            def fetch(path):
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise OSError('Indisponibilité fictive')
+                return fixture_fetch(path)
+
+            def wait(seconds):
+                delays.append(seconds)
+                if len(delays) == 2:
+                    stopping.set()
+
+            with patch.object(model_catalogue, '_now', return_value=catalogue_fixture.NOW), \
+                    patch.object(stopping, 'wait', side_effect=wait), \
+                    self.assertLogs('benchmark.service', level='WARNING') as logs:
+                service._refresh_catalogue(data, stopping, fetch)
+            self.assertEqual([3600, 3600], delays)
+            self.assertEqual(['WARNING:benchmark.service:CATALOGUE_UNAVAILABLE'], logs.output)
+            with closing(Store(data)) as store:
+                self.assertTrue(model_catalogue.selection(store)['models'])
+
+            stopping.clear()
+            calls.clear()
+            def stop_during_fetch(path):
+                stopping.set()
+                return fixture_fetch(path)
+            with patch.object(model_catalogue, '_now', return_value=catalogue_fixture.NOW.replace(day=16)):
+                service._refresh_catalogue(data, stopping, stop_during_fetch)
+            self.assertEqual(['/api/v1/models'], calls)
+            with closing(Store(data)) as store:
+                self.assertEqual(catalogue_fixture.NOW.isoformat(), model_catalogue.selection(store)['fetched_at'])
+
+    def test_catalogue_initializes_without_blocking_health_and_stops_cleanly(self):
+        from benchmark import model_catalogue
+        with tempfile.TemporaryDirectory() as directory:
+            data, sock = Path(directory).resolve() / 'private', Path(directory).resolve() / 'executor.sock'
+            initialize(data)
+            from benchmark.storage import initialize_preparation
+            initialize_preparation(data)
+            context = multiprocessing.get_context('spawn')
+            fetching, release, completed = context.Event(), context.Event(), context.Queue()
+            child = context.Process(target=catalogue_executor, args=(data, sock, fetching, release, completed))
+            child.start()
+            try:
+                self.assertTrue(fetching.wait(5))
+                self.assertEqual('ok', executor_health(sock)['storage'])
+                with closing(Store(data)) as store:
+                    with self.assertRaises(LookupError):
+                        model_catalogue.selection(store)
+                    release.set()
+                    deadline = time.monotonic() + 5
+                    while True:
+                        try:
+                            result = model_catalogue.selection(store)
+                            break
+                        except LookupError:
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(.01)
+                    self.assertTrue(result['models'])
+                self.assertEqual('ok', executor_health(sock)['storage'])
+                child.terminate()
+                child.join(5)
+                self.assertEqual(0, child.exitcode)
+                calls = completed.get(timeout=1)
+                self.assertEqual(1, calls.count('/api/v1/models'))
+                self.assertEqual(6, len(calls))
+            finally:
+                release.set()
+                if child.is_alive():
+                    child.kill()
+                child.join(5)
+
     def test_refus_inconnu_reste_generique(self):
         generic = ('Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier '
                    'ou demandez au responsable de vérifier son autorisation.')

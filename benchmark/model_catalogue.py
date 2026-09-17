@@ -164,6 +164,7 @@ def refresh(store, fetch):
             endpoint_documents[model_id] = detail
         document = {'models': models, 'endpoints': endpoint_documents}
         raw = storage._strict_json(document)
+        selected = _selection(now, document, registry)
     except (storage.SchemaError, storage.IntegrityError):
         raise
     except (OSError, HTTPException, ValueError):
@@ -179,7 +180,7 @@ def refresh(store, fetch):
         connection.execute('DELETE FROM s2_model_catalogue')
         connection.execute('INSERT INTO s2_model_catalogue VALUES (?, ?)', (now.isoformat(), raw))
         storage._check_schema(connection)
-    return selection(store)
+    return selected
 
 
 def _million_price(value):
@@ -208,7 +209,10 @@ def selection(store):
     if latest is None:
         raise LookupError('Aucun relevé de modèles connu')
     fetched_at, document = latest
-    registry = _registry()
+    return _selection(fetched_at, document, _registry())
+
+
+def _selection(fetched_at, document, registry):
     settings = _settings(registry)
     models = _data(document.get('models'), list)
     endpoint_documents = document.get('endpoints')

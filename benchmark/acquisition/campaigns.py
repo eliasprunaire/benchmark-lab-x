@@ -561,6 +561,10 @@ def configurations_view(store, session_id, dossier_id):
             catalogue = model_catalogue.selection(store)
         except LookupError:
             catalogue = None
+        catalogue_status = {'catalogue_available': catalogue is not None,
+                            'catalogue_stale': catalogue is not None and catalogue['stale'],
+                            'catalogue_fetched_at': None if catalogue is None else catalogue['fetched_at'],
+                            'detail': 'Relevé de modèles indisponible' if catalogue is None else None}
         tier_table = model_catalogue.tiers() if catalogue is not None else {}
         prepared = [snapshot for snapshot in _requester_campaigns(store, connection, dossier_id)
                     if not snapshot['admissions'] and not snapshot['attempts']]
@@ -583,9 +587,7 @@ def configurations_view(store, session_id, dossier_id):
                               'cap_source': 'default', 'estimate_total_usd': None,
                               'estimate_under_cap': False, 'assumptions': None,
                               'fetched_at': None if catalogue is None else catalogue['fetched_at'],
-                              'catalogue_available': catalogue is not None,
-                              'detail': ('Relevé de modèles indisponible'
-                                         if catalogue is None else None)})
+                              **catalogue_status})
         current = prepared[-1]
         estimates = [config['estimate']['amount_usd'] for config in current['manifest']['panel']]
         total = None if any(value is None for value in estimates) else format(
@@ -603,8 +605,7 @@ def configurations_view(store, session_id, dossier_id):
             'cap_source': current['cap_source'], 'estimate_total_usd': total,
             'estimate_under_cap': total is not None and _money(total) <= _money(current['cap_usd']),
             'assumptions': first['assumptions'], 'fetched_at': first['fetched_at'],
-            'catalogue_available': catalogue is not None,
-            'detail': 'Relevé de modèles indisponible' if catalogue is None else None})
+            **catalogue_status})
 
 
 def _create(store, connection, value):

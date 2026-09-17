@@ -213,9 +213,10 @@ class ParcoursComplet(unittest.TestCase):
                     self.cookies.load(cookie)
             return Page(raw), response.headers, raw
 
-    def submit(self, page, suffix, values, status=202):
+    def submit(self, page, suffix, values, status=303):
         form = page.form(suffix)
-        return self.request(form['action'], form['fields'] | values, status=status)[0]
+        result, headers, _ = self.request(form['action'], form['fields'] | values, status=status)
+        return self.request(headers['Location'])[0] if status == 303 else result
 
     def examine(self, page, route, state, primary):
         with self.subTest(route=route, état=state):
@@ -225,7 +226,7 @@ class ParcoursComplet(unittest.TestCase):
             actions = [n for n in page.nodes if n['main'] and not n['details']
                        and (n['tag'] == 'button' or n['tag'] == 'a' and 'button' in n['attrs'].get('class', '').split())
                        and 'sec' not in n['attrs'].get('class', '').split()]
-            self.assertEqual([primary], [n['text'].strip() for n in actions])
+            self.assertEqual([] if primary is None else [primary], [n['text'].strip() for n in actions])
             self.assertTrue(any(n['attrs'].get('role') in ('status', 'alert') and n['text'].strip()
                                 for n in page.nodes), 'Phrase d’état absente')
             self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b|\b(?:configuration|cell|attempt|case)-\d+\b|\b(?:O1|E1)\b|python -m|package_sha256')
@@ -250,10 +251,8 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, '/preparation/dossiers', 'erreur de saisie', 'Corriger et renvoyer')
         self.assertIn('Trop court', page.visible)
         page = self.submit(page, '/dossiers', {'request': 'Transformer des notes de réunion en une liste complète des actions à relire'})
-        dossier = page.link('Consulter le cas')
-        self.examine(page, '/preparation/dossiers', 'envoi enregistré', 'Consulter le cas d’usage et son avancement')
-        page, _, _ = self.request(dossier)
-        self.examine(page, dossier, 'attente', 'Actualiser cet état')
+        dossier = page.link('Actualiser cet état')
+        self.examine(page, dossier, 'attente', None)
         self.assertEqual(1, page.visible.count('Actualiser cet état'))
         prep.execute(self.data, self.starts.get_nowait(), self.prepare)
         page, _, _ = self.request(dossier)
@@ -282,9 +281,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Tableau des actions avec responsable', previous.visible)
         self.examine(previous, dossier + '/revisions/3', 'retour historique', 'Revenir à la révision courante')
         page, _, _ = self.request(previous.link('Revenir à la révision courante'))
-        page = self.submit(page, '/validation', {}, status=200)
-        self.examine(page, dossier, 'qualification en attente', 'Actualiser cet état')
-        self.assertIn('Qualification en attente', page.visible)
+        page = self.submit(page, '/validation', {})
+        self.examine(page, dossier, 'qualification en attente', None)
+        self.assertIn('Qualification en cours', page.visible)
         self.assertEqual(1, page.visible.count('Actualiser cet état'))
         start = self.starts.get_nowait()
         prep.execute_qualification(self.data, start['qualification_operation'], self.qualifier)

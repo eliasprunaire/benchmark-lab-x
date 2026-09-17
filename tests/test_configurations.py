@@ -1,6 +1,6 @@
 from contextlib import closing
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 import tempfile
@@ -226,6 +226,23 @@ class ConfigurationsTests(unittest.TestCase):
         self.assertFalse(view['catalogue_available'])
         self.assertEqual([], view['models'])
         self.assertEqual('Relevé de modèles indisponible', view['detail'])
+
+    def test_stale_catalogue_is_visible_without_changing_the_frozen_estimate(self):
+        from benchmark_web.views import render
+        first = self.prepare(['openai/gpt-5.6-sol', 'mistralai/mistral-medium-3-5'])
+        with patch.object(model_catalogue, '_now', return_value=NOW + timedelta(hours=25)):
+            view = campaigns.configurations_view(self.store, self.session, 'fixture')
+            self.assertTrue(view['catalogue_stale'])
+            page = render(view, 'csrf').decode()
+            self.assertIn('Ce relevé a expiré', page)
+            self.assertTrue(view['models'])
+        renewed_at = (NOW + timedelta(hours=26)).isoformat()
+        self.store._connection.execute('UPDATE s2_model_catalogue SET fetched_at=?', (renewed_at,))
+        with patch.object(model_catalogue, '_now', return_value=NOW + timedelta(hours=26)):
+            current = campaigns.configurations_view(self.store, self.session, 'fixture')
+        self.assertFalse(current['catalogue_stale'])
+        self.assertEqual(renewed_at, current['catalogue_fetched_at'])
+        self.assertEqual(first['fetched_at'], current['fetched_at'])
 
     def test_ignore_campagne_operateur_et_numerote_les_selections_du_demandeur(self):
         campaigns.create(self.store, manifest(self.candidate, 'campagne-operateur'))

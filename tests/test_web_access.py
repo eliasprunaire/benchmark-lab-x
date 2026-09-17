@@ -282,6 +282,29 @@ class AccessViewTests(unittest.TestCase):
 
 
 class AccessServerTests(unittest.TestCase):
+    def test_preparation_posts_redirect_only_successful_html_to_dossier(self):
+        for path, code in (('/preparation/dossiers', 202),
+                           ('/preparation/dossiers/d1/messages', 202),
+                           ('/preparation/dossiers/d1/validation', 202),
+                           ('/preparation/dossiers/d1/validation', 200)):
+            value = {'dossier_id': 'd1', 'operation_id': 'op'}
+            self.executor.raw_response = (_strict_json({'status': code, 'value': value}) + '\n').encode()
+            body = urlencode({'csrf_token': 'csrf'}).encode()
+            for accept in ('text/html', 'application/json'):
+                with self.subTest(path=path, code=code, accept=accept):
+                    status, headers, raw = self.request('POST', path, body, {
+                        'Content-Type': 'application/x-www-form-urlencoded', 'Accept': accept})
+                    self.assertEqual(code if accept == 'application/json' else 303, status)
+                    if accept == 'application/json':
+                        self.assertEqual(value, json.loads(raw))
+                    else:
+                        self.assertEqual('/preparation/dossiers/d1', headers['Location'])
+            self.executor.raw_response = b'{"status":403,"value":{"error":"Refus"}}\n'
+            status, headers, _ = self.request('POST', path, body, {
+                'Content-Type': 'application/x-www-form-urlencoded'})
+            self.assertEqual(403, status)
+            self.assertIsNone(headers['Location'])
+
     def test_cookie_survives_browser_close_and_renews_only_on_success(self):
         _, headers, _ = self.request('GET', '/preparation/access')
         cookie = SimpleCookie(headers['Set-Cookie'])['benchmark_session']

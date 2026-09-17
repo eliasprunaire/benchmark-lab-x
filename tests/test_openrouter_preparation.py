@@ -122,6 +122,7 @@ def executor_process(data, sock, entered=None, clock=None):
     time_patch = (patch.object(prep, '_now', side_effect=lambda: datetime.fromtimestamp(clock.value, timezone.utc))
                   if clock is not None else nullcontext())
     with time_patch, patch.dict(os.environ, {'OPENROUTER_API_KEY': KEY}), patch.object(assistant, 'HTTPSConnection', return_value=connection), \
+            patch('benchmark.transports.prices.fetch_public', side_effect=OSError('Catalogue factice indisponible')), \
             patch.object(service, 'release_identity', return_value='a' * 40):
         runtime.main(['executor', '--data', str(data), '--socket', str(sock),
                       '--preparation-assistant', assistant.ASSISTANT])
@@ -743,6 +744,9 @@ class OpenRouterPreparationTests(unittest.TestCase):
             self.http.request.assert_not_called()
             self.assertEqual(0, runtime.main(arguments))
             self.assertIsNone(executor.call_args.kwargs['transport'])
+            catalogue_fetch = executor.call_args.kwargs['catalogue_fetch']
+            self.assertTrue(callable(catalogue_fetch))
+            self.assertEqual(4 * 1024 * 1024, catalogue_fetch.keywords['max_response_bytes'])
         reflected = result()
         reflected['explanation'] = KEY
         self.http.getresponse.return_value.read.return_value = http_body(reflected)

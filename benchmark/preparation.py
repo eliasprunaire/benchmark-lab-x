@@ -360,13 +360,17 @@ def _automatic_qualification(store, connection, dossier_id, revision):
             return None
         if validated is None:
             raise IntegrityError('Qualification sans validation du besoin')
-        failed = operation['state'] in ('AMBIGUOUS', 'RECEIVED')
+        blocked_intent = (operation['state'] == 'INTENT_RECORDED'
+                          and (admission(store, connection) is None
+                               or os.path.lexists(store._root / 'restore.json')))
+        failed = operation['state'] in ('AMBIGUOUS', 'RECEIVED') or blocked_intent
         cost = (operation['observed_cost']['amount'] if operation['state'] == 'RECEIVED'
                 and operation['observed_cost']['status'] == 'KNOWN' else None)
         status = 'BLOCKED' if failed else 'PENDING'
         return dict(operation_id=operation['operation_id'], qualified=False, findings=[],
                     summary=('Résultat de qualification reçu non utilisable' if operation['state'] == 'RECEIVED'
                              else 'Effets de qualification inconnus' if operation['state'] == 'AMBIGUOUS'
+                             else 'Qualification suspendue : intention conservée sans émission ni reprise automatique' if blocked_intent
                              else 'Qualification en attente'),
                     model=operation['requested_configuration'].get('model'), cost_usd=cost,
                     created_at=operation['created_at'], status=status,
@@ -771,6 +775,7 @@ def execute_qualification(data, operation_id, transport):
     with closing(Store(data)) as store:
         connection = connection_for(store)
         emitted = False
+        operation = None
         try:
             proof = store.verify_storage()
             if not proof['integrity_ok'] or proof['orphan_files']:
@@ -834,6 +839,10 @@ def execute_qualification(data, operation_id, transport):
                 store.mark_ambiguous(operation_id, 'QUALIFICATION_RESULT_NOT_VERIFIED')
             else:
                 close_admission(store)
+        finally:
+            if operation is not None and not emitted and connection.execute('SELECT state FROM operations WHERE operation_id=?',
+                    (operation_id,)).fetchone() == ('INTENT_RECORDED',):
+                close_admission(store)
 
 
 def execute(data, operation_id, transport):
@@ -841,6 +850,7 @@ def execute(data, operation_id, transport):
     with closing(Store(data)) as store:
         connection = connection_for(store)
         emitted = False
+        operation = None
         try:
             proof = store.verify_storage()
             if not proof['integrity_ok'] or proof['orphan_files']:
@@ -912,6 +922,10 @@ def execute(data, operation_id, transport):
             if emitted:
                 store.mark_ambiguous(operation_id, 'PREPARATION_RESULT_NOT_VERIFIED')
             else:
+                close_admission(store)
+        finally:
+            if operation is not None and not emitted and connection.execute('SELECT state FROM operations WHERE operation_id=?',
+                    (operation_id,)).fetchone() == ('INTENT_RECORDED',):
                 close_admission(store)
 
 

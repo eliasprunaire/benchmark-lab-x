@@ -112,6 +112,26 @@ class OpenRouterQualificationTests(unittest.TestCase):
             self.assertEqual('0.2131072', transport.quote()['reserve_usd'])
             forecast.assert_called_once()
 
+    def test_closed_qualification_intent_is_blocked_without_retry(self):
+        transport, operation_id = self.validate(
+            {'qualified': True, 'findings': [], 'summary': 'Contrôles prouvés'})
+        self.assertEqual('PENDING', prep.view(self.store, self.session, 'dossier')['qualification']['status'])
+        prep.close_admission(self.store)
+        prep.execute_qualification(self.data, operation_id, transport)
+        for _ in range(2):
+            view = prep.view(self.store, self.session, 'dossier')
+            self.assertEqual('BLOCKED', view['qualification']['status'])
+            self.assertIn('sans émission', view['qualification']['summary'])
+        self.assertEqual([], transport.calls)
+
+    def test_qualification_rejected_before_emission_leaves_no_endless_wait(self):
+        transport, operation_id = self.validate(
+            {'qualified': True, 'findings': [], 'summary': 'Contrôles prouvés'})
+        with patch.object(transport, 'configuration', return_value={'model': 'profil-modifié'}):
+            prep.execute_qualification(self.data, operation_id, transport)
+        self.assertEqual([], transport.calls)
+        self.assertEqual('BLOCKED', prep.view(self.store, self.session, 'dossier')['qualification']['status'])
+
     def test_profile_frozen_and_strict_answer(self):
         transport = assistant.OpenRouterQualification(KEY)
         from tests.test_openrouter_preparation import estimate_for

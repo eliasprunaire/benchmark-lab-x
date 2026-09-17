@@ -20,6 +20,66 @@ TEMPLATE_PATH = Path(__file__).with_name('templates') / 'preparation.html'
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'preparation.css'
 FONTS_PATH = Path(__file__).with_name('static') / 'fonts'
 SOURCE_SHA = ''
+PREPARATION_PROGRESS_SCRIPT = """(() => {
+  const panel = document.getElementById('preparation-progress');
+  const link = panel.querySelector('a');
+  const status = panel.querySelector('[role="status"]');
+  const pause = panel.querySelector('button');
+  let stopped = false, timer, request;
+  function stop(message) {
+    stopped = true;
+    clearTimeout(timer);
+    request?.abort();
+    status.textContent = message;
+    panel.querySelector('progress').hidden = true;
+    pause.hidden = true;
+  }
+  async function refresh() {
+    if (stopped) return;
+    if (!document.hidden) {
+      request = new AbortController();
+      const timeout = setTimeout(() => request.abort(), 10000);
+      try {
+        const response = await fetch(link.href, {headers: {Accept: 'text/html'},
+          cache: 'no-store', redirect: 'error', signal: request.signal});
+        if (!response.ok) throw new Error('unavailable');
+        const next = new DOMParser().parseFromString(await response.text(), 'text/html');
+        if (!stopped && !next.getElementById('preparation-progress')) {
+          location.replace(link.href);
+          return;
+        }
+      } catch {
+        if (!stopped) stop('Suivi automatique interrompu. Actualisez pour vérifier l’état du dossier.');
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+    if (!stopped) timer = setTimeout(refresh, 4000);
+  }
+  pause.hidden = false;
+  pause.addEventListener('click', () => stop('Suivi automatique suspendu. Actualisez quand vous le souhaitez.'));
+  document.addEventListener('input', () => stop('Suivi automatique suspendu pour conserver votre saisie.'), {once: true});
+  window.addEventListener('pagehide', () => stop('Suivi suspendu.'), {once: true});
+  status.textContent = 'Suivi automatique actif. La consultation ne lance aucun nouvel appel.';
+  timer = setTimeout(refresh, 4000);
+})();"""
+
+
+def preparation_pending(value):
+    qualification = value.get('qualification', {})
+    return (value.get('stage') in ('waiting', 'preview')
+            and value.get('revision') == value.get('current_revision', value.get('revision'))
+            and not value.get('checks', {}).get('out_of_scope')
+            and (value['stage'] == 'waiting' or bool(value.get('validation'))
+                 and 'operation_id' in qualification and qualification.get('status') == 'PENDING'))
+
+
+def page_script(value):
+    if preparation_pending(value):
+        return PREPARATION_PROGRESS_SCRIPT
+    return COMPARISON_FOCUS_SCRIPT if value.get('kind') == 'comparison' else None
+
+
 BENCHMARK_REFERENCES = {
     'math': (('MathArena', 'https://matharena.ai/', 'Raisonnement mathématique et problèmes de compétition'),),
     'coding': (('LiveCodeBench', 'https://livecodebench.github.io/', 'Exercices de programmation'),
@@ -78,6 +138,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         return f'<p id="{text(name)}-error" role="alert">{text(value["error"])}</p>'
 
     state = value.get('availability', {})
+    pending = not error and preparation_pending(value)
     can_submit = state.get('can_submit', False)
     disabled = '' if can_submit else ' disabled aria-describedby="availability"'
     s9 = value.get('kind') != 'projection_preview'
@@ -241,7 +302,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                 navigation += '<a href="#' + anchor + '"' + (' aria-current="step"' if anchor == current_step else done) + '>' + inner + '</a>'
         navigation += '<small>Cas d’usage privé · pièces entièrement inventées</small></nav>'
         stages = {'draft': ('unk', 'Brouillon', 'Rien n’a encore été envoyé à l’assistant.'),
-                  'waiting': ('wait', 'Préparation en attente', 'L’assistant prépare une réponse. Actualisez pour voir son avancement.'),
+                  'waiting': ('wait', 'Préparation en cours', 'L’assistant prépare votre exemple ou les précisions nécessaires.'),
                   'clarification': ('action', 'Une précision est attendue de vous', 'Répondez ci-dessous pour que l’exemple soit préparé.'),
                   'preview': ('action', 'Un exemple est prêt à être examiné', 'Lisez la consigne et les pièces, corrigez si besoin, puis validez.'),
                   'scope_confirmation': ('action', 'Le périmètre est à confirmer',
@@ -265,14 +326,23 @@ def render(value, csrf, path='/preparation', *, error=False):
             elif qualification.get('status') == 'BLOCKED':
                 tone, heading, next_step = 'err', 'Qualification à reprendre', qualification['summary']
             else:
-                tone, heading, next_step = 'wait', 'Qualification en attente', 'Votre validation est enregistrée. Actualisez pour consulter le contrôle de l’exemple.'
+                tone, heading, next_step = 'wait', 'Qualification en cours', 'Votre validation est enregistrée. L’assistant vérifie la cohérence et les critères de l’exemple.'
         content = '<p class="tag">Cas d’usage inventé · révision ' + text(revision) + '</p>'
         if historical:
             content += '<p class="notice">Révision précédente en lecture seule. Pour modifier ou valider, ouvrez la révision courante.</p>'
-        actions = f'<a class="button" href="{text(path)}">Actualiser cet état</a>' if (value['stage'] == 'waiting' or value['validation'] and automatic and not value.get('qualified')) else ''
+        actions = ''
         if historical:
             actions = f'<a class="button" href="{text(url)}">Revenir à la révision courante</a>'
-        content += state_block(tone, 'Où j’en suis', heading, '<p>' + text(value['explanation']) + '</p><p class="hint">' + text(next_step) + '</p>', actions)
+        if pending:
+            title = heading
+            actions = ('<div id="preparation-progress"><progress aria-label="' + text(heading) + '"></progress>'
+                       '<p class="hint" role="status">Suivi automatique disponible avec JavaScript. Sinon, actualisez cet état.</p>'
+                       '<div class="actions"><a href="' + text(url) + '">Actualiser cet état</a>'
+                       '<button type="button" class="sec" hidden>Suspendre le suivi automatique</button></div></div>')
+            content += '<div id="availability">' + state_block(tone, 'Où j’en suis', heading,
+                '<p>' + text(next_step) + '</p>', actions) + '</div><script>' + PREPARATION_PROGRESS_SCRIPT + '</script>'
+        else:
+            content += state_block(tone, 'Où j’en suis', heading, '<p>' + text(value['explanation']) + '</p><p class="hint">' + text(next_step) + '</p>', actions)
         if referral:
             references = BENCHMARK_REFERENCES.get(referral, ())
             if references:
@@ -420,7 +490,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                 url + '/configurations') + '">Choisir les modèles</a></p>'
         if 'campaigns' in value:
             content += render_campaign_history(value['campaigns'], url)
-    if state and s9 and not value.get('checks', {}).get('out_of_scope'):
+    if state and s9 and not pending and not value.get('checks', {}).get('out_of_scope'):
         reasons = {
             'access': 'Ajoutez votre clé Openrouter pour préparer un exemple avec votre propre accès.',
             'open': 'Échanges disponibles. Chaque envoi reste vérifié par le serveur avant admission.',

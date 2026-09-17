@@ -28,6 +28,7 @@ typés. Le web n'a donc plus à se défendre champ par champ, et une réponse ho
 une indisponibilité annoncée plutôt qu'un corps nul ou une page rompue.
 """
 from contextlib import closing
+from http.client import HTTPException
 import fcntl
 import json
 import logging
@@ -248,10 +249,43 @@ def personal_transports(store, token, preparation_transport, qualification_trans
                  for t in (preparation_transport, qualification_transport))
 
 
+def _refresh_catalogue(data, stopping, fetch):
+    from . import model_catalogue
+
+    def fetch_unless_stopping(path):
+        if stopping.is_set():
+            raise InterruptedError('CATALOGUE_STOPPED')
+        result = fetch(path)
+        if stopping.is_set():
+            raise InterruptedError('CATALOGUE_STOPPED')
+        return result
+
+    try:
+        with closing(Store(data)) as store:
+            if not store._connection_checked().execute(
+                    "SELECT 1 FROM sqlite_schema WHERE name='s2_control'").fetchone():
+                return
+            while not stopping.is_set():
+                try:
+                    result = model_catalogue.refresh(store, fetch_unless_stopping)
+                    if result['stale'] and not stopping.is_set():
+                        logging.getLogger(__name__).warning('CATALOGUE_STALE')
+                except (SchemaError, IntegrityError):
+                    raise
+                except (OSError, HTTPException, ValueError):
+                    if not stopping.is_set():
+                        logging.getLogger(__name__).warning('CATALOGUE_UNAVAILABLE')
+                # Le cache décide du renouvellement ; une panne distante est réessayée à l'heure
+                stopping.wait(3600)
+    except Exception as error:
+        logging.getLogger(__name__).error('CATALOGUE_INTERNAL %s', type(error).__name__)
+
+
 def serve_executor(data, socket_path, source, *, transport=None, qualification_transport=None,
                    candidate_transport=None, candidate_transport_factory=None,
                    candidate_identity=None,
-                   access_secret=None, access_transport=None, presentation=None, personal_preparation=False):
+                   access_secret=None, access_transport=None, presentation=None, personal_preparation=False,
+                   catalogue_fetch=None):
     data, socket_path = Path(data), Path(socket_path)
     with closing(Store(data)) as store:
         lock_fd = os.open(data / 'executor.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -328,7 +362,18 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
 
             with socketserver.UnixStreamServer(str(socket_path), Handler) as server:
                 os.chmod(socket_path, 0o660)
-                run(server)
+                stopping = threading.Event()
+                catalogue_worker = None
+                if catalogue_fetch is not None:
+                    catalogue_worker = threading.Thread(target=_refresh_catalogue,
+                        args=(data, stopping, catalogue_fetch), name='model-catalogue')
+                    catalogue_worker.start()
+                try:
+                    run(server)
+                finally:
+                    stopping.set()
+                    if catalogue_worker is not None:
+                        catalogue_worker.join()
             stop(data, store, 'PROCESS_STOPPED_ADMISSION_BLOCKED', after_process_exit=True)
         finally:
             os.close(lock_fd)
