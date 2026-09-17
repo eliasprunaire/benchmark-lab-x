@@ -1,8 +1,7 @@
-"""Single OpenRouter preparation transport, reported cost, no tools or retries"""
+"""Échanges OpenRouter : préparation, qualification et jugement, sans rejeu implicite"""
 from base64 import b64encode
 from copy import deepcopy
 from datetime import datetime, timezone
-from decimal import Decimal
 from hashlib import sha256
 from http.client import HTTPSConnection, IncompleteRead
 import json
@@ -10,8 +9,9 @@ from pathlib import Path
 import re
 import time
 
-from .storage import _strict_json as encode, _unique_object, _money
-from . import openrouter_prices, outgoing
+from ..storage import _strict_json as encode, _unique_object, _money, _fields
+from . import prices as openrouter_prices
+from .. import outgoing
 
 
 ASSISTANT = 'preparation'
@@ -69,8 +69,6 @@ def _plain_text(value, pattern, maximum):
 
 def _finite_number(value, minimum, maximum):
     if type(value) is bool or type(value) not in (int, float) or not minimum <= value <= maximum:
-        raise ValueError('Profil de préparation invalide')
-    if type(value) is float and value != value:
         raise ValueError('Profil de préparation invalide')
     return value
 
@@ -194,7 +192,8 @@ def _load_profile_file(path):
     path = Path(path)
     if not path.is_file():
         raise ValueError('Profil de préparation introuvable')
-    raw = path.read_bytes()
+    with path.open('rb') as stream:
+        raw = stream.read(MAX_PROFILE_BYTES + 1)
     if len(raw) > MAX_PROFILE_BYTES:
         raise ValueError('Profil de préparation hors limites')
     document = json.loads(raw.decode('utf-8'), object_pairs_hook=_unique_object)
@@ -231,13 +230,9 @@ def providers(profile):
     return {route['tag']: route['provider_name'] for route in profile['routes']}
 
 
-HISTORICAL_PROFILE = _load_profile_file(Path(__file__).with_name(HISTORICAL_PROFILE_NAME))
-DEFAULT_PROFILE = _load_profile_file(Path(__file__).with_name(DEFAULT_PROFILE_NAME))
-FALLBACK_PROFILE = _load_profile_file(Path(__file__).with_name(FALLBACK_PROFILE_NAME))
-MODEL = DEFAULT_PROFILE['model']
-PROVIDERS = providers(DEFAULT_PROFILE)
-PARAMETERS = deepcopy(DEFAULT_PROFILE['parameters'])
-SYSTEM_PROMPT = DEFAULT_PROFILE['system']
+HISTORICAL_PROFILE = _load_profile_file(Path(__file__).parent / 'profiles' / HISTORICAL_PROFILE_NAME)
+DEFAULT_PROFILE = _load_profile_file(Path(__file__).parent / 'profiles' / DEFAULT_PROFILE_NAME)
+FALLBACK_PROFILE = _load_profile_file(Path(__file__).parent / 'profiles' / FALLBACK_PROFILE_NAME)
 
 
 def reservation(estimate, profile=None):
@@ -351,6 +346,12 @@ def post(api_key, wire, timeout=TIMEOUT_SECONDS, max_response_bytes=MAX_RESPONSE
     return status, safe_headers, raw, complete, started, clock
 
 
+def validate_key(api_key):
+    if (type(api_key) is not str or not api_key or not api_key.isascii()
+            or any(character.isspace() or ord(character) < 32 for character in api_key)):
+        raise ValueError('Clé OpenRouter explicite requise côté exécuteur')
+
+
 class OpenRouterPreparation:
     phases = ('preparation', 'correction')
 
@@ -365,19 +366,13 @@ class OpenRouterPreparation:
         return result
 
     def __init__(self, api_key, profile=None):
-        self._validate_key(api_key)
+        validate_key(api_key)
         self._api_key = api_key
         self._profile = frozen_profile(profile)
 
-    @staticmethod
-    def _validate_key(api_key):
-        if (type(api_key) is not str or not api_key or not api_key.isascii()
-                or any(character.isspace() or ord(character) < 32 for character in api_key)):
-            raise ValueError('Clé OpenRouter explicite requise côté exécuteur')
-
     def prepare(self, operation, request, api_key=None):
         key = self._api_key if api_key is None else api_key
-        self._validate_key(key)
+        validate_key(key)
         requested = operation['requested_configuration']
         expected = configuration(requested.get('reservation_estimate'), self._profile)
         if (('reserve_usd' not in expected and operation['phase'] != 'qualification') or requested != expected
@@ -397,7 +392,7 @@ class OpenRouterPreparation:
 
     def __call__(self, operation, request, api_key=None):
         key = self._api_key if api_key is None else api_key
-        self._validate_key(key)
+        validate_key(key)
         if operation['state'] != 'EMISSION_POSSIBLE':
             raise ValueError('Intention HTTP persistée requise')
         if operation['requested_configuration'].get('outgoing_format') != outgoing.FORMAT:
@@ -498,3 +493,56 @@ class OpenRouterPreparation:
                 'cost': {'status': 'KNOWN' if amount is not None else 'UNKNOWN', 'amount': amount, 'currency': 'USD',
                          'source': ('Montant débité rapporté par OpenRouter /usage/cost, en USD ; hors facture finale'
                                     if amount is not None else 'Usage ou attribution incomplets ; coût INCONNU')}}
+
+
+QUALIFICATION_ASSISTANT = 'qualification'
+QUALIFICATION_PROFILE = Path(__file__).parent / 'profiles' / 'qualification.profile.json'
+
+
+class OpenRouterQualification(OpenRouterPreparation):
+    phases = ('qualification',)
+
+    def __init__(self, api_key, profile=None):
+        if profile in (None, QUALIFICATION_ASSISTANT):
+            profile = load_profile(str(QUALIFICATION_PROFILE))
+        super().__init__(api_key, profile)
+
+    def configuration(self):
+        return configuration(profile=self._profile)
+
+    def content(self, request):
+        return request['outgoing']
+
+
+class OpenRouterJudgment(OpenRouterPreparation):
+    phases = ('judgment',)
+
+    def __init__(self, api_key, profile):
+        super().__init__(api_key, profile)
+
+    def content(self, request):
+        return outgoing.closed_review(request['outgoing'])
+
+    def validate_document(self, document):
+        authorized = {row['provider_name'] for row in self._profile['routes']}
+        metadata = document.get('openrouter_metadata')
+        rows = [document]
+        if type(metadata) is dict:
+            attempts = metadata.get('attempts', [])
+            endpoints = metadata.get('endpoints', {})
+            available = endpoints.get('available', []) if type(endpoints) is dict else []
+            if type(attempts) is list:
+                rows += attempts
+            if type(available) is list:
+                rows += [row for row in available if type(row) is dict and row.get('selected') is True]
+        if any(type(row) is dict and row.get('provider') is not None
+               and row['provider'] not in authorized for row in rows):
+            raise ValueError('Fournisseur rapporté hors profil de jugement')
+
+    @staticmethod
+    def validate_answer(result, message):
+        _fields(result, ('findings', 'measures', 'limits', 'proposed_verdict'), 'judgment proposal')
+        if (message.get('refusal') or message.get('function_call')
+                or result['proposed_verdict'] not in ('SATISFAIT', 'NE SATISFAIT PAS', 'INDETERMINE')):
+            raise ValueError('Proposition inexploitable')
+        return result

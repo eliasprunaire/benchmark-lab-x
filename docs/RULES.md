@@ -2,7 +2,7 @@
 style_gate: pass
 ---
 
-# Règles de Benchmark Lab-X
+# Règles de Bench-X
 
 Ces règles préservent les contrats historiques et n'autorisent aucune exécution. Elles ne portent aucun statut de livraison des versions.
 
@@ -191,7 +191,7 @@ Le coût ne compense jamais une non-admissibilité. Une mesure valide d’une so
 
 ## 14. Versionnement du produit
 
-**Version unique.** Benchmark Lab-X adopte [Semantic Versioning 2.0.0](https://semver.org/lang/fr/) sous la forme `MAJOR.MINOR.PATCH`. Une version identifie le produit du monorepo, frontend et backend ensemble. Les versions de Pi, de Graph Engineering Tool, de l’infrastructure, des modèles, des tâches et des schémas de données restent distinctes.
+**Version unique.** Bench-X adopte [Semantic Versioning 2.0.0](https://semver.org/lang/fr/) sous la forme `MAJOR.MINOR.PATCH`. Une version identifie le produit du monorepo, frontend et backend ensemble. Les versions de Pi, de Graph Engineering Tool, de l’infrastructure, des modèles, des tâches et des schémas de données restent distinctes.
 
 **Jalon initial.** `0.1.0` désigne le périmètre approuvé dans le [PRD](PRD.md#51-périmètre-010), avec ses critères d’acceptation. Ce numéro ne requalifie aucun prototype ni résultat historique et ne prouve aucune livraison. Aucun autre jalon chiffré n’est déduit de cette décision.
 

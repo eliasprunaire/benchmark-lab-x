@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from benchmark.pi_openrouter import VERSION
+from benchmark.transports.pi import VERSION
 
 
 ROOT = Path(__file__).parents[1]
@@ -86,7 +86,7 @@ class PiVersionTests(unittest.TestCase):
 
     def test_ci_lit_la_version_du_runtime(self):
         self.assertNotIn(f'@{VERSION}', self.workflow)
-        self.assertGreaterEqual(self.workflow.count('from benchmark.pi_openrouter import VERSION'), 2)
+        self.assertGreaterEqual(self.workflow.count('from benchmark.transports.pi import VERSION'), 2)
         job = self.job()
         self.assertIn("if: github.event_name == 'schedule'", job)
         self.assertIn('timeout-minutes: 5', job)

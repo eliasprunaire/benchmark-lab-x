@@ -108,6 +108,6 @@ def public_page(value, selected):
     body += 'vérification de son reçu fictif et de ses octets exacts.</p>'
     body += projection_body(value, selected)
     return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" '
-            'content="width=device-width, initial-scale=1"><title>Projection fictive · Benchmark Lab-X</title>'
+            'content="width=device-width, initial-scale=1"><title>Projection fictive · Bench-X</title>'
             '<link rel="stylesheet" href="style.css"></head><body><a class="skip" href="#main">Aller au contenu</a>'
             '<main id="main">' + body + '</main></body></html>').encode('utf-8')

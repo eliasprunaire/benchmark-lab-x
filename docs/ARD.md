@@ -2,7 +2,7 @@
 style_gate: pass
 ---
 
-# ARD : contrat d'architecture de Benchmark Lab-X
+# ARD : contrat d'architecture de Bench-X
 
 ## 1. Portée
 

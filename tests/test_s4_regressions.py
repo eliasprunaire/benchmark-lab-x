@@ -14,7 +14,9 @@ import time
 import unittest
 from unittest.mock import patch
 
-from benchmark import campaigns as c, preparation as prep, qualification as q, runtime, storage
+from benchmark.acquisition import execution
+from benchmark.acquisition import campaigns as c
+from benchmark import preparation as prep, qualification as q, runtime, storage
 from benchmark_web import views
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 
@@ -28,7 +30,7 @@ def independent_acquisition(data, entered, release):
                 raise RuntimeError('Fictional worker timeout')
             time.sleep(.02)
         return response(operation, request)
-    c.execute(data, 'intent-x', transport)
+    execution.execute(data, 'intent-x', transport)
 
 
 def manifest(candidate, name='local-comparison'):
@@ -171,13 +173,13 @@ class S4Regressions(unittest.TestCase):
     def test_original_preparation_cost_and_receipt_are_preserved(self):
         # The S3 fixture uses response_for(), whose sourced preparation cost is 3
         self.assertEqual('3',self.store.inspect_budget('fictional')['spent'])
-        self.admit(); self.reserve(); c.execute(self.data,'intent-x',response)
+        self.admit(); self.reserve(); execution.execute(self.data,'intent-x',response)
         self.assertEqual(self.before,[o for o in self.store.inspect_operations() if o['phase']=='preparation'])
         self.assertEqual('3',self.store.inspect_budget('fictional')['spent'])
         self.assertEqual('2',self.store.inspect_budget('local-comparison')['spent'])
 
     def test_manifest_and_authority_history_reject_update_delete_replace(self):
-        self.admit(); self.reserve(); c.execute(self.data,'intent-x',response)
+        self.admit(); self.reserve(); execution.execute(self.data,'intent-x',response)
         connection=self.store._connection
         for table in ('s4_control','s4_campaigns','s4_cells','s4_admissions','s4_attempts','s4_emissions','s4_results'):
             rows=connection.execute('SELECT * FROM '+table).fetchall()
@@ -220,35 +222,35 @@ class S4Regressions(unittest.TestCase):
             out=response(op,request)
             request['outgoing']['pieces'].clear()
             return out
-        c.execute(self.data,'intent-x',mutate)
+        execution.execute(self.data,'intent-x',mutate)
         self.assertEqual(self.snapshot['manifest'],c.inspect(self.store,'local-comparison')['manifest'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
     def test_no_transport_and_reading_never_emit_or_resume(self):
         self.admit(); self.reserve()
-        with self.assertRaises(ValueError): c.execute(self.data,'intent-x')
+        with self.assertRaises(ValueError): execution.execute(self.data,'intent-x')
         before=self.store.inspect_operations()
         with closing(storage.Store(self.data)) as reopened:
             c.inspect(reopened,'local-comparison'); c.list_campaigns(reopened)
             prep.view(reopened,self.session,'fixture'); runtime.status(self.data,reopened)
         self.assertEqual(before,self.store.inspect_operations())
         runtime.stop(self.data,self.store,'RESTART',after_process_exit=True)
-        with self.assertRaises(ValueError): c.execute(self.data,'intent-x',response)
-        self.admit('resume',['x']); c.execute(self.data,'intent-x',response)
+        with self.assertRaises(ValueError): execution.execute(self.data,'intent-x',response)
+        self.admit('resume',['x']); execution.execute(self.data,'intent-x',response)
         snapshot=c.inspect(self.store,'local-comparison')
         self.assertNotEqual(snapshot['attempts'][0]['admission_id'],snapshot['attempts'][0]['emission_admission_id'])
         self.assertEqual(2,len(snapshot['admissions']))
 
     def test_declared_order_checked_before_emission(self):
         self.admit(); self.reserve('y','intent-y')
-        with self.assertRaises(ValueError): c.execute(self.data,'intent-y',response)
+        with self.assertRaises(ValueError): execution.execute(self.data,'intent-y',response)
         self.assertEqual('INTENT_RECORDED',c.inspect(self.store,'local-comparison')['attempts'][0]['state'])
-        self.reserve(); c.execute(self.data,'intent-x',response); c.execute(self.data,'intent-y',response)
+        self.reserve(); execution.execute(self.data,'intent-x',response); execution.execute(self.data,'intent-y',response)
         self.assertEqual(['RECEIVED','RECEIVED'],[x['state'] for x in c.inspect(self.store,'local-comparison')['cells']])
 
     def test_malformed_response_keeps_unknown_effects_and_reserve(self):
         self.admit(); self.reserve()
-        c.execute(self.data,'intent-x',lambda op,request:{'cost':{'status':'KNOWN','amount':'0'}})
+        execution.execute(self.data,'intent-x',lambda op,request:{'cost':{'status':'KNOWN','amount':'0'}})
         snapshot=c.inspect(self.store,'local-comparison')
         self.assertEqual('AMBIGUOUS',snapshot['attempts'][0]['state'])
         self.assertEqual('7',snapshot['budget']['reserved'])
@@ -265,7 +267,7 @@ class S4Regressions(unittest.TestCase):
             out['receipt']['observed_configuration']['sources'].clear()
             out['receipt']['result']['emission']='UNKNOWN'
             return out
-        c.execute(self.data,'intent-x',unproven)
+        execution.execute(self.data,'intent-x',unproven)
         with self.assertRaises(ValueError): self.reserve('y','intent-y')
         attempt=c.inspect(self.store,'local-comparison')['attempts'][0]
         self.assertEqual(['revision','channel_id'],attempt['attribution_incident'])
@@ -275,7 +277,7 @@ class S4Regressions(unittest.TestCase):
         self.admit(); self.reserve()
         prep.admit(self.store,dict(authority_id='TEST_ONLY_EDIT',budget_id='fictional',reserve_amount='7',requested_configuration={'model':'fictional'}))
         prep.submit(self.store,self.session,'fixture',dict(action_id='edit',revision=self.view['revision'],kind='correct',message='Modifier les notes fictives'),'a'*40,True)
-        with self.assertRaises(ValueError): c.execute(self.data,'intent-x',response)
+        with self.assertRaises(ValueError): execution.execute(self.data,'intent-x',response)
         self.assertEqual(self.snapshot['manifest'],c.inspect(self.store,'local-comparison')['manifest'])
 
     def test_shared_envelope_unknown_cost_blocks_already_reserved_other_campaign(self):
@@ -285,12 +287,12 @@ class S4Regressions(unittest.TestCase):
         c.reserve(self.store,'second','x','second-x')
         def unknown(op,request):
             out=response(op,request); out['cost'].update(status='UNKNOWN',amount=None); return out
-        c.execute(self.data,'intent-x',unknown)
-        with self.assertRaises(ValueError): c.execute(self.data,'second-x',response)
+        execution.execute(self.data,'intent-x',unknown)
+        with self.assertRaises(ValueError): execution.execute(self.data,'second-x',response)
         self.assertEqual('14',self.store.inspect_budget('local-comparison')['reserved'])
 
     def test_storage_checks_operation_join_and_receipt_hash(self):
-        self.admit(); self.reserve(); c.execute(self.data,'intent-x',response)
+        self.admit(); self.reserve(); execution.execute(self.data,'intent-x',response)
         raw=self.store._connection.execute("SELECT receipt_json FROM operations WHERE operation_id='intent-x'").fetchone()[0]
         changed=json.loads(raw); changed['resources_seen']=[]
         self.store._connection.execute("UPDATE operations SET receipt_json=? WHERE operation_id='intent-x'",(storage._strict_json(changed),))
@@ -303,13 +305,13 @@ class S4Regressions(unittest.TestCase):
             out=response(op,request)
             out['receipt']['observed_configuration']['revision']='unrequested'
             return out
-        c.execute(self.data,'intent-x',mismatch)
+        execution.execute(self.data,'intent-x',mismatch)
         second=c.create(self.store,manifest(self.candidate,'second'))
         with self.assertRaises(ValueError): c.admit(self.store,'second',*inputs(second))
         self.assertEqual('2',self.store.inspect_budget('local-comparison')['spent'])
 
     def test_output_never_enters_session_projection_or_candidate_pieces(self):
-        self.admit(); self.reserve(); c.execute(self.data,'intent-x',response)
+        self.admit(); self.reserve(); execution.execute(self.data,'intent-x',response)
         view=prep.view(self.store,self.session,'fixture')
         raw=json.dumps(view)
         self.assertNotIn('fictional raw output',raw)

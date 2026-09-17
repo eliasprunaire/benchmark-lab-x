@@ -13,7 +13,10 @@ import time
 import unittest
 from unittest.mock import patch
 
-from benchmark import campaigns as c, evaluation as e, pi_openrouter as pi, runtime, storage
+from benchmark.acquisition import execution
+from benchmark.acquisition import campaigns as c
+from benchmark import evaluation as e, runtime, storage
+from benchmark.transports import pi as pi
 from tests.test_s4_regressions import inputs, manifest, response
 from tests import test_s5_regressions as s5
 from tests.test_s5_regressions import findings
@@ -163,8 +166,8 @@ class CustomNeedEngineTests(unittest.TestCase):
                     budget_id='atelier-preparation-budget', reserve_amount='7',
                     requested_configuration={'model': 'fictional-local-preview'}))
                 _, home, token, _ = web_api.dispatch(store, 'GET', '/preparation', None, None, 'a' * 40, True)
-                task = Path(__file__).parents[1].joinpath('benchmark', 'task.md').read_text()
-                mail = Path(__file__).parents[1].joinpath('benchmark', 'mail-thread.md').read_text()
+                task = Path(__file__).with_name('fixtures').joinpath('historical-task.md').read_text()
+                mail = Path(__file__).with_name('fixtures').joinpath('historical-mail-thread.md').read_text()
                 body = dict(dossier_id='atelier-boisclair-custom', action_id='atelier-boisclair-create',
                             request='Synthétiser le fil fictif Atelier Boisclair', csrf_token=home['csrf_token'],
                             source_sha256='a' * 64)
@@ -220,7 +223,7 @@ class CustomNeedEngineTests(unittest.TestCase):
                     self.assertIn('Atelier Boisclair', projection)
                     return response(operation, request)
 
-                c.execute(data, 'atelier-boisclair-attempt', acquisition)
+                execution.execute(data, 'atelier-boisclair-attempt', acquisition)
                 attempt = c.inspect(store, 'atelier-boisclair-local')['attempts'][0]
                 self.assertEqual('RECEIVED', attempt['state'])
                 self.assertTrue(runtime.verify(store)['integrity_ok'])
@@ -290,7 +293,7 @@ class PiTransportTests(unittest.TestCase):
 
     def execute(self):
         with patch.object(pi.http, 'post', side_effect=self.http) as http:
-            c.execute(self.data, 'pi-intent', self.transport)
+            execution.execute(self.data, 'pi-intent', self.transport)
             self.assertEqual(1, http.call_count)
         return c.inspect(self.store, 'pi-offline')['attempts'][0]
 
@@ -311,7 +314,7 @@ class PiTransportTests(unittest.TestCase):
         self.assertEqual(pi.system_context('Contexte commun fictif'), self.wire['messages'][0]['content'])
         self.assertEqual(before, len(self.store.inspect_operations()))
         with patch.object(pi.http, 'post') as http, self.assertRaises(storage.ConflictError):
-            c.execute(self.data, 'pi-intent', self.transport)
+            execution.execute(self.data, 'pi-intent', self.transport)
         http.assert_not_called()
         ctx = e._context(self.store, self.store._connection, 'pi-offline', 'pi-intent')
         report = findings(ctx, e._resources(self.store, ctx))
@@ -332,11 +335,11 @@ class PiTransportTests(unittest.TestCase):
             self.assertFalse(runtime.status(restored, store)['admission'])
 
     def test_http_error_without_model_is_not_an_identity_contradiction(self):
-        from benchmark import recovery
+        from benchmark.acquisition import recovery
         raw = b'{"error":{"code":429,"message":"Rate limited"}}'
         with patch.object(pi.http, 'post', return_value=(429, {}, raw, True,
                 '2026-09-10T10:00:00+00:00', time.monotonic())):
-            c.execute(self.data, 'pi-intent', self.transport)
+            execution.execute(self.data, 'pi-intent', self.transport)
         attempt = c.inspect(self.store, 'pi-offline')['attempts'][0]
         self.assertEqual('ROUTE_ERROR', recovery.observation(attempt)['kind'])
         self.assertIsNone(attempt['operation']['receipt']['observed_configuration']['model'])
@@ -362,7 +365,7 @@ class PiTransportTests(unittest.TestCase):
                 changed['choices'][0]['message']['content'] = 'Autre sortie fictive'
                 self.raw = json.dumps(changed).encode()
             with patch.object(pi.http, 'post', side_effect=self.http) as post:
-                c.execute(self.data, attempt_id, self.transport)
+                execution.execute(self.data, attempt_id, self.transport)
             self.assertEqual(1, post.call_count)
             context = self.wire['messages']
             if first_context is None:
@@ -383,7 +386,7 @@ class PiTransportTests(unittest.TestCase):
     def test_drift_refuses_before_emission(self):
         with patch.object(pi, 'identity', return_value={**self.identity, 'sha256':'0'*64}), patch.object(pi.http, 'post') as http:
             with self.assertRaises(ValueError):
-                c.execute(self.data, 'pi-intent', self.transport)
+                execution.execute(self.data, 'pi-intent', self.transport)
         http.assert_not_called()
         self.assertEqual('INTENT_RECORDED', c.inspect(self.store, 'pi-offline')['attempts'][0]['state'])
 
@@ -416,7 +419,7 @@ class PiTransportTests(unittest.TestCase):
         request = json.loads(self.store._connection.execute(
             'SELECT request_json FROM s4_attempts WHERE operation_id=?', ('pi-intent',)).fetchone()[0])
         operation = next(o for o in self.store.inspect_operations() if o['operation_id'] == 'pi-intent')
-        self.transport.prepare(c._transport_operation(operation), c._transport_view(request))
+        self.transport.prepare(execution._transport_operation(operation), execution._transport_view(request))
         clean = json.loads(self.raw)
         reflected = deepcopy(clean)
         reflected['choices'][0]['message']['content'] = self.transport._key

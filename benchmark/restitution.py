@@ -5,7 +5,9 @@ from hashlib import sha256
 import re
 from urllib.parse import parse_qsl, urlencode
 
-from . import campaigns as c, evaluation as e, preparation as p, qualification as q
+from .validation import identifier
+from .acquisition import campaigns as c
+from . import evaluation as e, preparation as p, qualification as q
 from .publications import SCHEMA, PRESENTATION_VERSION, _decode
 from .storage import _transaction, _strict_json as encode
 
@@ -19,7 +21,7 @@ FILTERS = ('case', 'sort', 'direction', 'verdict', 'obligation', 'configuration'
 
 
 def campaign_url(dossier_id, campaign_id):
-    return f'/preparation/dossiers/{p.identifier(dossier_id)}/campaigns/{p.identifier(campaign_id)}'
+    return f'/preparation/dossiers/{identifier(dossier_id)}/campaigns/{identifier(campaign_id)}'
 
 
 def query_parameters(raw):
@@ -92,7 +94,7 @@ def _rank(rows, columns):
 
 def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     p.owner(connection, session_id, dossier_id)
-    p.identifier(campaign_id)
+    identifier(campaign_id)
     campaign = next(iter(c.projection(store, connection, dossier_id, campaign_id)), None)
     if campaign is None:
         raise p.Denied('Campagne inaccessible')
@@ -153,7 +155,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                     measure['reason'] = 'Mesure ou preuve absente'
                 elif _number(measure['value'], measure['unit']) is None:
                     measure['reason'] = 'Valeur non interprétable sur l’échelle déclarée'
-        row['detail_href'] = base + '/attempts/' + p.identifier(row['attempt_id']) + suffix
+        row['detail_href'] = base + '/attempts/' + identifier(row['attempt_id']) + suffix
         rows.append(row)
     _rank(rows, columns)
     population = [r['attempt_id'] for r in rows]
@@ -214,7 +216,7 @@ def comparison(store, session_id, dossier_id, campaign_id, *, query=None):
 
 
 def detail(store, session_id, dossier_id, campaign_id, attempt_id, *, query=None):
-    p.identifier(attempt_id)
+    identifier(attempt_id)
     with store.read_snapshot() as connection:
         value = _comparison(store, connection, session_id, dossier_id, campaign_id,
                             {} if query is None else query)
@@ -278,7 +280,7 @@ def _preview(store, value, piece_ids, presentation):
     linked = {link['piece_id'] for row in value['rows'] for link in row['proof_links']}
     if not set(piece_ids) <= linked:
         raise p.Denied('Pièce non liée à la restitution')
-    selected = {pid: 'piece-' + p.identifier(pid) + '.txt' for pid in sorted(piece_ids)}
+    selected = {pid: 'piece-' + identifier(pid) + '.txt' for pid in sorted(piece_ids)}
     files = {name: store.read_piece(pid) for pid, name in selected.items()}
     if presentation is None:
         raise ValueError('Présentation de projection non enregistrée')

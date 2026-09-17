@@ -6,7 +6,7 @@ from http.client import HTTPSConnection, HTTPException
 import json
 import re
 
-from .storage import _money, _sum_money, _unique_object, _strict_json as encode
+from ..storage import _money, _sum_money, _unique_object, _strict_json as encode
 
 
 HOST = 'openrouter.ai'
@@ -107,7 +107,7 @@ def indication(estimate, usage):
 
 
 def forecast(model, input_tokens, output_tokens, cached_input_tokens=0):
-    from .model_catalog import require_current
+    from ..model_catalog import require_current
     require_current(dict(model=model))
     if (type(model) is not str or re.fullmatch(r'[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+', model) is None
             or any(type(value) is not int or value < 0 for value in (input_tokens, output_tokens, cached_input_tokens))

@@ -268,7 +268,7 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                                          args=(data, start['qualification_operation'], qualification_transport),
                                          daemon=True).start()
                     else:
-                        from .campaigns import execute_launch
+                        from .acquisition.execution import execute_launch
                         threading.Thread(target=execute_launch, args=(data, start['candidate_attempts'], candidate_transport),
                                          kwargs={'transport_factory': candidate_transport_factory,
                                                  'access_secret': access_secret,

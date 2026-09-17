@@ -2,103 +2,47 @@
 style_gate: pass
 ---
 
-# Outillage local de Benchmark Lab-X
+# Outillage local de Bench-X
 
-Cet outil Python utilise la bibliothèque standard. Il prépare une campagne scellée, exécute une fois chaque configuration après autorité S9, produit une revue aveugle, puis construit hors ligne une Salle de décision après décisions et autorité S10.
+## Organisation du moteur courant
 
-Il utilise le scénario et le panel figés de [campaign.json](campaign.json), Pi `0.84.4`, un plafond historique de 0,50 USD et des fichiers privés sous `runs/`. Ces paramètres appartiennent à ce scénario ; ils ne définissent pas les tâches, le panel ni les budgets du [jalon produit](../docs/PRD.md#51-périmètre-010). La revue et la construction refusent un panel incomplet ; route et effort non observés restent `INCONNU`.
+- `acquisition/` regroupe les campagnes et leurs reprises ; `execution.py` porte l'émission et la poursuite des seules tentatives préautorisées
+- `transports/` contient les échanges OpenRouter, les transports candidats Pi, les tarifs, les profils et le pont JavaScript
+- `validation.py` porte les prédicats partagés et le calcul d'empreinte, directement importés par leurs consommateurs
+- les modules de préparation, qualification, évaluation et restitution conservent leurs responsabilités et leurs formats de preuve
 
-`benchmark/__main__.py` conserve son épingle Pi `0.84.4` hors du parcours produit.
-La commande `collect` du prototype envoie `data_collection: "deny"` ; les reçus et campagnes antérieurs restent tels quels.
+Les commandes de `benchmark.runtime` restent identiques. Les chemins Python internes ont changé ; l'archive embarque les sous-paquets et leurs ressources. Les reçus existants restent lisibles ; une intention réservée avec une autre empreinte de moteur reste interdite d'émission.
 
-Les commandes ci-dessous décrivent une séquence : obtenir l’autorité d’acquisition avant `collect`, puis les décisions et l’autorité de construction avant `build`. Elles ne constituent pas un script à lancer d’un bloc. Le lancement d’une campagne réelle exige des identités actuellement vérifiées ; le panel historique ne prouve pas la disponibilité des modèles.
+## Lecture des preuves historiques
 
-Depuis la racine du dépôt, sur macOS, avec Python 3 et le binaire Pi requis :
+`prototype/` conserve le lecteur et le gabarit de présentation des résultats scellés. Les anciennes commandes `prepare`, `collect`, `review` et `build` ont été retirées avec leur acquisition Pi, leur superviseur et leur scénario embarqué. Les nouvelles campagnes passent par `benchmark.runtime`, décrit ci-dessous.
+
+Depuis la racine du dépôt, avec Python 3, `show` vérifie le sceau final et ouvre la page existante sur macOS :
 
 ```bash
-mkdir -p -m 700 runs
-python3 -B -m benchmark prepare --run-dir runs/ma-campagne --pi /chemin/reel/vers/pi
-python3 -B -m benchmark collect --run-dir runs/ma-campagne --authority /chemin/authorization-s9.json
-python3 -B -m benchmark review --run-dir runs/ma-campagne
-python3 -B -m benchmark build --run-dir runs/ma-campagne --decisions /chemin/decisions.json --authority /chemin/authorization-s10.json
 python3 -B -m benchmark show --run-dir runs/ma-campagne
 ```
 
-`show` vérifie le sceau final et ouvre la page existante sans la régénérer. L’alternative directe est `open runs/ma-campagne/index.html`.
-
-La page identifie la tâche par un brief (titre public, contexte, objectif, décision éclairée) et par le résultat attendu contractuel. Pour une future campagne, ce brief se fige avant exécution dans `campaign.json` sous la clé `brief` (exactement `title`, `context`, `objective`, `decision`) et entre ainsi dans l’empreinte du contrat ; le résultat attendu reste `expected_result`, unique source contractuelle, et un brief qui porterait `expected` est refusé. Deux replis existent quand ce champ manque : le scénario historique `quote-thread-summary` dispose d’un brief de présentation propre, rédigé après coup, signalé comme tel sur la page et relié à aucune empreinte de source ; toute autre tâche retombe sur son identifiant et le résultat attendu du contrat, avec les autres champs signalés non documentés.
-
-Après une évolution du rendu, `present` construit une nouvelle présentation locale depuis un run final scellé, sans modifier ses résultats ni relancer de candidat :
+`present` construit une présentation distincte à partir d'un résultat scellé :
 
 ```bash
 python3 -B -m benchmark present --source-run runs/ma-campagne --run-dir runs/ma-presentation
 python3 -B -m benchmark show --run-dir runs/ma-presentation
 ```
 
-## Témoins d’autorité
+Ces commandes utilisent seulement la bibliothèque standard, sans Pi ni appel modèle. Elles acceptent les formats de résultats et de sceaux `benchmark-lab-x-` et `benchmark-lab-x-v2-alpha-`. Les fichiers restent privés sous `runs/` ; une destination existante est refusée. `present` copie les résultats à l'identique et lie la présentation au sceau source. Le run source doit rester disponible et intact pour ouvrir cette présentation.
 
-Les schémas S9 et S10 sont vérifiés strictement. Les autorités restent externes à `prepare` et doivent utiliser les empreintes du run concerné.
+Le contrat, les verdicts et les coûts des campagnes historiques restent inchangés. Si le contrat contient un brief, la page le reprend. Le scénario `quote-thread-summary` dispose sinon d'un brief de présentation propre, rédigé après coup, signalé comme tel et relié à aucune empreinte de source. Pour les autres tâches, les champs non documentés restent indiqués comme tels.
 
-S9 :
+Les [tests du lecteur](../tests/test_historical_reader.py) utilisent des preuves synthétiques autonomes. Les anciens textes de scénario encore utiles aux tests se trouvent dans `tests/fixtures/` et ne sont plus embarqués avec le moteur.
 
-```json
-{
-  "schema": "benchmark-lab-x-s9-authorization-1",
-  "effect": "candidate_calls_and_spend_s9",
-  "authority_id": "TEMOIN-TEMPORAIRE-S9",
-  "run": "runs/ma-campagne",
-  "seal_sha256": "<sha256 seal.json>",
-  "contract_sha256": "<sources.campaign.json du sceau>",
-  "panel_sha256": "<artifacts.panel.json du sceau>",
-  "pi": {
-    "binary_sha256": "<pi.sha256 du sceau>",
-    "version": "0.84.4",
-    "settings_sha256": "<artifacts.settings.json du sceau>",
-    "models_sha256": "<artifacts.models.json du sceau>"
-  },
-  "budget": {
-    "currency": "USD",
-    "cap": 0.5,
-    "price_date": "<date>",
-    "price_source": "<source>",
-    "forecasts": {"C1": 0.1, "C2": 0.1, "C3": 0.1}
-  }
-}
-```
-
-Les décisions contiennent `accepted: true`, l’empreinte exacte de `review.json`, une décision par identifiant aveugle et les neuf constats `O1` à `O6`, `E1` à `E3`. Chaque constat possède un texte `finding` et une référence `evidence` parmi `blind-copy`, `receipt`, `incident`. `S1` et `S2` valent `acceptable` ou `excellent` uniquement pour `SATISFAIT`.
-
-S10 lie le run, `seal.json`, `review.json` et les octets exacts des décisions :
-
-```json
-{
-  "schema": "benchmark-lab-x-s10-authorization-1",
-  "effect": "product_execution_and_acceptance_s10",
-  "authority_id": "TEMOIN-TEMPORAIRE-S10-DISTINCT",
-  "run": "runs/ma-campagne",
-  "seal_sha256": "<sha256 seal.json>",
-  "review_sha256": "<sha256 review.json>",
-  "decisions_sha256": "<sha256 du fichier decisions.json externe>"
-}
-```
-
-Ces témoins documentent le format. Ils n’accordent aucune autorité réelle.
-
-## Compatibilité et intégrité
-
-La commande courante est `python3 -B -m benchmark`. Les nouveaux enregistrements utilisent le préfixe de schéma `benchmark-lab-x-`, suivi de leur objet et de leur version de format. Les exemples d’autorité ci-dessus correspondent à ces formats.
-
-Le contrat figé dans `campaign.json`, les données d’entrée et la carte du scénario conservent leurs octets et identifiants historiques. Les lecteurs `show` et `present` reconnaissent explicitement les anciens formats de résultats et de sceaux. `present` copie les résultats à l’identique dans une présentation distincte et conserve le lien au sceau source ; il ne convertit pas une campagne et ne change aucun verdict.
-
-Une préparation antérieure au changement de moteur n’est pas réutilisable pour acquérir, revoir ou construire : ses empreintes de sources ne correspondent plus. Il faut une nouvelle préparation et les autorités correspondantes. Aucun ancien reçu ou témoin d’autorité n’est converti automatiquement. Cette migration de noms ne constitue pas la livraison du périmètre produit.
-
-Les comparaisons publiées sont servies par le service web sous `/publications/` ; la publication GitHub Pages est retirée. Construire une page locale et l’intégrer dans cette publication sont deux actions d’autorités distinctes.
+Les comparaisons publiées sont servies par le service web sous `/publications/`. Construire une page locale et la publier gardent des autorités distinctes.
 
 ## Interfaces locales du service Linux en construction
 
-L’[ARD](../docs/ARD.md#3-pi-comme-frontière-constante) impose OpenRouter pour tous les appels modèles du produit : préparation, correction, jugement et candidats. Le secours officiel candidat explicitement autorisé suit les conditions décrites ci-dessous ; aucune substitution implicite de modèle n’est admise. Pi reste le harnais des candidats et doit utiliser OpenRouter ; le moteur historique le sélectionne déjà avec `--provider openrouter` et désactive le repli fournisseur. S4 fournit une interface à transport injecté ; le raccordement Pi/OpenRouter et le jugement opérateur sont décrits dans la section « Première comparaison privée » ci-dessous. S5 ne raccorde aucun modèle juge réel. Les contrats historiques et les outils de développement Graph/Codex restent hors de cette nouvelle règle produit.
+L’[ARD](../docs/ARD.md#3-pi-comme-frontière-constante) impose OpenRouter pour tous les appels modèles du produit : préparation, correction, jugement et candidats. Le secours officiel candidat explicitement autorisé suit les conditions décrites ci-dessous ; aucune substitution implicite de modèle n’est admise. Pi reste le harnais des candidats et utilise OpenRouter hors secours officiel explicitement autorisé. S4 fournit une interface à transport injecté ; le raccordement Pi/OpenRouter et le jugement opérateur sont décrits dans la section « Première comparaison privée » ci-dessous. S5 ne raccorde aucun modèle juge réel. Les contrats historiques et les outils de développement Graph/Codex restent hors de cette nouvelle règle produit.
 
-Le module `benchmark.runtime` fournit une initialisation privée, la vérification de SQLite et des pièces, la maintenance, une sauvegarde cohérente et une restauration vers un nouvel emplacement. Ces interfaces sont distinctes du moteur historique ci-dessus. Les processus web et exécuteur sont fournis ci-dessous. Le candidat local ajoute le parcours fictif S2 décrit plus bas. Le raccordement local OpenRouter de préparation est décrit ci-dessous ; ses essais réels restent à autoriser et vérifier.
+Le module `benchmark.runtime` fournit une initialisation privée, la vérification de SQLite et des pièces, la maintenance, une sauvegarde cohérente et une restauration vers un nouvel emplacement. Ces interfaces sont distinctes du lecteur historique ci-dessus. Les processus web et exécuteur sont fournis ci-dessous. Le candidat local ajoute le parcours fictif S2 décrit plus bas. Le raccordement local OpenRouter de préparation est décrit ci-dessous ; ses essais réels restent à autoriser et vérifier.
 
 Avec Python 3.12 ou supérieur, le répertoire parent des données doit exister. L’initialisation crée son emplacement privé ou utilise le répertoire vide préparé par Ansible sous le compte de service. Elle refuse tout emplacement contenant déjà des données :
 
@@ -208,7 +152,7 @@ Les requêtes JSON et formulaires portent les mêmes champs. Une création porte
 
 Les contrôles S2 de publication du paquet portent sur sa structure, les jointures, la relecture des pièces et leurs empreintes. À eux seuls, ils laissent la justesse métier de la référence NON VÉRIFIÉ et `qualified` faux. L’extension locale S3 ci-dessous conserve une qualification distincte. Les déclarations de limites et les demandes de clarification sont celles du transport fictif attribué ; aucun assistant réel n’a été évalué.
 
-La commande CI est `uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests` : 870 tests passent sur macOS pour le candidat corrigé. Elle exclut `benchmark/test_demo.py`, dont les 69 tests ont été exécutés séparément sur macOS. Les huit parcours HTTP avec vrais processus Web et exécuteur locaux passent également. Les transports sont entièrement fictifs ; ces preuves ne qualifient aucun assistant réel.
+La commande CI est `uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests` : 870 tests passent sur macOS pour le candidat corrigé. À cette date, elle excluait `benchmark/test_demo.py`, dont les 69 tests ont été exécutés séparément sur macOS. Cette suite a depuis été retirée avec l’acquisition historique ; les régressions du lecteur sont désormais découvertes sous `tests/`. Les huit parcours HTTP avec vrais processus Web et exécuteur locaux passent également. Les transports sont entièrement fictifs ; ces preuves ne qualifient aucun assistant réel.
 
 La vérification manuelle du 7 septembre 2026 utilise macOS 27.0 (26A5425a) et Chrome 152.0.7977.83 installé. Saisie, clarification, consultation de la pièce textuelle, retour à l’aperçu, validation et correction ont été effectués au clavier, avec focus visible. Le texte de la pièce a été effectivement affiché ; la correction conserve les accords antérieurs et exige une nouvelle validation. Le zoom Chrome à 200 % a été observé sur l’aperçu, ses limites et son lien de pièce. Le contrôle antérieur à 320 × 720 dans le navigateur Codex a vérifié l’absence de débordement horizontal de la page ; il reste une preuve distincte.
 
@@ -216,7 +160,7 @@ Le 7 septembre 2026, Ayo a retiré l’exigence de qualification au lecteur d’
 
 ## Assistant de préparation via OpenRouter, candidat local
 
-[Le transport de préparation](openrouter_preparation.py) raccorde l’exécuteur S2 à `POST https://openrouter.ai/api/v1/chat/completions`. Le responsable choisit l’assistant au démarrage par `--preparation-assistant` : l’alias `preparation`, qui charge [le profil de production GPT-6 Astra](preparation.profile.json), l’alias `preparation-fallback`, qui charge [le profil de secours DeepSeek V4.1 Flash](preparation-fallback.profile.json), l’alias historique `glm-5.3-flash`, qui charge [le profil de compatibilité](glm-5.3-flash.profile.json), ou le chemin d’un profil JSON local déjà approuvé. Le profil de secours n’est jamais sélectionné automatiquement. Sans cette option, aucun transport de préparation n’est chargé. Le profil fige modèle, une unique révision, paramètres, routes, capacités, message système et limites ; son empreinte canonique, le relevé tarifaire et la réserve sont liés à la configuration demandée. Le chemin hôte du fichier n’entre pas dans cette configuration, les messages ni les reçus. [Le transport de qualification](openrouter_qualification.py) charge séparément [le profil Claude Fable 5.1](qualification.profile.json) avec `--qualification-assistant qualification`, ou un profil JSON local déjà approuvé. Après validation d’une révision, il réserve l’opération sur l’enveloppe de préparation et l’exécute hors de la requête HTTP. Les preuves et reçus historiques restent inchangés. Après intégration et autorisation d’essai distinctes, l’opérateur peut sélectionner :
+[Le transport de préparation](transports/openrouter.py) raccorde l’exécuteur S2 à `POST https://openrouter.ai/api/v1/chat/completions`. Le responsable choisit l’assistant au démarrage par `--preparation-assistant` : l’alias `preparation`, qui charge [le profil de production GPT-6 Astra](transports/profiles/preparation.profile.json), l’alias `preparation-fallback`, qui charge [le profil de secours DeepSeek V4.1 Flash](transports/profiles/preparation-fallback.profile.json), l’alias historique `glm-5.3-flash`, qui charge [le profil de compatibilité](transports/profiles/glm-5.3-flash.profile.json), ou le chemin d’un profil JSON local déjà approuvé. Le profil de secours n’est jamais sélectionné automatiquement. Sans cette option, aucun transport de préparation n’est chargé. Le profil fige modèle, une unique révision, paramètres, routes, capacités, message système et limites ; son empreinte canonique, le relevé tarifaire et la réserve sont liés à la configuration demandée. Le chemin hôte du fichier n’entre pas dans cette configuration, les messages ni les reçus. [Le transport de qualification](transports/openrouter.py) charge séparément [le profil Claude Fable 5.1](transports/profiles/qualification.profile.json) avec `--qualification-assistant qualification`, ou un profil JSON local déjà approuvé. Après validation d’une révision, il réserve l’opération sur l’enveloppe de préparation et l’exécute hors de la requête HTTP. Les preuves et reçus historiques restent inchangés. Après intégration et autorisation d’essai distinctes, l’opérateur peut sélectionner :
 
 ```sh
 python3 -B -m benchmark.runtime executor --data /chemin/prive/benchmark --socket /chemin/prive/executor.sock --preparation-assistant preparation --qualification-assistant qualification
@@ -375,7 +319,7 @@ Ce contrat est distinct du contrat S3 et n’ouvre aucun jugement expert ; ses c
 
 ## Campagnes privées locales S4
 
-Le module [campaigns.py](campaigns.py) conserve plusieurs manifestes et leurs cellules sur les contrats approuvés S3. Il fournit l’admission, la réservation, une acquisition par callback et le suivi du dossier S2. Les témoins historiques utilisent un callback fictif ; le raccordement Pi/OpenRouter ci-dessous réutilise cette même frontière. Les paramètres du prototype historique restent propres à celui-ci. La capacité locale ne produit aucun verdict de contenu, classement ou publication.
+Le module [campaigns.py](acquisition/campaigns.py) conserve plusieurs manifestes et leurs cellules sur les contrats approuvés S3. Il fournit l’admission, la réservation et le suivi du dossier S2 ; [execution.py](acquisition/execution.py) porte l’acquisition par callback et la poursuite préautorisée des reprises. Les témoins historiques utilisent un callback fictif ; le raccordement Pi/OpenRouter ci-dessous réutilise cette même frontière. Les paramètres du prototype historique restent propres à celui-ci. La capacité locale ne produit aucun verdict de contenu, classement ou publication.
 
 L’initialisation est explicite sur une base S3 reconnue et intègre, même peuplée. Elle ajoute l’identité `benchmark-lab-x/campaigns/v1`, ses tables et contraintes, avec admission fermée pour chaque nouvelle campagne. `user_version=1`, les pièces et les lignes S1–S3 sont conservés. Répéter cette initialisation, celle de S3 ou celle de S2 ne réécrit pas une extension S4 exacte. L’ouverture et l’inspection ne migrent rien ; les anciens lecteurs refusent l’extension non reconnue. L’usage opérationnel de données existantes garde son autorité distincte.
 
@@ -438,7 +382,7 @@ L’arrêt du service ne prouve pas l’arrêt des workers S4. Le rapprochement 
 
 Sauvegarde et restauration couvrent SQLite, toutes les pièces et leurs liens S4. Le marqueur `restore.json` bloque durablement l’admission, y compris pour une nouvelle campagne, car une sauvegarde ancienne ne prouve pas l’absence d’appels ultérieurs. Cette tranche ne fournit aucune commande de levée de ce blocage sans rapprochement des preuves.
 
-Les [régressions S4](../tests/test_s4_regressions.py) utilisent uniquement des données fictives et les interfaces S1–S3. Elles vérifient notamment l’intention concurrente unique, l’immutabilité des preuves, la conservation des dépenses de préparation, le contrôle d’ordre, la reprise et l’isolation du suivi. Les contrôles automatiques ne qualifient aucun modèle ni contenu métier. La revue propriétaire du candidat reste nécessaire pour les libellés, la retrouvabilité des campagnes, le clavier/focus, le petit écran et le texte agrandi ; aucune observation de navigateur S4 n’est revendiquée. Les preuves macOS restent distinctes de Linux, et la suite demo du prototype reste séparée de la découverte CI.
+Les [régressions S4](../tests/test_s4_regressions.py) utilisent uniquement des données fictives et les interfaces S1–S3. Elles vérifient notamment l’intention concurrente unique, l’immutabilité des preuves, la conservation des dépenses de préparation, le contrôle d’ordre, la reprise et l’isolation du suivi. Les contrôles automatiques ne qualifient aucun modèle ni contenu métier. La revue propriétaire du candidat reste nécessaire pour les libellés, la retrouvabilité des campagnes, le clavier/focus, le petit écran et le texte agrandi ; aucune observation de navigateur S4 n’est revendiquée. Les preuves macOS restent distinctes de Linux.
 
 ### Validation du candidat local du 7 septembre 2026
 
@@ -514,7 +458,7 @@ Sur une sortie intègre et attribuable, un `FAIL` candidat prouvé donne `NE SAT
 
 La justesse d’un constat dépend du contrôleur qualifié et de ses preuves. Le produit vérifie les liens, les passages, la couverture et la règle de verdict ; il n’interprète pas universellement les obligations écrites en langage naturel. Le contrôleur applique aussi les obligations économiques éventuellement prévues : il doit conserver l’insuffisance lorsque le coût requis est inconnu. Un coût inconnu n’annule pas la satisfaction des obligations non économiques. Les dépenses candidates proviennent du reçu S1 de la tentative, avec leur base et leur source ; elles ne comprennent pas implicitement la préparation ou le jugement.
 
-L’assistance fictive réutilise une intention S1 de phase `judgment`, sous `TEST_ONLY_JUDGMENT_S5`, liée au même dossier et à sa révision, avec un budget en `TEST`. Sa première ressource est le JSON strict `{instructions, context_sha256, piece_ids}`, suivi des identifiants de pièces dans le même ordre que `resources`. L’empreinte du contexte est calculée avec `qualification.digest(context)`. Consignes, contexte et pièces sont vérifiés contre le jugement. L’opération conserve configuration demandée, reçu, configuration observée, ressources vues, autorité, moteur, réserve, coût et effets inconnus. Une opération candidate ou un jugement étranger est refusé. Un reçu absent ne permet pas une satisfaction assistée ; son éventuelle réception tardive ne réécrit pas l’évaluation précédente. Une correction reste explicite. Aucun appel ni retry n’est réalisé par S5.
+L’assistance fictive réutilise une intention S1 de phase `judgment`, sous `TEST_ONLY_JUDGMENT_S5`, liée au même dossier et à sa révision, avec un budget en `TEST`. Sa première ressource est le JSON strict `{instructions, context_sha256, piece_ids}`, suivi des identifiants de pièces dans le même ordre que `resources`. L’empreinte du contexte est calculée avec `validation.digest(context)`. Consignes, contexte et pièces sont vérifiés contre le jugement. L’opération conserve configuration demandée, reçu, configuration observée, ressources vues, autorité, moteur, réserve, coût et effets inconnus. Une opération candidate ou un jugement étranger est refusé. Un reçu absent ne permet pas une satisfaction assistée ; son éventuelle réception tardive ne réécrit pas l’évaluation précédente. Une correction reste explicite. Aucun appel ni retry n’est réalisé par S5.
 
 Les configurations demandées et observées des assistants de préparation, du juge éventuel et de la tentative sont rapprochées séparément pour exposer les liens connus de modèle ou fournisseur, avec les identifiants d’opération et de reçu sources. Une valeur absente reste `INCONNU` ; des noms différents ne prouvent pas l’indépendance. Le temps humain et le coût local restent inconnus sans méthode ni mesure. Les témoins fictifs conservent leurs dépenses propres : notamment `3 TEST` pour la préparation S2, `2 TEST` pour l’acquisition et `4 TEST` pour le reçu de jugement utilisé par l’acceptation. Ces unités ne sont pas des dépenses réelles de modèles ou de Graph.
 
@@ -535,7 +479,7 @@ python3 -B -m benchmark.runtime inspect-evaluation --data /chemin/prive/benchmar
 
 Le fichier d’inspection, ordinaire, privé et détenu par l’opérateur, contient exactement `{"evaluation_id": "identifiant-conserve"}`. L’inspection n’initialise rien et ne donne aucune autorité de jugement réel.
 
-Les [régressions S5](../tests/test_s5_regressions.py) couvrent les garanties complémentaires de concurrence, d’intégrité, d’évolution du dossier, de réception tardive et de sauvegarde. Elles sont indépendantes des rapports et fixtures du juge scellé. La découverte CI et la suite `benchmark.test_demo` restent des validations distinctes ; les preuves macOS ne valent pas preuve Linux. La revue du code et du parcours propriétaire reste nécessaire : comprendre le motif, retrouver qualification et correction, ouvrir la sortie et ses preuves, revenir au dossier, puis vérifier clavier, focus, petit écran et texte agrandi dans un navigateur identifié. Les contrôles binaires ne certifient ni la qualité métier ni ce parcours humain.
+Les [régressions S5](../tests/test_s5_regressions.py) couvrent les garanties complémentaires de concurrence, d’intégrité, d’évolution du dossier, de réception tardive et de sauvegarde. Elles sont indépendantes des rapports et fixtures du juge scellé. Les preuves macOS ne valent pas preuve Linux. La revue du code et du parcours propriétaire reste nécessaire : comprendre le motif, retrouver qualification et correction, ouvrir la sortie et ses preuves, revenir au dossier, puis vérifier clavier, focus, petit écran et texte agrandi dans un navigateur identifié. Les contrôles binaires ne certifient ni la qualité métier ni ce parcours humain.
 
 ## Comparaison et restitution fictives locales S6
 
@@ -567,13 +511,13 @@ L’aperçu exige une liste explicite de pièces liées aux évaluations retenue
 
 La vue d’aperçu est accessible depuis la comparaison sous la même session propriétaire. Les cases sont décochées au départ ; chaque actualisation reconstruit en mémoire le paquet de la campagne entière et affiche son empreinte. Le rendu réutilise la présentation de projection avec des liens privés vers les seules pièces choisies et un bandeau « NON APPROUVÉ ». Cet habillage privé est distinct des fichiers du paquet. Consulter ou modifier la sélection ne matérialise rien et ne change aucune projection déjà activée.
 
-Le seul reçu accepté est exactement `{"actor":"approbateur-fictif-S6","authority_id":"TEST_ONLY_PUBLICATION_S6","projection_sha256":"<empreinte exacte du manifeste>","catalogue":false}`. Ce reçu est extérieur aux octets du manifeste qu’il approuve. Il constitue un témoin logiciel local, sans authentification ni autorité réelle de publication. Le manifeste `benchmark-lab-x/restitution-fictional/v1` identifie présentation, conclusion, tâche/version, campagne, contrat, évaluations, limites et fichiers. Toute modification d’octets exige une nouvelle empreinte et son approbation exacte. La présentation produite porte désormais la version `4`, qui retire de la feuille de style publique les règles privées de préparation et de comparaison, absentes du HTML public. La version `2` avait remplacé les identifiants de critères par leurs libellés dans les colonnes, motifs, constats et mesures ; la version `3` avait porté la mention de restriction aussi sur les limites par ligne. Le lecteur accepte les versions `1`, `2`, `3` et `4` et sert leurs octets conservés après vérification des empreintes ; toute autre version est refusée. Les projections historiques de version antérieure ne sont ni régénérées, ni réétiquetées, ni requalifiées ; leur manifeste et leurs fichiers approuvés restent la référence.
+Le seul reçu accepté est exactement `{"actor":"approbateur-fictif-S6","authority_id":"TEST_ONLY_PUBLICATION_S6","projection_sha256":"<empreinte exacte du manifeste>","catalogue":false}`. Ce reçu est extérieur aux octets du manifeste qu’il approuve. Il constitue un témoin logiciel local, sans authentification ni autorité réelle de publication. Le manifeste `benchmark-lab-x/restitution-fictional/v1` identifie présentation, conclusion, tâche/version, campagne, contrat, évaluations, limites et fichiers. Toute modification d’octets exige une nouvelle empreinte et son approbation exacte. La présentation produite porte désormais la version `5`, qui adopte le nom public Bench-X. La version `4` avait retiré de la feuille de style publique les règles privées de préparation et de comparaison, absentes du HTML public ; la version `2` avait remplacé les identifiants de critères par leurs libellés dans les colonnes, motifs, constats et mesures ; la version `3` avait porté la mention de restriction aussi sur les limites par ligne. Le lecteur accepte les versions `1` à `5` et sert leurs octets conservés après vérification des empreintes ; toute autre version est refusée. Les projections historiques de version antérieure ne sont ni régénérées, ni réétiquetées, ni requalifiées ; leur manifeste et leurs fichiers approuvés restent la référence.
 
 La matérialisation vérifie l’ensemble avant de sélectionner `<sha256>/` dans `active.json`. Elle conserve les fichiers exacts, `publication.json` et `approval.json`, sans activer un paquet partiel. Le lecteur public vérifie le manifeste, le reçu et les fichiers à chaque lecture ; pièce inconnue, octets altérés ou lien symbolique ferme la lecture. Les répertoires ancêtres du chemin S6 doivent également être ordinaires ; fournir un chemin absolu sans lien symbolique, notamment le chemin résolu d’un répertoire temporaire sur macOS. Un paquet historique reste sous son format d’origine. Lorsque le pointeur actif désigne S6, les anciennes URLs simples redirigent vers l’URL contenant son empreinte, afin que les liens suivants gardent la même identité.
 
 Consultation privée, aperçu sans activation et projection fictive approuvée sont distincts. Le service annonce cette dernière par `X-Benchmark-Publication: APPROVED_FICTIONAL_S6` et l’empreinte dans l’URL et `X-Benchmark-Projection-SHA256`. Les octets approuvés ne sont pas réécrits pour changer un libellé d’aperçu. Aucun endpoint d’approbation, commande d’exploitation réelle, compte, admission au catalogue public ou ouverture extérieure n’est ajouté. Droits publics, admission au catalogue, approbateur et pièces réellement publiables restent à décider.
 
-Les [régressions S6](../tests/test_s6_regressions.py) utilisent les primitives et fixtures maintenues S2–S5, sans dépendre de `reports`. Elles couvrent calcul, routes locales, isolation, octets et activation. La découverte CI et `benchmark.test_demo` restent des preuves distinctes ; les résultats acquis sur macOS ne prouvent pas le candidat sous Linux ni une campagne réelle. La validation HTTP native et la revue propriétaire avec Ordinateur du candidat exact restent nécessaires. Les assertions HTML ne prouvent ni lisibilité, ni clavier, ni focus, ni Retour du navigateur. Un refus du navigateur sur une pièce brute reste distinct de la conformité de sa réponse HTTP.
+Les [régressions S6](../tests/test_s6_regressions.py) utilisent les primitives et fixtures maintenues S2–S5, sans dépendre de `reports`. Elles couvrent calcul, routes locales, isolation, octets et activation. Les résultats acquis sur macOS ne prouvent pas le candidat sous Linux ni une campagne réelle. La validation HTTP native et la revue propriétaire avec Ordinateur du candidat exact restent nécessaires. Les assertions HTML ne prouvent ni lisibilité, ni clavier, ni focus, ni Retour du navigateur. Un refus du navigateur sur une pièce brute reste distinct de la conformité de sa réponse HTTP.
 
 ## Outillage des premières campagnes
 
@@ -582,7 +526,7 @@ Les scripts de campagne historiques sous `tools/` sont retirés du dépôt coura
 
 ## Première comparaison privée : Pi et jugement opérateur
 
-Le transport [pi_openrouter.py](pi_openrouter.py) raccorde le SDK installé `@earendil-works/pi-coding-agent` 0.85.1 à l’acquisition S4. Pi construit et termine un tour sans outils ; le processus Python effectue l’échange OpenRouter avec le mécanisme HTTP déjà utilisé pour la préparation. Le secret reste dans Python. Pi ne charge ni contexte du poste, ni extension, ni skill, ni historique ; ses reprises et sa compaction sont désactivées. Aucune référence réservée au jugement ne lui est transmise. Le lanceur historique conserve ses paramètres et son contrat.
+Le transport [pi.py](transports/pi.py) raccorde le SDK installé `@earendil-works/pi-coding-agent` 0.85.1 à l’acquisition S4. Pi construit et termine un tour sans outils ; le processus Python effectue l’échange OpenRouter avec le mécanisme HTTP déjà utilisé pour la préparation. Le secret reste dans Python. Pi ne charge ni contexte du poste, ni extension, ni skill, ni historique ; ses reprises et sa compaction sont désactivées. Aucune référence réservée au jugement ne lui est transmise. Les preuves historiques conservent leurs paramètres et leur contrat.
 
 Cette capacité concerne les tâches textuelles sans outils, comme le suivi de réunion. Elle ne fournit ni exécution de code candidat, ni recherche externe, ni juge universel. L’installation de Pi dans l’environnement Linux et son essai opérationnel restent distincts du code et des tests locaux. L’archive produit inclut le pont JavaScript, mais n’installe ni Node ni Pi.
 
@@ -637,7 +581,7 @@ Les [tests de comparaison privée](../tests/test_private_comparison.py) réutili
 
 [judgment.py](judgment.py) conserve une proposition dans le reçu d’une opération S1 de phase `judgment`, identifiée par `benchmark-lab-x/judgment/v1`. Aucune nouvelle table ni migration implicite n’est nécessaire. Les reçus S5 historiques gardent leur validateur et leur sémantique. Un lecteur antérieur à ce raccordement ne sait pas valider une évaluation assistée S14.
 
-[OpenRouterJudgment](openrouter_judgment.py) exige un profil explicite au format S13. Modèle, paramètres, système, routes, limites et relevé tarifaire sont liés avant émission. Le système du profil doit demander un objet JSON contenant exactement `findings`, `measures`, `limits`, `proposed_verdict`. Le serveur construit la provenance ; une réponse modèle ne fournit ni autorité ni arbitrage propriétaire. Le verdict proposé est conservé comme proposition, même s’il diffère du verdict calculé ensuite.
+[OpenRouterJudgment](transports/openrouter.py) exige un profil explicite au format S13. Modèle, paramètres, système, routes, limites et relevé tarifaire sont liés avant émission. Le système du profil doit demander un objet JSON contenant exactement `findings`, `measures`, `limits`, `proposed_verdict`. Le serveur construit la provenance ; une réponse modèle ne fournit ni autorité ni arbitrage propriétaire. Le verdict proposé est conservé comme proposition, même s’il diffère du verdict calculé ensuite.
 
 La projection est celle de `evaluation.prepare_review()` et `outgoing.closed_review()` : tâche, critères, pièces du paquet, sortie exacte et références du contrat. L’export `prepare-evaluation` reste destiné à la revue locale et ne constitue jamais le corps HTTP. L’intention conserve séparément le contexte privé, l’autorité, l’admission de campagne, la réserve et les octets sortants. Le reçu conserve réponse, empreintes, incident et coût disponible. L’inspection vérifie ces liens sans appel ni rejeu.
 
@@ -692,6 +636,8 @@ La découverte authentifiée du 12 septembre 2026 confirme `claude-opus-5` chez 
 Depuis la racine du projet, copier [.env.example](../.env.example) vers `.env`, puis renseigner les clés souhaitées. Le fichier `.env` est ignoré par Git ; seul l’exemple avec des valeurs vides est versionné. Lui donner les permissions `600` sur macOS ou Linux.
 
 `OPENROUTER_API_KEY` concerne le canal principal. `DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`, `ZAI_API_KEY`, `OPENAI_API_KEY`, `MOONSHOT_API_KEY`, `DASHSCOPE_API_KEY` et `TENCENT_TOKENHUB_API_KEY` sont facultatives et réservées aux secours officiels. Alibaba exige aussi `DASHSCOPE_BASE_URL`, lié à la région de la clé. Tencent exige `TENCENT_TOKENHUB_BASE_URL`, soit le site Guangzhou, soit le site international correspondant à la clé. Les renseigner ne déclenche aucun appel ; le secours exige une préautorisation initiale complète ou une admission opérateur distincte.
+
+`GROK_API_KEY`, `MINIMAX_API_KEY`, `MIMO_API_KEY` et `MISTRAL_API_KEY` sont réservées dans `.env.example` pour de futurs transports. Le runtime courant ne les lit pas et ne doit pas être présenté comme compatible avec ces canaux officiels.
 
 Pour Qwen, conserver `DASHSCOPE_API_KEY` et `DASHSCOPE_BASE_URL`. Pour Hy4, conserver `TENCENT_TOKENHUB_API_KEY` et `TENCENT_TOKENHUB_BASE_URL`. Les noms `API_HOST`, `OPENAPI_ENDPOINT`, `DASHCOPE_ENDPOINT` (orthographe incomplète) et `HUNYUAN_API_KEY` ne sont lus par aucun de ces deux transports et peuvent être retirés du fichier `.env` privé après vérification qu’aucun autre outil local ne les utilise.
 

@@ -2,7 +2,7 @@
 style_gate: pass
 ---
 
-# Glossaire Benchmark Lab-X
+# Glossaire Bench-X
 
 Ce glossaire fixe les termes du domaine. Il ne porte ni statut de livraison des versions, ni backlog, ni inventaire d'environnement.
 

@@ -70,7 +70,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
     if configuration_route:
         if method not in ('GET', 'POST'):
             raise p.Denied('Action inaccessible')
-        from . import campaigns
+        from .acquisition import campaigns
         dossier_id = configuration_route.group(1)
         revision = p.owner(p.connection_for(store), session_id, dossier_id)
         p.require_requester_steps(store, p.connection_for(store), session_id, dossier_id, revision)
@@ -102,7 +102,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         raise p.Denied('Action inaccessible')
     launch_route = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/campaigns/([A-Za-z0-9_-]{1,128})/(conditions|cap|start)', path)
     if launch_route:
-        from . import campaigns
+        from .acquisition import campaigns
         dossier_id, campaign_id, action = launch_route.groups()
         connection = p.connection_for(store)
         p.owner(connection, session_id, dossier_id)

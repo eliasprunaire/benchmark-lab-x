@@ -20,31 +20,33 @@ from urllib.request import Request, urlopen
 from benchmark import outgoing, preparation as prep, qualification, runtime, service, storage
 from benchmark_web import views
 from benchmark_web.server import serve_web
-from benchmark import openrouter_preparation as assistant
+from benchmark.transports import openrouter as assistant
 
 
+PROFILE = assistant.load_profile(assistant.ASSISTANT)
+PROVIDERS = assistant.providers(PROFILE)
 KEY = 'fixture-key-never-a-credential'
-ESTIMATE = {'channel': 'OpenRouter', 'model_id': assistant.MODEL, 'context_length': 1050000,
+ESTIMATE = {'channel': 'OpenRouter', 'model_id': PROFILE['model'], 'context_length': 1050000,
             'canonical_slug': assistant.DEFAULT_PROFILE['revision'],
             'assumptions': {'input_tokens': 64000, 'cached_input_tokens': 0, 'output_tokens': 16384},
             'sources': {key: {'url': 'https://openrouter.ai/api/v1/' + path,
                               'retrieved_at': '2026-09-10T00:00:00+00:00', 'body_sha256': 'b' * 64}
-                        for key, path in [('model', 'model/' + assistant.MODEL),
-                                          ('endpoints', 'models/' + assistant.MODEL + '/endpoints')]},
+                        for key, path in [('model', 'model/' + PROFILE['model']),
+                                          ('endpoints', 'models/' + PROFILE['model'] + '/endpoints')]},
             'model_summary': {'pricing_raw': {
                 'prompt': '0.00001', 'completion': '0.00005', 'web_search': '0.01',
                 'input_cache_read': '0.000001', 'input_cache_write': '0.0000125',
                 'overrides': [{'min_prompt_tokens': 272000, 'prompt': '0.00002',
                                'completion': '0.000075', 'input_cache_read': '0.000002',
                                'input_cache_write': '0.000025'}]}},
-            'endpoints': [{'model_id': assistant.MODEL, 'tag': tag, 'provider_name': provider,
+            'endpoints': [{'model_id': PROFILE['model'], 'tag': tag, 'provider_name': provider,
                            'supported_parameters': ['temperature', 'top_p', 'reasoning', 'max_tokens', 'response_format'],
                            'pricing_raw': {'prompt': '0.0000002', 'completion': '0.0000008'}}
-                          for tag, provider in assistant.PROVIDERS.items()]}
+                          for tag, provider in PROVIDERS.items()]}
 RESERVE = assistant.reservation(ESTIMATE)
-ROUTE = {'requested': assistant.MODEL, 'strategy': 'direct', 'attempt': 1,
-         'endpoints': {'available': [{'provider': next(iter(assistant.PROVIDERS.values())),
-                                      'model': assistant.MODEL, 'selected': True}]}}
+ROUTE = {'requested': PROFILE['model'], 'strategy': 'direct', 'attempt': 1,
+         'endpoints': {'available': [{'provider': next(iter(PROVIDERS.values())),
+                                      'model': PROFILE['model'], 'selected': True}]}}
 SYNTHETIC_PROFILE = Path(__file__).resolve().parent / 'fixtures' / 'synthetic-preparation.profile.json'
 
 
@@ -99,7 +101,7 @@ def result(stage='preview'):
 
 
 def http_body(value=None, **updates):
-    return storage._strict_json({'id': 'fixture-provider-id', 'model': assistant.MODEL,
+    return storage._strict_json({'id': 'fixture-provider-id', 'model': PROFILE['model'],
         'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant',
                     'content': storage._strict_json(value if value is not None else result())}}],
         'openrouter_metadata': ROUTE, 'usage': {'cost': 0.000202, 'prompt_tokens': 1000, 'completion_tokens': 200, 'total_tokens': 1200,
@@ -170,8 +172,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
             self.assertEqual('Bearer ' + KEY, headers['Authorization'])
             self.assertNotIn(KEY.encode(), body)
             sent = json.loads(body)
-            self.assertEqual(assistant.MODEL, sent['model'])
-            self.assertEqual(assistant.PARAMETERS, {k: sent[k] for k in assistant.PARAMETERS})
+            self.assertEqual(PROFILE['model'], sent['model'])
+            self.assertEqual(PROFILE['parameters'], {k: sent[k] for k in PROFILE['parameters']})
             self.assertNotIn('tools', sent)
             self.assertNotIn('thinking', sent)
             self.assertNotIn('request_id', sent)
@@ -179,7 +181,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
             self.assertEqual(16384, sent['max_tokens'])
             self.assertNotIn('max_tokens', sent['reasoning'])
             self.assertFalse(sent['provider']['allow_fallbacks'])
-            self.assertEqual(list(assistant.PROVIDERS), sent['provider']['only'])
+            self.assertEqual(list(PROVIDERS), sent['provider']['only'])
             self.assertEqual(sent['provider']['only'], sent['provider']['order'])
             self.assertTrue(sent['provider']['require_parameters'])
             self.assertEqual('deny', sent['provider']['data_collection'])
@@ -195,7 +197,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         view = prep.view(self.store, self.session, 'd')
         observed = operation['receipt']['observed_configuration']
         self.assertEqual(self.raw, b64decode(observed['http']['body_base64']))
-        self.assertEqual(assistant.MODEL, observed['model'])
+        self.assertEqual(PROFILE['model'], observed['model'])
         self.assertIsNone(observed['parameters'])
         self.assertEqual(ROUTE, observed['route'])
         self.assertEqual('OpenAI', observed['provider'])
@@ -399,7 +401,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual(1, self.http.request.call_count)
 
     def test_truncation_wrong_model_tools_non_json_and_http_errors_are_not_retried(self):
-        operation_id = self.submit()
+        self.submit()
         operation = self.store.inspect_operations()[0]
         request = json.loads(operation['resources'][0])
         closed = prep._closed_preparation_request(request)
@@ -476,7 +478,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
                 if change == 'size': request['outgoing']['message'] = 'x' * assistant.MAX_REQUEST_BYTES
                 if change == 'format': request = dict(outgoing_format='legacy', outgoing=request['outgoing'])
                 if change == 'profile': requested['profile_sha256'] = '0' * 64
-                if change == 'revision': requested['revision'] = assistant.MODEL + '-20991231'
+                if change == 'revision': requested['revision'] = PROFILE['model'] + '-20991231'
                 if change == 'parameters': requested['parameters']['temperature'] = 0
                 if change == 'system': requested['prompt_sha256'] = '0' * 64
                 if change == 'routes': requested['routes'] = [{'tag': 'outside/fp8', 'provider_name': 'Outside'}]
@@ -567,8 +569,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
 
     def test_native_fallback_after_429_is_accepted_without_another_http_call(self):
         self.http.getresponse.return_value.read.return_value = http_body(openrouter_metadata={**ROUTE, 'strategy': 'fallback', 'attempt': 2,
-            'attempts': [{'provider': 'CoreWeave', 'model': assistant.MODEL, 'status': 429},
-                         {'provider': 'Modal', 'model': assistant.MODEL, 'status': 200}]})
+            'attempts': [{'provider': 'CoreWeave', 'model': PROFILE['model'], 'status': 429},
+                         {'provider': 'Modal', 'model': PROFILE['model'], 'status': 200}]})
         operation, view = self.execute()
         self.assertEqual('preview', view['stage'])
         self.assertEqual(2, operation['receipt']['observed_configuration']['route']['attempt'])
@@ -586,9 +588,9 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('preview', view['stage'])
         self.assertEqual(canonical, operation['receipt']['observed_configuration']['model'])
         self.assertIsNotNone(operation['receipt']['observed_configuration']['routing_limit'])
-        for index, updates in enumerate([{'model': assistant.MODEL + '-20260827'},
-                {'openrouter_metadata': {**ROUTE, 'attempts': [{'provider': 'Modal', 'model': assistant.MODEL + '-20260827'}]}},
-                {'openrouter_metadata': {**ROUTE, 'attempts': [{'provider': 'Modal', 'tag': 'outside/fp8', 'model': assistant.MODEL}]}}]):
+        for index, updates in enumerate([{'model': PROFILE['model'] + '-20260827'},
+                {'openrouter_metadata': {**ROUTE, 'attempts': [{'provider': 'Modal', 'model': PROFILE['model'] + '-20260827'}]}},
+                {'openrouter_metadata': {**ROUTE, 'attempts': [{'provider': 'Modal', 'tag': 'outside/fp8', 'model': PROFILE['model']}]}}]):
             prep.admit(self.store, self.authority)
             self.http.getresponse.return_value.read.return_value = http_body(**updates)
             operation, view = self.execute(action_id='different-' + str(index), revision=view['revision'], kind='correct', message=CORRECTION)
@@ -912,7 +914,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         preparation_profile = assistant.load_profile(assistant.ASSISTANT)
         fallback_profile = assistant.load_profile(assistant.FALLBACK_ASSISTANT)
         qualification_profile = assistant.load_profile(str(
-            Path(assistant.__file__).with_name('qualification.profile.json')))
+            Path(assistant.__file__).parent / 'profiles' / 'qualification.profile.json'))
         historical = assistant.load_profile(assistant.HISTORICAL_ASSISTANT)
         self.assertEqual('openai/gpt-6-astra', preparation_profile['model'])
         self.assertEqual({'effort': 'medium'}, preparation_profile['parameters']['reasoning'])
@@ -1054,11 +1056,11 @@ class OpenRouterPreparationTests(unittest.TestCase):
                     self.assertEqual(KEY, os.environ.get('OPENROUTER_API_KEY'))
                     self.http.request.assert_not_called()
         alias = assistant.load_profile(assistant.ASSISTANT)
-        from_file = assistant.load_profile(str(Path(assistant.__file__).with_name(assistant.DEFAULT_PROFILE_NAME)))
+        from_file = assistant.load_profile(str(Path(assistant.__file__).parent / 'profiles' / assistant.DEFAULT_PROFILE_NAME))
         self.assertEqual(alias, from_file)
-        self.assertEqual(assistant.MODEL, alias['model'])
-        self.assertEqual(assistant.SYSTEM_PROMPT, alias['system'])
-        self.assertEqual(assistant.PARAMETERS, alias['parameters'])
+        self.assertEqual(PROFILE['model'], alias['model'])
+        self.assertEqual(PROFILE['system'], alias['system'])
+        self.assertEqual(PROFILE['parameters'], alias['parameters'])
 
     def test_synthetic_profile_omits_optional_parameters_from_simulated_http(self):
         profile = assistant.load_profile(str(SYNTHETIC_PROFILE))

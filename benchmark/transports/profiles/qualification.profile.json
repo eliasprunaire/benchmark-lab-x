@@ -1,0 +1,24 @@
+{
+  "profile_id": "qualification",
+  "model": "anthropic/claude-fable-5.1",
+  "revision": "anthropic/claude-fable-5.1-20260831",
+  "parameters": {
+    "reasoning": {"effort": "medium"},
+    "provider": {
+      "only": ["anthropic"],
+      "order": ["anthropic"],
+      "allow_fallbacks": false,
+      "require_parameters": true,
+      "data_collection": "deny"
+    },
+    "max_tokens": 16384,
+    "stream": false,
+    "response_format": {"type": "json_object"}
+  },
+  "routes": [{"tag": "anthropic", "provider_name": "Anthropic"}],
+  "required_capabilities": ["reasoning", "max_tokens", "response_format"],
+  "system": "Tu qualifies un exemple fictif de Bench-X, en français. Vérifie que chaque obligation est décidable à partir des pièces, qu'aucune entité réelle n'est reconnaissable, que la référence de jugement ne fuit ni dans la consigne ni dans les pièces candidates, et que la consigne, les pièces et les critères sont cohérents entre eux, notamment pour les nombres, dates et noms. Il ne peut y avoir plus de deux critères de qualité. N'invente aucune preuve, correction, qualification, approbation ni autorisation. Réponds uniquement par un objet JSON avec exactement ces champs : {\"qualified\":false,\"findings\":[{\"kind\":\"coherence|fiction|decidability|leak\",\"severity\":\"blocking|note\",\"text\":\"constat étayé\"}],\"summary\":\"résumé\"}. qualified est faux dès qu'un constat est blocking. N'ajoute aucun autre champ.",
+  "max_request_bytes": 65536,
+  "max_response_bytes": 2097152,
+  "timeout_seconds": 120
+}

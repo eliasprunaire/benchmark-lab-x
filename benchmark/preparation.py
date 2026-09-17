@@ -292,7 +292,7 @@ def package_check(store, dossier_id, revision, package, digest):
             raise IntegrityError('Pièce étrangère ou réservée')
         if piece != {key: meta['piece_id'] if key == 'id' else meta[key] for key in piece}:
             raise IntegrityError('Métadonnées divergentes')
-        store.read_piece(piece['id'])
+        store.verify_piece(piece['id'])
     actual = {row[0] for row in store._connection.execute(
         "SELECT piece_id FROM pieces WHERE dossier_id=? AND revision=? AND role='candidate'",
         (dossier_id, revision))}
@@ -485,7 +485,7 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
                                                approval_status='PENDING', qualified=False)
             result['qualified'] = bool(result['qualification'] and result['qualification']['qualified'])
         if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_control'").fetchone():
-            from .campaigns import projection
+            from .acquisition.campaigns import projection
             result['campaigns'] = projection(store, connection, dossier_id)
             if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s5_control'").fetchone():
                 from .evaluation import projection as evaluations
@@ -799,7 +799,7 @@ def execute_qualification(data, operation_id, transport):
                          encode(result['findings']), result['summary'], operation['requested_configuration']['model'],
                          cost, datetime.now(timezone.utc).isoformat()))
                     if result['qualified']:
-                        from .campaigns import _record_comparison_contract
+                        from .acquisition.campaigns import _record_comparison_contract
                         _record_comparison_contract(store, connection, operation)
         except Exception:
             if emitted:
@@ -985,7 +985,7 @@ def publish(store, operation, request, response):
                             digest, encode([]), encode(checks)))
         if (operation['requested_configuration'].get('provider') == 'OpenRouter'
                 and type(response['receipt']['observed_configuration']) is dict):
-            from .openrouter_prices import indication
+            from .transports.prices import indication
             observed = response['receipt']['observed_configuration']
             consumption = observed.get('consumption')
             observed['indicative_cost'] = indication(
@@ -1016,7 +1016,7 @@ def verify_preparation(store, connection):
             raise IntegrityError('Validation étrangère ou divergente')
     for dossier_id, revision in connection.execute('SELECT dossier_id,revision FROM s2_qualifications').fetchall():
         _automatic_qualification(store, connection, dossier_id, revision)
-    from .campaigns import _comparison_contract
+    from .acquisition.campaigns import _comparison_contract
     for (fingerprint,) in connection.execute('SELECT contract_sha256 FROM s2_comparison_contracts').fetchall():
         _comparison_contract(store, connection, fingerprint)
     for dossier_id, action_id, revision, kind, raw, operation_id in connection.execute('SELECT * FROM s2_actions').fetchall():

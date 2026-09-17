@@ -7,7 +7,6 @@ from collections.abc import Callable
 from contextlib import closing
 from copy import deepcopy
 from datetime import datetime, timezone
-from hashlib import sha256
 import json
 import os
 import secrets
@@ -15,7 +14,7 @@ import secrets
 from . import storage
 from .storage import (IntegrityError, SchemaError, ConflictError, _transaction,
                       _strict_json as encode, _fields, _text, _identity, _unique_object)
-from .validation import _hash, _texts
+from .validation import digest, _hash, _texts
 
 FORMAT_IDENTITY = 'benchmark-lab-x/qualification/v1'
 _TABLES = {
@@ -104,10 +103,6 @@ def connection_for(store):
     if not connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s3_control'").fetchone():
         raise SchemaError('Initialisation explicite S3 requise')
     return connection
-
-
-def digest(value):
-    return sha256(encode(value).encode('utf-8')).hexdigest()
 
 
 def _professional(value):

@@ -4,21 +4,20 @@ import json
 import unittest
 from unittest import mock
 
-from benchmark import __main__ as demo
-from benchmark import test_demo as fixtures
+from benchmark.prototype import __main__ as demo
+from tests import test_historical_reader as fixtures
 
 
 class FormatMigrationTests(unittest.TestCase):
     def setUp(self):
-        self.fixture = fixtures.DemoTest()
+        self.fixture = fixtures.HistoricalReaderTests()
         self.fixture.setUp()
-        self.addCleanup(self.fixture.tearDown)
+        self.addCleanup(self.fixture.doCleanups)
 
     def test_new_formats_and_historical_readers_preserve_results(self):
-        run = self.fixture.built()
+        run = self.fixture.sealed()
         for name, kind in [
-            ("seal.json", "seal"), ("collection.json", "collection"),
-            ("review.json", "review"), ("results.json", "results"),
+            ("results.json", "results"),
             ("final-seal.json", "final-seal"),
         ]:
             self.assertEqual(demo._load_json(run / name)["schema"], f"benchmark-lab-x-{kind}-1")
@@ -58,21 +57,21 @@ class FormatMigrationTests(unittest.TestCase):
                 demo.show(presentation, self.fixture.root)
             opener.assert_not_called()
 
-    def test_historical_preparation_cannot_launch_or_migrate(self):
-        run = self.fixture.prepared()
-        seal = demo._load_json(run / "seal.json")
-        seal["schema"] = "benchmark-lab-x-v2-alpha-seal-1"
-        (run / "seal.json").write_text(json.dumps(seal))
-        authority, _ = self.fixture.s9(run)
+    def test_historical_preparation_cannot_be_presented(self):
+        run = self.fixture.root / "runs" / "prepared"
+        run.mkdir(mode=0o700)
+        self.fixture.write(run / "seal.json", {"schema": "benchmark-lab-x-v2-alpha-seal-1"})
+        target = self.fixture.root / "runs" / "presentation"
         original = {p.relative_to(run): p.read_bytes() for p in run.rglob("*") if p.is_file()}
         with mock.patch.object(demo.subprocess, "Popen") as launch:
-            with self.assertRaises(ValueError):
-                demo.collect(run, authority, self.fixture.root)
+            with self.assertRaises(FileNotFoundError):
+                demo.present(run, target, self.fixture.root)
             launch.assert_not_called()
+        self.assertFalse(target.exists())
         self.assertEqual(original, {p.relative_to(run): p.read_bytes() for p in run.rglob("*") if p.is_file()})
 
     def test_unknown_result_format_is_rejected_before_presentation(self):
-        run = self.fixture.built()
+        run = self.fixture.sealed()
         results = demo._load_json(run / "results.json")
         results["schema"] = "benchmark-lab-x-results-999"
         (run / "results.json").write_text(json.dumps(results))

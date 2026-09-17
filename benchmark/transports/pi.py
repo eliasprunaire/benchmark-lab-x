@@ -1,7 +1,7 @@
 """One tool-free Pi candidate turn through OpenRouter, with private raw receipts"""
 from base64 import b64encode
 from datetime import datetime, timezone
-from hashlib import sha256
+from hashlib import file_digest, sha256
 import json
 import os
 from pathlib import Path
@@ -11,11 +11,18 @@ import subprocess
 import tempfile
 import time
 
-from . import openrouter_preparation as http, qualification as q, storage, outgoing
+from ..validation import digest, _texts
+from . import openrouter as http
+from .. import storage, outgoing
 
 PACKAGE = '@earendil-works/pi-coding-agent'
 VERSION = '0.85.1'
 BRIDGE = Path(__file__).with_name('pi_bridge.mjs')
+
+
+def _file_hash(path):
+    with path.open('rb') as stream:
+        return file_digest(stream, 'sha256').hexdigest()
 
 
 def identity(package, node):
@@ -36,14 +43,14 @@ def identity(package, node):
             if path.is_symlink():
                 raise ValueError('Module Pi symbolique inattendu')
             if path.is_file():
-                files[name + '/' + path.relative_to(root).as_posix()] = sha256(path.read_bytes()).hexdigest()
+                files[name + '/' + path.relative_to(root).as_posix()] = _file_hash(path)
     lock = package / 'npm-shrinkwrap.json'
-    files['npm-shrinkwrap.json'] = sha256(lock.read_bytes()).hexdigest()
+    files['npm-shrinkwrap.json'] = _file_hash(lock)
     node = str(Path(node).resolve(strict=True))
     node_version = subprocess.check_output([node, '--version'], timeout=10, env={}).decode().strip()
-    return dict(package=PACKAGE, version=VERSION, sha256=q.digest(files),
-                bridge_sha256=sha256(BRIDGE.read_bytes()).hexdigest(),
-                node_version=node_version, node_sha256=sha256(Path(node).read_bytes()).hexdigest(),
+    return dict(package=PACKAGE, version=VERSION, sha256=digest(files),
+                bridge_sha256=_file_hash(BRIDGE),
+                node_version=node_version, node_sha256=_file_hash(Path(node)),
                 scope='Installed Pi coding-agent, agent-core and pi-ai module trees; remaining dependencies described by npm-shrinkwrap')
 
 
@@ -75,7 +82,7 @@ def _read_line(process, timeout):
 class PiOpenRouter:
     def __init__(self, api_key, package, node):
         # Reuse the channel's credential validation; this value never reaches Pi
-        http.OpenRouterPreparation(api_key)
+        http.validate_key(api_key)
         self._key = api_key
         self.package = Path(package).resolve(strict=True)
         self.node = str(Path(node).resolve(strict=True))
@@ -121,7 +128,7 @@ class PiOpenRouter:
         self._wire_bytes = wire
         self._wire_sha256 = sha256(wire.encode('utf-8')).hexdigest()
         self._wire_proof = outgoing.wire_proof(wire, messages)
-        self._prepared = q.digest(request)
+        self._prepared = digest(request)
         self._identity = live
         self._timeout = defaults['timeout_seconds']
 
@@ -143,7 +150,7 @@ class PiOpenRouter:
         if reasoning is not None:
             if 'effort' in reasoning:
                 storage._fields(reasoning, ('effort',), 'reasoning')
-                q._texts([reasoning['effort']], 'effort', required=True)
+                _texts([reasoning['effort']], 'effort', required=True)
             else:
                 storage._fields(reasoning, ('enabled',), 'reasoning')
                 if reasoning['enabled'] is not True:
@@ -156,7 +163,7 @@ class PiOpenRouter:
             raise ValueError('DATA_COLLECTION_REQUIRED')
         storage._fields(provider, ('only', 'order', 'allow_fallbacks', 'require_parameters',
                                    'data_collection'), 'OpenRouter routing')
-        q._texts(provider['only'], 'providers', required=True, unique=True)
+        _texts(provider['only'], 'providers', required=True, unique=True)
         if (provider['order'] != provider['only'] or type(provider['allow_fallbacks']) is not bool
                 or provider['require_parameters'] is not True):
             raise ValueError('Routage explicite et paramètres requis')
@@ -166,7 +173,7 @@ class PiOpenRouter:
         return json.loads(wire)['messages']
 
     def __call__(self, operation, request):
-        if (operation['state'] != 'EMISSION_POSSIBLE' or getattr(self, '_prepared', None) != q.digest(request)):
+        if (operation['state'] != 'EMISSION_POSSIBLE' or getattr(self, '_prepared', None) != digest(request)):
             raise ValueError('Préparation et intention persistante requises')
         wire = getattr(self, '_wire_bytes', None)
         if wire is None or sha256(wire.encode('utf-8')).hexdigest() != self._wire_sha256:

@@ -7,7 +7,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from benchmark import campaigns, model_catalogue, outgoing, pi_openrouter, preparation, qualification, storage, web_api
+from benchmark.acquisition import campaigns
+from benchmark import model_catalogue, outgoing, preparation, qualification, storage, web_api
+from benchmark.transports import pi as pi_openrouter
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 from tests.test_s4_regressions import manifest
 from tests.test_openrouter_qualification import qualify_fixture

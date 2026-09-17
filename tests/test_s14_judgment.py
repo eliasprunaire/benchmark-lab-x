@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from benchmark import evaluation, judgment, runtime, storage
-from benchmark.openrouter_judgment import OpenRouterJudgment
+from benchmark.transports.openrouter import OpenRouterJudgment
 from tests import test_s14_acceptance as acceptance
 
 KEY = acceptance.KEY

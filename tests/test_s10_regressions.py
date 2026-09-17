@@ -12,8 +12,9 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark import (campaigns as c, evaluation as e, preparation as p, publications as pub,
-                       qualification as q, restitution as r, web_api)
+from benchmark.acquisition import execution
+from benchmark.acquisition import campaigns as c
+from benchmark import evaluation as e, preparation as p, publications as pub, qualification as q, restitution as r, web_api
 from benchmark_web import fragments, projection, views
 from benchmark_web.server import serve_web
 from tests.test_s4_regressions import inputs, manifest, response
@@ -66,7 +67,7 @@ class S10ProofTests(unittest.TestCase):
                 value['receipt']['result']['output'] = cls.output
                 return value
 
-            c.execute(data, 'long', transport)
+            execution.execute(data, 'long', transport)
             e.evaluate(cls.store, 'proof', 'long', responsible=RESPONSIBLE,
                        authority=EVALUATION_AUTHORITY, check=findings)
 

@@ -2,68 +2,142 @@
 style_gate: pass
 ---
 
-# Benchmark Lab-X
+<div align="center">
+  <h1 id="bench-x">Bench-X</h1>
+  <p><strong>by Le Lab-X</strong></p>
+  <p>Choisir une configuration de modèle d’IA à partir d’une tâche précise, de résultats observés, de preuves consultables et de leur coût.</p>
+  <p>
+    <a href="https://github.com/eliasprunaire/benchmark-lab-x/actions/workflows/ci.yml"><img alt="CI Python" src="https://github.com/eliasprunaire/benchmark-lab-x/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="LICENSE"><img alt="Licence AGPL-3.0" src="https://img.shields.io/badge/licence-AGPL--3.0-blue.svg"></a>
+    <img alt="Python 3.12 ou supérieur" src="https://img.shields.io/badge/python-3.12%2B-3776AB.svg">
+  </p>
+  <p>
+    <a href="#ce-que-fait-bench-x">Fonctionnalités</a> ·
+    <a href="#démarrage-local">Démarrage</a> ·
+    <a href="#architecture-du-dépôt">Architecture</a> ·
+    <a href="#documentation">Documentation</a>
+  </p>
+</div>
 
-Licence : [AGPL-3.0-only](LICENSE)
+## Pourquoi Bench-X
 
-Benchmark Lab-X aide à choisir une configuration de modèle d’IA pour une tâche précise. Il rapproche le travail demandé, les résultats obtenus, leur évaluation et leur coût pour permettre une décision fondée sur des preuves consultables.
+Un modèle n’est jamais « le meilleur » dans l’absolu. Bench-X compare des configurations dans des conditions communes, sur une tâche définie avant l’exécution. Chaque conclusion reste liée à son contrat, à ses cas d’essai, à la configuration réellement observée, aux preuves conservées et à la date de la campagne.
 
-Le cap de 0.1.0 est un parcours public : décrire un besoin, le préciser avec une assistance IA, examiner et modifier un dossier entièrement fictif, puis autoriser une comparaison. Les classements par critère et les filtres aideront l’utilisateur à choisir à partir des résultats, des erreurs et des coûts observés. Une conclusion vaut pour la tâche et les conditions testées, sans meilleur modèle universel. Le score pondéré personnalisé appartient à la vision ultérieure, hors 0.1.0.
+Le projet sépare clairement la préparation, l’acquisition, l’évaluation et la restitution. Une simulation teste le logiciel ; elle ne devient jamais un résultat de benchmark réel.
 
-## Découvrir les résultats
+## Ce que fait Bench-X
 
-Les comparaisons publiées sont servies par le service web sous `/publications/` ; la publication GitHub Pages est retirée.
+- prépare un dossier entièrement fictif à partir d’un besoin général ;
+- qualifie un contrat de réussite avant les appels candidats ;
+- fige le panel, les conditions communes, les autorités et le budget d’une campagne ;
+- exécute les candidats sous Pi, normalement via OpenRouter ;
+- conserve les sorties, incidents, coûts et configurations observées ;
+- produit des évaluations explicables et une restitution reliée aux preuves ;
+- publie uniquement une projection explicitement approuvée ;
+- relit les résultats historiques scellés sans relancer d’acquisition.
 
-La restitution historique présentait un scénario et trois configurations, sous son contrat historique. Son parcours reste :
+Le jalon visé est `0.1.0`. Ce numéro décrit un périmètre produit ; il ne prouve ni release, ni déploiement, ni campagne réelle terminée.
 
-1. Lisez le besoin, l’entrée et le résultat attendu pour vérifier que la tâche ressemble à votre usage.
-2. Examinez le verdict de chaque configuration et les constats qui le justifient.
-3. Comparez les coûts des configurations qui satisfont les critères, puis les bénéfices prévus d’une option plus chère.
-4. Consultez les sorties, incidents et limites avant de transposer la conclusion à votre situation.
+## Démarrage local
 
-Un verdict indéterminé signifie que les preuves ne permettent pas de conclure. Un coût manquant limite la comparaison économique ; les dépenses des configurations non admissibles restent visibles. Cette présentation historique reste inchangée ; les [règles de décision courantes](docs/RULES.md#7-ordre-de-décision) définissent les futurs classements par critère sans requalifier ces résultats.
+### Prérequis
 
-## Utiliser l’outil local
+- Python 3.12 ou supérieur ;
+- [uv](https://docs.astral.sh/uv/) ;
+- Node.js et Pi uniquement pour les parcours candidats qui les utilisent.
 
-L’outillage Python prépare un scénario figé, recueille les sorties après autorisation, prépare une revue et construit une page à partir de décisions approuvées. Il peut aussi produire une nouvelle présentation d’un résultat scellé sans relancer de candidat.
-
-Depuis la racine du dépôt, avec Python 3 :
+Depuis la racine du dépôt :
 
 ```bash
-python3 -B -m benchmark --help
+git clone https://github.com/eliasprunaire/benchmark-lab-x.git
+cd benchmark-lab-x
+uv run --python 3.12 python -m benchmark.runtime --help
 ```
 
-Pour consulter une campagne locale déjà construite et scellée, remplacez le chemin d’exemple par le sien :
+Pour préparer un environnement privé, copiez le fichier d’exemple puis renseignez uniquement les accès nécessaires :
+
+```bash
+cp .env.example .env
+uv run --env-file .env python -m benchmark.runtime --help
+```
+
+Le fichier `.env` reste local et ne doit jamais être versionné. Renseigner une clé ne lance aucun appel et ne crée aucune autorité.
+
+### Lire un résultat historique
+
+Le lecteur historique vérifie les sceaux avant d’ouvrir une page existante :
 
 ```bash
 python3 -B -m benchmark show --run-dir runs/ma-campagne
 ```
 
-Cette commande vérifie l’intégrité puis ouvre la page sur macOS. Le [guide local](benchmark/README.md) détaille les étapes, les prérequis et les autorisations nécessaires. Les [tests hors ligne](benchmark/verify.md) utilisent un faux Pi et n’appellent aucun modèle.
+Il peut aussi construire une nouvelle présentation locale à partir des mêmes résultats, sans modifier la source ni relancer de candidat :
 
-Ce moteur historique reste attaché à un scénario et à son panel figés. Le runtime du service fournit séparément la préparation privée, les dossiers versionnés, les campagnes et leur restitution. Le [guide opérateur](benchmark/README.md#première-comparaison-privée--pi-et-jugement-opérateur) décrit le raccordement candidat Pi/OpenRouter et l’évaluation locale ou humaine ; leurs tests simulés ne remplacent ni les campagnes réelles ni leur autorisation. Le [périmètre produit](docs/PRD.md#5-périmètre-produit) définit ces capacités attendues.
+```bash
+python3 -B -m benchmark present \
+  --source-run runs/ma-campagne \
+  --run-dir runs/ma-presentation
+```
 
-## Préparer une tâche de benchmark
+Le [guide opérateur](benchmark/README.md) décrit l’initialisation, les autorités, les transports et le déroulement d’une comparaison privée.
 
-Le parcours prévu part d’une description générale, sans donnée personnelle ni information confidentielle. L’assistance pose les questions utiles, construit les pièces fictives puis présente un exemple consultable et modifiable. Une demande non évaluable est expliquée et reformulée avec accord, ou arrêtée. Valider l’exemple ne lance aucune campagne et ne publie rien. Aucun dossier réel, accès à l’ordinateur ou action sur téléphone n’entre dans ce parcours 0.1.0.
+## Vérification
 
-Comparer des salles, préparer le suivi d’une réunion et organiser les pièces de l’entreprise fictive Orme & Signal sont des exemples pédagogiques, sans corpus obligatoire ni preuve de couverture métier. Le [PRD](docs/PRD.md#10-restitution-publique) décrit le parcours et l’illustration ; ses fichiers ne sont pas construits par la seule spécification. Le [gabarit de tâche](docs/task-template.md) aide à relier :
+La suite locale et la CI utilisent la même commande principale :
 
-- le besoin, le résultat utilisable, ce que l’utilisateur doit encore faire et la décision à éclairer ;
-- les cas d’essai, leurs données et les conditions communes ;
-- les obligations, les variations acceptables, les erreurs éliminatoires et la référence permettant de juger ;
-- le périmètre des coûts et les limites de la conclusion.
+```bash
+uv run --with requests --with mpmath==1.3.0 \
+  python -m unittest discover -s tests
+```
 
-La préparation vérifie aussi que la référence est étayée et que les contrôles acceptent une solution valable et repèrent les défauts visés. Des modèles peuvent aider à la relire ; leur accord ne suffit pas à établir sa justesse. Le responsable de campagne prépare et approuve ce contrat avant les appels candidats, selon les [règles de qualification](docs/RULES.md#4-contrat-avant-exécution). La préparation assistée, le choix des configurations, le budget et la publication nécessitent leurs propres autorités. Les résultats de benchmark doivent être réellement acquis ; une réponse simulée ne les remplace pas.
+Les transports sont simulés dans les tests. Un résultat vert prouve les comportements couverts sur l’environnement observé ; il ne prouve pas un accès fournisseur, une campagne réelle, un déploiement ou une publication.
 
-Remplir cette carte ne l’enregistre pas automatiquement dans un catalogue et ne la rend pas exécutable par l’outillage actuel. L’intégration d’une nouvelle tâche doit relier la carte à ses données, à ses contrôles et à une campagne autorisée. La restitution historique ne propose ni formulaire de contribution, ni téléversement, ni commentaire ; l’ouverture du parcours public relève du [périmètre 0.1.0](docs/PRD.md#51-périmètre-010), avec les décisions d’accès, de financement et de données encore à prendre.
+## Architecture du dépôt
 
-## Comprendre le projet et suivre son évolution
+```text
+benchmark/
+├── acquisition/       campagnes, émissions et reprises préautorisées
+├── transports/        OpenRouter, Pi, secours officiels et profils
+├── prototype/         lecteur des preuves historiques scellées
+├── preparation.py     dossier fictif et validation du besoin
+├── qualification.py   qualification du contrat
+├── evaluation.py      constats, mesures et verdicts
+├── restitution.py     comparaison privée et preuves
+├── storage.py         stockage privé et contrôles d’intégrité
+└── runtime.py         commandes opérateur
 
-- [PRD](docs/PRD.md) : utilisateurs, parcours, périmètre et critères produit
-- [ARD](docs/ARD.md) : architecture, données, interfaces et exploitation
-- [Règles](docs/RULES.md) : évaluation, coûts, autorités et [versionnement](docs/RULES.md#14-versionnement-du-produit)
-- [Glossaire](CONTEXT.md) : vocabulaire partagé
-- [Instructions agents](AGENTS.md) : travail et validation dans le dépôt
+benchmark_web/         interface web et projections publiques
+docs/                  produit, architecture, règles et recettes
+tests/                 régressions hors ligne et parcours locaux
+tools/                 construction reproductible du runtime
+```
+
+Les identifiants techniques historiques conservent le préfixe `benchmark-lab-x`. Ils appartiennent aux formats de données et restent stables malgré le nom public Bench-X.
+
+## Documentation
+
+- [PRD](docs/PRD.md) : besoin, utilisateurs, parcours et périmètre ;
+- [ARD](docs/ARD.md) : objets, responsabilités, flux et exploitation ;
+- [Règles](docs/RULES.md) : contrats, preuves, coûts, autorités et versions ;
+- [Glossaire](CONTEXT.md) : vocabulaire partagé ;
+- [Gabarit de tâche](docs/task-template.md) : contenu minimal d’une future tâche ;
+- [Guide opérateur](benchmark/README.md) : commandes et parcours locaux ;
+- [Vérification locale](benchmark/verify.md) : portée des tests et limites des preuves.
 
 Les [Issues GitHub](https://github.com/eliasprunaire/benchmark-lab-x/issues) et le [Project](https://github.com/users/eliasprunaire/projects/5) portent le travail de livraison et son avancement.
+
+## Contribuer
+
+Une contribution doit préserver les preuves historiques, les frontières d’autorité et la distinction entre simulation et résultat réel. Commencez par les [instructions du dépôt](AGENTS.md), puis exécutez le test le plus proche du changement et la suite complète avant livraison.
+
+## Licence
+
+Bench-X est distribué sous licence [AGPL-3.0-only](LICENSE).
+
+---
+
+<div align="center">
+  <p><strong>Bench-X</strong> by <strong>Le Lab-X</strong></p>
+  <p>Des choix de modèles fondés sur des tâches précises et des preuves lisibles.</p>
+  <p><a href="#bench-x">Retour en haut</a></p>
+</div>

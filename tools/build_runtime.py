@@ -35,8 +35,6 @@ def build(repo, source, destination):
             raise ValueError('Source non régulière')
         if not re.fullmatch(r'benchmark(?:_web)?/[A-Za-z0-9_./-]+', name) or '..' in Path(name).parts or any(part.startswith('.') for part in Path(name).parts):
             raise ValueError('Chemin source interdit')
-        if name.endswith('/test_demo.py'):
-            continue
         files[name] = git(repo, 'cat-file', 'blob', blob)
         blobs[name] = blob
         modes[name] = 0o755 if mode == '100755' else 0o644

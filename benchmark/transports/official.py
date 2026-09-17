@@ -8,9 +8,9 @@ import os
 import time
 from urllib.parse import urlsplit
 
-from . import storage
-from .pi_openrouter import PiOpenRouter
-from . import openrouter_preparation as limits
+from .. import storage
+from .pi import PiOpenRouter
+from . import openrouter as limits
 
 CHANNELS = {
     'anthropic': ('Anthropic', 'api.anthropic.com', '/v1/messages', 'ANTHROPIC_API_KEY'),

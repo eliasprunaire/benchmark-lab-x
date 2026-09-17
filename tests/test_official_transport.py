@@ -6,7 +6,10 @@ import json
 import unittest
 from unittest.mock import Mock, patch
 
-from benchmark import campaigns as c, evaluation as e, pi_official as native, runtime, pi_openrouter as router, recovery
+from benchmark.acquisition import execution
+from benchmark.acquisition import campaigns as c, recovery
+from benchmark import evaluation as e, runtime
+from benchmark.transports import official as native, pi as router
 from tests import test_private_comparison as private
 from tests.test_s4_regressions import inputs
 from tests.test_s5_regressions import findings
@@ -72,7 +75,7 @@ class OfficialTransportTests(unittest.TestCase):
             body['usage']['prompt_tokens'] = 10
             return 200 if finish else 503, {}, json.dumps(body).encode(), True, '2026-09-10T10:00:00+00:00', time.monotonic()
         with patch.object(router.http, 'post', side_effect=failed):
-            c.execute(h.data, source_oid, h.transport)
+            execution.execute(h.data, source_oid, h.transport)
         if retry_effort:
             source = deepcopy(c.inspect(h.store, source_id)['manifest'])
             source_id += '-retry'
@@ -90,7 +93,7 @@ class OfficialTransportTests(unittest.TestCase):
             source_oid = source_id + '-attempt'
             c.reserve(h.store, source_id, 'x', source_oid)
             with patch.object(router.http, 'post', side_effect=failed):
-                c.execute(h.data, source_oid, h.transport)
+                execution.execute(h.data, source_oid, h.transport)
         base_url = self.DASHSCOPE_BASE_URL if kind == 'dashscope' else (
             self.TOKENHUB_BASE_URL if kind == 'tokenhub' else None)
         transport = native.PiOfficial('fixture-native-key', h.package, h.node, kind, base_url)
@@ -212,7 +215,7 @@ class OfficialTransportTests(unittest.TestCase):
         with patch.object(router.http, 'post', side_effect=truncated), \
                 patch.object(native, 'HTTPSConnection',
                              return_value=self.response('zai')):
-            c.execute(h.data, 'automatic-source', transport_factory=factory)
+            execution.execute(h.data, 'automatic-source', transport_factory=factory)
 
         campaigns = c.list_campaigns(h.store)
         recovered = next(item for item in campaigns if item['manifest'].get('official_fallback'))
@@ -226,7 +229,7 @@ class OfficialTransportTests(unittest.TestCase):
         self.assertEqual('RECEIVED', recovered['attempts'][0]['state'])
         self.assertEqual([config['channel_id'], config['channel_id'], transport.endpoint], channels)
         before = sum(len(item['attempts']) for item in campaigns)
-        recovery.continue_preauthorized(h.data, recovered['attempts'][0]['operation_id'],
+        execution.continue_preauthorized(h.data, recovered['attempts'][0]['operation_id'],
                                        transport_factory=factory)
         self.assertEqual(before, sum(len(item['attempts']) for item in c.list_campaigns(h.store)))
 
@@ -237,7 +240,7 @@ class OfficialTransportTests(unittest.TestCase):
                 transport, cid, oid = self.prepare(kind)
                 connection = self.response(kind)
                 with patch.object(native, 'HTTPSConnection', return_value=connection):
-                    c.execute(h.data, oid, transport)
+                    execution.execute(h.data, oid, transport)
                 attempt = c.inspect(h.store, cid)['attempts'][0]
                 receipt = attempt['operation']['receipt']
                 observed = receipt['observed_configuration']
@@ -268,7 +271,7 @@ class OfficialTransportTests(unittest.TestCase):
                 connection = self.response(kind, **({'stop_reason':'refusal'} if kind == 'anthropic' else {'model':'foreign-model'}))
                 raw = connection.getresponse.return_value.read.return_value
                 with patch.object(native, 'HTTPSConnection', return_value=connection):
-                    c.execute(h.data, oid, transport)
+                    execution.execute(h.data, oid, transport)
                 attempt = c.inspect(h.store, cid)['attempts'][0]
                 receipt = attempt['operation']['receipt']
                 self.assertEqual(raw, b64decode(receipt['observed_configuration']['http']['body_base64']))
@@ -299,7 +302,7 @@ class OfficialTransportTests(unittest.TestCase):
         transport, cid, oid = self.prepare('anthropic')
         connection = self.response('anthropic', stop_reason='max_tokens')
         with patch.object(native, 'HTTPSConnection', return_value=connection):
-            c.execute(self.h.data, oid, transport)
+            execution.execute(self.h.data, oid, transport)
         attempt = c.inspect(self.h.store, cid)['attempts'][0]
         self.assertEqual('PROVIDER_RESPONSE_INCOMPLETE', attempt['operation']['receipt']['result']['incident'])
         self.assertEqual('LENGTH', recovery.observation(attempt)['kind'])
@@ -401,7 +404,7 @@ class OfficialTransportTests(unittest.TestCase):
         connection = self.response('openai', status='incomplete',
                                    incomplete_details={'reason': 'content_filter'})
         with patch.object(native, 'HTTPSConnection', return_value=connection):
-            c.execute(self.h.data, oid, transport)
+            execution.execute(self.h.data, oid, transport)
         attempt = c.inspect(self.h.store, cid)['attempts'][0]
         self.assertEqual('CONTENT_REFUSAL', recovery.observation(attempt)['kind'])
 

@@ -3,7 +3,7 @@ import argparse
 from collections import Counter
 from contextlib import closing, contextmanager
 import fcntl
-from hashlib import sha256
+from hashlib import file_digest
 import json
 import os
 from pathlib import Path
@@ -73,7 +73,7 @@ def stop(root, store, reason, after_process_exit=False):
         from .preparation import close_admission
         close_admission(store)
     if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_control'").fetchone():
-        from .campaigns import close_admission
+        from .acquisition.campaigns import close_admission
         close_admission(store, reason)
     if after_process_exit:
         campaigns = set()
@@ -99,7 +99,8 @@ def hashes(root):
     for path in sorted(root.rglob('*')):
         private_path(path, directory=path.is_dir() and not path.is_symlink())
         if path.is_file():
-            result[path.relative_to(root).as_posix()] = sha256(path.read_bytes()).hexdigest()
+            with path.open('rb') as stream:
+                result[path.relative_to(root).as_posix()] = file_digest(stream, 'sha256').hexdigest()
     return result
 
 
@@ -197,9 +198,9 @@ def restore(source, destination):
 
 def candidate_transport_factory(package, node, openrouter_key):
     """Resolve an admitted channel without exposing provider choice to web input"""
-    from .openrouter_preparation import ENDPOINT
-    from .pi_official import CHANNELS, PiOfficial, kind_for_endpoint
-    from .pi_openrouter import PiOpenRouter
+    from .transports.openrouter import ENDPOINT
+    from .transports.official import CHANNELS, PiOfficial, kind_for_endpoint
+    from .transports.pi import PiOpenRouter
     keys = {kind: os.environ.pop(values[3], '') for kind, values in CHANNELS.items()}
     bases = {
         'dashscope': os.environ.pop('DASHSCOPE_BASE_URL', ''),
@@ -264,14 +265,14 @@ def main(argv=None):
         if args.qualification_assistant is not None and args.action != 'executor':
             raise ValueError('Qualificateur réservé à l’exécuteur')
         if args.action == 'inspect-pi':
-            from .pi_openrouter import identity
+            from .transports.pi import identity
             if args.pi_package is None or args.node is None:
                 raise ValueError('Installation Pi et Node explicites requis')
             print(encode(identity(args.pi_package, args.node)))
             return 0
         if args.action == 'forecast-prices':
-            from .openrouter_prices import forecast
-            from .openrouter_preparation import configuration, load_profile
+            from .transports.prices import forecast
+            from .transports.openrouter import configuration, load_profile
             profile = None
             if args.preparation_assistant is not None:
                 profile = load_profile(args.preparation_assistant)
@@ -300,7 +301,7 @@ def main(argv=None):
                 if args.data is None:
                     raise ValueError('Données requises')
                 from .provider_access import OpenRouterAccess, parse_secret
-                from .openrouter_preparation import OpenRouterPreparation, load_profile
+                from .transports.openrouter import OpenRouterPreparation, load_profile
                 access_secret = parse_secret(os.environ.pop('BENCHMARK_ACCESS_SECRET', ''))
                 transport = None
                 qualification_transport = None
@@ -313,7 +314,7 @@ def main(argv=None):
                     args.preparation_assistant is not None or args.qualification_assistant is not None
                     or args.candidate_pi) else ''
                 if args.candidate_pi:
-                    from .pi_openrouter import identity
+                    from .transports.pi import identity
                     if args.pi_package is None or args.node is None:
                         raise ValueError('Installation Pi et Node explicites requis')
                     candidate_identity = identity(args.pi_package, args.node)
@@ -323,7 +324,7 @@ def main(argv=None):
                 if args.preparation_assistant is not None:
                     transport = OpenRouterPreparation(key, profile)
                 if args.qualification_assistant is not None:
-                    from .openrouter_qualification import OpenRouterQualification
+                    from .transports.openrouter import OpenRouterQualification
                     qualification_transport = OpenRouterQualification(key, args.qualification_assistant)
                 serve_executor(args.data, args.socket, release_identity(), transport=transport,
                                qualification_transport=qualification_transport,
@@ -343,7 +344,7 @@ def main(argv=None):
             initialize_preparation(args.data)
             result = {'state': 'PREPARATION_INITIALIZED_ADMISSION_BLOCKED'}
         elif args.action == 'initialize-campaigns':
-            from .campaigns import initialize as initialize_campaigns
+            from .acquisition.campaigns import initialize as initialize_campaigns
             initialize_campaigns(args.data)
             result = {'state': 'CAMPAIGNS_INITIALIZED'}
         elif args.action == 'initialize-evaluations':
@@ -382,7 +383,7 @@ def main(argv=None):
                         _fields(request, ('operation_id',), args.action)
                         result = judgment.inspect(store, request['operation_id'])
                     else:
-                        from .openrouter_judgment import OpenRouterJudgment
+                        from .transports.openrouter import OpenRouterJudgment
                         if args.judgment_profile is None:
                             raise ValueError('Profil de jugement explicite requis')
                         transport = OpenRouterJudgment(os.environ.pop('OPENROUTER_API_KEY', ''), args.judgment_profile)
@@ -413,22 +414,23 @@ def main(argv=None):
                                 _fields(proof, ('operation_id',), 'inspect-cost')
                                 result = store.inspect_cost(proof['operation_id'])
                 elif args.action in ('prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt'):
-                    from . import campaigns, evaluation
+                    from .acquisition import campaigns
+                    from . import evaluation
                     from .storage import _fields
                     if args.authority is None:
                         raise ValueError('Fichier opérateur privé requis')
                     private_path(args.authority)
                     request = json.loads(args.authority.read_text(), object_pairs_hook=_unique_object)
                     if args.action == 'prepare-recovery':
-                        from .recovery import propose
+                        from .acquisition.recovery import propose
                         _fields(request, ('operation_id', 'capabilities'), args.action)
                         result = propose(store, request['operation_id'], request['capabilities'])
                     elif args.action == 'prepare-candidate-configuration':
-                        from .recovery import starting_configuration
+                        from .acquisition.recovery import starting_configuration
                         _fields(request, ('configuration', 'outgoing_format'), args.action)
                         result = starting_configuration(store, request['configuration'], content_format=request['outgoing_format'])
                     elif args.action == 'inspect-model-profile':
-                        from .recovery import profile
+                        from .acquisition.recovery import profile
                         _fields(request, ('provider', 'model', 'revision', 'access', 'channel_id', 'outgoing_format'),
                                 args.action)
                         result = profile(store, request)
@@ -436,8 +438,9 @@ def main(argv=None):
                         _fields(request, ('campaign_id', 'cell_id', 'attempt_id'), args.action)
                         result = campaigns.reserve(store, request['campaign_id'], request['cell_id'], request['attempt_id'])
                     elif args.action == 'execute-candidate':
-                        from .openrouter_preparation import ENDPOINT
-                        from .pi_official import kind_for_endpoint
+                        from .acquisition import execution
+                        from .transports.openrouter import ENDPOINT
+                        from .transports.official import kind_for_endpoint
                         _fields(request, ('campaign_id', 'attempt_id'), args.action)
                         if args.pi_package is None or args.node is None:
                             raise ValueError('Installation Pi et Node explicites requis')
@@ -453,7 +456,7 @@ def main(argv=None):
                         factory = candidate_transport_factory(
                             args.pi_package, args.node,
                             os.environ.pop('OPENROUTER_API_KEY', ''))
-                        campaigns.execute(args.data, request['attempt_id'],
+                        execution.execute(args.data, request['attempt_id'],
                                           transport_factory=factory)
                         result = next(a for a in campaigns.inspect(store, request['campaign_id'])['attempts']
                                       if a['operation_id'] == request['attempt_id'])
@@ -466,7 +469,7 @@ def main(argv=None):
                     else:
                         result = evaluation.submit_report(store, request)
                 elif args.action in campaign_actions:
-                    from . import campaigns
+                    from .acquisition import campaigns
                     from .storage import _fields
                     if args.authority is None:
                         raise ValueError('Fichier opérateur privé requis')

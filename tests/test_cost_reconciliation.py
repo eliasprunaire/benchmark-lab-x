@@ -11,10 +11,11 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from benchmark import storage, preparation as prep, runtime, qualification, campaigns, evaluation
+from benchmark import storage, preparation as prep, runtime, qualification, evaluation
+from benchmark.acquisition import campaigns
 from benchmark_web import views
-from benchmark import openrouter_preparation as assistant
-from tests.test_openrouter_preparation import ESTIMATE, RESERVE, KEY, NEED, http_body, result
+from benchmark.transports import openrouter as assistant
+from tests.test_openrouter_preparation import ESTIMATE, RESERVE, KEY, NEED, PROFILE, http_body, result
 
 
 class CostReconciliationTests(unittest.TestCase):
@@ -64,7 +65,7 @@ class CostReconciliationTests(unittest.TestCase):
         return dict(format_identity=storage.RECONCILIATION_IDENTITY, operation_id=self.operation_id,
                     budget_id='fixture', receipt_sha256=sha256(storage._strict_json(self.original['receipt']).encode()).hexdigest(),
                     actor='fixture-operator', authority_id='FIXTURE_RECONCILIATION_ONLY', account_reference='fixture-account',
-                    generation_id='gen-fixture', model=assistant.MODEL,
+                    generation_id='gen-fixture', model=PROFILE['model'],
                     cost=dict(status='KNOWN', amount=amount, currency='USD', source='Fictional OpenRouter billing evidence'),
                     source=dict(kind='openrouter_generation' if native else 'operator_attested_openrouter_record',
                                 http_status=200 if native else None, name='Fictional private billing export',
@@ -120,11 +121,11 @@ class CostReconciliationTests(unittest.TestCase):
         for status in (404, 429):
             value = deepcopy(proof); value['source']['http_status'] = status; bad.append(value)
         for data in ({'id': 'gen-fixture', 'model': ESTIMATE['canonical_slug']},
-                     {'id': 'gen-fixture', 'model': assistant.MODEL + '-20260827', 'total_cost': 0},
-                     {'id': 'gen-other', 'model': assistant.MODEL, 'total_cost': 0},
-                     {'id': 'gen-fixture', 'model': assistant.MODEL, 'total_cost': True},
+                     {'id': 'gen-fixture', 'model': PROFILE['model'] + '-20260827', 'total_cost': 0},
+                     {'id': 'gen-other', 'model': PROFILE['model'], 'total_cost': 0},
+                     {'id': 'gen-fixture', 'model': PROFILE['model'], 'total_cost': True},
                      {'id': 'gen-fixture', 'model': None, 'total_cost': 0},
-                     {'id': 'gen-fixture', 'model': assistant.MODEL, 'total_cost': '100'}):
+                     {'id': 'gen-fixture', 'model': PROFILE['model'], 'total_cost': '100'}):
             value = deepcopy(proof); document = json.dumps({'data': data})
             value['source'].update(document=document, excerpt=document, sha256=sha256(document.encode()).hexdigest()); bad.append(value)
         for value in bad:

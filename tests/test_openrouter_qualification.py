@@ -8,8 +8,9 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from benchmark import openrouter_qualification as assistant
-from benchmark import campaigns, preparation as prep, qualification, service, storage, web_api
+from benchmark.transports import openrouter as assistant
+from benchmark.acquisition import campaigns
+from benchmark import preparation as prep, qualification, service, storage, web_api
 from tests.test_s2_review_regressions import response_for
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, specification
 

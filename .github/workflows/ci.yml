@@ -35,7 +35,7 @@ jobs:
           package-manager-cache: false
 
       - name: Lire la version Pi du produit
-        run: echo "BENCHMARK_PI_VERSION=$(python3 -c 'from benchmark.pi_openrouter import VERSION; print(VERSION)')" >> "$GITHUB_ENV"
+        run: echo "BENCHMARK_PI_VERSION=$(python3 -c 'from benchmark.transports.pi import VERSION; print(VERSION)')" >> "$GITHUB_ENV"
 
       - name: Installer Pi pour les réponses fictives
         run: |
@@ -75,7 +75,7 @@ jobs:
 
       - name: Vérifier la dernière version Pi publiée
         run: |
-          attendue="$(python3 -c 'from benchmark.pi_openrouter import VERSION; print(VERSION)')"
+          attendue="$(python3 -c 'from benchmark.transports.pi import VERSION; print(VERSION)')"
           publiee="$(npm view @earendil-works/pi-coding-agent version)"
           test "$attendue" = "$publiee" || {
             echo "::error::Pi $publiee est publié, mais le produit épingle $attendue"

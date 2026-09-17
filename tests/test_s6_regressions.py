@@ -16,8 +16,9 @@ from urllib.parse import urlencode
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark import (campaigns as c, evaluation as e, preparation as p, publications as pub,
-                       qualification as q, restitution as r, service, storage, web_api)
+from benchmark.acquisition import execution
+from benchmark.acquisition import campaigns as c
+from benchmark import evaluation as e, preparation as p, publications as pub, qualification as q, restitution as r, service, storage, web_api
 from benchmark_web import projection, views
 from benchmark_web.server import serve_web
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
@@ -33,8 +34,8 @@ _VOLATILE_PRESENTATION = re.compile(
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
-    '4': {
-        'index.html': '8eee8a8357dfc8fb4ac00dbbbc5414849c0d6f7fb1d790afc3b771c803013f5f',
+    '5': {
+        'index.html': '42cdea5a5ca3d6350405a54f543dbd351f0695d0946e3ac53a5a66f6942c3fcd',
         'style.css': '247e439218d7036d03dbbd4cfc7bcc2d89af51fa8fbb98fb6b9f6db45f4a1cfb',
     },
 }
@@ -93,7 +94,7 @@ def build(data, criterion_ids=('duration', 'present')):
                 value['cost'].update(status='UNKNOWN' if amount is None else 'KNOWN', amount=amount)
                 return value
 
-            c.execute(data, aid, transport)
+            execution.execute(data, aid, transport)
 
             def report(ctx, resources):
                 value = findings(ctx, resources)
@@ -193,7 +194,7 @@ class S6Regressions(unittest.TestCase):
                 labeled = dict(manifest, presentation_version=old)
                 raw = storage._strict_json(labeled).encode()
                 pub._manifest(raw, sha256(raw).hexdigest())
-        unknown = dict(manifest, presentation_version='5')
+        unknown = dict(manifest, presentation_version='6')
         raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
             pub._manifest(raw, sha256(raw).hexdigest())
