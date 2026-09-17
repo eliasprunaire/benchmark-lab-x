@@ -107,6 +107,7 @@ section h3 { margin-top: 1rem; }
 p[role="status"] { padding: .6rem 1rem; border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 var(--radius) var(--radius) 0; }
 .custom-model-forms [role="status"]:empty { margin: 0; padding: 0; border: 0; }
 .custom-model-forms { margin-bottom: .75rem; }
+.custom-model-forms form + form { margin-top: 1rem; }
 .availability { padding: .6rem 1rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); margin: .4rem 0 1rem; font-size: .92rem; }
 .availability p { margin: .2rem 0; max-width: none; }
 
@@ -126,7 +127,7 @@ button.sec:hover, .button.sec:hover, summary.button:hover { background: var(--ac
 .actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin-top: 1rem; }
 form > button, form > .actions { margin-top: 1rem; }
 details.corr { border: 0; background: transparent; margin: 1rem 0 0; }
-details.personal-key { margin-bottom: 1rem; }
+details.personal-key, details.custom-models { margin-bottom: 1rem; }
 details.corr > summary { padding: .65rem 1.15rem; }
 details.corr > summary::before { display: none; }
 details.corr > div { margin: 1rem 0 0; padding: 1rem 1.2rem; border: 1px solid var(--accent-soft-2); border-radius: var(--radius); background: var(--surface); }

@@ -94,6 +94,23 @@ class ModelProbeTests(unittest.TestCase):
         self.assertIn('appel payant', page)
         self.assertIn('/custom-models', page)
         self.assertIn(page_script(value), page)
+        from tests.test_parcours_complet import Page
+        document = Page(page.encode())
+        disclosure = next(n for n in document.nodes if n['attrs'].get('id') == 'custom-models')
+        self.assertEqual('details', disclosure['tag'])
+        self.assertNotIn('open', disclosure['attrs'])
+        self.assertIn('Ajouter un slug Openrouter', disclosure['text'])
+        self.assertLess(page.index('Modèles à comparer'), page.index('id="custom-models"'))
+        self.assertLess(page.index('id="custom-models"'), page.index('Palier de raisonnement'))
+        selection = document.form('/configurations')
+        self.assertEqual('csrf-test', selection['fields']['csrf_token'])
+        self.assertFalse(any(n['tag'] == 'form' for n in selection['nodes']))
+        self.assertTrue(any(n['attrs'].get('name') == 'models' for n in selection['nodes']))
+        tiers = [n for n in document.nodes if n['attrs'].get('name') == 'tier']
+        self.assertTrue(tiers)
+        self.assertTrue(all(n['attrs'].get('form') == 'configurations-form' for n in tiers))
+        save = next(n for n in document.nodes if n['tag'] == 'button' and 'Enregistrer les configurations' in n['text'])
+        self.assertEqual('configurations-form', save['attrs'].get('form'))
 
     def test_refus_avant_depense_et_isolation(self):
         for invalid in ('GPT 6', 'https://openrouter.ai/openai/gpt-6-astra', '../x', 'openrouter/auto'):
