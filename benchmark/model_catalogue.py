@@ -9,7 +9,8 @@ from pathlib import Path
 import re
 import tomllib
 
-from . import openrouter_prices, storage
+from .transports import prices as openrouter_prices
+from . import storage
 
 
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024

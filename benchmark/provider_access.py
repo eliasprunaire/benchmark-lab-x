@@ -439,7 +439,7 @@ def callback(store, session_id, secret, code, transport=None, now=None):
     if status == 200 and raw is not None:
         try:
             document = _decode(raw)
-            key = _credential(document['key'])
+            _credential(document['key'])
         except (ValueError, KeyError, TypeError):
             document = None
     with _transaction(connection, write=True):

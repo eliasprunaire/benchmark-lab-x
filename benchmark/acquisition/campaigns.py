@@ -3,13 +3,11 @@
 The local operator supplies authority and availability evidence. No provider,
 plugin loader, queue drainer or content evaluator belongs to this module.
 """
-from collections.abc import Callable
 from contextlib import closing
 from copy import deepcopy
 from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
-import hmac
 import json
 import os
 from pathlib import Path
@@ -17,11 +15,9 @@ import re
 import secrets
 import sqlite3
 
-from . import qualification as q, storage
-from .preparation import identifier
-from .storage import (BudgetError, ConflictError, IntegrityError, SchemaError,
-                      _fields, _money, _sum_money, _text, _transaction,
-                      _strict_json as encode)
+from .. import qualification as q, storage
+from ..validation import digest as value_digest, identifier, _hash, _texts
+from ..storage import BudgetError, ConflictError, IntegrityError, SchemaError, _fields, _money, _sum_money, _text, _transaction, _strict_json as encode
 
 FORMAT_IDENTITY = 'benchmark-lab-x/campaigns/v1'
 _TABLES = {
@@ -217,19 +213,19 @@ def _manifest(value, contract, *, require_data_collection=False):
         if 'recovery_of' not in value:
             raise ValueError('Secours officiel sans tentative source')
         _fields(value['official_fallback'], ('route_attempts',), 'official fallback')
-        q._texts(value['official_fallback']['route_attempts'], 'route attempts', required=True, unique=True)
+        _texts(value['official_fallback']['route_attempts'], 'route attempts', required=True, unique=True)
     encode(value)
     identifier(value['campaign_id'])
     if type(value['version']) is not int or value['version'] < 1:
         raise ValueError('Version de manifeste requise')
-    q._hash(value['contract_sha256'])
+    _hash(value['contract_sha256'])
     cases = _entries(value['cases'], ('id', 'package_sha256'), 'cases')
     for case in value['cases']:
         if case['package_sha256'] != contract['package_sha256']:
             raise ValueError('Cas sans paquet contractuel exact')
     panel = _entries(value['panel'], _CONFIGURATION, 'panel', _CONFIGURATION_OPTIONAL)
-    from .pi_official import provider_for_endpoint
-    from .openrouter_preparation import ENDPOINT
+    from ..transports.official import provider_for_endpoint
+    from ..transports.openrouter import ENDPOINT
     if any(provider_for_endpoint(config['channel_id']) for config in value['panel']) and 'official_fallback' not in value:
         raise ValueError('Secours officiel lié aux reçus OpenRouter requis')
     for config in value['panel']:
@@ -249,7 +245,7 @@ def _manifest(value, contract, *, require_data_collection=False):
             raise ValueError('Limite d’effort inconnue')
         if 'estimate' in config:
             encode(config['estimate'])
-        q._texts(config['required_observations'], 'required_observations', required=True, unique=True)
+        _texts(config['required_observations'], 'required_observations', required=True, unique=True)
         required = set(config['required_observations'])
         if not {'revision', 'channel_id'} <= required <= set(_OBSERVED) & set(_CONFIGURATION):
             raise ValueError('required_observations invalide')
@@ -264,10 +260,10 @@ def _manifest(value, contract, *, require_data_collection=False):
     _fields(pi, ('package', 'version', 'sha256', 'status', 'proof'), 'pi')
     for key in ('package', 'version', 'proof'):
         _present(pi[key], key)
-    q._hash(pi['sha256'])
+    _hash(pi['sha256'])
     if pi['status'] not in ('declared', 'configured', 'active', 'observed'):
         raise ValueError('Statut Pi inconnu')
-    q._hash(conditions['context_sha256'])
+    _hash(conditions['context_sha256'])
     _date(conditions['frozen_at'])
     for field in ('packages', 'tools', 'skills'):
         if type(conditions[field]) is not list:
@@ -280,7 +276,7 @@ def _manifest(value, contract, *, require_data_collection=False):
             raise ValueError('Cellule hors du manifeste')
     policy = value['attempt_policy']
     _fields(policy, ('retries', 'order', 'reason'), 'attempt_policy')
-    q._texts(policy['order'], 'order', required=True, unique=True)
+    _texts(policy['order'], 'order', required=True, unique=True)
     _present(policy['reason'], 'reason')
     if policy['retries'] is not False or set(policy['order']) != cells:
         raise ValueError('Plan exact sans retry requis')
@@ -289,11 +285,11 @@ def _manifest(value, contract, *, require_data_collection=False):
 
 
 def _comparison_specification(spec):
-    from .outgoing import criteria
+    from ..outgoing import criteria
     _fields(spec, ('result_expected', 'obligations', 'eliminatory_errors',
                    'secondary_criteria', 'limits', 'cost_basis'), 'Spécification de comparaison')
     _text(spec['result_expected'], 'Résultat attendu')
-    q._texts(spec['limits'], 'Limites')
+    _texts(spec['limits'], 'Limites')
     ids = set()
     for kind in ('obligations', 'eliminatory_errors', 'secondary_criteria'):
         entries = spec[kind]
@@ -319,7 +315,7 @@ def _comparison_specification(spec):
 
 
 def _comparison_spec(package):
-    from .outgoing import criteria
+    from ..outgoing import criteria
     grouped = criteria(package['criteria'])
     return dict(result_expected=package['instruction'],
                 obligations=[dict(id=f'O{i}', description=text) for i, text in enumerate(grouped['obligations'], 1)],
@@ -344,14 +340,14 @@ def _record_comparison_contract(store, connection, operation):
     q._validated(connection, contract)
     received = store._operation_for_update(connection, operation['operation_id'], ('RECEIVED',))
     authority = dict(authority_id='assistant:' + received['requested_configuration']['model'],
-                     operation_id=received['operation_id'], receipt_sha256=q.digest(received['receipt']))
+                     operation_id=received['operation_id'], receipt_sha256=value_digest(received['receipt']))
     connection.execute('INSERT INTO s2_comparison_contracts VALUES (?,?,?,?,?,?)',
-                       (q.digest(contract), dossier_id, revision, version, encode(contract), encode(authority)))
+                       (value_digest(contract), dossier_id, revision, version, encode(contract), encode(authority)))
 
 
 def _comparison_contract(store, connection, fingerprint):
-    from .preparation import _automatic_qualification, _qualification_result
-    q._hash(fingerprint)
+    from ..preparation import _automatic_qualification, _qualification_result
+    _hash(fingerprint)
     row = connection.execute('SELECT dossier_id,revision,version,contract_json,authority_json '
                              'FROM s2_comparison_contracts WHERE contract_sha256=?', (fingerprint,)).fetchone()
     if row is None:
@@ -378,7 +374,7 @@ def _comparison_contract(store, connection, fingerprint):
     model = qualified['model']
     if (not isinstance(model, str) or encode(authority) != row[4]
             or authority != dict(authority_id='assistant:' + model,
-                                 operation_id=qualified['operation_id'], receipt_sha256=q.digest(operation['receipt']))
+                                 operation_id=qualified['operation_id'], receipt_sha256=value_digest(operation['receipt']))
             or result != {key: qualified[key] for key in ('qualified', 'findings', 'summary')}):
         raise IntegrityError('Autorité ou reçu du contrat de comparaison divergent')
     q._validated(connection, contract)
@@ -426,7 +422,7 @@ def _current_contract(store, connection, dossier_id):
                                  'ON c.dossier_id=d.dossier_id AND c.revision=d.current_revision '
                                  'WHERE c.dossier_id=? ORDER BY c.version DESC LIMIT 1', (dossier_id,)).fetchone()
     if row is None:
-        from .preparation import Denied
+        from ..preparation import Denied
         raise Denied('CONTRACT_MISSING')
     return _approved(store, connection, row[0], current=True)
 
@@ -445,7 +441,7 @@ def _requester_campaigns(store, connection, dossier_id):
 
 
 def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
-    from . import openrouter_prices
+    from ..transports import prices as openrouter_prices
     parameters = {
         'max_tokens': DEFAULT_MAX_OUTPUT_TOKENS,
         'provider': {'only': [model['route']], 'order': [model['route']],
@@ -489,8 +485,8 @@ def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
 
 
 def prepare_configurations(store, session_id, dossier_id, body, candidate_identity):
-    from . import model_catalogue, outgoing
-    from .pi_openrouter import system_context
+    from .. import model_catalogue, outgoing
+    from ..transports.pi import system_context
     _fields(body, ('models', 'tier'), 'configurations')
     if (type(body['models']) is not list or len(body['models']) < 2
             or len(set(body['models'])) != len(body['models'])
@@ -503,7 +499,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
     _intact(store)
     connection = connection_for(store)
     with _transaction(connection, write=True):
-        from .preparation import owner
+        from ..preparation import owner
         owner(connection, session_id, dossier_id)
         contract = _current_contract(store, connection, dossier_id)
         catalogue = model_catalogue.selection(store)
@@ -536,7 +532,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
         plan = [dict(cell_id=f'cell-{index}', case_id=case['id'], configuration_id=config['id'])
                 for index, config in enumerate(panel, 1)]
         manifest = dict(
-            campaign_id=campaign_id, version=1, contract_sha256=q.digest(contract), cases=[case], panel=panel,
+            campaign_id=campaign_id, version=1, contract_sha256=value_digest(contract), cases=[case], panel=panel,
             conditions=dict(
                 pi=dict(package=candidate_identity['package'], version=candidate_identity['version'],
                         sha256=candidate_identity['sha256'], status='active', proof=candidate_identity['scope']),
@@ -556,8 +552,8 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
 
 
 def configurations_view(store, session_id, dossier_id):
-    from . import model_catalogue
-    from .preparation import owner, page_view
+    from .. import model_catalogue
+    from ..preparation import owner, page_view
     connection = connection_for(store)
     with _transaction(connection):
         owner(connection, session_id, dossier_id)
@@ -620,13 +616,13 @@ def _create(store, connection, value):
             raise IntegrityError('Contrat de campagne introuvable')
         contract = _approved(store, connection, value['contract_sha256'], current=True)
         _manifest(value, contract, require_data_collection=True)
-        from .model_catalog import require_current
+        from ..model_catalog import require_current
         for configuration in value['panel']:
             require_current(configuration)
         if 'recovery_of' in value:
             from .recovery import validate_link
             validate_link(store, connection, value)
-        fingerprint = q.digest(value)
+        fingerprint = value_digest(value)
         connection.execute('INSERT INTO s4_campaigns VALUES (?,?,?,?)',
                            (value['campaign_id'], value['contract_sha256'], encode(value), fingerprint))
         for cell in value['plan']:
@@ -692,7 +688,7 @@ def _authority(value, manifest, fingerprint):
         _present(value[key], key)
     if value['actor'] != 'Ayo' or value['manifest_sha256'] != fingerprint or value['purpose'] not in ('start', 'resume'):
         raise ValueError('Autorité locale divergente')
-    q._texts(value['allowed_cells'], 'allowed_cells', required=True, unique=True)
+    _texts(value['allowed_cells'], 'allowed_cells', required=True, unique=True)
     cells = {c['cell_id'] for c in manifest['plan']}
     if not set(value['allowed_cells']) <= cells:
         raise ValueError('Cellules non prévues')
@@ -756,8 +752,8 @@ def _request(store, manifest, fingerprint, contract, cell):
                 pieces=[dict(id=p['id'], sha256=p['sha256'], content=store.read_piece(p['id']).decode('utf-8'))
                         for p in contract['package']['pieces']])
     if 'outgoing_format' in contract['package']:
-        from . import outgoing
-        from .preparation import package_check
+        from .. import outgoing
+        from ..preparation import package_check
         package_check(store, contract['dossier_id'], contract['revision'], contract['package'], contract['package_sha256'])
         request['outgoing_format'] = contract['package']['outgoing_format']
         request['pieces'] = [dict(p, role=store.get_piece(p['id'])['role']) for p in request['pieces']]
@@ -766,50 +762,12 @@ def _request(store, manifest, fingerprint, contract, cell):
 
 
 def _engine():
-    return {name: sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
-            for name in ('campaigns.py', 'storage.py', 'preparation.py', 'web_api.py', 'qualification.py', 'runtime.py',
+    root = Path(__file__).resolve().parents[1]
+    return {name: sha256((root / name).read_bytes()).hexdigest()
+            for name in ('acquisition/campaigns.py', 'acquisition/execution.py', 'storage.py', 'preparation.py', 'web_api.py', 'qualification.py', 'runtime.py',
                          'validation.py',
-                         'pi_openrouter.py', 'pi_official.py', 'pi_bridge.mjs',
-                         'openrouter_preparation.py', 'recovery.py', 'outgoing.py')}
-
-
-def _transport_view(request) -> dict:
-    from . import outgoing
-    if request.get('outgoing_format') != outgoing.FORMAT:
-        raise ValueError('Ancien format sortant : nouvelle version de tâche requise')
-    content = request['outgoing']
-    outgoing_view = outgoing.closed_candidate(dict(
-        instruction=content['instruction'], deliverables=list(content['deliverables']),
-        criteria=deepcopy(content['criteria']), acceptable_ambiguities=list(content['acceptable_ambiguities']),
-        pieces=[dict(name=piece['name'], content=piece['content']) for piece in content['pieces']]))
-    config = request['requested_configuration']
-    conditions = request['conditions']
-    defaults = conditions.get('defaults') or {}
-    environment = conditions.get('environment') or {}
-    pi = conditions['pi']
-    return dict(
-        outgoing_format=outgoing.FORMAT,
-        outgoing=outgoing_view,
-        requested_configuration=dict(
-            provider=config['provider'], model=config['model'], revision=config['revision'],
-            access=config['access'], channel_id=config['channel_id'], route=config['route'],
-            parameters=deepcopy(config['parameters']), effort=config['effort'],
-            required_observations=list(config['required_observations'])),
-        conditions=dict(
-            pi=dict(package=pi['package'], version=pi['version'], sha256=pi['sha256']),
-            packages=list(conditions['packages']), tools=list(conditions['tools']),
-            skills=list(conditions['skills']), context_sha256=conditions['context_sha256'],
-            defaults={key: defaults[key] for key in ('system_prompt', 'timeout_seconds', 'context_window',
-                                                     'max_output_tokens', 'defaults_source') if key in defaults},
-            environment={key: environment[key] for key in ('node_version', 'node_sha256', 'bridge_sha256') if key in environment},
-            frozen_at=conditions['frozen_at']))
-
-
-def _transport_operation(operation):
-    value = dict(operation_id=operation['operation_id'], phase=operation['phase'])
-    if operation.get('state') == 'EMISSION_POSSIBLE':
-        value['state'] = 'EMISSION_POSSIBLE'
-    return value
+                         'transports/pi.py', 'transports/official.py', 'transports/pi_bridge.mjs',
+                         'transports/openrouter.py', 'acquisition/recovery.py', 'outgoing.py')}
 
 
 def _attribution(receipt, configuration):
@@ -870,14 +828,14 @@ def _inspect(store, connection, campaign_id):
             raise IntegrityError('Source moteur absente')
         for source, source_hash in engine.items():
             _present(source, 'engine source')
-            q._hash(source_hash)
+            _hash(source_hash)
         if request != _request(store, manifest, fingerprint, contract, cell):
             raise IntegrityError('Requête divergente du paquet ou du manifeste')
         authority = admissions[aid]['authority']
         op = operations[oid]
         if (op['phase'] != 'acquisition' or (op['dossier_id'], op['revision']) != (contract['dossier_id'], contract['revision'])
                 or op['requested_configuration'] != request['requested_configuration']
-                or op['resources'] != [digest] or op['engine_version'] != FORMAT_IDENTITY + ':' + q.digest(engine)
+                or op['resources'] != [digest] or op['engine_version'] != FORMAT_IDENTITY + ':' + value_digest(engine)
                 or op['authority'] != authority['authority_id'] or op['budget_id'] != authority['budget_id']
                 or op['reserved_amount'] != authority['reserve_amounts'][cid] or cid not in authority['allowed_cells']):
             raise IntegrityError('Tentative sans intention S1 attribuée')
@@ -896,7 +854,7 @@ def _inspect(store, connection, campaign_id):
         if acquired:
             output_id, receipt_hash, cost_hash, received_at = acquired
             _result(op['receipt'], op['observed_cost'])
-            if (q.digest(op['receipt']), q.digest(op['observed_cost'])) != (receipt_hash, cost_hash) or _date(received_at) < _date(emission[1]):
+            if (value_digest(op['receipt']), value_digest(op['observed_cost'])) != (receipt_hash, cost_hash) or _date(received_at) < _date(emission[1]):
                 raise IntegrityError('Reçu ou chronologie divergents')
             output = op['receipt']['result']['output']
             if (output is None) != (output_id is None):
@@ -1040,7 +998,7 @@ def _admit(store, connection, campaign_id, authority, evidence, *, owner_launch=
         raise BudgetError('Enveloppe insuffisante pour les cellules autorisées')
     aid = secrets.token_hex(16)
     record = dict(admission_id=aid, campaign_id=campaign_id, authority=authority, evidence=evidence, created_at=_now())
-    connection.execute('INSERT INTO s4_admissions VALUES (?,?,?,?)', (aid, campaign_id, encode(record), q.digest(record)))
+    connection.execute('INSERT INTO s4_admissions VALUES (?,?,?,?)', (aid, campaign_id, encode(record), value_digest(record)))
     connection.execute('UPDATE s4_status SET admission_id=?, stop_reason=NULL, stopped_at=NULL WHERE campaign_id=?', (aid, campaign_id))
     return record
 
@@ -1069,7 +1027,7 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
         raise ConflictError('Tentative déjà enregistrée pour cette cellule')
     request = _request(store, manifest, snapshot['manifest_sha256'], contract, cell)
     engine = _engine()
-    digest = q.digest(request)
+    digest = value_digest(request)
     authority = admission['authority']
     if manifest.get('funding') == 'requester':
         spent = _sum_money(_money(attempt['operation']['observed_cost']['amount'])
@@ -1079,7 +1037,7 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
         if _money(authority['reserve_amounts'][cell_id]) > _money(snapshot['cap_usd']) - spent:
             raise BudgetError('Réserve supérieure au plafond restant')
     operation = dict(operation_id=attempt_id, phase='acquisition', dossier_id=contract['dossier_id'], revision=contract['revision'],
-                     authority=authority['authority_id'], engine_version=FORMAT_IDENTITY + ':' + q.digest(engine),
+                     authority=authority['authority_id'], engine_version=FORMAT_IDENTITY + ':' + value_digest(engine),
                      requested_configuration=request['requested_configuration'], resources=[digest])
     store._reserve_intent(connection, operation, authority['budget_id'], authority['reserve_amounts'][cell_id],
                           retained_cost_ids=_retained_costs(snapshot, store, connection))
@@ -1096,8 +1054,8 @@ def _estimate_total(snapshot):
 
 
 def _requester_checks(store, connection, snapshot, session_id, access):
-    from . import model_catalogue
-    from .preparation import Denied, require_qualification
+    from .. import model_catalogue
+    from ..preparation import Denied, require_qualification
     task = snapshot['task']
     validated = connection.execute(
         'SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? '
@@ -1144,7 +1102,7 @@ def _requester_checks(store, connection, snapshot, session_id, access):
 
 def set_cap(store, session_id, dossier_id, campaign_id, body, *, access_secret=None,
             access_transport=None):
-    from .preparation import owner
+    from ..preparation import owner
     _fields(body, ('cap_usd',), 'plafond')
     raw = body['cap_usd']
     try:
@@ -1173,7 +1131,7 @@ def set_cap(store, session_id, dossier_id, campaign_id, body, *, access_secret=N
 
 def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=None,
                 access_transport=None):
-    from .preparation import owner, page_view
+    from ..preparation import owner, page_view
     connection = connection_for(store)
     with _transaction(connection):
         owner(connection, session_id, dossier_id)
@@ -1183,7 +1141,7 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
         requester = snapshot['manifest'].get('funding') == 'requester'
     access = {'connected': False, 'status': 'unavailable'}
     if requester:
-        from .provider_access import view as access_view
+        from ..provider_access import view as access_view
         access = access_view(store, session_id, access_secret, access_transport, refresh=False)
     with _transaction(connection):
         snapshot = _inspect(store, connection, campaign_id)
@@ -1208,7 +1166,7 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
         eligible = False
         if grant and grant['session_id'] == session_id:
             try:
-                from .model_catalog import require_current
+                from ..model_catalog import require_current
                 for configuration in snapshot['manifest']['panel']:
                     require_current(configuration)
                 _eligible(store, connection, snapshot, admission['authority'], admission['evidence'])
@@ -1222,8 +1180,8 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
 
 
 def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=None, access_transport=None):
-    from .preparation import owner, Denied
-    from .provider_access import view as access_view
+    from ..preparation import owner, Denied
+    from ..provider_access import view as access_view
     _intact(store)
     connection = connection_for(store)
     with _transaction(connection):
@@ -1246,7 +1204,7 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
         if failed:
             raise Denied(failed['key'])
     if requester_funding:
-        from .provider_access import key_for_session
+        from ..provider_access import key_for_session
         key_for_session(store, session_id, access_secret, access_transport)
     if requester:
         access = access_view(store, session_id, access_secret, access_transport, refresh=False)
@@ -1307,7 +1265,7 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
             snapshot = _inspect(store, connection, campaign_id)
             attempts = []
             for cell in snapshot['manifest']['attempt_policy']['order']:
-                attempt_id = 'web-' + q.digest(
+                attempt_id = 'web-' + value_digest(
                     [campaign_id, cell, admission['admission_id']])[:40]
                 _reserve(store, connection, snapshot, cell, attempt_id)
                 attempts.append(attempt_id)
@@ -1332,21 +1290,10 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
         attempts = []
         for cell in snapshot['manifest']['attempt_policy']['order']:
             if cell in admission['authority']['allowed_cells']:
-                aid = 'web-' + q.digest([campaign_id, cell, admission['admission_id']])[:40]
+                aid = 'web-' + value_digest([campaign_id, cell, admission['admission_id']])[:40]
                 _reserve(store, connection, snapshot, cell, aid)
                 attempts.append(aid)
         return attempts
-
-
-def execute_launch(data, attempts, transport=None, *, transport_factory=None,
-                   access_secret=None, access_transport=None):
-    for attempt_id in attempts:
-        try:
-            execute(data, attempt_id, transport, transport_factory=transport_factory,
-                    access_secret=access_secret, access_transport=access_transport)
-        except (ValueError, ConflictError, BudgetError, IntegrityError):
-            # An interruption leaves the remaining intentions for private inspection
-            break
 
 
 def _recovery_descendants(connection, campaign_id):
@@ -1393,130 +1340,6 @@ def close_admission(store, reason):
     connection = connection_for(store)
     with _transaction(connection, write=True):
         connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE admission_id IS NOT NULL', (reason, _now()))
-
-
-def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
-            transport_factory: Callable[..., Callable[..., dict]] | None = None,
-            access_secret=None, access_transport=None):
-    """One explicit worker, one durable boundary, one callback; never an implicit retry."""
-    if not callable(transport) and not callable(transport_factory):
-        raise ValueError('Transport injecté par le lanceur de confiance requis')
-    from .runtime import worker_lock
-    received = False
-    with closing(storage.Store(data)) as store, worker_lock(store, shared=True):
-        _intact(store)
-        connection = connection_for(store)
-        requester_key = None
-        session_id = None
-        with _transaction(connection):
-            row = connection.execute('SELECT campaign_id FROM s4_attempts WHERE operation_id=?',
-                                     (attempt_id,)).fetchone()
-            if row is None:
-                raise KeyError(attempt_id)
-            preview = _inspect(store, connection, row[0])
-            if preview['manifest'].get('funding', 'operator') == 'requester':
-                session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
-                                                (preview['task']['dossier_id'],)).fetchone()[0]
-        if session_id is not None:
-            from .provider_access import key_for_session
-            requester_key = key_for_session(store, session_id, access_secret, access_transport)
-        with _transaction(connection, write=True):
-            row = connection.execute('SELECT campaign_id FROM s4_attempts WHERE operation_id=?', (attempt_id,)).fetchone()
-            if row is None:
-                raise KeyError(attempt_id)
-            snapshot = _inspect(store, connection, row[0])
-            attempt = next(a for a in snapshot['attempts'] if a['operation_id'] == attempt_id)
-            admission = snapshot['admission']
-            if attempt['state'] != 'INTENT_RECORDED' or admission is None or attempt['cell_id'] not in admission['authority']['allowed_cells']:
-                raise ConflictError('Tentative non admise ou déjà émise')
-            _eligible(store, connection, snapshot, admission['authority'], admission['evidence'])
-            if attempt['engine_source'] != _engine():
-                raise ConflictError('Source moteur modifiée depuis la réservation')
-            order = snapshot['manifest']['attempt_policy']['order']
-            states = {c['cell_id']: c['state'] for c in snapshot['cells']}
-            if any(states[cid] != 'RECEIVED' for cid in order[:order.index(attempt['cell_id'])]):
-                raise ConflictError('Ordre de tentative non respecté')
-            raw = connection.execute('SELECT request_json FROM s4_attempts WHERE operation_id=?', (attempt_id,)).fetchone()[0]
-            request = json.loads(raw)
-            closed_request = _transport_view(request)
-            closed_operation = _transport_operation(attempt['operation'])
-            if transport_factory is not None:
-                if snapshot['manifest'].get('funding', 'operator') == 'requester':
-                    from .provider_access import decrypt
-                    row = connection.execute("SELECT key_cipher FROM s2_provider_access WHERE session_id=? AND status='connected'",
-                                             (session_id,)).fetchone()
-                    if (row is None or requester_key is None or not hmac.compare_digest(
-                            decrypt(access_secret, row[0]).encode(), requester_key.encode())):
-                        from .preparation import Denied
-                        raise Denied('ACCESS_REQUIRED')
-                    transport = transport_factory(
-                        closed_request['requested_configuration']['channel_id'], requester_key)
-                else:
-                    transport = transport_factory(
-                        closed_request['requested_configuration']['channel_id'])
-            if not callable(transport):
-                raise ValueError('Transport injecté par le lanceur de confiance requis')
-            if hasattr(transport, 'prepare'):
-                getattr(transport, 'prepare')(deepcopy(closed_operation), deepcopy(closed_request))
-            connection.execute('INSERT INTO s4_emissions VALUES (?,?,?)', (attempt_id, admission['admission_id'], _now()))
-            # Same S1 transition as mark_emission_possible, in the transaction that
-            # also freezes the admission actually used by this worker
-            operation = store._operation_for_update(connection, attempt_id, ('INTENT_RECORDED',))
-            connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' WHERE operation_id=?", (attempt_id,))
-        operation['state'] = 'EMISSION_POSSIBLE'
-        try:
-            response = deepcopy(transport(_transport_operation(operation), deepcopy(closed_request)))
-            _fields(response, ('receipt', 'cost'), 'transport response')
-            receipt, cost = response['receipt'], response['cost']
-            receipt['resources_seen'] = [p['id'] for p in request['pieces']]
-            _result(receipt, cost)
-            with _transaction(connection, write=True):
-                # A stop during the callback must not discard the late receipt
-                store._record_receipt(connection, attempt_id, receipt, cost)
-                output = receipt['result']['output']
-                output_id = None
-                if output is not None:
-                    output_id = 'output-' + secrets.token_hex(16)
-                    store._put_piece(connection, operation['dossier_id'], operation['revision'], output_id,
-                                     name='Sortie brute ' + attempt_id, role='judge', media_type='text/plain; charset=utf-8', content=output.encode('utf-8'))
-                connection.execute('INSERT INTO s4_results VALUES (?,?,?,?,?)',
-                                   (attempt_id, output_id, q.digest(receipt), q.digest(cost), _now()))
-                incomplete = (_attribution(receipt, request['requested_configuration'])
-                              or (cost['status'] == 'UNKNOWN'
-                                  and snapshot['manifest'].get('financial_cost_policy') != 'retain_reserve')
-                              or receipt['result']['emission'] != 'ESTABLISHED')
-                if incomplete:
-                    connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
-                                       ('ACQUISITION_EVIDENCE_INCOMPLETE', _now(), snapshot['manifest']['campaign_id']))
-                elif snapshot['manifest'].get('funding') == 'requester':
-                    operation_ids = {row[0] for row in connection.execute(
-                        'SELECT operation_id FROM s4_attempts WHERE campaign_id=?',
-                        (snapshot['manifest']['campaign_id'],))}
-                    spent = _sum_money(_money(operation['observed_cost']['amount'])
-                                       for operation in store._operations(
-                                           connection, operation_ids=operation_ids)
-                                       if operation['observed_cost'] is not None
-                                       and operation['observed_cost']['status'] == 'KNOWN')
-                    if spent >= _money(snapshot['cap_usd']):
-                        connection.execute(
-                            'UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? '
-                            'WHERE campaign_id=?',
-                            ('CAP_REACHED', _now(), snapshot['manifest']['campaign_id']))
-            received = True
-        except Exception:
-            # Exception text can contain private bytes. Preserve a fixed technical
-            # reason; neither an unusable response nor an exception settles cost
-            with _transaction(connection, write=True):
-                op = store._operation_for_update(connection, attempt_id, ('EMISSION_POSSIBLE', 'AMBIGUOUS'))
-                if op['state'] == 'EMISSION_POSSIBLE':
-                    connection.execute("UPDATE operations SET state='AMBIGUOUS', ambiguity_reason=? WHERE operation_id=?",
-                                       ('ACQUISITION_RECEIPT_NOT_VERIFIED', attempt_id))
-                connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
-                                   ('ACQUISITION_RECEIPT_NOT_VERIFIED', _now(), snapshot['manifest']['campaign_id']))
-    if received:
-        from .recovery import continue_preauthorized
-        continue_preauthorized(data, attempt_id, transport,
-                               transport_factory=transport_factory)
 
 
 def _projected(store, connection, campaign_id, snapshot) -> dict:

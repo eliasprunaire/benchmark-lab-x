@@ -6,7 +6,9 @@ import json
 import unittest
 from unittest.mock import patch
 
-from benchmark import campaigns as c, outgoing as out, storage, preparation as prep, evaluation as evaluation
+from benchmark.acquisition import execution
+from benchmark.acquisition import campaigns as c
+from benchmark import outgoing as out, storage, preparation as prep, evaluation as evaluation
 from tests import test_openrouter_preparation as prep_fixture
 from tests.test_openrouter_preparation import result, http_body, assistant, NOTES, KEY, NEED, REFERENCE
 from tests import test_private_comparison as comparison_fixture
@@ -117,7 +119,7 @@ class TransportBoundary(unittest.TestCase):
                  'budget_id', 'dossier_id', '"campaign_id"', 'INTENT_RECORDED', 'EN_ATTENTE']
         spy=Spy()
         c.reserve(store,'local-comparison','y','intent-y')
-        c.execute(data,'intent-y',spy)
+        execution.execute(data,'intent-y',spy)
         seen=_dump(spy.calls)
         for marker in markers:
             self.assertNotIn(marker, seen)
@@ -129,7 +131,7 @@ class TransportBoundary(unittest.TestCase):
         attempt=f.execute()
         raw=storage._strict_json(f.wire)
         self.assertNotIn('CANARY', raw)
-        self.assertEqual(storage._strict_json(c._transport_view(json.loads(
+        self.assertEqual(storage._strict_json(execution._transport_view(json.loads(
             f.store._connection.execute('SELECT request_json FROM s4_attempts WHERE operation_id=?',
                                         ('pi-intent',)).fetchone()[0]))['outgoing']),
                          f.wire['messages'][1]['content'])
@@ -151,23 +153,23 @@ class TransportBoundary(unittest.TestCase):
             self.assertNotIn('pieces', request)
             return fictional_response(operation, request)
         c.reserve(f.store,'local-comparison','y','intent-y')
-        c.execute(f.data,'intent-y',transport)
+        execution.execute(f.data,'intent-y',transport)
         self.assertEqual(out.FORMAT, seen['format'])
         self.assertEqual('RECEIVED', c.inspect(f.store,'local-comparison')['attempts'][-1]['state'])
 
     def test_changed_transport_engine_identity_blocks_before_transport(self):
         from tests.test_s4_regressions import S4Regressions
         f=S4Regressions();f.setUp();self.addCleanup(f.doCleanups)
-        for name in ('pi_openrouter.py','pi_bridge.mjs','openrouter_preparation.py','outgoing.py','recovery.py','web_api.py','validation.py'):
+        for name in ('transports/pi.py','transports/pi_bridge.mjs','transports/openrouter.py','outgoing.py','acquisition/recovery.py','acquisition/execution.py','web_api.py','validation.py'):
             self.assertIn(name, c._engine())
         f.admit(); f.reserve()
         spy=Spy()
-        for name in ('pi_openrouter.py','web_api.py'):
+        for name in ('transports/pi.py','web_api.py'):
             with self.subTest(source=name):
                 broken=dict(c._engine()); broken[name]='0'*64
                 with patch.object(c,'_engine',return_value=broken):
                     with self.assertRaises(storage.ConflictError):
-                        c.execute(f.data,'intent-x',spy)
+                        execution.execute(f.data,'intent-x',spy)
         self.assertEqual([], spy.calls)
 
     def test_body_change_between_prepare_and_emit_blocks_before_network(self):
@@ -178,7 +180,7 @@ class TransportBoundary(unittest.TestCase):
             original(operation, request)
             f.transport._wire_bytes = f.transport._wire_bytes.replace('fixture', 'mutated')
         with patch.object(f.transport,'prepare',side_effect=prepare), patch.object(comparison_fixture.pi.http,'post') as http:
-            c.execute(f.data,'pi-intent',f.transport)
+            execution.execute(f.data,'pi-intent',f.transport)
             http.assert_not_called()
         self.assertEqual('AMBIGUOUS', c.inspect(f.store,'pi-offline')['attempts'][0]['state'])
 

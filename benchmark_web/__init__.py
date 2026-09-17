@@ -1,1 +1,1 @@
-"""Présentation web de Benchmark Lab-X ; dépend du moteur, jamais l'inverse."""
+"""Présentation web de Bench-X ; dépend du moteur, jamais l'inverse."""

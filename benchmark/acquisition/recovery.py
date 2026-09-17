@@ -1,16 +1,15 @@
 """Receipt-driven recovery; auto-execution needs a frozen owner preauthorization"""
 from base64 import b64decode
-from contextlib import closing
 from copy import deepcopy
 from decimal import Decimal
 from hashlib import sha256
 import json
 import os
-import sqlite3
 
-from . import campaigns as c, qualification as q, outgoing
-from .preparation import identifier
-from .storage import BudgetError, ConflictError, IntegrityError, Store, _fields, _money, _transaction
+from . import campaigns as c
+from .. import qualification as q, outgoing
+from ..validation import digest as value_digest, identifier, _hash, _texts
+from ..storage import BudgetError, ConflictError, IntegrityError, _fields, _money, _transaction
 
 _IDENTITY = ('provider', 'model', 'revision', 'access', 'channel_id')
 _UNRECOVERABLE = {'MODEL_IDENTITY_MISMATCH', 'PROVIDER_ROUTE_MISMATCH', 'HARNESS_ERROR'}
@@ -78,7 +77,7 @@ def observation(attempt) -> dict:
     usage = data.get('usage') or {}
     return dict(kind=kind, output_chars=len(content), usage=usage,
                 provider=observed.get('provider'), route=observed.get('route'),
-                receipt_sha256=q.digest(receipt), received_at=http.get('received_at'))
+                receipt_sha256=value_digest(receipt), received_at=http.get('received_at'))
 
 
 def routing_error(operation):
@@ -119,8 +118,8 @@ def validate_link(store, connection, manifest):
 
 
 def validate_official_link(store, connection, manifest, source, original_config):
-    from .pi_official import CHANNELS, native_identity, provider_for_endpoint
-    from .openrouter_preparation import ENDPOINT
+    from ..transports.official import CHANNELS, native_identity, provider_for_endpoint
+    from ..transports.openrouter import ENDPOINT
     new = manifest['panel'][0]
     official_provider = provider_for_endpoint(new['channel_id'])
     if (official_provider is None or new['provider'] != official_provider
@@ -320,12 +319,12 @@ def derive_child(source_manifest, attempt, observed, capabilities, *, budget_id,
         reserves.append(_money(pricing['prompt']) * manifest['conditions']['defaults']['context_window']
                         + _money(pricing['completion']) * params['max_tokens'])
     reserve = max(reserves)
-    manifest.update(campaign_id='recovery-' + q.digest([attempt['operation_id'], params])[:40],
+    manifest.update(campaign_id='recovery-' + value_digest([attempt['operation_id'], params])[:40],
                     recovery_of=attempt['operation_id'], panel=[config], plan=[cell],
                     attempt_policy=dict(retries=False, order=[cell['cell_id']],
                     reason='Reprise technique liée au reçu ' + attempt['operation_id'] + ' ; aucune sélection sémantique'))
     return dict(manifest=manifest, reserve_amount=str(reserve), budget_id=budget_id,
-                source_receipt=observed, capabilities_sha256=q.digest(capabilities))
+                source_receipt=observed, capabilities_sha256=value_digest(capabilities))
 
 
 def _progress_chars(store, connection, source_manifest, observed):
@@ -371,14 +370,14 @@ def _official_proposal(store, connection, operation_id, grant, budget_id, *, che
     config = item['configuration']
     route_attempts = _official_route_attempts(store, connection, snapshot, attempt)
     manifest.update(
-        campaign_id='recovery-' + q.digest([operation_id, config, route_attempts])[:40],
+        campaign_id='recovery-' + value_digest([operation_id, config, route_attempts])[:40],
         recovery_of=operation_id, panel=[config], plan=[cell],
         official_fallback=dict(route_attempts=route_attempts),
         attempt_policy=dict(retries=False, order=[cell['cell_id']],
                             reason='Secours officiel préautorisé après épuisement OpenRouter ; aucune sélection sémantique'))
     validate_official_link(store, connection, manifest, snapshot['manifest'], source_config)
     proposal = dict(manifest=manifest, reserve_amount=item['reserve_amount'], budget_id=budget_id,
-                    source_receipt=observed, capabilities_sha256=q.digest(item))
+                    source_receipt=observed, capabilities_sha256=value_digest(item))
     if check_budget:
         budget = c._envelope(store, connection, snapshot, snapshot['admissions'][-1]['authority'])
         if _money(proposal['reserve_amount']) > Decimal(budget['available']):
@@ -467,7 +466,7 @@ def _capability(value):
             raise ValueError('Plafond de sortie figé requis')
         if type(endpoint['context_length']) is not int or endpoint['context_length'] < 0:
             raise ValueError('Contexte figé requis')
-        q._texts(endpoint['supported_parameters'], 'supported_parameters', unique=True)
+        _texts(endpoint['supported_parameters'], 'supported_parameters', unique=True)
         pricing = endpoint['pricing']
         if type(pricing) is not dict:
             raise ValueError('Tarifs figés requis')
@@ -477,7 +476,7 @@ def _capability(value):
             if key not in pricing:
                 raise ValueError('Tarifs figés requis')
             _money(pricing[key])
-    q.digest(value)
+    value_digest(value)
 
 
 def validate_grant(grant, *, purpose, recovery):
@@ -508,7 +507,7 @@ def validate_grant(grant, *, purpose, recovery):
         _fields(config, c._CONFIGURATION, 'official fallback configuration')
         if config['id'] != configuration_id:
             raise ValueError('Identité de secours officielle divergente')
-        from .pi_official import provider_for_endpoint
+        from ..transports.official import provider_for_endpoint
         if (provider_for_endpoint(config['channel_id']) != config['provider']
                 or config['access'] != 'API' or config['route'] != config['channel_id']):
             raise ValueError('Canal de secours officiel invalide')
@@ -526,7 +525,7 @@ def validate_derived_from(value):
     _fields(value, ('admission_id', 'operation_id', 'manifest_sha256'), 'derived recovery authority')
     identifier(value['admission_id'])
     identifier(value['operation_id'])
-    q._hash(value['manifest_sha256'])
+    _hash(value['manifest_sha256'])
 
 
 def bind_derived(store, connection, manifest, authority, *, stored=False):
@@ -554,7 +553,7 @@ def bind_derived(store, connection, manifest, authority, *, stored=False):
     except (ValueError, ConflictError, IntegrityError) as exc:
         raise error('Reprise dérivée non reconstruite') from exc
     cell = expected['manifest']['plan'][0]['cell_id']
-    if (q.digest(manifest) != q.digest(expected['manifest'])
+    if (value_digest(manifest) != value_digest(expected['manifest'])
             or authority['budget_id'] != expected['budget_id']
             or authority['reserve_amounts'] != {cell: expected['reserve_amount']}):
         raise error('Manifeste dérivé non conforme à la préautorisation')
@@ -577,106 +576,3 @@ def _owner_grant(store, connection, snapshot):
     if start is None:
         return None, None
     return start, start['authority'].get('technical_recovery')
-
-
-def _derive_authority(owner_record, snapshot, operation_id, reserve_amount, budget_id):
-    owner = owner_record['authority']
-    cell = snapshot['manifest']['plan'][0]['cell_id']
-    return dict(
-        actor=owner['actor'], authority_id=owner['authority_id'], purpose='start',
-        manifest_sha256=snapshot['manifest_sha256'], execution_authority=owner['execution_authority'],
-        candidate_authority=owner['candidate_authority'], budget_authority=owner['budget_authority'],
-        budget_id=budget_id, allowed_cells=[cell], reserve_amounts={cell: reserve_amount},
-        derived_from=dict(admission_id=owner_record['admission_id'], operation_id=operation_id,
-                          manifest_sha256=owner['manifest_sha256']))
-
-
-def _derive_evidence(owner_record, snapshot, grant):
-    source = owner_record['evidence']
-    config = snapshot['manifest']['panel'][0]
-    if 'official_fallback' in snapshot['manifest']:
-        channel = _official_grant(grant, config['id'])['channel']
-    else:
-        channel = deepcopy(source['channels'][config['id']])
-        channel['route'] = config['route']
-    return dict(pi_sha256=source['pi_sha256'], context_sha256=source['context_sha256'],
-                channels={config['id']: channel}, confinement=deepcopy(source['confinement']))
-
-
-def _next_preauthorized_attempt(store, operation_id, *, allow_official=False):
-    c._intact(store)
-    connection = c.connection_for(store)
-    try:
-        with _transaction(connection, write=True):
-            snapshot, attempt = parent(store, connection, operation_id)
-            if (attempt['state'] != 'RECEIVED'
-                    or snapshot['admission'] is None
-                    or os.path.lexists(store._root / 'restore.json')):
-                return None
-            owner, grant = _owner_grant(store, connection, snapshot)
-            if grant is None:
-                return None
-            try:
-                observed = observation(attempt)
-            except (ValueError, ConflictError, IntegrityError):
-                return None
-            if observed['kind'] not in _RECOVERABLE:
-                return None
-            try:
-                proposal = _automatic_proposal(store, connection, operation_id, grant,
-                                               allow_official=allow_official)
-            except (ValueError, BudgetError):
-                return None
-            cid = proposal['manifest']['campaign_id']
-            try:
-                c._create(store, connection, deepcopy(proposal['manifest']))
-            except ConflictError:
-                existing = c._inspect(store, connection, cid)
-                if existing['manifest_sha256'] != q.digest(proposal['manifest']):
-                    return None
-            snap = c._inspect(store, connection, cid)
-            if snap['admission'] is None:
-                if snap['admissions']:
-                    return None
-                authority = _derive_authority(owner, snap, operation_id,
-                                              proposal['reserve_amount'], proposal['budget_id'])
-                evidence = _derive_evidence(owner, snap, grant)
-                c._admit(store, connection, cid, authority, evidence)
-                snap = c._inspect(store, connection, cid)
-            admission = snap['admission']
-            if admission is None:
-                raise ConflictError('Admission dérivée absente')
-            cell = snap['manifest']['plan'][0]['cell_id']
-            existing_attempt = next((row for row in snap['attempts'] if row['cell_id'] == cell), None)
-            if existing_attempt is not None:
-                if existing_attempt['state'] != 'INTENT_RECORDED':
-                    return None
-                return existing_attempt['operation_id']
-            oid = 'recovery-' + q.digest([cid, cell, admission['admission_id']])[:40]
-            try:
-                c._reserve(store, connection, snap, cell, oid)
-            except sqlite3.IntegrityError:
-                snap = c._inspect(store, connection, cid)
-                existing_attempt = next((row for row in snap['attempts'] if row['cell_id'] == cell), None)
-                if existing_attempt and existing_attempt['state'] == 'INTENT_RECORDED':
-                    return existing_attempt['operation_id']
-                raise
-            return oid
-    except (ValueError, KeyError, ConflictError, BudgetError, IntegrityError, sqlite3.IntegrityError):
-        return None
-
-
-def continue_preauthorized(data, operation_id, transport=None, *, transport_factory=None):
-    """Create, admit, reserve and execute the next frozen recovery, or stop"""
-    try:
-        with closing(Store(data)) as store:
-            nxt = _next_preauthorized_attempt(store, operation_id,
-                                              allow_official=transport_factory is not None)
-        if nxt is None:
-            return
-        if transport_factory is None:
-            c.execute(data, nxt, transport)
-        else:
-            c.execute(data, nxt, transport_factory=transport_factory)
-    except (ValueError, KeyError, ConflictError, BudgetError, IntegrityError):
-        return

@@ -8,7 +8,8 @@ import json
 import unittest
 from unittest.mock import Mock, patch
 
-from benchmark import openrouter_prices as prices, runtime, openrouter_preparation as assistant
+from benchmark.transports import prices as prices, openrouter as assistant
+from benchmark import runtime
 
 
 MODEL = 'z-ai/glm-5.3-flash'

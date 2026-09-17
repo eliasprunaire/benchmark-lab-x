@@ -2,11 +2,11 @@
 style_gate: pass
 ---
 
-# PRD de Benchmark Lab-X
+# PRD de Bench-X
 
 ## 1. Rôle et autorité
 
-Ce document fixe la vision durable, le besoin, l’audience et les résultats attendus de Benchmark Lab-X. Les parcours et principes décrivent le produit à long terme ; un périmètre associé à une version borne seulement son jalon. Le document ne porte aucun statut de livraison et les options non décidées ne deviennent pas des exigences par leur seule mention.
+Ce document fixe la vision durable, le besoin, l’audience et les résultats attendus de Bench-X. Les parcours et principes décrivent le produit à long terme ; un périmètre associé à une version borne seulement son jalon. Le document ne porte aucun statut de livraison et les options non décidées ne deviennent pas des exigences par leur seule mention.
 
 L'approbation de ce document n'autorise aucune campagne ni publication. Les campagnes historiques restent sous leurs contrats d'origine.
 
@@ -14,7 +14,7 @@ L'[ARD](ARD.md) fixe le contrat d'architecture. Les [règles](RULES.md) portent 
 
 ## 2. Besoin
 
-**FAIT ÉTABLI** : le besoin originel est de permettre à la communauté Lab X de tester elle-même des solutions d'IA sur des tâches utiles, avec des preuves lisibles plutôt qu'un palmarès repris d'un tiers.
+**FAIT ÉTABLI** : le besoin originel est de permettre à la communauté du Lab-X de tester elle-même des solutions d'IA sur des tâches utiles, avec des preuves lisibles plutôt qu'un palmarès repris d'un tiers.
 
 L’utilisateur décrit un travail qu’il souhaite comparer. Le produit l’aide à le préciser et construit un dossier fictif qu’il peut examiner et modifier avant de valider le besoin représenté. Une campagne autorisée compare ensuite les configurations de modèle sous le même harnais Pi. Résultats, preuves et coûts observés alimentent des classements par critère et des filtres ; l’utilisateur choisit la configuration qui lui convient. Le produit ne désigne pas automatiquement un gagnant et un coût faible ne rend pas une sortie erronée utilisable.
 
@@ -24,7 +24,7 @@ Le nom du modèle ne suffit toutefois pas comme preuve. Le modèle est l'identif
 
 ### 3.1 Audience et accès
 
-Le produit s’adresse à la communauté Lab X et aux utilisateurs qui cherchent une configuration adaptée à une tâche. Les tâches représentent des besoins de métiers et de domaines variés ; le catalogue n’est pas limité aux usages informatiques ou administratifs. Dès 0.1.0, le parcours public permet de décrire un besoin et de préparer une épreuve avec une assistance IA. L’approbation du contrat, l’exécution et la publication gardent leurs autorités propres. Le site permet aussi de consulter les résultats dont la publication a été approuvée.
+Le produit s’adresse à la communauté du Lab-X et aux utilisateurs qui cherchent une configuration adaptée à une tâche. Les tâches représentent des besoins de métiers et de domaines variés ; le catalogue n’est pas limité aux usages informatiques ou administratifs. Dès 0.1.0, le parcours public permet de décrire un besoin et de préparer une épreuve avec une assistance IA. L’approbation du contrat, l’exécution et la publication gardent leurs autorités propres. Le site permet aussi de consulter les résultats dont la publication a été approuvée.
 
 La description reste générale, sans donnée personnelle ni information confidentielle. Les personnes, organismes, échanges et pièces du dossier sont entièrement inventés ; un dossier réel simplement anonymisé ne convient pas. Le parcours 0.1.0 ne comprend aucun téléversement de dossier réel, accès à l’ordinateur, connecteur vers les données de l’utilisateur ou action sur son téléphone. Une consigne de saisie ne garantit pas l’absence de contenu sensible et aucune anonymisation automatique, notamment dans le navigateur, n’est promise. Les modalités d’accès, de conservation et de traitement d’une saisie sensible restent à décider avant ouverture.
 

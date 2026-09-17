@@ -8,7 +8,9 @@ import tempfile
 import threading
 import unittest
 
-from benchmark import campaigns as c, evaluation as e, preparation as prep, qualification as q, runtime, storage
+from benchmark.acquisition import execution
+from benchmark.acquisition import campaigns as c
+from benchmark import evaluation as e, preparation as prep, qualification as q, runtime, storage
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 from tests.test_s4_regressions import inputs, manifest, response
 
@@ -50,7 +52,7 @@ class S5Regressions(unittest.TestCase):
         e.initialize(self.data)
 
     def acquire(self):
-        c.execute(self.data, 'intent-x', response)
+        execution.execute(self.data, 'intent-x', response)
 
     def evaluate(self, callback=findings, **kwargs):
         return e.evaluate(self.store, 'local-comparison', 'intent-x', responsible=RESPONSIBLE,
@@ -215,7 +217,7 @@ class S5Regressions(unittest.TestCase):
             result = response(op, request)
             result['receipt']['result']['incident'] = 'Fictional provider warning after output'
             return result
-        c.execute(self.data, 'intent-x', transport)
+        execution.execute(self.data, 'intent-x', transport)
         def defective(ctx, resources):
             report = findings(ctx, resources)
             report['findings'][0].update(status='FAIL', attribution='candidate')
@@ -229,7 +231,7 @@ class S5Regressions(unittest.TestCase):
             result = response(op, request)
             result['receipt']['result']['output'] = ''
             return result
-        c.execute(self.data, 'intent-x', transport)
+        execution.execute(self.data, 'intent-x', transport)
         def empty(ctx, resources):
             report = findings(ctx, resources)
             report['findings'][0].update(status='FAIL', attribution='candidate', finding='Sortie fictive vide, action absente')

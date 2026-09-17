@@ -7,7 +7,8 @@ import json
 import os
 import re
 
-from . import evaluation as e, outgoing, qualification as q, storage
+from .validation import digest as value_digest, identifier
+from . import evaluation as e, outgoing, storage
 from .storage import ConflictError, IntegrityError, BudgetError, _fields, _money, _strict_json as encode, _transaction
 from .runtime import worker_lock, verify
 
@@ -30,10 +31,10 @@ def _inputs(store, connection, request, *, latest=True):
     if request['authority']['actor'] != 'Ayo':
         raise ValueError('Autorité opérateur requise')
     for key in ('operation_id', 'campaign_id', 'attempt_id', 'budget_id'):
-        e.c.identifier(request[key])
+        identifier(request[key])
     ctx = e._context(store, connection, request['campaign_id'], request['attempt_id'])
     content = e._review_content(store, ctx)
-    if content['output'] is None or q.digest(content) != request['review_sha256']:
+    if content['output'] is None or value_digest(content) != request['review_sha256']:
         raise IntegrityError('Projection ou sortie divergente')
     if latest:
         row = connection.execute('SELECT evaluation_id FROM s5_evaluations WHERE attempt_id=? ORDER BY rowid DESC LIMIT 1',
@@ -81,7 +82,7 @@ def reserve(store, request, transport):
                 engine_version=FORMAT, requested_configuration=request['requested_configuration'], resources=[])
             wire = transport.prepare(deepcopy(operation), dict(outgoing_format=outgoing.FORMAT, outgoing=content))
             operation['resources'] = [encode(dict(request=request, admission_id=aid,
-                context_sha256=q.digest(ctx), context=ctx, content=content)), wire]
+                context_sha256=value_digest(ctx), context=ctx, content=content)), wire]
             store._reserve_intent(connection, operation, request['budget_id'], request['reserve_amount'])
     return inspect(store, request['operation_id'])
 
@@ -94,7 +95,7 @@ def _bound(store, connection, operation, *, latest=False):
     request = saved['request']
     ctx, content = _inputs(store, connection, request, latest=latest)
     e._validate_context(saved['context'], ctx)
-    if (q.digest(saved['context']) != saved['context_sha256']
+    if (value_digest(saved['context']) != saved['context_sha256']
             or saved['context']['campaign']['admission'] is None
             or saved['context']['campaign']['admission']['admission_id'] != saved['admission_id']):
         raise IntegrityError('Instantané de jugement divergent')
@@ -109,7 +110,7 @@ def _bound(store, connection, operation, *, latest=False):
         raise IntegrityError('Liaison de jugement divergente')
     wire = json.loads(operation['resources'][1], object_pairs_hook=storage._unique_object)
     config = operation['requested_configuration']
-    from . import openrouter_preparation as profiles
+    from .transports import openrouter as profiles
     profile = dict(profile_id=config['profile_id'], model=config['model'], revision=config['revision'],
         parameters=config['parameters'], routes=config['routes'], system=wire['messages'][0]['content'],
         required_capabilities=[k for k in profiles.CAPABILITY_PARAMETERS if k in config['parameters']],
@@ -236,7 +237,7 @@ def diagnostic(store, connection, operation, ctx):
 
 
 def evaluation_judgment(store, connection, value, ctx, operation, result):
-    saved, bound_ctx = _bound(store, connection, operation)
+    saved, _ = _bound(store, connection, operation)
     e._validate_context(saved['context'], ctx)
     if (operation['receipt'] is None
             or operation['receipt']['result'] is None):
@@ -267,7 +268,7 @@ def _retained_proposal(store, connection, operation, ctx):
         document = json.loads(raw, object_pairs_hook=storage._unique_object)
         message = document['choices'][0]['message']
         answer = json.loads(message['content'], object_pairs_hook=storage._unique_object)
-        from .openrouter_judgment import OpenRouterJudgment
+        from .transports.openrouter import OpenRouterJudgment
         OpenRouterJudgment.validate_answer(answer, message)
         if (observed['incident'] is not None or not observed['http']['complete']
                 or observed['http']['status'] != 200

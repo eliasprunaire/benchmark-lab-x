@@ -86,7 +86,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
     source_salt = secrets.token_bytes(32)
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = 'Benchmark'
+        server_version = 'Bench-X'
         sys_version = ''
 
         def setup(self):

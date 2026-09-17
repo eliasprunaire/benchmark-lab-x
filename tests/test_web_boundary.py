@@ -7,7 +7,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from benchmark import campaigns, preparation, restitution
+from benchmark.acquisition import campaigns
+from benchmark import preparation, restitution
 from benchmark_web import views
 from tests.test_s6_regressions import build
 
@@ -68,7 +69,7 @@ class WebBoundaryTests(unittest.TestCase):
         for path in WEB.rglob('*.py'):
             source = path.read_text()
             self.assertNotRegex(source, r'\b(sqlite3|Store\(|storage\.Store|urlopen|OPENROUTER|API_KEY)\b', path.name)
-            self.assertNotRegex(source, r'from benchmark\.(pi_|openrouter_|outgoing|recovery|judgment)', path.name)
+            self.assertNotRegex(source, r'from benchmark\.(transports|acquisition|outgoing|judgment)', path.name)
             self.assertNotIn('code_verifier', source, path.name)
             self.assertNotIn('openrouter.ai', source, path.name)
 

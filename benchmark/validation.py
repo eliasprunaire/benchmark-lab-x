@@ -2,9 +2,14 @@
 
 Aucun flux privé, aucun stockage ouvert ; seuls les prédicats de forme vivent ici.
 """
+from hashlib import sha256
 import re
 
-from .storage import _text
+from .storage import _text, _strict_json as encode
+
+
+def digest(value):
+    return sha256(encode(value).encode('utf-8')).hexdigest()
 
 
 def identifier(value):

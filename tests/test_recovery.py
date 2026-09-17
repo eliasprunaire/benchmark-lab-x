@@ -9,7 +9,9 @@ import tempfile
 import threading
 import unittest
 
-from benchmark import campaigns as c, qualification as q, recovery as r, storage
+from benchmark.acquisition import execution
+from benchmark.acquisition import campaigns as c, recovery as r
+from benchmark import qualification as q, storage
 from tests.test_s3_regressions import fixture, specification, check, ACTOR, AUTHORITY
 from tests.test_s4_regressions import manifest, inputs, response
 
@@ -97,7 +99,7 @@ class Recovery(unittest.TestCase):
     def emit(self, cid='local-comparison', cell='x', oid='first', finish='length', output='', unknown=False,
              status=200, incident=None, native=None, refusal=None, route='one', terminal=None):
         c.reserve(self.store,cid,cell,oid)
-        c.execute(self.data,oid,lambda op,request: self.build_response(
+        execution.execute(self.data,oid,lambda op,request: self.build_response(
             op,request,finish=finish,output=output,unknown=unknown,status=status,
             incident=incident,native=native,refusal=refusal,route=route,terminal=terminal))
 
@@ -291,7 +293,7 @@ class Recovery(unittest.TestCase):
         c.reserve(self.store,cid,'x','first')
         transport,calls=self.sequence(dict(finish='length',output='partial'),
                                       dict(finish='stop',output='Complete'))
-        c.execute(self.data,'first',transport)
+        execution.execute(self.data,'first',transport)
         self.assertEqual(2,len(calls))
         self.assertEqual(calls[0]['outgoing'],calls[1]['outgoing'])
         self.assertEqual(100,calls[0]['request']['parameters']['max_tokens'])
@@ -319,7 +321,7 @@ class Recovery(unittest.TestCase):
         c.reserve(self.store,cid,'x','first')
         transport,calls=self.sequence(dict(status=503,finish=None,route='one'),
                                       dict(finish='stop',output='Complete',route='two'))
-        c.execute(self.data,'first',transport)
+        execution.execute(self.data,'first',transport)
         self.assertEqual(2,len(calls))
         self.assertEqual(['one','two'],calls[0]['request']['parameters']['provider']['only'])
         self.assertEqual(['two'],calls[1]['request']['parameters']['provider']['only'])
@@ -336,7 +338,7 @@ class Recovery(unittest.TestCase):
         c.reserve(self.store,cid,'x','empty')
         transport,calls=self.sequence(dict(finish='stop',output='',route='one'),
                                       dict(finish='stop',output='Complete',route='two'))
-        c.execute(self.data,'empty',transport)
+        execution.execute(self.data,'empty',transport)
         self.assertEqual(2,len(calls))
         self.assertEqual(['two'],calls[1]['request']['parameters']['provider']['only'])
         self.assertEqual(100,calls[1]['request']['parameters']['max_tokens'])
@@ -376,7 +378,7 @@ class Recovery(unittest.TestCase):
                 if 'second' in case:
                     steps.append(case['second'])
                 transport,calls=self.sequence(*steps)
-                c.execute(self.data,'first-'+name,transport)
+                execution.execute(self.data,'first-'+name,transport)
                 self.assertEqual(case['calls'],len(calls))
                 if case['calls']==1:
                     self.assertIsNone(next((s for s in c.list_campaigns(self.store)
@@ -389,7 +391,7 @@ class Recovery(unittest.TestCase):
         def broken(op,request):
             calls.append(op['operation_id'])
             raise OSError('fixture interruption')
-        c.execute(self.data,'first',broken)
+        execution.execute(self.data,'first',broken)
         self.assertEqual(1,len(calls))
         self.assertEqual('AMBIGUOUS',c.inspect(self.store,cid)['attempts'][0]['state'])
         self.assertIsNone(next((s for s in c.list_campaigns(self.store) if s['manifest'].get('recovery_of')=='first'),None))
@@ -408,14 +410,14 @@ class Recovery(unittest.TestCase):
         transport,calls=self.sequence(dict(finish='length',output='partial'),
                                       dict(finish='stop',output='Complete'),
                                       dict(finish='stop',output='Complete'))
-        c.execute_launch(self.data,attempts,transport)
+        execution.execute_launch(self.data,attempts,transport)
         emitted=len(calls)
         self.assertGreaterEqual(emitted,2)
         self.assertEqual([],c.launch(self.store,self.sid,'fixture','clickable',body))
         with self.assertRaises(storage.ConflictError):
-            c.execute(self.data,attempts[0],transport)
+            execution.execute(self.data,attempts[0],transport)
         self.assertEqual(emitted,len(calls))
-        r.continue_preauthorized(self.data,attempts[0],transport)
+        execution.continue_preauthorized(self.data,attempts[0],transport)
         self.assertEqual(emitted,len(calls))
 
     def test_preauthorized_outgoing_boundary_and_frozen_capabilities(self):
@@ -429,7 +431,7 @@ class Recovery(unittest.TestCase):
         def transport(op,request):
             seen.append(deepcopy(request))
             return inner(op,request)
-        c.execute(self.data,'first',transport)
+        execution.execute(self.data,'first',transport)
         self.assertEqual(2,len(calls))
         dumped=json.dumps(seen,ensure_ascii=False)
         self.assertNotIn('technical_recovery',dumped)
@@ -481,7 +483,7 @@ class Recovery(unittest.TestCase):
         c.reserve(self.store,cid,'x','first')
         transport,calls=self.sequence(dict(finish='length',output='partial'),
                                       dict(finish='stop',output='Complete'))
-        c.execute(self.data,'first',transport)
+        execution.execute(self.data,'first',transport)
         proposal=r.propose(self.store,'first',self.caps)
         recovered=self._recovery('first')
         self.assertEqual(q.digest(proposal['manifest']),q.digest(recovered['manifest']))
@@ -500,7 +502,7 @@ class Recovery(unittest.TestCase):
             calls.append(op['operation_id'])
             c.stop(self.store,cid)
             return self.build_response(op,request,finish='length',output='partial')
-        c.execute(self.data,'first',transport)
+        execution.execute(self.data,'first',transport)
         self.assertEqual(1,len(calls))
         snap=c.inspect(self.store,cid)
         self.assertEqual('STOPPED',snap['state'])
@@ -517,7 +519,7 @@ class Recovery(unittest.TestCase):
             calls.append(op['operation_id'])
             c.close_admission(self.store,'MAINTENANCE')
             return self.build_response(op,request,finish='length',output='partial')
-        c.execute(self.data,'first',transport)
+        execution.execute(self.data,'first',transport)
         self.assertEqual(1,len(calls))
         snap=c.inspect(self.store,cid)
         self.assertIsNone(snap['admission'])
@@ -525,12 +527,12 @@ class Recovery(unittest.TestCase):
         self.assertIsNone(next((s for s in c.list_campaigns(self.store) if s['manifest'].get('recovery_of')=='first'),None))
 
     def _suspend_continue(self):
-        original=r.continue_preauthorized
-        r.continue_preauthorized=lambda *a,**k: None
+        original=execution.continue_preauthorized
+        execution.continue_preauthorized=lambda *a,**k: None
         return original
 
     def _restore_continue(self, original):
-        r.continue_preauthorized=original
+        execution.continue_preauthorized=original
 
     def _received_source(self, name, **spec):
         cid=self.granted(name)
@@ -539,7 +541,7 @@ class Recovery(unittest.TestCase):
                                       dict(finish='stop',output='Complete'))
         original=self._suspend_continue()
         try:
-            c.execute(self.data,'first',transport)
+            execution.execute(self.data,'first',transport)
         finally:
             self._restore_continue(original)
         self.assertEqual(1,len(calls))
@@ -549,7 +551,7 @@ class Recovery(unittest.TestCase):
     def _commit_control_before_child_prepare(self, apply_control, transport):
         entering_write=threading.Event()
         lock_held=threading.Event()
-        real_c,real_r=c._transaction,r._transaction
+        real_c,real_r=c._transaction,execution._transaction
 
         @contextmanager
         def wrapped(connection, *, write=False):
@@ -571,11 +573,11 @@ class Recovery(unittest.TestCase):
             self.assertTrue(lock_held.wait(timeout=5))
             try:
                 c._transaction=wrapped
-                r._transaction=wrapped
-                r.continue_preauthorized(self.data,'first',transport)
+                execution._transaction=wrapped
+                execution.continue_preauthorized(self.data,'first',transport)
             finally:
                 c._transaction=real_c
-                r._transaction=real_r
+                execution._transaction=real_r
 
         threads=[threading.Thread(target=controller), threading.Thread(target=recoverer)]
         for thread in threads:
@@ -602,7 +604,7 @@ class Recovery(unittest.TestCase):
     def test_source_stop_after_child_prepare_refuses_child_transport(self):
         cid=self.granted('prepared-then-stop')
         c.reserve(self.store,cid,'x','first')
-        real_execute=c.execute
+        real_execute=execution.execute
         def execute_child_after_source_stop(data,oid,transport=None):
             if oid!='first':
                 with closing(storage.Store(self.data)) as other:
@@ -611,10 +613,10 @@ class Recovery(unittest.TestCase):
         transport,calls=self.sequence(dict(finish='length',output='partial'),
                                       dict(finish='stop',output='Complete'))
         try:
-            c.execute=execute_child_after_source_stop
+            execution.execute=execute_child_after_source_stop
             real_execute(self.data,'first',transport)
         finally:
-            c.execute=real_execute
+            execution.execute=real_execute
         self.assertEqual(1,len(calls))
         source=c.inspect(self.store,cid)
         self.assertEqual('STOPPED',source['state'])
@@ -646,7 +648,7 @@ class Recovery(unittest.TestCase):
             ready.set()
             self.assertTrue(go.wait(timeout=5))
             try:
-                r.continue_preauthorized(self.data,'first',transport)
+                execution.continue_preauthorized(self.data,'first',transport)
             except Exception as exc:
                 errors.append(exc)
         threads=[threading.Thread(target=run,args=(ready1,)),
@@ -672,7 +674,7 @@ class Recovery(unittest.TestCase):
         c.reserve(self.store,cid,'x','first')
         transport,calls=self.sequence(dict(finish='length',output='partial'),
                                       dict(finish='stop',output='Complete'))
-        c.execute(self.data,'first',transport)
+        execution.execute(self.data,'first',transport)
         self.assertEqual(2,len(calls))
         child=self._recovery('first')
         self.assertEqual('RECEIVED',child['attempts'][0]['state'])
@@ -683,7 +685,7 @@ class Recovery(unittest.TestCase):
         before=self.store.inspect_budget('local-comparison')
         orphan=self.data/'pieces'/'orphan-untracked.txt'
         orphan.write_bytes(b'untracked')
-        r.continue_preauthorized(self.data,'first',transport)
+        execution.continue_preauthorized(self.data,'first',transport)
         self.assertEqual(1,len(calls))
         try:
             campaigns=c.list_campaigns(self.store)

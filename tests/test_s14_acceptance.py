@@ -8,12 +8,13 @@ import unittest
 from unittest.mock import Mock, patch
 
 from benchmark import evaluation, outgoing, storage
-from benchmark import openrouter_preparation as profiles
+from benchmark.transports import openrouter as profiles
 from tests import test_s5_regressions as s5
 from tests.test_openrouter_preparation import estimate_for, SYNTHETIC_PROFILE
 
 try:
-    from benchmark import judgment, openrouter_judgment
+    from benchmark import judgment
+    from benchmark.transports import openrouter as openrouter_judgment
 except ImportError:
     judgment = openrouter_judgment = None
 

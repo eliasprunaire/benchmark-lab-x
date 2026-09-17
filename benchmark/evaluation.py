@@ -11,7 +11,9 @@ import json
 from pathlib import Path
 import secrets
 
-from . import campaigns as c, qualification as q, storage
+from .validation import digest as value_digest, identifier, _hash, _texts
+from .acquisition import campaigns as c
+from . import qualification as q, storage
 from .storage import (ConflictError, IntegrityError, SchemaError, _fields,
                       _strict_json as encode, _transaction)
 
@@ -141,8 +143,8 @@ def _evidence(value, resources, *, required=False):
         raise ValueError('Pièces de preuve requises')
     for proof in value:
         _fields(proof, ('piece_id', 'sha256', 'passage'), 'evidence')
-        c.identifier(proof['piece_id'])
-        q._hash(proof['sha256'])
+        identifier(proof['piece_id'])
+        _hash(proof['sha256'])
         if type(proof['passage']) is not str:
             raise ValueError('Passage textuel requis')
         raw = resources.get(proof['piece_id'])
@@ -197,7 +199,7 @@ def _judgment(store, connection, value, ctx, resources, source_operation=None, r
     if value['mode'] not in ('local', 'human', 'assisted'):
         raise ValueError('Mode de jugement inconnu')
     c._present(value['instructions'], 'instructions')
-    q._texts(value['resources_seen'], 'resources_seen', unique=True)
+    _texts(value['resources_seen'], 'resources_seen', unique=True)
     if not set(value['resources_seen']) <= resources.keys():
         raise ValueError('Ressource vue étrangère')
     links = value['model_links']
@@ -235,7 +237,7 @@ def _judgment(store, connection, value, ctx, resources, source_operation=None, r
         if oid is not None or source_operation is not None:
             raise ValueError('Opération assistée incompatible avec le mode')
         return result
-    c.identifier(oid)
+    identifier(oid)
     current = next(iter(store._operations(connection, operation_ids={oid})), None)
     if current is None:
         raise KeyError(oid)
@@ -252,7 +254,7 @@ def _judgment(store, connection, value, ctx, resources, source_operation=None, r
         raise ValueError('Consignes de jugement absentes')
     binding = json.loads(op['resources'][0], object_pairs_hook=storage._unique_object)
     _fields(binding, ('instructions', 'context_sha256', 'piece_ids'), 'judgment inputs')
-    if (binding['instructions'] != value['instructions'] or binding['context_sha256'] != q.digest(ctx)
+    if (binding['instructions'] != value['instructions'] or binding['context_sha256'] != value_digest(ctx)
             or binding['piece_ids'] != list(resources) or op['resources'][1:] != list(resources)):
         raise ValueError('Jugement sans lien exact aux consignes et observations')
     receipt = op['receipt']
@@ -274,7 +276,7 @@ def _judgment(store, connection, value, ctx, resources, source_operation=None, r
 def _report(store, connection, report, ctx, resources, source_operation=None, responsible=_ACTOR):
     _fields(report, _REPORT_FIELDS, 'evaluation report')
     encode(report)
-    q._texts(report['limits'], 'limits')
+    _texts(report['limits'], 'limits')
     spec = ctx['qualification']['contract']['specification']
     criteria = {x['id']: x for x in spec['obligations'] + spec['eliminatory_errors']}
     if type(report['findings']) is not list:
@@ -413,12 +415,12 @@ def _record(store, connection, ctx, report, *, evaluation_id, created_at, engine
     observed = (op['receipt'] or {}).get('observed_configuration') or {}
     sources = observed.get('sources', {})
     output = resources.get(attempt['output_piece_id'])
-    c.identifier(evaluation_id)
+    identifier(evaluation_id)
     c._date(created_at)
-    q._hash(engine_source)
+    _hash(engine_source)
     record = dict(evaluation_id=evaluation_id, execution_id=evaluation_id, created_at=created_at,
                 engine_version=record_format, engine_source_sha256=engine_source,
-                context_sha256=q.digest(ctx), campaign_id=manifest['campaign_id'],
+                context_sha256=value_digest(ctx), campaign_id=manifest['campaign_id'],
                 manifest_sha256=campaign['manifest_sha256'], attempt_id=attempt['operation_id'],
                 case_id=cell['case_id'], configuration_id=cell['configuration_id'],
                 contract_sha256=qualification['contract_sha256'], qualification_id=qualification['approval']['qualification_id'],
@@ -487,7 +489,7 @@ def verify_evaluations(store, connection):
 
 
 def inspect(store, evaluation_id):
-    c.identifier(evaluation_id)
+    identifier(evaluation_id)
     connection = connection_for(store)
     with _transaction(connection):
         row = connection.execute('SELECT attempt_id FROM s5_evaluations WHERE evaluation_id=?', (evaluation_id,)).fetchone()
@@ -519,7 +521,8 @@ def decision(record, *, attempt=None) -> dict:
 
 def attempt_status(store, campaign_id, attempt_id):
     """Private read-only next action, including attempts without an official verdict"""
-    from . import recovery, judgment
+    from .acquisition import recovery
+    from . import judgment
     recovery_status = recovery.diagnose(store, attempt_id)
     connection = connection_for(store)
     with _transaction(connection):
@@ -587,8 +590,8 @@ def evaluate(store, campaign_id, attempt_id, *, responsible, authority, check, p
                 raise IntegrityError('Source changée pendant le jugement')
             connection.execute('INSERT INTO s5_evaluations VALUES (?,?,?,?,?,?,?,?,?,?)',
                                (record['evaluation_id'], campaign_id, attempt_id, record['contract_sha256'],
-                                record['qualification_id'], previous_evaluation_id, encode(record), q.digest(record),
-                                encode(ctx), q.digest(ctx)))
+                                record['qualification_id'], previous_evaluation_id, encode(record), value_digest(record),
+                                encode(ctx), value_digest(ctx)))
             return record
 
 
@@ -647,7 +650,7 @@ def prepare_report(store, campaign_id, attempt_id):
         resources = _resources(store, ctx)
         previous = _records(store, connection, attempt_id)
         spec = ctx['qualification']['contract']['specification']
-        return dict(campaign_id=campaign_id, attempt_id=attempt_id, context_sha256=q.digest(ctx),
+        return dict(campaign_id=campaign_id, attempt_id=attempt_id, context_sha256=value_digest(ctx),
                     previous_evaluation_id=previous[-1]['evaluation_id'] if previous else None,
                     contract=ctx['qualification']['contract'], attempt=ctx['attempt'],
                     pieces=[dict(piece_id=pid, sha256=sha256(raw).hexdigest(), content=raw.decode('utf-8'))
@@ -658,7 +661,6 @@ def prepare_report(store, campaign_id, attempt_id):
                         measures=[], judgment=dict(mode='human', instructions='Revue à renseigner selon la méthode du contrat',
                             resources_seen=[], assistance_operation_id=None, model_links='INCONNU',
                             disagreements=[], professional_review='ABSENTE'), limits=[]))
-
 
 
 def _review_piece(piece_id, name, raw):
@@ -705,7 +707,7 @@ def prepare_review(store, campaign_id, attempt_id):
         ctx = _context(store, connection, campaign_id, attempt_id)
         content = _review_content(store, ctx)
         previous = _records(store, connection, attempt_id)
-        return dict(outgoing_format=outgoing.FORMAT, content=content, content_sha256=q.digest(content),
+        return dict(outgoing_format=outgoing.FORMAT, content=content, content_sha256=value_digest(content),
                     binding=dict(campaign_id=campaign_id, attempt_id=attempt_id,
                                  previous_evaluation_id=previous[-1]['evaluation_id'] if previous else None))
 

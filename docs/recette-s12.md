@@ -94,4 +94,4 @@ Ran 1224 tests in 158.530s
 OK
 ```
 
-Cette découverte exclut `benchmark.test_demo` ; la commande séparée `uv run python -B -m unittest benchmark.test_demo` passe avec `Ran 69 tests in 40.124s`, `OK`. Le scan des accents et des commentaires ajoutés, les liens locaux et `git diff --check` passent aussi. Les preuves locales restent distinctes d’une CI Linux, d’une intégration sur `main` et d’un déploiement. Aucun push ni PR n’est demandé.
+Cette découverte excluait `benchmark.test_demo` ; la commande séparée `uv run python -B -m unittest benchmark.test_demo` avait donné `Ran 69 tests in 40.124s`, `OK`. Cette suite a depuis été retirée avec l’acquisition historique ; le lecteur est couvert sous `tests/test_historical_reader.py`. Le scan des accents et des commentaires ajoutés, les liens locaux et `git diff --check` passent aussi. Les preuves locales restent distinctes d’une CI Linux, d’une intégration sur `main` et d’un déploiement. Aucun push ni PR n’est demandé.

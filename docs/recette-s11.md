@@ -90,7 +90,7 @@ uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests
 uv run --with requests --with mpmath==1.3.0 python -m unittest discover -s tests
 ```
 
-Ces commandes contrôlent des propriétés automatisées. Leurs résultats ne prouvent ni une campagne de captures ni une validation visuelle. La suite historique `benchmark/test_demo.py` n’est pas découverte par la seconde commande.
+Ces commandes contrôlent des propriétés automatisées. Leurs résultats ne prouvent ni une campagne de captures ni une validation visuelle. La suite historique `benchmark/test_demo.py` n’était pas découverte par la seconde commande ; elle a depuis été retirée avec l’acquisition historique. Le lecteur est désormais couvert sous `tests/test_historical_reader.py`.
 
 ## Limites et décision
 

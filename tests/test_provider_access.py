@@ -13,8 +13,10 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
-from benchmark import campaigns, evaluation, preparation, provider_access, qualification, runtime, storage, web_api
-from benchmark.openrouter_preparation import ENDPOINT
+from benchmark.acquisition import execution
+from benchmark.acquisition import campaigns
+from benchmark import evaluation, preparation, provider_access, qualification, runtime, storage, web_api
+from benchmark.transports.openrouter import ENDPOINT
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
 from tests.test_s4_regressions import inputs, manifest, response
 
@@ -401,7 +403,7 @@ class ProviderAccessTests(unittest.TestCase):
             supplied.append((channel_id, api_key))
             return response
 
-        campaigns.execute_launch(self.data, attempts, transport_factory=factory,
+        execution.execute_launch(self.data, attempts, transport_factory=factory,
                                  access_secret=SECRET, access_transport=self.transport)
         self.assertEqual([KEY, KEY], [key for _, key in supplied])
 

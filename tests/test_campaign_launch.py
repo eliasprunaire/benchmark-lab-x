@@ -9,8 +9,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from benchmark import (campaigns as c, evaluation, judgment, model_catalogue,
-                       preparation as p, provider_access, qualification as q, restitution, storage, web_api)
+from benchmark.acquisition import execution
+from benchmark.acquisition import campaigns as c
+from benchmark import evaluation, judgment, model_catalogue, preparation as p, provider_access, qualification as q, restitution, storage, web_api
 from benchmark_web import campaign_views, views
 from benchmark_web import projection
 from tests.test_openrouter_qualification import qualify_fixture
@@ -91,7 +92,7 @@ class CampaignLaunch(unittest.TestCase):
         def transport(op, request):
             calls.append(op['operation_id'])
             return response(op, request)
-        c.execute_launch(self.data, next(r for r in replies if r), transport)
+        execution.execute_launch(self.data, next(r for r in replies if r), transport)
         self.assertEqual(2, len(calls))
         self.assertEqual([], self.launch(body))
         self.assertEqual(['RECEIVED'] * 2, [a['state'] for a in c.inspect(self.store, 'local-comparison')['attempts']])
@@ -127,7 +128,7 @@ class CampaignLaunch(unittest.TestCase):
         attempts = self.launch(body)
         c.stop(self.store, 'local-comparison')
         calls = []
-        c.execute_launch(self.data, attempts, lambda *args: calls.append(args))
+        execution.execute_launch(self.data, attempts, lambda *args: calls.append(args))
         self.assertEqual([], calls)
         with self.assertRaises(p.Denied):
             self.launch(body)
@@ -140,7 +141,7 @@ class CampaignLaunch(unittest.TestCase):
             result = response(op, request)
             result['cost'].update(status='UNKNOWN', amount=None)
             return result
-        c.execute_launch(self.data, attempts, transport)
+        execution.execute_launch(self.data, attempts, transport)
         self.assertEqual(1, len(calls))
         self.assertIsNone(c.inspect(self.store, 'local-comparison')['admission'])
 
@@ -242,7 +243,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
             value = response(operation, request)
             value['cost'].update(currency='USD', amount='0.001')
             return value
-        c.execute_launch(self.data, attempts, received, access_secret=SECRET, access_transport=self.access)
+        execution.execute_launch(self.data, attempts, received, access_secret=SECRET, access_transport=self.access)
         result = restitution.comparison(self.store, self.sid, 'fixture', self.campaign_id)
         self.assertEqual(['cost'], [column['id'] for column in result['columns']])
         self.assertEqual([], result['rows'])
@@ -530,7 +531,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
             result['cost'].update(amount='0.06', currency='USD')
             return result
 
-        c.execute_launch(self.data, attempts, transport, access_secret=SECRET,
+        execution.execute_launch(self.data, attempts, transport, access_secret=SECRET,
                          access_transport=self.access)
         snapshot = c.inspect(self.store, self.campaign_id)
         self.assertEqual(2, len(calls))
@@ -557,7 +558,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
                                                emission='UNKNOWN', output=None)
             return result
 
-        c.execute_launch(self.data, second_attempts, limited, access_secret=SECRET,
+        execution.execute_launch(self.data, second_attempts, limited, access_secret=SECRET,
                          access_transport=self.access)
         self.assertEqual('ACQUISITION_EVIDENCE_INCOMPLETE',
                          c.inspect(self.store, second_id)['stop_reason'])
@@ -583,11 +584,11 @@ class BackendReadiness(CampaignLaunch):
             result = response(op, request)
             result['cost'].update(status='UNKNOWN', amount=None)
             return result
-        c.execute(self.data, 'new-x', unknown)
+        execution.execute(self.data, 'new-x', unknown)
         self.assertIsNotNone(c.inspect(self.store, 'new-policy')['admission'])
         self.assertEqual('7', self.store.inspect_budget('local-comparison')['reserved'])
         c.reserve(self.store, 'new-policy', 'y', 'new-y')
-        c.execute(self.data, 'new-y', response)
+        execution.execute(self.data, 'new-y', response)
         budget = self.store.inspect_budget('local-comparison')
         self.assertEqual('7', budget['reserved'])
         self.assertEqual(['new-x'], budget['unknown_cost_operations'])
@@ -603,7 +604,7 @@ class BackendReadiness(CampaignLaunch):
         c.reserve(self.store, 'new-policy', 'x', 'new-x')
         def broken(op, request):
             raise OSError('fixture interruption')
-        c.execute(self.data, 'new-x', broken)
+        execution.execute(self.data, 'new-x', broken)
         self.assertIsNone(c.inspect(self.store, 'new-policy')['admission'])
         with self.assertRaises(ValueError):
             c.reserve(self.store, 'new-policy', 'y', 'new-y')
@@ -613,8 +614,8 @@ class BackendReadiness(CampaignLaunch):
         from benchmark import runtime
         with patch('benchmark.service.serve_executor') as server, \
              patch('benchmark.service.release_identity', return_value='a'*40), \
-             patch('benchmark.pi_openrouter.identity'), \
-             patch('benchmark.pi_openrouter.PiOpenRouter') as bridge, \
+             patch('benchmark.transports.pi.identity'), \
+             patch('benchmark.transports.pi.PiOpenRouter') as bridge, \
              patch.dict('os.environ', {'OPENROUTER_API_KEY':'fixture-not-a-real-key'}):
             result = runtime.main(['executor','--data',str(self.data),'--socket',str(self.data/'sock'),
                                    '--candidate-pi','--pi-package','/fixture/pi','--node','/fixture/node'])

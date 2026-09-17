@@ -16,7 +16,9 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import urlencode, urlsplit
 
-from benchmark import campaigns, evaluation, model_catalogue, preparation as prep
+from benchmark.acquisition import execution
+from benchmark.acquisition import campaigns
+from benchmark import evaluation, model_catalogue, preparation as prep
 from benchmark import provider_access, qualification, service, storage, web_api
 from benchmark_web import server, views
 from tests.test_configurations import NOW, model
@@ -356,13 +358,13 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('en attente', page.visible)
         self.assertFalse(any(f['action'].endswith('/cap') for f in page.forms))
         self.assertEqual(3, len(self.calls))
-        campaigns.execute_launch(self.data, attempts[:1], self.candidate,
+        execution.execute_launch(self.data, attempts[:1], self.candidate,
                                  access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'réception partielle', 'Actualiser le suivi')
         self.assertIn('réponse reçue', page.visible)
         self.assertIn('en attente', page.visible)
-        campaigns.execute_launch(self.data, attempts[1:], self.candidate,
+        execution.execute_launch(self.data, attempts[1:], self.candidate,
                                  access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'réponses reçues', 'Comparer les résultats et lire les preuves')

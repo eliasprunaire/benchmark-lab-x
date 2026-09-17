@@ -525,7 +525,7 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
             from .qualification import schema_objects
             s3 = s2 + schema_objects()
         if s3 is not None and any(name == 's4_control' for _, name, _, _ in rows):
-            from .campaigns import schema_objects
+            from .acquisition.campaigns import schema_objects
             s4 = s3 + schema_objects()
         if s4 is not None and any(name == 's5_control' for _, name, _, _ in rows):
             from .evaluation import schema_objects
@@ -549,7 +549,7 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
             if connection.execute('SELECT * FROM s3_control').fetchall() != [(1, FORMAT_IDENTITY)]:
                 raise SchemaError('unsupported qualification identity')
         if layout in ('s4', 's5', 's6'):
-            from .campaigns import FORMAT_IDENTITY
+            from .acquisition.campaigns import FORMAT_IDENTITY
             if connection.execute('SELECT * FROM s4_control').fetchall() != [(1, FORMAT_IDENTITY)]:
                 raise SchemaError('unsupported campaigns identity')
         if layout in ('s5', 's6'):
@@ -733,7 +733,7 @@ class Store:
             + ', r.budget_id, r.amount, b.currency FROM operations o '
             'LEFT JOIN reservations r ON r.operation_id=o.operation_id '
             'LEFT JOIN budgets b ON b.budget_id=r.budget_id ORDER BY o.operation_id'
-        ).fetchall()
+        )
         records = []
         for row in rows:
             record: dict = dict(zip(_OPERATION_COLUMNS + ('budget_id', 'reserved_amount', 'currency'), row))
@@ -1068,7 +1068,7 @@ class Store:
                     'SELECT piece_id, relative_path FROM pieces ORDER BY piece_id').fetchall():
                 references.add(relative_path)
                 try:
-                    self.read_piece(piece_id)
+                    self.verify_piece(piece_id)
                 except IntegrityError:
                     broken.append(piece_id)
             # Inventory names only: do not follow links or remove partial/orphan bytes
@@ -1085,7 +1085,7 @@ class Store:
                 from .qualification import verify_qualification
                 verify_qualification(self, connection)
             if layout in ('s4', 's5', 's6'):
-                from .campaigns import verify_campaigns
+                from .acquisition.campaigns import verify_campaigns
                 verify_campaigns(self, connection)
             if layout in ('s5', 's6'):
                 from .evaluation import verify_evaluations
@@ -1221,7 +1221,8 @@ class Store:
             raise IntegrityError("invalid stored piece metadata") from error
         return meta
 
-    def read_piece(self, piece_id: str) -> bytes:
+    @contextmanager
+    def _piece_file(self, piece_id):
         meta = self.get_piece(piece_id)
         try:
             fd = os.open(meta["relative_path"].split("/")[1],
@@ -1231,15 +1232,24 @@ class Store:
                 _private(before)
                 if before.st_size != meta["size_bytes"]:
                     raise IntegrityError("piece size mismatch")
-                raw = stream.read()
+                yield stream, meta
                 after = os.fstat(stream.fileno())
                 if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
                         after.st_size, after.st_mtime_ns, after.st_ctime_ns):
                     raise IntegrityError("piece changed during reading")
         except OSError as error:
             raise IntegrityError("piece file missing or unsafe") from error
-        if len(raw) != meta["size_bytes"] or hashlib.sha256(raw).hexdigest() != meta["sha256"]:
-            raise IntegrityError("piece size or SHA-256 mismatch")
+
+    def verify_piece(self, piece_id: str) -> None:
+        with self._piece_file(piece_id) as (stream, meta):
+            if hashlib.file_digest(stream, 'sha256').hexdigest() != meta['sha256']:
+                raise IntegrityError("piece size or SHA-256 mismatch")
+
+    def read_piece(self, piece_id: str) -> bytes:
+        with self._piece_file(piece_id) as (stream, meta):
+            raw = stream.read()
+            if len(raw) != meta['size_bytes'] or hashlib.sha256(raw).hexdigest() != meta['sha256']:
+                raise IntegrityError("piece size or SHA-256 mismatch")
         return raw
 
     def close(self) -> None:

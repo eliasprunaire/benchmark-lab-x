@@ -5,7 +5,7 @@ il valide des octets déjà approuvés et les sert depuis le seul répertoire pu
 Il n'ouvre aucun stockage et n'instancie aucun Store.
 """
 from copy import deepcopy
-from hashlib import sha256
+from hashlib import file_digest, sha256
 import json
 import os
 from pathlib import Path
@@ -17,8 +17,8 @@ from .storage import _strict_json as encode, _unique_object
 from .validation import identifier, _hash, _texts
 
 SCHEMA = 'benchmark-lab-x/restitution-fictional/v1'
-PRESENTATION_VERSION = '4'
-PRESENTATION_VERSIONS = ('1', '2', '3', '4')
+PRESENTATION_VERSION = '5'
+PRESENTATION_VERSIONS = ('1', '2', '3', '4', '5')
 _FILES = re.compile(r'[A-Za-z0-9_-]+\.(?:html|css|txt)\Z')
 
 
@@ -106,23 +106,29 @@ def _directory(path):
         raise
 
 
-def _read(fd, name):
+def _read(fd, name, *, digest_only=False):
     file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
     with os.fdopen(file_fd, 'rb') as stream:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise ValueError('Fichier ordinaire requis')
-        return stream.read()
+        return file_digest(stream, 'sha256').hexdigest() if digest_only else stream.read()
 
 
-def _read_bundle(fd, identity):
+def _read_bundle(fd, identity, *, selected=None):
     raw = _read(fd, 'publication.json')
     m = _manifest(raw, identity)
     approval = _decode(_read(fd, 'approval.json'))
     _approval(approval, identity)
-    bundle = dict(manifest=raw, projection_sha256=identity,
-                  files={name: _read(fd, name) for name in m['files']})
-    _bundle(bundle, approval)
-    return bundle
+    files = {}
+    for name, expected in m['files'].items():
+        if selected is None or name == selected:
+            files[name] = _read(fd, name)
+            observed = sha256(files[name]).hexdigest()
+        else:
+            observed = _read(fd, name, digest_only=True)
+        if observed != expected:
+            raise ValueError('Octets de projection divergents')
+    return dict(manifest=raw, projection_sha256=identity, files=files)
 
 
 def public_bytes(destination, identity, name):
@@ -133,7 +139,7 @@ def public_bytes(destination, identity, name):
     try:
         folder = os.open(identity, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
         try:
-            bundle = _read_bundle(folder, identity)
+            bundle = _read_bundle(folder, identity, selected=name)
             if name not in bundle['files']:
                 raise ValueError('Pièce publique non déclarée')
             return bundle['files'][name]
