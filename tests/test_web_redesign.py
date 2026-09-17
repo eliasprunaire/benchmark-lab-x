@@ -65,6 +65,15 @@ class TemplateTests(unittest.TestCase):
         self.assertNotRegex(css, r'body\s*\{[^}]*overflow-wrap:\s*anywhere;')
         self.assertIn(':focus-visible { outline: 3px solid var(--focus)', css)
 
+    def test_personal_key_is_only_on_preparation_home(self):
+        for path, value in (
+                ('/preparation/dossiers', {'operation_id': 'op', 'dossier_id': 'd1'}),
+                ('/preparation/access', {'kind': 'access', 'status': 'disconnected'})):
+            with self.subTest(path=path):
+                page = views.render(dict(value, personal_preparation=True), 'csrf', path).decode()
+                self.assertNotIn('Ajouter ma clé Openrouter', page)
+                self.assertNotIn('id="openrouter-key"', page)
+
     def test_chaque_motif_de_disponibilite_a_son_libelle(self):
         motifs = set(re.findall(r"reason = '(\w+)'", inspect.getsource(prep.availability)))
         self.assertIn('daily_cap', motifs)
@@ -157,6 +166,24 @@ class TemplateTests(unittest.TestCase):
 class DossierPageTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
+
+    def test_scope_confirmation_explains_why_benchmark_is_unavailable(self):
+        page = views.render({
+            'dossier_id': 'd1', 'revision': 2, 'stage': 'scope_confirmation',
+            'package': None, 'validation': None, 'qualified': False,
+            'explanation': '1 + 1 = 2. Souhaitez-vous préparer un exercice évaluable ?',
+            'payload': {'request': 'Je veux juste savoir combien font 1 + 1 et ce que signifie 10e23.',
+                        'clarifications': [], 'validated_assumptions': [],
+                        'reformulation': '', 'fictional_parameters': {}},
+            'availability': AVAILABILITY, 'personal_preparation': True},
+            'csrf', '/preparation/dossiers/d1').decode()
+        self.assertIn('Cette demande n’est pas encore une épreuve Bench-X', page)
+        self.assertIn('Aucun benchmark ne peut être lancé à cette étape.', page)
+        self.assertNotIn('href="#exemple"', page)
+        self.assertNotIn('href="#validation"', page)
+        self.assertNotIn('action="/preparation/dossiers/d1/validation"', page)
+        self.assertNotIn('Choisir les modèles', page)
+        self.assertNotIn('Ajouter ma clé Openrouter', page)
 
     def test_criteria_groups_render_new_and_legacy_packages(self):
         def render(criteria):
