@@ -180,7 +180,16 @@ class AccessViewTests(unittest.TestCase):
         page = views.render(value, 'csrf').decode()
         self.assertIn('action="/preparation/dossiers/d1/configurations"', page)
         self.assertEqual(2, page.count('name="models"'))
-        self.assertIn('name="tier" value="enhanced" checked', page)
+        markup = Markup(page.encode())
+        radios = {attrs['value']: attrs for tag, attrs in markup.tags
+                  if tag == 'input' and attrs.get('name') == 'tier'}
+        self.assertIn('checked', radios['enhanced'])
+        self.assertNotIn('checked', radios['standard'])
+        descriptions = {attrs.get('id') for tag, attrs in markup.tags if tag == 'p'}
+        for radio in radios.values():
+            self.assertIn(radio['aria-describedby'], descriptions)
+        self.assertIn('Le modèle utilise ses réglages habituels', page)
+        self.assertIn('sans garantir une meilleure réponse', page)
         self.assertIn('palier de raisonnement non réglable', page)
         for technical in ('modele-a', 'modele-b'):
             self.assertIn('<details><summary>Identifiant technique</summary><code>' +
