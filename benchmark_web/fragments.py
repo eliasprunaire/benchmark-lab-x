@@ -60,8 +60,9 @@ def hidden(name, value):
     return f'<input type="hidden" name="{text(name)}" value="{text(value)}">'
 
 
-def form(csrf, url, fields, content):
-    return (f'<form method="post" action="{text(url)}">' + hidden('csrf_token', csrf)
+def form(csrf, url, fields, content, *, form_id=None):
+    identity = '' if form_id is None else f' id="{text(form_id)}"'
+    return (f'<form{identity} method="post" action="{text(url)}">' + hidden('csrf_token', csrf)
             + ''.join(hidden(k, v) for k, v in fields.items()) + content + '</form>')
 
 

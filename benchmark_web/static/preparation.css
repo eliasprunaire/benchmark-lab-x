@@ -36,12 +36,12 @@
 svg[hidden] { display: none; }
 html { background: var(--paper); }
 body { margin: 0 auto; max-width: 76rem; padding: 0 clamp(16px, 3vw, 32px); color: var(--ink); background: var(--paper); font-family: var(--body); font-size: 16px; line-height: 1.55; overflow-wrap: break-word; }
-h1, h2, h3, h4, h5, h6 { font-family: var(--display); line-height: 1.15; letter-spacing: -.012em; text-wrap: balance; margin: 0 0 .5rem; }
-h1 { font-size: clamp(1.85rem, 3.6vw, 2.6rem); font-weight: 700; max-width: 24ch; margin: .25rem 0 .9rem; }
+h1, h2, h3, h4, h5, h6 { font-family: var(--display); line-height: 1.15; letter-spacing: -.012em; margin: 0 0 .5rem; }
+h1 { font-size: clamp(1.85rem, 3.6vw, 2.6rem); font-weight: 700; margin: .25rem 0 .9rem; }
 h2 { font-size: 1.25rem; font-weight: 700; }
 h3 { font-size: 1.02rem; font-weight: 700; margin-bottom: .35rem; }
 h4, h5, h6 { font-size: .95rem; font-weight: 700; }
-p { margin: .4rem 0; max-width: 68ch; }
+p { margin: .4rem 0; }
 a { color: var(--accent-ink); text-underline-offset: .2em; text-decoration-thickness: 1px; }
 a:hover { color: var(--accent); }
 code, pre, .verbatim, .mono { font-family: var(--mono); font-size: .9em; }
@@ -55,7 +55,7 @@ blockquote { margin: .6rem 0; border-left: 3px solid var(--line-2); padding-left
 :target { scroll-margin-top: 1rem; }
 .skip { position: absolute; top: -10rem; }
 .skip:focus { position: static; display: block; }
-.lead { font-size: 1.12rem; color: var(--ink-2); max-width: 58ch; }
+.lead { font-size: 1.12rem; color: var(--ink-2); }
 .hint, small { color: var(--muted); font-size: .9rem; }
 .eyebrow { font-family: var(--display); font-size: .74rem; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 700; margin: 0 0 .25rem; }
 .ico { width: 1.15em; height: 1.15em; vertical-align: -.2em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
@@ -202,7 +202,7 @@ thead th { font-family: var(--display); font-size: .72rem; letter-spacing: .05em
 tbody th { font-weight: 400; }
 tbody th strong { font-weight: 600; }
 td p, th p { margin: .3rem 0; }
-table details { max-width: 24rem; font-size: .88rem; margin: .4rem 0; }
+table details { font-size: .88rem; margin: .4rem 0; }
 .source-value { font-variant-numeric: tabular-nums; font-weight: 600; }
 .costbar { height: .45rem; border-radius: 3px; background: linear-gradient(to right, var(--accent) var(--w), var(--soft) var(--w)); margin-top: .35rem; min-width: 6rem; }
 tr.out .costbar { background: repeating-linear-gradient(135deg, var(--line-2) 0 3px, var(--soft) 3px 6px) 0 / var(--w) 100% no-repeat, var(--soft); }
@@ -217,7 +217,7 @@ footer.site h2 { font-family: var(--display); font-size: .74rem; letter-spacing:
 footer.site ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; }
 footer.site a { color: var(--ink-2); text-decoration: none; }
 footer.site a:hover { color: var(--accent-ink); text-decoration: underline; }
-footer.site p { margin: 0; max-width: 34ch; }
+footer.site p { margin: 0; }
 footer.site .brandline { display: flex; gap: .6rem; align-items: center; color: var(--ink); font-family: var(--display); font-weight: 700; font-size: 1rem; margin-bottom: .5rem; }
 footer.site .brandline img { width: 1.4rem; height: 1.4rem; color: var(--accent); }
 footer.site .bottom { display: flex; flex-wrap: wrap; gap: .4rem 2rem; margin-top: 1.6rem; padding-top: .9rem; border-top: 1px solid var(--line); font-size: .8rem; }

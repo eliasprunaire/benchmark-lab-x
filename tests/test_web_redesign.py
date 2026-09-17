@@ -19,6 +19,31 @@ class TemplateTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
 
+    def test_personal_key_follows_context_without_nesting_forms(self):
+        from html.parser import HTMLParser
+        class Forms(HTMLParser):
+            depth = 0
+            nested = False
+            def handle_starttag(self, tag, attrs):
+                if tag == 'form':
+                    self.nested |= self.depth > 0
+                    self.depth += 1
+            def handle_endtag(self, tag):
+                if tag == 'form':
+                    self.depth -= 1
+        page = views.render({'dossiers': [], 'availability': AVAILABILITY,
+                             'personal_preparation': True}, 'csrf').decode()
+        forms = Forms()
+        forms.feed(page)
+        self.assertFalse(forms.nested)
+        self.assertLess(page.index('id="context"'), page.index('Ma clé OpenRouter'))
+        self.assertLess(page.index('Ma clé OpenRouter'), page.index('Préparer cet exemple'))
+        parsed = Markup(page.encode())
+        button = next(attrs for tag, attrs in parsed.tags if tag == 'button' and attrs.get('form'))
+        self.assertEqual('prepare-case', button['form'])
+        self.assertTrue(any(tag == 'form' and attrs.get('id') == button['form'] for tag, attrs in parsed.tags))
+        self.assertNotIn('Préparation et qualification : plafond local', page)
+
     def test_evitement_et_aide_du_formulaire_indisponible(self):
         page = views.render({'dossiers': [], 'availability': dict(
             AVAILABILITY, can_submit=False, reason='closed')}, 'csrf')

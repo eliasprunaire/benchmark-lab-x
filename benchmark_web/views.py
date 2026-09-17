@@ -51,9 +51,7 @@ def personal_key_form(csrf, access):
     content += form(csrf, '/preparation/access/key', {'assistance_cap': '20'},
         '<label for="openrouter-key">Clé API OpenRouter</label>'
         '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help">'
-        '<p id="key-help">Utilisez une clé dédiée avec un plafond OpenRouter non renouvelable de 50 USD maximum. '
-        'Préparation et qualification : plafond local de 20 USD pour ce navigateur. Les comparaisons demandent une autorisation distincte. '
-        'Enregistrer vérifie la clé sans lancer de modèle ; remplacer la clé ne réinitialise pas le budget.</p>'
+        '<p id="key-help">Utilisez une clé dédiée avec un plafond OpenRouter non renouvelable de 50 USD maximum.</p>'
         '<button type="submit">Enregistrer la clé</button>')
     if access.get('status') in ('connected', 'invalid'):
         content += form(csrf, '/preparation/access/disconnect', {},
@@ -203,8 +201,10 @@ def render(value, csrf, path='/preparation', *, error=False):
             '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5" aria-describedby="request-help' + ('"' if can_submit else ' availability" disabled') + '></textarea>'
             '<label for="useful">Résultat attendu</label><textarea id="useful" name="useful" maxlength="800" rows="3"' + disabled + '></textarea>'
             '<label for="context">Contexte utile</label><textarea id="context" name="context" maxlength="200" rows="2"' + disabled + '></textarea>'
-            '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>'
-            '<button type="submit"' + disabled + '>' + icon('i-pen') + 'Préparer cet exemple</button>'), 'besoin')
+            '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>',
+            form_id='prepare-case')
+            + (personal_key_form(csrf, value.get('personal_access', {})) if value.get('personal_preparation') else '')
+            + '<button type="submit" form="prepare-case"' + disabled + '>' + icon('i-pen') + 'Préparer cet exemple</button>', 'besoin')
         content += section('Mes cas d’usage dans ce navigateur', dossiers)
     elif value.get('kind') == 'honeypot_ack' or 'operation_id' in value:
         title = 'Demande enregistrée'
@@ -395,8 +395,8 @@ def render(value, csrf, path='/preparation', *, error=False):
                 url + '/configurations') + '">Choisir les modèles</a></p>'
         if 'campaigns' in value:
             content += render_campaign_history(value['campaigns'], url)
-    if value.get('personal_preparation') and s9:
-        content = personal_key_form(csrf, value.get('personal_access', {})) + content
+    if value.get('personal_preparation') and s9 and 'dossiers' not in value:
+        content += personal_key_form(csrf, value.get('personal_access', {}))
     if state and s9:
         reasons = {
             'access': 'Ajoutez votre clé OpenRouter pour préparer un exemple avec votre propre accès.',
