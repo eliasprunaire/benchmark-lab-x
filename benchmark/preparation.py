@@ -23,7 +23,6 @@ USEFUL_MAX = 800
 CONTEXT_MAX = 200
 MESSAGE_MAX = 1_000
 SESSION_INTERVAL = timedelta(seconds=30)
-SESSION_DAILY_DOSSIERS = 2
 PREPARATION_DAILY_CAP_USD = Decimal('20')
 SOURCE_HOURLY_MAX = 20
 SOURCE_RATE_WINDOW = timedelta(hours=1)
@@ -105,25 +104,19 @@ def _daily_preparation_reserved(connection, now):
     return _sum_money(_money(row[0]) for row in amounts)
 
 
-def _submission_limits(connection, session_id, create, now, authority):
+def _submission_limits(connection, session_id, now, authority):
     if connection.execute(
             "SELECT 1 FROM operations o JOIN s2_dossiers d USING(dossier_id) "
             "WHERE d.session_id=? AND o.phase IN ('preparation','correction','qualification') "
             "AND o.state!='RECEIVED' LIMIT 1",
             (session_id,)).fetchone():
         raise Denied('PREPARATION_IN_PROGRESS')
-    rows = connection.execute(
-        "SELECT o.created_at,a.kind FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) "
-        "JOIN operations o USING(operation_id) WHERE d.session_id=? ORDER BY o.created_at DESC",
-        (session_id,)).fetchall()
-    dates = [(datetime.fromisoformat(created), kind) for created, kind in rows]
-    if dates and now - dates[0][0] < SESSION_INTERVAL:
+    latest = connection.execute(
+        "SELECT o.created_at FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) "
+        "JOIN operations o USING(operation_id) WHERE d.session_id=? ORDER BY o.created_at DESC LIMIT 1",
+        (session_id,)).fetchone()
+    if latest and now - datetime.fromisoformat(latest[0]) < SESSION_INTERVAL:
         raise Denied('TOO_SOON')
-    if create:
-        today = now.date()
-        if sum(kind == 'create' and created.astimezone(timezone.utc).date() == today
-               for created, kind in dates) >= SESSION_DAILY_DOSSIERS:
-            raise Denied('DAILY_SESSION_LIMIT')
     if (_daily_preparation_reserved(connection, now) + _money(authority['reserve_amount'])
             > PREPARATION_DAILY_CAP_USD):
         raise Denied('DAILY_CAP')
@@ -609,7 +602,7 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
         if not authority or not transport or os.path.lexists(store._root / 'restore.json'):
             raise Denied('Admission fermée ou transport absent')
         if enforce_limits:
-            _submission_limits(connection, session_id, create, now, authority)
+            _submission_limits(connection, session_id, now, authority)
         # S2 admits one effect at a time; no restart drains a durable queue
         if connection.execute(
                 "SELECT 1 FROM operations WHERE phase IN ('preparation','correction','qualification') "

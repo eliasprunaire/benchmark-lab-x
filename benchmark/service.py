@@ -146,7 +146,6 @@ def denied_response(error):
         'TEXT_TOO_LONG': 'Ce texte est trop long.',
         'PREPARATION_IN_PROGRESS': 'Une préparation est déjà en cours.',
         'TOO_SOON': 'Attendez avant un nouvel envoi.',
-        'DAILY_SESSION_LIMIT': 'La limite quotidienne de dossiers est atteinte.',
         'SOURCE_RATE_LIMIT': 'La limite horaire de cette source est atteinte.',
         'SOURCE_MISSING': 'La source de cet envoi est absente ou invalide.',
         'DAILY_CAP': 'Le plafond quotidien de préparation est atteint.',
