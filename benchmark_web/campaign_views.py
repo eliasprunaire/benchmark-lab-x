@@ -271,13 +271,19 @@ def render_configurations(value, csrf):
                 choices += ' · palier de raisonnement non réglable'
             choices += '</label>'
         tiers = ''.join(
-            '<label><input type="radio" name="tier" value="' + tier + '"' +
+            '<label><input type="radio" name="tier" aria-describedby="tier-help-' + tier + '" value="' + tier + '"' +
             (' checked' if value['current_tier'] == tier else '') + '> ' +
-            ('Standard' if tier == 'standard' else 'Renforcé') + '</label>'
+            ('Standard' if tier == 'standard' else 'Renforcé') + '</label>' +
+            '<p class="hint" id="tier-help-' + tier + '">' +
+            ('Le modèle utilise ses réglages habituels, sans demande de raisonnement renforcé.'
+             if tier == 'standard' else
+             'Demande un raisonnement plus approfondi, lorsque le modèle le permet. '
+             'Cela peut allonger l’attente et augmenter le coût, sans garantir une meilleure réponse. '
+             'Sans effet sur les modèles indiqués comme non réglables.') + '</p>'
             for tier in value['available_tiers'])
         content += ('<form method="post" action="' + text(dossier_url + '/configurations') + '">' +
                     hidden('csrf_token', csrf) + '<fieldset><legend>Modèles à comparer</legend>' +
-                    choices + '</fieldset><fieldset><legend>Palier</legend>' + tiers +
+                    choices + '</fieldset><fieldset><legend>Palier de raisonnement</legend>' + tiers +
                     '</fieldset><button' + (' class="sec"' if value['configurations'] else '') + ' type="submit">Enregistrer les configurations</button></form>')
     if value['configurations']:
         model_names = {model['id']: model['name'] for model in value['models']}
