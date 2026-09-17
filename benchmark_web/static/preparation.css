@@ -71,16 +71,13 @@ header.site nav { display: flex; flex-wrap: wrap; gap: .2rem 1.2rem; font-size: 
 header.site nav a { color: var(--ink-2); text-decoration: none; padding: .3rem 0; border-bottom: 2px solid transparent; }
 header.site nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 700; }
 header.site nav a:hover { color: var(--accent-ink); border-bottom-color: var(--accent-soft-2); }
-main { min-width: 0; max-width: 60rem; padding-block: 1.6rem 2rem; }
+main { min-width: 0; padding-block: 1.6rem 2rem; }
 .layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 2.5rem; }
 section { margin: 1.6rem 0 0; padding-top: 1.2rem; border-top: 1px solid var(--line); }
 main > h1 + section, .hero + section { border-top: 0; padding-top: 0; }
 section h3 { margin-top: 1rem; }
 .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem 2rem; }
 .two section { margin: 0; border-top: 0; padding-top: 0; }
-
-aside[aria-label="Modèles disponibles"] { font-size: .85rem; color: var(--muted); margin: 0 0 .6rem; }
-aside[aria-label="Modèles disponibles"] p { max-width: none; margin: 0; }
 
 /* Étapes */
 .steps { padding-top: 1.8rem; position: sticky; top: 0; align-self: start; font-size: .92rem; font-family: var(--display); }
