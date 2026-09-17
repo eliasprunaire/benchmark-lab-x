@@ -190,7 +190,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         content = render_attempt_detail(value)
     elif 'dossiers' in value:
         title = 'Mes cas d’usage'
-        content = '<p class="lead" role="status">Décrivez le travail et le résultat qui vous serait utile. Vous pourrez examiner et corriger l’exemple avant de le valider.</p>'
+        content = personal_key_form(csrf, value.get('personal_access', {})) if value.get('personal_preparation') else ''
+        content += '<p class="lead" role="status">Décrivez le travail et le résultat qui vous serait utile. Vous pourrez examiner et corriger l’exemple avant de le valider.</p>'
         dossiers = '<ul class="dossiers">' + ''.join(
             f'<li><a href="/preparation/dossiers/{text(d["dossier_id"])}">{text(d.get("need") or "Cas d’usage " + d["dossier_id"])}</a>'
             f'<small>Révision {d["revision"]}</small><a class="button sec" href="/preparation/dossiers/{text(d["dossier_id"])}">Reprendre</a></li>'
@@ -205,7 +206,6 @@ def render(value, csrf, path='/preparation', *, error=False):
             '<label for="context">Contexte utile</label><textarea id="context" name="context" maxlength="200" rows="2"' + disabled + '></textarea>'
             '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>',
             form_id='prepare-case')
-            + (personal_key_form(csrf, value.get('personal_access', {})) if value.get('personal_preparation') else '')
             + '<button type="submit" form="prepare-case"' + disabled + '>' + icon('i-pen') + 'Préparer cet exemple</button>', 'besoin')
         content += section('Mes cas d’usage dans ce navigateur', dossiers)
     elif value.get('kind') == 'honeypot_ack' or 'operation_id' in value:
