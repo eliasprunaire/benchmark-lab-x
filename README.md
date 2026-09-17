@@ -60,7 +60,7 @@ uv run --env-file .env python -m benchmark.runtime --help
 
 Le fichier `.env` reste local et ne doit jamais être versionné. Renseigner une clé ne lance aucun appel et ne crée aucune autorité.
 
-Dans le parcours web configuré en mode personnel, **Ma clé OpenRouter** permet de fournir votre clé depuis le navigateur, sans modifier le `.env` du serveur. Elle finance vos préparations, qualifications et comparaisons sous leurs plafonds respectifs. Enregistrer la clé ne lance aucun modèle.
+Dans le parcours web configuré en mode personnel, **Ajouter ma clé Openrouter** permet de fournir votre clé depuis le navigateur, sans modifier le `.env` du serveur. Elle finance vos préparations, qualifications et comparaisons sous leurs plafonds respectifs. Enregistrer la clé ne lance aucun modèle.
 
 ### Lire un résultat historique
 

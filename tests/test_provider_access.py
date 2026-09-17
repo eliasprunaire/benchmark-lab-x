@@ -214,7 +214,7 @@ class ProviderAccessTests(unittest.TestCase):
         html = render({'dossiers': [], 'personal_preparation': True, 'personal_access': value}, csrf).decode()
         self.assertIn('type="password"', html)
         self.assertIn('autocomplete="new-password"', html)
-        self.assertIn('Ma clé OpenRouter', html)
+        self.assertIn('Ajouter ma clé Openrouter', html)
         self.assertIn('Retirer la clé', html)
         self.assertNotIn(KEY, html)
         self.assertNotIn('localStorage', html)

@@ -43,8 +43,7 @@ def render_task_index(task):
 
 def personal_key_form(csrf, access):
     connected = access.get('connected', False)
-    status = 'Clé vérifiée' if connected else 'Ajouter ma clé'
-    content = '<details class="corr"><summary class="button sec">Ma clé OpenRouter · ' + status + '</summary><div>'
+    content = '<details class="corr personal-key"><summary class="button sec">Ajouter ma clé Openrouter</summary><div>'
     if connected:
         content += '<p>Plafond OpenRouter : ' + text(access.get('limit_usd') or 'inconnu') + ' USD. Solde annoncé : ' + text(access.get('limit_remaining_usd') or 'inconnu') + ' USD.</p>'
     content += '<p>Cette clé finance uniquement vos essais dans ce navigateur. Elle est conservée chiffrée sur le serveur, jamais réaffichée.</p>'
