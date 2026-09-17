@@ -148,7 +148,7 @@ class ServiceProcessesTests(unittest.TestCase):
                 self.assertEqual(0, child.exitcode)
                 calls = completed.get(timeout=1)
                 self.assertEqual(1, calls.count('/api/v1/models'))
-                self.assertEqual(6, len(calls))
+                self.assertEqual(5, len(calls))
             finally:
                 release.set()
                 if child.is_alive():

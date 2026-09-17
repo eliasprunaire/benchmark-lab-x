@@ -41,7 +41,7 @@ class ModelCatalogueTests(unittest.TestCase):
             calls = []
             with patch.object(catalogue, '_now', return_value=NOW):
                 result = catalogue.refresh(store, self.fetch(calls))
-            self.assertEqual(6, len(calls))
+            self.assertEqual(5, len(calls))
             malformed = [model for model in result['models'] if model['excluded'] == 'malformed']
             self.assertEqual({
                 'openai/malformed-created',
@@ -53,7 +53,6 @@ class ModelCatalogueTests(unittest.TestCase):
                 'google/gemini-3.0-flash:free',
                 'openai/gpt-5.6-sol-0902',
                 'openai/gpt-5.6-sol',
-                'openai/gpt-5.5-sol',
                 'x-ai/grok-4-preview',
             ], [model['id'] for model in result['models'] if model['excluded'] != 'malformed'])
             self.assertNotIn('openai/gpt-5.4-sol', [model['id'] for model in result['models']])
@@ -77,12 +76,32 @@ class ModelCatalogueTests(unittest.TestCase):
                                 if model['excluded'] != 'malformed'))
             self.assertFalse(result['stale'])
 
+    def test_two_latest_models_per_maker_across_families_without_variant_duplicates(self):
+        rows = [dict(id=model_id, name=model_id, created=int((NOW - timedelta(days=days)).timestamp()),
+                     architecture={'output_modalities': ['text']}) for model_id, days in (
+            ('google/gemini-3.8-flash', 1), ('google/gemini-3.8-flash:free', 0),
+            ('google/gemini-3.7-pro', 2), ('google/gemini-3.7-flash', 3),
+            ('google/gemini-2.5-pro-preview', 100), ('openai/current-1', 1),
+            ('openai/other-family-2', 2), ('openai/third-family-3', 3),
+            ('openai/outdated-9', 500), ('unknown/recent-1', 0))]
+        def fetch(path):
+            if path == '/api/v1/models':
+                return {'data': rows}
+            model_id = path.removeprefix('/api/v1/models/').removesuffix('/endpoints')
+            return {'data': {'id': model_id, 'endpoints': [{'tag': 'fixture', 'status': 0}]}}
+        with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store, \
+                patch.object(catalogue, '_now', return_value=NOW):
+            result = catalogue.refresh(store, fetch)
+        self.assertEqual({'google/gemini-3.8-flash', 'google/gemini-3.7-pro',
+                          'openai/current-1', 'openai/other-family-2'},
+                         {m['id'] for m in result['models'] if m['excluded'] is None})
+
     def test_configuration_active_livree_avec_le_paquet(self):
         self.assertEqual(Path(catalogue.__file__).resolve().parent / 'models.toml',
                          catalogue.CONFIG_PATH)
         settings = catalogue._settings(catalogue._registry())
-        self.assertEqual(16, len(settings['makers']))
-        self.assertEqual((3, 365, 24), (settings['max_per_family'],
+        self.assertEqual(10, len(settings['makers']))
+        self.assertEqual((2, 365, 24), (settings['max_per_maker'],
                                         settings['max_age_days'], settings['cache_hours']))
         self.assertEqual(81, len(settings['baseline_families']))
         self.assertEqual(139, len(settings['baseline_models']))
@@ -106,7 +125,7 @@ class ModelCatalogueTests(unittest.TestCase):
         with registry:
             registry.write('''[catalogue]
 makers = ["openai", "anthropic", "google", "x-ai"]
-max_per_family = 3
+max_per_maker = 2
 max_age_days = 365
 cache_hours = 24
 excluded_providers = ["fixture"]
@@ -121,14 +140,14 @@ excluded_providers = ["fixture"]
         excluded = {model['id'] for model in result['models']
                     if model['excluded'] == 'provider_excluded'}
         self.assertEqual({'google/gemini-3.0-flash:free', 'openai/gpt-5.6-sol-0902',
-                          'openai/gpt-5.5-sol', 'x-ai/grok-4-preview'}, excluded)
+                          'x-ai/grok-4-preview'}, excluded)
 
     def test_excluded_providers_invalide(self):
         registry = tempfile.NamedTemporaryFile('w', suffix='.toml', delete=False)
         with registry:
             registry.write('''[catalogue]
 makers = ["openai"]
-max_per_family = 3
+max_per_maker = 2
 max_age_days = 365
 cache_hours = 24
 excluded_providers = "fixture"
@@ -220,7 +239,7 @@ excluded_providers = "fixture"
 
     def test_rapport_signale_une_famille_nouvelle_et_un_modele_disparu(self):
         registry = {
-            'catalogue': {'makers': ['openai'], 'max_per_family': 3,
+            'catalogue': {'makers': ['openai'], 'max_per_maker': 2,
                           'max_age_days': 365, 'cache_hours': 24,
                           'baseline_models': ['openai/ancien-1', 'openai/ancien-2'],
                           'baseline_fetched_at': '2026-09-01T00:00:00Z'},

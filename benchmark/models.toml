@@ -6,8 +6,8 @@
 # [catalogue].excluded_providers : slugs de fournisseurs, liste vide par défaut, inférés du préfixe du tag
 
 [catalogue]
-makers = ["openai", "anthropic", "google", "x-ai", "meta-llama", "mistralai", "deepseek", "qwen", "moonshotai", "z-ai", "minimax", "cohere", "ai21", "nvidia", "amazon", "microsoft"]
-max_per_family = 3
+makers = ["openai", "anthropic", "google", "x-ai", "mistralai", "deepseek", "qwen", "moonshotai", "z-ai", "minimax"]
+max_per_maker = 2
 max_age_days = 365
 cache_hours = 24
 baseline_families = [

@@ -115,8 +115,8 @@ class RuntimeBundleTests(unittest.TestCase):
                             'from pathlib import Path; from benchmark import model_catalogue; '
                             'assert model_catalogue.CONFIG_PATH == Path("benchmark/models.toml").resolve(), model_catalogue.CONFIG_PATH; '
                             'settings = model_catalogue._settings(model_catalogue._registry()); '
-                            'assert (settings["max_per_family"], settings["max_age_days"], settings["cache_hours"]) == (3, 365, 24); '
-                            'assert len(settings["makers"]) == 16; '
+                            'assert (settings["max_per_maker"], settings["max_age_days"], settings["cache_hours"]) == (2, 365, 24); '
+                            'assert len(settings["makers"]) == 10; '
                             'assert (len(settings["baseline_families"]), len(settings["baseline_models"])) == (81, 139); '
                             'assert model_catalogue.tiers() == {"deepseek": {"enhanced": {"enabled": True}}}'],
                            cwd=unpacked, check=True)

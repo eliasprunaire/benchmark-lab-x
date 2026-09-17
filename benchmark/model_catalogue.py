@@ -44,7 +44,7 @@ def _registry(path=None):
 
 def _settings(registry):
     value = registry.get('catalogue')
-    required = {'makers', 'max_per_family', 'max_age_days', 'cache_hours'}
+    required = {'makers', 'max_per_maker', 'max_age_days', 'cache_hours'}
     optional = {'baseline_families', 'baseline_models', 'baseline_fetched_at', 'excluded_providers'}
     if (type(value) is not dict or not required <= value.keys()
             or value.keys() - required - optional):
@@ -53,7 +53,7 @@ def _settings(registry):
     if (type(value['makers']) is not list or not value['makers']
             or any(type(item) is not str or not item for item in value['makers'])
             or any(type(value[key]) is not int or value[key] <= 0
-                   for key in ('max_per_family', 'max_age_days', 'cache_hours'))
+                   for key in ('max_per_maker', 'max_age_days', 'cache_hours'))
             or type(excluded_providers) is not list
             or any(type(item) is not str or not item for item in excluded_providers)):
         raise ValueError('Paramètres du catalogue invalides')
@@ -83,7 +83,7 @@ def _malformed(model):
 
 
 def _candidates(models, settings, now):
-    grouped = defaultdict(list)
+    variants = defaultdict(list)
     for model in models:
         model_id = _model_id(model)
         if model_id is None or model_id.split('/', 1)[0] not in settings['makers']:
@@ -91,14 +91,19 @@ def _candidates(models, settings, now):
         if (_malformed(model) or model_id.endswith(':batch')
                 or model['architecture'].get('output_modalities') != ['text']):
             continue
-        grouped[family(model_id)].append(model)
+        variants[model_id.split(':', 1)[0]].append(model)
     cutoff = int((now - timedelta(days=settings['max_age_days'])).timestamp())
+    grouped = defaultdict(list)
+    for alternatives in variants.values():
+        # La variante gratuite ne rajeunit pas le modèle ni n'occupe une seconde place
+        model = min(alternatives, key=lambda item: (':' in item['id'], -item['created'], item['id']))
+        if model['created'] >= cutoff:
+            grouped[model['id'].split('/', 1)[0]].append(model)
     selected = []
-    for models_in_family in grouped.values():
-        models_in_family.sort(key=lambda item: (-item['created'], item['id']))
-        if models_in_family[0]['created'] >= cutoff:
-            selected.extend(models_in_family[:settings['max_per_family']])
-    return sorted(selected, key=lambda item: (family(item['id']), -item['created'], item['id']))
+    for models_in_maker in grouped.values():
+        models_in_maker.sort(key=lambda item: (-item['created'], item['id']))
+        selected.extend(models_in_maker[:settings['max_per_maker']])
+    return sorted(selected, key=lambda item: (item['id'].split('/', 1)[0], -item['created'], item['id']))
 
 
 def _provider_slug(endpoint):
