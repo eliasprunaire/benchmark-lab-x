@@ -473,7 +473,9 @@ def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
     forecast = openrouter_prices.price_row(
         pricing, {'prompt': assumptions['input_tokens'], 'completion': assumptions['output_tokens']})['forecast']
     estimate = {'amount_usd': forecast['token_subtotal_usd'], 'forecast': forecast,
-                'fetched_at': fetched_at, 'assumptions': deepcopy(assumptions)}
+                'fetched_at': model.get('fetched_at', fetched_at), 'assumptions': deepcopy(assumptions)}
+    if model.get('probe_operation_id'):
+        estimate['probe_operation_id'] = model['probe_operation_id']
     configuration = dict(
         id=f'configuration-{index}', provider='OpenRouter', model=model['id'], revision=model['id'],
         access='API', channel_id='https://openrouter.ai/api/v1/chat/completions',
@@ -485,7 +487,7 @@ def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
 
 
 def prepare_configurations(store, session_id, dossier_id, body, candidate_identity):
-    from .. import model_catalogue, outgoing
+    from .. import model_catalogue, model_probes, outgoing
     from ..transports.pi import system_context
     _fields(body, ('models', 'tier'), 'configurations')
     if (type(body['models']) is not list or len(body['models']) < 2
@@ -502,7 +504,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
         from ..preparation import owner
         owner(connection, session_id, dossier_id)
         contract = _current_contract(store, connection, dossier_id)
-        catalogue = model_catalogue.selection(store)
+        catalogue = model_probes.selection(store, session_id, dossier_id)
         by_id = {model['id']: model for model in catalogue['models']}
         try:
             selected = [by_id[model_id] for model_id in body['models']]
@@ -552,16 +554,17 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
 
 
 def configurations_view(store, session_id, dossier_id):
-    from .. import model_catalogue
+    from .. import model_catalogue, model_probes
     from ..preparation import owner, page_view
     connection = connection_for(store)
     with _transaction(connection):
         owner(connection, session_id, dossier_id)
         try:
-            catalogue = model_catalogue.selection(store)
+            catalogue = model_probes.selection(store, session_id, dossier_id)
         except LookupError:
             catalogue = None
-        catalogue_status = {'catalogue_available': catalogue is not None,
+        catalogue_status = {'custom_models': model_probes.view(store, session_id, dossier_id),
+                            'catalogue_available': catalogue is not None,
                             'catalogue_stale': catalogue is not None and catalogue['stale'],
                             'catalogue_fetched_at': None if catalogue is None else catalogue['fetched_at'],
                             'detail': 'Relevé de modèles indisponible' if catalogue is None else None}
@@ -1055,7 +1058,7 @@ def _estimate_total(snapshot):
 
 
 def _requester_checks(store, connection, snapshot, session_id, access):
-    from .. import model_catalogue
+    from .. import model_probes
     from ..preparation import Denied, require_qualification
     task = snapshot['task']
     validated = connection.execute(
@@ -1070,11 +1073,14 @@ def _requester_checks(store, connection, snapshot, session_id, access):
         except Denied as error:
             qualification_findings = error.findings or []
     try:
-        catalogue = model_catalogue.selection(store)
-        selectable = {model['id'] for model in catalogue['models']
+        catalogue = model_probes.selection(store, session_id, task['dossier_id'])
+        selectable = {model['id']: model for model in catalogue['models']
                       if model['excluded'] is None and model['route'] is not None}
         missing = [configuration['model'] for configuration in snapshot['manifest']['panel']
-                   if configuration['model'] not in selectable]
+                   if configuration['model'] not in selectable or
+                   (configuration.get('estimate', {}).get('probe_operation_id') is not None and
+                    configuration['estimate']['probe_operation_id'] !=
+                    selectable[configuration['model']].get('probe_operation_id'))]
     except LookupError:
         missing = [configuration['model'] for configuration in snapshot['manifest']['panel']]
     total = _estimate_total(snapshot)
