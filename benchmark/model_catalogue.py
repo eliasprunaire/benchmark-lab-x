@@ -44,18 +44,24 @@ def _registry(path=None):
 
 def _settings(registry):
     value = registry.get('catalogue')
-    required = {'makers', 'max_per_family', 'max_age_days', 'cache_hours'}
-    optional = {'baseline_families', 'baseline_models', 'baseline_fetched_at', 'excluded_providers'}
+    required = {'makers', 'max_per_maker', 'max_age_days', 'cache_hours'}
+    optional = {'baseline_families', 'baseline_models', 'baseline_fetched_at', 'excluded_providers',
+                'generalist_families'}
     if (type(value) is not dict or not required <= value.keys()
             or value.keys() - required - optional):
         raise ValueError('Configuration [catalogue] incomplète')
     excluded_providers = value.get('excluded_providers', [])
+    generalist_families = value.get('generalist_families', [])
     if (type(value['makers']) is not list or not value['makers']
             or any(type(item) is not str or not item for item in value['makers'])
             or any(type(value[key]) is not int or value[key] <= 0
-                   for key in ('max_per_family', 'max_age_days', 'cache_hours'))
+                   for key in ('max_per_maker', 'max_age_days', 'cache_hours'))
             or type(excluded_providers) is not list
-            or any(type(item) is not str or not item for item in excluded_providers)):
+            or any(type(item) is not str or not item for item in excluded_providers)
+            or type(generalist_families) is not list
+            or any(type(item) is not str or not item for item in generalist_families)
+            or len(set(generalist_families)) != len(generalist_families)
+            or ('generalist_families' in value and not generalist_families)):
         raise ValueError('Paramètres du catalogue invalides')
     return value
 
@@ -76,6 +82,11 @@ def _model_id(model):
             and all(part not in ('.', '..') for part in model['id'].split('/')) else None)
 
 
+def _maker(model_id):
+    maker = model_id.split('/', 1)[0]
+    return 'meta' if maker == 'meta-llama' else maker
+
+
 def _malformed(model):
     return (type(model.get('created')) is not int
             or type(model.get('name')) is not str
@@ -83,22 +94,40 @@ def _malformed(model):
 
 
 def _candidates(models, settings, now):
-    grouped = defaultdict(list)
+    variants = defaultdict(list)
+    generalists = settings.get('generalist_families')
     for model in models:
         model_id = _model_id(model)
-        if model_id is None or model_id.split('/', 1)[0] not in settings['makers']:
+        if model_id is None or _maker(model_id) not in settings['makers']:
             continue
         if (_malformed(model) or model_id.endswith(':batch')
                 or model['architecture'].get('output_modalities') != ['text']):
             continue
-        grouped[family(model_id)].append(model)
+        if generalists is not None and family(model_id).removesuffix('-preview') not in generalists:
+            continue
+        variants[model_id.split(':', 1)[0]].append(model)
     cutoff = int((now - timedelta(days=settings['max_age_days'])).timestamp())
+    grouped = defaultdict(list)
+    for alternatives in variants.values():
+        # La variante gratuite ne rajeunit pas le modèle ni n'occupe une seconde place
+        model = min(alternatives, key=lambda item: (':' in item['id'], -item['created'], item['id']))
+        if model['created'] >= cutoff:
+            grouped[_maker(model['id'])].append(model)
     selected = []
-    for models_in_family in grouped.values():
-        models_in_family.sort(key=lambda item: (-item['created'], item['id']))
-        if models_in_family[0]['created'] >= cutoff:
-            selected.extend(models_in_family[:settings['max_per_family']])
-    return sorted(selected, key=lambda item: (family(item['id']), -item['created'], item['id']))
+    for models_in_maker in grouped.values():
+        models_in_maker.sort(key=lambda item: (-item['created'], item['id']))
+        if generalists is not None:
+            # Privilégier la dernière référence de chaque gamme avant ses anciennes révisions
+            newest, remaining = {}, []
+            for model in models_in_maker:
+                line = family(model['id']).removesuffix('-preview')
+                if line in newest:
+                    remaining.append(model)
+                else:
+                    newest[line] = model
+            models_in_maker = [*(newest[line] for line in generalists if line in newest), *remaining]
+        selected.extend(models_in_maker[:settings['max_per_maker']])
+    return sorted(selected, key=lambda item: (_maker(item['id']), -item['created'], item['id']))
 
 
 def _provider_slug(endpoint):
@@ -159,7 +188,7 @@ def refresh(store, fetch):
         for model in candidates:
             model_id = model['id']
             detail = _data(fetch('/api/v1/models/' + model_id + '/endpoints'), dict)
-            if detail.get('id') != model_id or type(detail.get('endpoints')) is not list:
+            if _model_id(detail) is None or type(detail.get('endpoints')) is not list:
                 raise ValueError('Endpoints du modèle non vérifiés')
             endpoint_documents[model_id] = detail
         document = {'models': models, 'endpoints': endpoint_documents}
@@ -222,7 +251,7 @@ def _selection(fetched_at, document, registry):
     view = [{
         'id': model_id,
         'name': model.get('name') if type(model.get('name')) is str else None,
-        'maker': model_id.split('/', 1)[0],
+        'maker': _maker(model_id),
         'family': family(model_id),
         'released': None,
         'input_price_per_million': None,
@@ -235,7 +264,7 @@ def _selection(fetched_at, document, registry):
         'excluded': 'malformed',
     } for model in models
         if (model_id := _model_id(model)) is not None
-        and model_id.split('/', 1)[0] in settings['makers'] and _malformed(model)]
+        and _maker(model_id) in settings['makers'] and _malformed(model)]
     for model in _candidates(models, settings, fetched_at):
         model_id = model['id']
         detail = endpoint_documents.get(model_id)
@@ -260,7 +289,11 @@ def _selection(fetched_at, document, registry):
                                   and not (type(endpoint.get('status')) in (int, float)
                                            and endpoint['status'] < 0)
                                   and _provider_slug(endpoint) not in excluded_providers)
-        if available_routes:
+        if detail.get('id') != model_id:
+            # Conserver le constat fournisseur sans rendre un alias substituable à sa cible
+            available_routes = []
+            excluded = 'endpoint_identity_mismatch'
+        elif available_routes:
             excluded = None
         elif endpoints and all(_provider_slug(endpoint) in excluded_providers
                                for endpoint in endpoints):
@@ -273,7 +306,7 @@ def _selection(fetched_at, document, registry):
         view.append({
             'id': model_id,
             'name': model['name'],
-            'maker': model_id.split('/', 1)[0],
+            'maker': _maker(model_id),
             'family': family(model_id),
             'released': datetime.fromtimestamp(model['created'], timezone.utc).date().isoformat(),
             'input_price_per_million': _million_price(pricing.get('prompt')),

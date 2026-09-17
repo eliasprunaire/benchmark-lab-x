@@ -6,10 +6,36 @@
 # [catalogue].excluded_providers : slugs de fournisseurs, liste vide par défaut, inférés du préfixe du tag
 
 [catalogue]
-makers = ["openai", "anthropic", "google", "x-ai", "meta-llama", "mistralai", "deepseek", "qwen", "moonshotai", "z-ai", "minimax", "cohere", "ai21", "nvidia", "amazon", "microsoft"]
-max_per_family = 3
+makers = ["openai", "anthropic", "google", "x-ai", "meta", "mistralai", "deepseek", "qwen", "moonshotai", "z-ai", "minimax", "cohere", "ai21", "nvidia", "amazon", "microsoft"]
+max_per_maker = 3
 max_age_days = 365
 cache_hours = 24
+# Gammes généralistes par ordre de priorité éditoriale, pas un classement de qualité
+# Les variantes Pro OpenAI et Contributor Meta ne prennent pas une seconde place
+# Les nouvelles générations de ces gammes sont relevées automatiquement
+# La date Openrouter est une date d'ajout au catalogue, pas une date de sortie certifiée
+generalist_families = [
+  "openai/gpt-#-astra", "openai/gpt-#-sol", "openai/gpt-#-terra",
+  "openai/gpt-#-luna", "openai/gpt-#", "openai/gpt-#-mini",
+  "anthropic/claude-fable-#", "anthropic/claude-opus-#", "anthropic/claude-sonnet-#",
+  "google/gemini-#-pro", "google/gemini-#-flash", "google/gemini-#-flash-lite",
+  "x-ai/grok-#",
+  "meta/muse-spark-#", "meta/muse-glimmer-#b",
+  "meta-llama/llama-#-maverick", "meta-llama/llama-#-scout", "meta-llama/llama-#-#b-instruct",
+  "mistralai/mistral-large", "mistralai/mistral-medium-#", "mistralai/mistral-medium-#-#",
+  "mistralai/mistral-small", "mistralai/mistral-small-#-#b-instruct",
+  "deepseek/deepseek-v#", "deepseek/deepseek-v#-flash", "deepseek/deepseek-v#-pro",
+  "qwen/qwen#-max", "qwen/qwen#-plus", "qwen/qwen#-flash",
+  "moonshotai/kimi-k#", "moonshotai/kimi-k#-thinking",
+  "z-ai/glm-#", "z-ai/glm-#-flash", "z-ai/glm-#-turbo",
+  "minimax/minimax-m#",
+  "cohere/command-a", "cohere/command-r-#", "cohere/command-r-plus-#",
+  "ai21/jamba-#-large", "ai21/jamba-#-mini",
+  "nvidia/nemotron-#-lightning", "nvidia/nemotron-#-ultra-#b-a#b",
+  "nvidia/nemotron-#-super-#b-a#b",
+  "amazon/nova-#-lite-v#", "amazon/nova-premier-v#", "amazon/nova-pro-v#",
+  "microsoft/phi-#", "microsoft/wizardlm-#-#x#b",
+]
 baseline_families = [
   "amazon/nova-#-lite-v#",
   "amazon/nova-premier-v#",
