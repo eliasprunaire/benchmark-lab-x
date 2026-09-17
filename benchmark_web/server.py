@@ -112,6 +112,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
             policy = "default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
             if script is not None:
                 policy += "; script-src 'sha256-" + b64encode(sha256(script.encode()).digest()).decode() + "'"
+                if script == views.PREPARATION_PROGRESS_SCRIPT:
+                    policy += "; connect-src 'self'"
             self.send_header('Content-Security-Policy', policy)
             self.send_header('Referrer-Policy', 'no-referrer')
             for name, value in (headers.items() if type(headers) is dict else headers or ()):
@@ -227,6 +229,15 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     token = result['cookie']
                 if result['status'] < 400 and token:
                     headers['Set-Cookie'] = _session_cookie(token)
+                if (self.command == 'POST' and result['status'] < 400 and not wants_json
+                        and (self.path == '/preparation/dossiers' or re.fullmatch(
+                            r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/(?:messages|validation)', self.path))):
+                    dossier_id = result['value']['dossier_id']
+                    if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', dossier_id):
+                        raise ValueError('Dossier de retour invalide')
+                    headers['Location'] = '/preparation/dossiers/' + dossier_id
+                    self.respond(303, b'', 'text/html; charset=utf-8', headers)
+                    return
                 if return_path is not None and result['status'] < 400:
                     response_headers = list(headers.items())
                     response_headers += [
@@ -272,15 +283,11 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                             result['value']['kind'] = 'access'
                         if 'operation_id' in result['value']:
                             result['value']['availability'] = home['value']['availability']
-                        if self.command == 'POST' and self.path.endswith('/validation'):
-                            target = '/preparation/dossiers/' + result['value']['dossier_id']
-                            result = preparation_request(socket_path, 'GET', target, token)
-                            view_path = target
                     elif self.command == 'POST' and type(body) is dict:
                         result['value']['form'] = {key: value for key, value in body.items()
                                                    if key not in ('csrf_token', 'source_sha256', 'website', 'key')}
                     page = views.render(result['value'], csrf, view_path, error=result['status'] >= 400)
-                    script = views.COMPARISON_FOCUS_SCRIPT if result['value'].get('kind') == 'comparison' else None
+                    script = views.page_script(result['value']) if result['status'] < 400 else None
                     self.respond(result['status'], page, 'text/html; charset=utf-8', headers, script=script)
             except (ValueError, TypeError, KeyError, CookieError) as error:
                 if relayed:

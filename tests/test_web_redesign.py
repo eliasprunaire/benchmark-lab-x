@@ -3,6 +3,8 @@ from contextlib import closing
 import inspect
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -303,6 +305,76 @@ class DossierPageTests(unittest.TestCase):
 
 
 class ComparisonPageTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Node requis pour exécuter le suivi navigateur')
+    def test_progress_script_reads_only_and_stops_on_completion_error_or_input(self):
+        program = r'''
+const vm = require('node:vm'), assert = require('node:assert/strict');
+const script = require('node:fs').readFileSync(0, 'utf8');
+(async () => {
+  for (const outcome of ['waiting', 'finished', 'error', 'input', 'pause']) {
+    const timers = new Map(), events = {}, requests = [], navigations = [];
+    const status = {}, progress = {}, pause = {addEventListener: (_, fn) => events.pause = fn};
+    const link = {href: 'https://fixture.invalid/preparation/dossiers/d1'};
+    const nodes = {'a': link, '[role="status"]': status, 'button': pause, 'progress': progress};
+    const panel = {querySelector: name => nodes[name]};
+    let serial = 0;
+    vm.runInNewContext(script, {
+      document: {hidden: false, getElementById: () => panel,
+                 addEventListener: (event, fn) => events[event] = fn},
+      window: {addEventListener: (event, fn) => events[event] = fn},
+      location: {replace: url => navigations.push(url)}, AbortController,
+      setTimeout: fn => {timers.set(++serial, fn); return serial;},
+      clearTimeout: id => timers.delete(id),
+      DOMParser: class {parseFromString() {return {getElementById: () => outcome === 'waiting' ? panel : null};}},
+      fetch: async (url, options) => {requests.push({url, options});
+        return {ok: outcome !== 'error', text: async () => '<html></html>'};}
+    });
+    if (outcome === 'input' || outcome === 'pause') events[outcome]();
+    else {const [id, task] = timers.entries().next().value; timers.delete(id); await task();}
+    assert.equal(requests.length, ['input', 'pause'].includes(outcome) ? 0 : 1);
+    for (const {url, options} of requests) {
+      assert.equal(url, link.href); assert.equal(options.method, undefined);
+      assert.equal(options.body, undefined); assert.equal(options.redirect, 'error');
+    }
+    assert.deepEqual(navigations, outcome === 'finished' ? [link.href] : []);
+    assert.equal(timers.size, outcome === 'waiting' ? 1 : 0);
+    if (['error', 'input', 'pause'].includes(outcome)) {
+      assert.equal(progress.hidden, true); assert.equal(pause.hidden, true);
+      assert.match(status.textContent, /interrompu|suspendu/);
+    }
+  }
+})().catch(error => {console.error(error); process.exitCode = 1;});
+'''
+        subprocess.run(['node', '-e', program], input=views.PREPARATION_PROGRESS_SCRIPT,
+                       text=True, check=True, capture_output=True)
+
+    def test_progress_only_for_current_pending_work(self):
+        value = dict(dossier_id='d1', revision=1, current_revision=1, stage='waiting',
+                     package=None, validation=None, qualified=False, explanation='Ancien texte',
+                     payload=dict(request='Trier les factures fictives', clarifications=[],
+                                  validated_assumptions=[], reformulation='', fictional_parameters={}),
+                     availability={**AVAILABILITY, 'reason': 'waiting', 'can_submit': False})
+        for stage, qualification, historical, pending in (
+                ('waiting', {}, False, True), ('waiting', {}, True, False),
+                ('clarification', {}, False, False), ('suspended', {}, False, False),
+                ('preview', {'operation_id': 'op', 'status': 'PENDING'}, False, True),
+                ('preview', {'operation_id': 'op', 'status': 'BLOCKED'}, False, False),
+                ('preview', {'operation_id': 'op', 'status': 'QUALIFIED'}, False, False)):
+            with self.subTest(stage=stage, qualification=qualification, historical=historical):
+                view = {**value, 'stage': stage, 'current_revision': 2 if historical else 1,
+                        'qualification': {**qualification, 'summary': 'Contrôle', 'findings': []},
+                        'validation': {'validated_at': '2026-09-17'} if qualification else None,
+                        'qualified': qualification.get('status') == 'QUALIFIED'}
+                page = views.render(view, 'csrf', '/preparation/dossiers/d1').decode()
+                self.assertEqual(pending, '<progress ' in page)
+                self.assertEqual(pending, 'id="preparation-progress"' in page)
+                if pending:
+                    self.assertEqual(1, page.count('id="availability"'))
+                    self.assertNotIn('<aside id="availability"', page)
+                    self.assertIn('Actualiser cet état', page)
+                    self.assertNotIn('<progress value=', page)
+                    self.assertIn('Suivi automatique', page)
+
     def test_badges_and_cost_bars(self):
         with tempfile.TemporaryDirectory() as temporary:
             data = Path(temporary).resolve() / 'private'

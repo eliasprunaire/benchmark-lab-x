@@ -250,3 +250,9 @@ footer.site details > :not(summary) { margin: .4rem 0 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 .website{display:none}
+/* Suivi natif indéterminé, sans pourcentage supposé */
+#preparation-progress { width: 100%; }
+#preparation-progress progress { width: 100%; height: .75rem; accent-color: var(--accent); }
+#preparation-progress [role="status"] { border: 0; padding: .4rem 0; background: transparent; }
+#preparation-progress button { padding: 0; border: 0; background: transparent; font: inherit; color: var(--accent-ink); text-decoration: underline; }
+#preparation-progress [hidden] { display: none; }

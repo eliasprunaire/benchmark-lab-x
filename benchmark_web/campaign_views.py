@@ -260,7 +260,9 @@ def render_configurations(value, csrf):
     if not value.get('catalogue_available', True):
         content += '<p>' + text(value['detail']) + '</p>'
     else:
-        content += '<p>Relevé des modèles du ' + text(date_lisible_utc(value['fetched_at'])) + '.</p>'
+        content += '<p>Relevé des modèles du ' + text(date_lisible_utc(value.get('catalogue_fetched_at', value['fetched_at']))) + '.</p>'
+        if value.get('catalogue_stale'):
+            content += '<p role="status">Ce relevé a expiré ; son actualisation n’a pas abouti. Le dernier relevé valide reste consultable.</p>'
         choices = ''
         for model in value['models']:
             checked = ' checked' if model['selected'] else ''

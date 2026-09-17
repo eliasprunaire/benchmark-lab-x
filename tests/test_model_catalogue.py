@@ -1,4 +1,5 @@
 from contextlib import closing
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -153,6 +154,22 @@ excluded_providers = "fixture"
             with patch.object(catalogue, '_now', return_value=NOW + timedelta(hours=26)), \
                     self.assertRaises(RuntimeError):
                 catalogue.refresh(store, lambda path: (_ for _ in ()).throw(RuntimeError('défaut interne')))
+
+    def test_invalid_refresh_preserves_the_last_usable_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
+            with patch.object(catalogue, '_now', return_value=NOW):
+                first = catalogue.refresh(store, self.fetch([]))
+            broken = deepcopy(FIXTURE)
+            next(model for model in broken['data'] if model['id'] == 'openai/gpt-5.6-sol')['context_length'] = 0
+            fetch = self.fetch([])
+            with patch.object(catalogue, '_now', return_value=NOW + timedelta(hours=24)):
+                result = catalogue.refresh(store, lambda path: broken if path == '/api/v1/models' else fetch(path))
+                self.assertTrue(result['stale'])
+                self.assertEqual(first['fetched_at'], result['fetched_at'])
+                self.assertEqual(first['models'], catalogue.selection(store)['models'])
+                renewed = catalogue.refresh(store, self.fetch([]))
+                self.assertFalse(renewed['stale'])
+                self.assertNotEqual(first['fetched_at'], renewed['fetched_at'])
 
     def test_famille_sur_quinze_identifiants(self):
         cases = {
