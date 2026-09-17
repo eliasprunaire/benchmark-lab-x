@@ -17,7 +17,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from benchmark import outgoing, preparation as prep, qualification, runtime, service, storage
+from benchmark import outgoing, preparation as prep, qualification, runtime, service, storage, web_api
 from benchmark_web import views
 from benchmark_web.server import serve_web
 from benchmark.transports import openrouter as assistant
@@ -195,6 +195,28 @@ class OpenRouterPreparationTests(unittest.TestCase):
         provider_access.import_key(self.store, self.session, SECRET, PERSONAL_KEY, access)
         bound, _ = service.personal_transports(self.store, self.token, self.transport, None, SECRET, access)
         return bound, SECRET, PERSONAL_KEY
+
+    def test_out_of_scope_stops_dossier_without_closing_other_preparations(self):
+        answer = result('suspended')
+        answer['out_of_scope'] = 'math'
+        answer['explanation'] = 'Un calcul isolé ne constitue pas une tâche de travail pour Bench-X.'
+        self.http.getresponse.return_value.read.return_value = http_body(answer)
+        operation, view = self.execute()
+        self.assertEqual('RECEIVED', operation['state'])
+        self.assertEqual('math', view['checks'].get('out_of_scope'))
+        self.assertIsNone(view['package'])
+        self.assertIsNotNone(prep.admission(self.store))
+        before = len(self.store.inspect_operations())
+        with self.assertRaisesRegex(prep.Denied, 'OUT_OF_SCOPE'):
+            self.submit(action_id='continue', revision=view['revision'], kind='clarify', message='Oui')
+        with self.assertRaises(storage.ConflictError):
+            prep.validate(self.store, self.session, 'd',
+                {'dossier_id': 'd', 'revision': view['revision'], 'package_sha256': 'a' * 64})
+        with self.assertRaisesRegex(prep.Denied, 'STEP_INCOMPLETE'):
+            web_api.dispatch(self.store, 'GET', '/preparation/dossiers/d/configurations',
+                             self.token, None, 'a' * 40, self.transport)
+        self.assertEqual(before, len(self.store.inspect_operations()))
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
     def test_personal_preparation_and_qualification_never_charge_operator(self):
         bound, secret, key = self.personal_transport()
@@ -419,6 +441,11 @@ class OpenRouterPreparationTests(unittest.TestCase):
         valid = result()
         variants = [(dict(valid, package_note=None, authority=None), True),
                     (dict(result('clarification'), package_note=None), True)]
+        variants.extend((dict(result('suspended'), out_of_scope=category), True)
+                        for category in ('math', 'coding', 'other'))
+        variants.extend((dict(result('suspended'), out_of_scope=category), False)
+                        for category in ('https://example.com', '', [], {}))
+        variants.append((dict(valid, out_of_scope='math'), False))
         for value in ('instruction', False, 0, '', [], {}):
             variants.append((dict(valid, package_note=value), False))
         for field in valid:
@@ -453,6 +480,9 @@ class OpenRouterPreparationTests(unittest.TestCase):
                 self.assertFalse(view['qualified'])
                 if accepted:
                     expected = {key: value[key] for key in valid}
+                    if 'out_of_scope' in value:
+                        expected['out_of_scope'] = value['out_of_scope']
+                        self.assertEqual(value['out_of_scope'], view['checks']['out_of_scope'])
                     self.assertEqual(expected, op['receipt']['result'])
                     if value['package']:
                         piece = view['package']['pieces'][0]

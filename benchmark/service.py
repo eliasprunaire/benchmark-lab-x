@@ -158,6 +158,7 @@ def denied_response(error):
         'NOT_QUALIFIED': 'Ce dossier doit être qualifié avant le lancement.',
         'CONTRACT_MISSING': "Le contrat de comparaison n'est pas encore établi. Terminez la qualification de l'exemple.",
         'STEP_INCOMPLETE': 'Terminez l’étape précédente avant de poursuivre.',
+        'OUT_OF_SCOPE': 'Cette demande est hors du périmètre de Bench-X. Décrivez un autre cas d’usage pour continuer.',
         'example_validated': 'Validez l’exemple présenté avant le lancement.',
         'example_qualified': 'La qualification de l’exemple est requise avant le lancement.',
         'configurations_available': 'Choisissez de nouveau les modèles indisponibles avant le lancement.',
