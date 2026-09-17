@@ -116,18 +116,15 @@ class PreparationLimitTests(unittest.TestCase):
             'SELECT 1 FROM s2_actions WHERE dossier_id=?', ('b',)).fetchone())
         self.assertEqual('waiting', availability['reason'])
 
-    def test_two_daily_dossiers_per_session(self):
-        data, store, _, csrf, token = self.fixture()
+    def test_more_than_two_daily_dossiers_within_budget(self):
+        data, store, _, csrf, token = self.fixture(reserve='5')
         start = datetime(2026, 9, 14, 8, tzinfo=timezone.utc)
-        operations = []
-        for index, seconds in ((1, 0), (2, 30)):
+        for index, seconds in ((1, 0), (2, 30), (3, 60)):
             with patch.object(prep, '_now', return_value=start + timedelta(seconds=seconds)):
-                operations.append(self.create(store, token, csrf, f'd{index}', 'x' * 40)[3])
-            self.receive(data, operations[-1])
-        with patch.object(prep, '_now', return_value=start + timedelta(seconds=60)):
-            with self.assertRaises(prep.Denied) as caught:
-                self.create(store, token, csrf, 'd3', 'x' * 40)
-        self.assertEqual('DAILY_SESSION_LIMIT', caught.exception.code)
+                code, _, _, operation = self.create(store, token, csrf, f'd{index}', 'x' * 40)
+            self.assertEqual(202, code)
+            self.receive(data, operation)
+        self.assertEqual(3, len(store.inspect_operations()))
 
     def test_too_soon_does_not_consume_source_window(self):
         data, store, _, csrf, token = self.fixture(reserve='0')
