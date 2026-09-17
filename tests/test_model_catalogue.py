@@ -171,6 +171,24 @@ excluded_providers = "fixture"
                 self.assertFalse(renewed['stale'])
                 self.assertNotEqual(first['fetched_at'], renewed['fetched_at'])
 
+    def test_endpoint_alias_is_excluded_without_hiding_verified_models(self):
+        with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
+            fixture_fetch = self.fetch([])
+            def fetch(path):
+                result = fixture_fetch(path)
+                if path == '/api/v1/models/x-ai/grok-4-preview/endpoints':
+                    result['data']['id'] = 'x-ai/grok-4'
+                return result
+            with patch.object(catalogue, '_now', return_value=NOW):
+                result = catalogue.refresh(store, fetch)
+                stored = catalogue.selection(store)
+            self.assertEqual(result, stored)
+            alias = next(m for m in stored['models'] if m['id'] == 'x-ai/grok-4-preview')
+            self.assertEqual('endpoint_identity_mismatch', alias['excluded'])
+            self.assertIsNone(alias['route'])
+            self.assertNotIn('x-ai/grok-4', [m['id'] for m in stored['models']])
+            self.assertIn('openai/gpt-5.6-sol', [m['id'] for m in stored['models'] if m['excluded'] is None])
+
     def test_famille_sur_quinze_identifiants(self):
         cases = {
             'anthropic/claude-opus-5': 'anthropic/claude-opus-#',

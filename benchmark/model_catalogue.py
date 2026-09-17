@@ -159,7 +159,7 @@ def refresh(store, fetch):
         for model in candidates:
             model_id = model['id']
             detail = _data(fetch('/api/v1/models/' + model_id + '/endpoints'), dict)
-            if detail.get('id') != model_id or type(detail.get('endpoints')) is not list:
+            if _model_id(detail) is None or type(detail.get('endpoints')) is not list:
                 raise ValueError('Endpoints du modèle non vérifiés')
             endpoint_documents[model_id] = detail
         document = {'models': models, 'endpoints': endpoint_documents}
@@ -260,7 +260,11 @@ def _selection(fetched_at, document, registry):
                                   and not (type(endpoint.get('status')) in (int, float)
                                            and endpoint['status'] < 0)
                                   and _provider_slug(endpoint) not in excluded_providers)
-        if available_routes:
+        if detail.get('id') != model_id:
+            # Conserver le constat fournisseur sans rendre un alias substituable à sa cible
+            available_routes = []
+            excluded = 'endpoint_identity_mismatch'
+        elif available_routes:
             excluded = None
         elif endpoints and all(_provider_slug(endpoint) in excluded_providers
                                for endpoint in endpoints):
