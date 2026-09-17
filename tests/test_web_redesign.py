@@ -19,7 +19,7 @@ class TemplateTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
 
-    def test_personal_key_follows_context_without_nesting_forms(self):
+    def test_personal_key_follows_availability_before_description_without_nesting_forms(self):
         from html.parser import HTMLParser
         class Forms(HTMLParser):
             depth = 0
@@ -36,8 +36,8 @@ class TemplateTests(unittest.TestCase):
         forms = Forms()
         forms.feed(page)
         self.assertFalse(forms.nested)
-        self.assertLess(page.index('id="context"'), page.index('Ajouter ma clé Openrouter'))
-        self.assertLess(page.index('Ajouter ma clé Openrouter'), page.index('Préparer cet exemple'))
+        self.assertLess(page.index('</aside>'), page.index('Ajouter ma clé Openrouter'))
+        self.assertLess(page.index('Enregistrer la clé'), page.index('Décrivez le travail et le résultat qui vous serait utile'))
         parsed = Markup(page.encode())
         button = next(attrs for tag, attrs in parsed.tags if tag == 'button' and attrs.get('form'))
         self.assertEqual('prepare-case', button['form'])
