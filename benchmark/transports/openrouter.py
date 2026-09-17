@@ -510,6 +510,16 @@ class OpenRouterQualification(OpenRouterPreparation):
     def configuration(self):
         return configuration(profile=self._profile)
 
+    def quote(self):
+        if not hasattr(self, '_quote'):
+            from .prices import forecast, read_public
+            profile = self._profile
+            summary, _ = read_public('/api/v1/model/' + profile['model'])
+            estimate = forecast(profile['model'], profile.get('reserve_input_tokens', summary['context_length']),
+                                profile['parameters']['max_tokens'])
+            self._quote = configuration(estimate, profile)
+        return deepcopy(self._quote)
+
     def content(self, request):
         return request['outgoing']
 

@@ -128,6 +128,28 @@ def executor_process(data, sock, entered=None, clock=None):
 
 
 class OpenRouterPreparationTests(unittest.TestCase):
+    def test_operator_cli_reopens_with_explicit_profile_and_stdin_authority(self):
+        prep.close_admission(self.store)
+        output = io.StringIO()
+        with redirect_stdout(output), patch('sys.stdin', io.StringIO(json.dumps(self.authority))):
+            code = runtime.main(['admit-preparation', '--data', str(self.data),
+                                 '--authority', '-', '--preparation-assistant', 'preparation'])
+        self.assertEqual(0, code, output.getvalue())
+        self.assertEqual(self.authority, prep.admission(self.store))
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(0, runtime.main(['close-preparation', '--data', str(self.data)]))
+        self.assertIsNone(prep.admission(self.store))
+
+    def test_checked_admission_refuses_exhausted_budget_without_reopening(self):
+        prep.close_admission(self.store)
+        self.store.create_budget('too-small', '0.01', 'USD')
+        authority = {**self.authority, 'budget_id': 'too-small'}
+        with self.assertRaises(storage.BudgetError):
+            prep.admit(self.store, authority, profile=PROFILE)
+        self.assertIsNone(prep.admission(self.store))
+        prep.admit(self.store, self.authority, profile=PROFILE)
+        self.assertEqual(self.authority, prep.admission(self.store))
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='openrouter-fixture-')
         self.addCleanup(temporary.cleanup)

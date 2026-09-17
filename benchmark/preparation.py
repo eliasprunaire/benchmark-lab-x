@@ -198,13 +198,30 @@ def close_admission(store):
             connection.execute('UPDATE s2_control SET admission_json=NULL WHERE singleton=1 AND admission_json IS NOT NULL')
 
 
-def admit(store, authority):
+def admit(store, authority, *, profile=None):
     check_authority(authority)
     connection = connection_for(store)
     with _transaction(connection, write=True):
         if os.path.lexists(store._root / 'restore.json'):
             raise Denied('Restauration à rapprocher')
-        store._budget(connection, authority['budget_id'], store._operations(connection))
+        operations = store._operations(connection)
+        budget = store._budget(connection, authority['budget_id'], operations)
+        if profile is not None:
+            from .transports.openrouter import configuration
+            requested = authority['requested_configuration']
+            expected = configuration(requested.get('reservation_estimate'), profile)
+            if requested != expected or 'reserve_usd' not in expected:
+                raise Denied('CONFIGURATION_CHANGED')
+            _usd_budget(authority['reserve_amount'], requested, budget)
+            if (_money(authority['reserve_amount']) > _money(budget['available'])
+                    or store._blocking_costs(operations, budget, 'preparation')):
+                raise BudgetError('Enveloppe de préparation indisponible')
+            if connection.execute(
+                    "SELECT 1 FROM operations WHERE state!='RECEIVED' LIMIT 1").fetchone():
+                raise Denied('PREPARATION_IN_PROGRESS')
+            if (_daily_preparation_reserved(connection, _now()) + _money(authority['reserve_amount'])
+                    > PREPARATION_DAILY_CAP_USD):
+                raise Denied('DAILY_CAP')
         connection.execute('UPDATE s2_control SET admission_json=? WHERE singleton=1', (encode(authority),))
 
 
@@ -689,6 +706,8 @@ def _qualification_input(store, connection, dossier_id, revision):
 def validate_and_qualify(store, session_id, dossier_id, body, source, transport):
     if transport is None or not callable(getattr(transport, 'configuration', None)):
         raise Denied('QUALIFICATION_UNAVAILABLE')
+    configuration = (transport.quote() if callable(getattr(transport, 'quote', None))
+                     else transport.configuration())
     _text(source, 'source')
     connection = connection_for(store)
     with _transaction(connection, write=True):
@@ -706,12 +725,13 @@ def validate_and_qualify(store, session_id, dossier_id, body, source, transport)
                 "SELECT 1 FROM operations WHERE phase IN ('preparation','correction','qualification') "
                 "AND state!='RECEIVED' LIMIT 1").fetchone():
             raise Denied('PREPARATION_IN_PROGRESS')
-        if (_daily_preparation_reserved(connection, _now()) + _money(authority['reserve_amount'])
+        reserve = str(max(_money(authority['reserve_amount']),
+                          _money(configuration.get('reserve_usd', authority['reserve_amount']))))
+        if (_daily_preparation_reserved(connection, _now()) + _money(reserve)
                 > PREPARATION_DAILY_CAP_USD):
             raise Denied('DAILY_CAP')
         request = _qualification_input(store, connection, dossier_id, revision)
         operation_id = secrets.token_hex(16)
-        configuration = transport.configuration()
         operation = dict(operation_id=operation_id, phase='qualification', dossier_id=dossier_id,
                          revision=revision, authority=authority['authority_id'], engine_version=source,
                          requested_configuration=configuration, resources=[])
@@ -723,7 +743,7 @@ def validate_and_qualify(store, session_id, dossier_id, body, source, transport)
         budget = store._budget(connection, authority['budget_id'], store._operations(connection))
         if budget['currency'] != 'USD':
             raise BudgetError('Enveloppe USD de préparation requise')
-        store._reserve_intent(connection, operation, authority['budget_id'], authority['reserve_amount'])
+        store._reserve_intent(connection, operation, authority['budget_id'], reserve)
         return result, operation_id, True
 
 
