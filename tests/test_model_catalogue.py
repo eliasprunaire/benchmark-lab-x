@@ -113,7 +113,7 @@ class ModelCatalogueTests(unittest.TestCase):
         self.assertEqual(16, len(settings['makers']))
         self.assertEqual((3, 365, 24), (settings['max_per_maker'],
                                         settings['max_age_days'], settings['cache_hours']))
-        self.assertEqual(81, len(settings['baseline_families']))
+        self.assertEqual(83, len(settings['baseline_families']))
         self.assertEqual(139, len(settings['baseline_models']))
         self.assertEqual({'deepseek': {'enhanced': {'enabled': True}}}, catalogue.tiers())
         # Le registre d'alias historique est retiré : aucune source concurrente à la racine

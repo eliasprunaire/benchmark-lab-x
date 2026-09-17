@@ -296,7 +296,9 @@ class ParcoursComplet(unittest.TestCase):
         configurations = page.link('Choisir les modèles')
         page, _, _ = self.request(configurations)
         self.examine(page, configurations, 'choix des configurations', 'Enregistrer les configurations')
-        self.assertIn('Relevé des modèles du 15 septembre 2026 à 12:00:00 UTC', page.visible)
+        self.assertNotIn('Gammes généralistes retenues', page.visible)
+        self.assertNotIn('date d’ajout au catalogue', page.visible)
+        self.assertNotIn('Relevé des modèles du', page.visible)
         self.assertNotIn('2026-09-15T12:00:00+00:00', page.visible)
         form = page.form('/configurations')
         _, _, raw = self.request(form['action'], form['fields'] | {

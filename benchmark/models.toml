@@ -58,6 +58,8 @@ baseline_families = [
   "google/gemini-#-pro-preview-customtools",
   "google/gemma-#-#b-a#b-it",
   "google/gemma-#-#b-it",
+  "meta/muse-glimmer-#b",
+  "meta/muse-spark-#",
   "minimax/minimax-m#",
   "minimax/minimax-m#-her",
   "mistralai/devstral",
