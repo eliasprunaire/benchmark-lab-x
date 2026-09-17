@@ -41,7 +41,7 @@ class ModelCatalogueTests(unittest.TestCase):
             calls = []
             with patch.object(catalogue, '_now', return_value=NOW):
                 result = catalogue.refresh(store, self.fetch(calls))
-            self.assertEqual(5, len(calls))
+            self.assertEqual(6, len(calls))
             malformed = [model for model in result['models'] if model['excluded'] == 'malformed']
             self.assertEqual({
                 'openai/malformed-created',
@@ -53,6 +53,7 @@ class ModelCatalogueTests(unittest.TestCase):
                 'google/gemini-3.0-flash:free',
                 'openai/gpt-5.6-sol-0902',
                 'openai/gpt-5.6-sol',
+                'openai/gpt-5.5-sol',
                 'x-ai/grok-4-preview',
             ], [model['id'] for model in result['models'] if model['excluded'] != 'malformed'])
             self.assertNotIn('openai/gpt-5.4-sol', [model['id'] for model in result['models']])
@@ -76,14 +77,20 @@ class ModelCatalogueTests(unittest.TestCase):
                                 if model['excluded'] != 'malformed'))
             self.assertFalse(result['stale'])
 
-    def test_two_latest_models_per_maker_across_families_without_variant_duplicates(self):
+    def test_recent_generalist_ranges_without_specialists_or_variant_duplicates(self):
         rows = [dict(id=model_id, name=model_id, created=int((NOW - timedelta(days=days)).timestamp()),
                      architecture={'output_modalities': ['text']}) for model_id, days in (
             ('google/gemini-3.8-flash', 1), ('google/gemini-3.8-flash:free', 0),
-            ('google/gemini-3.7-pro', 2), ('google/gemini-3.7-flash', 3),
-            ('google/gemini-2.5-pro-preview', 100), ('openai/current-1', 1),
-            ('openai/other-family-2', 2), ('openai/third-family-3', 3),
-            ('openai/outdated-9', 500), ('unknown/recent-1', 0))]
+            ('google/gemini-3.7-flash', 2), ('google/gemini-3.5-flash-lite', 3),
+            ('google/gemini-3.1-pro-preview', 100), ('google/gemini-2.5-pro', 500),
+            ('google/gemma-4-31b-it', 0), ('google/gemini-3.1-pro-preview-customtools', 0),
+            ('nvidia/nemotron-3.5-content-safety', 0),
+            ('nvidia/nemotron-3.5-lightning', 1), ('nvidia/nemotron-3-ultra-550b-a55b', 2),
+            ('nvidia/nemotron-3-super-120b-a12b', 3),
+            ('minimax/minimax-m3', 1), ('minimax/minimax-m2.7', 2),
+            ('minimax/minimax-m2.5', 3), ('minimax/minimax-m2-her', 0),
+            ('moonshotai/kimi-k3', 1), ('moonshotai/kimi-k2.7-code', 0),
+            ('unknown/recent-1', 0))]
         def fetch(path):
             if path == '/api/v1/models':
                 return {'data': rows}
@@ -92,22 +99,46 @@ class ModelCatalogueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store, \
                 patch.object(catalogue, '_now', return_value=NOW):
             result = catalogue.refresh(store, fetch)
-        self.assertEqual({'google/gemini-3.8-flash', 'google/gemini-3.7-pro',
-                          'openai/current-1', 'openai/other-family-2'},
+        self.assertEqual({'google/gemini-3.8-flash', 'google/gemini-3.5-flash-lite',
+                          'google/gemini-3.1-pro-preview', 'nvidia/nemotron-3.5-lightning',
+                          'nvidia/nemotron-3-ultra-550b-a55b', 'nvidia/nemotron-3-super-120b-a12b',
+                          'minimax/minimax-m3', 'minimax/minimax-m2.7', 'minimax/minimax-m2.5',
+                          'moonshotai/kimi-k3'},
                          {m['id'] for m in result['models'] if m['excluded'] is None})
 
     def test_configuration_active_livree_avec_le_paquet(self):
         self.assertEqual(Path(catalogue.__file__).resolve().parent / 'models.toml',
                          catalogue.CONFIG_PATH)
         settings = catalogue._settings(catalogue._registry())
-        self.assertEqual(10, len(settings['makers']))
-        self.assertEqual((2, 365, 24), (settings['max_per_maker'],
+        self.assertEqual(16, len(settings['makers']))
+        self.assertEqual((3, 365, 24), (settings['max_per_maker'],
                                         settings['max_age_days'], settings['cache_hours']))
         self.assertEqual(81, len(settings['baseline_families']))
         self.assertEqual(139, len(settings['baseline_models']))
         self.assertEqual({'deepseek': {'enhanced': {'enabled': True}}}, catalogue.tiers())
         # Le registre d'alias historique est retiré : aucune source concurrente à la racine
         self.assertFalse((Path(__file__).resolve().parents[1] / 'models.toml').exists())
+
+    def test_flagship_priorities_and_meta_namespaces_share_one_maker_quota(self):
+        rows = [dict(id=model_id, name=model_id, created=int((NOW - timedelta(days=days)).timestamp()),
+                     architecture={'output_modalities': ['text']}) for model_id, days in (
+            ('openai/gpt-6-astra', 1), ('openai/gpt-6-astra-pro', 1),
+            ('openai/gpt-5.6-luna', 2), ('openai/gpt-5.6-terra', 3),
+            ('openai/gpt-5.6-sol', 4), ('meta/muse-spark-1.3', 1),
+            ('meta/muse-spark-1.3-contributor', 0), ('meta/muse-glimmer-30b', 2),
+            ('meta-llama/llama-4-maverick', 3), ('meta-llama/llama-4-scout', 4))]
+        def fetch(path):
+            if path == '/api/v1/models':
+                return {'data': rows}
+            model_id = path.removeprefix('/api/v1/models/').removesuffix('/endpoints')
+            return {'data': {'id': model_id, 'endpoints': [{'tag': 'fixture', 'status': 0}]}}
+        with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store, \
+                patch.object(catalogue, '_now', return_value=NOW):
+            result = catalogue.refresh(store, fetch)
+        self.assertEqual({'openai/gpt-6-astra', 'openai/gpt-5.6-sol', 'openai/gpt-5.6-terra',
+                          'meta/muse-spark-1.3', 'meta/muse-glimmer-30b', 'meta-llama/llama-4-maverick'},
+                         {m['id'] for m in result['models']})
+        self.assertEqual(3, sum(m['maker'] == 'meta' for m in result['models']))
 
     def test_statut_endpoint_exclut_seulement_un_nombre_negatif(self):
         cases = ((0, None), (1, None), (None, None), ('inconnu', None), (True, None), (-1, 'no_available_endpoint'))
