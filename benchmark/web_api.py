@@ -167,11 +167,8 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
     if method == 'GET' and action is None:
         if piece_id:
             return 200, p.piece_bytes(store, session_id, dossier_id, revision, piece_id), None, None
-        result = p.view(store, session_id, dossier_id, revision)
-        result['current_revision'] = p.owner(p.connection_for(store), session_id, dossier_id)
+        result = p.view(store, session_id, dossier_id, revision, include_history=True)
         result['availability'] = p.availability(store, transport)
-        from .restitution import catalogue
-        result['task_index'] = next(t for t in catalogue(store, session_id)['tasks'] if t['dossier_id'] == dossier_id)
         # The CSRF token travels independently in HTML rendering through the web's session query
         return 200, result, None, None
     if method == 'POST' and action == 'messages':

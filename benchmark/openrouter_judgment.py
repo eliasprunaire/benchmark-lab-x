@@ -29,7 +29,8 @@ class OpenRouterJudgment(OpenRouterPreparation):
                and row['provider'] not in authorized for row in rows):
             raise ValueError('Fournisseur rapporté hors profil de jugement')
 
-    def validate_answer(self, result, message):
+    @staticmethod
+    def validate_answer(result, message):
         _fields(result, ('findings', 'measures', 'limits', 'proposed_verdict'), 'judgment proposal')
         if (message.get('refusal') or message.get('function_call')
                 or result['proposed_verdict'] not in ('SATISFAIT', 'NE SATISFAIT PAS', 'INDETERMINE')):

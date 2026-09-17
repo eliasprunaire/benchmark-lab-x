@@ -3,6 +3,7 @@
 No controller loader, assistant transport or public approval authority is provided.
 The private operator is the trust boundary, not a role string submitted over HTTP.
 """
+from collections.abc import Callable
 from contextlib import closing
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -240,7 +241,7 @@ def _contract(store, connection, fingerprint):
     package, package_hash = _package(store, connection, *row[:2])
     if (contract['package'], contract['package_sha256']) != (package, package_hash):
         raise IntegrityError('Contrat sans paquet exact')
-    references = _references(store, *row[:2], contract['specification']['reference_piece_ids'])
+    references = _references(store, row[0], row[1], contract['specification']['reference_piece_ids'])
     if contract['reference_pieces'] != references:
         raise IntegrityError('Références contractuelles divergentes')
     return contract
@@ -375,7 +376,7 @@ def inspect_contract(store, contract_sha256):
         return _inspect(store, connection, contract_sha256)
 
 
-def qualify(store, contract_sha256, *, reviewer, check):
+def qualify(store, contract_sha256, *, reviewer, check: Callable[..., dict]):
     _text(reviewer, 'reviewer')
     if not callable(check):
         raise ValueError('Contrôleur local injecté requis')

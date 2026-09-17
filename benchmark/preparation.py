@@ -8,6 +8,7 @@ import json
 import os
 import re
 import secrets
+from typing import Any, TypeVar, cast
 import unicodedata
 
 from .storage import (Store, SchemaError, IntegrityError, ConflictError, BudgetError,
@@ -34,6 +35,8 @@ _CHECK_CODES = frozenset({
 
 
 class Denied(ValueError):
+    provider_status: int | None
+
     def __init__(self, message, field=None, findings=None, step=None):
         super().__init__(message)
         self.code = message if re.fullmatch(r'[A-Z_]+', message) or message in _CHECK_CODES else None
@@ -236,13 +239,16 @@ def binding(dossier_id, revision, digest):
     return {'dossier_id': dossier_id, 'revision': revision, 'package_sha256': digest}
 
 
-def page_view(value):
+_PageValue = TypeVar('_PageValue')
+
+
+def page_view(value: _PageValue) -> _PageValue:
     """Retirer les empreintes des projections destinées aux pages"""
     if type(value) is dict:
-        return {key: page_view(item) for key, item in value.items()
-                if key != 'sha256' and key not in ('fingerprint', 'digest') and not key.endswith('_sha256')}
+        return cast(_PageValue, {key: page_view(item) for key, item in value.items()
+                    if key != 'sha256' and key not in ('fingerprint', 'digest') and not key.endswith('_sha256')})
     if type(value) is list:
-        return [page_view(item) for item in value]
+        return cast(_PageValue, [page_view(item) for item in value])
     return deepcopy(value)
 
 
@@ -405,7 +411,7 @@ def require_requester_steps(store, connection, session_id, dossier_id, revision)
         raise Denied('STEP_INCOMPLETE', step='example_qualified') from None
 
 
-def view(store, session_id, dossier_id, revision=None):
+def view(store, session_id, dossier_id, revision=None, *, include_history=False):
     connection = connection_for(store)
     with store.read_snapshot() as connection:
         current = owner(connection, session_id, dossier_id)
@@ -424,13 +430,13 @@ def view(store, session_id, dossier_id, revision=None):
         validated = connection.execute('SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? '
                                        'AND package_sha256=? AND session_id=?',
                                        (dossier_id, revision, digest, session_id)).fetchone()
-        result = dict(dossier_id=dossier_id, revision=revision, payload=store.get_dossier(dossier_id, revision),
+        result: dict[str, Any] = dict(dossier_id=dossier_id, revision=revision, payload=store.get_dossier(dossier_id, revision),
                       stage=stage, explanation=explanation, package=package, package_sha256=digest,
                       fictional=True, validation=binding(dossier_id, revision, digest) if validated else None,
                       qualified=False, changes=changes, piece_changes=piece_changes,
                       checks=json.loads(checks, object_pairs_hook=_unique_object))
         result['example_contents'] = {piece['id']: store.read_piece(piece['id']).decode('utf-8')
-                                      for piece in (package or {}).get('pieces', [])}
+                                      for piece in (package['pieces'] if package is not None else [])}
         result['rechecked'] = result['checks'].get('fields', [])
         completed = connection.execute('SELECT a.request_json,o.observed_cost_json,o.operation_id FROM s2_actions a '
                                        'JOIN operations o USING(operation_id) WHERE a.dossier_id=? '
@@ -485,6 +491,11 @@ def view(store, session_id, dossier_id, revision=None):
                 from .evaluation import projection as evaluations
                 for campaign in result['campaigns']:
                     campaign['evaluations'] = evaluations(store, connection, dossier_id, campaign['campaign_id'])
+        if include_history:
+            from .restitution import _task_index
+            result['current_revision'] = current
+            result['task_index'] = _task_index(store, connection, dossier_id, current,
+                                               result.get('campaigns', []))
         projected = page_view(result)
         if projected['package'] is not None:
             from .outgoing import criteria
@@ -934,7 +945,8 @@ def publish(store, operation, request, response):
                 explanation = 'SCOPE_LOOP : ' + explanation
         revision = before + 1
         store.save_dossier(dossier_id, revision, payload)
-        package, digest, checks = None, None, {}
+        package: dict[str, Any] | None = None
+        digest, checks = None, {}
         if generated is not None:
             from .outgoing import FORMAT
             package = dict(instruction=generated['candidate']['instruction'],

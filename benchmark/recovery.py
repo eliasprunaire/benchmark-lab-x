@@ -26,7 +26,7 @@ def parent(store, connection, operation_id):
     return snapshot, attempt
 
 
-def observation(attempt):
+def observation(attempt) -> dict:
     if attempt['state'] != 'RECEIVED':
         raise ConflictError('Reçu attribuable requis ; aucun rejeu ambigu')
     receipt = attempt['operation']['receipt']
@@ -335,7 +335,7 @@ def _progress_chars(store, connection, source_manifest, observed):
     return observation(earlier)['output_chars']
 
 
-def _proposal(store, connection, operation_id, capabilities, *, check_budget=True):
+def _proposal(store, connection, operation_id, capabilities, *, check_budget=True) -> dict:
     """Shared proposal body; caller owns the enclosing transaction"""
     snapshot, attempt = parent(store, connection, operation_id)
     contract = c._approved(store, connection, snapshot['manifest']['contract_sha256'])
@@ -359,7 +359,7 @@ def _official_grant(grant, configuration_id):
     return deepcopy(item)
 
 
-def _official_proposal(store, connection, operation_id, grant, budget_id, *, check_budget=True):
+def _official_proposal(store, connection, operation_id, grant, budget_id, *, check_budget=True) -> dict:
     snapshot, attempt = parent(store, connection, operation_id)
     observed = observation(attempt)
     if observed['kind'] not in _RECOVERABLE:

@@ -71,13 +71,20 @@ def _metric(row, column):
             next(m for m in row['measures'] if m['criterion_id'] == column['criterion_id']))
 
 
+def _metric_number(metric):
+    value = _number(metric['value'], metric['unit'])
+    if value is None:
+        raise ValueError('Mesure non ordonnable')
+    return value
+
+
 def _rank(rows, columns):
     for case_id in dict.fromkeys(r['case_id'] for r in rows):
         group = [r for r in rows if r['case_id'] == case_id]
         for column in columns:
             metrics = [_metric(row, column) for row in group]
             known = [m for m in metrics if m['reason'] is None]
-            values = [_number(m['value'], m['unit']) for m in known]
+            values = [_metric_number(m) for m in known]
             higher = column['favorable'] in ('higher', 'yes')
             for metric, value in zip(known, values):
                 metric['rank'] = 1 + sum(other > value if higher else other < value for other in values)
@@ -181,7 +188,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
             key = next(column for column in columns if column['id'] == query['sort'])
             known = [r for r in group if _metric(r, key)['rank'] is not None]
             unknown = [r for r in group if _metric(r, key)['rank'] is None]
-            known.sort(key=lambda r: _number(_metric(r, key)['value'], _metric(r, key)['unit']),
+            known.sort(key=lambda r: _metric_number(_metric(r, key)),
                        reverse=query.get('direction', 'asc') == 'desc')
             group = known + unknown
         ordered.extend(group)
@@ -227,36 +234,41 @@ def detail(store, session_id, dossier_id, campaign_id, attempt_id, *, query=None
                                  '#attempt-' + attempt_id))
 
 
+def _task_index(store, connection, dossier_id, current, campaigns):
+    revisions = [r[0] for r in connection.execute(
+        'SELECT revision FROM s2_revisions WHERE dossier_id=? ORDER BY revision', (dossier_id,))]
+    versions = []
+    has_contracts = connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s3_control'").fetchone()
+    fingerprints = connection.execute('SELECT contract_sha256 FROM s3_contracts WHERE dossier_id=? ORDER BY version',
+                                      (dossier_id,)).fetchall() if has_contracts else []
+    for fingerprint, in fingerprints:
+        contract = q._contract(store, connection, fingerprint)
+        versions.append(dict(version=contract['version'], revision=contract['revision'],
+            campaigns=[dict(campaign_id=v['campaign_id'], href=campaign_url(dossier_id, v['campaign_id']))
+                       for v in campaigns if v['contract_sha256'] == fingerprint]))
+    for fingerprint, version, revision in connection.execute(
+            'SELECT contract_sha256,version,revision FROM s2_comparison_contracts '
+            'WHERE dossier_id=? ORDER BY version', (dossier_id,)):
+        c._comparison_contract(store, connection, fingerprint)
+        versions.append(dict(version=version, revision=revision,
+            campaigns=[dict(campaign_id=v['campaign_id'], href=campaign_url(dossier_id, v['campaign_id']))
+                       for v in campaigns if v['contract_sha256'] == fingerprint]))
+    return dict(dossier_id=dossier_id, need=store.get_dossier(dossier_id, current)['request'],
+                revision=current, revisions=revisions, versions=versions,
+                href='/preparation/dossiers/' + dossier_id)
+
+
 def catalogue(store, session_id):
     connection = p.connection_for(store)
     with store.read_snapshot() as connection:
         if not connection.execute('SELECT 1 FROM s2_sessions WHERE session_id=?', (session_id,)).fetchone():
             raise p.Denied('Session requise')
         tasks = []
-        has_contracts = connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s3_control'").fetchone()
         has_campaigns = connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_control'").fetchone()
         for dossier_id, current in connection.execute(
                 'SELECT dossier_id,current_revision FROM s2_dossiers WHERE session_id=? ORDER BY dossier_id', (session_id,)).fetchall():
-            revisions = [r[0] for r in connection.execute('SELECT revision FROM s2_revisions WHERE dossier_id=? ORDER BY revision', (dossier_id,))]
             campaigns = c.projection(store, connection, dossier_id) if has_campaigns else []
-            versions = []
-            fingerprints = connection.execute('SELECT contract_sha256 FROM s3_contracts WHERE dossier_id=? ORDER BY version',
-                                              (dossier_id,)).fetchall() if has_contracts else []
-            for fingerprint, in fingerprints:
-                contract = q._contract(store, connection, fingerprint)
-                versions.append(dict(version=contract['version'], revision=contract['revision'],
-                    campaigns=[dict(campaign_id=v['campaign_id'], href=campaign_url(dossier_id, v['campaign_id']))
-                               for v in campaigns if v['contract_sha256'] == fingerprint]))
-            for fingerprint, version, revision in connection.execute(
-                    'SELECT contract_sha256,version,revision FROM s2_comparison_contracts '
-                    'WHERE dossier_id=? ORDER BY version', (dossier_id,)):
-                c._comparison_contract(store, connection, fingerprint)
-                versions.append(dict(version=version, revision=revision,
-                    campaigns=[dict(campaign_id=v['campaign_id'], href=campaign_url(dossier_id, v['campaign_id']))
-                               for v in campaigns if v['contract_sha256'] == fingerprint]))
-            tasks.append(dict(dossier_id=dossier_id, need=store.get_dossier(dossier_id, current)['request'],
-                              revision=current, revisions=revisions, versions=versions,
-                              href='/preparation/dossiers/' + dossier_id))
+            tasks.append(_task_index(store, connection, dossier_id, current, campaigns))
         return p.page_view(dict(kind='catalogue', visibility='private', catalogue_admission=False, tasks=tasks))
 
 

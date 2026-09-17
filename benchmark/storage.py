@@ -679,6 +679,8 @@ class Store:
         _root_path(self._root)
         for path, fd in ((self._root, self._root_fd),
                          (self._root / "pieces", self._pieces_fd)):
+            if fd is None:
+                raise ValueError("store is closed")
             try:
                 current = path.lstat()
             except OSError as error:
@@ -734,7 +736,7 @@ class Store:
         ).fetchall()
         records = []
         for row in rows:
-            record = dict(zip(_OPERATION_COLUMNS + ('budget_id', 'reserved_amount', 'currency'), row))
+            record: dict = dict(zip(_OPERATION_COLUMNS + ('budget_id', 'reserved_amount', 'currency'), row))
             try:
                 for key in ('requested_configuration', 'resources', 'receipt', 'observed_cost'):
                     raw = record.pop(key + '_json')
@@ -1145,6 +1147,8 @@ class Store:
 
     def _put_piece(self, connection, dossier_id, revision, piece_id, *,
                    name, role, media_type, content):
+        if self._pieces_fd is None:
+            raise ValueError("store is closed")
         # Failed commits retain orphan bytes for S1 integrity inspection
         _identity(dossier_id, revision)
         for label, value in (("piece_id", piece_id), ("name", name), ("media_type", media_type)):

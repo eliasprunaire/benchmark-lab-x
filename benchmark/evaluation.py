@@ -110,15 +110,16 @@ def _context(store, connection, campaign_id, attempt_id):
                 and connection.total_changes == store._verified_read_changes)
     if snapshot:
         store._connection_checked()
-    cached = store._verified_contexts.get(campaign_id) if snapshot else None
+    contexts = store._verified_contexts if snapshot else None
+    cached = contexts.get(campaign_id) if contexts is not None else None
     if cached is None:
         campaign = c._inspect(store, connection, campaign_id)
         if connection.execute('SELECT 1 FROM s2_comparison_contracts WHERE contract_sha256=?',
                               (campaign['manifest']['contract_sha256'],)).fetchone():
             raise ValueError('Contrat de comparaison non évaluable par le jugement expert')
         qualification = q._inspect(store, connection, campaign['manifest']['contract_sha256'])
-        if snapshot:
-            store._verified_contexts[campaign_id] = deepcopy((campaign, qualification))
+        if contexts is not None:
+            contexts[campaign_id] = deepcopy((campaign, qualification))
     else:
         campaign, qualification = deepcopy(cached)
     attempt = next((a for a in campaign['attempts'] if a['operation_id'] == attempt_id), None)
@@ -495,7 +496,7 @@ def inspect(store, evaluation_id):
         return next(r for r in _records(store, connection, row[0]) if r['evaluation_id'] == evaluation_id)
 
 
-def decision(record, *, attempt=None):
+def decision(record, *, attempt=None) -> dict:
     """Current business view; never rewrite the historical evaluation record"""
     if 'decision' in record:
         return deepcopy(record['decision'])
@@ -525,7 +526,7 @@ def attempt_status(store, campaign_id, attempt_id):
         ctx = _context(store, connection, campaign_id, attempt_id)
         records = _records(store, connection, attempt_id)
         latest = records[-1] if records else None
-        result = (decision(latest) if latest else dict(verdict=None,
+        result: dict = (decision(latest) if latest else dict(verdict=None,
             state='REVIEW_REQUIRED' if recovery_status['kind'] == 'COMPLETE' else 'EXECUTION_REQUIRED',
             reason=recovery_status['reason'], next_action=recovery_status['reason']))
         result.update(attempt_id=attempt_id, campaign_id=campaign_id,

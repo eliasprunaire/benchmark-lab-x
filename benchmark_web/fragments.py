@@ -90,7 +90,7 @@ def readable_fields(value):
               'conditions': 'Conditions'}
     if isinstance(value, dict):
         return ('<dl class="evidence-fields">' + ''.join(
-            '<dt>' + escape(labels.get(key, key.replace('_', ' ')), quote=True) + '</dt><dd>' + readable_fields(item) + '</dd>'
+            '<dt>' + text(labels.get(key, key.replace('_', ' '))) + '</dt><dd>' + readable_fields(item) + '</dd>'
             for key, item in value.items()) + '</dl>') if value else '<span>Non renseigné</span>'
     if isinstance(value, list):
         return ('<ul>' + ''.join('<li>' + readable_fields(item) + '</li>' for item in value) + '</ul>') if value else '<span>Aucun élément déclaré</span>'
