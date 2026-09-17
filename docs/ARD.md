@@ -216,7 +216,7 @@ Le frontend et le backend appartiennent au même dépôt produit et sont servis 
 
 | Composant | Responsabilité et accès |
 |---|---|
-| Serveur public | présenter l’entrée de demande et le parcours interactif ; relayer à l’exécuteur, sans le lire ni le conserver, le résultat d’une autorisation déléguée accordée par le demandeur ; servir la projection approuvée et ses pièces publiables ; aucun accès public direct au stockage privé ni aux secrets fournisseurs |
+| Serveur public | présenter l’entrée de demande et le parcours interactif ; relayer à l’exécuteur le résultat d’une autorisation déléguée ou la clé personnelle saisie par le demandeur via HTTPS, sans conserver la clé ; servir la projection approuvée et ses pièces publiables ; aucun accès public direct au stockage privé ni aux secrets opérateur |
 | Exécuteur de travaux longs | opérer les campagnes indépendamment des requêtes HTTP, sous identité et autorité propres ; conserver observations, incidents et évaluations privées |
 | Opérateur autorisé | préparer, admettre, arrêter, reprendre et approuver selon l’opération ; une interface opérateur web n’est pas exigée |
 | Contrôleur de livraison | installer une source ou un artefact approuvé, vérifier son identité et consigner le résultat ; aucun droit d’appel candidat déduit du droit de déployer |

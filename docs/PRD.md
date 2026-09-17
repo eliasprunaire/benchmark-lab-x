@@ -134,6 +134,10 @@ L’aperçu présente une situation fictive concrète, les informations importan
 
 Les critères sont fixés avant approbation du contrat. La présentation du panel, des conditions et des coûts de campagne permet de les examiner avant lancement ; modifier un critère à ce stade fait revenir aux vérifications et validations affectées. Validation du besoin, qualification, approbation du contrat, autorisation de dépense et publication restent distinctes. La préparation et le suivi des résultats sont privés tant que leur publication n’est pas autorisée.
 
+### Accès OpenRouter personnel
+
+Le demandeur peut saisir sa clé OpenRouter dans le parcours web pour financer ses préparations, qualifications et comparaisons. La clé est liée à sa session de navigateur et conservée chiffrée côté exécuteur. Elle n’est ni réaffichée ni stockée dans le navigateur. Son enregistrement vérifie l’accès sans lancer de modèle ; les enveloppes et autorisations d’appel restent distinctes. Le mode personnel n’utilise jamais la clé opérateur en secours. Remplacer la clé ne renouvelle pas l’enveloppe de préparation de cette session. La retirer interdit les nouveaux appels avec cette clé, sans révoquer l’accès chez OpenRouter ni annuler les appels déjà émis. L’arrêt global du service s’applique aussi au mode personnel.
+
 ### Exemple pédagogique : Orme & Signal
 
 Orme & Signal est une entreprise entièrement fictive dont la dirigeante veut préparer un tableau par opération, les justificatifs organisés sans doublons, la liste des pièces manquantes et un calendrier de rappels. L’illustration porte sur cinq débits de janvier 2027 : 240 €, 96 €, 96 €, 185 € et 72 €. Elle comprend une facture de fournitures de 240 €, deux factures distinctes Despins de 96 € à la même date dont une copie documentaire, une facture de 185 € d’un fournisseur fictif en Chine avec une note expliquant l’achat d’échantillons, et un justificatif de 72 € manquant.

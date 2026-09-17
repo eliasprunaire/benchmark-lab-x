@@ -41,6 +41,24 @@ def render_task_index(task):
     return content
 
 
+def personal_key_form(csrf, access):
+    connected = access.get('connected', False)
+    content = '<details class="corr personal-key"><summary class="button sec">Ajouter ma clé Openrouter</summary><div>'
+    if connected:
+        content += '<p>Plafond Openrouter : ' + text(access.get('limit_usd') or 'inconnu') + ' USD. Solde annoncé : ' + text(access.get('limit_remaining_usd') or 'inconnu') + ' USD.</p>'
+    content += '<p>Votre clé est conservée chiffrée sur le serveur.</p>'
+    content += form(csrf, '/preparation/access/key', {'assistance_cap': '20'},
+        '<label for="openrouter-key">Clé API Openrouter</label>'
+        '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help">'
+        '<p id="key-help">Utilisez une clé dédiée avec un plafond non renouvelable de 50 USD maximum.</p>'
+        '<button type="submit">Enregistrer la clé</button>')
+    if access.get('status') in ('connected', 'invalid'):
+        content += form(csrf, '/preparation/access/disconnect', {},
+            '<button type="submit" class="sec">Retirer la clé de ce navigateur</button>')
+        content += '<p>Terminez la préparation ou qualification en cours avant de changer la clé. Le retrait bloque les nouveaux appels, sans révoquer la clé chez Openrouter ni annuler une comparaison engagée.</p>'
+    return content + '</div></details>'
+
+
 def render(value, csrf, path='/preparation', *, error=False):
     """Native HTML forms, inert evidence and a fixed comparison focus script"""
     def field_attributes(name):
@@ -83,26 +101,26 @@ def render(value, csrf, path='/preparation', *, error=False):
         back_class = 'button sec' if type(submitted) is dict and ('request' in submitted or 'message' in submitted) else 'button'
         content += '<p><a class="' + back_class + '" href="/preparation">Retrouver mes cas d’usage</a></p>'
     elif value.get('kind') == 'access':
-        title = 'Accès OpenRouter'
+        title = 'Accès Openrouter'
         status = value['status']
         if status == 'connected':
-            content = state_block('done', 'Accès OpenRouter', 'Compte connecté',
+            content = state_block('done', 'Accès Openrouter', 'Compte connecté',
                 '<p>Crédit restant : ' + text(value['limit_remaining_usd'] if value['limit_remaining_usd'] is not None else 'INCONNU')
                 + ' USD. Limite du compte : ' + text(value['limit_usd'] if value['limit_usd'] is not None else 'INCONNU') + ' USD.</p>')
             content += form(csrf, '/preparation/access/disconnect', {}, '<button class="sec" type="submit">Déconnecter</button>')
         elif status == 'invalid':
-            content = state_block('err', 'Accès OpenRouter', 'Accès invalide',
+            content = state_block('err', 'Accès Openrouter', 'Accès invalide',
                                   '<p>Motif : ' + text(value.get('reason') or 'INCONNU') + '.</p>')
             content += form(csrf, '/preparation/access/start', {'return': path},
-                            '<button type="submit">Reconnecter mon compte OpenRouter</button>')
+                            '<button type="submit">Reconnecter mon compte Openrouter</button>')
         elif status == 'disconnected':
-            content = state_block('action', 'Accès OpenRouter', 'Compte non connecté',
+            content = state_block('action', 'Accès Openrouter', 'Compte non connecté',
                                   '<p>Connectez votre compte pour financer les appels candidats de votre comparaison.</p>')
             content += form(csrf, '/preparation/access/start', {'return': path},
-                            '<button type="submit">Connecter mon compte OpenRouter</button>')
+                            '<button type="submit">Connecter mon compte Openrouter</button>')
         else:
-            content = state_block('err', 'Accès OpenRouter', 'Connexion indisponible',
-                                  '<p>Connexion OpenRouter indisponible.</p>')
+            content = state_block('err', 'Accès Openrouter', 'Connexion indisponible',
+                                  '<p>Connexion Openrouter indisponible.</p>')
         content += '<p><a class="button' + ('' if status in ('connected', 'unavailable') else ' sec') + '" href="/preparation">Revenir à mes cas d’usage</a></p>'
     elif value.get('kind') == 'configurations':
         title = 'Choisir les configurations'
@@ -182,8 +200,10 @@ def render(value, csrf, path='/preparation', *, error=False):
             '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5" aria-describedby="request-help' + ('"' if can_submit else ' availability" disabled') + '></textarea>'
             '<label for="useful">Résultat attendu</label><textarea id="useful" name="useful" maxlength="800" rows="3"' + disabled + '></textarea>'
             '<label for="context">Contexte utile</label><textarea id="context" name="context" maxlength="200" rows="2"' + disabled + '></textarea>'
-            '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>'
-            '<button type="submit"' + disabled + '>' + icon('i-pen') + 'Préparer cet exemple</button>'), 'besoin')
+            '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>',
+            form_id='prepare-case')
+            + (personal_key_form(csrf, value.get('personal_access', {})) if value.get('personal_preparation') else '')
+            + '<button type="submit" form="prepare-case"' + disabled + '>' + icon('i-pen') + 'Préparer cet exemple</button>', 'besoin')
         content += section('Mes cas d’usage dans ce navigateur', dossiers)
     elif value.get('kind') == 'honeypot_ack' or 'operation_id' in value:
         title = 'Demande enregistrée'
@@ -331,7 +351,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         else:
             content += '<p>La validation sera possible lorsqu’un exemple à examiner sera disponible.</p>'
         if editable and package and value['stage'] == 'preview' and value['validation'] is None:
-            content += '<p>Cette validation confirme la fidélité de cet exemple à votre besoin. Si la qualification est disponible, elle est financée par l’opérateur sur l’enveloppe de préparation. Aucun appel candidat ni publication n’est autorisé ici.</p>'
+            content += '<p>Cette validation confirme la fidélité de cet exemple à votre besoin. Si la qualification est disponible, ' + ('elle utilise votre clé sur votre enveloppe de préparation' if value.get('personal_preparation') else 'elle est financée par l’opérateur sur l’enveloppe de préparation') + '. Aucun appel candidat ni publication n’est autorisé ici.</p>'
             content += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
                             '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
         content += '</section>'
@@ -374,8 +394,11 @@ def render(value, csrf, path='/preparation', *, error=False):
                 url + '/configurations') + '">Choisir les modèles</a></p>'
         if 'campaigns' in value:
             content += render_campaign_history(value['campaigns'], url)
+    if value.get('personal_preparation') and s9 and 'dossiers' not in value:
+        content += personal_key_form(csrf, value.get('personal_access', {}))
     if state and s9:
         reasons = {
+            'access': 'Ajoutez votre clé Openrouter pour préparer un exemple avec votre propre accès.',
             'open': 'Échanges disponibles. Chaque envoi reste vérifié par le serveur avant admission.',
             'closed': 'Appels fermés : aucune admission de préparation ouverte.',
             'unconfigured': 'Appels fermés : aucun assistant configuré pour la préparation.',
@@ -385,10 +408,15 @@ def render(value, csrf, path='/preparation', *, error=False):
             'unresolved': 'Appels fermés : effets ou coûts non résolus dans l’enveloppe de préparation.',
             'budget': 'Appels fermés : enveloppe insuffisante pour un nouvel échange.',
             'daily_cap': 'Appels fermés : plafond quotidien de préparation atteint.'}
-        status = '<aside id="availability" class="availability" aria-label="État de la préparation"><p><strong>Assistant '
-        status += 'configuré' if state['assistant_configured'] else 'non configuré'
-        status += '.</strong> Admission ' + ('ouverte' if state['admission_open'] else 'fermée') + '.</p><p>'
-        status += text(reasons[state['reason']]) + '</p><p class="hint">La consultation ne lance aucun appel. La préparation et la qualification sont financées par l’opérateur ; les appels candidats demandent un lancement distinct.</p></aside>'
+        status = '<aside id="availability" class="availability" aria-label="État de la préparation"><p><strong>'
+        if value.get('personal_preparation'):
+            status += ('Préparation disponible' if can_submit else 'Préparation en attente') + '.</strong></p><p>'
+        else:
+            status += 'Assistant ' + ('configuré' if state['assistant_configured'] else 'non configuré')
+            status += '.</strong> Admission ' + ('ouverte' if state['admission_open'] else 'fermée') + '.</p><p>'
+        funding = ('Préparation et qualification utilisent votre clé personnelle' if value.get('personal_preparation')
+                   else 'La préparation et la qualification sont financées par l’opérateur')
+        status += text(reasons[state['reason']]) + '</p><p class="hint">La consultation ne lance aucun appel. ' + funding + ' ; les appels candidats demandent un lancement distinct.</p></aside>'
         content = status + content
     template = TEMPLATE_PATH.read_text()
     body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''

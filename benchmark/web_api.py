@@ -9,7 +9,7 @@ from .storage import _fields
 
 def dispatch(store, method, path, token, body, source, transport, *, qualification_transport=None, candidate_transport=None,
              candidate_identity=None,
-             access_secret=None, access_transport=None, presentation=None):
+             access_secret=None, access_transport=None, presentation=None, personal_preparation=False):
     """Executor-side authorization: HTTP fields can never claim an operator role."""
     if method == 'GET' and path == '/preparation':
         session_id, csrf, token = p.session(store, token, create=True)
@@ -20,7 +20,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
                                    'need': store.get_dossier(d, r)['request']} for d, r in rows]}, token, None
     session_id, csrf, _ = p.session(store, token)
     access_paths = ('/preparation/access', '/preparation/access/start',
-                    '/preparation/access/callback', '/preparation/access/disconnect')
+                    '/preparation/access/callback', '/preparation/access/disconnect', '/preparation/access/key')
     if method == 'GET' and path == '/preparation/access':
         from . import provider_access
         if not provider_access.available(store):
@@ -65,6 +65,10 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
             if type(supplied) is not str or not hmac.compare_digest(supplied.encode(), csrf.encode()):
                 raise p.Denied('Protection CSRF requise')
             body = {key: value for key, value in body.items() if key != 'csrf_token'}
+    if personal_preparation and method == 'POST' and (path == '/preparation/dossiers' or
+            re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/(messages|validation)', path)):
+        if transport is None or (path.endswith('/validation') and qualification_transport is None):
+            raise p.Denied('ACCESS_REQUIRED')
     configuration_route = re.fullmatch(
         r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/configurations', path)
     if configuration_route:
@@ -88,6 +92,14 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         if unavailable:
             return 503, {'connected': False, 'status': 'unavailable',
                          'error_code': 'ACCESS_UNAVAILABLE'}, None, None
+        if method == 'POST' and path == '/preparation/access/key':
+            if not personal_preparation:
+                raise p.Denied('ACCESS_UNAVAILABLE')
+            _fields(body, ('key', 'assistance_cap'), 'personal access')
+            if body['assistance_cap'] != '20':
+                raise p.Denied('ACCESS_CAP_REQUIRED')
+            return 200, provider_access.import_key(store, session_id, access_secret, body['key'],
+                                                   access_transport), None, None
         if method == 'POST' and path == '/preparation/access/start':
             _fields(body, ('callback_url',), 'access start')
             return 200, provider_access.start(store, session_id, access_secret,

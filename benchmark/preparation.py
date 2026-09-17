@@ -135,13 +135,15 @@ def connection_for(store):
     return connection
 
 
-def admission(store, connection=None):
+def admission(store, connection=None, *, transport=None):
     connection = connection if connection is not None else connection_for(store)
     raw = connection.execute('SELECT admission_json FROM s2_control WHERE singleton=1').fetchone()[0]
     if raw is None:
         return None
     result = json.loads(raw, object_pairs_hook=_unique_object)
     check_authority(result)
+    if getattr(transport, 'preparation_budget_id', None) is not None:
+        result = {**result, 'budget_id': transport.preparation_budget_id}
     return result
 
 
@@ -149,7 +151,7 @@ def availability(store, transport):
     """Read-only projection of preparation gates, without configuration or secrets"""
     connection = connection_for(store)
     with _transaction(connection):
-        authority = admission(store, connection)
+        authority = admission(store, connection, transport=transport)
         configured = bool(transport)
         reason = 'open'
         pending = connection.execute(
@@ -597,7 +599,7 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
                 raise ConflictError('Dossier déjà créé')
             if body['revision'] != existing[1]:
                 raise ConflictError('Révision périmée')
-        authority = admission(store, connection)
+        authority = admission(store, connection, transport=transport)
         if not authority or not transport or os.path.lexists(store._root / 'restore.json'):
             raise Denied('Admission fermée ou transport absent')
         if enforce_limits:
@@ -718,7 +720,7 @@ def validate_and_qualify(store, session_id, dossier_id, body, source, transport)
             (dossier_id, revision)).fetchone()
         if existing:
             return result, existing[0], False
-        authority = admission(store, connection)
+        authority = admission(store, connection, transport=transport)
         if authority is None or os.path.lexists(store._root / 'restore.json'):
             raise Denied('ADMISSION_CLOSED')
         if connection.execute(
@@ -780,12 +782,19 @@ def execute_qualification(data, operation_id, transport):
                     operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
                 except ConflictError:
                     return
-                authority = admission(store, connection)
+                authority = admission(store, connection, transport=transport)
+                if callable(getattr(transport, 'authorized', None)) and not transport.authorized(store):
+                    return
+                configured = (transport.quote() if callable(getattr(transport, 'quote', None))
+                              else transport.configuration()) if transport is not None else {}
+                reserve = (str(max(_money(authority['reserve_amount']),
+                                   _money(configured.get('reserve_usd', authority['reserve_amount']))))
+                           if authority is not None else None)
                 if (transport is None or authority is None or operation['phase'] != 'qualification'
                         or os.path.lexists(store._root / 'restore.json')
                         or (operation['authority'], operation['budget_id'], operation['reserved_amount']) !=
-                           (authority['authority_id'], authority['budget_id'], authority['reserve_amount'])
-                        or operation['requested_configuration'] != transport.configuration()):
+                           (authority['authority_id'], authority['budget_id'], reserve)
+                        or operation['requested_configuration'] != configured):
                     return
                 request = _qualification_input(store, connection, operation['dossier_id'], operation['revision'])
                 if encode(request) != operation['resources'][0]:
@@ -840,7 +849,9 @@ def execute(data, operation_id, transport):
                 return
             with _transaction(connection, write=True):
                 operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
-                authority = admission(store, connection)
+                authority = admission(store, connection, transport=transport)
+                if callable(getattr(transport, 'authorized', None)) and not transport.authorized(store):
+                    return
                 if (transport is None or authority is None or os.path.lexists(store._root / 'restore.json')
                         or authority != dict(authority_id=operation['authority'], budget_id=operation['budget_id'],
                                              reserve_amount=operation['reserved_amount'],

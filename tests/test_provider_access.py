@@ -22,7 +22,7 @@ from tests.test_s4_regressions import inputs, manifest, response
 
 
 SECRET = bytes.fromhex('11' * 32)
-KEY = 'sk-or-fixture-secret'
+KEY = 'sk-or-v1-fixture-secret'
 
 
 class AccessTransport:
@@ -163,6 +163,69 @@ class ProviderAccessTests(unittest.TestCase):
         self.store = storage.Store(self.data)
         self.addCleanup(self.store.close)
         self.transport = AccessTransport()
+
+    def test_manual_key_is_verified_encrypted_and_does_not_refill_budget(self):
+        self.transport.verify_result = (200, json.dumps({'data': {
+            'limit': 50, 'limit_remaining': 49, 'limit_reset': None, 'is_free_tier': False}}).encode())
+        value = provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
+        self.assertTrue(value['connected'])
+        self.assertEqual(KEY, provider_access.key_for_session(self.store, self.session, SECRET, self.transport))
+        budget_id = provider_access.preparation_budget_id(self.session)
+        self.assertEqual('20', self.store.inspect_budget(budget_id)['limit'])
+        provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
+        self.assertEqual('20', self.store.inspect_budget(budget_id)['limit'])
+        self.assertNotIn(KEY, json.dumps(value))
+        self.assertNotIn(KEY, '\n'.join(self.store._connection.iterdump()))
+
+    def test_manual_import_rejects_unbounded_or_renewing_keys_and_wrong_csrf(self):
+        for changes in ({'limit': None}, {'limit_reset': 'daily'}, {'limit': 51}):
+            self.transport.verify_result = (200, json.dumps({'data': {
+                'limit': 50, 'limit_remaining': 20, 'is_free_tier': False, **changes}}).encode())
+            with self.assertRaises(preparation.Denied):
+                provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
+        session_id, csrf, token = preparation.session(self.store, None, create=True)
+        self.transport.verifications.clear()
+        with self.assertRaises(preparation.Denied):
+            web_api.dispatch(self.store, 'POST', '/preparation/access/key', token,
+                {'csrf_token': 'wrong', 'key': KEY, 'assistance_cap': '20'}, 'a' * 40, None,
+                access_secret=SECRET, access_transport=self.transport, personal_preparation=True)
+        self.assertEqual([], self.transport.verifications)
+        with self.assertRaises(preparation.Denied):
+            provider_access.import_key(self.store, session_id, SECRET, 'sk-ant-wrong-provider', self.transport)
+        self.assertEqual([], self.transport.verifications)
+
+    def test_oauth_replacement_cannot_remove_personal_spending_cap(self):
+        provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
+        self.transport.verify_result = (200, json.dumps({'data': {
+            'limit': None, 'limit_remaining': None, 'is_free_tier': False}}).encode())
+        self.connect()
+        with self.assertRaises(preparation.Denied):
+            provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
+
+    def test_manual_form_and_route_return_only_safe_state(self):
+        from benchmark_web.views import render
+        _, csrf, token = preparation.session(self.store, None, create=True)
+        code, value, _, start = web_api.dispatch(self.store, 'POST', '/preparation/access/key', token,
+            {'csrf_token': csrf, 'key': KEY, 'assistance_cap': '20'}, 'a' * 40, None,
+            access_secret=SECRET, access_transport=self.transport, personal_preparation=True)
+        self.assertEqual(200, code)
+        self.assertIsNone(start)
+        self.assertNotIn(KEY, json.dumps(value))
+        html = render({'dossiers': [], 'personal_preparation': True, 'personal_access': value}, csrf).decode()
+        self.assertIn('type="password"', html)
+        self.assertIn('autocomplete="new-password"', html)
+        self.assertIn('Ajouter ma clé Openrouter', html)
+        self.assertIn('Retirer la clé', html)
+        self.assertNotIn(KEY, html)
+        self.assertNotIn('localStorage', html)
+        self.assertEqual([], self.transport.exchanges)
+
+    def test_invalid_manual_key_preserves_existing_access(self):
+        self.connect()
+        self.transport.verify_result = (401, b'{}')
+        with self.assertRaises(preparation.Denied):
+            provider_access.import_key(self.store, self.session, SECRET, 'sk-or-v1-invalid', self.transport)
+        self.assertEqual(KEY, provider_access.key_for_session(self.store, self.session, SECRET, self.transport))
 
     def connect(self):
         provider_access.start(self.store, self.session, SECRET,

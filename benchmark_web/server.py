@@ -137,7 +137,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     parsed = urlsplit(self.path)
                     values = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
                     if parsed.path != '/preparation/access/callback' or set(values) != {'code'} or len(values['code']) != 1 or not values['code'][0]:
-                        raise ValueError('Retour OpenRouter invalide')
+                        raise ValueError('Retour Openrouter invalide')
                     state = cookies.get('benchmark_access_callback')
                     if state is None:
                         raise ValueError('Session de retour absente')
@@ -156,7 +156,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                                  [('Location', return_path), expired])
                     return
                 if self.path == '/preparation/access/callback':
-                    raise ValueError('Callback OpenRouter réservé au retour GET')
+                    raise ValueError('Callback Openrouter réservé au retour GET')
                 body = None
                 return_path = None
                 if self.command == 'POST':
@@ -196,7 +196,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     if self.path == '/preparation/access/start':
                         if callback_url is None:
                             value = {'kind': 'access', 'connected': False, 'status': 'unavailable',
-                                     'error': 'Connexion OpenRouter indisponible : URL publique non configurée.'}
+                                     'error': 'Connexion Openrouter indisponible : URL publique non configurée.'}
                             self.respond(503, value if wants_json else views.render(value, body.get('csrf_token', ''), error=True),
                                          'application/json' if wants_json else 'text/html; charset=utf-8')
                             return
@@ -227,6 +227,9 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                         ('Set-Cookie', 'benchmark_access_callback=' + _callback_cookie(token, return_path)
                          + '; HttpOnly; Secure; SameSite=Lax; Path=/preparation/access/callback')]
                     self.respond(303, b'', 'text/html; charset=utf-8', response_headers)
+                    return
+                if self.command == 'POST' and self.path == '/preparation/access/key' and result['status'] < 400 and not wants_json:
+                    self.respond(303, b'', 'text/html; charset=utf-8', {'Location': '/preparation'})
                     return
                 if self.command == 'POST' and self.path == '/preparation/access/disconnect' and result['status'] < 400:
                     self.respond(303, b'', 'text/html; charset=utf-8', {'Location': '/preparation/access'})
@@ -266,7 +269,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                             view_path = target
                     elif self.command == 'POST' and type(body) is dict:
                         result['value']['form'] = {key: value for key, value in body.items()
-                                                   if key not in ('csrf_token', 'source_sha256', 'website')}
+                                                   if key not in ('csrf_token', 'source_sha256', 'website', 'key')}
                     page = views.render(result['value'], csrf, view_path, error=result['status'] >= 400)
                     script = views.COMPARISON_FOCUS_SCRIPT if result['value'].get('kind') == 'comparison' else None
                     self.respond(result['status'], page, 'text/html; charset=utf-8', headers, script=script)

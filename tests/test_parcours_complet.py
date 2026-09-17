@@ -318,7 +318,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'accès requis', 'Compléter cette étape')
         page, _, _ = self.request(page.link('Compléter cette étape'))
-        self.examine(page, '/preparation/access', 'accès déconnecté', 'Connecter mon compte OpenRouter')
+        self.examine(page, '/preparation/access', 'accès déconnecté', 'Connecter mon compte Openrouter')
         form = page.form('/access/start')
         _, headers, _ = self.request(form['action'], form['fields'], status=303)
         self.assertEqual('openrouter.ai', urlsplit(headers['Location']).hostname)
@@ -431,7 +431,7 @@ class ParcoursComplet(unittest.TestCase):
     def test_acces_openrouter_factice_et_retours(self):
         self.request('/preparation')
         page, _, _ = self.request('/preparation/access')
-        self.examine(page, '/preparation/access', 'déconnecté', 'Connecter mon compte OpenRouter')
+        self.examine(page, '/preparation/access', 'déconnecté', 'Connecter mon compte Openrouter')
         form = page.form('/access/start')
         _, headers, _ = self.request(form['action'], form['fields'], status=303)
         self.assertEqual('openrouter.ai', urlsplit(headers['Location']).hostname)
@@ -452,7 +452,7 @@ class ParcoursComplet(unittest.TestCase):
         form = page.form('/disconnect')
         self.request(form['action'], form['fields'], status=303)
         page, _, _ = self.request('/preparation/access')
-        self.examine(page, '/preparation/access', 'déconnexion', 'Connecter mon compte OpenRouter')
+        self.examine(page, '/preparation/access', 'déconnexion', 'Connecter mon compte Openrouter')
         self.assertEqual([], self.calls)
         self.assertEqual([], self.qualifier.calls)
 

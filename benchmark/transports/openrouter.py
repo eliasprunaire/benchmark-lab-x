@@ -1,6 +1,6 @@
 """Échanges OpenRouter : préparation, qualification et jugement, sans rejeu implicite"""
 from base64 import b64encode
-from copy import deepcopy
+from copy import copy, deepcopy
 from datetime import datetime, timezone
 from hashlib import sha256
 from http.client import HTTPSConnection, IncompleteRead
@@ -366,9 +366,30 @@ class OpenRouterPreparation:
         return result
 
     def __init__(self, api_key, profile=None):
-        validate_key(api_key)
+        if api_key is not None:
+            validate_key(api_key)
         self._api_key = api_key
         self._profile = frozen_profile(profile)
+
+    def for_session(self, key, session_id, secret):
+        from ..provider_access import preparation_budget_id
+        validate_key(key)
+        bound = copy(self)
+        bound._api_key = key
+        bound._session_id = session_id
+        bound._access_secret = secret
+        bound.preparation_budget_id = preparation_budget_id(session_id)
+        return bound
+
+    def authorized(self, store):
+        if not hasattr(self, '_session_id'):
+            return True
+        from ..provider_access import decrypt
+        from hmac import compare_digest
+        row = store._connection.execute(
+            "SELECT key_cipher FROM s2_provider_access WHERE session_id=? AND status='connected'",
+            (self._session_id,)).fetchone()
+        return row is not None and compare_digest(decrypt(self._access_secret, row[0]), self._api_key)
 
     def prepare(self, operation, request, api_key=None):
         key = self._api_key if api_key is None else api_key

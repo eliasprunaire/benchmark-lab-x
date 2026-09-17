@@ -314,7 +314,7 @@ def render_campaign_launch_requester(value, csrf):
         '<p>Chaque modèle reçoit la même consigne et les mêmes pièces. Le verdict reste limité à cet exemple et aux configurations observées.</p>' +
         '<details><summary>Critères et conditions exactes</summary>' + readable_fields(
             {'criteria': value['criteria'], 'conditions': campaign['conditions'], 'panel': campaign['panel']}) + '</details>')
-    content += '<p>Les appels candidats sont financés par votre accès OpenRouter. Estimation, plafond et coût observé sont distincts ; le plafond ne garantit pas une limite absolue de facturation.</p>'
+    content += '<p>Les appels candidats sont financés par votre accès Openrouter. Estimation, plafond et coût observé sont distincts ; le plafond ne garantit pas une limite absolue de facturation.</p>'
     check_content = '<ul>'
     for check in value['checks']:
         detail = check['detail']
@@ -373,7 +373,7 @@ def render_campaign_launch_requester(value, csrf):
         }
         content += '<p role="status">Lancement indisponible : ' + text(
             failed['detail'] if type(failed['detail']) is str else
-            'connectez votre accès OpenRouter') + '. <a class="button" href="' + text(
+            'connectez votre accès Openrouter') + '. <a class="button" href="' + text(
             links[failed['key']]) + '">Compléter cette étape</a></p>'
     else:
         content += '<p role="status">Lancement indisponible. Le responsable doit vérifier la disponibilité de l’exécution.</p>'
@@ -399,21 +399,21 @@ def render_campaign_launch_operator(value, csrf):
     access = value.get('access', {'status': 'unavailable'})
     status = access.get('status')
     if status == 'connected':
-        access_content = '<p>Compte OpenRouter connecté. Crédit restant : ' + text(
+        access_content = '<p>Compte Openrouter connecté. Crédit restant : ' + text(
             access.get('limit_remaining_usd') if access.get('limit_remaining_usd') is not None else 'INCONNU') + ' USD.</p>'
         access_content += form(csrf, '/preparation/access/disconnect', {},
                                '<button type="submit">Déconnecter</button>')
     elif status == 'invalid':
-        access_content = '<p>Accès OpenRouter invalide : ' + text(access.get('reason') or 'INCONNU') + '.</p>'
+        access_content = '<p>Accès Openrouter invalide : ' + text(access.get('reason') or 'INCONNU') + '.</p>'
         access_content += form(csrf, '/preparation/access/start', {'return': base + '/conditions'},
-                               '<button type="submit">Reconnecter mon compte OpenRouter</button>')
+                               '<button type="submit">Reconnecter mon compte Openrouter</button>')
     elif status == 'disconnected':
-        access_content = '<p>Compte OpenRouter non connecté.</p>'
+        access_content = '<p>Compte Openrouter non connecté.</p>'
         access_content += form(csrf, '/preparation/access/start', {'return': base + '/conditions'},
-                               '<button type="submit">Connecter mon compte OpenRouter</button>')
+                               '<button type="submit">Connecter mon compte Openrouter</button>')
     else:
-        access_content = '<p>Connexion OpenRouter indisponible.</p>'
-    content += section('Accès OpenRouter', access_content)
+        access_content = '<p>Connexion Openrouter indisponible.</p>'
+    content += section('Accès Openrouter', access_content)
     estimate = value['estimate']
     content += '<h2>Coût et autorisation</h2><p>Estimation indicative : ' + text(
         estimate['amount'] + ' ' + estimate['currency'] if estimate else 'non fournie par le responsable') + '.</p>'
