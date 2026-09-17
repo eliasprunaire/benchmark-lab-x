@@ -46,11 +46,14 @@ def personal_key_form(csrf, access):
     content = '<details class="corr personal-key"><summary class="button sec">Ajouter ma clé Openrouter</summary><div>'
     if connected:
         content += '<p>Plafond Openrouter : ' + text(access.get('limit_usd') or 'inconnu') + ' USD. Solde annoncé : ' + text(access.get('limit_remaining_usd') or 'inconnu') + ' USD.</p>'
-    content += '<p>Votre clé est conservée chiffrée sur le serveur.</p>'
     content += form(csrf, '/preparation/access/key', {'assistance_cap': '20'},
         '<label for="openrouter-key">Clé API Openrouter</label>'
-        '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help">'
+        '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help key-storage">'
         '<p id="key-help">Utilisez une clé dédiée avec un plafond non renouvelable de 50 USD maximum.</p>'
+        '<p id="key-storage" class="hint">Votre clé est conservée chiffrée sur notre serveur. '
+        'Un cookie de session mémorise votre accès dans ce navigateur pour vos prochaines visites. '
+        'Ce cookie sera automatiquement supprimé au bout de 30 jours maximum d’inactivité. '
+        'Néanmoins, vous pouvez retirer votre clé depuis cette page si vous préférez.</p>'
         '<button type="submit">Enregistrer la clé</button>')
     if access.get('status') in ('connected', 'invalid'):
         content += form(csrf, '/preparation/access/disconnect', {},

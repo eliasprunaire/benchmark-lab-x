@@ -177,6 +177,32 @@ class ProviderAccessTests(unittest.TestCase):
         self.assertNotIn(KEY, json.dumps(value))
         self.assertNotIn(KEY, '\n'.join(self.store._connection.iterdump()))
 
+    def test_personal_key_expires_at_thirty_days_and_cannot_be_revived(self):
+        started = datetime(2026, 9, 17, 12, tzinfo=timezone.utc)
+        with patch.object(provider_access, '_now', return_value=started):
+            provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
+        budget = self.store.inspect_budget(provider_access.preparation_budget_id(self.session))
+        self.transport.verifications.clear()
+        for days in (30, 31):
+            with self.assertRaises(preparation.Denied):
+                provider_access.key_for_session(self.store, self.session, SECRET,
+                                               self.transport, now=started + timedelta(days=days))
+        self.assertEqual([], self.transport.verifications)
+        self.assertEqual(budget, self.store.inspect_budget(provider_access.preparation_budget_id(self.session)))
+
+    def test_successful_verification_renews_personal_access(self):
+        started = datetime(2026, 9, 17, 12, tzinfo=timezone.utc)
+        with patch.object(provider_access, '_now', return_value=started):
+            provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
+        visit = started + timedelta(days=29)
+        with patch.object(provider_access, '_now', return_value=visit):
+            self.assertEqual(KEY, provider_access.key_for_session(
+                self.store, self.session, SECRET, self.transport, now=visit))
+        next_visit = visit + timedelta(days=29)
+        with patch.object(provider_access, '_now', return_value=next_visit):
+            self.assertEqual(KEY, provider_access.key_for_session(
+                self.store, self.session, SECRET, self.transport, now=next_visit))
+
     def test_manual_import_rejects_unbounded_or_renewing_keys_and_wrong_csrf(self):
         for changes in ({'limit': None}, {'limit_reset': 'daily'}, {'limit': 51}):
             self.transport.verify_result = (200, json.dumps({'data': {

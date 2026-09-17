@@ -187,7 +187,7 @@ def expire(store, now=None):
     connection = store._connection_checked()
     with _transaction(connection, write=True):
         sessions = [row[0] for row in connection.execute(
-            'SELECT session_id FROM s2_provider_access WHERE COALESCE(verified_at, created_at)<?',
+            'SELECT session_id FROM s2_provider_access WHERE COALESCE(verified_at, created_at)<=?',
             ((now - EXPIRATION).isoformat(),)).fetchall()]
         for session_id in sessions:
             _delete(connection, session_id)
