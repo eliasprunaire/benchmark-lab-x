@@ -28,6 +28,7 @@ typés. Le web n'a donc plus à se défendre champ par champ, et une réponse ho
 une indisponibilité annoncée plutôt qu'un corps nul ou une page rompue.
 """
 from contextlib import closing
+from concurrent.futures import Future
 from http.client import HTTPException
 import fcntl
 import json
@@ -166,6 +167,10 @@ def denied_response(error):
         'estimate_under_cap': 'Augmentez le plafond ou choisissez d’autres configurations avant le lancement.',
         'QUALIFICATION_UNAVAILABLE': 'Qualification indisponible',
         'ADMISSION_CLOSED': 'Admission fermée',
+        'PROBE_SLUG_INVALID': 'Copiez le slug exact de la fiche Openrouter, au format constructeur/modèle. Les URL et routeurs automatiques ne sont pas acceptés.',
+        'PROBE_UNAVAILABLE': 'La vérification de modèles est indisponible.',
+        'PROBE_CLOSED': 'Les nouveaux appels sont fermés. Aucun test de modèle n’a été lancé.',
+        'PROBE_MODEL_UNAVAILABLE': 'Slug introuvable, modèle substitué ou endpoint texte incompatible. Aucun appel payant n’a été lancé. Vérifiez la fiche Openrouter.',
     }
     status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG', 'SOURCE_MISSING') else 403
     result = {'status': status, 'value': {'error': messages.get(error.code, generic),
@@ -281,11 +286,26 @@ def _refresh_catalogue(data, stopping, fetch):
         logging.getLogger(__name__).error('CATALOGUE_INTERNAL %s', type(error).__name__)
 
 
+def _probe_worker(future, data, request, fetch, secret, access_transport, transport):
+    from . import model_probes, preparation
+    try:
+        operation_id = model_probes.run(data, request['session_id'], request['dossier_id'],
+            request['body'], fetch, secret, access_transport, transport)
+        result = {'operation_id': operation_id}
+    except preparation.Denied as error:
+        result = {'error': denied_response(error)['value']['error']}
+    except (BudgetError, ConflictError):
+        result = {'error': 'Vérification refusée : budget disponible insuffisant ou opération déjà en cours.'}
+    except Exception as error:
+        result = {'error': _internal_result(error, 'MODEL_PROBE')['value']['error']}
+    future.set_result(result)
+
+
 def serve_executor(data, socket_path, source, *, transport=None, qualification_transport=None,
                    candidate_transport=None, candidate_transport_factory=None,
                    candidate_identity=None,
                    access_secret=None, access_transport=None, presentation=None, personal_preparation=False,
-                   catalogue_fetch=None):
+                   catalogue_fetch=None, model_probe_transport=None):
     data, socket_path = Path(data), Path(socket_path)
     with closing(Store(data)) as store:
         lock_fd = os.open(data / 'executor.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -304,6 +324,8 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
             def health():
                 verify(store)
                 return {'source_sha': source, 'storage': 'ok', **status(data, store)}
+
+            probe_jobs = {}
 
             def handle_message(message):
                 from . import preparation, provider_access, web_api
@@ -328,7 +350,22 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                         value['personal_access'] = provider_access.view(
                             store, session_id, access_secret, access_transport, refresh=False)
                 if isinstance(start, dict):
-                    if 'qualification_operation' in start:
+                    if 'model_probe' in start:
+                        job = probe_jobs.get(start['session_id'])
+                        if (job is not None and job['request_id'] == start['model_probe']
+                                and job['slug'] != start['body']['slug'].strip()):
+                            raise ConflictError('Identité déjà utilisée avec un autre slug')
+                        if job is None or job['request_id'] != start['model_probe']:
+                            if any(not item['future'].done() for item in probe_jobs.values()):
+                                raise preparation.Denied('PREPARATION_IN_PROGRESS')
+                            # Un seul résultat gratuit courant par session ; les appels restent dans le registre
+                            job = dict(request_id=start['model_probe'], dossier_id=start['dossier_id'],
+                                       slug=start['body']['slug'].strip(), future=Future())
+                            probe_jobs[start['session_id']] = job
+                            threading.Thread(target=_probe_worker, args=(job['future'], data, start,
+                                catalogue_fetch, access_secret, access_transport, model_probe_transport),
+                                daemon=True).start()
+                    elif 'qualification_operation' in start:
                         threading.Thread(target=preparation.execute_qualification,
                                          args=(data, start['qualification_operation'], active_qualification),
                                          daemon=True).start()
@@ -340,6 +377,13 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                                                  'access_transport': access_transport}, daemon=True).start()
                 elif start:
                     threading.Thread(target=preparation.execute, args=(data, start, active_transport), daemon=True).start()
+                if isinstance(value, dict) and value.get('kind') == 'configurations':
+                    session_id, _, _ = preparation.session(store, message['token'])
+                    job = probe_jobs.get(session_id)
+                    if job is not None and job['dossier_id'] == value['dossier_id']:
+                        value['probe_request'] = {key: job[key] for key in ('request_id', 'slug')}
+                        value['probe_request'].update(job['future'].result() if job['future'].done()
+                                                      else {'pending': True})
                 return {'status': code, 'value': value.hex() if isinstance(value, bytes) else value,
                         'piece': isinstance(value, bytes), 'cookie': cookie}
 
@@ -372,6 +416,8 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                     run(server)
                 finally:
                     stopping.set()
+                    from .preparation import close_admission
+                    close_admission(store)
                     if catalogue_worker is not None:
                         catalogue_worker.join()
             stop(data, store, 'PROCESS_STOPPED_ADMISSION_BLOCKED', after_process_exit=True)

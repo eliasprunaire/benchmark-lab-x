@@ -270,57 +270,63 @@ def _selection(fetched_at, document, registry):
         detail = endpoint_documents.get(model_id)
         if type(detail) is not dict or type(detail.get('endpoints')) is not list:
             raise storage.IntegrityError('Cache endpoint incomplet')
-        reasoning = model.get('reasoning')
-        levels = reasoning.get('supported_efforts') if type(reasoning) is dict else None
-        if type(levels) is not list or any(type(level) is not str for level in levels):
-            levels = []
-        pricing = model.get('pricing')
-        if pricing is None:
-            pricing = {}
-        if type(pricing) is not dict:
-            raise ValueError('Tarifs modèle invalides')
-        top_provider = model.get('top_provider')
-        max_output = top_provider.get('max_completion_tokens') if type(top_provider) is dict else None
-        if max_output is not None and type(max_output) is not int:
-            raise ValueError('Limite de sortie invalide')
-        endpoints = detail['endpoints']
-        available_routes = sorted(endpoint['tag'] for endpoint in endpoints
-                                  if type(endpoint) is dict and type(endpoint.get('tag')) is str
-                                  and not (type(endpoint.get('status')) in (int, float)
-                                           and endpoint['status'] < 0)
-                                  and _provider_slug(endpoint) not in excluded_providers)
-        if detail.get('id') != model_id:
-            # Conserver le constat fournisseur sans rendre un alias substituable à sa cible
-            available_routes = []
-            excluded = 'endpoint_identity_mismatch'
-        elif available_routes:
-            excluded = None
-        elif endpoints and all(_provider_slug(endpoint) in excluded_providers
-                               for endpoint in endpoints):
-            excluded = 'provider_excluded'
-        else:
-            excluded = 'no_available_endpoint'
-        context_length = model.get('context_length')
-        if context_length is not None and (type(context_length) is not int or context_length <= 0):
-            raise ValueError('Fenêtre de contexte invalide')
-        view.append({
-            'id': model_id,
-            'name': model['name'],
-            'maker': _maker(model_id),
-            'family': family(model_id),
-            'released': datetime.fromtimestamp(model['created'], timezone.utc).date().isoformat(),
-            'input_price_per_million': _million_price(pricing.get('prompt')),
-            'output_price_per_million': _million_price(pricing.get('completion')),
-            'reasoning_levels': levels,
-            'context_length': context_length,
-            'route': available_routes[0] if available_routes else None,
-            'max_output_tokens': max_output,
-            'variant': _variant(model_id),
-            'excluded': excluded,
-        })
+        view.append(model_view(model, detail, excluded_providers))
     return {'fetched_at': fetched_at.isoformat(),
             'stale': _now() - fetched_at >= timedelta(hours=settings['cache_hours']),
             'models': view}
+
+
+def model_view(model, detail, excluded_providers):
+    """Métadonnées communes aux modèles proposés et aux slugs ajoutés"""
+    model_id = model['id']
+    reasoning = model.get('reasoning')
+    levels = reasoning.get('supported_efforts') if type(reasoning) is dict else None
+    if type(levels) is not list or any(type(level) is not str for level in levels):
+        levels = []
+    pricing = model.get('pricing')
+    if pricing is None:
+        pricing = {}
+    if type(pricing) is not dict:
+        raise ValueError('Tarifs modèle invalides')
+    top_provider = model.get('top_provider')
+    max_output = top_provider.get('max_completion_tokens') if type(top_provider) is dict else None
+    if max_output is not None and type(max_output) is not int:
+        raise ValueError('Limite de sortie invalide')
+    endpoints = detail['endpoints']
+    available_routes = sorted(endpoint['tag'] for endpoint in endpoints
+                              if type(endpoint) is dict and type(endpoint.get('tag')) is str
+                              and not (type(endpoint.get('status')) in (int, float)
+                                       and endpoint['status'] < 0)
+                              and _provider_slug(endpoint) not in excluded_providers)
+    if detail.get('id') != model_id:
+        # Conserver le constat fournisseur sans rendre un alias substituable à sa cible
+        available_routes = []
+        excluded = 'endpoint_identity_mismatch'
+    elif available_routes:
+        excluded = None
+    elif endpoints and all(_provider_slug(endpoint) in excluded_providers
+                           for endpoint in endpoints):
+        excluded = 'provider_excluded'
+    else:
+        excluded = 'no_available_endpoint'
+    context_length = model.get('context_length')
+    if context_length is not None and (type(context_length) is not int or context_length <= 0):
+        raise ValueError('Fenêtre de contexte invalide')
+    return {
+        'id': model_id,
+        'name': model['name'],
+        'maker': _maker(model_id),
+        'family': family(model_id),
+        'released': datetime.fromtimestamp(model['created'], timezone.utc).date().isoformat(),
+        'input_price_per_million': _million_price(pricing.get('prompt')),
+        'output_price_per_million': _million_price(pricing.get('completion')),
+        'reasoning_levels': levels,
+        'context_length': context_length,
+        'route': available_routes[0] if available_routes else None,
+        'max_output_tokens': max_output,
+        'variant': _variant(model_id),
+        'excluded': excluded,
+    }
 
 
 def report(models, registry=None, now=None):

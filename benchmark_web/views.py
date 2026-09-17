@@ -10,7 +10,7 @@ from benchmark import VERSION
 from benchmark.preparation import binding
 from benchmark.storage import _strict_json as encode
 
-from .campaign_views import (COMPARISON_FOCUS_SCRIPT, render_attempt_detail, render_campaign_history,
+from .campaign_views import (COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_history,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations)
 from .fragments import date_lisible_utc, form, icon, listing, section, state_block, text
@@ -77,6 +77,8 @@ def preparation_pending(value):
 def page_script(value):
     if preparation_pending(value):
         return PREPARATION_PROGRESS_SCRIPT
+    if value.get('kind') == 'configurations' and value.get('personal_preparation'):
+        return CUSTOM_MODELS_SCRIPT
     return COMPARISON_FOCUS_SCRIPT if value.get('kind') == 'comparison' else None
 
 

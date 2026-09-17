@@ -70,7 +70,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         if transport is None or (path.endswith('/validation') and qualification_transport is None):
             raise p.Denied('ACCESS_REQUIRED')
     configuration_route = re.fullmatch(
-        r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/configurations', path)
+        r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/(configurations|custom-models)', path)
     if configuration_route:
         if method not in ('GET', 'POST'):
             raise p.Denied('Action inaccessible')
@@ -81,6 +81,18 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         if candidate_identity is None:
             return 503, {'error': 'Harnais candidat indisponible',
                          'error_code': 'CANDIDATE_PI_UNAVAILABLE'}, None, None
+        if configuration_route.group(2) == 'custom-models':
+            from . import model_probes
+            if not personal_preparation:
+                raise p.Denied('PROBE_UNAVAILABLE')
+            operation_id, start = None, None
+            if method == 'POST':
+                operation_id = model_probes.request_id(store, session_id, dossier_id, body)
+                start = {'model_probe': operation_id, 'session_id': session_id,
+                         'dossier_id': dossier_id, 'body': body}
+            value = campaigns.configurations_view(store, session_id, dossier_id)
+            value['probe_operation_id'] = operation_id
+            return (202 if start else 200), value, None, start
         if method == 'POST':
             return 201, campaigns.prepare_configurations(
                 store, session_id, dossier_id, body, candidate_identity), None, None

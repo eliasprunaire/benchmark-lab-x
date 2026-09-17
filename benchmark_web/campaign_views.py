@@ -10,6 +10,7 @@ la préparation : ces domaines restent dans `views`. Il n'importe pas `views`,
 pour qu'aucun cycle ne soit possible.
 """
 import re
+import secrets
 from urllib.parse import urlencode
 
 from benchmark.storage import _strict_json as encode
@@ -26,6 +27,129 @@ window.addEventListener('pageshow', () => {
   const row = document.getElementById(history.state?.comparisonFocus);
   if (row) row.focus({preventScroll: true});
 });"""
+
+CUSTOM_MODELS_SCRIPT = """(() => {
+  const panel = document.getElementById('custom-models');
+  const forms = panel.querySelector('.custom-model-forms');
+  const template = forms.querySelector('form').cloneNode(true);
+  const add = panel.querySelector('[data-add-slug]');
+  let busy = false;
+  function newRow() {
+    const row = template.cloneNode(true);
+    const id = 'slug-' + crypto.randomUUID();
+    row.querySelector('input[name=slug]').id = id;
+    row.querySelector('label').htmlFor = id;
+    row.querySelector('input[name=action_id]').value = crypto.randomUUID();
+    forms.append(row);
+    row.querySelector('input[name=slug]').focus();
+  }
+  add.hidden = false;
+  add.addEventListener('click', newRow);
+  function status(target, message, failed = false) {
+    target.setAttribute('role', failed ? 'alert' : 'status');
+    target.textContent = message;
+  }
+  function show(target, record, value) {
+    const cost = record.cost;
+    status(target, record.detail + (cost ? (cost.status === 'KNOWN'
+      ? ' Coût signalé : ' + cost.amount + ' USD.' : ' Coût inconnu ; réserve conservée : ' + record.reserve_usd + ' USD.') : ''),
+      !record.usable && record.status !== 'EMISSION_POSSIBLE');
+    if (record.usable) {
+      const model = value.models.find(item => item.id === record.slug);
+      const choices = document.getElementById('model-choices');
+      if (choices && model && !Array.from(choices.querySelectorAll('input')).some(input => input.value === model.id)) {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'checkbox'; input.name = 'models'; input.value = model.id;
+        label.append(input, ' ' + model.name + (model.not_adjustable ? ' · palier de raisonnement non réglable' : ''));
+        choices.append(label);
+      }
+    }
+  }
+  async function follow(operation, target, value) {
+    while (true) {
+      const request = value.probe_request?.request_id === operation ? value.probe_request : null;
+      const record = value.custom_models.find(item => item.operation_id === (request?.operation_id || operation));
+      if (request?.error) { status(target, request.error, true); return; }
+      if (record) {
+        show(target, record, value);
+        if (record.status !== 'EMISSION_POSSIBLE') return;
+      } else if (request?.pending) target.textContent = 'Vérification du slug et de son accès…';
+      else throw new Error('missing');
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      const response = await fetch(template.action, {headers: {Accept: 'application/json'}, cache: 'no-store',
+        redirect: 'error', signal: AbortSignal.timeout(10000)});
+      if (!response.ok) throw new Error('unavailable');
+      value = await response.json();
+    }
+  }
+  forms.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (busy) return;
+    busy = true;
+    const form = event.target, target = form.querySelector('[aria-live]');
+    form.querySelector('input[name=slug]').readOnly = true;
+    forms.querySelectorAll('button').forEach(button => button.disabled = true);
+    add.disabled = true;
+    status(target, 'Vérification du slug et de son accès…');
+    try {
+      const response = await fetch(form.action, {method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json'},
+        body: new URLSearchParams(new FormData(form)), redirect: 'error'});
+      const value = await response.json();
+      if (!response.ok) status(target, value.error || 'Vérification impossible.', true);
+      else await follow(value.probe_operation_id, target, value);
+      form.querySelector('input[name=action_id]').value = crypto.randomUUID();
+    } catch {
+      status(target, 'Suivi interrompu. Actualisez la page pour consulter l’état enregistré ; aucun appel ne sera relancé.', true);
+      form.querySelector('button').dataset.uncertain = 'true';
+    } finally {
+      busy = false; add.disabled = false;
+      form.querySelector('input[name=slug]').readOnly = false;
+      forms.querySelectorAll('button').forEach(button => button.disabled = button.dataset.uncertain === 'true');
+    }
+  });
+  panel.querySelectorAll('[data-probe-request]').forEach(async target => {
+    try {
+      const response = await fetch(template.action, {headers: {Accept: 'application/json'}, cache: 'no-store', redirect: 'error'});
+      if (!response.ok) throw new Error('unavailable');
+      await follow(target.dataset.probeRequest, target, await response.json());
+    } catch { target.textContent = 'Suivi interrompu. Actualisez pour consulter l’état enregistré.'; }
+  });
+})();"""
+
+
+def render_custom_models(value, csrf, dossier_url):
+    content = '<section id="custom-models"><h2>Ajouter un modèle</h2>'
+    content += '<p>Copiez le slug exact indiqué sur sa fiche Openrouter, au format <code>constructeur/modèle</code>, '
+    content += 'par exemple <code>openai/gpt-6-astra</code> ou <code>z-ai/glm-5.3-flash</code>. Une URL ou un nom commercial ne convient pas.</p>'
+    content += '<p class="hint" id="slug-help">Tester lance un court appel payant avec votre clé, limité à 128 tokens de sortie. '
+    content += 'Il vérifie que le modèle répond ; il ne lance pas de benchmark. Les modèles ajoutés restent privés à ce cas d’usage.</p>'
+    request = value.get('probe_request', {})
+    if request.get('error'):
+        content += '<p role="status">' + text(request['error']) + '</p>'
+    elif request.get('pending') and not any(record['operation_id'] == request['request_id']
+                                          for record in value.get('custom_models', [])):
+        content += '<p role="status" data-probe-request="' + text(request['request_id']) + '">Vérification du slug et de son accès…</p>'
+    for record in value.get('custom_models', []):
+        pending = (' data-probe-request="' + text(record['operation_id']) + '"' if record['status'] == 'EMISSION_POSSIBLE' else '')
+        content += '<p><code>' + text(record['slug']) + '</code> : <span role="status"' + pending + '>' + text(record['detail'])
+        cost = record['cost']
+        if cost:
+            content += (' Coût signalé : ' + text(montant_lisible(cost['amount'])) + ' USD.' if cost['status'] == 'KNOWN'
+                        else ' Coût inconnu ; réserve conservée : ' + text(montant_lisible(record['reserve_usd'])) + ' USD.')
+        content += '</span></p>'
+        if record['status'] == 'EMISSION_POSSIBLE':
+            content += '<p><progress aria-label="Vérification du modèle"></progress> <a href="' + text(
+                dossier_url + '/configurations#custom-models') + '">Actualiser la vérification</a></p>'
+    content += '<div class="custom-model-forms">' + form(csrf, dossier_url + '/custom-models',
+        {'action_id': secrets.token_hex(16)},
+        '<label for="custom-slug">Slug Openrouter</label>'
+        '<input id="custom-slug" name="slug" type="text" required maxlength="256" spellcheck="false" '
+        'autocapitalize="none" autocomplete="off" aria-describedby="slug-help" placeholder="constructeur/modèle">'
+        '<button class="sec" type="submit">Tester et ajouter</button><p role="status" aria-live="polite"></p>')
+    content += '</div><button class="sec" type="button" data-add-slug hidden>+ Ajouter une ligne</button>'
+    return content + '</section><script>' + CUSTOM_MODELS_SCRIPT + '</script>'
 
 
 def render_evaluations(evaluations, dossier_url):
@@ -257,6 +381,8 @@ def render_configurations(value, csrf):
     dossier_url = '/preparation/dossiers/' + value['dossier_id']
     content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
     content += '<p role="status">Choisissez au moins deux modèles et un palier de raisonnement. Aucun appel candidat ne part à cette étape.</p>'
+    if value.get('personal_preparation'):
+        content += render_custom_models(value, csrf, dossier_url)
     if not value.get('catalogue_available', True):
         content += '<p>' + text(value['detail']) + '</p>'
     else:
@@ -282,7 +408,7 @@ def render_configurations(value, csrf):
              'Sans effet sur les modèles indiqués comme non réglables.') + '</p>'
             for tier in value['available_tiers'])
         content += ('<form method="post" action="' + text(dossier_url + '/configurations') + '">' +
-                    hidden('csrf_token', csrf) + '<fieldset><legend>Modèles à comparer</legend>' +
+                    hidden('csrf_token', csrf) + '<fieldset id="model-choices"><legend>Modèles à comparer</legend>' +
                     choices + '</fieldset><fieldset><legend>Palier de raisonnement</legend>' + tiers +
                     '</fieldset><button' + (' class="sec"' if value['configurations'] else '') + ' type="submit">Enregistrer les configurations</button></form>')
     if value['configurations']:
