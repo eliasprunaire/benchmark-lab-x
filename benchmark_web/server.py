@@ -306,6 +306,12 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
 
         def do_GET(self):
             from benchmark import publications
+            assets = {'/bench-x.svg': ('bench-x.svg', 'image/svg+xml'),
+                      '/favicon.ico': ('favicon.ico', 'image/vnd.microsoft.icon')}
+            if self.path in assets:
+                name, media = assets[self.path]
+                self.respond(200, (Path(__file__).parent / 'static' / name).read_bytes(), media)
+                return
             if self.path == '/preparation' or self.path.startswith('/preparation/'):
                 self.preparation()
                 return

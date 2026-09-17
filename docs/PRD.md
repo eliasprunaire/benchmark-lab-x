@@ -10,7 +10,7 @@ Ce document fixe la vision durable, le besoin, l’audience et les résultats at
 
 L'approbation de ce document n'autorise aucune campagne ni publication. Les campagnes historiques restent sous leurs contrats d'origine.
 
-L'[ARD](ARD.md) fixe le contrat d'architecture. Les [règles](RULES.md) portent les invariants. Le [glossaire](../CONTEXT.md) fixe le vocabulaire.
+L'[ARD](ARD.md) fixe le contrat d'architecture. Les [règles](RULES.md) portent les invariants. Le glossaire fixe le vocabulaire.
 
 ## 2. Besoin
 
@@ -42,7 +42,7 @@ Le catalogue distingue le métier ou domaine, qui donne le contexte, et la famil
 | Je veux vérifier une conclusion                  | retrouver tâche, contrat, configuration, sortie et preuves                    | chaîne d'attribution bornée                              |
 | Je cherche une tâche proche de mon besoin        | parcourir le catalogue et sa couverture réelle                               | tâche, version, cas et campagnes pertinents              |
 
-Le [demandeur-lecteur](../CONTEXT.md#demandeur-lecteur) exprime son besoin et valide l’exemple qui le représente. Il n’a pas à inventer un seuil, une métrique ou une méthode de jugement : le [responsable de campagne](../CONTEXT.md#responsable-de-campagne) prépare et approuve le contrat avant les appels candidats. L’assistance de préparation exige ses propres autorités. Ces deux rôles peuvent être tenus par la même personne ; leur existence n’impose aucun système de comptes. L’affectation de l’approbateur dans le service public reste à décider.
+Le demandeur-lecteur exprime son besoin et valide l’exemple qui le représente. Il n’a pas à inventer un seuil, une métrique ou une méthode de jugement : le responsable de campagne prépare et approuve le contrat avant les appels candidats. L’assistance de préparation exige ses propres autorités. Ces deux rôles peuvent être tenus par la même personne ; leur existence n’impose aucun système de comptes. L’affectation de l’approbateur dans le service public reste à décider.
 
 ## 4. Question active
 
@@ -104,7 +104,7 @@ La comparaison ne désigne aucune option automatiquement. Chaque tri annonce son
 
 ## 8. Preuve et transparence
 
-Les [conditions de test communes](../CONTEXT.md#conditions-de-test-communes) sont exposées une fois par comparaison : état de Pi, environnement et date de gel. Chaque configuration observée expose ensuite ses valeurs propres : fournisseur, modèle, accès API via OpenRouter, route, paramètres et effort de raisonnement, demandés puis observés. Les preuves historiques conservent leur accès d’origine. Les champs exacts sont ceux de l'[ARD](ARD.md#4-objets-et-responsabilités).
+Les conditions de test communes sont exposées une fois par comparaison : état de Pi, environnement et date de gel. Chaque configuration observée expose ensuite ses valeurs propres : fournisseur, modèle, accès API via OpenRouter, route, paramètres et effort de raisonnement, demandés puis observés. Les preuves historiques conservent leur accès d’origine. Les champs exacts sont ceux de l'[ARD](ARD.md#4-objets-et-responsabilités).
 
 Une valeur non observée reste `INCONNU`. La restitution porte l'avertissement suivant ou une formulation équivalente :
 

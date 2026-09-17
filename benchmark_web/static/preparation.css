@@ -65,7 +65,7 @@ blockquote { margin: .6rem 0; border-left: 3px solid var(--line-2); padding-left
 /* En-tête et navigation */
 header.site { display: flex; align-items: center; justify-content: space-between; gap: .75rem 2rem; flex-wrap: wrap; padding: .9rem 0; border-bottom: 1px solid var(--line-2); }
 .brand { display: flex; align-items: center; gap: .6rem; font-family: var(--display); font-weight: 700; font-size: 1.15rem; color: var(--ink); text-decoration: none; line-height: 1.1; }
-.brand svg { width: 2rem; height: 2rem; flex: none; color: var(--accent); }
+.brand img { width: 2rem; height: 2rem; flex: none; color: var(--accent); }
 .brand small { display: block; font-family: var(--body); font-size: .7rem; font-weight: 500; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
 header.site nav { display: flex; flex-wrap: wrap; gap: .2rem 1.2rem; font-size: .95rem; font-family: var(--display); }
 header.site nav a { color: var(--ink-2); text-decoration: none; padding: .3rem 0; border-bottom: 2px solid transparent; }
@@ -222,7 +222,7 @@ footer.site a { color: var(--ink-2); text-decoration: none; }
 footer.site a:hover { color: var(--accent-ink); text-decoration: underline; }
 footer.site p { margin: 0; max-width: 34ch; }
 footer.site .brandline { display: flex; gap: .6rem; align-items: center; color: var(--ink); font-family: var(--display); font-weight: 700; font-size: 1rem; margin-bottom: .5rem; }
-footer.site .brandline svg { width: 1.4rem; height: 1.4rem; color: var(--accent); }
+footer.site .brandline img { width: 1.4rem; height: 1.4rem; color: var(--accent); }
 footer.site .bottom { display: flex; flex-wrap: wrap; gap: .4rem 2rem; margin-top: 1.6rem; padding-top: .9rem; border-top: 1px solid var(--line); font-size: .8rem; }
 footer.site .bottom span:first-child { font-family: var(--mono); }
 footer.site details { border: 0; background: transparent; margin: .4rem 0 0; }

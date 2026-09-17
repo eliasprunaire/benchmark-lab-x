@@ -99,4 +99,4 @@ Ces commandes contrôlent des propriétés automatisées. Leurs résultats ne pr
 - La validation visuelle d’Ayo reste ouverte
 - Les captures et les essais réels ne sont pas exécutés dans cette correction documentaire et de test
 
-Le [PRD](PRD.md), l’[ARD](ARD.md), les [règles](RULES.md) et le [glossaire](../CONTEXT.md) restent les sources canoniques ; cette recette n’ajoute aucun contrat produit.
+Le [PRD](PRD.md), l’[ARD](ARD.md), les [règles](RULES.md) et le glossaire restent les sources canoniques ; cette recette n’ajoute aucun contrat produit.
