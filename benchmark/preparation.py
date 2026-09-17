@@ -27,6 +27,7 @@ SESSION_DAILY_DOSSIERS = 2
 PREPARATION_DAILY_CAP_USD = Decimal('20')
 SOURCE_HOURLY_MAX = 20
 SOURCE_RATE_WINDOW = timedelta(hours=1)
+OUT_OF_SCOPE_CATEGORIES = ('math', 'coding', 'other')
 _SOURCE_ACCEPTED = {}
 _CHECK_CODES = frozenset({
     'example_validated', 'example_qualified', 'configurations_available',
@@ -599,6 +600,11 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
                 raise ConflictError('Dossier déjà créé')
             if body['revision'] != existing[1]:
                 raise ConflictError('Révision périmée')
+            checks = json.loads(connection.execute(
+                'SELECT checks_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
+                (dossier_id, existing[1])).fetchone()[0])
+            if checks.get('out_of_scope') is not None:
+                raise Denied('OUT_OF_SCOPE')
         authority = admission(store, connection, transport=transport)
         if not authority or not transport or os.path.lexists(store._root / 'restore.json'):
             raise Denied('Admission fermée ou transport absent')
@@ -918,7 +924,10 @@ def execute(data, operation_id, transport):
 
 def publish(store, operation, request, response):
     result = response['receipt']['result']
-    _fields(result, ('stage', 'explanation', 'reformulation', 'fictional_parameters', 'package'), 'preparation result')
+    fields = ('stage', 'explanation', 'reformulation', 'fictional_parameters', 'package')
+    if type(result) is dict and 'out_of_scope' in result:
+        fields += ('out_of_scope',)
+    _fields(result, fields, 'preparation result')
     stage = result['stage']
     explanation = result['explanation']
     if stage not in ('clarification', 'preview', 'scope_confirmation', 'suspended'):
@@ -927,6 +936,9 @@ def publish(store, operation, request, response):
         raise ValueError('Explication requise')
     if (stage == 'preview') != (result['package'] is not None):
         raise ValueError('Paquet incohérent avec l’état')
+    referral = result.get('out_of_scope')
+    if 'out_of_scope' in result and (stage != 'suspended' or referral not in OUT_OF_SCOPE_CATEGORIES):
+        raise ValueError('Orientation hors périmètre invalide')
     candidate = (result['package'] or {}).get('candidate', {})
     invalid_candidate = type(candidate) is not dict
     exposed = [] if invalid_candidate else [candidate.get('instruction', '')]
@@ -1011,6 +1023,8 @@ def publish(store, operation, request, response):
             rechecked = ['stage', 'explanation']
         checks['fields'] = rechecked
         checks['scope_confirmation_count'] = scope_count
+        if referral is not None:
+            checks['out_of_scope'] = referral
         connection.execute('INSERT INTO s2_revisions VALUES (?,?,?,?,?,?,?,?)',
                            (dossier_id, revision, stage, explanation, None if package is None else encode(package),
                             digest, encode([]), encode(checks)))
@@ -1036,8 +1050,12 @@ def verify_preparation(store, connection):
     for dossier_id, revision, stage, explanation, raw, digest, changes, checks in connection.execute('SELECT * FROM s2_revisions').fetchall():
         if not connection.execute('SELECT 1 FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone():
             raise IntegrityError('Révision sans propriétaire')
-        if type(json.loads(changes)) is not list or type(json.loads(checks)) is not dict:
+        checks = json.loads(checks)
+        if type(json.loads(changes)) is not list or type(checks) is not dict:
             raise IntegrityError('Contrôles de révision invalides')
+        if 'out_of_scope' in checks and (checks['out_of_scope'] not in OUT_OF_SCOPE_CATEGORIES
+                                        or stage != 'suspended' or raw is not None):
+            raise IntegrityError('Orientation hors périmètre incohérente')
         if raw is not None:
             package_check(store, dossier_id, revision, json.loads(raw), digest)
     for dossier_id, revision, digest, session_id, date in connection.execute('SELECT * FROM s2_validations').fetchall():

@@ -20,6 +20,11 @@ TEMPLATE_PATH = Path(__file__).with_name('templates') / 'preparation.html'
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'preparation.css'
 FONTS_PATH = Path(__file__).with_name('static') / 'fonts'
 SOURCE_SHA = ''
+BENCHMARK_REFERENCES = {
+    'math': (('MathArena', 'https://matharena.ai/', 'Raisonnement mathématique et problèmes de compétition'),),
+    'coding': (('LiveCodeBench', 'https://livecodebench.github.io/', 'Exercices de programmation'),
+               ('SWE-bench', 'https://www.swebench.com/', 'Résolution de problèmes logiciels dans des dépôts de code')),
+}
 
 
 def render_task_index(task):
@@ -219,7 +224,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         url = '/preparation/dossiers/' + dossier_id
         title = 'Est-ce le travail que vous voulez tester ?' if value['package'] else 'Précisons le résultat utile'
         historical = revision != value.get('current_revision', revision)
-        editable = not historical and value['stage'] != 'waiting'
+        referral = value.get('checks', {}).get('out_of_scope')
+        editable = not historical and value['stage'] != 'waiting' and not referral
         disabled = '' if can_submit and editable else ' disabled aria-describedby="availability"'
         current_campaigns = [c for c in value.get('campaigns', []) if c['task']['revision'] == revision]
         navigation = '<nav class="steps" aria-label="Étapes de préparation">'
@@ -238,11 +244,16 @@ def render(value, csrf, path='/preparation', *, error=False):
                   'waiting': ('wait', 'Préparation en attente', 'L’assistant prépare une réponse. Actualisez pour voir son avancement.'),
                   'clarification': ('action', 'Une précision est attendue de vous', 'Répondez ci-dessous pour que l’exemple soit préparé.'),
                   'preview': ('action', 'Un exemple est prêt à être examiné', 'Lisez la consigne et les pièces, corrigez si besoin, puis validez.'),
-                  'scope_confirmation': ('action', 'Cette demande n’est pas encore une épreuve Bench-X',
+                  'scope_confirmation': ('action', 'Le périmètre est à confirmer',
                       'Bench-X compare des modèles sur un travail concret, avec un résultat attendu et des critères vérifiables. '
                       'Précisez ou confirmez le travail que vous souhaitez comparer. Aucun benchmark ne peut être lancé à cette étape.'),
                   'suspended': ('err', 'Préparation suspendue', 'Une intervention du responsable est nécessaire ; aucun rejeu automatique.')}
         tone, heading, next_step = stages[value['stage']]
+        if referral:
+            title = 'Demande hors périmètre'
+            tone, heading, next_step = ('unk', 'Cette demande est hors du périmètre de Bench-X',
+                'Bench-X compare des modèles sur des tâches de travail concrètes. '
+                'Ce dossier est arrêté ; aucun benchmark ne sera lancé pour cette demande.')
         qualification = value.get('qualification', {})
         automatic = 'operation_id' in qualification
         if value['validation']:
@@ -262,6 +273,13 @@ def render(value, csrf, path='/preparation', *, error=False):
         if historical:
             actions = f'<a class="button" href="{text(url)}">Revenir à la révision courante</a>'
         content += state_block(tone, 'Où j’en suis', heading, '<p>' + text(value['explanation']) + '</p><p class="hint">' + text(next_step) + '</p>', actions)
+        if referral:
+            references = BENCHMARK_REFERENCES.get(referral, ())
+            if references:
+                content += section('Consulter des benchmarks spécialisés', '<ul>' + ''.join(
+                    '<li><a href="' + href + '" rel="noreferrer">' + label + '</a> : ' + description + '.</li>'
+                    for label, href, description in references) + '</ul>')
+            content += '<p><a class="button sec" href="/preparation">Décrire un autre cas d’usage</a></p>'
         refresh = '' if 'Actualiser cet état' in actions else f'<a href="{text(path)}">Actualiser cet état</a> · '
         content += f'<p class="hint">{refresh}<a href="{text(url)}">Révision courante</a>'
         if revision > 1:
@@ -353,6 +371,8 @@ def render(value, csrf, path='/preparation', *, error=False):
                 content += '<p>En attente de préparation des conditions par le responsable.</p>'
         elif package:
             content += '<p role="status">Une nouvelle validation est requise pour l’exemple présenté.</p>'
+        elif referral:
+            content += '<p>Cette demande hors périmètre ne peut pas être validée ni comparée dans Bench-X.</p>'
         else:
             content += '<p>La validation sera possible lorsqu’un exemple à examiner sera disponible.</p>'
         if editable and package and value['stage'] == 'preview' and value['validation'] is None:
@@ -382,24 +402,25 @@ def render(value, csrf, path='/preparation', *, error=False):
         labels = {'PENDING': 'En attente', 'QUALIFIED': 'Contrôles requis prouvés',
                   'BLOCKED': 'Bloquée : référence ou contrôles insuffisamment prouvés',
                   'APPROVED': 'Approuvée par action opérateur locale'}
-        content += '<details><summary>Qualification et approbation de l’épreuve</summary>'
-        content += section('Qualification', '<p>' + text(labels.get(
-            qualification.get('qualification_status'), 'En attente')) + '</p>')
-        if automatic:
-            content += '<p>' + text(qualification['summary']) + '</p>'
-            content += listing(finding['text'] for finding in qualification.get('findings', []))
-        content += section('Approbation', '<p>' + text(labels.get(
-            qualification.get('approval_status'), 'En attente')) + '</p>'
-            '<p>La validation du besoin, la qualification et l’approbation restent distinctes. '
-            'Aucun appel ni publication n’est autorisé par cet état. Les preuves, la référence '
-            'et les limites de jugement sont réservées à l’inspection locale du responsable.</p>')
-        content += '</details>'
+        if not referral:
+            content += '<details><summary>Qualification et approbation de l’épreuve</summary>'
+            content += section('Qualification', '<p>' + text(labels.get(
+                qualification.get('qualification_status'), 'En attente')) + '</p>')
+            if automatic:
+                content += '<p>' + text(qualification['summary']) + '</p>'
+                content += listing(finding['text'] for finding in qualification.get('findings', []))
+            content += section('Approbation', '<p>' + text(labels.get(
+                qualification.get('approval_status'), 'En attente')) + '</p>'
+                '<p>La validation du besoin, la qualification et l’approbation restent distinctes. '
+                'Aucun appel ni publication n’est autorisé par cet état. Les preuves, la référence '
+                'et les limites de jugement sont réservées à l’inspection locale du responsable.</p>')
+            content += '</details>'
         if value.get('qualified'):
             content += '<p><a class="button' + (' sec' if current_campaigns or historical else '') + '" href="' + text(
                 url + '/configurations') + '">Choisir les modèles</a></p>'
         if 'campaigns' in value:
             content += render_campaign_history(value['campaigns'], url)
-    if state and s9:
+    if state and s9 and not value.get('checks', {}).get('out_of_scope'):
         reasons = {
             'access': 'Ajoutez votre clé Openrouter pour préparer un exemple avec votre propre accès.',
             'open': 'Échanges disponibles. Chaque envoi reste vérifié par le serveur avant admission.',

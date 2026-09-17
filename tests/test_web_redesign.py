@@ -171,19 +171,46 @@ class DossierPageTests(unittest.TestCase):
         page = views.render({
             'dossier_id': 'd1', 'revision': 2, 'stage': 'scope_confirmation',
             'package': None, 'validation': None, 'qualified': False,
-            'explanation': '1 + 1 = 2. Souhaitez-vous préparer un exercice évaluable ?',
-            'payload': {'request': 'Je veux juste savoir combien font 1 + 1 et ce que signifie 10e23.',
+            'explanation': 'Je ne peux pas parcourir votre ordinateur. Acceptez-vous un exemple avec des pièces textuelles inventées ?',
+            'payload': {'request': 'Je voudrais organiser mes factures pour mon comptable.',
                         'clarifications': [], 'validated_assumptions': [],
                         'reformulation': '', 'fictional_parameters': {}},
             'availability': AVAILABILITY, 'personal_preparation': True},
             'csrf', '/preparation/dossiers/d1').decode()
-        self.assertIn('Cette demande n’est pas encore une épreuve Bench-X', page)
+        self.assertIn('Le périmètre est à confirmer', page)
         self.assertIn('Aucun benchmark ne peut être lancé à cette étape.', page)
         self.assertNotIn('href="#exemple"', page)
         self.assertNotIn('href="#validation"', page)
         self.assertNotIn('action="/preparation/dossiers/d1/validation"', page)
         self.assertNotIn('Choisir les modèles', page)
         self.assertNotIn('Ajouter ma clé Openrouter', page)
+
+    def test_out_of_scope_has_fixed_referrals_and_no_continuation(self):
+        links = {'math': 'https://matharena.ai/',
+                 'coding': 'https://livecodebench.github.io/', 'other': None}
+        for category, link in links.items():
+            with self.subTest(category=category):
+                page = views.render({
+                    'dossier_id': 'd1', 'revision': 2, 'stage': 'suspended',
+                    'checks': {'out_of_scope': category}, 'package': None,
+                    'validation': None, 'qualified': False,
+                    'explanation': 'Il s’agit d’un test générique, sans tâche de travail à comparer.',
+                    'payload': {'request': 'Un exercice générique', 'clarifications': [],
+                                'validated_assumptions': [], 'reformulation': '',
+                                'fictional_parameters': {}}, 'availability': AVAILABILITY},
+                    'csrf', '/preparation/dossiers/d1').decode()
+                self.assertIn('Cette demande est hors du périmètre de Bench-X', page)
+                self.assertNotIn('n’est pas encore', page)
+                self.assertNotIn('Envoyer ma réponse', page)
+                self.assertNotIn('action="/preparation/dossiers/d1/validation"', page)
+                self.assertNotIn('Choisir les modèles', page)
+                self.assertNotIn('intervention du responsable', page)
+                self.assertNotIn('id="availability"', page)
+                self.assertIn('Décrire un autre cas d’usage', page)
+                if link:
+                    self.assertIn('href="' + link + '"', page)
+                if category == 'math':
+                    self.assertNotIn('https://livecodebench.github.io/', page)
 
     def test_criteria_groups_render_new_and_legacy_packages(self):
         def render(criteria):
