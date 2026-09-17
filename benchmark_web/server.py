@@ -24,6 +24,11 @@ from benchmark.storage import _unique_object
 from . import views
 
 
+def _session_cookie(token):
+    return ('benchmark_session=' + token
+            + '; HttpOnly; Secure; SameSite=Strict; Path=/preparation; Max-Age=2592000')
+
+
 def _source_fingerprint(headers, client_address, salt):
     value = headers.get('X-Real-IP')
     if value is None:
@@ -153,7 +158,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                                      'text/html; charset=utf-8', [expired])
                         return
                     self.respond(303, b'', 'text/html; charset=utf-8',
-                                 [('Location', return_path), expired])
+                                 [('Location', return_path), expired,
+                                  ('Set-Cookie', _session_cookie(callback_token))])
                     return
                 if self.path == '/preparation/access/callback':
                     raise ValueError('Callback Openrouter réservé au retour GET')
@@ -219,7 +225,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                 headers = {}
                 if result.get('cookie'):
                     token = result['cookie']
-                    headers['Set-Cookie'] = ('benchmark_session=' + token + '; HttpOnly; Secure; SameSite=Strict; Path=/preparation')
+                if result['status'] < 400 and token:
+                    headers['Set-Cookie'] = _session_cookie(token)
                 if return_path is not None and result['status'] < 400:
                     response_headers = list(headers.items())
                     response_headers += [
@@ -229,10 +236,12 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     self.respond(303, b'', 'text/html; charset=utf-8', response_headers)
                     return
                 if self.command == 'POST' and self.path == '/preparation/access/key' and result['status'] < 400 and not wants_json:
-                    self.respond(303, b'', 'text/html; charset=utf-8', {'Location': '/preparation'})
+                    headers['Location'] = '/preparation'
+                    self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
                 if self.command == 'POST' and self.path == '/preparation/access/disconnect' and result['status'] < 400:
-                    self.respond(303, b'', 'text/html; charset=utf-8', {'Location': '/preparation/access'})
+                    headers['Location'] = '/preparation/access'
+                    self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
                 if (self.command == 'POST' and self.path.endswith('/configurations')
                         and result['status'] < 400 and not wants_json):

@@ -1,5 +1,6 @@
 """Connexion Openrouter relayée par le web, sans appel fournisseur."""
 from http.client import HTTPConnection
+from http.cookies import SimpleCookie
 import json
 import multiprocessing
 from pathlib import Path
@@ -281,6 +282,24 @@ class AccessViewTests(unittest.TestCase):
 
 
 class AccessServerTests(unittest.TestCase):
+    def test_cookie_survives_browser_close_and_renews_only_on_success(self):
+        _, headers, _ = self.request('GET', '/preparation/access')
+        cookie = SimpleCookie(headers['Set-Cookie'])['benchmark_session']
+        self.assertEqual('2592000', cookie['max-age'])
+        self.assertTrue(cookie['httponly'])
+        self.assertTrue(cookie['secure'])
+        self.assertEqual('Strict', cookie['samesite'])
+        self.assertEqual('/preparation', cookie['path'])
+        self.assertEqual('', cookie['domain'])
+        request_headers = {'Cookie': 'benchmark_session=' + cookie.value,
+                           'Accept': 'application/json'}
+        _, renewed, _ = self.request('GET', '/preparation', headers=request_headers)
+        again = SimpleCookie(renewed['Set-Cookie'])['benchmark_session']
+        self.assertEqual(cookie.value, again.value)
+        self.assertEqual('2592000', again['max-age'])
+        _, refused, _ = self.request('GET', '/preparation/unknown', headers=request_headers)
+        self.assertIsNone(refused.get('Set-Cookie'))
+
     def test_personal_key_is_never_reflected_and_success_redirects(self):
         key = 'sk-or-v1-private-fixture'
         body = urlencode({'csrf_token': 'csrf', 'key': key, 'assistance_cap': '20'}).encode()
@@ -296,6 +315,7 @@ class AccessServerTests(unittest.TestCase):
             self.assertNotIn(key, str(headers))
             if code == 200:
                 self.assertEqual('/preparation', headers['Location'])
+                self.assertEqual('2592000', SimpleCookie(headers['Set-Cookie'])['benchmark_session']['max-age'])
 
     def request(self, method, path, body=None, headers=None):
         connection = HTTPConnection('127.0.0.1', self.port, timeout=3)
@@ -347,7 +367,8 @@ class AccessServerTests(unittest.TestCase):
             'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': session_cookie})
         self.assertEqual(303, status)
         self.assertEqual('https://openrouter.ai/auth?fixture=1', headers['Location'])
-        callback_cookie = headers['Set-Cookie'].split(';', 1)[0]
+        callback_cookie = next(value.split(';', 1)[0] for value in headers.get_all('Set-Cookie')
+                               if value.startswith('benchmark_access_callback='))
         self.assertNotIn(b'code=', raw)
         start = self.executor.requests.get_nowait()
         home = self.executor.requests.get_nowait()
@@ -363,6 +384,9 @@ class AccessServerTests(unittest.TestCase):
             headers={'Cookie': callback_cookie})
         self.assertEqual(303, status)
         self.assertEqual('/preparation/dossiers/d1', headers['Location'])
+        persistent = next(value for value in headers.get_all('Set-Cookie')
+                          if value.startswith('benchmark_session='))
+        self.assertEqual('2592000', SimpleCookie(persistent)['benchmark_session']['max-age'])
         rendered_headers = str(headers)
         self.assertNotIn('secret-authorization-code', rendered_headers)
         self.assertNotIn(b'secret-authorization-code', raw)
@@ -376,7 +400,8 @@ class AccessServerTests(unittest.TestCase):
         body = urlencode({'csrf_token': 'csrf', 'return': '/preparation/dossiers/d1'}).encode()
         status, headers, _ = self.request('POST', '/preparation/access/start', body, {
             'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': session_cookie})
-        callback_cookie = headers['Set-Cookie'].split(';', 1)[0]
+        callback_cookie = next(value.split(';', 1)[0] for value in headers.get_all('Set-Cookie')
+                               if value.startswith('benchmark_access_callback='))
         self.executor.callback_result = {
             'status': 403,
             'value': {'error': 'Échange Openrouter refusé', 'error_code': 'ACCESS_EXCHANGE_FAILED'},
