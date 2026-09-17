@@ -190,7 +190,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content = render_attempt_detail(value)
     elif 'dossiers' in value:
         title = 'Mes cas d’usage'
-        content = personal_key_form(csrf, value.get('personal_access', {})) if value.get('personal_preparation') else ''
+        content = personal_key_form(csrf, value.get('personal_access', {})) if value.get('personal_preparation') and path == '/preparation' else ''
         content += '<p class="lead" role="status">Décrivez le travail et le résultat qui vous serait utile. Vous pourrez examiner et corriger l’exemple avant de le valider.</p>'
         dossiers = '<ul class="dossiers">' + ''.join(
             f'<li><a href="/preparation/dossiers/{text(d["dossier_id"])}">{text(d.get("need") or "Cas d’usage " + d["dossier_id"])}</a>'
@@ -228,8 +228,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         order = [anchor for anchor, _ in steps]
         for number, (anchor, label) in enumerate(steps, start=1):
             inner = '<span class="n">' + str(number) + '</span>' + label
-            if anchor == 'exemple' and not value['package']:
-                navigation += '<span>' + inner + '</span>'
+            if anchor in ('exemple', 'validation') and not value['package']:
+                navigation += '<span aria-disabled="true">' + inner + '</span>'
             else:
                 done = ' class="done"' if order.index(anchor) < order.index(current_step) else ''
                 navigation += '<a href="#' + anchor + '"' + (' aria-current="step"' if anchor == current_step else done) + '>' + inner + '</a>'
@@ -238,7 +238,9 @@ def render(value, csrf, path='/preparation', *, error=False):
                   'waiting': ('wait', 'Préparation en attente', 'L’assistant prépare une réponse. Actualisez pour voir son avancement.'),
                   'clarification': ('action', 'Une précision est attendue de vous', 'Répondez ci-dessous pour que l’exemple soit préparé.'),
                   'preview': ('action', 'Un exemple est prêt à être examiné', 'Lisez la consigne et les pièces, corrigez si besoin, puis validez.'),
-                  'scope_confirmation': ('action', 'Le périmètre est à confirmer', 'Confirmez ou corrigez le périmètre proposé ci-dessous.'),
+                  'scope_confirmation': ('action', 'Cette demande n’est pas encore une épreuve Bench-X',
+                      'Bench-X compare des modèles sur un travail concret, avec un résultat attendu et des critères vérifiables. '
+                      'Précisez ou confirmez le travail que vous souhaitez comparer. Aucun benchmark ne peut être lancé à cette étape.'),
                   'suspended': ('err', 'Préparation suspendue', 'Une intervention du responsable est nécessaire ; aucun rejeu automatique.')}
         tone, heading, next_step = stages[value['stage']]
         qualification = value.get('qualification', {})
@@ -397,8 +399,6 @@ def render(value, csrf, path='/preparation', *, error=False):
                 url + '/configurations') + '">Choisir les modèles</a></p>'
         if 'campaigns' in value:
             content += render_campaign_history(value['campaigns'], url)
-    if value.get('personal_preparation') and s9 and 'dossiers' not in value:
-        content += personal_key_form(csrf, value.get('personal_access', {}))
     if state and s9:
         reasons = {
             'access': 'Ajoutez votre clé Openrouter pour préparer un exemple avec votre propre accès.',
