@@ -120,11 +120,9 @@ CUSTOM_MODELS_SCRIPT = """(() => {
 
 
 def render_custom_models(value, csrf, dossier_url):
-    content = '<section id="custom-models"><h2>Ajouter un modèle</h2>'
-    content += '<p>Copiez le slug exact indiqué sur sa fiche Openrouter, au format <code>constructeur/modèle</code>, '
-    content += 'par exemple <code>openai/gpt-6-astra</code> ou <code>z-ai/glm-5.3-flash</code>. Une URL ou un nom commercial ne convient pas.</p>'
-    content += '<p class="hint" id="slug-help">Tester lance un court appel payant avec votre clé, limité à 128 tokens de sortie. '
-    content += 'Il vérifie que le modèle répond ; il ne lance pas de benchmark. Les modèles ajoutés restent privés à ce cas d’usage.</p>'
+    content = '<details id="custom-models" class="corr custom-models"><summary class="button sec">Ajouter un slug Openrouter</summary><div>'
+    content += '<p id="slug-help">Copiez le slug exact de la fiche Openrouter, par exemple <code>openai/gpt-6-astra</code>.</p>'
+    content += '<p class="hint">Un court appel payant avec votre clé vérifie que le modèle répond, sans lancer de benchmark.</p>'
     request = value.get('probe_request', {})
     if request.get('error'):
         content += '<p role="status">' + text(request['error']) + '</p>'
@@ -149,7 +147,7 @@ def render_custom_models(value, csrf, dossier_url):
         'autocapitalize="none" autocomplete="off" aria-describedby="slug-help" placeholder="constructeur/modèle">'
         '<button class="sec" type="submit">Tester et ajouter</button><p role="status" aria-live="polite"></p>')
     content += '</div><button class="sec" type="button" data-add-slug hidden>+ Ajouter une ligne</button>'
-    return content + '</section><script>' + CUSTOM_MODELS_SCRIPT + '</script>'
+    return content + '</div></details><script>' + CUSTOM_MODELS_SCRIPT + '</script>'
 
 
 def render_evaluations(evaluations, dossier_url):
@@ -381,10 +379,10 @@ def render_configurations(value, csrf):
     dossier_url = '/preparation/dossiers/' + value['dossier_id']
     content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
     content += '<p role="status">Choisissez au moins deux modèles et un palier de raisonnement. Aucun appel candidat ne part à cette étape.</p>'
-    if value.get('personal_preparation'):
-        content += render_custom_models(value, csrf, dossier_url)
     if not value.get('catalogue_available', True):
         content += '<p>' + text(value['detail']) + '</p>'
+        if value.get('personal_preparation'):
+            content += render_custom_models(value, csrf, dossier_url)
     else:
         if value.get('catalogue_stale'):
             content += '<p role="status">Ce relevé a expiré ; son actualisation n’a pas abouti. Le dernier relevé valide reste consultable.</p>'
@@ -397,7 +395,7 @@ def render_configurations(value, csrf):
                 choices += ' · palier de raisonnement non réglable'
             choices += '</label>'
         tiers = ''.join(
-            '<label><input type="radio" name="tier" aria-describedby="tier-help-' + tier + '" value="' + tier + '"' +
+            '<label><input type="radio" form="configurations-form" name="tier" aria-describedby="tier-help-' + tier + '" value="' + tier + '"' +
             (' checked' if value['current_tier'] == tier else '') + '> ' +
             ('Standard' if tier == 'standard' else 'Renforcé') + '</label>' +
             '<p class="hint" id="tier-help-' + tier + '">' +
@@ -407,10 +405,14 @@ def render_configurations(value, csrf):
              'Cela peut allonger l’attente et augmenter le coût, sans garantir une meilleure réponse. '
              'Sans effet sur les modèles indiqués comme non réglables.') + '</p>'
             for tier in value['available_tiers'])
-        content += ('<form method="post" action="' + text(dossier_url + '/configurations') + '">' +
+        content += ('<form id="configurations-form" method="post" action="' + text(dossier_url + '/configurations') + '">' +
                     hidden('csrf_token', csrf) + '<fieldset id="model-choices"><legend>Modèles à comparer</legend>' +
-                    choices + '</fieldset><fieldset><legend>Palier de raisonnement</legend>' + tiers +
-                    '</fieldset><button' + (' class="sec"' if value['configurations'] else '') + ' type="submit">Enregistrer les configurations</button></form>')
+                    choices + '</fieldset></form>')
+        if value.get('personal_preparation'):
+            content += render_custom_models(value, csrf, dossier_url)
+        content += ('<fieldset><legend>Palier de raisonnement</legend>' + tiers +
+                    '</fieldset><button form="configurations-form"' + (' class="sec"' if value['configurations'] else '') +
+                    ' type="submit">Enregistrer les configurations</button>')
     if value['configurations']:
         model_names = {model['id']: model['name'] for model in value['models']}
         summary = '<ul>'
