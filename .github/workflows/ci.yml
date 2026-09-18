@@ -62,7 +62,7 @@ jobs:
 
       - name: Vérifier les archives dans Chromium
         run: |
-          npm install --prefix "$RUNNER_TEMP/privacy-browser" --ignore-scripts --no-audit --no-fund --save-exact playwright@1.57.0
+          npm install --prefix "$RUNNER_TEMP/privacy-browser" --ignore-scripts --no-audit --no-fund --save-exact playwright@1.60.0
           "$RUNNER_TEMP/privacy-browser/node_modules/.bin/playwright" install --with-deps chromium
           PLAYWRIGHT_MODULE="$RUNNER_TEMP/privacy-browser/node_modules/playwright/index.js" node --test tests/privacy_browser.test.cjs
 
