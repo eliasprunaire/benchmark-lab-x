@@ -219,14 +219,12 @@ tr:target { outline: 3px solid var(--focus); outline-offset: -3px; }
 tr.out th strong { color: var(--muted); }
 .economic-choice { padding: clamp(1.2rem, 3vw, 2rem); margin: 1.5rem 0; border: 1px solid var(--accent); border-top: 5px solid var(--accent); border-radius: var(--radius); background: linear-gradient(135deg, var(--accent-soft), var(--surface)); }
 .economic-choice p { margin: .35rem 0; max-width: none; }
-.economic-choice .eyebrow { color: var(--accent-ink); }
 .economic-choice h2 { margin: .35rem 0 1.2rem; }
 .choice-highlight { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem 2rem; margin: 1rem 0; }
 .choice-highlight > div { min-width: 0; }
 .choice-model { font-family: var(--display); font-size: clamp(1.2rem, 2.5vw, 1.75rem); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
 .choice-cost { padding: .6rem 1rem; background: var(--surface); border: 1px solid var(--accent-soft-2); border-radius: var(--radius); color: var(--ink-2); font-size: .85rem; }
 .choice-cost strong { display: block; color: var(--accent-ink); font-size: 1.2rem; font-variant-numeric: tabular-nums; }
-.economic-choice .button { margin: .8rem 0 .5rem; }
 
 /* Détail et preuves : fragment partagé par la page directe et la modale */
 .result-dialog { width: min(100% - 2rem, 44rem); max-height: 90vh; overflow: auto; padding: 1rem 1.4rem 1.2rem; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--paper); color: var(--ink); }

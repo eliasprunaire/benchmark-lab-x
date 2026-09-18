@@ -319,7 +319,7 @@ def cost_bar(value, known):
 
 def effort_label(configuration):
     effort = configuration['effort']
-    return {'off': 'Réglages habituels', 'on': 'Raisonnement renforcé',
+    return {'off': 'Standard · niveau de raisonnement non imposé', 'on': 'Raisonnement renforcé',
             'low': 'Raisonnement faible', 'medium': 'Raisonnement moyen',
             'high': 'Raisonnement élevé', 'xhigh': 'Raisonnement très élevé',
             'max': 'Raisonnement maximal'}.get(effort, effort)
@@ -366,13 +366,12 @@ def render_comparison(value):
         return content
     choice = value.get('economic_choice')
     if choice:
-        content += '<aside class="economic-choice" aria-labelledby="economic-choice-title"><p class="eyebrow">Notre conseil</p>'
-        content += '<h2 id="economic-choice-title">Si le coût est votre priorité</h2><div class="choice-highlight"><div>'
+        content += '<aside class="economic-choice" aria-labelledby="economic-choice-title">'
+        content += '<h2 id="economic-choice-title">Notre conseil</h2><div class="choice-highlight"><div>'
         content += '<p class="choice-model">' + text(choice['configuration']['model']) + '</p>'
         content += '<p>' + text(effort_label(choice['configuration'])) + '</p></div>'
         content += '<p class="choice-cost">Coût observé<strong>' + text(montant_lisible(choice['amount']) + ' ' + choice['unit']) + '</strong></p></div>'
         content += '<p>La moins coûteuse parmi ' + text(choice['count']) + ' réponses conformes sur cet exemple.</p>'
-        content += '<a class="button" data-result href="' + text(choice['detail_href']) + '">Détails et réserves</a>'
         content += '<p class="hint">Un seul exemple ne garantit pas le même résultat sur d’autres tâches.</p></aside>'
     sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
     sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
@@ -502,7 +501,7 @@ def render_configurations(value, csrf):
             (' checked' if value['current_tier'] == tier else '') + '> ' +
             ('Standard' if tier == 'standard' else 'Renforcé') + '</label>' +
             '<p class="hint" id="tier-help-' + tier + '">' +
-            ('Le modèle utilise ses réglages habituels, sans demande de raisonnement renforcé.'
+            ('Aucun niveau de raisonnement n’est imposé. Le fournisseur applique le réglage par défaut du modèle ; cela ne signifie pas que son raisonnement est désactivé.'
              if tier == 'standard' else
              'Demande un raisonnement plus approfondi, lorsque le modèle le permet. '
              'Cela peut allonger l’attente et augmenter le coût, sans garantir une meilleure réponse. '
