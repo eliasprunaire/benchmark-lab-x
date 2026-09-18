@@ -92,6 +92,24 @@ def _rank(rows, columns):
                 metric['rank'] = 1 + sum(other > value if higher else other < value for other in values)
 
 
+def _economic_choice(rows, case_count, coverage, pending):
+    """Conditional cost advice, independent of display filters and without aggregation"""
+    if (case_count != 1 or pending or coverage['not_started']
+            or coverage['decided_attempts'] != coverage['planned_cells']
+            or len({row['configuration_id'] for row in rows}) != len(rows)):
+        return None
+    eligible = [row for row in rows if row['verdict'] == 'SATISFAIT']
+    if len(eligible) < 2 or any(row['cost']['rank'] is None for row in eligible):
+        return None
+    minimum = min(_metric_number(row['cost']) for row in eligible)
+    cheapest = [row for row in eligible if _metric_number(row['cost']) == minimum]
+    if len(cheapest) != 1:
+        return None
+    row = cheapest[0]
+    return dict(configuration=deepcopy(row['requested_configuration']), count=len(eligible),
+                amount=row['cost']['value'], unit=row['cost']['unit'], detail_href=row['detail_href'])
+
+
 def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     p.owner(connection, session_id, dossier_id)
     identifier(campaign_id)
@@ -121,10 +139,10 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                     state='REVIEW_REQUIRED' if a['state'] == 'RECEIVED' and a['incident'] is None else 'EXECUTION_REQUIRED',
                     next_action='Inspecter cette tentative et compléter son évaluation avant finalisation')
                for a in campaign['attempts'] if a['operation_id'] not in latest]
-    if connection.execute('SELECT 1 FROM s2_comparison_contracts WHERE contract_sha256=?',
+    if pending and connection.execute('SELECT 1 FROM s2_comparison_contracts WHERE contract_sha256=?',
                           (campaign['contract_sha256'],)).fetchone():
         from . import automatic_judgment as auto
-        progress = auto.status(store, connection, campaign_id)
+        progress = campaign.get('judgment') or auto.status(store, connection, campaign_id)
         for attempt in pending:
             if attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='EVALUATION_' + progress['status'],
@@ -209,6 +227,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 result_expected=spec['result_expected'], human_work=contract['package']['human_work'],
                 conclusion=conclusion, coverage=coverage, population=population, filter_scope=deepcopy(query),
                 economic_status='COMPLETE' if complete else 'INCOMPLETE', columns=columns, rows=ordered,
+                economic_choice=_economic_choice(rows, len(campaign['cases']), coverage, pending),
                 cases=campaign['cases'], panel=campaign['panel'], conditions=campaign['conditions'],
                 obligations=spec['obligations'], cost_basis=basis, cells=campaign['cells'],
                 campaign_state=campaign['state'], history=records, href=base, pending_attempts=pending,
@@ -228,15 +247,13 @@ def detail(store, session_id, dossier_id, campaign_id, attempt_id, *, query=None
     with store.read_snapshot() as connection:
         value = _comparison(store, connection, session_id, dossier_id, campaign_id,
                             {} if query is None else query)
-    history = [r for r in value['history'] if r['attempt_id'] == attempt_id]
-    if not history:
-        raise p.Denied('Tentative évaluée inaccessible')
-    for record in history:
-        record['proof_contents'] = {
-            link['piece_id']: e.piece_bytes(store, session_id, dossier_id,
-                                           record['evaluation_id'], link['piece_id']).decode('utf-8')
-            for link in record['proof_links']
-        }
+        history = [r for r in value['history'] if r['attempt_id'] == attempt_id]
+        if not history:
+            raise p.Denied('Tentative évaluée inaccessible')
+        for record in history:
+            pieces = e._pieces_bytes(store, connection, session_id, dossier_id,
+                                     record['evaluation_id'], [link['piece_id'] for link in record['proof_links']])
+            record['proof_contents'] = {pid: raw.decode('utf-8') for pid, raw in pieces.items()}
     return p.page_view(dict(kind='attempt_detail', campaign_id=campaign_id, task=value['task'],
                        need=value['need'], conclusion=value['conclusion'], history=history,
                        filter_scope=value['filter_scope'], dossier_href=value['dossier_href'],

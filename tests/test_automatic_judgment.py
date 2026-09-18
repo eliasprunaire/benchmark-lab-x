@@ -83,6 +83,35 @@ class AutomaticJudgment(unittest.TestCase):
                 candidate_transport=response, judgment_transport=self.transport, personal_preparation=True,
                 access_secret=SECRET, access_transport=self.fixture.access)
 
+    def test_economic_help_uses_complete_results_despite_display_filters(self):
+        from benchmark import automatic_judgment as auto
+        amounts = iter(['0.2', '0.01'])
+        self.candidate_update = lambda op, value: value['cost'].update(amount=next(amounts))
+
+        def satisfied(document):
+            answer = json.loads(document['choices'][0]['message']['content'])
+            for finding in answer['findings']:
+                finding['status'] = 'PASS'
+            document['choices'][0]['message']['content'] = storage._strict_json(answer)
+
+        self.response_update = satisfied
+        self.acquire()
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        auto.execute_campaign(self.data, ids, self.transport)
+        before = deepcopy(self.store.inspect_operations())
+        value = restitution.comparison(self.store, self.sid, 'fixture', self.cid)
+        choice = value['economic_choice']
+        self.assertEqual('0.01', choice['amount'])
+        self.assertEqual(2, choice['count'])
+        expensive = next(row for row in value['rows'] if row['cost']['value'] == '0.2')
+        filtered = restitution.comparison(self.store, self.sid, 'fixture', self.cid,
+                                         query={'configuration': expensive['configuration_id']})
+        self.assertEqual([expensive['attempt_id']], [row['attempt_id'] for row in filtered['rows']])
+        self.assertEqual(choice['configuration'], filtered['economic_choice']['configuration'])
+        self.assertEqual(choice['amount'], filtered['economic_choice']['amount'])
+        self.assertEqual(before, self.store.inspect_operations())
+        self.assertEqual(2, self.http.request.call_count)
+
     def test_normal_launch_runs_acquisition_then_judgment_and_get_never_emits(self):
         first = self.dispatch('GET', '/conditions')
         self.assertTrue(first[1]['launchable'])
@@ -101,7 +130,7 @@ class AutomaticJudgment(unittest.TestCase):
             self.assertEqual(2, len(results['rows']))
             self.assertIn('NE SATISFAIT PAS', views.render(results, 'csrf').decode())
             detail = restitution.detail(self.store, self.sid, 'fixture', self.cid, results['rows'][0]['attempt_id'])
-            self.assertIn('NE SATISFAIT PAS', views.render(detail, 'csrf').decode())
+            self.assertIn('Ne satisfait pas', views.render(detail, 'csrf').decode())
         self.assertEqual(2, self.http.request.call_count)
 
     def test_budget_refuses_before_any_candidate_or_judge_and_is_not_renewed(self):
@@ -159,7 +188,7 @@ class AutomaticJudgment(unittest.TestCase):
             self.assertEqual(['NE SATISFAIT PAS'] * 2, [r['verdict'] for r in rows])
             self.assertEqual('COMPLETE', auto.status(self.store, self.store._connection, self.cid)['status'])
             detail = restitution.detail(self.store, self.sid, 'fixture', self.cid, rows[0]['attempt_id'])
-            self.assertIn('NE SATISFAIT PAS', views.render(detail, 'csrf').decode())
+            self.assertIn('Ne satisfait pas', views.render(detail, 'csrf').decode())
             other, _, _ = preparation.session(self.store, None, create=True)
             proof = rows[0]['proof_links'][0]
             with self.assertRaises(preparation.Denied):

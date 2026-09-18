@@ -16,7 +16,7 @@ L'[ARD](ARD.md) fixe le contrat d'architecture. Les [règles](RULES.md) portent 
 
 **FAIT ÉTABLI** : le besoin originel est de permettre à la communauté du Lab-X de tester elle-même des solutions d'IA sur des tâches utiles, avec des preuves lisibles plutôt qu'un palmarès repris d'un tiers.
 
-L’utilisateur décrit un travail qu’il souhaite comparer. Le produit l’aide à le préciser et construit un dossier fictif qu’il peut examiner et modifier avant de valider le besoin représenté. Une campagne autorisée compare ensuite les configurations de modèle sous le même harnais Pi. Résultats, preuves et coûts observés alimentent des classements par critère et des filtres ; l’utilisateur choisit la configuration qui lui convient. Le produit ne désigne pas automatiquement un gagnant et un coût faible ne rend pas une sortie erronée utilisable.
+L’utilisateur décrit un travail qu’il souhaite comparer. Le produit l’aide à le préciser et construit un dossier fictif qu’il peut examiner et modifier avant de valider le besoin représenté. Une campagne autorisée compare ensuite les configurations de modèle sous le même harnais Pi. Résultats, preuves et coûts observés alimentent des classements par critère et des filtres ; l’utilisateur choisit la configuration qui lui convient. Le produit peut signaler la configuration conforme la moins coûteuse sur l’exemple testé si le coût est la priorité de l’utilisateur, selon les règles de comparaison. Il ne désigne pas de gagnant global et un coût faible ne rend pas une sortie erronée utilisable.
 
 Le nom du modèle ne suffit toutefois pas comme preuve. Le modèle est l'identifiant principal présenté, mais le verdict s'applique à sa configuration observée sous les conditions de test communes déclarées. Aucun effet que le fournisseur, l'effort, Pi ou ses réglages peuvent influencer n'est attribué au seul modèle.
 
@@ -100,7 +100,7 @@ Le [gabarit de carte](task-template.md) matérialise ce contrat. La méthode de 
 
 L’évaluation établit les verdicts avant la comparaison. L’utilisateur consulte ensuite les mesures et coûts connus au moyen de classements par critère et de filtres, selon l’[ordre de décision](RULES.md#7-ordre-de-décision). Une mesure valide reste visible pour une sortie non admissible ; son rang ne change pas le verdict et le coût ne rend pas cette sortie utilisable.
 
-La comparaison ne désigne aucune option automatiquement. Chaque tri annonce son critère et son périmètre ; les valeurs inconnues ou incompatibles restent sans rang. Les filtres ne changent pas le contrat, les verdicts ou le dénominateur d’une statistique déjà calculée. Sans règle d’agrégation préalable, les résultats restent par cas et tentative. La conclusion reste bornée à la tâche, à sa version et aux observations de la campagne.
+La comparaison peut fournir une aide au choix économique conditionnelle selon les [règles](RULES.md#8-coût-et-bénéfices). Elle ne désigne pas de meilleur modèle en général et ne transforme pas les observations descriptives en score de qualité. Chaque tri annonce son critère et son périmètre ; les valeurs inconnues ou incompatibles restent sans rang. Les filtres ne changent pas le contrat, les verdicts ou le dénominateur d’une statistique déjà calculée. Sans règle d’agrégation préalable, les résultats restent par cas et tentative. La conclusion reste bornée à la tâche, à sa version et aux observations de la campagne.
 
 ## 8. Preuve et transparence
 
