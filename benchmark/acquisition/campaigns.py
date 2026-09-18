@@ -662,8 +662,16 @@ def _load(store, connection, campaign_id):
 
 
 def _authority(value, manifest, fingerprint):
-    extra = tuple(key for key in ('browser_launch', 'technical_recovery', 'derived_from') if key in value)
+    extra = tuple(key for key in ('browser_launch', 'technical_recovery', 'derived_from', 'automatic_judgment') if key in value)
     _fields(value, _AUTHORITY + extra, 'campaign authority')
+    if 'automatic_judgment' in value:
+        from ..provider_access import preparation_budget_id
+        grant = value['automatic_judgment']
+        _fields(grant, ('budget_id', 'configuration'), 'automatic judgment grant')
+        if (manifest.get('funding') != 'requester' or not value['authority_id'].startswith('requester:')
+                or grant['budget_id'] != preparation_budget_id(value['authority_id'].split(':', 1)[1])
+                or type(grant['configuration']) is not dict or _money(grant['configuration']['reserve_usd']) <= 0):
+            raise ValueError('Profil et enveloppe personnelle de jugement requis')
     if 'technical_recovery' in value and 'derived_from' in value:
         raise ValueError('Préautorisation propriétaire distincte de l’admission dérivée')
     if 'derived_from' in value and 'browser_launch' in value:
@@ -1139,7 +1147,7 @@ def set_cap(store, session_id, dossier_id, campaign_id, body, *, access_secret=N
 
 
 def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=None,
-                access_transport=None):
+                access_transport=None, judgment_transport=None):
     from ..preparation import owner, page_view
     connection = connection_for(store)
     with _transaction(connection):
@@ -1152,16 +1160,28 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
     if requester:
         from ..provider_access import view as access_view
         access = access_view(store, session_id, access_secret, access_transport, refresh=False)
+    judgment_estimate, judgment_error = None, None
+    if requester and judgment_transport is not None and not snapshot['attempts']:
+        from .. import automatic_judgment as auto
+        try:
+            _, judgment_estimate = auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport)
+        except (ValueError, ConflictError, BudgetError):
+            judgment_error = 'Évaluation indisponible : vérifiez votre clé, le budget restant ou la disponibilité du service'
     with _transaction(connection):
         snapshot = _inspect(store, connection, campaign_id)
         if snapshot['task']['dossier_id'] != dossier_id:
             raise ValueError('Campagne étrangère au dossier')
         projected = _projected(store, connection, campaign_id, snapshot)
+        if requester and judgment_transport is not None:
+            from .. import automatic_judgment as auto
+            projected['judgment'] = auto.status(store, connection, campaign_id)
         contract = _approved(store, connection, snapshot['manifest']['contract_sha256'])
         criteria = {key: contract['specification'][key]
                     for key in ('result_expected', 'obligations', 'eliminatory_errors', 'limits')}
         if requester:
             checks = _requester_checks(store, connection, snapshot, session_id, access)
+            if judgment_error:
+                checks.append(dict(key='judgment_available', ok=False, detail=judgment_error))
             total = _estimate_total(snapshot)
             return page_view(dict(
                 kind='campaign_launch', dossier_id=dossier_id, campaign=projected,
@@ -1169,6 +1189,7 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
                 launchable=all(check['ok'] for check in checks)
                 and not snapshot['admissions'] and not snapshot['attempts'],
                 cap_usd=snapshot['cap_usd'], cap_source=snapshot['cap_source'],
+                judgment_estimate_usd=judgment_estimate,
                 estimate_total_usd=None if total is None else str(total), access=access))
         admission = snapshot['admission']
         grant = admission['authority'].get('browser_launch') if admission else None
@@ -1188,7 +1209,8 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
                          estimate=grant['estimate'] if grant else None))
 
 
-def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=None, access_transport=None):
+def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=None, access_transport=None,
+           judgment_transport=None):
     from ..preparation import owner, Denied
     from ..provider_access import view as access_view
     _intact(store)
@@ -1251,6 +1273,11 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
                 budget_authority=identity, budget_id=campaign_id,
                 allowed_cells=list(snapshot['manifest']['attempt_policy']['order']),
                 reserve_amounts=reserve_amounts)
+            if judgment_transport is not None:
+                from .. import automatic_judgment as auto, provider_access
+                config, _ = auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport)
+                authority['automatic_judgment'] = dict(
+                    budget_id=provider_access.preparation_budget_id(session_id), configuration=config)
             fetched_at = snapshot['manifest']['panel'][0]['estimate']['fetched_at']
             channels = {}
             for configuration in snapshot['manifest']['panel']:
@@ -1382,7 +1409,7 @@ def _projected(store, connection, campaign_id, snapshot) -> dict:
         budget['balance_status'] = 'INCONNU' if unresolved else 'KNOWN'
         if unresolved:
             budget['available'] = None
-    return dict(recovery_of=manifest.get('recovery_of'), campaign_id=campaign_id, manifest_sha256=snapshot['manifest_sha256'],
+    projected = dict(recovery_of=manifest.get('recovery_of'), campaign_id=campaign_id, manifest_sha256=snapshot['manifest_sha256'],
                 contract_sha256=manifest['contract_sha256'], task=snapshot['task'], version=manifest['version'],
                 panel=manifest['panel'], conditions=manifest['conditions'], cases=manifest['cases'],
                 cost_basis=manifest['cost_basis'], cells=snapshot['cells'], attempts=attempts, budget=budget,
@@ -1391,6 +1418,11 @@ def _projected(store, connection, campaign_id, snapshot) -> dict:
                 reserve_amounts=latest['authority']['reserve_amounts'] if latest else None,
                 missing_authorities=[] if admission else ['exécution', 'appels candidats', 'budget'],
                 stop_reason=snapshot['stop_reason'], restore_pending=snapshot['restore_pending'])
+    if manifest.get('funding') == 'requester':
+        from .. import automatic_judgment as auto
+        if auto.operations(store, connection, campaign_id):
+            projected['judgment'] = auto.status(store, connection, campaign_id)
+    return projected
 
 
 def projection(store, connection, dossier_id, campaign_id=None):

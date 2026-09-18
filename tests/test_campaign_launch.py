@@ -265,7 +265,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.assertEqual(['cost'], [column['id'] for column in result['columns']])
         self.assertEqual([], result['rows'])
         self.assertEqual(2, len(result['pending_attempts']))
-        self.assertEqual({'JUDGMENT_NOT_CONFIGURED'}, {row['state'] for row in result['pending_attempts']})
+        self.assertEqual({'EVALUATION_NOT_STARTED'}, {row['state'] for row in result['pending_attempts']})
         self.assertTrue(all('Réponse reçue' in row['next_action'] for row in result['pending_attempts']))
         self.assertIn('En attente d’évaluation', views.render(result, 'csrf').decode())
         contract = c._current_contract(self.store, self.store._connection, 'fixture')

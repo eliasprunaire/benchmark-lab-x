@@ -2,7 +2,8 @@
 
 The trusted local caller supplies findings, never a verdict or a transport.
 Real local or human findings require an explicit private operator authority.
-Assisted proposals require a separate private operator submission.
+Historical assisted proposals keep their operator submission contract.
+Requester campaigns derive their private verdicts automatically from retained judge receipts.
 """
 from contextlib import closing
 from copy import deepcopy
@@ -243,7 +244,7 @@ def _judgment(store, connection, value, ctx, resources, source_operation=None, r
         raise KeyError(oid)
     op = current if source_operation is None else source_operation
     _operation_snapshot(op, current)
-    if op['engine_version'] == 'benchmark-lab-x/judgment/v1':
+    if op['engine_version'] in ('benchmark-lab-x/judgment/v1', 'benchmark-lab-x/automatic-judgment/v1'):
         from .judgment import evaluation_judgment
         return evaluation_judgment(store, connection, value, ctx, op, result)
     contract = ctx['qualification']['contract']
@@ -388,15 +389,21 @@ def _verdict(ctx, findings, judgment):
 def _record(store, connection, ctx, report, *, evaluation_id, created_at, engine_source,
             previous_evaluation_id, source_operation=None, responsible=_ACTOR, authority=None,
             record_format=FORMAT_IDENTITY):
-    if record_format not in (FORMAT_IDENTITY, RECORD_FORMAT_IDENTITY):
+    from . import automatic_judgment as auto
+    automatic = record_format == auto.FORMAT
+    if record_format not in (FORMAT_IDENTITY, RECORD_FORMAT_IDENTITY, auto.FORMAT):
         raise IntegrityError('Format d’évaluation inconnu')
     authority = authority or {'actor': _ACTOR, 'authority_id': _AUTHORITY}
-    _authority(responsible, authority)
+    if automatic:
+        if authority != auto.authority(connection, ctx):
+            raise IntegrityError('Autorité personnelle divergente')
+    else:
+        _authority(responsible, authority)
     resources = _resources(store, ctx)
     findings, measures, judgment = _report(store, connection, report, ctx, resources, source_operation, responsible)
     if judgment['mode'] == 'assisted':
         op = judgment['operation']
-        if op['engine_version'] == 'benchmark-lab-x/judgment/v1':
+        if op['engine_version'] in ('benchmark-lab-x/judgment/v1', auto.FORMAT):
             binding = json.loads(op['resources'][0])['request']
             from .judgment import local_criteria
             local = local_criteria(ctx['qualification']['contract']['specification'])
@@ -423,7 +430,8 @@ def _record(store, connection, ctx, report, *, evaluation_id, created_at, engine
                 context_sha256=value_digest(ctx), campaign_id=manifest['campaign_id'],
                 manifest_sha256=campaign['manifest_sha256'], attempt_id=attempt['operation_id'],
                 case_id=cell['case_id'], configuration_id=cell['configuration_id'],
-                contract_sha256=qualification['contract_sha256'], qualification_id=qualification['approval']['qualification_id'],
+                contract_sha256=qualification['contract_sha256'], qualification_id=(qualification['operation_id'] if automatic
+                    else qualification['approval']['qualification_id']),
                 method=contract['specification']['method'], reference_pieces=contract['reference_pieces'],
                 input_sha256=attempt['input_sha256'], output_piece_id=attempt['output_piece_id'],
                 output_sha256=None if output is None else sha256(output).hexdigest(),
@@ -440,7 +448,13 @@ def _record(store, connection, ctx, report, *, evaluation_id, created_at, engine
                 previous_evaluation_id=previous_evaluation_id)
     if authority['actor'] == 'Ayo':
         record['authority_actor'] = 'Ayo'
-    if record_format == RECORD_FORMAT_IDENTITY:
+    if automatic:
+        record['decision'] = dict(verdict=None if verdict == 'INDETERMINE' else verdict,
+            state='INCONCLUSIVE' if verdict == 'INDETERMINE' else 'DECIDED', reason=reason,
+            next_action='Les preuves conservées ne permettent pas de conclure.' if verdict == 'INDETERMINE' else None)
+        record['verdict'] = record['decision']['verdict']
+        record['state'] = record['decision']['state']
+    elif record_format == RECORD_FORMAT_IDENTITY:
         record['decision'] = decision(record, attempt=attempt)
         record['verdict'] = record['decision']['verdict']
         record['state'] = record['decision']['state']
@@ -597,11 +611,15 @@ def evaluate(store, campaign_id, attempt_id, *, responsible, authority, check, p
 
 def projection(store, connection, dossier_id, campaign_id):
     """Private owner projection, without broad access to the judge piece role"""
+    from . import automatic_judgment as auto
     records = []
-    for record in _records(store, connection, campaign_id=campaign_id):
+    for record in _records(store, connection, campaign_id=campaign_id) + auto.records(store, connection, campaign_id):
         if record['campaign_id'] != campaign_id:
             continue
-        contract = q._contract(store, connection, record['contract_sha256'])
+        automatic = record['engine_version'] == auto.FORMAT
+        qualification = (auto.context(store, connection, campaign_id, record['attempt_id'])['qualification'] if automatic
+                         else q._inspect(store, connection, record['contract_sha256']))
+        contract = qualification['contract']
         if contract['dossier_id'] != dossier_id:
             raise IntegrityError('Évaluation étrangère au dossier')
         # The context, operator admissions and other S1 operations stay private
@@ -613,7 +631,7 @@ def projection(store, connection, dossier_id, campaign_id):
             visible['judgment']['operation_provenance'] = {k: deepcopy(operation[k]) for k in (
                 'operation_id', 'phase', 'authority', 'engine_version', 'created_at', 'state',
                 'ambiguity_reason', 'budget_id', 'reserved_amount', 'receipt')}
-        visible['qualification'] = q._inspect(store, connection, record['contract_sha256'])
+        visible['qualification'] = qualification
         pieces = contract['package']['pieces'] + contract['reference_pieces']
         ids = [p['id'] for p in pieces]
         if record['output_piece_id'] is not None:
@@ -632,7 +650,15 @@ def piece_bytes(store, session_id, dossier_id, evaluation_id, piece_id):
         row = connection.execute('SELECT e.attempt_id FROM s5_evaluations e JOIN s3_contracts c USING(contract_sha256) '
                                  'WHERE e.evaluation_id=? AND c.dossier_id=?', (evaluation_id, dossier_id)).fetchone()
         if row is None:
-            raise Denied('Évaluation inaccessible')
+            from . import automatic_judgment as auto
+            operation = next(iter(store._operations(connection, operation_ids={evaluation_id})), None)
+            if operation is None or operation['engine_version'] != auto.FORMAT or operation['dossier_id'] != dossier_id:
+                raise Denied('Évaluation inaccessible')
+            from . import judgment
+            _, ctx = judgment._bound(store, connection, operation)
+            if judgment._retained_proposal(store, connection, operation, ctx) is None or piece_id not in _resources(store, ctx):
+                raise Denied('Pièce non liée à cette évaluation')
+            return store.read_piece(piece_id)
         record = next(r for r in _records(store, connection, row[0]) if r['evaluation_id'] == evaluation_id)
         contract = q._contract(store, connection, record['contract_sha256'])
         ids = {p['id'] for p in contract['package']['pieces'] + contract['reference_pieces']}

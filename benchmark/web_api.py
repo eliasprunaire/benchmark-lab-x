@@ -8,7 +8,7 @@ from .storage import _fields
 
 
 def dispatch(store, method, path, token, body, source, transport, *, qualification_transport=None, candidate_transport=None,
-             candidate_identity=None,
+             candidate_identity=None, judgment_transport=None,
              access_secret=None, access_transport=None, presentation=None, personal_preparation=False):
     """Executor-side authorization: HTTP fields can never claim an operator role."""
     if method == 'GET' and path == '/preparation':
@@ -124,7 +124,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
             _fields(body, (), 'access disconnect')
             return 200, provider_access.disconnect(store, session_id, access_secret), None, None
         raise p.Denied('Action inaccessible')
-    launch_route = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/campaigns/([A-Za-z0-9_-]{1,128})/(conditions|cap|start)', path)
+    launch_route = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/campaigns/([A-Za-z0-9_-]{1,128})/(conditions|cap|start|evaluate)', path)
     if launch_route:
         from .acquisition import campaigns
         dossier_id, campaign_id, action = launch_route.groups()
@@ -153,22 +153,39 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         if method == 'POST' and action == 'start':
             if not callable(candidate_transport):
                 raise p.Denied('Acquisition indisponible')
+            if personal_preparation and requester:
+                from . import automatic_judgment as auto
+                auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport)
             attempts = campaigns.launch(store, session_id, dossier_id, campaign_id, body,
-                                        access_secret=access_secret, access_transport=access_transport)
+                                        access_secret=access_secret, access_transport=access_transport,
+                                        judgment_transport=judgment_transport if personal_preparation and requester else None)
             value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
                                           access_secret=access_secret,
-                                          access_transport=access_transport)
+                                          access_transport=access_transport, judgment_transport=judgment_transport)
             if requester:
                 value['launchable'] = False
             else:
                 value['can_launch'] = False
-            return 202, value, None, {'candidate_attempts': attempts} if attempts else None
+            start = {'candidate_attempts': attempts} if attempts else None
+            if start and personal_preparation and requester:
+                start.update(judgment_campaign=campaign_id, session_id=session_id, dossier_id=dossier_id)
+            return 202, value, None, start
+        if method == 'POST' and action == 'evaluate':
+            from . import automatic_judgment as auto
+            _fields(body, ('confirm',), 'évaluation')
+            if body['confirm'] != 'yes' or not personal_preparation:
+                raise p.Denied('Action inaccessible')
+            ids = auto.reserve_campaign(store, session_id, dossier_id, campaign_id, judgment_transport)
+            value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
+                access_secret=access_secret, access_transport=access_transport)
+            return 202, value, None, {'judgment_operations': ids} if ids else None
         if method == 'GET' and action == 'conditions':
             value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
                                           access_secret=access_secret,
-                                          access_transport=access_transport)
+                                          access_transport=access_transport, judgment_transport=judgment_transport)
             if requester:
-                value['launchable'] = value['launchable'] and callable(candidate_transport)
+                value['launchable'] = value['launchable'] and callable(candidate_transport) and (
+                    not personal_preparation or judgment_transport is not None)
             else:
                 value['can_launch'] = value['can_launch'] and callable(candidate_transport)
             return 200, value, None, None

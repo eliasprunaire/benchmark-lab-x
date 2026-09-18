@@ -956,6 +956,10 @@ class Store:
                         created_at=None):
         """Shared reservation body; caller owns the enclosing transaction."""
         _operation(operation)
+        from . import automatic_judgment
+        campaign_id = (json.loads(operation['resources'][0])['request']['campaign_id']
+                       if operation['engine_version'] == automatic_judgment.FORMAT else None)
+        automatic_judgment.guard_budget(self, connection, budget_id, campaign_id=campaign_id)
         require_current(operation['requested_configuration'])
         _text(budget_id, 'budget_id')
         requested = _money(amount)

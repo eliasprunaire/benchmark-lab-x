@@ -301,9 +301,32 @@ def _probe_worker(future, data, request, fetch, secret, access_transport, transp
     future.set_result(result)
 
 
+def _campaign_worker(data, start, candidate_transport, factory, secret, access_transport, judge):
+    from . import automatic_judgment as auto
+    from .acquisition import campaigns, execution
+    execution.execute_launch(data, start['candidate_attempts'], candidate_transport,
+                             transport_factory=factory, access_secret=secret, access_transport=access_transport)
+    if 'judgment_campaign' not in start:
+        return
+    try:
+        with closing(Store(data)) as store:
+            snapshot = campaigns.inspect(store, start['judgment_campaign'])
+            if snapshot['admission'] is None:
+                return
+            ids = auto.reserve_campaign(store, start['session_id'], start['dossier_id'],
+                                        start['judgment_campaign'], judge)
+            if not ids and not any(a['output_piece_id'] for a in snapshot['attempts']):
+                campaigns.stop(store, start['judgment_campaign'], reason='JUDGMENT_STOPPED')
+        auto.execute_campaign(data, ids, judge)
+    except Exception as error:
+        with closing(Store(data)) as store:
+            campaigns.stop(store, start['judgment_campaign'], reason='JUDGMENT_STOPPED')
+        logging.getLogger(__name__).error('AUTOMATIC_JUDGMENT_STOPPED error=%s', type(error).__name__)
+
+
 def serve_executor(data, socket_path, source, *, transport=None, qualification_transport=None,
                    candidate_transport=None, candidate_transport_factory=None,
-                   candidate_identity=None,
+                   candidate_identity=None, judgment_transport=None,
                    access_secret=None, access_transport=None, presentation=None, personal_preparation=False,
                    catalogue_fetch=None, model_probe_transport=None):
     data, socket_path = Path(data), Path(socket_path)
@@ -330,14 +353,19 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
             def handle_message(message):
                 from . import preparation, provider_access, web_api
                 active_transport, active_qualification = transport, qualification_transport
+                active_judgment = None
                 if personal_preparation:
                     active_transport, active_qualification = personal_transports(
                         store, message['token'], transport, qualification_transport, access_secret, access_transport)
+                    if active_transport is not None and judgment_transport is not None:
+                        active_judgment = judgment_transport.for_session(active_transport._api_key,
+                            active_transport._session_id, access_secret)
                 code, value, cookie, start = web_api.dispatch(
                     store, message['method'], message['path'], message['token'], message['body'],
                     source, active_transport, candidate_transport=candidate_transport or candidate_transport_factory,
                     candidate_identity=candidate_identity,
                     qualification_transport=active_qualification,
+                    judgment_transport=active_judgment,
                     access_secret=access_secret, access_transport=access_transport,
                     presentation=presentation, personal_preparation=personal_preparation)
                 if personal_preparation and isinstance(value, dict):
@@ -369,12 +397,13 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                         threading.Thread(target=preparation.execute_qualification,
                                          args=(data, start['qualification_operation'], active_qualification),
                                          daemon=True).start()
+                    elif 'judgment_operations' in start:
+                        from .automatic_judgment import execute_campaign
+                        threading.Thread(target=execute_campaign,
+                            args=(data, start['judgment_operations'], active_judgment), daemon=True).start()
                     else:
-                        from .acquisition.execution import execute_launch
-                        threading.Thread(target=execute_launch, args=(data, start['candidate_attempts'], candidate_transport),
-                                         kwargs={'transport_factory': candidate_transport_factory,
-                                                 'access_secret': access_secret,
-                                                 'access_transport': access_transport}, daemon=True).start()
+                        threading.Thread(target=_campaign_worker, args=(data, start, candidate_transport,
+                            candidate_transport_factory, access_secret, access_transport, active_judgment), daemon=True).start()
                 elif start:
                     threading.Thread(target=preparation.execute, args=(data, start, active_transport), daemon=True).start()
                 if isinstance(value, dict) and value.get('kind') == 'configurations':

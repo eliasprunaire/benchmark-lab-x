@@ -525,7 +525,7 @@ def render_campaign_followup(value, csrf):
         content += form(csrf, base + '/evaluate', {'confirm': 'yes'},
             '<p>Votre clé personnelle finance l’évaluation des réponses déjà reçues. Aucun modèle candidat ne sera relancé.</p>'
             '<button type="submit">Évaluer les réponses conservées</button>')
-    if not active and (ready or not judgment):
+    if not active and (ready or not judgment or judgment['completed'] > 0):
         content += '<p><a class="button' + ('' if all_received else ' sec') + '" href="' + text(base) + '">Comparer les résultats et lire les preuves</a></p>'
     content += '<p>L’arrêt intervient après le paiement de l’appel en cours. La dépense peut donc dépasser le plafond du montant du dernier appel.</p>'
     return content + '</div>'

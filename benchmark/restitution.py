@@ -123,10 +123,12 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                for a in campaign['attempts'] if a['operation_id'] not in latest]
     if connection.execute('SELECT 1 FROM s2_comparison_contracts WHERE contract_sha256=?',
                           (campaign['contract_sha256'],)).fetchone():
+        from . import automatic_judgment as auto
+        progress = auto.status(store, connection, campaign_id)
         for attempt in pending:
             if attempt['state'] == 'REVIEW_REQUIRED':
-                attempt.update(state='JUDGMENT_NOT_CONFIGURED',
-                    next_action='Réponse reçue et conservée. Son évaluation est indisponible.')
+                attempt.update(state='EVALUATION_' + progress['status'],
+                    next_action=progress['reason'] or 'Réponse reçue et conservée. Son évaluation automatique reste à terminer.')
     pending += [dict(attempt_id=record['attempt_id'], **record['decision'])
                 for record in latest.values() if record['decision']['verdict'] is None]
     pending += e.pending_judgments(store, connection, campaign_id, latest)

@@ -107,7 +107,7 @@ Responsabilité : appliquer les erreurs éliminatoires et obligations du contrat
 
 Une évaluation non concluante conserve son rapport et ses preuves comme travail à reprendre, sans verdict métier. Son état, ses causes et la prochaine action restent consultables. Les anciens verdicts `INDETERMINE` gardent leur valeur d’origine dans l’historique.
 
-L'évaluation s'applique à un cas et une tentative identifiés. Le verdict porte les éléments exigés par la règle « Verdict explicable » des [règles](RULES.md#6-erreurs-et-verdict) : valeur, motif court, critères ou constats concernés, références de preuve et responsable. L’évaluation référence la version de la méthode et de la référence de jugement ainsi que les preuves de leur qualification. Lorsqu’elle est assistée par un modèle, elle conserve sa configuration demandée et observée, les consignes, les pièces vues et l’arbitrage humain ; ces éléments se distinguent de la configuration candidate et suivent les [règles de provenance](RULES.md#5-sortie-et-provenance). L’éventuelle revue professionnelle est une preuve attribuée à son auteur et à son périmètre, sans nouveau rôle produit obligatoire. Une mesure valide d’un critère secondaire peut décrire une sortie non admissible ; elle ne change pas le verdict ni ne compense une erreur éliminatoire. Un défaut de consigne, de données, de référence, de contrôle ou d’exécution ne devient pas artificiellement une erreur candidate.
+L'évaluation s'applique à un cas et une tentative identifiés. Le verdict porte les éléments exigés par la règle « Verdict explicable » des [règles](RULES.md#6-erreurs-et-verdict) : valeur, motif court, critères ou constats concernés, références de preuve et responsable. L’évaluation référence la version de la méthode et de la référence de jugement ainsi que les preuves de leur qualification. Lorsqu’elle est assistée par un modèle, elle conserve sa configuration demandée et observée, les consignes, les pièces vues, les constats et la règle de décision versionnée ; ces éléments se distinguent de la configuration candidate et suivent les [règles de provenance](RULES.md#5-sortie-et-provenance). Dans le parcours public, le lancement autorisé enchaîne automatiquement les appels candidats, le jugement et la restitution privée. Les citations sont vérifiées avant le calcul du verdict ; aucune soumission opérateur n’est exigée. Les évaluations historiques gardent leur contrat d’origine. L’éventuelle revue professionnelle est une preuve attribuée à son auteur et à son périmètre, sans nouveau rôle produit obligatoire. Une mesure valide d’un critère secondaire peut décrire une sortie non admissible ; elle ne change pas le verdict ni ne compense une erreur éliminatoire. Un défaut de consigne, de données, de référence, de contrôle ou d’exécution ne devient pas artificiellement une erreur candidate.
 
 ### 4.6 Vue de décision
 
@@ -131,7 +131,7 @@ Demande, éventuellement vague
   -> Contrat de tâche qualifié et approuvé ; manifeste et autorités approuvés
   -> Admission et acquisition candidate sous Pi constant
   -> Sortie brute ou incident, conservé avec sa provenance
-  -> Évaluation : SATISFAIT / NE SATISFAIT PAS, ou travail à reprendre sans verdict ; preuves conservées
+  -> Évaluation automatique : SATISFAIT / NE SATISFAIT PAS, ou résultat non concluant ; preuves conservées
   -> Mesures et coûts observés, classements par critère et filtres
   -> Choix de l’utilisateur ; publication uniquement sous autorité distincte
 ```
