@@ -57,7 +57,7 @@ class CampaignLaunch(unittest.TestCase):
                              '/preparation/dossiers/fixture/campaigns/local-comparison/conditions',
                              'token', None, 'a' * 40, True)
 
-    def test_legacy_and_extra_http_authority_are_denied(self):
+    def test_unscoped_and_extra_http_authority_are_denied(self):
         body = self.admit(False)
         with self.assertRaises(p.Denied):
             self.launch(body)
@@ -438,9 +438,9 @@ class RequesterCampaignLaunch(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'required_observations invalide'):
             c.create(self.store, manifest)
 
-    def test_manifeste_historique_reste_lisible_mais_inadmissible(self):
+    def test_manifest_without_data_collection_remains_inadmissible(self):
         manifest = deepcopy(c.inspect(self.store, self.campaign_id)['manifest'])
-        manifest['campaign_id'] = 'campagne-historique-sans-deny'
+        manifest['campaign_id'] = 'campagne-sans-deny'
         for config in manifest['panel']:
             del config['parameters']['provider']['data_collection']
         connection = self.store._connection
@@ -462,7 +462,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
             c.admit(self.store, manifest['campaign_id'], {}, {})
         with self.assertRaisesRegex(ValueError, 'DATA_COLLECTION_REQUIRED'):
             c.reserve(self.store, manifest['campaign_id'], manifest['plan'][0]['cell_id'],
-                      'tentative-historique-refusee')
+                      'tentative-sans-deny-refusee')
 
     def test_ordre_des_etapes(self):
         with tempfile.TemporaryDirectory(prefix='requester-step-') as directory:

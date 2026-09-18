@@ -75,7 +75,7 @@ class S3Regressions(unittest.TestCase):
         spec.pop('local_criterion_ids')
         with self.assertRaisesRegex(ValueError, 'preuve locale explicites'):
             q.draft(self.store, 'fixture', self.view['revision'], spec)
-        q._specification(spec, legacy=True)
+        q._specification(spec, compatible=True)
 
     def qualify(self, checker=check):
         return q.qualify(self.store, self.fingerprint, reviewer=ACTOR, check=checker)

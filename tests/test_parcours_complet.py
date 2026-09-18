@@ -1,4 +1,4 @@
-"""Recette HTTP locale sur données contrôlées, sans participant ni appel fournisseur"""
+"""Parcours HTTP local sur données contrôlées, sans participant ni appel fournisseur"""
 from contextlib import closing
 from datetime import timedelta
 from html.parser import HTMLParser
@@ -101,10 +101,10 @@ class ParcoursComplet(unittest.TestCase):
             'qualified': True, 'findings': [], 'summary': 'Les actions et leur format sont vérifiables'})
         self.identity = {'package': 'pi', 'version': '0.85.1', 'sha256': '1' * 64,
                          'bridge_sha256': '2' * 64, 'node_sha256': '3' * 64,
-                         'node_version': 'v24.0.0', 'scope': 'Identité factice de recette'}
+                         'node_version': 'v24.0.0', 'scope': 'Identité factice de fixture'}
         with closing(storage.Store(self.data)) as store:
-            store.create_budget('recette', '100', 'USD')
-            prep.admit(store, {'authority_id': 'TEST_ONLY_S12', 'budget_id': 'recette',
+            store.create_budget('fixture', '100', 'USD')
+            prep.admit(store, {'authority_id': 'TEST_ONLY_S12', 'budget_id': 'fixture',
                               'reserve_amount': '1', 'requested_configuration': {'model': 'factice'}})
             rows = [model('openai/gpt-5.6-sol', 'openai', ['high']),
                     model('deepseek/deepseek-v4.1-flash', 'deepseek', [])]
@@ -152,7 +152,7 @@ class ParcoursComplet(unittest.TestCase):
         self.enterContext(patch.object(server, 'run', run))
         self.enterContext(patch.object(views, 'SOURCE_SHA', views.SOURCE_SHA))
         web_thread = threading.Thread(target=server.serve_web,
-            args=('127.0.0.1', 0, root, self.sock, 'a' * 40, 'https://recette.example'))
+            args=('127.0.0.1', 0, root, self.sock, 'a' * 40, 'https://fixture.example'))
         web_thread.start()
         self.assertTrue(ready.wait(3), 'Serveur local absent')
         self.addCleanup(web_thread.join, 3)
@@ -186,7 +186,7 @@ class ParcoursComplet(unittest.TestCase):
         value = response(operation, request)
         second = request['requested_configuration']['model'] == 'deepseek/deepseek-v4.1-flash'
         value['receipt']['result']['output'] = ('Action omise' if second else
-            'Action : relire | Responsable : Camille\n<script>contenu inerte</script>\n' + 'Note de recette\n' * 80)
+            'Action : relire | Responsable : Camille\n<script>contenu inerte</script>\n' + 'Note de fixture\n' * 80)
         value['cost'].update(status='UNKNOWN' if second else 'KNOWN', amount=None if second else '0.10',
                              currency='USD', source='Reçu candidat simulé S12')
         return value
@@ -279,7 +279,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Tableau des actions avec responsable', page.visible)
         previous, _, _ = self.request(page.link('Révision précédente'))
         self.assertNotIn('Tableau des actions avec responsable', previous.visible)
-        self.examine(previous, dossier + '/revisions/3', 'retour historique', 'Revenir à la révision courante')
+        self.examine(previous, dossier + '/revisions/3', 'révision précédente', 'Revenir à la révision courante')
         page, _, _ = self.request(previous.link('Revenir à la révision courante'))
         page = self.submit(page, '/validation', {})
         self.examine(page, dossier, 'qualification en attente', None)
@@ -379,7 +379,7 @@ class ParcoursComplet(unittest.TestCase):
         foreign = SimpleCookie(headers['Set-Cookie'])
         for private_path in (recap, comparison):
             _, _, raw = self.request(private_path, cookies=foreign, status=403)
-            self.assertNotIn(b'Note de recette', raw)
+            self.assertNotIn(b'Note de fixture', raw)
             self.assertNotIn(b'Transformer des notes', raw)
         self.assertEqual(5, len(self.calls))
         self.assertTrue(self.starts.empty())

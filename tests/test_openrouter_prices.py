@@ -12,8 +12,8 @@ from benchmark.transports import prices as prices, openrouter as assistant
 from benchmark import runtime
 
 
-MODEL = 'z-ai/glm-5.3-flash'
-SUMMARY = {'id': MODEL, 'canonical_slug': MODEL + '-20260826', 'context_length': 1000, 'pricing': {'prompt': '0.00000001'}}
+MODEL = 'openai/gpt-6-astra'
+SUMMARY = {'id': MODEL, 'canonical_slug': MODEL + '-20260903', 'context_length': 1000, 'pricing': {'prompt': '0.00000001'}}
 ENDPOINT = {'model_id': MODEL, 'provider_name': 'Fixture provider', 'tag': 'fixture/fp8', 'status': 0,
             'pricing': {'prompt': '0.000001', 'completion': '0.000002', 'input_cache_read': '0.0000001'}}
 
@@ -29,8 +29,9 @@ class OpenRouterPricesTests(unittest.TestCase):
         self.addCleanup(connection.stop)
 
     def responses(self, endpoints=None, summary=None):
-        self.raw = [json.dumps({'data': SUMMARY if summary is None else summary}).encode(),
-                    json.dumps({'data': {'id': MODEL, 'endpoints': [ENDPOINT] if endpoints is None else endpoints}}).encode()]
+        summary = SUMMARY if summary is None else summary
+        self.raw = [json.dumps({'data': summary}).encode(),
+                    json.dumps({'data': {'id': summary['id'], 'endpoints': [ENDPOINT] if endpoints is None else endpoints}}).encode()]
         self.response.read.side_effect = self.raw
 
     def test_runtime_forecast_is_public_read_only_and_provider_specific(self):
@@ -69,20 +70,24 @@ class OpenRouterPricesTests(unittest.TestCase):
         self.assertEqual(2, self.http.close.call_count)
 
     def test_runtime_prepares_s2_configuration_from_the_public_forecast(self):
-        historical = assistant.load_profile(assistant.HISTORICAL_ASSISTANT)
+        profile = assistant.load_profile(assistant.ASSISTANT)
         self.responses([{**ENDPOINT, 'tag': tag, 'provider_name': provider,
+                         'model_id': profile['model'],
                          'supported_parameters': ['temperature', 'top_p', 'reasoning', 'max_tokens', 'response_format']}
-                        for tag, provider in assistant.providers(historical).items()],
-                       summary={**SUMMARY, 'pricing': {'prompt': '0.000001', 'completion': '0.000002'}})
+                        for tag, provider in assistant.providers(profile).items()],
+                       summary={'id': profile['model'], 'canonical_slug': profile['revision'],
+                                'context_length': profile['reserve_input_tokens'],
+                                'pricing': {'prompt': '0.000001', 'completion': '0.000002'}})
         with redirect_stdout(io.StringIO()) as output, patch.object(runtime, 'Store') as store:
-            self.assertEqual(0, runtime.main(['forecast-prices', '--model', MODEL, '--input-tokens', '1000',
-                                              '--output-tokens', '16384', '--preparation-assistant', assistant.HISTORICAL_ASSISTANT]))
+            self.assertEqual(0, runtime.main(['forecast-prices', '--model', profile['model'], '--input-tokens',
+                                              str(profile['reserve_input_tokens']), '--output-tokens', '16384',
+                                              '--preparation-assistant', assistant.ASSISTANT]))
         value = json.loads(output.getvalue())['preparation']
-        self.assertEqual('0.033768', value['reserve_amount'])
-        self.assertEqual(MODEL, value['requested_configuration']['model'])
+        self.assertEqual('0.096768', value['reserve_amount'])
+        self.assertEqual(profile['model'], value['requested_configuration']['model'])
         self.assertEqual('OpenRouter', value['requested_configuration']['provider'])
-        self.assertEqual(assistant.HISTORICAL_ASSISTANT, value['requested_configuration']['profile_id'])
-        self.assertEqual(assistant.profile_digest(assistant.HISTORICAL_PROFILE),
+        self.assertEqual(assistant.ASSISTANT, value['requested_configuration']['profile_id'])
+        self.assertEqual(assistant.profile_digest(profile),
                          value['requested_configuration']['profile_sha256'])
         self.assertIn('reservation_estimate', value['requested_configuration'])
         store.assert_not_called()
@@ -92,7 +97,7 @@ class OpenRouterPricesTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()) as output, patch.object(assistant, 'HTTPSConnection') as inference:
             self.assertEqual(78, runtime.main(['forecast-prices', '--model', 'openrouter/auto',
                                               '--input-tokens', '1000', '--output-tokens', '16384',
-                                              '--preparation-assistant', assistant.HISTORICAL_ASSISTANT]))
+                                              '--preparation-assistant', assistant.ASSISTANT]))
         self.assertEqual('HOLD', json.loads(output.getvalue())['state'])
         self.http.request.assert_not_called()
         inference.assert_not_called()

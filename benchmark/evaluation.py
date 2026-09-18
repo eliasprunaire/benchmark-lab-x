@@ -2,7 +2,7 @@
 
 The trusted local caller supplies findings, never a verdict or a transport.
 Real local or human findings require an explicit private operator authority.
-Historical assisted proposals keep their operator submission contract.
+Recorded assisted proposals keep their operator submission contract.
 Requester campaigns derive their private verdicts automatically from retained judge receipts.
 """
 from contextlib import closing
@@ -412,7 +412,7 @@ def _record(store, connection, ctx, report, *, evaluation_id, created_at, engine
             if binding['previous_evaluation_id'] != previous_evaluation_id:
                 raise ConflictError('Prédécesseur distinct de la relecture assistée')
         elif authority['actor'] == 'Ayo':
-            raise ValueError('Jugement historique réservé à son autorité fictive')
+            raise ValueError('Jugement de compatibilité réservé à son autorité fictive')
     verdict, reason = _verdict(ctx, findings, judgment)
     campaign, qualification, attempt = (ctx[k] for k in ('campaign', 'qualification', 'attempt'))
     contract = qualification['contract']
@@ -513,7 +513,7 @@ def inspect(store, evaluation_id):
 
 
 def decision(record, *, attempt=None) -> dict:
-    """Current business view; never rewrite the historical evaluation record"""
+    """Current business view; never rewrite a recorded evaluation"""
     if 'decision' in record:
         return deepcopy(record['decision'])
     if record['verdict'] != 'INDETERMINE':

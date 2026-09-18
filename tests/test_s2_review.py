@@ -87,7 +87,7 @@ class S2ReviewTest(unittest.TestCase):
                     {'action_id': 'create', 'request': 'Organiser les actions de cet atelier inventé'}, 'test', True)
                 preparation.execute(data, operation, lambda op, request: response(op, 'Organiser les notes',
                     [{'name': 'notes.txt', 'content': 'Action : relire'},
-                     {'name': 'obsolète.txt', 'content': 'Action : retirer'}]))
+                     {'name': 'a-retirer.txt', 'content': 'Action : retirer'}]))
                 first = preparation.view(store, session, 'dossier')
                 self.assertEqual([], first['changes'])
                 self.assertEqual({'eliminatory': [], 'obligations': ['Toutes les actions présentes'],
@@ -106,7 +106,7 @@ class S2ReviewTest(unittest.TestCase):
                 digest = sha256(storage._strict_json(duplicate).encode()).hexdigest()
                 with self.assertRaisesRegex(storage.IntegrityError, 'Nom de pièce répété'):
                     preparation.package_check(store, 'dossier', first['revision'], duplicate, digest)
-                removed = next(piece for piece in first['package']['pieces'] if piece['name'] == 'obsolète.txt')
+                removed = next(piece for piece in first['package']['pieces'] if piece['name'] == 'a-retirer.txt')
                 removed_path = data / store.get_piece(removed['id'])['relative_path']
 
                 operation, _ = preparation.submit(store, session, 'dossier', {'action_id': 'correct',
@@ -121,10 +121,10 @@ class S2ReviewTest(unittest.TestCase):
                 current = preparation.view(store, session, 'dossier')
                 self.assertEqual(before, store._connection.total_changes)
                 self.assertEqual(['instruction', 'pieces'], current['changes'])
-                self.assertEqual({'added': ['compte-rendu.txt'], 'removed': ['obsolète.txt'],
+                self.assertEqual({'added': ['compte-rendu.txt'], 'removed': ['a-retirer.txt'],
                                   'modified': ['notes.txt']}, current['piece_changes'])
                 page = views.render(current, csrf).decode()
-                for expected in ('Pièces ajoutées', 'compte-rendu.txt', 'Pièces retirées', 'obsolète.txt',
+                for expected in ('Pièces ajoutées', 'compte-rendu.txt', 'Pièces retirées', 'a-retirer.txt',
                                  'Pièces modifiées', 'notes.txt'):
                     self.assertIn(expected, page)
                 self.assertEqual('[]', store._connection.execute(
