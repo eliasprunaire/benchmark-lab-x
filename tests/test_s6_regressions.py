@@ -254,7 +254,7 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual([('script', {})], [(tag, attrs) for tag, attrs in markup.tags if tag == 'script'])
         self.assertFalse(any(k.startswith('on') for _, attrs in markup.tags for k in attrs))
         self.assertEqual(views.COMPARISON_FOCUS_SCRIPT.encode(), comparison_html.split(b'<script>')[1].split(b'</script>')[0])
-        self.assertEqual('UYVwhfSrYOHss9ut/0sNyZev/f+WGn1ovpct7BS3gkA=',
+        self.assertEqual('CCXvslT7aeBVUJkC26TP8/XafRTVx/P3Oqn9DHFTKsc=',
                          b64encode(sha256(views.COMPARISON_FOCUS_SCRIPT.encode()).digest()).decode())
         detail = next(link for link in markup.links if '/attempts/attempt-error' in link)
         code, value, _, _ = web_api.dispatch(self.store, 'GET', detail, self.token, None, 'a' * 40, False)
@@ -324,8 +324,11 @@ class S6Regressions(unittest.TestCase):
                     raw = result.read()
                     expected = policy
                     if path == self.base and accept == 'text/html':
-                        expected += "; script-src 'sha256-UYVwhfSrYOHss9ut/0sNyZev/f+WGn1ovpct7BS3gkA='"
+                        # Le script de la modale récupère la page directe : connect-src 'self' seulement ici
+                        expected += "; script-src 'sha256-CCXvslT7aeBVUJkC26TP8/XafRTVx/P3Oqn9DHFTKsc='; connect-src 'self'"
                         self.assertEqual(1, raw.count(b'<script>'))
+                        self.assertNotIn(b'innerHTML', raw)
+                        self.assertEqual(1, raw.count(b'<dialog '))
                         self.assertEqual(views.COMPARISON_FOCUS_SCRIPT.encode(), raw.split(b'<script>')[1].split(b'</script>')[0])
                     elif accept == 'text/html':
                         self.assertFalse(any(tag == 'script' for tag, _ in Markup(raw).tags))

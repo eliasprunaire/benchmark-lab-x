@@ -642,32 +642,39 @@ def projection(store, connection, dossier_id, campaign_id):
     return records
 
 
-def piece_bytes(store, session_id, dossier_id, evaluation_id, piece_id):
+def _pieces_bytes(store, connection, session_id, dossier_id, evaluation_id, piece_ids):
+    """Read an evaluation's selected proofs under the caller's snapshot"""
     from .preparation import Denied, owner
-    connection = connection_for(store)
-    with _transaction(connection):
-        owner(connection, session_id, dossier_id)
-        row = connection.execute('SELECT e.attempt_id FROM s5_evaluations e JOIN s3_contracts c USING(contract_sha256) '
-                                 'WHERE e.evaluation_id=? AND c.dossier_id=?', (evaluation_id, dossier_id)).fetchone()
-        if row is None:
-            from . import automatic_judgment as auto
-            operation = next(iter(store._operations(connection, operation_ids={evaluation_id})), None)
-            if operation is None or operation['engine_version'] != auto.FORMAT or operation['dossier_id'] != dossier_id:
-                raise Denied('Évaluation inaccessible')
-            from . import judgment
-            _, ctx = judgment._bound(store, connection, operation)
-            if (judgment._retained_proposal(store, connection, operation, ctx, recover_metadata=True) is None
-                    or piece_id not in _resources(store, ctx)):
-                raise Denied('Pièce non liée à cette évaluation')
-            return store.read_piece(piece_id)
-        record = next(r for r in _records(store, connection, row[0]) if r['evaluation_id'] == evaluation_id)
-        contract = q._contract(store, connection, record['contract_sha256'])
-        ids = {p['id'] for p in contract['package']['pieces'] + contract['reference_pieces']}
-        if record['output_piece_id'] is not None:
-            ids.add(record['output_piece_id'])
-        if piece_id not in ids:
+    owner(connection, session_id, dossier_id)
+    row = connection.execute('SELECT e.attempt_id FROM s5_evaluations e JOIN s3_contracts c USING(contract_sha256) '
+                             'WHERE e.evaluation_id=? AND c.dossier_id=?', (evaluation_id, dossier_id)).fetchone()
+    if row is None:
+        from . import automatic_judgment as auto
+        operation = next(iter(store._operations(connection, operation_ids={evaluation_id})), None)
+        if operation is None or operation['engine_version'] != auto.FORMAT or operation['dossier_id'] != dossier_id:
+            raise Denied('Évaluation inaccessible')
+        from . import judgment
+        _, ctx = judgment._bound(store, connection, operation)
+        if judgment._retained_proposal(store, connection, operation, ctx, recover_metadata=True) is None:
             raise Denied('Pièce non liée à cette évaluation')
-        return store.read_piece(piece_id)
+        resources = _resources(store, ctx)
+        if not set(piece_ids) <= resources.keys():
+            raise Denied('Pièce non liée à cette évaluation')
+        return {pid: resources[pid] for pid in piece_ids}
+    record = next(r for r in _records(store, connection, row[0]) if r['evaluation_id'] == evaluation_id)
+    contract = q._contract(store, connection, record['contract_sha256'])
+    ids = {p['id'] for p in contract['package']['pieces'] + contract['reference_pieces']}
+    if record['output_piece_id'] is not None:
+        ids.add(record['output_piece_id'])
+    if not set(piece_ids) <= ids:
+        raise Denied('Pièce non liée à cette évaluation')
+    return {pid: store.read_piece(pid) for pid in piece_ids}
+
+
+def piece_bytes(store, session_id, dossier_id, evaluation_id, piece_id):
+    with store.read_snapshot() as connection:
+        return _pieces_bytes(store, connection, session_id, dossier_id, evaluation_id, [piece_id])[piece_id]
+
 
 def prepare_report(store, campaign_id, attempt_id):
     """Export private inputs for a reviewer; no verdict or approval is inferred"""

@@ -25,7 +25,85 @@ COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
 window.addEventListener('pageshow', () => {
   const row = document.getElementById(history.state?.comparisonFocus);
   if (row) row.focus({preventScroll: true});
-});"""
+});
+(() => {
+  const dialog = document.getElementById('result-dialog');
+  if (!dialog || typeof dialog.showModal !== 'function') return;
+  const status = dialog.querySelector('.result-status'), body = dialog.querySelector('.result-body'),
+        full = dialog.querySelector('a.full');
+  let request = null, opener = null;
+  const element = (tag, textContent, attrs = {}) => Object.assign(document.createElement(tag), {textContent}, attrs);
+  function fail(href) {
+    status.textContent = '';
+    const alert = element('p', 'Le détail n’a pas pu être chargé. ');
+    alert.setAttribute('role', 'alert');
+    const retry = element('button', 'Réessayer', {type: 'button', className: 'sec'});
+    retry.addEventListener('click', () => load(href));
+    alert.append(retry, ' ou ouvrez la page complète.');
+    body.replaceChildren(alert);
+  }
+  function load(href) {
+    request?.abort();
+    const current = request = new AbortController();
+    const timer = setTimeout(() => current.abort(new DOMException('Délai dépassé', 'TimeoutError')), 15000);
+    dialog.setAttribute('aria-busy', 'true');
+    status.textContent = 'Chargement du détail…';
+    const progress = document.createElement('progress');
+    progress.setAttribute('aria-hidden', 'true');
+    body.replaceChildren(progress);
+    fetch(href, {headers: {Accept: 'text/html'}, cache: 'no-store', redirect: 'error', mode: 'same-origin', signal: current.signal})
+      .then(response => { if (!response.ok) throw new Error(String(response.status)); return response.text(); })
+      .then(html => {
+        if (current !== request || !dialog.open) return;
+        const part = new DOMParser().parseFromString(html, 'text/html').getElementById('attempt-detail');
+        if (!part) throw new Error('fragment');
+        body.replaceChildren(...part.childNodes);
+        status.textContent = 'Détail chargé.';
+      })
+      .catch(error => {
+        if (current !== request || !dialog.open || error.name === 'AbortError') return;
+        fail(href);
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        if (current === request) { request = null; dialog.removeAttribute('aria-busy'); }
+      });
+  }
+  document.addEventListener('click', event => {
+    const link = event.target.closest('a[data-result]');
+    if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    opener = link;
+    full.href = link.href;
+    if (!dialog.open) dialog.showModal();
+    load(link.href);
+  });
+  dialog.addEventListener('click', event => {
+    if (event.target.closest('[data-close]')) { dialog.close(); return; }
+    const anchor = event.target.closest('a[href^="#"]');
+    if (anchor) {
+      const target = document.getElementById(anchor.getAttribute('href').slice(1));
+      if (!target || !dialog.contains(target)) return;
+      event.preventDefault();
+      for (let node = target; node && node !== dialog; node = node.parentElement) {
+        if (node.tagName === 'DETAILS') node.open = true;
+      }
+      target.scrollIntoView({block: 'start'});
+      return;
+    }
+    if (event.target !== dialog) return;
+    const rect = dialog.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
+  });
+  dialog.addEventListener('close', () => {
+    request?.abort();
+    request = null;
+    dialog.removeAttribute('aria-busy');
+    status.textContent = '';
+    body.replaceChildren();
+    opener?.focus();
+  });
+})();"""
 
 CUSTOM_MODELS_SCRIPT = """(() => {
   const panel = document.getElementById('custom-models');
@@ -149,17 +227,27 @@ def render_custom_models(value, csrf, dossier_url):
     return content + '</div></details><script>' + CUSTOM_MODELS_SCRIPT + '</script>'
 
 
+def _readable_reason(record):
+    """Motif du juge avec les identifiants de critères remplacés par leurs descriptions"""
+    spec = record['qualification']['contract']['specification']
+    labels = {item['id']: item['description'] for item in spec['obligations'] + spec['eliminatory_errors']}
+    if not labels:
+        return record['reason']
+    return re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)',
+                  lambda match: labels[match[0]], record['reason'])
+
+
 def render_evaluations(evaluations, dossier_url):
-    """Inert evidence and correction history inside the owner's existing page"""
+    """Inert evidence and correction history inside the owner's existing page.
+
+    Rendu complet de l’historique ; `render_result` fournit la lecture compacte
+    """
     content = '<h4>Verdicts et preuves</h4><p>Évaluations fictives, par cas et tentative. '
     content += 'Le verdict porte sur la configuration observée sous les conditions communes ; '
     content += 'il ne prouve ni une propriété du modèle seul ni une compétence métier générale.</p>'
     for record in evaluations:
         eid = record['evaluation_id']
-        spec = record['qualification']['contract']['specification']
-        labels = {item['id']: item['description'] for item in spec['obligations'] + spec['eliminatory_errors']}
-        reason = re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)',
-                        lambda match: labels[match[0]], record['reason'])
+        reason = _readable_reason(record)
         label = ('Évaluation à reprendre (valeur historique : INDETERMINE)' if record['verdict'] == 'INDETERMINE'
                  else record['verdict'] or 'Évaluation à reprendre')
         content += '<section id="evaluation-' + text(eid) + '"><h5>' + text(label) + '</h5>'
@@ -276,6 +364,13 @@ def render_comparison(value):
     content += '</div>'
     if not value['population']:
         return content
+    choice = value.get('economic_choice')
+    if choice:
+        content += '<div class="economic-choice"><p>Si le coût est votre priorité, <strong>' + text(choice['configuration']['model'])
+        content += ' · ' + text(effort_label(choice['configuration'])) + '</strong> est la configuration conforme la moins coûteuse sur cet exemple ('
+        content += text(montant_lisible(choice['amount']) + ' ' + choice['unit']) + ', parmi ' + text(choice['count']) + ' réponses conformes).</p>'
+        content += '<p class="hint"><a data-result href="' + text(choice['detail_href']) + '">Détails et réserves</a> · '
+        content += 'Un seul exemple ne garantit pas le même résultat sur d’autres tâches.</p></div>'
     sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
     sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
     options = {
@@ -353,12 +448,17 @@ def render_comparison(value):
                 else:
                     content += '<td>' + readable_fields(measure['value'])
                     content += ('' if measure['unit'] in ('bool', 'boolean', 'booléen') else ' ' + text(measure['unit'])) + '</td>'
-            content += '<td><a href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
+            content += '<td><a data-result href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
         content += '</tbody></table></div></section>'
     content += '<details id="method"><summary>Comment lire ces résultats</summary>'
     content += '<ul><li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
     content += '<li>Comparez le coût des réponses satisfaisantes, puis consultez leurs qualités et limites dans « Détail et preuves ». Un coût inconnu ne change pas le verdict.</li>'
     content += '<li>Les modèles reçoivent les mêmes consignes et pièces. Ces résultats concernent uniquement cet exemple fictif, sans garantir la même qualité sur d’autres tâches.</li></ul></details>'
+    # Conteneur vide de la modale : sans JavaScript il reste invisible et les liens naviguent vers la page directe
+    content += '<dialog id="result-dialog" class="result-dialog" aria-label="Détail et preuves">'
+    content += '<div class="result-head"><button type="button" class="sec" data-close autofocus>Fermer</button>'
+    content += '<p class="result-status" role="status"></p></div><div class="result-body"></div>'
+    content += '<p class="result-foot"><a class="full" href="' + text(base) + '">Ouvrir la page complète</a></p></dialog>'
     return content
 
 
@@ -651,15 +751,162 @@ def render_campaign_launch_operator(value, csrf):
     return content
 
 
+PREVIEW_LENGTH = 200
+
+CRITERION_STATES = {
+    'obligation': {'PASS': ('b-ok', 'i-check', 'Respectée'), 'FAIL': ('b-ko', 'i-cross', 'Non respectée'),
+                   'INDETERMINE': ('b-ind', 'i-help', 'Non vérifiable')},
+    'eliminatory': {'PASS': ('b-ok', 'i-check', 'Non commise'), 'FAIL': ('b-ko', 'i-cross', 'Commise'),
+                    'INDETERMINE': ('b-ind', 'i-help', 'Non vérifiable')},
+}
+
+ATTRIBUTIONS = {'reference': 'référence du juge'}
+
+
+def _plural(count, label, *, number=True):
+    """« 2 exigences », « 1 non respectée » : accord simple, « non » invariable"""
+    words = ' '.join(word + ('s' if count > 1 and word != 'non' else '') for word in label.split(' '))
+    return (str(count) + ' ' if number else '') + words
+
+
+def _criterion_state(findings):
+    """Tous les contrôles PASS ; sinon FAIL dès qu'un contrôle échoue ; sinon non conclu"""
+    statuses = {finding['status'] for finding in findings}
+    return 'PASS' if statuses == {'PASS'} else 'FAIL' if 'FAIL' in statuses else 'INDETERMINE'
+
+
+def _proof_anchor(record, piece_id):
+    link = next((p for p in record['proof_links'] if p['piece_id'] == piece_id), None)
+    if link is None:
+        return None, None
+    if piece_id in record.get('proof_contents', {}):
+        return link, '#proof-' + record['evaluation_id'] + '-' + piece_id
+    return link, link['href']
+
+
+def _criteria_list(record, criteria, kind):
+    content = '<ul class="checks">'
+    for criterion in criteria:
+        findings = [f for f in record['findings'] if f['criterion_id'] == criterion['id']]
+        tone, name, label = CRITERION_STATES[kind][_criterion_state(findings)]
+        content += '<li><span class="badge ' + tone + '">' + icon(name) + label + '</span><span>' + text(criterion['description']) + '</span>'
+        if findings:
+            content += '<details><summary>Constats et extraits</summary><ul>'
+            for finding in findings:
+                content += '<li>' + text(finding['finding'])
+                if finding['attribution'] not in ('candidate', 'evidence'):
+                    content += ' <span class="hint">(attribué à : ' + text(ATTRIBUTIONS.get(finding['attribution'], finding['attribution'])) + ')</span>'
+                for proof in finding['evidence']:
+                    link, target = _proof_anchor(record, proof['piece_id'])
+                    if link is None:
+                        continue
+                    content += '<details><summary>Passage de ' + text('la réponse du modèle' if link['piece_id'] == record['output_piece_id'] else link['name']) + '</summary><pre>' + text(proof['passage']) + '</pre>'
+                    content += '<p><a href="' + text(target) + '">Ouvrir la pièce</a></p></details>'
+                content += '</li>'
+            content += '</ul></details>'
+        content += '</li>'
+    return content + '</ul>'
+
+
+def render_result(record):
+    """Lecture humaine compacte d'une évaluation : fragment partagé par la page directe et la modale.
+
+    Le rendu technique complet reste `render_evaluations` sur l'historique du cas
+    d'usage ; ce fragment n'en remplace pas le minimum accessible. Tout texte
+    candidat, motif, constat ou mesure passe par `text()` ; aucune pièce n'est
+    interprétée.
+    """
+    eid = record['evaluation_id']
+    spec = record['qualification']['contract']['specification']
+    configuration = record['requested_configuration']
+    verdict = record['decision']['verdict']
+    content = '<section class="result" id="evaluation-' + text(eid) + '"><p class="eyebrow">Résultat sur cet exemple</p>'
+    content += '<h2>' + text(configuration['model']) + '</h2><p class="hint">' + text(effort_label(configuration)) + '</p>'
+    cost = record['candidate_cost']
+    content += '<p class="result-verdict">' + badge(verdict) + ' <span>Coût observé : ' + text(
+        'inconnu' if cost is None or cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']) + '</span></p>'
+    if verdict is None and record['decision'].get('next_action'):
+        content += '<p>' + text(record['decision']['next_action']) + '</p>'
+    # Ce que le modèle a produit
+    content += '<h3>Ce que le modèle a produit</h3>'
+    output_id = record['output_piece_id']
+    link, target = _proof_anchor(record, output_id) if output_id else (None, None)
+    output = record.get('proof_contents', {}).get(output_id) if output_id else None
+    if output is not None:
+        preview = output[:PREVIEW_LENGTH].strip()
+        content += '<p class="hint">Début de la réponse</p>'
+        content += '<div class="proof-text preview">' + text(preview) + ('…' if len(output) > PREVIEW_LENGTH else '') + '</div>'
+        content += '<details class="proof-content" id="proof-' + text(eid + '-' + output_id) + '"><summary>Lire la réponse complète</summary>'
+        content += '<div class="proof-text">' + text(output) + '</div></details>'
+    elif link is not None:
+        content += '<p><a href="' + text(link['href']) + '">' + text(link['name']) + '</a></p>'
+    else:
+        content += '<p>Aucune sortie conservée pour cette tentative.</p>'
+    # Pourquoi ce verdict
+    content += '<h3>Pourquoi ce verdict</h3>'
+    states = {criterion['id']: _criterion_state([f for f in record['findings'] if f['criterion_id'] == criterion['id']])
+              for criterion in spec['obligations'] + spec['eliminatory_errors']}
+    obligations = [states[c['id']] for c in spec['obligations']]
+    eliminatory = [states[c['id']] for c in spec['eliminatory_errors']]
+    summary = [_plural(obligations.count('PASS'), 'exigence') + ' sur ' + str(len(obligations)) + ' ' + _plural(obligations.count('PASS'), 'respectée', number=False)]
+    if obligations.count('FAIL'):
+        summary.append(_plural(obligations.count('FAIL'), 'non respectée'))
+    if obligations.count('INDETERMINE'):
+        summary.append(_plural(obligations.count('INDETERMINE'), 'non vérifiable'))
+    content += '<p>' + ', '.join(summary) + '.'
+    if eliminatory:
+        content += (' Aucune erreur éliminatoire relevée.' if all(state == 'PASS' for state in eliminatory) else
+                    ' ' + _plural(eliminatory.count('FAIL'), 'erreur éliminatoire relevée') + '.' if 'FAIL' in eliminatory else
+                    ' Contrôle éliminatoire non concluant.')
+    content += '</p>'
+    reason = _readable_reason(record)
+    content += ('<p class="hint">' + text(reason) + '</p>' if len(reason) <= PREVIEW_LENGTH else
+                '<details><summary>Explication de l’évaluation</summary><p>' + text(reason) + '</p></details>')
+    content += '<details><summary>Voir les exigences vérifiées</summary>' + _criteria_list(record, spec['obligations'], 'obligation') + '</details>'
+    if spec['eliminatory_errors']:
+        content += '<details><summary>Erreurs éliminatoires contrôlées</summary>' + _criteria_list(record, spec['eliminatory_errors'], 'eliminatory') + '</details>'
+    if record['measures']:
+        content += '<details><summary>Ce que le juge a observé</summary><p class="hint">Ces observations complètent le verdict ; elles ne forment pas une note globale.</p><ul>'
+        for measure in record['measures']:
+            content += '<li>' + text(measure['definition']['measure']) + ' : '
+            if measure['status'] == 'UNKNOWN':
+                content += 'non observée'
+            else:
+                content += readable_fields(measure['value']) + ('' if measure['unit'] in ('bool', 'boolean', 'booléen') else ' ' + text(measure['unit']))
+            content += '</li>'
+        content += '</ul></details>'
+    # Réserves
+    limits = list(dict.fromkeys(record['limits']))
+    if limits:
+        content += '<h3>Réserves à garder en tête</h3>' + listing(limits)
+    # Pièces
+    references = {piece['id'] for piece in record['qualification']['contract']['reference_pieces']}
+    content += '<details><summary>Pièces de l’exemple</summary><ul>'
+    for piece in record['proof_links']:
+        if piece['piece_id'] == output_id:
+            continue
+        role = 'Référence utilisée par le juge' if piece['piece_id'] in references else 'Pièce fournie au modèle'
+        content += '<li><span class="hint">' + role + '</span>'
+        if piece['piece_id'] in record.get('proof_contents', {}):
+            content += '<details class="proof-content" id="proof-' + text(eid + '-' + piece['piece_id']) + '"><summary>Lire la pièce complète : ' + text(piece['name']) + '</summary>'
+            content += '<div class="proof-text">' + text(record['proof_contents'][piece['piece_id']]) + '</div></details>'
+        else:
+            content += ' <a href="' + text(piece['href']) + '">' + text(piece['name']) + '</a>'
+        content += '</li>'
+    return content + '</ul></details></section>'
+
+
 def render_attempt_detail(value):
-    """Preuves d'une tentative, dernière évaluation en premier"""
-    content = '<nav aria-label="Retour"><a class="button" href="' + text(value['back_href']) + '">Revenir à la comparaison avec ses filtres</a> · '
-    content += '<a href="/preparation">Mes cas d’usage</a></nav><p class="lead">' + text(value['need']) + '</p>'
-    content += '<p>Consultation privée · version d’épreuve ' + text(value['task']['version']) + '.</p>'
-    content += '<details><summary>Identité de la campagne</summary><p>' + text(value['campaign_id']) + '</p></details>'
-    content += '<p>Les pièces exactes et leurs passages restent inertes. Historique conservé ; la dernière évaluation est affichée en premier.</p>'
-    content += render_evaluations(list(reversed(value['history'])), value['back_href'])
-    return content
+    """Page directe d’une tentative et fragment partagé avec la modale"""
+    content = '<nav aria-label="Retour"><a class="button" href="' + text(value['back_href']) + '">Revenir à la comparaison avec ses filtres</a>'
+    content += '</nav>'
+    content += '<p class="hint">Consultation privée · version d’épreuve ' + text(value['task']['version']) + '.</p>'
+    history = value['history']
+    content += '<div id="attempt-detail">' + render_result(history[-1])
+    for record in reversed(history[:-1]):
+        content += '<details><summary>Évaluation précédente, remplacée (' + text(date_lisible_utc(record['created_at'])) + ')</summary>'
+        content += render_result(record) + '</details>'
+    return content + '</div>'
 
 
 def render_campaign_history(campaigns, url):

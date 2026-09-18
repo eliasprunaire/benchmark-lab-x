@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 from benchmark.acquisition import execution
 from benchmark.acquisition import campaigns as c
 from benchmark import evaluation as e, preparation as p, publications as pub, qualification as q, restitution as r, web_api
-from benchmark_web import fragments, projection, views
+from benchmark_web import campaign_views, fragments, projection, views
 from benchmark_web.server import serve_web
 from tests.test_s4_regressions import inputs, manifest, response
 from tests.test_s5_regressions import EVALUATION_AUTHORITY, RESPONSIBLE, findings
@@ -149,10 +149,10 @@ class S10ProofTests(unittest.TestCase):
 
     def test_complete_html_and_raw_proofs_preserve_context(self):
         query = dict(case='notes', sort='cost', direction='desc')
-        with patch.object(e, 'piece_bytes', wraps=e.piece_bytes) as guarded:
+        with patch.object(e, '_pieces_bytes', wraps=e._pieces_bytes) as guarded:
             detail = r.detail(self.store, self.sid, 'fixture', 'proof', 'long', query=query)
         record = detail['history'][-1]
-        self.assertEqual(len(record['proof_links']), guarded.call_count)
+        self.assertEqual(1, guarded.call_count)
         self.assertEqual(self.output, record['proof_contents'][record['output_piece_id']])
         page = views.render(detail, '')
         self.assertIn(('<div class="proof-text">' + escape(self.output, quote=True) + '</div>').encode(), page)
@@ -175,7 +175,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertNotIn(b'PRIVATE_UNSELECTED', page)
 
     def test_owner_guard_precedes_loading_and_comparison_stays_light(self):
-        with patch.object(e, 'piece_bytes', wraps=e.piece_bytes) as guarded:
+        with patch.object(e, '_pieces_bytes', wraps=e._pieces_bytes) as guarded:
             with self.assertRaises(p.Denied):
                 r.detail(self.store, 'foreign', 'fixture', 'proof', 'long')
             guarded.assert_not_called()
@@ -185,6 +185,53 @@ class S10ProofTests(unittest.TestCase):
         row = comparison['rows'][0]
         with self.assertRaises(p.Denied):
             e.piece_bytes(self.store, self.sid, 'fixture', row['evaluation_id'], 'unlinked')
+
+    def test_detail_reads_proofs_in_the_same_snapshot(self):
+        read = e._pieces_bytes
+
+        def coherent_read(*args):
+            self.assertTrue(self.store._connection.in_transaction)
+            return read(*args)
+
+        with patch.object(e, '_pieces_bytes', side_effect=coherent_read):
+            detail = r.detail(self.store, self.sid, 'fixture', 'proof', 'long')
+        self.assertEqual(self.output, detail['history'][-1]['proof_contents'][
+            detail['history'][-1]['output_piece_id']])
+
+    def test_result_dialog_economic_help_and_compact_fragment(self):
+        value = r.comparison(self.store, self.sid, 'fixture', 'proof')
+        row = value['rows'][0]
+        page = views.render(value, '').decode()
+        self.assertNotIn('coût est votre priorité', page)
+        value['economic_choice'] = dict(configuration=row['requested_configuration'], count=2,
+                                        amount='0.00113885', unit='USD', detail_href=row['detail_href'])
+        page = views.render(value, '').decode()
+        parsed = Markup(page.encode())
+        self.assertEqual(1, sum(tag == 'dialog' for tag, _ in parsed.tags))
+        self.assertEqual(1, sum(tag == 'form' for tag, _ in parsed.tags))
+        self.assertEqual([row['detail_href']] * 2,
+                         [attrs['href'] for tag, attrs in parsed.tags if tag == 'a' and 'data-result' in attrs])
+        self.assertLess(page.index('coût est votre priorité'), page.index('id="filters"'))
+        self.assertIn('<strong>' + row['requested_configuration']['model'] + ' · ' + campaign_views.effort_label(row['requested_configuration'])
+                      + '</strong> est la configuration conforme la moins coûteuse sur cet exemple (0,00113885 USD, parmi 2 réponses conformes).', page)
+        self.assertIn('>Détails et réserves</a>', page)
+        for word in ('recommand', 'meilleur', 'innerHTML', 'gagnant'):
+            self.assertNotIn(word, page.lower())
+        self.assertFalse(any(k.startswith('on') for _, attrs in parsed.tags for k in attrs))
+        self.assertIn('data-result', views.COMPARISON_FOCUS_SCRIPT)
+        detail = r.detail(self.store, self.sid, 'fixture', 'proof', 'long', query={'sort': 'cost'})
+        raw = views.render(detail, '').decode()
+        self.assertEqual(1, raw.count('id="attempt-detail"'))
+        fragment = raw.split('id="attempt-detail"', 1)[1]
+        self.assertNotIn(detail['need'], fragment)
+        for absent in ('evidence-fields', 'Identifiants', 'Responsable :', 'Dépense de jugement'):
+            self.assertNotIn(absent, fragment)
+        for present in ('Résultat sur cet exemple', 'Coût observé', 'Début de la réponse', 'Lire la réponse complète',
+                        'Pourquoi ce verdict', 'Réserves à garder en tête', 'Ce que le juge a observé', 'Pièces de l’exemple'):
+            self.assertIn(present, fragment)
+        self.assertIn(escape(self.output[:200].strip(), quote=True) + '…', fragment)
+        self.assertLess(fragment.index('Début de la réponse'), fragment.index('Lire la réponse complète'))
+        self.assertIn('id="evaluation-' + detail['history'][-1]['evaluation_id'] + '"', fragment)
 
     def test_summary_keeps_full_population_and_readable_fields_without_changing_evidence(self):
         value = r.comparison(self.store, self.sid, 'fixture', 'comparison')
@@ -203,9 +250,13 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn('<h1>Résultats</h1>', page)
         self.assertLess(page.index('<table>'), page.index('id="method"'))
         self.assertNotIn('open', next(attrs for tag, attrs in Markup(page.encode()).tags if attrs.get('id') == 'filters'))
+        # Le rendu technique complet reste sur l'historique du cas d'usage ; la page directe garde la lecture humaine
+        _, dossier, _, _ = web_api.dispatch(self.store, 'GET', value['dossier_href'], self.token, None, 'a' * 40, None)
+        history = views.render(dossier, '', value['dossier_href']).decode()
+        self.assertIn('Configuration demandée', history)
+        self.assertIn('Configuration observée', history)
         detail = views.render(r.detail(self.store, self.sid, 'fixture', 'comparison', 'attempt-error'), '').decode()
-        self.assertIn('Configuration demandée', detail)
-        self.assertIn('Configuration observée', detail)
+        self.assertNotIn('Configuration observée', detail)
         self.assertNotIn('&quot;observed_configuration&quot;', page)
         self.assertNotIn('True bool', page)
         self.assertIn('>Oui</span>', detail)
