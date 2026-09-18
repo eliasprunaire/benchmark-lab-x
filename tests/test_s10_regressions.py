@@ -143,6 +143,7 @@ class S10ProofTests(unittest.TestCase):
 
     def test_results_method_is_concise_and_received_without_verdict_is_pending(self):
         value = r.comparison(self.store, self.sid, 'fixture', 'comparison')
+        evaluated_page = views.render(value, '').decode()
         value.update(history=[], rows=[], population=[], acquisition_dates=['2026-09-18'])
         value['coverage']['evaluated_attempts'] = 0
         page = views.render(value, '').decode()
@@ -150,7 +151,9 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn('En attente d’évaluation', page)
         self.assertNotIn('Identité de la campagne', page)
         self.assertNotIn('href="#method">Méthode et limites', page)
-        method = page.split('<details id="method">', 1)[1].split('</details>', 1)[0]
+        self.assertNotIn('id="filters"', page)
+        self.assertNotIn('id="method"', page)
+        method = evaluated_page.split('<details id="method">', 1)[1].split('</details>', 1)[0]
         self.assertIn('Travail humain restant', method)
         self.assertIn('Conditions communes', method)
         self.assertNotIn('<dl', method)

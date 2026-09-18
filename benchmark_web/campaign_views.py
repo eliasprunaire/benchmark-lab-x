@@ -275,6 +275,8 @@ def render_comparison(value):
     if dates:
         content += '<p class="hint">Réponses reçues : ' + text(dates[0] if len(dates) == 1 else dates[0] + ' au ' + dates[-1]) + '.</p>'
     content += '</div>'
+    if not value['population']:
+        return content
     content += '<details id="filters" class="comparison-filters"><summary>Tris et filtres'
     content += (' · ' + text(len(query)) + ' sélection(s) active(s)' if query else '') + '</summary>'
     content += '<p id="filter-help">Chaque bouton applique le champ choisi et conserve les autres sélections. '
@@ -355,17 +357,12 @@ def render_comparison(value):
                 content += '<p>' + text(measure['definition']['measure']) + '</p>' + metric(measure)
             content += '</td><td><a href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
         content += '</tbody></table></div></section>'
-    content += '<details id="method"><summary>Méthode, critères et limites</summary>'
-    content += '<p>' + text(value['conclusion']['attribution']) + '</p><p>' + text('; '.join(value['conclusion']['limits'])) + '</p>'
+    content += '<details id="method"><summary>Comment lire ces résultats</summary>'
+    content += '<p>Chaque réponse est vérifiée selon les obligations ci-dessous. Le verdict concerne cet essai et ses conditions, sans garantir le même résultat sur une autre tâche.</p>'
     content += '<p>Travail humain restant : ' + text(value['human_work']) + '</p>'
-    content += '<p>Les rangs comparent seulement les valeurs connues d’un même cas. Les égalités sont conservées ; '
-    content += 'les valeurs inconnues ou incompatibles restent sans rang. Aucun choix automatique ni total multi-cas.</p>'
-    content += '<p>' + badge('SATISFAIT') + ' obligations prouvées. ' + badge('NE SATISFAIT PAS') + ' défaut établi. ' + badge(None) + ' pas encore de verdict métier.</p>'
     if value['obligations']:
         content += '<h3>Obligations</h3>' + listing(item['description'] for item in value['obligations'])
-    pi = value['conditions'].get('pi', {})
-    content += '<h3>Conditions communes</h3><p>Pi : ' + text(pi.get('package', 'INCONNU')) + ' ' + text(pi.get('version', 'INCONNU'))
-    content += '. Conditions figées le ' + text(date_lisible_utc(value['conditions']['frozen_at'])) + '.</p>'
+    content += '<h3>Conditions communes</h3><p>Les modèles reçoivent les mêmes consignes et pièces, avec les réglages confirmés avant le lancement.</p>'
     content += '<h3>Mesures et coûts</h3><ul>'
     for column in value['columns']:
         label = column['definition'].get('measure', 'Coût observé')
@@ -373,9 +370,10 @@ def render_comparison(value):
         content += '<li>' + text(label) + ' (' + text(column['unit']) + ') ; sens favorable : ' + text(favorable) + '. '
         content += text(column['proof']) + '</li>'
     content += '</ul><p>Un coût inconnu reste inconnu et ne change pas le verdict. Les reçus et sorties disponibles sont accessibles dans le détail de chaque résultat.</p>'
+    content += '<h3>Limites</h3>' + listing(value['conclusion']['limits'])
     if value.get('stop_reason'):
-        content += '<p>Motif d’arrêt enregistré : ' + text(value['stop_reason']) + '</p>'
-    content += '<p><a href="' + text(base + '/preview') + '">Examiner un aperçu privé de la projection</a></p></details>'
+        content += '<p>La comparaison a été interrompue. Les réponses reçues sont conservées.</p>'
+    content += '</details>'
     return content
 
 
@@ -477,6 +475,8 @@ def campaign_followup(campaign):
         return True, False, 'Comparaison en cours. Les réponses arrivent progressivement.'
     if cells and all(c['state'] == 'RECEIVED' for c in cells):
         return False, True, 'Réponses reçues. En attente d’évaluation pour les réponses sans verdict.'
+    if any(c['state'] == 'INTENT_RECORDED' for c in cells):
+        return True, False, 'En attente de démarrage. Votre lancement est enregistré.'
     return False, False, 'En attente de démarrage. Aucune activité observée ; actualisez pour vérifier le suivi.'
 
 
@@ -505,7 +505,8 @@ def render_campaign_followup(value):
         content += '<button type="button" class="sec" hidden>Suspendre le suivi automatique</button></div></div>'
     else:
         content += '<p><a class="button' + (' sec' if all_received else '') + '" href="' + text(base + '/conditions') + '">Actualiser le suivi</a></p>'
-    content += '<p><a class="button' + ('' if all_received else ' sec') + '" href="' + text(base) + '">Comparer les résultats et lire les preuves</a></p>'
+    if not active:
+        content += '<p><a class="button' + ('' if all_received else ' sec') + '" href="' + text(base) + '">Comparer les résultats et lire les preuves</a></p>'
     content += '<p>L’arrêt intervient après le paiement de l’appel en cours. La dépense peut donc dépasser le plafond du montant du dernier appel.</p>'
     return content + '</div>'
 

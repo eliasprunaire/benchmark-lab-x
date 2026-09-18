@@ -271,7 +271,7 @@ class AccessViewTests(unittest.TestCase):
     def test_campaign_followup_only_polls_active_work_and_keeps_received_distinct(self):
         for state, admission, incident, active, terminal, message in (
             ('EMISSION_POSSIBLE', True, None, True, False, 'Comparaison en cours'),
-            ('INTENT_RECORDED', True, None, False, False, 'En attente de démarrage'),
+            ('INTENT_RECORDED', True, None, True, False, 'En attente de démarrage'),
             ('EMISSION_POSSIBLE', False, None, False, False, 'Admission fermée'),
             ('AMBIGUOUS', True, None, False, False, 'Vérification requise'),
             ('RECEIVED', True, 'LENGTH', False, False, 'Incident'),
@@ -294,6 +294,8 @@ class AccessViewTests(unittest.TestCase):
                     self.assertIn('En attente d’évaluation', page)
                 if active or terminal:
                     self.assertIn('<script>' + views.page_script(value) + '</script>', page)
+                if active:
+                    self.assertNotIn('Comparer les résultats et lire les preuves</a>', page)
                 nav = page.split('<nav class="steps"', 1)[1].split('</nav>', 1)[0]
                 self.assertIn('/preparation/dossiers/d1/revisions/2#exemple', nav)
                 self.assertIn('/preparation/dossiers/d1/campaigns/c1', nav)

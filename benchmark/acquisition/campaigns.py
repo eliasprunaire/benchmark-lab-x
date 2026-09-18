@@ -1130,6 +1130,8 @@ def set_cap(store, session_id, dossier_id, campaign_id, body, *, access_secret=N
             raise ValueError('Campagne demandeur requise')
         if snapshot['admissions'] or snapshot['attempts']:
             raise ConflictError('Plafond figé au lancement')
+        if cap == _money(snapshot['cap_usd']):
+            raise ConflictError('Plafond inchangé')
         connection.execute('UPDATE s4_caps SET cap_usd=?, cap_source=? WHERE campaign_id=?',
                            (str(cap.quantize(Decimal('0.01'))), 'requester', campaign_id))
     return launch_view(store, session_id, dossier_id, campaign_id,
@@ -1330,15 +1332,19 @@ def stop(store, campaign_id, reason='OPERATOR_STOP'):
     _present(reason, 'stop reason')
     connection = connection_for(store)
     with _transaction(connection, write=True):
-        if not connection.execute('SELECT 1 FROM s4_campaigns WHERE campaign_id=?', (campaign_id,)).fetchone():
-            raise KeyError(campaign_id)
-        now = _now()
-        connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
-                           (reason, now, campaign_id))
-        for descendant in _recovery_descendants(connection, campaign_id):
-            connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? '
-                               'WHERE campaign_id=? AND admission_id IS NOT NULL',
-                               (reason, now, descendant))
+        _stop(connection, campaign_id, reason)
+
+
+def _stop(connection, campaign_id, reason):
+    if not connection.execute('SELECT 1 FROM s4_campaigns WHERE campaign_id=?', (campaign_id,)).fetchone():
+        raise KeyError(campaign_id)
+    now = _now()
+    connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
+                       (reason, now, campaign_id))
+    for descendant in _recovery_descendants(connection, campaign_id):
+        connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? '
+                           'WHERE campaign_id=? AND admission_id IS NOT NULL',
+                           (reason, now, descendant))
 
 
 def close_admission(store, reason):

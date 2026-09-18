@@ -35,6 +35,7 @@ PREPARATION_PROGRESS_SCRIPT = """(() => {
     status.textContent = message;
     panel.querySelector('progress').hidden = true;
     pause.hidden = true;
+    link.hidden = false;
   }
   async function refresh() {
     if (stopped) return;
@@ -71,6 +72,7 @@ PREPARATION_PROGRESS_SCRIPT = """(() => {
     if (!stopped) timer = setTimeout(refresh, 4000);
   }
   pause.hidden = false;
+  link.hidden = true;
   pause.addEventListener('click', () => stop('Suivi automatique suspendu. Actualisez quand vous le souhaitez.'));
   document.addEventListener('input', () => stop('Suivi automatique suspendu pour conserver votre saisie.'), {once: true});
   window.addEventListener('pagehide', () => stop('Suivi suspendu.'), {once: true});
@@ -251,7 +253,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         title = 'Choisir les configurations'
         content = render_configurations(value, csrf)
     elif value.get('kind') == 'campaign_launch' and 'checks' in value:
-        title = 'Vérifier puis lancer la comparaison'
+        title = 'Suivi de la comparaison' if value['campaign']['attempts'] else 'Vérifier puis lancer la comparaison'
         content = render_campaign_launch_requester(value, csrf)
     elif value.get('kind') == 'campaign_launch':
         title = 'Examiner puis lancer la comparaison'

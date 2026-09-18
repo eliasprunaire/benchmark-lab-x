@@ -4,6 +4,7 @@ from contextlib import closing
 from copy import deepcopy
 import hmac
 import json
+import logging
 import os
 import secrets
 import sqlite3
@@ -60,8 +61,19 @@ def execute_launch(data, attempts, transport=None, *, transport_factory=None,
         try:
             execute(data, attempt_id, transport, transport_factory=transport_factory,
                     access_secret=access_secret, access_transport=access_transport)
-        except (ValueError, ConflictError, BudgetError, IntegrityError):
+        except (ValueError, ConflictError, BudgetError, IntegrityError) as error:
             # An interruption leaves the remaining intentions for private inspection
+            logging.getLogger(__name__).warning('ACQUISITION_STOPPED operation=%s error=%s',
+                                                attempt_id, type(error).__name__)
+            with closing(Store(data)) as store:
+                connection = c.connection_for(store)
+                with _transaction(connection, write=True):
+                    row = connection.execute(
+                        'SELECT campaign_id FROM s4_attempts JOIN operations USING(operation_id) '
+                        'JOIN s4_status USING(campaign_id) WHERE operation_id=? '
+                        "AND state='INTENT_RECORDED' AND s4_status.admission_id IS NOT NULL", (attempt_id,)).fetchone()
+                    if row:
+                        c._stop(connection, row[0], 'ACQUISITION_STOPPED_BEFORE_EMISSION')
             break
 
 
@@ -134,6 +146,7 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
             operation = store._operation_for_update(connection, attempt_id, ('INTENT_RECORDED',))
             connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' WHERE operation_id=?", (attempt_id,))
         operation['state'] = 'EMISSION_POSSIBLE'
+        logging.getLogger(__name__).info('ACQUISITION_EMITTING operation=%s', attempt_id)
         try:
             response = deepcopy(transport(_transport_operation(operation), deepcopy(closed_request)))
             _fields(response, ('receipt', 'cost'), 'transport response')
@@ -173,7 +186,9 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
                             'WHERE campaign_id=?',
                             ('CAP_REACHED', c._now(), snapshot['manifest']['campaign_id']))
             received = True
-        except Exception:
+            logging.getLogger(__name__).info('ACQUISITION_RECEIVED operation=%s usable=%s cost=%s',
+                attempt_id, output is not None and not incomplete, cost['status'])
+        except Exception as error:
             # Exception text can contain private bytes. Preserve a fixed technical
             # reason; neither an unusable response nor an exception settles cost
             with _transaction(connection, write=True):
@@ -183,6 +198,8 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
                                        ('ACQUISITION_RECEIPT_NOT_VERIFIED', attempt_id))
                 connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
                                    ('ACQUISITION_RECEIPT_NOT_VERIFIED', c._now(), snapshot['manifest']['campaign_id']))
+            logging.getLogger(__name__).error('ACQUISITION_AMBIGUOUS operation=%s error=%s',
+                                              attempt_id, type(error).__name__)
     if received:
         continue_preauthorized(data, attempt_id, transport,
                                transport_factory=transport_factory)
