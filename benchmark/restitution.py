@@ -126,7 +126,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         for attempt in pending:
             if attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='JUDGMENT_NOT_CONFIGURED',
-                    next_action='Réponse reçue. Le jugement de ce parcours n’est pas encore raccordé.')
+                    next_action='Réponse reçue et conservée. Son évaluation est indisponible.')
     pending += [dict(attempt_id=record['attempt_id'], **record['decision'])
                 for record in latest.values() if record['decision']['verdict'] is None]
     pending += e.pending_judgments(store, connection, campaign_id, latest)
