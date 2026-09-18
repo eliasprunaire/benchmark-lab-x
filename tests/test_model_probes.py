@@ -101,7 +101,7 @@ class ModelProbeTests(unittest.TestCase):
         self.assertNotIn('open', disclosure['attrs'])
         self.assertIn('Ajouter un slug Openrouter', disclosure['text'])
         self.assertLess(page.index('Modèles à comparer'), page.index('id="custom-models"'))
-        self.assertLess(page.index('id="custom-models"'), page.index('Palier de raisonnement'))
+        self.assertLess(page.index('id="custom-models"'), page.index('Niveau de raisonnement demandé'))
         selection = document.form('/configurations')
         self.assertEqual('csrf-test', selection['fields']['csrf_token'])
         self.assertFalse(any(n['tag'] == 'form' for n in selection['nodes']))

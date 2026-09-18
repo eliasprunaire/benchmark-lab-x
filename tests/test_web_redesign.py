@@ -166,6 +166,13 @@ class DossierPageTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
 
+    def test_qualified_example_stays_on_validation_until_models_are_opened(self):
+        nav = views.preparation_steps(dict(dossier_id='d1', revision=3, current_revision=3,
+            package={'instruction':'Exemple'}, validation={'revision':3}, qualified=True))
+        self.assertIn('aria-current="step"><span class="n">3</span>Validation', nav)
+        self.assertNotIn('aria-current="step"><span class="n">4</span>Modèles', nav)
+        self.assertIn('/preparation/dossiers/d1/configurations', nav)
+
     def test_five_steps_preserve_revision_and_disable_future_steps(self):
         value = dict(dossier_id='d1', revision=2, current_revision=3, stage='preview',
                      package=None, validation=None, qualified=False, explanation='Exemple attendu',

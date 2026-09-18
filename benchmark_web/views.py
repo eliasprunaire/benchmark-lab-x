@@ -160,7 +160,7 @@ def preparation_steps(value):
     example = downstream or bool(value.get('package'))
     models = downstream or value.get('qualified') or bool(campaign)
     results = kind in ('comparison', 'campaign_models') or bool(campaign.get('attempts'))
-    current = 5 if kind == 'comparison' or kind == 'campaign_launch' and results else 4 if models else 3 if value.get('validation') else 2 if example else 1
+    current = 5 if kind == 'comparison' or kind == 'campaign_launch' and results else 4 if downstream else 3 if value.get('validation') or value.get('qualified') else 2 if example else 1
     models_href = base + ('/configurations' if results else '/conditions') if base else dossier + '/configurations'
     if not downstream and not results and value.get('qualified') and revision == value.get('current_revision', revision):
         models_href = dossier + '/configurations'

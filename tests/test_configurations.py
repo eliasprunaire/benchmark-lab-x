@@ -109,6 +109,18 @@ class ConfigurationsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'exclu'):
             self.prepare(['openai/gpt-5.6-sol', 'openai/gpt-5.5-sol'])
 
+    def test_explicit_effort_is_sent_without_silent_substitution(self):
+        prepared = self.prepare(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'medium')
+        configurations = prepared['configurations']
+        self.assertEqual({'effort': 'medium'}, configurations[0]['parameters']['reasoning'])
+        self.assertEqual('medium', configurations[0]['effort'])
+        self.assertNotIn('reasoning', configurations[1]['parameters'])
+        self.assertEqual('not_adjustable', configurations[1]['effort_limit'])
+        self.assertEqual('medium', prepared['current_tier'])
+        self.assertNotIn('standard', prepared['available_tiers'])
+        with self.assertRaisesRegex(ValueError, 'mistralai/mistral-medium-3-5'):
+            self.prepare(['openai/gpt-5.6-sol', 'mistralai/mistral-medium-3-5'], 'medium')
+
     def test_resout_standard_high_tiers_et_non_reglable_sans_low(self):
         standard = self.prepare(
             ['openai/gpt-5.6-sol', 'mistralai/mistral-medium-3-5'])
@@ -124,7 +136,7 @@ class ConfigurationsTests(unittest.TestCase):
         self.assertEqual({'enabled': True},
                          by_model['deepseek/deepseek-v4.1-flash']['parameters']['reasoning'])
         self.assertEqual('on', by_model['deepseek/deepseek-v4.1-flash']['effort'])
-        self.assertNotIn('low', enhanced['available_tiers'])
+        self.assertIn('low', enhanced['available_tiers'])
 
         fixed = self.prepare(
             ['mistralai/mistral-medium-3-5', 'openai/gpt-5.6-sol'], 'enhanced')

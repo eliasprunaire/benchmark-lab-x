@@ -13,6 +13,7 @@ from .transports import prices as openrouter_prices
 from . import storage
 
 
+REASONING_EFFORTS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 TABLE_SQL = """CREATE TABLE s2_model_catalogue (
     fetched_at TEXT NOT NULL,
@@ -281,8 +282,12 @@ def model_view(model, detail, excluded_providers):
     model_id = model['id']
     reasoning = model.get('reasoning')
     levels = reasoning.get('supported_efforts') if type(reasoning) is dict else None
+    if type(reasoning) is dict and 'supported_efforts' in reasoning and levels is None:
+        levels = list(REASONING_EFFORTS)
     if type(levels) is not list or any(type(level) is not str for level in levels):
         levels = []
+    levels = [level for level in levels if level in REASONING_EFFORTS
+              and not (level == 'none' and reasoning.get('mandatory') is True)]
     pricing = model.get('pricing')
     if pricing is None:
         pricing = {}

@@ -16,6 +16,7 @@ import secrets
 import sqlite3
 
 from .. import qualification as q, storage
+from ..model_catalogue import REASONING_EFFORTS as _EFFORT_ORDER
 from ..validation import digest as value_digest, identifier, _hash, _texts
 from ..storage import BudgetError, ConflictError, IntegrityError, SchemaError, _fields, _money, _sum_money, _text, _transaction, _strict_json as encode
 
@@ -127,7 +128,6 @@ DEFAULT_CAP_USD = Decimal('50.00')
 CANDIDATE_SYSTEM_PROMPT = (
     'Vous répondez à une tâche de travail décrite dans le message. Répondez en français. '
     'Produisez exactement les livrables demandés, sans commenter la consigne ni les pièces.')
-_EFFORT_ORDER = ('minimal', 'low', 'medium', 'high', 'xhigh')
 
 
 def schema_objects():
@@ -450,9 +450,17 @@ def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
     }
     effort = 'off'
     effort_limit = None
-    if tier == 'enhanced':
+    if tier in _EFFORT_ORDER:
+        if model['reasoning_levels']:
+            if tier not in model['reasoning_levels']:
+                raise ValueError(f"{model['id']} n’accepte pas le niveau {tier}. Niveaux disponibles : {', '.join(model['reasoning_levels'])}")
+            effort = tier
+            parameters['reasoning'] = {'effort': tier}
+        else:
+            effort_limit = 'not_adjustable'
+    elif tier == 'enhanced':
         levels = [level for level in model['reasoning_levels']
-                  if level in _EFFORT_ORDER and level != 'low']
+                  if level in _EFFORT_ORDER and level not in ('none', 'low')]
         if 'high' in levels:
             effort = 'high'
             parameters['reasoning'] = {'effort': effort}
@@ -494,7 +502,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
             or len(set(body['models'])) != len(body['models'])
             or any(type(model_id) is not str for model_id in body['models'])):
         raise ValueError('Au moins deux modèles distincts sont requis')
-    if body['tier'] not in ('standard', 'enhanced'):
+    if body['tier'] not in (*_EFFORT_ORDER, 'standard', 'enhanced'):
         raise ValueError('Palier inconnu')
     if type(candidate_identity) is not dict:
         raise LookupError('CANDIDATE_PI_UNAVAILABLE')
@@ -568,7 +576,6 @@ def configurations_view(store, session_id, dossier_id):
                             'catalogue_stale': catalogue is not None and catalogue['stale'],
                             'catalogue_fetched_at': None if catalogue is None else catalogue['fetched_at'],
                             'detail': 'Relevé de modèles indisponible' if catalogue is None else None}
-        tier_table = model_catalogue.tiers() if catalogue is not None else {}
         prepared = [snapshot for snapshot in _requester_campaigns(store, connection, dossier_id)
                     if not snapshot['admissions'] and not snapshot['attempts']]
         selected = set() if not prepared else {
@@ -578,15 +585,20 @@ def configurations_view(store, session_id, dossier_id):
             if model['excluded'] is not None or model['route'] is None:
                 continue
             levels = [level for level in model['reasoning_levels']
-                      if level in _EFFORT_ORDER and level != 'low']
+                      if level in _EFFORT_ORDER]
             models.append({'id': model['id'], 'name': model['name'] or model['id'],
                            'selected': model['id'] in selected,
-                           'not_adjustable': not levels and model['maker'] not in tier_table})
+                           'not_adjustable': not levels})
+        available_tiers = [level for level in _EFFORT_ORDER if any(
+            level in model['reasoning_levels'] for model in ([] if catalogue is None else catalogue['models'])
+            if model['excluded'] is None and model['route'] is not None)]
+        available_tiers = available_tiers or ['standard']
+        default_tier = 'medium' if 'medium' in available_tiers else next(iter(available_tiers), 'medium')
         if not prepared:
             return page_view({'kind': 'configurations', 'dossier_id': dossier_id,
                               'current_campaign_id': None, 'configurations': [], 'models': models,
-                              'current_tier': 'standard', 'superseded': [],
-                              'available_tiers': ['standard', 'enhanced'], 'estimate_total_usd': None,
+                              'current_tier': default_tier, 'superseded': [],
+                              'available_tiers': available_tiers, 'estimate_total_usd': None,
                               'estimate_available': False, 'assumptions': None,
                               'fetched_at': None if catalogue is None else catalogue['fetched_at'],
                               **catalogue_status})
@@ -599,11 +611,10 @@ def configurations_view(store, session_id, dossier_id):
             'kind': 'configurations', 'dossier_id': dossier_id, 'models': models,
             'current_campaign_id': current['manifest']['campaign_id'],
             'configurations': current['manifest']['panel'],
-            'current_tier': ('enhanced' if any(item['effort'] != 'off' or
-                                               item.get('effort_limit') == 'not_adjustable'
-                                               for item in current['manifest']['panel']) else 'standard'),
+            'current_tier': next((item['effort'] for item in current['manifest']['panel']
+                                  if item['effort'] in available_tiers), default_tier),
             'superseded': [snapshot['manifest']['campaign_id'] for snapshot in prepared[:-1]],
-            'available_tiers': ['standard', 'enhanced'], 'estimate_total_usd': total,
+            'available_tiers': available_tiers, 'estimate_total_usd': total,
             'estimate_available': total is not None,
             'assumptions': first['assumptions'], 'fetched_at': first['fetched_at'],
             **catalogue_status})
