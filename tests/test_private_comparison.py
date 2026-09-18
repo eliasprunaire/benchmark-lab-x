@@ -150,26 +150,26 @@ class PrivateEvaluationTests(unittest.TestCase):
 
 
 class CustomNeedEngineTests(unittest.TestCase):
-    def test_atelier_boisclair_custom_need_crosses_current_engine_without_network(self):
+    def test_custom_need_crosses_current_engine_without_network(self):
         from benchmark import preparation as prep, qualification as q, web_api
         from tests.test_s2_review_regressions import response_for
         from tests.test_s3_regressions import ACTOR, AUTHORITY, check, specification
 
-        with tempfile.TemporaryDirectory(prefix='atelier-boisclair-') as temporary:
+        with tempfile.TemporaryDirectory(prefix='custom-need-') as temporary:
             data = Path(temporary).resolve() / 'private'
             storage.initialize(data)
             storage.initialize_preparation(data)
             with closing(storage.Store(data)) as store, patch.dict(os.environ, {}, clear=True), \
                     patch.object(pi.http, 'post') as network:
-                store.create_budget('atelier-preparation-budget', '20', 'TEST')
-                prep.admit(store, dict(authority_id='TEST_ONLY_ATELIER_PREPARATION',
-                    budget_id='atelier-preparation-budget', reserve_amount='7',
+                store.create_budget('custom-preparation-budget', '20', 'TEST')
+                prep.admit(store, dict(authority_id='TEST_ONLY_CUSTOM_PREPARATION',
+                    budget_id='custom-preparation-budget', reserve_amount='7',
                     requested_configuration={'model': 'fictional-local-preview'}))
                 _, home, token, _ = web_api.dispatch(store, 'GET', '/preparation', None, None, 'a' * 40, True)
-                task = Path(__file__).with_name('fixtures').joinpath('historical-task.md').read_text()
-                mail = Path(__file__).with_name('fixtures').joinpath('historical-mail-thread.md').read_text()
-                body = dict(dossier_id='atelier-boisclair-custom', action_id='atelier-boisclair-create',
-                            request='Synthétiser le fil fictif Atelier Boisclair', csrf_token=home['csrf_token'],
+                task = Path(__file__).with_name('fixtures').joinpath('custom-need-task.md').read_text()
+                mail = Path(__file__).with_name('fixtures').joinpath('custom-need-input.md').read_text()
+                body = dict(dossier_id='custom-need', action_id='custom-need-create',
+                            request='Synthétiser le fil fictif Test Alpha sans inventer de décisions.', csrf_token=home['csrf_token'],
                             source_sha256='a' * 64)
                 code, _, _, operation = web_api.dispatch(
                     store, 'POST', '/preparation/dossiers', token, body, 'a' * 40, True)
@@ -180,24 +180,24 @@ class CustomNeedEngineTests(unittest.TestCase):
                     package = result['receipt']['result']['package']
                     package['candidate']['instruction'] = task
                     package['candidate']['pieces'][0]['content'] = 'Action : relire\n\n' + mail
-                    result['receipt']['result']['reformulation'] = 'Synthétiser le fil fictif Atelier Boisclair'
+                    result['receipt']['result']['reformulation'] = 'Synthétiser le fil fictif Test Alpha sans inventer de décisions.'
                     return result
 
                 prep.execute(data, operation, preview_transport)
                 session = prep.session(store, token)[0]
-                preview = prep.view(store, session, 'atelier-boisclair-custom')
+                preview = prep.view(store, session, 'custom-need')
                 self.assertEqual('preview', preview['stage'])
-                validation_body = prep.binding('atelier-boisclair-custom', preview['revision'], preview['package_sha256'])
+                validation_body = prep.binding('custom-need', preview['revision'], preview['package_sha256'])
                 validation_body['csrf_token'] = home['csrf_token']
                 self.assertEqual(200, web_api.dispatch(store, 'POST',
-                    '/preparation/dossiers/atelier-boisclair-custom/validation', token,
+                    '/preparation/dossiers/custom-need/validation', token,
                     validation_body, 'a' * 40, True)[0])
 
                 q.initialize(data)
                 reference = store._connection.execute(
                     "SELECT piece_id FROM pieces WHERE dossier_id=? AND role='judge'",
-                    ('atelier-boisclair-custom',)).fetchone()[0]
-                candidate = q.draft(store, 'atelier-boisclair-custom', preview['revision'], specification(reference))
+                    ('custom-need',)).fetchone()[0]
+                candidate = q.draft(store, 'custom-need', preview['revision'], specification(reference))
                 qualified = q.qualify(store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
                 approval = q.approve(store, candidate['contract_sha256'], qualified['qualification_id'],
                                      actor=ACTOR, authority=AUTHORITY)
@@ -207,24 +207,23 @@ class CustomNeedEngineTests(unittest.TestCase):
 
                 prep.close_admission(store)
                 c.initialize(data)
-                store.create_budget('atelier-campaign-budget', '20', 'TEST')
-                campaign = c.create(store, manifest(candidate, 'atelier-boisclair-local'))
+                store.create_budget('custom-campaign-budget', '20', 'TEST')
+                campaign = c.create(store, manifest(candidate, 'custom-need-local'))
                 self.assertEqual(preview['package_sha256'], campaign['manifest']['cases'][0]['package_sha256'])
-                campaign_authority, campaign_evidence = inputs(
-                    campaign, cells=['x'], budget='atelier-campaign-budget')
-                campaign_authority['authority_id'] = 'TEST_ONLY_ATELIER_CAMPAIGN'
-                c.admit(store, 'atelier-boisclair-local', campaign_authority, campaign_evidence)
-                c.reserve(store, 'atelier-boisclair-local', 'x', 'atelier-boisclair-attempt')
+                campaign_authority, campaign_evidence = inputs(campaign, cells=['x'], budget='custom-campaign-budget')
+                campaign_authority['authority_id'] = 'TEST_ONLY_CUSTOM_CAMPAIGN'
+                c.admit(store, 'custom-need-local', campaign_authority, campaign_evidence)
+                c.reserve(store, 'custom-need-local', 'x', 'custom-need-attempt')
 
                 def acquisition(operation, request):
                     projection = storage._strict_json(request)
                     self.assertNotIn(reference, projection)
                     self.assertNotIn('Attendu fictif réservé', projection)
-                    self.assertIn('Atelier Boisclair', projection)
+                    self.assertIn('Test Alpha', projection)
                     return response(operation, request)
 
-                execution.execute(data, 'atelier-boisclair-attempt', acquisition)
-                attempt = c.inspect(store, 'atelier-boisclair-local')['attempts'][0]
+                execution.execute(data, 'custom-need-attempt', acquisition)
+                attempt = c.inspect(store, 'custom-need-local')['attempts'][0]
                 self.assertEqual('RECEIVED', attempt['state'])
                 self.assertTrue(runtime.verify(store)['integrity_ok'])
                 network.assert_not_called()

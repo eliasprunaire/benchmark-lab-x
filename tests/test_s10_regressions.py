@@ -82,7 +82,7 @@ class S10ProofTests(unittest.TestCase):
             with self.subTest(suffix=suffix), self.assertRaises((p.Denied, ValueError)):
                 web_api.dispatch(self.store, 'GET', path.split('?')[0] + '?' + suffix, self.token, None, 'a' * 40, None)
 
-    def test_historical_unstarted_campaign_and_non_comparable_sorted_measure(self):
+    def test_recorded_unstarted_campaign_and_non_comparable_sorted_measure(self):
         value = p.view(self.store, self.sid, 'fixture')
         value['campaigns'] = [campaign for campaign in value['campaigns'] if campaign['campaign_id'] == 'empty']
         value['current_revision'] = value['revision'] + 1
@@ -272,7 +272,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn('<h1>Résultats</h1>', page)
         self.assertLess(page.index('<table>'), page.index('id="method"'))
         self.assertNotIn('open', next(attrs for tag, attrs in Markup(page.encode()).tags if attrs.get('id') == 'filters'))
-        # Le rendu technique complet reste sur l'historique du cas d'usage ; la page directe garde la lecture humaine
+        # Le rendu technique complet reste sur les évaluations enregistrées ; la page directe garde la lecture humaine
         _, dossier, _, _ = web_api.dispatch(self.store, 'GET', value['dossier_href'], self.token, None, 'a' * 40, None)
         history = views.render(dossier, '', value['dossier_href']).decode()
         self.assertIn('Configuration demandée', history)

@@ -155,7 +155,6 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     suffix = '?' + urlencode(query) if query else ''
     for record in latest.values():
         row = deepcopy(record)
-        row['historical_verdict'] = record['verdict'] if record['engine_version'] == e.FORMAT_IDENTITY else None
         row['verdict'] = row['decision']['verdict']
         attempt = next(a for a in campaign['attempts'] if a['operation_id'] == record['attempt_id'])
         incompatible = ('Attribution requise absente ou incompatible' if record['attribution_incident'] else

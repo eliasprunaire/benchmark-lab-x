@@ -3,7 +3,7 @@
 Ce module met en forme tout ce qui porte sur une campagne d'un cas d'usage :
 le choix des configurations, les deux formes de lancement (demandeur et
 opérateur), la comparaison et ses filtres, le détail d'une tentative, les
-évaluations et l'historique des campagnes.
+évaluations et les comparaisons déjà enregistrées.
 
 Il ne possède ni le gabarit de page, ni les erreurs, ni l'accès fournisseur, ni
 la préparation : ces domaines restent dans `views`. Il n'importe pas `views`,
@@ -238,9 +238,9 @@ def _readable_reason(record):
 
 
 def render_evaluations(evaluations, dossier_url):
-    """Inert evidence and correction history inside the owner's existing page.
+    """Inert evidence and recorded corrections inside the owner's existing page.
 
-    Rendu complet de l’historique ; `render_result` fournit la lecture compacte
+    Rendu complet des évaluations enregistrées ; `render_result` fournit la lecture compacte
     """
     content = '<h4>Verdicts et preuves</h4><p>Évaluations fictives, par cas et tentative. '
     content += 'Le verdict porte sur la configuration observée sous les conditions communes ; '
@@ -248,7 +248,7 @@ def render_evaluations(evaluations, dossier_url):
     for record in evaluations:
         eid = record['evaluation_id']
         reason = _readable_reason(record)
-        label = ('Évaluation à reprendre (valeur historique : INDETERMINE)' if record['verdict'] == 'INDETERMINE'
+        label = ('Évaluation à reprendre (valeur enregistrée : INDETERMINE)' if record['verdict'] == 'INDETERMINE'
                  else record['verdict'] or 'Évaluation à reprendre')
         content += '<section id="evaluation-' + text(eid) + '"><h5>' + text(label) + '</h5>'
         content += '<p role="status">' + text(reason) + '</p><details><summary>Identifiants de cette évaluation</summary><p>Cas ' + text(record['case_id'])
@@ -784,7 +784,7 @@ def _criteria_list(record, criteria, kind):
 def render_result(record):
     """Lecture humaine compacte d'une évaluation : fragment partagé par la page directe et la modale.
 
-    Le rendu technique complet reste `render_evaluations` sur l'historique du cas
+    Le rendu technique complet reste `render_evaluations` sur les révisions du cas
     d'usage ; ce fragment n'en remplace pas le minimum accessible. Tout texte
     candidat, motif, constat ou mesure passe par `text()` ; aucune pièce n'est
     interprétée.
@@ -882,8 +882,8 @@ def render_attempt_detail(value):
     return content + '</div>'
 
 
-def render_campaign_history(campaigns, url):
-    """Historique replié des campagnes d'un cas d'usage, cellules et tentatives comprises"""
+def render_campaign_records(campaigns, url):
+    """Comparaisons enregistrées d'un cas d'usage, cellules et tentatives comprises"""
     content = '<p>Suivi privé des comparaisons fictives de ce cas d’usage. '
     content += 'L’acquisition conserve des reçus ; elle ne juge pas le contenu des sorties.</p>'
     technical = {'NOT_STARTED': 'Non lancée : aucune tentative', 'INTENT_RECORDED': 'Intention enregistrée',
@@ -956,4 +956,4 @@ def render_campaign_history(campaigns, url):
         content += '</article>'
     if not campaigns:
         content += '<p>Aucune campagne liée à ce dossier.</p>'
-    return '<details><summary>Historique et détails des comparaisons de ce cas d’usage</summary>' + content + '</details>'
+    return '<details><summary>Comparaisons enregistrées et détails de ce cas d’usage</summary>' + content + '</details>'

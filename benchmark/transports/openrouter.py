@@ -16,7 +16,6 @@ from .. import outgoing
 
 ASSISTANT = 'preparation'
 FALLBACK_ASSISTANT = 'preparation-fallback'
-HISTORICAL_ASSISTANT = 'glm-5.3-flash'
 HOST = 'openrouter.ai'
 PATH = '/api/v1/chat/completions'
 ENDPOINT = 'https://' + HOST + PATH
@@ -26,7 +25,6 @@ USAGE_METHOD = {
     'sources': ['https://openrouter.ai/docs/cookbook/administration/usage-accounting',
                 'https://openrouter.ai/docs/faq'],
 }
-HISTORICAL_PROFILE_NAME = 'glm-5.3-flash.profile.json'
 DEFAULT_PROFILE_NAME = 'preparation.profile.json'
 FALLBACK_PROFILE_NAME = 'preparation-fallback.profile.json'
 MAX_PROFILE_BYTES = 65536
@@ -203,8 +201,6 @@ def _load_profile_file(path):
 def load_profile(source):
     if source == ASSISTANT:
         return deepcopy(DEFAULT_PROFILE)
-    if source == HISTORICAL_ASSISTANT:
-        return deepcopy(HISTORICAL_PROFILE)
     if source == FALLBACK_ASSISTANT:
         return deepcopy(FALLBACK_PROFILE)
     if type(source) is not str or not source:
@@ -230,7 +226,6 @@ def providers(profile):
     return {route['tag']: route['provider_name'] for route in profile['routes']}
 
 
-HISTORICAL_PROFILE = _load_profile_file(Path(__file__).parent / 'profiles' / HISTORICAL_PROFILE_NAME)
 DEFAULT_PROFILE = _load_profile_file(Path(__file__).parent / 'profiles' / DEFAULT_PROFILE_NAME)
 FALLBACK_PROFILE = _load_profile_file(Path(__file__).parent / 'profiles' / FALLBACK_PROFILE_NAME)
 

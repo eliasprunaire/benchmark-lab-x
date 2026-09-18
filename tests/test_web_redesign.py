@@ -230,7 +230,7 @@ class DossierPageTests(unittest.TestCase):
                 if category == 'math':
                     self.assertNotIn('https://livecodebench.github.io/', page)
 
-    def test_criteria_groups_render_new_and_legacy_packages(self):
+    def test_criteria_groups_render_versioned_packages(self):
         def render(criteria):
             with tempfile.TemporaryDirectory() as temporary:
                 data = Path(temporary).resolve() / 'private'
@@ -267,13 +267,13 @@ class DossierPageTests(unittest.TestCase):
         self.assertIn('<h1>Est-ce le travail que vous voulez tester ?</h1>', page)
         self.assertIn('<title>Est-ce le travail que vous voulez tester ?', page)
 
-        legacy = render(['Toutes les actions présentes'])
-        self.assertIn('<h3>Obligations</h3>', legacy)
-        self.assertIn('<li>Toutes les actions présentes</li>', legacy)
-        self.assertNotIn('<h3>Éliminatoires</h3>', legacy)
-        self.assertNotIn('<h3>Qualité</h3>', legacy)
-        self.assertIn(rule, legacy)
-        self.assertIn('<h1>Est-ce le travail que vous voulez tester ?</h1>', legacy)
+        single_group = render(['Toutes les actions présentes'])
+        self.assertIn('<h3>Obligations</h3>', single_group)
+        self.assertIn('<li>Toutes les actions présentes</li>', single_group)
+        self.assertNotIn('<h3>Éliminatoires</h3>', single_group)
+        self.assertNotIn('<h3>Qualité</h3>', single_group)
+        self.assertIn(rule, single_group)
+        self.assertIn('<h1>Est-ce le travail que vous voulez tester ?</h1>', single_group)
 
     def test_resume_de_qualification_bloquee_reste_du_texte(self):
         summary = '<img src=x onerror="alert(1)">Correction requise'
@@ -384,14 +384,14 @@ const script = require('node:fs').readFileSync(0, 'utf8');
                      payload=dict(request='Trier les factures fictives', clarifications=[],
                                   validated_assumptions=[], reformulation='', fictional_parameters={}),
                      availability={**AVAILABILITY, 'reason': 'waiting', 'can_submit': False})
-        for stage, qualification, historical, pending in (
+        for stage, qualification, prior_revision, pending in (
                 ('waiting', {}, False, True), ('waiting', {}, True, False),
                 ('clarification', {}, False, False), ('suspended', {}, False, False),
                 ('preview', {'operation_id': 'op', 'status': 'PENDING'}, False, True),
                 ('preview', {'operation_id': 'op', 'status': 'BLOCKED'}, False, False),
                 ('preview', {'operation_id': 'op', 'status': 'QUALIFIED'}, False, False)):
-            with self.subTest(stage=stage, qualification=qualification, historical=historical):
-                view = {**value, 'stage': stage, 'current_revision': 2 if historical else 1,
+            with self.subTest(stage=stage, qualification=qualification, prior_revision=prior_revision):
+                view = {**value, 'stage': stage, 'current_revision': 2 if prior_revision else 1,
                         'qualification': {**qualification, 'summary': 'Contrôle', 'findings': []},
                         'validation': {'validated_at': '2026-09-17'} if qualification else None,
                         'qualified': qualification.get('status') == 'QUALIFIED'}

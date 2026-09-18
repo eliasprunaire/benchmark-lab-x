@@ -19,7 +19,7 @@ EVIDENCE_BINDING = 'server-evidence/v1'
 REQUEST_FIELDS = ('operation_id', 'campaign_id', 'attempt_id', 'review_sha256',
                   'previous_evaluation_id', 'authority', 'budget_id', 'reserve_amount',
                   'requested_configuration')
-_LEGACY_LOCAL_CRITERION = re.compile(r'co[uû]t|\bcost\b|budget|latenc|durée|duration|transport', re.I)
+_INFERRED_LOCAL_CRITERION = re.compile(r'co[uû]t|\bcost\b|budget|latenc|durée|duration|transport', re.I)
 
 
 def _admission(store, ctx):
@@ -163,7 +163,7 @@ def local_criteria(spec):
     if 'local_criterion_ids' in spec:
         return set(spec['local_criterion_ids'])
     return {x['id'] for x in spec['obligations'] + spec['eliminatory_errors']
-            if _LEGACY_LOCAL_CRITERION.search(encode(x))}
+            if _INFERRED_LOCAL_CRITERION.search(encode(x))}
 
 
 def _proposal(store, connection, operation, ctx, answer, *, bind_evidence=False):

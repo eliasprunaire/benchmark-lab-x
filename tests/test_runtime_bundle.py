@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,14 @@ from tools.build_runtime import build
 
 
 class RuntimeBundleTests(unittest.TestCase):
+    def test_python_entrypoint_delegates_to_runtime(self):
+        for code in (0, 78):
+            with self.subTest(code=code), patch('benchmark.runtime.main', return_value=code) as main:
+                with self.assertRaises(SystemExit) as stopped:
+                    runpy.run_module('benchmark', run_name='__main__')
+                self.assertEqual(code, stopped.exception.code)
+                main.assert_called_once_with()
+
     def test_transports_load_without_private_workflows(self):
         subprocess.run([sys.executable, '-c',
                         'import sys; '
@@ -84,9 +93,9 @@ class RuntimeBundleTests(unittest.TestCase):
             for name, expected in manifest['files'].items():
                 self.assertEqual(expected, hashlib.sha256((unpacked / name).read_bytes()).hexdigest())
             self.assertEqual(0o755, (unpacked / 'benchmark/benchmark-runtime').stat().st_mode & 0o777)
-            result = subprocess.run([sys.executable, str(unpacked / 'benchmark/benchmark-runtime'), 'initialize', '--data', str(root / 'private')], cwd=root, check=True, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, '-m', 'benchmark', 'initialize', '--data', str(root / 'private')], cwd=unpacked, check=True, capture_output=True, text=True)
             self.assertEqual('INITIALIZED_ADMISSION_BLOCKED', json.loads(result.stdout)['state'])
-            result = subprocess.run([sys.executable, str(unpacked / 'benchmark/benchmark-runtime'), 'verify', '--data', str(root / 'private')], cwd=root, check=True, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, '-m', 'benchmark', 'verify', '--data', str(root / 'private')], cwd=unpacked, check=True, capture_output=True, text=True)
             self.assertTrue(json.loads(result.stdout)['integrity_ok'])
             subprocess.run([sys.executable, '-c', 'from benchmark.service import serve_executor; from benchmark.web_api import dispatch; from benchmark_web.server import serve_web'], cwd=unpacked, check=True)
             # Les modules de rendu extraits doivent s'importer depuis l'archive, sans cycle
@@ -107,8 +116,7 @@ class RuntimeBundleTests(unittest.TestCase):
             subprocess.run([sys.executable, '-c',
                             'from benchmark.acquisition.execution import execute; '
                             'from benchmark.transports.pi import BRIDGE; '
-                            'from benchmark.prototype.__main__ import PACKAGE_DIR; '
-                            'assert BRIDGE.is_file(); assert (PACKAGE_DIR / "page.html").is_file()'],
+                            'assert BRIDGE.is_file()'],
                            cwd=unpacked, check=True)
             # La configuration active du catalogue doit se charger depuis l'archive,
             # sans aucun models.toml à la racine du dépôt source
@@ -118,7 +126,7 @@ class RuntimeBundleTests(unittest.TestCase):
                             'settings = model_catalogue._settings(model_catalogue._registry()); '
                             'assert (settings["max_per_maker"], settings["max_age_days"], settings["cache_hours"]) == (3, 365, 24); '
                             'assert len(settings["makers"]) == 16; '
-                            'assert (len(settings["baseline_families"]), len(settings["baseline_models"])) == (83, 139); '
+                            'assert (len(settings["baseline_families"]), len(settings["baseline_models"])) == (83, 138); '
                             'assert model_catalogue.tiers() == {"deepseek": {"enhanced": {"enabled": True}}}'],
                            cwd=unpacked, check=True)
             # Un commit sans configuration de catalogue ne produit pas d'archive

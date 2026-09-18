@@ -1,8 +1,8 @@
-"""Current model selection policy, separate from immutable historical receipts"""
+"""Current model selection policy, separate from immutable recorded receipts"""
 
 DEEPSEEK_REPLACEMENT = 'deepseek/deepseek-v4.1-flash'
 RETIREMENT_NOTICE = ('DeepSeek V4 Flash 0731 est retiré des nouveaux essais et remplacé par '
-                     'DeepSeek V4.1 Flash. Les résultats historiques restent consultables.')
+                     'DeepSeek V4.1 Flash. Les résultats déjà enregistrés restent consultables.')
 
 
 def require_current(configuration):

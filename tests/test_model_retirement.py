@@ -1,4 +1,4 @@
-"""Retirement blocks new calls without rewriting historical operations"""
+"""Retirement blocks new calls without rewriting recorded operations"""
 from pathlib import Path
 import tempfile
 import unittest

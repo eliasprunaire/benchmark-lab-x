@@ -39,7 +39,7 @@ _FIXTURE_PRESENTATION = {
         'style.css': 'e6160575de2d71a327dbc3237cb2779c4ec325faf5361be0a2fbd53d617c3355',
     },
 }
-# Feuille antérieure fictive, distincte des octets actifs : aucun actif historique n'est dupliqué
+# Feuille fictive distincte des octets actifs : aucun actif scellé n'est dupliqué
 _PRIOR_STYLESHEET = b':root { color-scheme: light; }\n'
 
 
@@ -386,7 +386,7 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual([], c.projection(self.store, connection, 'fixture', 'inconnue'))
         self.assertEqual([], c.projection(self.store, connection, 'foreign', 'comparison'))
 
-    def test_dossier_courant_et_historique_partagent_une_projection_ciblee(self):
+    def test_dossier_courant_et_revision_precedente_partagent_une_projection_ciblee(self):
         from tests.test_s2_review_regressions import response_for
 
         connection = self.store._connection
