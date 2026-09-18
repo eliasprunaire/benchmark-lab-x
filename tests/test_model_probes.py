@@ -140,15 +140,15 @@ class ModelProbeTests(unittest.TestCase):
                 self.store, self.session, 'fixture')['models']})
         self.assertEqual(5, len(self.calls))
 
-    def test_pas_de_depense_sans_budget_admission_ou_cle(self):
+    def test_ancien_budget_ignore_mais_admission_requise(self):
         budget_id = provider_access.preparation_budget_id(self.session)
         self.store._connection.execute('UPDATE budgets SET limit_amount=? WHERE budget_id=?', ('0', budget_id))
-        with self.assertRaises(storage.BudgetError):
-            self.submit()
-        self.assertFalse(any(o['engine_version'] == model_probes.ENGINE for o in self.store.inspect_operations()))
+        operation_id, key = self.submit()
+        self.respond(operation_id, key)
+        self.assertTrue(any(o['engine_version'] == model_probes.ENGINE for o in self.store.inspect_operations()))
         preparation.close_admission(self.store)
         with self.assertRaises(preparation.Denied):
-            self.submit(action='closed')
+            self.submit(slug='outside/another', action='closed')
 
     def test_interruption_sans_retry_et_cout_inconnu_conserve_sa_reserve(self):
         operation_id, key = self.submit()

@@ -897,6 +897,19 @@ class Store:
                                (operation['operation_id'], raw, digest))
             return {'proof': proof, 'sha256': digest}
 
+    def _provider_managed_budget(self, connection, budget_id):
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
+        if budget_id.startswith('personal-preparation-') and 's2_sessions' in tables and connection.execute(
+                'SELECT 1 FROM s2_sessions WHERE session_id=?',
+                (budget_id.removeprefix('personal-preparation-'),)).fetchone():
+            return True
+        if 's4_campaigns' in tables:
+            row = connection.execute('SELECT manifest_json FROM s4_campaigns WHERE campaign_id=?',
+                                     (budget_id,)).fetchone()
+            if row:
+                return json.loads(row[0], object_pairs_hook=_unique_object).get('funding') == 'requester'
+        return False
+
     def _budget(self, connection, budget_id, operations=None):
         if operations is None:
             snapshot = (connection is self._connection and connection.in_transaction
@@ -928,9 +941,11 @@ class Store:
                 if cost is not None:
                     unknown.append(operation['operation_id'])
         reserved, spent = _sum_money(reserves), _sum_money(costs)
-        available = _sum_money((ceiling, reserved.copy_negate(), spent.copy_negate()))
+        provider_managed = self._provider_managed_budget(connection, budget_id)
+        available = None if provider_managed else str(_sum_money((ceiling, reserved.copy_negate(), spent.copy_negate())))
         return {'budget_id': budget_id, 'limit': limit, 'currency': currency,
-                'reserved': str(reserved), 'spent': str(spent), 'available': str(available),
+                'reserved': str(reserved), 'spent': str(spent), 'available': available,
+                'provider_managed': provider_managed,
                 'unknown_cost_operations': unknown}
 
     def _blocking_costs(self, operations, budget, phase):
@@ -979,7 +994,7 @@ class Store:
                 row['budget_id'] == budget_id and row['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS')
                 for row in operations)):
             raise BudgetError('unresolved effects or costs block this envelope')
-        if requested > Decimal(budget['available']):
+        if not budget['provider_managed'] and requested > Decimal(budget['available']):
             raise BudgetError('insufficient available budget')
         connection.execute(
             'INSERT INTO operations (' + ', '.join(_OPERATION_COLUMNS) + ') '

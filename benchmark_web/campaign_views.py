@@ -11,7 +11,6 @@ pour qu'aucun cycle ne soit possible.
 """
 import re
 import secrets
-from urllib.parse import urlencode
 
 from benchmark.storage import _strict_json as encode
 
@@ -26,7 +25,85 @@ COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
 window.addEventListener('pageshow', () => {
   const row = document.getElementById(history.state?.comparisonFocus);
   if (row) row.focus({preventScroll: true});
-});"""
+});
+(() => {
+  const dialog = document.getElementById('result-dialog');
+  if (!dialog || typeof dialog.showModal !== 'function') return;
+  const status = dialog.querySelector('.result-status'), body = dialog.querySelector('.result-body'),
+        full = dialog.querySelector('a.full');
+  let request = null, opener = null;
+  const element = (tag, textContent, attrs = {}) => Object.assign(document.createElement(tag), {textContent}, attrs);
+  function fail(href) {
+    status.textContent = '';
+    const alert = element('p', 'Le détail n’a pas pu être chargé. ');
+    alert.setAttribute('role', 'alert');
+    const retry = element('button', 'Réessayer', {type: 'button', className: 'sec'});
+    retry.addEventListener('click', () => load(href));
+    alert.append(retry, ' ou ouvrez la page complète.');
+    body.replaceChildren(alert);
+  }
+  function load(href) {
+    request?.abort();
+    const current = request = new AbortController();
+    const timer = setTimeout(() => current.abort(new DOMException('Délai dépassé', 'TimeoutError')), 15000);
+    dialog.setAttribute('aria-busy', 'true');
+    status.textContent = 'Chargement du détail…';
+    const progress = document.createElement('progress');
+    progress.setAttribute('aria-hidden', 'true');
+    body.replaceChildren(progress);
+    fetch(href, {headers: {Accept: 'text/html'}, cache: 'no-store', redirect: 'error', mode: 'same-origin', signal: current.signal})
+      .then(response => { if (!response.ok) throw new Error(String(response.status)); return response.text(); })
+      .then(html => {
+        if (current !== request || !dialog.open) return;
+        const part = new DOMParser().parseFromString(html, 'text/html').getElementById('attempt-detail');
+        if (!part) throw new Error('fragment');
+        body.replaceChildren(...part.childNodes);
+        status.textContent = 'Détail chargé.';
+      })
+      .catch(error => {
+        if (current !== request || !dialog.open || error.name === 'AbortError') return;
+        fail(href);
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        if (current === request) { request = null; dialog.removeAttribute('aria-busy'); }
+      });
+  }
+  document.addEventListener('click', event => {
+    const link = event.target.closest('a[data-result]');
+    if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    opener = link;
+    full.href = link.href;
+    if (!dialog.open) dialog.showModal();
+    load(link.href);
+  });
+  dialog.addEventListener('click', event => {
+    if (event.target.closest('[data-close]')) { dialog.close(); return; }
+    const anchor = event.target.closest('a[href^="#"]');
+    if (anchor) {
+      const target = document.getElementById(anchor.getAttribute('href').slice(1));
+      if (!target || !dialog.contains(target)) return;
+      event.preventDefault();
+      for (let node = target; node && node !== dialog; node = node.parentElement) {
+        if (node.tagName === 'DETAILS') node.open = true;
+      }
+      target.scrollIntoView({block: 'start'});
+      return;
+    }
+    if (event.target !== dialog) return;
+    const rect = dialog.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
+  });
+  dialog.addEventListener('close', () => {
+    request?.abort();
+    request = null;
+    dialog.removeAttribute('aria-busy');
+    status.textContent = '';
+    body.replaceChildren();
+    opener?.focus();
+  });
+})();"""
 
 CUSTOM_MODELS_SCRIPT = """(() => {
   const panel = document.getElementById('custom-models');
@@ -150,17 +227,27 @@ def render_custom_models(value, csrf, dossier_url):
     return content + '</div></details><script>' + CUSTOM_MODELS_SCRIPT + '</script>'
 
 
+def _readable_reason(record):
+    """Motif du juge avec les identifiants de critères remplacés par leurs descriptions"""
+    spec = record['qualification']['contract']['specification']
+    labels = {item['id']: item['description'] for item in spec['obligations'] + spec['eliminatory_errors']}
+    if not labels:
+        return record['reason']
+    return re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)',
+                  lambda match: labels[match[0]], record['reason'])
+
+
 def render_evaluations(evaluations, dossier_url):
-    """Inert evidence and correction history inside the owner's existing page"""
+    """Inert evidence and recorded corrections inside the owner's existing page.
+
+    Rendu complet des évaluations enregistrées ; `render_result` fournit la lecture compacte
+    """
     content = '<h4>Verdicts et preuves</h4><p>Évaluations fictives, par cas et tentative. '
     content += 'Le verdict porte sur la configuration observée sous les conditions communes ; '
     content += 'il ne prouve ni une propriété du modèle seul ni une compétence métier générale.</p>'
     for record in evaluations:
         eid = record['evaluation_id']
-        spec = record['qualification']['contract']['specification']
-        labels = {item['id']: item['description'] for item in spec['obligations'] + spec['eliminatory_errors']}
-        reason = re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)',
-                        lambda match: labels[match[0]], record['reason'])
+        reason = _readable_reason(record)
         label = ('Évaluation à reprendre (valeur enregistrée : INDETERMINE)' if record['verdict'] == 'INDETERMINE'
                  else record['verdict'] or 'Évaluation à reprendre')
         content += '<section id="evaluation-' + text(eid) + '"><h5>' + text(label) + '</h5>'
@@ -230,35 +317,32 @@ def cost_bar(value, known):
     return '<div class="costbar" aria-hidden="true" style="--w:' + str(round(100 * float(value) / max(known))) + '%"></div>'
 
 
+def effort_label(configuration):
+    effort = configuration['effort']
+    return {'off': 'Standard · niveau de raisonnement non imposé', 'on': 'Raisonnement renforcé',
+            'low': 'Raisonnement faible', 'medium': 'Raisonnement moyen',
+            'high': 'Raisonnement élevé', 'xhigh': 'Raisonnement très élevé',
+            'max': 'Raisonnement maximal'}.get(effort, effort)
+
+
 def render_comparison(value):
-    def data(label, value):
-        return '<details><summary>' + text(label) + '</summary>' + readable_fields(value) + '</details>'
-
-    def metric(value):
-        source = 'INCONNU' if value['value'] is None else value['value']
-        content = '<span class="source-value">' + readable_fields(source)
-        content += ('' if value['unit'] in ('bool', 'boolean', 'booléen') else ' ' + text(value['unit'])) + '</span>'
-        if value['rank'] is None:
-            return content + '<p>Sans rang : ' + text(value['reason']) + '</p>'
-        return content + '<p>Rang ' + text(value['rank']) + '</p>'
-
     base, query = value['href'], value['filter_scope']
+    multiple_cases = len(value['cases']) > 1
     content = '<nav aria-label="Parcours"><a class="button" href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a></nav>'
-    content += '<p class="hint">Résultats privés · version d’épreuve ' + text(value['task']['version'])
-    content += '.</p>'
-    content += '<p class="lead">' + text(value['result_expected']) + '</p>'
+    content += '<p class="hint">Résultats privés · version d’épreuve ' + text(value['task']['version']) + '.</p>'
     content += '<div class="campaign-summary" aria-label="Conclusion de la campagne"><span class="ic">' + icon('i-scale') + '</span>'
-    content += '<p class="eyebrow">Le verdict ne fait pas de moyenne</p>'
+    content += '<p class="eyebrow">Bilan de la comparaison</p>'
     latest = {record['attempt_id']: record for record in value['history']}
-    # Décompter les verdicts conservés par cas, sans créer de verdict agrégé
     for case_number, case in enumerate(value['cases'], 1):
         records = [record for record in latest.values() if record['case_id'] == case['id']]
         if records:
-            counts = [str(sum(record['decision']['verdict'] == verdict for record in records)) + ' ' + label
-                      for verdict, label in (('SATISFAIT', 'satisfait(s)'), ('NE SATISFAIT PAS', 'non satisfait(s)'),
-                                             (None, 'évaluation(s) à reprendre'))
-                      if any(record['decision']['verdict'] == verdict for record in records)]
-            content += '<p><strong>Cas ' + text(case_number) + '</strong> : ' + text(' · '.join(counts)) + '.</p>'
+            counts = []
+            for verdict, label in (('SATISFAIT', 'conforme'), ('NE SATISFAIT PAS', 'non conforme'), (None, 'à réévaluer')):
+                count = sum(record['decision']['verdict'] == verdict for record in records)
+                if count:
+                    counts.append(str(count) + ' ' + label + ('s' if count > 1 and verdict else ''))
+            prefix = '<strong>Cas ' + text(case_number) + '</strong> : ' if multiple_cases else ''
+            content += '<p>' + prefix + 'Réponses : ' + text(' · '.join(counts)) + '.</p>'
     if not latest:
         received = any(cell['state'] == 'RECEIVED' for cell in value['cells'])
         content += '<p>' + ('En attente d’évaluation : des réponses ont été reçues, sans verdict disponible.' if received else
@@ -267,113 +351,128 @@ def render_comparison(value):
     if pending_reasons:
         content += listing(pending_reasons)
     coverage = value['coverage']
-    content += '<p role="status">' + text(coverage['evaluated_attempts']) + ' tentative(s) évaluée(s) · '
-    content += text(coverage['attempted_cells']) + ' essai(s) lancé(s) sur ' + text(coverage['planned_cells'])
-    content += ' prévu(s) · ' + text(coverage['not_started']) + ' non lancé(s). '
-    content += ('Comparaison des coûts complète.' if value['economic_status'] == 'COMPLETE' else 'Comparaison des coûts incomplète.') + '</p>'
+    content += '<p role="status">Réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : '
+    content += text(coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '. '
+    if value['economic_status'] != 'COMPLETE':
+        content += 'Comparaison des coûts incomplète. '
+    content += '</p>'
+    if value.get('stop_reason') and (coverage['not_started'] or pending_reasons):
+        content += '<p>Comparaison incomplète : les essais ont été arrêtés. Les réponses déjà reçues restent consultables.</p>'
     dates = sorted(set(date[:10] for date in value.get('acquisition_dates', [])))
     if dates:
         content += '<p class="hint">Réponses reçues : ' + text(dates[0] if len(dates) == 1 else dates[0] + ' au ' + dates[-1]) + '.</p>'
     content += '</div>'
     if not value['population']:
         return content
-    content += '<details id="filters" class="comparison-filters"><summary>Tris et filtres'
-    content += (' · ' + text(len(query)) + ' sélection(s) active(s)' if query else '') + '</summary>'
-    content += '<p id="filter-help">Chaque bouton applique le champ choisi et conserve les autres sélections. '
-    content += 'Les filtres changent seulement les lignes visibles. Les rangs et la couverture gardent la population entière.</p>'
-    sort_label = next((('Coût observé' if 'criterion_id' not in column else column['definition']['measure'])
-                       for column in value['columns'] if column['id'] == query.get('sort')), 'descriptif, sans préférence')
-    content += '<p>Ordre actuel : ' + text(sort_label)
-    content += (', ' + ('décroissant' if query.get('direction') == 'desc' else 'croissant') if 'sort' in query else '') + '.</p>'
+    choice = value.get('economic_choice')
+    if choice:
+        content += '<aside class="economic-choice" aria-labelledby="economic-choice-title">'
+        content += '<h2 id="economic-choice-title">Notre conseil</h2><div class="choice-highlight"><div>'
+        content += '<p class="choice-model">' + text(choice['configuration']['model']) + '</p>'
+        content += '<p>' + text(effort_label(choice['configuration'])) + '</p></div>'
+        content += '<p class="choice-cost">Coût observé<strong>' + text(montant_lisible(choice['amount']) + ' ' + choice['unit']) + '</strong></p></div>'
+        content += '<p>La moins coûteuse parmi ' + text(choice['count']) + ' réponses conformes sur cet exemple.</p>'
+        content += '<p class="hint">Un seul exemple ne garantit pas le même résultat sur d’autres tâches.</p></aside>'
+    sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
+    sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
     options = {
-        'case': ('Cas', [(v['id'], 'Cas ' + str(number))
-                         for number, v in enumerate(value['cases'], 1)]),
-        'sort': ('Critère de tri', [(v['id'], 'Coût observé' if 'criterion_id' not in v else v['definition']['measure']) for v in value['columns']]),
-        'direction': ('Ordre d’affichage', [('asc', 'Croissant'), ('desc', 'Décroissant')]),
-        'verdict': ('Décision ou travail restant', [('SATISFAIT', 'SATISFAIT'), ('NE SATISFAIT PAS', 'NE SATISFAIT PAS'), ('A_REPRENDRE', 'À reprendre')]),
-        'obligation': ('Constat par obligation', [(v['id'] + ':' + state, v['description'] + ' : ' + label)
+        'case': ('Cas d’essai', 'Tous les cas', [(v['id'], 'Cas ' + str(number))
+                         for number, v in enumerate(value['cases'], 1)] if multiple_cases else []),
+        'configuration': ('Modèle', 'Tous les modèles', [(v['id'], v['model'] +
+                           (' · ' + effort_label(v) if sum(p['model'] == v['model'] for p in value['panel']) > 1 else '')) for v in value['panel']]),
+        'verdict': ('Résultat', 'Tous les résultats', [('SATISFAIT', 'Satisfait'), ('NE SATISFAIT PAS', 'Ne satisfait pas'), ('A_REPRENDRE', 'À reprendre')]),
+        'sort': ('Trier par', 'Sans tri', [(v['id'], v['definition'].get('measure', 'Coût observé')) for v in value['columns']]),
+        'direction': ('Sens du tri', 'Croissant', [('desc', 'Décroissant')]),
+        'obligation': ('Exigence à examiner', 'Toutes les exigences', [(v['id'] + ':' + state, v['description'] + ' : ' + label)
                         for v in value['obligations'] for state, label in
                         (('PASS', 'Respectée'), ('FAIL', 'Non respectée'), ('INDETERMINE', 'Indéterminée'))]),
-        'configuration': ('Configuration', [(v['id'], v['model'] + ' · ' + v['id']) for v in value['panel']]),
     }
-    if query:
-        content += '<ul aria-label="Sélections actives">'
-        for key, val in query.items():
-            remaining = {k: v for k, v in query.items() if k != key}
-            target = base + ('?' + urlencode(remaining) if remaining else '') + '#filters'
-            label = next((label for option, label in options[key][1] if option == val), val)
-            content += '<li>' + text(options[key][0] + ' : ' + label) + ' · <a href="' + text(target)
-            content += '">Enlever ' + text(options[key][0].lower()) + '</a></li>'
-        content += '</ul>'
-    else:
-        content += '<p>Aucun filtre ni tri appliqué.</p>'
-    content += '<div class="filter-grid">'
-    for key, (label, values) in options.items():
+    content += '<section class="comparison-results"><h2>Comparaison des modèles</h2>'
+    content += '<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
+    content += '<details id="filters" class="comparison-filters"' + (' open' if query else '') + '><summary>Tris et filtres</summary>'
+    content += '<form method="get" action="' + text(base) + '#filters"><div class="filter-grid">'
+    advanced = ''
+    for key, (label, default, values) in options.items():
         if not values:
             continue
-        content += '<form method="get" action="' + text(base) + '" aria-describedby="filter-help">'
-        for k, v in query.items():
-            if k != key:
-                content += '<input type="hidden" name="' + text(k) + '" value="' + text(v) + '">'
-        content += '<label for="filter-' + key + '">' + label + '</label><select id="filter-' + key + '" name="' + key + '">'
-        for val, title in values:
-            content += '<option value="' + text(val) + '"' + (' selected' if query.get(key) == val else '') + '>' + text(title) + '</option>'
-        content += '</select><button type="submit">Appliquer : ' + label.lower() + '</button></form>'
-    content += '</div><p><a href="' + text(base) + '#filters">Enlever tous les filtres et le tri</a></p></details>'
-    content += '<p class="view-scope">' + text(len(value['rows'])) + ' ligne(s) affichée(s) sur '
-    content += text(len(value['population'])) + ' tentatives évaluées · ordre ' + text(sort_label)
-    content += (', décroissant' if query.get('direction') == 'desc' else ', croissant') if 'sort' in query else ''
-    content += '. Les filtres ne changent pas le bilan de campagne.</p>'
+        selected = query.get(key, '')
+        if key == 'direction' and selected == 'asc':
+            selected = ''
+        control = '<div><label for="filter-' + key + '">' + label + '</label><select id="filter-' + key + '" name="' + key + '">'
+        for val, title in [('', default)] + values:
+            control += '<option value="' + text(val) + '"' + (' selected' if selected == val else '') + '>' + text(title) + '</option>'
+        control += '</select></div>'
+        if key == 'obligation':
+            advanced = '<details class="filter-advanced"' + (' open' if key in query else '') + '><summary>Filtrer par exigence</summary>'
+            advanced += '<p class="hint">Pour retrouver les réponses qui respectent ou non une exigence précise.</p>' + control + '</details>'
+        else:
+            content += control
+    content += '</div>' + advanced + '<div class="actions"><button type="submit">Appliquer</button>'
+    content += '<a class="button sec" href="' + text(base) + '#filters">Effacer</a></div></form></details>'
+    content += '<p class="view-scope" role="status">Résultats affichés : ' + text(len(value['rows'])) + ' sur '
+    content += text(len(value['population'])) + ' · ' + text(sort_label)
+    if sort_column:
+        content += ', décroissant' if query.get('direction') == 'desc' else ', croissant'
+    content += '.</p>'
     if not value['rows']:
-        content += '<p role="status">' + ('Aucune ligne ne correspond aux filtres ; les observations de la campagne restent conservées.'
-                     if value['population'] else 'Aucune tentative évaluée dans cette campagne.') + '</p>'
+        content += '<p role="status">Aucune ligne ne correspond aux filtres ; les observations de la campagne restent conservées.</p>'
     for case_number, case in enumerate(value['cases'], 1):
         rows = [r for r in value['rows'] if r['case_id'] == case['id']]
         if not rows:
             continue
-        content += '<section class="comparison-results"><h2>Cas ' + text(case_number) + '</h2>'
-        content += '<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement pour lire coûts et preuves.</p>'
-        content += '<div class="table-scroll" role="region" tabindex="0" aria-label="Observations du cas ' + text(case_number) + '">'
-        content += '<table><caption>Cas ' + text(case_number) + ' · valeurs par tentative, sans agrégation</caption><thead><tr>'
-        for title in ('Configuration et tentative', 'Verdict et motif', 'Coût observé', 'Mesures prévues', 'Preuves'):
-            content += '<th scope="col">' + title + '</th>'
+        label = 'Cas ' + str(case_number) if multiple_cases else 'Comparaison des modèles'
+        if multiple_cases:
+            content += '<h3>' + text(label) + '</h3>'
+        content += '<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '">'
+        content += '<table><caption>Chaque verdict concerne la réponse obtenue sur cet exemple.</caption><thead><tr>'
+        measure_column = sort_column if sort_column and 'criterion_id' in sort_column else None
+        titles = ['Modèle', 'Résultat', 'Coût observé'] + ([sort_label] if measure_column else []) + ['Détails']
+        for title in titles:
+            content += '<th scope="col">' + text(title) + '</th>'
         content += '</tr></thead><tbody>'
-        known = [float(r['cost']['value']) for r in rows if r['cost']['value'] is not None and _numeric(r['cost']['value'])]
+        known = [float(r['cost']['value']) for r in rows
+                 if r['cost']['value'] is not None and _numeric(r['cost']['value'])]
         for row in rows:
             content += '<tr id="attempt-' + text(row['attempt_id']) + '"' + ('' if row['verdict'] == 'SATISFAIT' else ' class="out"') + ' tabindex="-1"><th scope="row">'
             content += '<strong>' + text(row['requested_configuration']['model']) + '</strong>'
-            content += data('Demandée, observée et sources', {k: row[k] for k in ('requested_configuration', 'observed_configuration', 'observation_sources')}) + '</th>'
-            spec = row['qualification']['contract']['specification']
-            labels = {item['id']: item['description'] for item in spec['obligations'] + spec['eliminatory_errors']}
-            reason = re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)',
-                            lambda match: labels[match[0]], row['reason'])
-            content += '<td>' + badge(row['verdict']) + '<p>' + text(reason) + '</p>'
-            if row.get('decision', {}).get('next_action'):
-                content += '<p>' + text(row['decision']['next_action']) + '</p>'
-            if row['incident']:
-                content += '<p>Incident : ' + text(row['incident']) + '</p>'
-            content += '</td><td>' + metric(row['cost']) + cost_bar(row['cost']['value'], known) + '</td><td>'
-            for measure in row['measures']:
-                content += '<p>' + text(measure['definition']['measure']) + '</p>' + metric(measure)
-            content += '</td><td><a href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
-        content += '</tbody></table></div></section>'
-    content += '<details id="method"><summary>Comment lire ces résultats</summary>'
-    content += '<p>Chaque réponse est vérifiée selon les obligations ci-dessous. Le verdict concerne cet essai et ses conditions, sans garantir le même résultat sur une autre tâche.</p>'
-    content += '<p>Travail humain restant : ' + text(value['human_work']) + '</p>'
-    if value['obligations']:
-        content += '<h3>Obligations</h3>' + listing(item['description'] for item in value['obligations'])
-    content += '<h3>Conditions communes</h3><p>Les modèles reçoivent les mêmes consignes et pièces, avec les réglages confirmés avant le lancement.</p>'
-    content += '<h3>Mesures et coûts</h3><ul>'
-    for column in value['columns']:
-        label = column['definition'].get('measure', 'Coût observé')
-        favorable = {'lower': 'plus faible', 'higher': 'plus élevé', 'yes': 'oui'}.get(column['favorable'], 'selon le contrat')
-        content += '<li>' + text(label) + ' (' + text(column['unit']) + ') ; sens favorable : ' + text(favorable) + '. '
-        content += text(column['proof']) + '</li>'
-    content += '</ul><p>Un coût inconnu reste inconnu et ne change pas le verdict. Les reçus et sorties disponibles sont accessibles dans le détail de chaque résultat.</p>'
-    content += '<h3>Limites</h3>' + listing(value['conclusion']['limits'])
-    if value.get('stop_reason'):
-        content += '<p>La comparaison a été interrompue. Les réponses reçues sont conservées.</p>'
-    content += '</details>'
+            content += '<p class="hint">' + text(effort_label(row['requested_configuration'])) + '</p></th>'
+            reason = {'SATISFAIT': 'Toutes les exigences sont respectées.',
+                      'NE SATISFAIT PAS': 'Un critère requis n’est pas respecté.'}.get(row['verdict'], 'Évaluation à compléter.')
+            content += '<td>' + badge(row['verdict']) + '<p class="hint">' + reason + '</p></td><td>'
+            cost = row['cost']
+            content += '<span class="source-value">' + text('Inconnu' if cost['value'] is None else montant_lisible(cost['value']) + ' ' + cost['unit']) + '</span>'
+            if cost['value'] is not None and cost['rank'] is None:
+                content += '<p class="hint">Coût non comparable</p>'
+            content += cost_bar(cost['value'], known) + '</td>'
+            if measure_column:
+                measure = next(m for m in row['measures'] if m['criterion_id'] == measure_column['criterion_id'])
+                if measure['rank'] is None:
+                    content += '<td>' + ('Inconnu' if measure['value'] is None else 'Non comparable')
+                    content += '<p class="hint">' + text(measure['reason']) + '</p></td>'
+                else:
+                    content += '<td>' + readable_fields(measure['value'])
+                    content += ('' if measure['unit'] in ('bool', 'boolean', 'booléen') else ' ' + text(measure['unit'])) + '</td>'
+            content += '<td><a data-result href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
+        content += '</tbody></table></div>'
+    content += '</section><details id="method"><summary>Comment lire ces résultats</summary>'
+    content += '<ul><li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
+    content += '<li>Comparez le coût des réponses satisfaisantes, puis consultez leurs qualités et limites dans « Détail et preuves ». Un coût inconnu ne change pas le verdict.</li>'
+    content += '<li>Les modèles reçoivent les mêmes consignes et pièces. Ces résultats concernent uniquement cet exemple fictif, sans garantir la même qualité sur d’autres tâches.</li></ul></details>'
+    # Conteneur vide de la modale : sans JavaScript il reste invisible et les liens naviguent vers la page directe
+    content += '<dialog id="result-dialog" class="result-dialog" aria-label="Détail et preuves">'
+    content += '<div class="result-head"><button type="button" class="sec" data-close autofocus>Fermer</button>'
+    content += '<p class="result-status" role="status"></p></div><div class="result-body"></div>'
+    content += '<p class="result-foot"><a class="full" href="' + text(base) + '">Ouvrir la page complète</a></p></dialog>'
+    return content
+
+
+def render_campaign_models(value):
+    content = '<p>Voici les modèles et réglages retenus pour cette comparaison. Cette consultation ne modifie pas la comparaison et ne lance aucun appel.</p>'
+    for model in value['panel']:
+        content += section(model['model'], '<p>' + text(effort_label(model)) + '</p>' +
+                           '<details><summary>Réglages utilisés</summary>' + readable_fields(model['parameters']) + '</details>')
+    content += '<p><a class="button" href="' + text(value['href']) + '">Revenir aux résultats</a></p>'
+    content += '<p class="hint">Pour changer les modèles ou l’exemple, préparez une nouvelle comparaison depuis le cas d’usage. Les résultats actuels seront conservés.</p>'
     return content
 
 
@@ -402,7 +501,7 @@ def render_configurations(value, csrf):
             (' checked' if value['current_tier'] == tier else '') + '> ' +
             ('Standard' if tier == 'standard' else 'Renforcé') + '</label>' +
             '<p class="hint" id="tier-help-' + tier + '">' +
-            ('Le modèle utilise ses réglages habituels, sans demande de raisonnement renforcé.'
+            ('Aucun niveau de raisonnement n’est imposé. Le fournisseur applique le réglage par défaut du modèle ; cela ne signifie pas que son raisonnement est désactivé.'
              if tier == 'standard' else
              'Demande un raisonnement plus approfondi, lorsque le modèle le permet. '
              'Cela peut allonger l’attente et augmenter le coût, sans garantir une meilleure réponse. '
@@ -433,33 +532,11 @@ def render_configurations(value, csrf):
         summary += '<p>Estimation totale : ' + text(
             'non estimable' if value['estimate_total_usd'] is None else
             montant_lisible(value['estimate_total_usd']) + ' USD') + '.</p>'
-        summary += '<p>Plafond : ' + text(montant_lisible(value['cap_usd'])) + ' USD.</p>'
         summary += '<p><a class="button" href="' + text(
             dossier_url + '/campaigns/' + value['current_campaign_id'] +
             '/conditions') + '">Voir le récapitulatif</a></p>'
         content += section('Sélection courante', summary)
     return content
-
-
-CAP_SCRIPT = r"""(() => {
-  const input = document.getElementById('cap_usd');
-  const button = input.form.querySelector('button[type="submit"]');
-  function update() {
-    const decimal = /^[0-9]+(?:\.[0-9]{1,2})?$/.test(input.value);
-    const amount = Number(input.value);
-    input.setCustomValidity(decimal && amount >= 0.10 && amount <= 100 ? '' :
-      'Saisissez un montant de 0,10 à 100 USD, avec au plus deux décimales.');
-    button.disabled = !input.checkValidity() || amount === Number(input.defaultValue);
-    button.className = button.disabled ? 'sec' : '';
-  }
-  input.addEventListener('input', update);
-  input.addEventListener('change', update);
-  input.form.addEventListener('submit', event => {
-    update();
-    if (button.disabled) event.preventDefault();
-  });
-  update();
-})();"""
 
 
 def campaign_followup(campaign):
@@ -527,12 +604,11 @@ def render_campaign_followup(value, csrf):
             '<button type="submit">Évaluer les réponses conservées</button>')
     if not active and (ready or not judgment or judgment['completed'] > 0):
         content += '<p><a class="button' + ('' if all_received else ' sec') + '" href="' + text(base) + '">Comparer les résultats et lire les preuves</a></p>'
-    content += '<p>L’arrêt intervient après le paiement de l’appel en cours. La dépense peut donc dépasser le plafond du montant du dernier appel.</p>'
     return content + '</div>'
 
 
 def render_campaign_launch_requester(value, csrf):
-    """Contrôles, plafond et suivi présentés au demandeur qui lance lui-même"""
+    """Contrôles et suivi présentés au demandeur qui lance lui-même"""
     campaign = value['campaign']
     if campaign['attempts']:
         return render_campaign_followup(value, csrf)
@@ -544,14 +620,14 @@ def render_campaign_launch_requester(value, csrf):
         '<p>Chaque modèle reçoit la même consigne et les mêmes pièces. Le verdict reste limité à cet exemple et aux configurations observées.</p>' +
         '<details><summary>Critères et conditions exactes</summary>' + readable_fields(
             {'criteria': value['criteria'], 'conditions': campaign['conditions'], 'panel': campaign['panel']}) + '</details>')
-    content += '<p>Les appels candidats sont financés par votre accès Openrouter. Estimation, plafond et coût observé sont distincts ; le plafond ne garantit pas une limite absolue de facturation.</p>'
+    content += '<p>Tous les appels utilisent votre clé Openrouter et son plafond unique. Les estimations ne sont pas des dépenses facturées.</p>'
     check_content = '<ul>'
     for check in value['checks']:
         detail = check['detail']
         if type(detail) is dict:
             detail = ('Crédit restant : ' + str(detail.get('limit_remaining_usd')
                       if detail.get('limit_remaining_usd') is not None else 'INCONNU') +
-                      ' USD ; limite du compte : ' + str(detail.get('limit_usd')
+                      ' USD ; plafond de la clé : ' + str(detail.get('limit_usd')
                       if detail.get('limit_usd') is not None else 'INCONNU') + ' USD')
         check_content += '<li>' + text(('✓ ' if check['ok'] else '✕ ') + str(detail))
         if check['key'] == 'example_qualified' and check.get('findings'):
@@ -562,18 +638,9 @@ def render_campaign_launch_requester(value, csrf):
     content += section('Contrôles avant lancement', check_content)
     if value.get('judgment_estimate_usd') is not None:
         content += '<p>Évaluation estimée : ' + text(montant_lisible(value['judgment_estimate_usd'])) + ' USD, financée par votre clé personnelle.</p>'
-    content += '<p>Plafond actuel : ' + text(montant_lisible(value['cap_usd'])) + ' USD.</p>'
-    content += ('<p>L’arrêt intervient après le paiement de l’appel en cours. '
-                'La dépense peut donc dépasser le plafond du montant du dernier appel.</p>')
-    if not campaign['attempts']:
-        content += section('Modifier le plafond',
-            '<form method="post" action="' + text(base + '/cap') + '">' + hidden('csrf_token', csrf) +
-            '<label for="cap_usd">Plafond en USD, de 0,10 à 100</label>' +
-            '<input id="cap_usd" name="cap_usd" type="number" min="0.10" max="100.00" step="0.01" value="' +
-            text(value['cap_usd']) + '" required><button class="sec" type="submit" disabled>Modifier le plafond</button></form><script>' + CAP_SCRIPT + '</script>')
     failed = next((check for check in value['checks'] if not check['ok']), None)
     if value['launchable']:
-        content += '<p role="status">Les contrôles sont satisfaits. Vérifiez le travail, les modèles et le plafond avant de confirmer le lancement.</p>'
+        content += '<p role="status">Les contrôles sont satisfaits. Vérifiez le travail, les modèles et les coûts estimés avant de confirmer le lancement.</p>'
         content += form(csrf, base + '/start', {
             'manifest_version': campaign['version'],
             'frozen_at': campaign['conditions']['frozen_at']},
@@ -586,7 +653,7 @@ def render_campaign_launch_requester(value, csrf):
             'example_qualified': dossier_url,
             'configurations_available': dossier_url + '/configurations',
             'access_connected': '/preparation/access',
-            'estimate_under_cap': dossier_url + '/configurations',
+            'estimate_available': dossier_url + '/configurations',
         }
         content += '<p role="status">Lancement indisponible : ' + text(
             failed['detail'] if type(failed['detail']) is str else
@@ -656,15 +723,162 @@ def render_campaign_launch_operator(value, csrf):
     return content
 
 
+PREVIEW_LENGTH = 200
+
+CRITERION_STATES = {
+    'obligation': {'PASS': ('b-ok', 'i-check', 'Respectée'), 'FAIL': ('b-ko', 'i-cross', 'Non respectée'),
+                   'INDETERMINE': ('b-ind', 'i-help', 'Non vérifiable')},
+    'eliminatory': {'PASS': ('b-ok', 'i-check', 'Non commise'), 'FAIL': ('b-ko', 'i-cross', 'Commise'),
+                    'INDETERMINE': ('b-ind', 'i-help', 'Non vérifiable')},
+}
+
+ATTRIBUTIONS = {'reference': 'référence du juge'}
+
+
+def _plural(count, label, *, number=True):
+    """« 2 exigences », « 1 non respectée » : accord simple, « non » invariable"""
+    words = ' '.join(word + ('s' if count > 1 and word != 'non' else '') for word in label.split(' '))
+    return (str(count) + ' ' if number else '') + words
+
+
+def _criterion_state(findings):
+    """Tous les contrôles PASS ; sinon FAIL dès qu'un contrôle échoue ; sinon non conclu"""
+    statuses = {finding['status'] for finding in findings}
+    return 'PASS' if statuses == {'PASS'} else 'FAIL' if 'FAIL' in statuses else 'INDETERMINE'
+
+
+def _proof_anchor(record, piece_id):
+    link = next((p for p in record['proof_links'] if p['piece_id'] == piece_id), None)
+    if link is None:
+        return None, None
+    if piece_id in record.get('proof_contents', {}):
+        return link, '#proof-' + record['evaluation_id'] + '-' + piece_id
+    return link, link['href']
+
+
+def _criteria_list(record, criteria, kind):
+    content = '<ul class="checks">'
+    for criterion in criteria:
+        findings = [f for f in record['findings'] if f['criterion_id'] == criterion['id']]
+        tone, name, label = CRITERION_STATES[kind][_criterion_state(findings)]
+        content += '<li><span class="badge ' + tone + '">' + icon(name) + label + '</span><span>' + text(criterion['description']) + '</span>'
+        if findings:
+            content += '<details><summary>Constats et extraits</summary><ul>'
+            for finding in findings:
+                content += '<li>' + text(finding['finding'])
+                if finding['attribution'] not in ('candidate', 'evidence'):
+                    content += ' <span class="hint">(attribué à : ' + text(ATTRIBUTIONS.get(finding['attribution'], finding['attribution'])) + ')</span>'
+                for proof in finding['evidence']:
+                    link, target = _proof_anchor(record, proof['piece_id'])
+                    if link is None:
+                        continue
+                    content += '<details><summary>Passage de ' + text('la réponse du modèle' if link['piece_id'] == record['output_piece_id'] else link['name']) + '</summary><pre>' + text(proof['passage']) + '</pre>'
+                    content += '<p><a href="' + text(target) + '">Ouvrir la pièce</a></p></details>'
+                content += '</li>'
+            content += '</ul></details>'
+        content += '</li>'
+    return content + '</ul>'
+
+
+def render_result(record):
+    """Lecture humaine compacte d'une évaluation : fragment partagé par la page directe et la modale.
+
+    Le rendu technique complet reste `render_evaluations` sur les révisions du cas
+    d'usage ; ce fragment n'en remplace pas le minimum accessible. Tout texte
+    candidat, motif, constat ou mesure passe par `text()` ; aucune pièce n'est
+    interprétée.
+    """
+    eid = record['evaluation_id']
+    spec = record['qualification']['contract']['specification']
+    configuration = record['requested_configuration']
+    verdict = record['decision']['verdict']
+    content = '<section class="result" id="evaluation-' + text(eid) + '"><p class="eyebrow">Résultat sur cet exemple</p>'
+    content += '<h2>' + text(configuration['model']) + '</h2><p class="hint">' + text(effort_label(configuration)) + '</p>'
+    cost = record['candidate_cost']
+    content += '<p class="result-verdict">' + badge(verdict) + ' <span>Coût observé : ' + text(
+        'inconnu' if cost is None or cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']) + '</span></p>'
+    if verdict is None and record['decision'].get('next_action'):
+        content += '<p>' + text(record['decision']['next_action']) + '</p>'
+    # Ce que le modèle a produit
+    content += '<h3>Ce que le modèle a produit</h3>'
+    output_id = record['output_piece_id']
+    link, target = _proof_anchor(record, output_id) if output_id else (None, None)
+    output = record.get('proof_contents', {}).get(output_id) if output_id else None
+    if output is not None:
+        preview = output[:PREVIEW_LENGTH].strip()
+        content += '<p class="hint">Début de la réponse</p>'
+        content += '<div class="proof-text preview">' + text(preview) + ('…' if len(output) > PREVIEW_LENGTH else '') + '</div>'
+        content += '<details class="proof-content" id="proof-' + text(eid + '-' + output_id) + '"><summary>Lire la réponse complète</summary>'
+        content += '<div class="proof-text">' + text(output) + '</div></details>'
+    elif link is not None:
+        content += '<p><a href="' + text(link['href']) + '">' + text(link['name']) + '</a></p>'
+    else:
+        content += '<p>Aucune sortie conservée pour cette tentative.</p>'
+    # Pourquoi ce verdict
+    content += '<h3>Pourquoi ce verdict</h3>'
+    states = {criterion['id']: _criterion_state([f for f in record['findings'] if f['criterion_id'] == criterion['id']])
+              for criterion in spec['obligations'] + spec['eliminatory_errors']}
+    obligations = [states[c['id']] for c in spec['obligations']]
+    eliminatory = [states[c['id']] for c in spec['eliminatory_errors']]
+    summary = [_plural(obligations.count('PASS'), 'exigence') + ' sur ' + str(len(obligations)) + ' ' + _plural(obligations.count('PASS'), 'respectée', number=False)]
+    if obligations.count('FAIL'):
+        summary.append(_plural(obligations.count('FAIL'), 'non respectée'))
+    if obligations.count('INDETERMINE'):
+        summary.append(_plural(obligations.count('INDETERMINE'), 'non vérifiable'))
+    content += '<p>' + ', '.join(summary) + '.'
+    if eliminatory:
+        content += (' Aucune erreur éliminatoire relevée.' if all(state == 'PASS' for state in eliminatory) else
+                    ' ' + _plural(eliminatory.count('FAIL'), 'erreur éliminatoire relevée') + '.' if 'FAIL' in eliminatory else
+                    ' Contrôle éliminatoire non concluant.')
+    content += '</p>'
+    reason = _readable_reason(record)
+    content += ('<p class="hint">' + text(reason) + '</p>' if len(reason) <= PREVIEW_LENGTH else
+                '<details><summary>Explication de l’évaluation</summary><p>' + text(reason) + '</p></details>')
+    content += '<details><summary>Voir les exigences vérifiées</summary>' + _criteria_list(record, spec['obligations'], 'obligation') + '</details>'
+    if spec['eliminatory_errors']:
+        content += '<details><summary>Erreurs éliminatoires contrôlées</summary>' + _criteria_list(record, spec['eliminatory_errors'], 'eliminatory') + '</details>'
+    if record['measures']:
+        content += '<details><summary>Ce que le juge a observé</summary><p class="hint">Ces observations complètent le verdict ; elles ne forment pas une note globale.</p><ul>'
+        for measure in record['measures']:
+            content += '<li>' + text(measure['definition']['measure']) + ' : '
+            if measure['status'] == 'UNKNOWN':
+                content += 'non observée'
+            else:
+                content += readable_fields(measure['value']) + ('' if measure['unit'] in ('bool', 'boolean', 'booléen') else ' ' + text(measure['unit']))
+            content += '</li>'
+        content += '</ul></details>'
+    # Réserves
+    limits = list(dict.fromkeys(record['limits']))
+    if limits:
+        content += '<h3>Réserves à garder en tête</h3>' + listing(limits)
+    # Pièces
+    references = {piece['id'] for piece in record['qualification']['contract']['reference_pieces']}
+    content += '<details><summary>Pièces de l’exemple</summary><ul>'
+    for piece in record['proof_links']:
+        if piece['piece_id'] == output_id:
+            continue
+        role = 'Référence utilisée par le juge' if piece['piece_id'] in references else 'Pièce fournie au modèle'
+        content += '<li><span class="hint">' + role + '</span>'
+        if piece['piece_id'] in record.get('proof_contents', {}):
+            content += '<details class="proof-content" id="proof-' + text(eid + '-' + piece['piece_id']) + '"><summary>Lire la pièce complète : ' + text(piece['name']) + '</summary>'
+            content += '<div class="proof-text">' + text(record['proof_contents'][piece['piece_id']]) + '</div></details>'
+        else:
+            content += ' <a href="' + text(piece['href']) + '">' + text(piece['name']) + '</a>'
+        content += '</li>'
+    return content + '</ul></details></section>'
+
+
 def render_attempt_detail(value):
-    """Preuves d'une tentative, dernière évaluation en premier"""
-    content = '<nav aria-label="Retour"><a class="button" href="' + text(value['back_href']) + '">Revenir à la comparaison avec ses filtres</a> · '
-    content += '<a href="/preparation">Mes cas d’usage</a></nav><p class="lead">' + text(value['need']) + '</p>'
-    content += '<p>Consultation privée · version d’épreuve ' + text(value['task']['version']) + '.</p>'
-    content += '<details><summary>Identité de la campagne</summary><p>' + text(value['campaign_id']) + '</p></details>'
-    content += '<p>Les pièces exactes et leurs passages restent inertes. Les évaluations enregistrées restent consultables ; la dernière est affichée en premier.</p>'
-    content += render_evaluations(list(reversed(value['history'])), value['back_href'])
-    return content
+    """Page directe d’une tentative et fragment partagé avec la modale"""
+    content = '<nav aria-label="Retour"><a class="button" href="' + text(value['back_href']) + '">Revenir à la comparaison avec ses filtres</a>'
+    content += '</nav>'
+    content += '<p class="hint">Consultation privée · version d’épreuve ' + text(value['task']['version']) + '.</p>'
+    history = value['history']
+    content += '<div id="attempt-detail">' + render_result(history[-1])
+    for record in reversed(history[:-1]):
+        content += '<details><summary>Évaluation précédente, remplacée (' + text(date_lisible_utc(record['created_at'])) + ')</summary>'
+        content += render_result(record) + '</details>'
+    return content + '</div>'
 
 
 def render_campaign_records(campaigns, url):
@@ -702,9 +916,12 @@ def render_campaign_records(campaigns, url):
             content += '<p>Motif d’arrêt : ' + text(campaign['stop_reason']) + '.</p>'
         budget = campaign['budget']
         if budget:
-            content += '<p>' + text(f'Enveloppe {budget["budget_id"]} : {budget["limit"]} {budget["currency"]}. '
-                f'Sous-total des coûts connus : {budget["spent"]}. Réservations conservées : {budget["reserved"]}. '
-                f'Solde disponible : {budget["available"] if budget["balance_status"] == "KNOWN" else "INCONNU"}.') + '</p>'
+            content += '<p>' + text(
+                f'Sous-total des coûts connus : {budget["spent"]} {budget["currency"]}. '
+                f'Réservations conservées : {budget["reserved"]}.') + '</p>'
+            if not budget.get('provider_managed'):
+                content += '<p>' + text(f'Enveloppe {budget["budget_id"]} : {budget["limit"]} {budget["currency"]}. '
+                    f'Solde disponible : {budget["available"] if budget["balance_status"] == "KNOWN" else "INCONNU"}.') + '</p>'
         else:
             content += '<p>Budget prévu : INCONNU, enveloppe à désigner par l’opérateur.</p>'
         content += '<p>Prévisions de réserve par cellule : ' + text(

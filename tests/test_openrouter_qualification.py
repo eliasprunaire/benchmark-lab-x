@@ -178,16 +178,15 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.assertEqual(1, len(transport.calls))
         self.assertTrue(prep.view(self.store, self.session, 'dossier')['qualified'])
 
-    def test_qualification_quote_cannot_exceed_remaining_daily_cap(self):
+    def test_qualification_has_no_additional_daily_cap(self):
         transport = QualificationTransport({'qualified': True, 'findings': [], 'summary': 'OK'})
-        transport.quote = lambda: {**transport.configuration(), 'reserve_usd': '20'}
-        with self.assertRaisesRegex(prep.Denied, 'DAILY_CAP'):
-            prep.validate_and_qualify(
-                self.store, self.session, 'dossier',
-                prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']),
-                'b' * 40, transport)
-        self.assertEqual('0', self.store.inspect_budget('preparation')['reserved'])
-        self.assertFalse(any(row['phase'] == 'qualification' for row in self.store.inspect_operations()))
+        transport.quote = lambda: {**transport.configuration(), 'reserve_usd': '50'}
+        prep.validate_and_qualify(
+            self.store, self.session, 'dossier',
+            prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']),
+            'b' * 40, transport)
+        self.assertEqual('50', self.store.inspect_budget('preparation')['reserved'])
+        self.assertEqual([], transport.calls)
 
     def test_validation_reserves_then_executes_outside_request(self):
         result = {'qualified': True, 'findings': [{'kind': 'fiction', 'severity': 'note',

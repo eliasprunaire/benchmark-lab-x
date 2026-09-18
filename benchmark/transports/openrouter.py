@@ -406,6 +406,45 @@ class OpenRouterPreparation:
         self._key_sha256 = sha256(key.encode()).hexdigest()
         return wire
 
+    def retained_answer(self, operation, document, safe_headers):
+        expected_models = operation['requested_configuration']['model_identities']
+        authorized = providers(self._profile)
+        estimate = operation['requested_configuration'].get('reservation_estimate')
+        named_providers = ({row['provider_name'] for row in estimate['endpoints']}
+                           if type(estimate) is dict else set(authorized.values()))
+        self.validate_document(document)
+        route = document.get('openrouter_metadata')
+        if type(route) is dict:
+            if 'requested' in route and route['requested'] != self._profile['model']:
+                raise ValueError('Modèle demandé rapporté divergent')
+            attempted = route.get('attempts', [])
+            endpoints = route.get('endpoints', {})
+            selected = endpoints.get('available', []) if type(endpoints) is dict else []
+            rows = attempted if type(attempted) is list else []
+            if type(selected) is list:
+                rows = rows + [row for row in selected if type(row) is dict and row.get('selected') is True]
+            for row in rows:
+                if type(row) is dict and (('provider' in row and row['provider'] is not None and row['provider'] in named_providers and row['provider'] not in authorized.values())
+                        or ('model' in row and row['model'] is not None and row['model'] not in expected_models)
+                        or ('tag' in row and row['tag'] is not None and row['tag'] not in authorized)):
+                    raise ValueError('Fournisseur, endpoint ou modèle rapporté hors autorisation')
+        if safe_headers.get('X-Generation-Id') and document.get('id') and document['id'] != safe_headers['X-Generation-Id']:
+            raise ValueError('Identifiants de génération divergents')
+        choices = document['choices']
+        if type(choices) is not list or len(choices) != 1:
+            raise ValueError('Choix unique requis')
+        choice = choices[0]
+        message = choice['message']
+        if choice['finish_reason'] != 'stop' or message.get('tool_calls') or message.get('role') != 'assistant':
+            raise ValueError('Réponse incomplète ou appel outil')
+        result = json.loads(message['content'], object_pairs_hook=_unique_object)
+        encode(result)
+        if type(result) is dict and operation['phase'] != 'judgment':
+            result = {key: value for key, value in result.items() if value is not None or key in (
+                'stage', 'explanation', 'reformulation', 'fictional_parameters', 'package')}
+        result = self.validate_answer(result, message)
+        return result
+
     def __call__(self, operation, request, api_key=None):
         key = self._api_key if api_key is None else api_key
         validate_key(key)
@@ -418,11 +457,6 @@ class OpenRouterPreparation:
                 or sha256(wire.encode()).hexdigest() != self._wire_sha256 or key in wire
                 or sha256(key.encode()).hexdigest() != self._key_sha256):
             raise ValueError('Corps préparé divergent')
-        expected_models = operation['requested_configuration']['model_identities']
-        authorized = providers(self._profile)
-        estimate = operation['requested_configuration'].get('reservation_estimate')
-        named_providers = ({row['provider_name'] for row in estimate['endpoints']}
-                           if type(estimate) is dict else set(authorized.values()))
         status, safe_headers, raw, complete, started, clock = post(
             key, wire, timeout=self._profile['timeout_seconds'],
             max_response_bytes=self._profile['max_response_bytes'])
@@ -437,44 +471,19 @@ class OpenRouterPreparation:
             document = parsed
             if key in encode(document):
                 redacted = True
-            if status != 200 or not complete or redacted or document.get('model') not in expected_models:
+            if status != 200 or not complete or redacted or document.get('model') not in operation['requested_configuration']['model_identities']:
                 raise ValueError('Réponse non attribuable')
-            self.validate_document(document)
-            route = document.get('openrouter_metadata')
-            if type(route) is dict:
-                if 'requested' in route and route['requested'] != self._profile['model']:
-                    raise ValueError('Modèle demandé rapporté divergent')
-                attempted = route.get('attempts', [])
-                endpoints = route.get('endpoints', {})
-                selected = endpoints.get('available', []) if type(endpoints) is dict else []
-                rows = attempted if type(attempted) is list else []
-                if type(selected) is list:
-                    rows = rows + [row for row in selected if type(row) is dict and row.get('selected') is True]
-                for row in rows:
-                    if type(row) is dict and (('provider' in row and row['provider'] is not None and row['provider'] in named_providers and row['provider'] not in authorized.values())
-                            or ('model' in row and row['model'] is not None and row['model'] not in expected_models)
-                            or ('tag' in row and row['tag'] is not None and row['tag'] not in authorized)):
-                        raise ValueError('Fournisseur, endpoint ou modèle rapporté hors autorisation')
-            if safe_headers.get('X-Generation-Id') and document.get('id') and document['id'] != safe_headers['X-Generation-Id']:
-                raise ValueError('Identifiants de génération divergents')
-            choices = document['choices']
-            if type(choices) is not list or len(choices) != 1:
-                raise ValueError('Choix unique requis')
-            choice = choices[0]
-            message = choice['message']
-            if choice['finish_reason'] != 'stop' or message.get('tool_calls') or message.get('role') != 'assistant':
-                raise ValueError('Réponse incomplète ou appel outil')
-            result = json.loads(message['content'], object_pairs_hook=_unique_object)
-            encode(result)
+            # Check the decoded inner JSON before format validation can reject it
+            decoded = json.loads(document['choices'][0]['message']['content'], object_pairs_hook=_unique_object)
+            if key in encode(decoded):
+                redacted = True
+                raise ValueError('Réponse confidentielle')
+            result = self.retained_answer(operation, document, safe_headers)
             if key in encode(result):
                 redacted = True
                 raise ValueError('Réponse confidentielle')
-            if type(result) is dict and operation['phase'] != 'judgment':
-                result = {key: value for key, value in result.items() if value is not None or key in (
-                    'stage', 'explanation', 'reformulation', 'fictional_parameters', 'package')}
-            result = self.validate_answer(result, message)
             incident = None
-        except (ValueError, TypeError, KeyError, AttributeError):
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError):
             result = None
         if redacted:
             raw, document = b'[REDACTED_CREDENTIAL]', None
@@ -484,6 +493,7 @@ class OpenRouterPreparation:
         route = document.get('openrouter_metadata') if type(document) is dict else None
         selected = route.get('endpoints', {}).get('available', []) if type(route) is dict and type(route.get('endpoints')) is dict else []
         found = [row.get('provider') for row in selected if type(row) is dict and row.get('selected') is True] if type(selected) is list else []
+        authorized = providers(self._profile)
         provider = found[0] if len(found) == 1 and type(found[0]) is str and found[0] in authorized.values() else None
         sent_provider = json.loads(wire).get('provider')
         observed = {'outgoing': outgoing.wire_proof(wire, json.loads(wire)['messages']), 'model': model if type(model) is str else None, 'revision': None,

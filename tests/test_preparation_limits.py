@@ -163,20 +163,15 @@ class PreparationLimitTests(unittest.TestCase):
                          '\n\nContexte :\nÉquipe francophone', captured['message'])
         self.assertEqual(request, captured['request'])
 
-    def test_daily_cap_blocks_next_reservation_and_availability(self):
-        data, store, _, csrf, token = self.fixture(reserve='11')
-        start = datetime(2026, 9, 14, 8, tzinfo=timezone.utc)
-        with patch.object(prep, '_now', return_value=start):
-            operation = self.create(store, token, csrf, 'first', 'x' * 40)[3]
+    def test_daily_history_does_not_create_an_additional_financial_cap(self):
+        data, store, _, csrf, token = self.fixture(reserve='26')
+        operation = self.create(store, token, csrf, 'first', 'x' * 40)[3]
         self.receive(data, operation)
         _, csrf2, token2 = prep.session(store, None, create=True)
-        before = self.state(store)
-        with patch.object(prep, '_now', return_value=start + timedelta(minutes=1)):
-            self.assertEqual('daily_cap', prep.availability(store, True)['reason'])
-            with self.assertRaises(prep.Denied) as caught:
-                self.create(store, token2, csrf2, 'second', 'x' * 40)
-        self.assertEqual('DAILY_CAP', caught.exception.code)
-        self.assertEqual(before, self.state(store))
+        self.assertTrue(prep.availability(store, True)['can_submit'])
+        code, _, _, operation = self.create(store, token2, csrf2, 'second', 'x' * 40)
+        self.assertEqual(202, code)
+        self.receive(data, operation)
 
     def test_source_limit_is_independent_and_sliding(self):
         data, store, _, _, _ = self.fixture(reserve='0')

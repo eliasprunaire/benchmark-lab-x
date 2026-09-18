@@ -254,7 +254,7 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual([('script', {})], [(tag, attrs) for tag, attrs in markup.tags if tag == 'script'])
         self.assertFalse(any(k.startswith('on') for _, attrs in markup.tags for k in attrs))
         self.assertEqual(views.COMPARISON_FOCUS_SCRIPT.encode(), comparison_html.split(b'<script>')[1].split(b'</script>')[0])
-        self.assertEqual('UYVwhfSrYOHss9ut/0sNyZev/f+WGn1ovpct7BS3gkA=',
+        self.assertEqual('CCXvslT7aeBVUJkC26TP8/XafRTVx/P3Oqn9DHFTKsc=',
                          b64encode(sha256(views.COMPARISON_FOCUS_SCRIPT.encode()).digest()).decode())
         detail = next(link for link in markup.links if '/attempts/attempt-error' in link)
         code, value, _, _ = web_api.dispatch(self.store, 'GET', detail, self.token, None, 'a' * 40, False)
@@ -324,8 +324,11 @@ class S6Regressions(unittest.TestCase):
                     raw = result.read()
                     expected = policy
                     if path == self.base and accept == 'text/html':
-                        expected += "; script-src 'sha256-UYVwhfSrYOHss9ut/0sNyZev/f+WGn1ovpct7BS3gkA='"
+                        # Le script de la modale récupère la page directe : connect-src 'self' seulement ici
+                        expected += "; script-src 'sha256-CCXvslT7aeBVUJkC26TP8/XafRTVx/P3Oqn9DHFTKsc='; connect-src 'self'"
                         self.assertEqual(1, raw.count(b'<script>'))
+                        self.assertNotIn(b'innerHTML', raw)
+                        self.assertEqual(1, raw.count(b'<dialog '))
                         self.assertEqual(views.COMPARISON_FOCUS_SCRIPT.encode(), raw.split(b'<script>')[1].split(b'</script>')[0])
                     elif accept == 'text/html':
                         self.assertFalse(any(tag == 'script' for tag, _ in Markup(raw).tags))
@@ -338,7 +341,7 @@ class S6Regressions(unittest.TestCase):
 
     def test_invalid_filters_private_access_and_catalogue(self):
         for query in ('sort=cost&sort=duration', 'case=unknown', 'sort=O1', 'sort=unknown', 'direction=wrong',
-                      'configuration=foreign', 'obligation=O1:wrong', 'obligation=E1:PASS', 'winner=error', 'sort='):
+                      'configuration=foreign', 'obligation=O1:wrong', 'obligation=E1:PASS', 'winner=error', 'winner=', 'sort=&sort=cost'):
             with self.subTest(query=query), self.assertRaises(ValueError):
                 web_api.dispatch(self.store, 'GET', self.base + '?' + query, self.token, None, 'a' * 40, False)
         for did, cid in (('foreign', 'comparison'), ('fixture', 'foreign')):
@@ -353,6 +356,19 @@ class S6Regressions(unittest.TestCase):
         self.assertIs(view['catalogue_admission'], False)
         self.assertEqual({'comparison', 'empty'}, {v['campaign_id'] for v in view['tasks'][0]['versions'][0]['campaigns']})
         self.assertFalse((self.public / 'active.json').exists())
+
+    def test_combined_filter_form_and_empty_selections(self):
+        query = 'case=notes&sort=cost&direction=desc&verdict=NE+SATISFAIT+PAS&obligation=O1%3AFAIL&configuration=error'
+        code, value, cookie, start = web_api.dispatch(self.store, 'GET', self.base + '?' + query,
+                                                     self.token, None, 'a' * 40, None)
+        self.assertEqual((200, None, None), (code, cookie, start))
+        self.assertEqual(['error'], [row['configuration_id'] for row in value['rows']])
+        empty = 'case=&sort=&direction=&verdict=&obligation=&configuration='
+        _, cleared, _, _ = web_api.dispatch(self.store, 'GET', self.base + '?' + empty,
+                                             self.token, None, 'a' * 40, None)
+        self.assertEqual({}, cleared['filter_scope'])
+        self.assertEqual(self.compare()['rows'], cleared['rows'])
+        self.assertEqual(value['coverage'], cleared['coverage'])
 
     def test_projection_ciblee_identique_et_limitee_a_la_campagne_demandee(self):
         connection = c.connection_for(self.store)

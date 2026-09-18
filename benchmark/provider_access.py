@@ -393,7 +393,7 @@ def _key_details(raw):
     return document
 
 
-def _personal_amounts(document):
+def _bounded_key_amounts(document):
     limit, remaining = _money(document.get('limit')), _money(document.get('limit_remaining'))
     if (limit is None or remaining is None or Decimal(limit) > 50
             or not 0 < Decimal(remaining) <= Decimal(limit) or document.get('limit_reset') is not None):
@@ -419,7 +419,7 @@ def import_key(store, session_id, secret, key, transport=None):
             raise ValueError('Clé refusée')
         document = _key_details(raw)
         try:
-            limit, remaining = _personal_amounts(document)
+            limit, remaining = _bounded_key_amounts(document)
         except ValueError:
             raise Denied('ACCESS_CAP_REQUIRED') from None
     except Exception as error:
@@ -430,7 +430,7 @@ def import_key(store, session_id, secret, key, transport=None):
         raise Denied('ACCESS_KEY_REJECTED') from None
     budget_id = preparation_budget_id(session_id)
     if not connection.execute('SELECT 1 FROM budgets WHERE budget_id=?', (budget_id,)).fetchone():
-        store.create_budget(budget_id, '20', 'USD')
+        store.create_budget(budget_id, limit, 'USD')
     with _transaction(connection, write=True):
         _no_preparation_in_progress(connection, session_id)
         _event_result(connection, event_id, 'RECEIVED', _now(), status, raw, (key,))
@@ -461,20 +461,16 @@ def _verify(store, session_id, transport, key, now):
     state = 'RECEIVED'
     update = None
     invalid_reason = None
-    personal = connection.execute('SELECT 1 FROM budgets WHERE budget_id=?',
-                                  (preparation_budget_id(session_id),)).fetchone() is not None
     if status == 200:
         try:
             document = _key_details(raw)
             if type(document['is_free_tier']) is not bool:
                 raise ValueError('Statut de palier invalide')
-            amounts = (_personal_amounts(document) if personal else
-                       (_money(document.get('limit')), _money(document.get('limit_remaining'))))
+            amounts = _bounded_key_amounts(document)
             update = (*amounts, int(document['is_free_tier']))
         except (ValueError, KeyError, TypeError):
             state = 'FAILED'
-            if personal:
-                invalid_reason = 'ACCESS_CAP_REQUIRED'
+            invalid_reason = 'ACCESS_CAP_REQUIRED'
     with _transaction(connection, write=True):
         observed = _now()
         _event_result(connection, event_id, state, observed, status, raw, (key,))
@@ -553,6 +549,9 @@ def _row_view(row, reason=None):
              'limit_remaining_usd': row[4], 'is_free_tier': bool(row[5]), 'status': row[0]}
     if row[0] == 'invalid':
         value['reason'] = row[7]
+    if row[0] == 'connected' and (row[3] is None or row[4] is None
+            or not 0 < Decimal(row[4]) <= Decimal(row[3]) <= 50):
+        value.update(connected=False, status='invalid', reason='ACCESS_CAP_REQUIRED')
     return value
 
 

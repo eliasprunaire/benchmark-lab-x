@@ -10,9 +10,9 @@ from benchmark import VERSION
 from benchmark.preparation import binding
 from benchmark.storage import _strict_json as encode
 
-from .campaign_views import (CAP_SCRIPT, COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
+from .campaign_views import (COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
-                             render_comparison, render_configurations, campaign_followup)
+                             render_comparison, render_configurations, render_campaign_models, campaign_followup)
 from .fragments import date_lisible_utc, form, icon, listing, section, state_block, text
 from .projection import projection_body
 
@@ -90,16 +90,31 @@ def preparation_pending(value):
                  and 'operation_id' in qualification and qualification.get('status') == 'PENDING'))
 
 
+STEP_SCRIPT = """(() => {
+  const initial = document.querySelector('.steps [aria-current]');
+  function selectStep() {
+    const section = ['#besoin', '#exemple', '#validation'].includes(location.hash);
+    document.querySelectorAll('.steps a').forEach(link => {
+      const selected = section ? new URL(link.href).hash === location.hash : link === initial;
+      if (selected) link.setAttribute('aria-current', 'step');
+      else link.removeAttribute('aria-current');
+    });
+  }
+  window.addEventListener('hashchange', selectStep);
+  selectStep();
+})();"""
+
+
 def page_script(value):
     if value.get('kind') == 'campaign_launch' and value['campaign']['attempts']:
         active, ready, _ = campaign_followup(value['campaign'])
         return PREPARATION_PROGRESS_SCRIPT if active or ready else None
-    if value.get('kind') == 'campaign_launch' and 'checks' in value and not value['campaign']['attempts']:
-        return CAP_SCRIPT
     if preparation_pending(value):
         return PREPARATION_PROGRESS_SCRIPT
     if value.get('kind') == 'configurations' and value.get('personal_preparation'):
         return CUSTOM_MODELS_SCRIPT
+    if 'revision' in value:
+        return STEP_SCRIPT
     return COMPARISON_FOCUS_SCRIPT if value.get('kind') == 'comparison' else None
 
 
@@ -131,7 +146,7 @@ def render_task_index(task):
 
 def preparation_steps(value):
     kind = value.get('kind')
-    if kind not in ('configurations', 'campaign_launch', 'comparison') and 'revision' not in value:
+    if kind not in ('configurations', 'campaign_launch', 'comparison', 'campaign_models') and 'revision' not in value:
         return ''
     dossier = '/preparation/dossiers/' + (value.get('dossier_id') or value['task']['dossier_id'])
     campaign = value.get('campaign', {})
@@ -140,14 +155,14 @@ def preparation_steps(value):
     campaigns = [c for c in value.get('campaigns', []) if c['task']['revision'] == revision]
     if not campaign and campaigns:
         campaign = campaigns[-1]
-    base = value['href'] if kind == 'comparison' else dossier + '/campaigns/' + campaign['campaign_id'] if campaign else None
-    downstream = kind in ('configurations', 'campaign_launch', 'comparison')
+    base = value['href'] if kind in ('comparison', 'campaign_models') else dossier + '/campaigns/' + campaign['campaign_id'] if campaign else None
+    downstream = kind in ('configurations', 'campaign_launch', 'comparison', 'campaign_models')
     example = downstream or bool(value.get('package'))
     models = downstream or value.get('qualified') or bool(campaign)
-    results = kind == 'comparison' or bool(campaign.get('attempts'))
+    results = kind in ('comparison', 'campaign_models') or bool(campaign.get('attempts'))
     current = 5 if kind == 'comparison' or kind == 'campaign_launch' and results else 4 if models else 3 if value.get('validation') else 2 if example else 1
-    models_href = base + '/conditions' if base else dossier + '/configurations'
-    if not downstream and value.get('qualified') and revision == value.get('current_revision', revision):
+    models_href = base + ('/configurations' if results else '/conditions') if base else dossier + '/configurations'
+    if not downstream and not results and value.get('qualified') and revision == value.get('current_revision', revision):
         models_href = dossier + '/configurations'
     results_href = base
     if campaign.get('judgment') and campaign['judgment']['status'] != 'COMPLETE':
@@ -172,7 +187,7 @@ def personal_key_form(csrf, access):
     content = '<details class="corr personal-key"><summary class="button sec">Ajouter ma clé Openrouter</summary><div>'
     if connected:
         content += '<p>Plafond Openrouter : ' + text(access.get('limit_usd') or 'inconnu') + ' USD. Solde annoncé : ' + text(access.get('limit_remaining_usd') or 'inconnu') + ' USD.</p>'
-    content += form(csrf, '/preparation/access/key', {'assistance_cap': '20'},
+    content += form(csrf, '/preparation/access/key', {},
         '<label for="openrouter-key">Clé API Openrouter</label>'
         '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help key-storage">'
         '<p id="key-help">Utilisez une clé dédiée avec un plafond non renouvelable de 50 USD maximum.</p>'
@@ -255,6 +270,9 @@ def render(value, csrf, path='/preparation', *, error=False):
     elif value.get('kind') == 'configurations':
         title = 'Choisir les configurations'
         content = render_configurations(value, csrf)
+    elif value.get('kind') == 'campaign_models':
+        title = 'Modèles de cette comparaison'
+        content = render_campaign_models(value)
     elif value.get('kind') == 'campaign_launch' and 'checks' in value:
         title = 'Suivi de la comparaison' if value['campaign']['attempts'] else 'Vérifier puis lancer la comparaison'
         content = render_campaign_launch_requester(value, csrf)
@@ -273,7 +291,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             '<div class="tile"><h3>Exemple</h3><p>Une consigne et des pièces inventées vous sont proposées. Vous corrigez jusqu’à ce que l’exemple soit fidèle.</p></div>'
             '<div class="tile"><h3>Validation</h3><p>Vous confirmez le travail à tester. La qualification de l’exemple suit ; aucun candidat n’est lancé et rien n’est publié.</p></div>'
             '<div class="tile"><h3>Comparaison</h3><p>Chaque modèle passe l’épreuve dans les mêmes conditions. Vous lisez les verdicts, les preuves et les coûts.</p></div></div>')
-        content += section('Ce qui rend le résultat lisible', '<div class="rule">' + icon('i-scale') + '<span><strong>Le verdict ne fait pas de moyenne.</strong> '
+        content += section('Ce qui rend le résultat lisible', '<div class="rule">' + icon('i-scale') + '<span><strong>Chaque exigence compte.</strong> '
             'Une obligation non prouvée ou une erreur éliminatoire suffit à écarter une configuration, quel que soit le reste.</span></div>'
             '<ul><li>Le verdict porte sur la configuration observée sous des conditions communes, jamais sur le nom du modèle seul.</li>'
             '<li>Le coût est observé sur reçu, pas estimé. Un coût inconnu reste inconnu.</li>'
@@ -346,8 +364,10 @@ def render(value, csrf, path='/preparation', *, error=False):
         url = '/preparation/dossiers/' + dossier_id
         title = 'Est-ce le travail que vous voulez tester ?' if value['package'] else 'Précisons le résultat utile'
         prior_revision = revision != value.get('current_revision', revision)
+        snapshot = '/revisions/' in path and any(c['task']['revision'] == revision and c['attempts']
+                                                for c in value.get('campaigns', []))
         referral = value.get('checks', {}).get('out_of_scope')
-        editable = not prior_revision and value['stage'] != 'waiting' and not referral
+        editable = not prior_revision and not snapshot and value['stage'] != 'waiting' and not referral
         disabled = '' if can_submit and editable else ' disabled aria-describedby="availability"'
         current_campaigns = [c for c in value.get('campaigns', []) if c['task']['revision'] == revision]
         stages = {'draft': ('unk', 'Brouillon', 'Rien n’a encore été envoyé à l’assistant.'),
@@ -377,11 +397,17 @@ def render(value, csrf, path='/preparation', *, error=False):
             else:
                 tone, heading, next_step = 'wait', 'Qualification en cours', 'Votre validation est enregistrée. L’assistant vérifie la cohérence et les critères de l’exemple.'
         content = '<p class="tag">Cas d’usage inventé · révision ' + text(revision) + '</p>'
+        if snapshot:
+            title = 'Exemple utilisé pour la comparaison'
+            tone, heading, next_step = 'done', 'Exemple déjà testé', 'Vous consultez la version utilisée. Les résultats sont conservés.'
+            content += '<p class="notice">Consultation seule. Une modification de l’exemple crée une nouvelle version à valider.</p>'
         if prior_revision:
             content += '<p class="notice">Révision précédente en lecture seule. Pour modifier ou valider, ouvrez la révision courante.</p>'
         actions = ''
         if prior_revision:
             actions = f'<a class="button" href="{text(url)}">Revenir à la révision courante</a>'
+        elif snapshot:
+            actions = f'<a class="button sec" href="{text(url)}">Préparer une nouvelle comparaison</a>'
         if pending:
             title = heading
             actions = ('<div id="preparation-progress"><progress aria-label="' + text(heading) + '"></progress>'
@@ -534,7 +560,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                 'Aucun appel ni publication n’est autorisé par cet état. Les preuves, la référence '
                 'et les limites de jugement sont réservées à l’inspection locale du responsable.</p>')
             content += '</details>'
-        if value.get('qualified'):
+        if value.get('qualified') and not snapshot:
             content += '<p><a class="button' + (' sec' if current_campaigns or prior_revision else '') + '" href="' + text(
                 url + '/configurations') + '">Choisir les modèles</a></p>'
         if 'campaigns' in value:
@@ -549,8 +575,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             'interrupted': 'Appels fermés : préparation interrompue ou suspendue. Une intervention du responsable est nécessaire ; aucun rejeu automatique.',
             'restore': 'Appels fermés : restauration à vérifier par le responsable.',
             'unresolved': 'Appels fermés : effets ou coûts non résolus dans l’enveloppe de préparation.',
-            'budget': 'Appels fermés : enveloppe insuffisante pour un nouvel échange.',
-            'daily_cap': 'Appels fermés : plafond quotidien de préparation atteint.'}
+            'budget': 'Appels fermés : enveloppe insuffisante pour un nouvel échange.'}
         status = '<aside id="availability" class="availability" aria-label="État de la préparation"><p><strong>'
         if value.get('personal_preparation'):
             status += ('Préparation disponible' if can_submit else 'Préparation en attente') + '.</strong></p><p>'
@@ -563,6 +588,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         content = status + content
     if not error and value.get('kind') == 'campaign_launch' and value['campaign']['attempts'] and page_script(value):
         content += '<script>' + page_script(value) + '</script>'
+    if not error and page_script(value) == STEP_SCRIPT:
+        content += '<script>' + STEP_SCRIPT + '</script>'
     template = TEMPLATE_PATH.read_text()
     body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''
     version = 'v' + VERSION + ('+' + SOURCE_SHA[:7] if SOURCE_SHA else '')

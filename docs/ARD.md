@@ -24,7 +24,7 @@ Pi est la frontière des comparaisons candidates ; il ne choisit pas les modèle
 
 L’architecture est indépendante des modèles et de leurs versions commerciales. L’assistant de préparation est choisi au démarrage par un profil OpenRouter approuvé, désigné par un alias de compatibilité ou le chemin d’un fichier JSON local. Les identifiants disponibles et les alias pris en charge relèvent de la configuration et de la documentation opérateur. Le profil fige l’identifiant demandé, la révision unique de réponse autorisée, les paramètres envoyés, les routes, les capacités attendues, le message système et les limites de taille et de temps, sans dépasser les plafonds définis par cet adaptateur. Il est chargé une fois, recopié indépendamment du fichier ou de l’objet appelant, et son empreinte canonique est liée à la configuration demandée avec le relevé tarifaire et la réserve. Le chemin hôte du fichier n’entre pas dans la configuration, les messages ni les reçus. Une divergence de profil, d’empreinte, de modèle, de révision, de paramètres, de système, de route, de capacité, de relevé, de réserve ou de limite bloque avant l’émission HTTP. Aucun registre de plugins, fabrique générique ni base de profils n’est requis. Un relevé périodique des modèles disponibles auprès du canal, filtré par des règles tenues dans le dépôt, peut alimenter la sélection des configurations candidates ; il ne remplace ni l’admission ni la vérification d’hébergeur avant appel. Les profils des assistants restent OpenRouter ; le secours officiel candidat exige sa propre configuration. Fournir un fichier de profil ne sélectionne aucun nouvel assistant de production.
 
-Les appels engagés pour un demandeur peuvent être imputés à un accès fournisseur que ce demandeur autorise lui-même, par un mécanisme d’autorisation déléguée du fournisseur d’accès. Le mécanisme concret relève de la configuration et de la documentation opérateur ; l’architecture exige seulement que le secret obtenu soit reçu, conservé et utilisé par l’exécuteur seul, lié à la session du demandeur, révocable par lui, jamais transmis au serveur public, aux pages, aux journaux ni aux reçus publics. Un plafond de dépense par comparaison, distinct de la limite propre à cet accès, borne chaque campagne ainsi imputée. Cette imputation ne modifie ni la séparation des autorités de validation, de qualification et de lancement, ni les exigences de reçu et de preuve.
+Les appels engagés pour un demandeur peuvent être imputés à un accès fournisseur que ce demandeur autorise lui-même, par un mécanisme d’autorisation déléguée du fournisseur d’accès. Le mécanisme concret relève de la configuration et de la documentation opérateur ; l’architecture exige seulement que le secret obtenu soit reçu, conservé et utilisé par l’exécuteur seul, lié à la session du demandeur, révocable par lui, jamais transmis au serveur public, aux pages, aux journaux ni aux reçus publics. Le plafond non renouvelable de la clé OpenRouter est la seule limite financière du parcours financé par le demandeur. Préparation, correction, qualification, vérification des modèles, comparaison et jugement utilisent cette même clé, sans plafond local quotidien, par navigateur ou par campagne. Les estimations, réservations et coûts restent enregistrés pour le suivi, sans constituer une seconde limite. Cette imputation ne modifie ni la séparation des autorités de validation, de qualification et de lancement, ni les exigences de reçu et de preuve.
 
 ### 3.1 Identité de l'environnement d'exécution
 
@@ -64,7 +64,7 @@ Responsabilité : conserver tout ce qui borne l’attribution de la sortie :
 
 - fournisseur
 - modèle et révision exacte exigée par le contrat
-- accès API via OpenRouter pour les appels courants ; accès d’origine consigné dans les reçus déjà scellés
+- accès API via OpenRouter pour les appels courants ; accès d’origine conservé dans les preuves déjà enregistrées
 - route demandée et route observée
 - paramètres demandés et observés
 - effort de raisonnement demandé et observé
@@ -107,11 +107,11 @@ Responsabilité : appliquer les erreurs éliminatoires et obligations du contrat
 
 Une évaluation non concluante conserve son rapport et ses preuves comme travail à reprendre, sans verdict métier. Son état, ses causes et la prochaine action restent consultables. Les valeurs `INDETERMINE` déjà enregistrées restent inchangées dans leur reçu.
 
-L'évaluation s'applique à un cas et une tentative identifiés. Le verdict porte les éléments exigés par la règle « Verdict explicable » des [règles](RULES.md#6-erreurs-et-verdict) : valeur, motif court, critères ou constats concernés, références de preuve et responsable. L’évaluation référence la version de la méthode et de la référence de jugement ainsi que les preuves de leur qualification. Lorsqu’elle est assistée par un modèle, elle conserve sa configuration demandée et observée, les consignes, les pièces vues, les constats et la règle de décision versionnée ; ces éléments se distinguent de la configuration candidate et suivent les [règles de provenance](RULES.md#5-sortie-et-provenance). Dans le parcours public, le lancement autorisé enchaîne automatiquement les appels candidats, le jugement et la restitution privée. Les citations sont vérifiées avant le calcul du verdict ; aucune soumission opérateur n’est exigée. Chaque évaluation déjà enregistrée garde son contrat scellé. L’éventuelle revue professionnelle est une preuve attribuée à son auteur et à son périmètre, sans nouveau rôle produit obligatoire. Une mesure valide d’un critère secondaire peut décrire une sortie non admissible ; elle ne change pas le verdict ni ne compense une erreur éliminatoire. Un défaut de consigne, de données, de référence, de contrôle ou d’exécution ne devient pas artificiellement une erreur candidate.
+L'évaluation s'applique à un cas et une tentative identifiés. Le verdict porte les éléments exigés par la règle « Verdict explicable » des [règles](RULES.md#6-erreurs-et-verdict) : valeur, motif court, critères ou constats concernés, références de preuve et responsable. L’évaluation référence la version de la méthode et de la référence de jugement ainsi que les preuves de leur qualification. Lorsqu’elle est assistée par un modèle, elle conserve sa configuration demandée et observée, les consignes, les pièces vues, les constats et la règle de décision versionnée ; ces éléments se distinguent de la configuration candidate et suivent les [règles de provenance](RULES.md#5-sortie-et-provenance). Dans le parcours public, le lancement autorisé enchaîne automatiquement les appels candidats, le jugement et la restitution privée. Le juge fournit les identifiants de pièces et les passages exacts ; le serveur vérifie les citations et calcule leurs empreintes avant le verdict. Une empreinte recopiée incorrectement est corrigée dans le rapport dérivé et signalée côté serveur, sans bloquer les résultats dont les citations sont vérifiables. Le reçu brut reste inchangé. Aucune soumission opérateur n’est exigée. Chaque évaluation déjà enregistrée garde son contrat scellé. L’éventuelle revue professionnelle est une preuve attribuée à son auteur et à son périmètre, sans nouveau rôle produit obligatoire. Une mesure valide d’un critère secondaire peut décrire une sortie non admissible ; elle ne change pas le verdict ni ne compense une erreur éliminatoire. Un défaut de consigne, de données, de référence, de contrôle ou d’exécution ne devient pas artificiellement une erreur candidate.
 
 ### 4.6 Vue de décision
 
-Responsabilité : présenter les évaluations, les classements par critère, les filtres et la complétude de la comparaison des coûts, selon les [règles](RULES.md#7-ordre-de-décision). Chaque colonne ordonnable référence sa définition contractuelle et ses preuves ; les valeurs inconnues ou incompatibles sont sans rang, les égalités conservées. La vue expose le périmètre filtré sans modifier les sorties, reçus, verdicts ou populations des statistiques déjà calculées. Elle ne fusionne pas des couvertures incompatibles et ne désigne aucune option automatiquement. Le score pondéré personnalisé reste différé selon le PRD ; aucun moteur ni formule n’est ajouté à 0.1.0.
+Responsabilité : présenter les évaluations, les classements par critère, les filtres et la complétude de la comparaison des coûts, selon les [règles](RULES.md#7-ordre-de-décision). Chaque colonne ordonnable référence sa définition contractuelle et ses preuves ; les valeurs inconnues ou incompatibles sont sans rang, les égalités conservées. La vue expose le périmètre filtré sans modifier les sorties, reçus, verdicts ou populations des statistiques déjà calculées. Elle ne fusionne pas des couvertures incompatibles. Elle peut produire l’aide économique conditionnelle définie dans les règles, à partir des observations complètes avant filtrage, sans nouveau stockage ni appel modèle. Le score pondéré personnalisé reste différé selon le PRD ; aucun moteur ni formule n’est ajouté à 0.1.0.
 
 ### 4.7 Restitution
 
@@ -151,7 +151,7 @@ Chaque tâche, version, cas, campagne, contrat, conditions communes, configurati
 - la vue de décision aux seuls verdicts compatibles
 - la publication à la vue et aux preuves explicitement approuvées
 
-Un libellé public n'est pas une clé de jointure. La sortie brute et les preuves déjà scellées ne sont pas corrigées silencieusement.
+Un libellé public n'est pas une clé de jointure. La sortie brute et les preuves déjà enregistrées ne sont pas corrigées silencieusement.
 
 La conclusion refuse de combiner comme comparables les éléments suivants ; les observations conservées et leur couverture restent consultables :
 
@@ -166,7 +166,7 @@ Une mesure valide d’une configuration non admissible peut être classée sur s
 
 ## 7. Verdict, coût et bénéfices
 
-L’évaluation applique l’[ordre de décision](RULES.md#7-ordre-de-décision), puis la vue applique les [règles économiques](RULES.md#8-coût-et-bénéfices). La conclusion économique décrit le périmètre et la complétude de la comparaison des coûts, avec inconnues et incompatibilités, sans objet de recommandation « co-moins-chères ». Elle reste distincte du verdict : `INCOMPLETE` est un état économique distinct du verdict. Les versions de l’évaluateur, de sa méthode et du calcul de conclusion restent reliées aux preuves. Le coût ne compense aucune non-admissibilité, y compris dans la vision future du score personnalisé.
+L’évaluation applique l’[ordre de décision](RULES.md#7-ordre-de-décision), puis la vue applique les [règles économiques](RULES.md#8-coût-et-bénéfices). La conclusion économique décrit le périmètre et la complétude de la comparaison des coûts, avec inconnues et incompatibilités, sans objet persistant de recommandation ni agrégation implicite. L’aide économique privée reste une lecture conditionnelle des observations conforme aux règles. Elle reste distincte du verdict : `INCOMPLETE` est un état économique distinct du verdict. Les versions de l’évaluateur, de sa méthode et du calcul de conclusion restent reliées aux preuves. Le coût ne compense aucune non-admissibilité, y compris dans la vision future du score personnalisé.
 
 ## 8. Incidents et attribution
 
@@ -179,9 +179,16 @@ L’évaluation applique l’[ordre de décision](RULES.md#7-ordre-de-décision)
 
 Le verdict n'attribue pas au seul modèle un effet que le fournisseur, l'effort, Pi ou ses réglages peuvent influencer, et ne permet pas d'affirmer que le modèle isolé aurait produit la même sortie avec un autre harnais, fournisseur, contexte ou environnement.
 
-## 9. Historique Git
+## 9. Vues des évaluations enregistrées
 
-Les révisions retirées appartiennent à Git. Elles ne constituent ni une vue, ni un lecteur, ni une interface du produit courant.
+Les campagnes déjà enregistrées conservent leurs questions, panels, schémas et verdicts d'origine. Une vue de consultation peut les résumer fidèlement. Elle ne peut pas :
+
+- renoter une sortie et appeler cela le verdict d'origine
+- fabriquer des répétitions ou une stabilité
+- déduire un rang qualitatif des `FAIL G-001`
+- transformer un `PASS` de qualification du harnais en `PASS` produit
+- produire une baseline, un coût par résultat acceptable ou une recommandation absente
+- remplacer une inconnue par une estimation
 
 ## 10. Sécurité et autorité
 
@@ -222,7 +229,7 @@ Soumission d’une demande, consultation autorisée de son dossier et publicatio
 
 SQLite sur disque local conserve les métadonnées transactionnelles. Les pièces privées restent hors du dépôt et des répertoires de release. Les enregistrements lient les pièces par identité, emplacement contrôlé et empreinte. Une référence cassée ou une empreinte divergente empêche d’utiliser la pièce comme preuve.
 
-La version du schéma de stockage et les versions des contrats et formats déjà scellés sont distinctes. Le runtime vérifie leur compatibilité avant d’écrire ; une version inconnue ou une migration non autorisée bloque l’opération sans réinterpréter les preuves. Les contraintes de référence, l’unicité des tentatives et la réservation budgétaire doivent tenir aussi lorsque plusieurs opérations se présentent simultanément, sans imposer ici une politique de sérialisation.
+La version du schéma de stockage et les versions des contrats et formats compatibles sont distinctes. Le runtime vérifie leur compatibilité avant d’écrire ; une version inconnue ou une migration non autorisée bloque l’opération sans réinterpréter les preuves. Les contraintes de référence, l’unicité des tentatives et la réservation budgétaire doivent tenir aussi lorsque plusieurs opérations se présentent simultanément, sans imposer ici une politique de sérialisation.
 
 L’écriture d’une pièce et celle de sa référence doivent laisser un état détectable après interruption. Une pièce incomplète ne peut pas devenir une preuve valide. Initialisation, migration, sauvegarde et restauration couvrent ensemble SQLite, les pièces et leurs liens ; une sauvegarde réussie n’atteste pas une restauration réussie.
 
@@ -267,3 +274,7 @@ GitHub porte le produit et le backlog ; Forgejo pilote la livraison et le déplo
 Le provisionnement utilise les primitives Terraform, l’orchestrateur Bash et Ansible de Cybrel. L’exposition respecte la chaîne Consul, consul-template et HAProxy, notamment la déclaration initiale du backend avant son référencement dynamique. Une release produit ne relance pas implicitement le provisionnement.
 
 Graph Engineering Tool reste dans son dépôt indépendant pour l’exécution agentique des Stories. Il ne remplace ni le moteur des campagnes ni leurs autorisations. Son identité est épinglée dans chaque contrat de run ; aucun numéro de version de cet outil n’est fixé ici. La piste d’une VM macOS Graph est exclue.
+
+## 13. Historique Git
+
+Les révisions et décisions retirées ne décrivent pas le produit courant. Git est l’unique archive de ces états.

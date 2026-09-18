@@ -15,6 +15,7 @@ from .storage import ConflictError, IntegrityError, BudgetError, _fields, _money
 from .runtime import worker_lock, verify
 
 FORMAT = 'benchmark-lab-x/judgment/v1'
+EVIDENCE_BINDING = 'server-evidence/v1'
 REQUEST_FIELDS = ('operation_id', 'campaign_id', 'attempt_id', 'review_sha256',
                   'previous_evaluation_id', 'authority', 'budget_id', 'reserve_amount',
                   'requested_configuration')
@@ -63,7 +64,7 @@ def _envelope(store, connection, request, operation_id=None):
             or _money(request['reserve_amount']) != _money(config['reserve_usd'])):
         raise BudgetError('Réserve USD liée au profil requise')
     if (store._blocking_costs(operations, budget, 'judgment')
-            or _money(budget['available']) < 0
+            or not budget['provider_managed'] and _money(budget['available']) < 0
             or any(op['operation_id'] != operation_id and op['budget_id'] == request['budget_id']
                    and op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') for op in operations)):
         raise BudgetError('Effets ou coûts non résolus')
@@ -101,7 +102,8 @@ def _reserve(store, connection, request, transport, *, automatic=False):
     wire = transport.prepare(deepcopy(operation), dict(outgoing_format=outgoing.FORMAT, outgoing=content))
     saved = dict(request=request, admission_id=aid, context_sha256=value_digest(ctx), context=ctx, content=content)
     if automatic:
-        saved['engine_source_sha256'] = sha256(Path(auto.__file__).read_bytes() + Path(e.__file__).read_bytes()).hexdigest()
+        saved['engine_source_sha256'] = sha256(Path(auto.__file__).read_bytes() + Path(e.__file__).read_bytes()
+                                             + Path(__file__).read_bytes()).hexdigest()
     operation['resources'] = [encode(saved), wire]
     store._reserve_intent(connection, operation, request['budget_id'], request['reserve_amount'])
 
@@ -135,11 +137,7 @@ def _bound(store, connection, operation, *, latest=False):
     wire = json.loads(operation['resources'][1], object_pairs_hook=storage._unique_object)
     config = operation['requested_configuration']
     from .transports import openrouter as profiles
-    profile = dict(profile_id=config['profile_id'], model=config['model'], revision=config['revision'],
-        parameters=config['parameters'], routes=config['routes'], system=wire['messages'][0]['content'],
-        required_capabilities=[k for k in profiles.CAPABILITY_PARAMETERS if k in config['parameters']],
-        **{k: config[k] for k in ('max_request_bytes', 'max_response_bytes', 'timeout_seconds')},
-        **({k: config[k] for k in profiles.OPTIONAL_PROFILE_FIELDS if k in config}))
+    profile = _profile(config, wire['messages'][0]['content'])
     if profiles.configuration(config['reservation_estimate'], profile) != config:
         raise IntegrityError('Configuration de jugement divergente')
     if (set(wire) != {'model', 'messages', *config['parameters']}
@@ -152,6 +150,15 @@ def _bound(store, connection, operation, *, latest=False):
     return saved, ctx
 
 
+def _profile(config, instructions):
+    from .transports import openrouter as profiles
+    return dict(profile_id=config['profile_id'], model=config['model'], revision=config['revision'],
+        parameters=config['parameters'], routes=config['routes'], system=instructions,
+        required_capabilities=[k for k in profiles.CAPABILITY_PARAMETERS if k in config['parameters']],
+        **{k: config[k] for k in ('max_request_bytes', 'max_response_bytes', 'timeout_seconds')},
+        **{k: config[k] for k in profiles.OPTIONAL_PROFILE_FIELDS if k in config})
+
+
 def local_criteria(spec):
     if 'local_criterion_ids' in spec:
         return set(spec['local_criterion_ids'])
@@ -159,7 +166,7 @@ def local_criteria(spec):
             if _INFERRED_LOCAL_CRITERION.search(encode(x))}
 
 
-def _proposal(store, connection, operation, ctx, answer):
+def _proposal(store, connection, operation, ctx, answer, *, bind_evidence=False):
     _fields(answer, ('findings', 'measures', 'limits', 'proposed_verdict'), 'judgment proposal')
     if answer['proposed_verdict'] not in ('SATISFAIT', 'NE SATISFAIT PAS', 'INDETERMINE'):
         raise ValueError('Verdict proposé inconnu')
@@ -169,6 +176,21 @@ def _proposal(store, connection, operation, ctx, answer):
         limits=deepcopy(answer['limits']), judgment=dict(mode='human', instructions=instructions,
             resources_seen=list(resources), assistance_operation_id=None, model_links='INCONNU',
             disagreements=[], professional_review='ABSENTE'))
+    warnings = []
+    if bind_evidence:
+        for group in ('findings', 'measures'):
+            for index, item in enumerate(report[group]):
+                for position, proof in enumerate(item['evidence']):
+                    _fields(proof, ('piece_id', 'passage') + (('sha256',) if 'sha256' in proof else ()), 'citation')
+                    identifier(proof['piece_id'])
+                    raw = resources.get(proof['piece_id'])
+                    if raw is None:
+                        raise IntegrityError('Pièce de citation étrangère')
+                    fingerprint = sha256(raw).hexdigest()
+                    if 'sha256' in proof and proof['sha256'] != fingerprint:
+                        warnings.append(dict(code='JUDGMENT_EVIDENCE_METADATA_CORRECTED',
+                                             group=group, item=index, citation=position))
+                    proof['sha256'] = fingerprint
     # Validate model findings as data, before assigning server provenance
     e._report(store, connection, report, ctx, resources)
     spec = ctx['qualification']['contract']['specification']
@@ -180,7 +202,10 @@ def _proposal(store, connection, operation, ctx, answer):
     if local:
         report['limits'].append('Les contrôles sur les données opérationnelles exigent une vérification locale.')
     report['judgment'].update(mode='assisted', assistance_operation_id=operation['operation_id'])
-    return dict(report=report, proposed_verdict=answer['proposed_verdict'])
+    result = dict(report=report, proposed_verdict=answer['proposed_verdict'])
+    if bind_evidence:
+        result['evidence_binding'] = dict(version=EVIDENCE_BINDING, warnings=warnings)
+    return result
 
 
 def execute(data, operation_id, transport):
@@ -214,12 +239,15 @@ def execute(data, operation_id, transport):
             _fields(response, ('receipt', 'cost'), 'judgment response')
             receipt = response['receipt']
             try:
-                proposal = _proposal(store, connection, operation, ctx, receipt['result'])
+                proposal = _proposal(store, connection, operation, ctx, receipt['result'], bind_evidence=True)
             except (ValueError, KeyError, TypeError):
                 proposal = None
                 receipt['observed_configuration']['incident'] = 'UNUSABLE_JUDGMENT_PROPOSAL'
             receipt['result'] = proposal
             store.record_receipt(operation_id, receipt, response['cost'])
+            if proposal and proposal['evidence_binding']['warnings']:
+                logging.getLogger(__name__).warning('JUDGMENT_EVIDENCE_METADATA_CORRECTED operation=%s citations=%s',
+                    operation_id, len(proposal['evidence_binding']['warnings']))
             logging.getLogger(__name__).info('JUDGMENT_RECEIVED operation=%s usable=%s cost=%s',
                                             operation_id, proposal is not None, response['cost']['status'])
         except BaseException as error:
@@ -239,7 +267,10 @@ def inspect(store, operation_id):
                     ('INTENT_RECORDED', 'EMISSION_POSSIBLE', 'AMBIGUOUS', 'RECEIVED'))
         saved, ctx = _bound(store, connection, operation)
         request = saved['request']
-        proposal = _retained_proposal(store, connection, operation, ctx)
+        proposal = _retained_proposal(store, connection, operation, ctx, recover_metadata=True)
+        if proposal and proposal.get('evidence_binding', {}).get('recovered_from_receipt'):
+            logging.getLogger(__name__).warning('JUDGMENT_EVIDENCE_METADATA_RECOVERED operation=%s citations=%s',
+                operation_id, len(proposal['evidence_binding']['warnings']))
         return dict(operation=operation, binding={k: request[k] for k in
                     ('campaign_id', 'attempt_id', 'previous_evaluation_id', 'review_sha256')}, proposal=proposal,
                     diagnostic=diagnostic(store, connection, operation, ctx))
@@ -251,6 +282,11 @@ def diagnostic(store, connection, operation, ctx):
     if receipt is None:
         return dict(state='RECONCILIATION_REQUIRED' if operation['state'] != 'INTENT_RECORDED' else 'EXECUTION_REQUIRED',
                     reason='Jugement sans reçu ; vérifier les effets avant tout nouvel appel')
+    proposal = _retained_proposal(store, connection, operation, ctx, recover_metadata=True)
+    if proposal and proposal.get('evidence_binding', {}).get('recovered_from_receipt'):
+        return dict(state='EVALUATED_METADATA_CORRECTED',
+            reason='Citations vérifiées ; empreintes calculées côté serveur, reçu initial conservé',
+            evidence_binding=proposal['evidence_binding'])
     if receipt['result'] is not None:
         from .automatic_judgment import FORMAT as automatic_format
         if operation['engine_version'] == automatic_format:
@@ -272,7 +308,7 @@ def diagnostic(store, connection, operation, ctx):
         _proposal(store, connection, operation, ctx, answer)
     except IntegrityError:
         return dict(state='EVIDENCE_REVIEW_REQUIRED', reason='Identifiant, empreinte ou passage de preuve divergent ; relire la même sortie et corriger explicitement le jugement')
-    except (ValueError, KeyError, TypeError, IndexError):
+    except (ValueError, KeyError, TypeError, IndexError, AttributeError):
         return dict(state='JUDGE_FORMAT_REVIEW_REQUIRED', reason='Structure ou critères de la proposition invalides ; corriger le jugement sur la même sortie')
     return dict(state='JUDGE_EXECUTION_REQUIRED', reason='Incident de provenance du juge ; rapprocher les observations conservées')
 
@@ -280,19 +316,21 @@ def diagnostic(store, connection, operation, ctx):
 def evaluation_judgment(store, connection, value, ctx, operation, result):
     saved, _ = _bound(store, connection, operation)
     e._validate_context(saved['context'], ctx)
-    if (operation['receipt'] is None
-            or operation['receipt']['result'] is None):
+    proposal = _retained_proposal(store, connection, operation, ctx, recover_metadata=True)
+    if proposal is None:
         raise IntegrityError('Proposition reçue et observation liée requises')
-    expected = operation['receipt']['result']['report']['judgment']
+    expected = proposal['report']['judgment']
     for key in ('mode', 'instructions', 'resources_seen', 'assistance_operation_id', 'model_links'):
         if value[key] != expected[key]:
             raise IntegrityError('Provenance assistée divergente')
     result.update(operation=operation, requested_configuration=operation['requested_configuration'],
                   observed_configuration=operation['receipt']['observed_configuration'], cost=operation['observed_cost'])
+    if 'evidence_binding' in proposal:
+        result['evidence_binding'] = proposal['evidence_binding']
     return result
 
 
-def _retained_proposal(store, connection, operation, ctx):
+def _retained_proposal(store, connection, operation, ctx, *, recover_metadata=False):
     receipt = operation['receipt']
     if receipt is None:
         return None
@@ -305,6 +343,27 @@ def _retained_proposal(store, connection, operation, ctx):
     if sha256(raw).hexdigest() != observed['http']['body_sha256']:
         raise IntegrityError('Octets de réponse divergents')
     proposal = receipt['result']
+    if proposal is None and recover_metadata:
+        from .automatic_judgment import FORMAT as automatic_format
+        if (operation['engine_version'] == automatic_format
+                and observed['incident'] == 'UNUSABLE_JUDGMENT_PROPOSAL'
+                and observed['http']['complete'] and observed['http']['status'] == 200
+                and not observed['http'].get('credential_redacted')):
+            try:
+                from .transports.openrouter import OpenRouterJudgment
+                document = json.loads(raw, object_pairs_hook=storage._unique_object)
+                if document['model'] not in operation['requested_configuration']['model_identities']:
+                    return None
+                profile = _profile(operation['requested_configuration'], json.loads(wire)['messages'][0]['content'])
+                reader = OpenRouterJudgment(None, profile)
+                answer = reader.retained_answer(operation, document, observed['http']['response_headers'])
+                repaired = _proposal(store, connection, operation, ctx, answer, bind_evidence=True)
+                if repaired['evidence_binding']['warnings']:
+                    repaired['evidence_binding'].update(recovered_from_receipt=True,
+                        source_receipt_id=receipt['receipt_id'], normalizer_sha256=sha256(Path(__file__).read_bytes()).hexdigest())
+                    return repaired
+            except (ValueError, KeyError, TypeError, IndexError, AttributeError):
+                return None
     if proposal is not None:
         document = json.loads(raw, object_pairs_hook=storage._unique_object)
         message = document['choices'][0]['message']
@@ -315,7 +374,8 @@ def _retained_proposal(store, connection, operation, ctx):
                 or observed['http']['status'] != 200
                 or document['model'] not in operation['requested_configuration']['model_identities']
                 or document['choices'][0]['finish_reason'] != 'stop' or message.get('tool_calls')
-                or proposal != _proposal(store, connection, operation, ctx, answer)):
+                or proposal != _proposal(store, connection, operation, ctx, answer,
+                                         bind_evidence='evidence_binding' in proposal)):
             raise IntegrityError('Proposition divergente de la réponse conservée')
     return proposal
 

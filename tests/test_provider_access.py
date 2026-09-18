@@ -171,11 +171,27 @@ class ProviderAccessTests(unittest.TestCase):
         self.assertTrue(value['connected'])
         self.assertEqual(KEY, provider_access.key_for_session(self.store, self.session, SECRET, self.transport))
         budget_id = provider_access.preparation_budget_id(self.session)
-        self.assertEqual('20', self.store.inspect_budget(budget_id)['limit'])
+        self.assertEqual('50', self.store.inspect_budget(budget_id)['limit'])
         provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
-        self.assertEqual('20', self.store.inspect_budget(budget_id)['limit'])
+        self.assertEqual('50', self.store.inspect_budget(budget_id)['limit'])
         self.assertNotIn(KEY, json.dumps(value))
         self.assertNotIn(KEY, '\n'.join(self.store._connection.iterdump()))
+
+    def test_personal_ledger_preserves_old_amount_without_enforcing_a_second_cap(self):
+        budget_id = provider_access.preparation_budget_id(self.session)
+        self.store.create_budget(budget_id, '20', 'USD')
+        provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
+        original = self.store.inspect_operations()[0]
+        operation = {key: original[key] for key in storage._OPERATION_KEYS}
+        operation['operation_id'] = 'personal-over-old-cap'
+        self.store.reserve_intent(operation, budget_id, '25')
+        budget = self.store.inspect_budget(budget_id)
+        self.assertTrue(budget['provider_managed'])
+        self.assertEqual(('20', '25'), (budget['limit'], budget['reserved']))
+        self.assertIsNone(budget['available'])
+        self.store.create_budget('operator-test', '20', 'USD')
+        with self.assertRaises(storage.BudgetError):
+            self.store.reserve_intent({**operation, 'operation_id': 'operator-over-cap'}, 'operator-test', '25')
 
     def test_personal_key_expires_at_thirty_days_and_cannot_be_revived(self):
         started = datetime(2026, 9, 17, 12, tzinfo=timezone.utc)
@@ -189,6 +205,18 @@ class ProviderAccessTests(unittest.TestCase):
                                                self.transport, now=started + timedelta(days=days))
         self.assertEqual([], self.transport.verifications)
         self.assertEqual(budget, self.store.inspect_budget(provider_access.preparation_budget_id(self.session)))
+
+    def test_provider_exhaustion_or_revocation_blocks_personal_access(self):
+        for status, remaining in ((200, 0), (401, 20)):
+            with self.subTest(status=status):
+                self.transport.verify_result = (200, json.dumps({'data': {
+                    'limit': 50, 'limit_remaining': 20, 'is_free_tier': False}}).encode())
+                provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
+                self.transport.verify_result = (status, json.dumps({'data': {
+                    'limit': 50, 'limit_remaining': remaining, 'is_free_tier': False}}).encode())
+                with self.assertRaises(preparation.Denied):
+                    provider_access.key_for_session(self.store, self.session, SECRET,
+                        self.transport, now=provider_access._now() + timedelta(hours=1))
 
     def test_successful_verification_renews_personal_access(self):
         started = datetime(2026, 9, 17, 12, tzinfo=timezone.utc)
@@ -213,7 +241,7 @@ class ProviderAccessTests(unittest.TestCase):
         self.transport.verifications.clear()
         with self.assertRaises(preparation.Denied):
             web_api.dispatch(self.store, 'POST', '/preparation/access/key', token,
-                {'csrf_token': 'wrong', 'key': KEY, 'assistance_cap': '20'}, 'a' * 40, None,
+                {'csrf_token': 'wrong', 'key': KEY}, 'a' * 40, None,
                 access_secret=SECRET, access_transport=self.transport, personal_preparation=True)
         self.assertEqual([], self.transport.verifications)
         with self.assertRaises(preparation.Denied):
@@ -228,11 +256,22 @@ class ProviderAccessTests(unittest.TestCase):
         with self.assertRaises(preparation.Denied):
             provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
 
+    def test_oauth_without_personal_ledger_also_requires_provider_cap(self):
+        self.assertIsNone(self.store._connection.execute('SELECT 1 FROM budgets WHERE budget_id=?',
+            (provider_access.preparation_budget_id(self.session),)).fetchone())
+        for changes in ({'limit': None}, {'limit_reset': 'daily'}, {'limit_remaining': 0}):
+            with self.subTest(changes=changes):
+                self.transport.verify_result = (200, json.dumps({'data': {
+                    'limit': 50, 'limit_remaining': 20, 'is_free_tier': False, **changes}}).encode())
+                self.connect()
+                with self.assertRaises(preparation.Denied):
+                    provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
+
     def test_manual_form_and_route_return_only_safe_state(self):
         from benchmark_web.views import render
         _, csrf, token = preparation.session(self.store, None, create=True)
         code, value, _, start = web_api.dispatch(self.store, 'POST', '/preparation/access/key', token,
-            {'csrf_token': csrf, 'key': KEY, 'assistance_cap': '20'}, 'a' * 40, None,
+            {'csrf_token': csrf, 'key': KEY}, 'a' * 40, None,
             access_secret=SECRET, access_transport=self.transport, personal_preparation=True)
         self.assertEqual(200, code)
         self.assertIsNone(start)
