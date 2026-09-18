@@ -212,8 +212,11 @@ class S10ProofTests(unittest.TestCase):
         self.assertEqual([row['detail_href']] * 2,
                          [attrs['href'] for tag, attrs in parsed.tags if tag == 'a' and 'data-result' in attrs])
         self.assertLess(page.index('coût est votre priorité'), page.index('id="filters"'))
-        self.assertIn('<strong>' + row['requested_configuration']['model'] + ' · ' + campaign_views.effort_label(row['requested_configuration'])
-                      + '</strong> est la configuration conforme la moins coûteuse sur cet exemple (0,00113885 USD, parmi 2 réponses conformes).', page)
+        self.assertIn('<h2 id="economic-choice-title">Si le coût est votre priorité</h2>', page)
+        self.assertIn('<p class="choice-model">' + row['requested_configuration']['model'] + '</p>', page)
+        self.assertIn(campaign_views.effort_label(row['requested_configuration']), page)
+        self.assertIn('La moins coûteuse parmi 2 réponses conformes sur cet exemple.', page)
+        self.assertIn('<strong>0,00113885 USD</strong>', page)
         self.assertIn('>Détails et réserves</a>', page)
         for word in ('recommand', 'meilleur', 'innerHTML', 'gagnant'):
             self.assertNotIn(word, page.lower())
@@ -232,6 +235,19 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn(escape(self.output[:200].strip(), quote=True) + '…', fragment)
         self.assertLess(fragment.index('Début de la réponse'), fragment.index('Lire la réponse complète'))
         self.assertIn('id="evaluation-' + detail['history'][-1]['evaluation_id'] + '"', fragment)
+
+    def test_results_filters_stay_with_the_table(self):
+        for query in ({}, {'verdict': 'SATISFAIT'}, {'verdict': 'NE SATISFAIT PAS'}):
+            value = r.comparison(self.store, self.sid, 'fixture', 'proof', query=query)
+            page = views.render(value, '').decode()
+            self.assertEqual(1, page.count('<h2>Comparaison des modèles</h2>'))
+            self.assertLess(page.index('<h2>Comparaison des modèles</h2>'), page.index('id="filters"'))
+            self.assertLess(page.index('id="filters"'), page.index('Résultats affichés :'))
+            if value['rows']:
+                self.assertLess(page.index('Résultats affichés :'), page.index('<table>'))
+                self.assertNotIn('<h2>', page[page.index('id="filters"'):page.index('<table>')])
+            else:
+                self.assertIn('Aucune ligne ne correspond aux filtres', page)
 
     def test_summary_keeps_full_population_and_readable_fields_without_changing_evidence(self):
         value = r.comparison(self.store, self.sid, 'fixture', 'comparison')

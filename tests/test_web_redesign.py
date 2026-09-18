@@ -450,7 +450,9 @@ input.valid = false; events.input(); assert.equal(button.disabled, true);
             with closing(store):
                 page = views.render(r.comparison(store, sid, 'fixture', 'comparison'), '').decode()
         options = dict(re.findall(r'<option value="([^"]+)"(?: selected)?>(Cas [0-9]+)</option>', page))
-        titles = set(re.findall(r'<h2>(Cas [0-9]+)</h2>', page))
+        titles = set(re.findall(r'<h3>(Cas [0-9]+)</h3>', page))
+        self.assertEqual(1, page.count('<h2>Comparaison des modèles</h2>'))
+        self.assertLess(page.index('<h2>Comparaison des modèles</h2>'), page.index('id="filters"'))
         self.assertEqual({'notes': 'Cas 1', 'distinct': 'Cas 2'}, options)
         self.assertEqual(set(options.values()), titles)
 
