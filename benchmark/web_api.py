@@ -19,6 +19,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
                      'dossiers': [{'dossier_id': d, 'revision': r,
                                    'need': store.get_dossier(d, r)['request']} for d, r in rows]}, token, None
     session_id, csrf, _ = p.session(store, token)
+    campaign_reference = None
     access_paths = ('/preparation/access', '/preparation/access/start',
                     '/preparation/access/callback', '/preparation/access/disconnect', '/preparation/access/key')
     if method == 'GET' and path == '/preparation/access':
@@ -44,19 +45,28 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
             return 200, value, None, None
         comparison_route = re.fullmatch(
             r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/campaigns/([A-Za-z0-9_-]{1,128})'
-            r'(?:/attempts/([A-Za-z0-9_-]{1,128}))?', parsed.path)
+            r'(?:/attempts/([A-Za-z0-9_-]{1,128})|/(configurations))?', parsed.path)
         if comparison_route:
             if parsed.scheme or parsed.netloc or parsed.fragment:
                 raise ValueError('Chemin local requis')
-            dossier_id, campaign_id, attempt_id = comparison_route.groups()
+            dossier_id, campaign_id, attempt_id, models = comparison_route.groups()
             query = restitution.query_parameters(parsed.query)
             if attempt_id is None:
                 value = restitution.comparison(store, session_id, dossier_id, campaign_id, query=query)
             else:
                 value = restitution.detail(store, session_id, dossier_id, campaign_id, attempt_id, query=query)
+            if models:
+                value['kind'] = 'campaign_models'
             return 200, value, None, None
         if path == '/preparation/catalogue':
             return 200, restitution.catalogue(store, session_id), None, None
+        if parsed.query and re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/revisions/[1-9][0-9]*', parsed.path):
+            pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True, errors='strict')
+            if (parsed.scheme or parsed.netloc or parsed.fragment or len(pairs) != 1
+                    or pairs[0][0] != 'campaign' or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', pairs[0][1])):
+                raise ValueError('Référence de campagne invalide')
+            campaign_reference = pairs[0][1]
+            path = parsed.path
     if method == 'POST':
         if type(body) is not dict:
             raise ValueError('Formulaire requis')
@@ -209,6 +219,12 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         if piece_id:
             return 200, p.piece_bytes(store, session_id, dossier_id, revision, piece_id), None, None
         result = p.view(store, session_id, dossier_id, revision, include_history=True)
+        if campaign_reference:
+            result['campaigns'] = [campaign for campaign in result.get('campaigns', [])
+                                   if campaign['campaign_id'] == campaign_reference and campaign['task']['revision'] == revision]
+            if not result['campaigns']:
+                raise p.Denied('Campagne inaccessible pour cette révision')
+            result['dossier_href'] = path + '?campaign=' + campaign_reference
         result['availability'] = p.availability(store, transport)
         # The CSRF token travels independently in HTML rendering through the web's session query
         return 200, result, None, None

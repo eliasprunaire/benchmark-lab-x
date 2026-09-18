@@ -28,7 +28,7 @@ def query_parameters(raw):
     pairs = parse_qsl(raw, keep_blank_values=True, strict_parsing=True, errors='strict')
     if len(dict(pairs)) != len(pairs) or any(k not in FILTERS for k, _ in pairs):
         raise ValueError('Paramètre inconnu ou répété')
-    return dict(pairs)
+    return {key: value for key, value in pairs if value}
 
 
 def _orderable(definition):
@@ -214,7 +214,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 campaign_state=campaign['state'], history=records, href=base, pending_attempts=pending,
                 acquisition_dates=[a['received_at'] for a in campaign['attempts'] if a['received_at']],
                 stop_reason=campaign['stop_reason'],
-                dossier_href=f'/preparation/dossiers/{dossier_id}/revisions/{contract["revision"]}')
+                dossier_href=f'/preparation/dossiers/{dossier_id}/revisions/{contract["revision"]}?campaign={campaign_id}')
 
 
 def comparison(store, session_id, dossier_id, campaign_id, *, query=None):
