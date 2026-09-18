@@ -253,7 +253,7 @@ Un journal minimal de révocation hors des sauvegardes applicatives précède ch
 
 La migration explicite arme une barrière persistante de démarrage avant quiescence. Après sauvegarde et restauration isolée vérifiée, les services restent arrêtés et le contrôleur conserve son exclusion pendant que le candidat acquiert ses propres verrous de migration. L’identité est enregistrée dans la transaction `s7`. Après commit, seul un programme compatible peut reprendre ; aucun rollback automatique de données n’est permis. Le programme compatible est activé durablement avant levée de la barrière. Un déploiement ordinaire ne migre jamais implicitement.
 
-Un traitement planifié natif exécute purges et expiration des sauvegardes sans visite du site. La rétention applicative, les copies de travail, snapshots et sauvegardes VM/PBS doivent être inventoriés et vérifiés avant de promettre la durée publique. Une demande de suppression ou une attestation non étayée ne prouve pas l’effacement.
+Un traitement planifié natif exécute purges et expiration des sauvegardes sans visite du site. La rétention applicative, les copies de travail, snapshots et sauvegardes VM/PBS doivent être inventoriés et vérifiés avant de promettre la durée publique. Les snapshots de VM sont bornés à sept jours par âge réel ; le délai résiduel restaurable, garbage collection compris, est borné à onze jours après suppression active. Cette borne ne certifie pas un effacement physique du support. Une demande de suppression ou une attestation non étayée ne prouve pas l’effacement.
 
 ### 12.3 Interfaces et cycle de vie
 

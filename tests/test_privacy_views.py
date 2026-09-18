@@ -36,9 +36,11 @@ class PrivacyViewsTests(unittest.TestCase):
         self.assertIn('src="/preparation/privacy.js"', page)
         self.assertNotIn('data-privacy-activity', page)
         notice = views.render({'kind': 'privacy_notice'}, '').decode()
-        for term in ('Cybrel', 'RSSI', 'contact@cybrel.fr', '7 jours', '30 jours', '6 mois', 'fournisseurs'):
+        for term in ('Cybrel', 'RSSI', 'contact@cybrel.fr', '7 jours', '30 jours', '6 mois',
+                     '11 jours', 'fournisseurs'):
             self.assertIn(term, notice)
         self.assertNotIn('data-privacy-activity', notice)
+        self.assertNotIn('copies chiffrées', notice)
         inactive = views.render({'kind': 'privacy_notice', 'privacy_enabled': False}, '').decode()
         self.assertIn('n’est pas encore activée', inactive)
         self.assertNotIn('supprimés du serveur après 7 jours', inactive)
@@ -101,6 +103,9 @@ class PrivacyViewsTests(unittest.TestCase):
         self.assertIn('7 jours d’inactivité', controls)
         notice = views.render({'kind': 'privacy_notice'}, '').decode()
         self.assertIn('7 jours d’inactivité', notice)
+        self.assertIn('11 jours après leur suppression du service actif', notice)
+        self.assertIn('ne sont pas remises en service', notice)
+        self.assertNotIn('effacement physique', notice)
         self.assertIn('Openrouter', notice)
         self.assertNotIn('OpenRouter', notice)
 
