@@ -171,8 +171,8 @@ class ConfigurationsTests(unittest.TestCase):
         amounts = [Decimal(item['estimate']['amount_usd'])
                    for item in second['configurations']]
         self.assertEqual(str(sum(amounts)), second['estimate_total_usd'])
-        self.assertEqual('50.00', second['cap_usd'])
-        self.assertTrue(second['estimate_under_cap'])
+        self.assertNotIn('cap_usd', second)
+        self.assertTrue(second['estimate_available'])
         self.assertEqual('fixture-c1', first['current_campaign_id'])
         snapshot = campaigns.inspect(self.store, second['current_campaign_id'])
         defaults = snapshot['manifest']['conditions']['defaults']

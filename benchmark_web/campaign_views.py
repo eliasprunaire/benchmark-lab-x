@@ -532,33 +532,11 @@ def render_configurations(value, csrf):
         summary += '<p>Estimation totale : ' + text(
             'non estimable' if value['estimate_total_usd'] is None else
             montant_lisible(value['estimate_total_usd']) + ' USD') + '.</p>'
-        summary += '<p>Plafond : ' + text(montant_lisible(value['cap_usd'])) + ' USD.</p>'
         summary += '<p><a class="button" href="' + text(
             dossier_url + '/campaigns/' + value['current_campaign_id'] +
             '/conditions') + '">Voir le récapitulatif</a></p>'
         content += section('Sélection courante', summary)
     return content
-
-
-CAP_SCRIPT = r"""(() => {
-  const input = document.getElementById('cap_usd');
-  const button = input.form.querySelector('button[type="submit"]');
-  function update() {
-    const decimal = /^[0-9]+(?:\.[0-9]{1,2})?$/.test(input.value);
-    const amount = Number(input.value);
-    input.setCustomValidity(decimal && amount >= 0.10 && amount <= 100 ? '' :
-      'Saisissez un montant de 0,10 à 100 USD, avec au plus deux décimales.');
-    button.disabled = !input.checkValidity() || amount === Number(input.defaultValue);
-    button.className = button.disabled ? 'sec' : '';
-  }
-  input.addEventListener('input', update);
-  input.addEventListener('change', update);
-  input.form.addEventListener('submit', event => {
-    update();
-    if (button.disabled) event.preventDefault();
-  });
-  update();
-})();"""
 
 
 def campaign_followup(campaign):
@@ -626,12 +604,11 @@ def render_campaign_followup(value, csrf):
             '<button type="submit">Évaluer les réponses conservées</button>')
     if not active and (ready or not judgment or judgment['completed'] > 0):
         content += '<p><a class="button' + ('' if all_received else ' sec') + '" href="' + text(base) + '">Comparer les résultats et lire les preuves</a></p>'
-    content += '<p>L’arrêt intervient après le paiement de l’appel en cours. La dépense peut donc dépasser le plafond du montant du dernier appel.</p>'
     return content + '</div>'
 
 
 def render_campaign_launch_requester(value, csrf):
-    """Contrôles, plafond et suivi présentés au demandeur qui lance lui-même"""
+    """Contrôles et suivi présentés au demandeur qui lance lui-même"""
     campaign = value['campaign']
     if campaign['attempts']:
         return render_campaign_followup(value, csrf)
@@ -643,14 +620,14 @@ def render_campaign_launch_requester(value, csrf):
         '<p>Chaque modèle reçoit la même consigne et les mêmes pièces. Le verdict reste limité à cet exemple et aux configurations observées.</p>' +
         '<details><summary>Critères et conditions exactes</summary>' + readable_fields(
             {'criteria': value['criteria'], 'conditions': campaign['conditions'], 'panel': campaign['panel']}) + '</details>')
-    content += '<p>Les appels candidats sont financés par votre accès Openrouter. Estimation, plafond et coût observé sont distincts ; le plafond ne garantit pas une limite absolue de facturation.</p>'
+    content += '<p>Tous les appels utilisent votre clé Openrouter et son plafond unique. Les estimations ne sont pas des dépenses facturées.</p>'
     check_content = '<ul>'
     for check in value['checks']:
         detail = check['detail']
         if type(detail) is dict:
             detail = ('Crédit restant : ' + str(detail.get('limit_remaining_usd')
                       if detail.get('limit_remaining_usd') is not None else 'INCONNU') +
-                      ' USD ; limite du compte : ' + str(detail.get('limit_usd')
+                      ' USD ; plafond de la clé : ' + str(detail.get('limit_usd')
                       if detail.get('limit_usd') is not None else 'INCONNU') + ' USD')
         check_content += '<li>' + text(('✓ ' if check['ok'] else '✕ ') + str(detail))
         if check['key'] == 'example_qualified' and check.get('findings'):
@@ -661,18 +638,9 @@ def render_campaign_launch_requester(value, csrf):
     content += section('Contrôles avant lancement', check_content)
     if value.get('judgment_estimate_usd') is not None:
         content += '<p>Évaluation estimée : ' + text(montant_lisible(value['judgment_estimate_usd'])) + ' USD, financée par votre clé personnelle.</p>'
-    content += '<p>Plafond actuel : ' + text(montant_lisible(value['cap_usd'])) + ' USD.</p>'
-    content += ('<p>L’arrêt intervient après le paiement de l’appel en cours. '
-                'La dépense peut donc dépasser le plafond du montant du dernier appel.</p>')
-    if not campaign['attempts']:
-        content += section('Modifier le plafond',
-            '<form method="post" action="' + text(base + '/cap') + '">' + hidden('csrf_token', csrf) +
-            '<label for="cap_usd">Plafond en USD, de 0,10 à 100</label>' +
-            '<input id="cap_usd" name="cap_usd" type="number" min="0.10" max="100.00" step="0.01" value="' +
-            text(value['cap_usd']) + '" required><button class="sec" type="submit" disabled>Modifier le plafond</button></form><script>' + CAP_SCRIPT + '</script>')
     failed = next((check for check in value['checks'] if not check['ok']), None)
     if value['launchable']:
-        content += '<p role="status">Les contrôles sont satisfaits. Vérifiez le travail, les modèles et le plafond avant de confirmer le lancement.</p>'
+        content += '<p role="status">Les contrôles sont satisfaits. Vérifiez le travail, les modèles et les coûts estimés avant de confirmer le lancement.</p>'
         content += form(csrf, base + '/start', {
             'manifest_version': campaign['version'],
             'frozen_at': campaign['conditions']['frozen_at']},
@@ -685,7 +653,7 @@ def render_campaign_launch_requester(value, csrf):
             'example_qualified': dossier_url,
             'configurations_available': dossier_url + '/configurations',
             'access_connected': '/preparation/access',
-            'estimate_under_cap': dossier_url + '/configurations',
+            'estimate_available': dossier_url + '/configurations',
         }
         content += '<p role="status">Lancement indisponible : ' + text(
             failed['detail'] if type(failed['detail']) is str else
@@ -948,9 +916,12 @@ def render_campaign_history(campaigns, url):
             content += '<p>Motif d’arrêt : ' + text(campaign['stop_reason']) + '.</p>'
         budget = campaign['budget']
         if budget:
-            content += '<p>' + text(f'Enveloppe {budget["budget_id"]} : {budget["limit"]} {budget["currency"]}. '
-                f'Sous-total des coûts connus : {budget["spent"]}. Réservations conservées : {budget["reserved"]}. '
-                f'Solde disponible : {budget["available"] if budget["balance_status"] == "KNOWN" else "INCONNU"}.') + '</p>'
+            content += '<p>' + text(
+                f'Sous-total des coûts connus : {budget["spent"]} {budget["currency"]}. '
+                f'Réservations conservées : {budget["reserved"]}.') + '</p>'
+            if not budget.get('provider_managed'):
+                content += '<p>' + text(f'Enveloppe {budget["budget_id"]} : {budget["limit"]} {budget["currency"]}. '
+                    f'Solde disponible : {budget["available"] if budget["balance_status"] == "KNOWN" else "INCONNU"}.') + '</p>'
         else:
             content += '<p>Budget prévu : INCONNU, enveloppe à désigner par l’opérateur.</p>'
         content += '<p>Prévisions de réserve par cellule : ' + text(

@@ -13,7 +13,7 @@ from . import campaigns as c, recovery as r
 from .. import storage
 from ..validation import digest as value_digest
 from ..storage import (Store, BudgetError, ConflictError, IntegrityError,
-                       _fields, _money, _sum_money, _transaction)
+                       _fields, _money, _transaction)
 
 
 def _transport_view(request) -> dict:
@@ -171,20 +171,6 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
                 if incomplete:
                     connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
                                        ('ACQUISITION_EVIDENCE_INCOMPLETE', c._now(), snapshot['manifest']['campaign_id']))
-                elif snapshot['manifest'].get('funding') == 'requester':
-                    operation_ids = {row[0] for row in connection.execute(
-                        'SELECT operation_id FROM s4_attempts WHERE campaign_id=?',
-                        (snapshot['manifest']['campaign_id'],))}
-                    spent = _sum_money(_money(operation['observed_cost']['amount'])
-                                       for operation in store._operations(
-                                           connection, operation_ids=operation_ids)
-                                       if operation['observed_cost'] is not None
-                                       and operation['observed_cost']['status'] == 'KNOWN')
-                    if spent >= _money(snapshot['cap_usd']):
-                        connection.execute(
-                            'UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? '
-                            'WHERE campaign_id=?',
-                            ('CAP_REACHED', c._now(), snapshot['manifest']['campaign_id']))
             received = True
             logging.getLogger(__name__).info('ACQUISITION_RECEIVED operation=%s usable=%s cost=%s',
                 attempt_id, output is not None and not incomplete, cost['status'])

@@ -114,7 +114,7 @@ def preflight(store, session_id, dossier_id, campaign_id, transport):
         all_operations = store._operations(connection)
         budget = store._budget(connection, budget_id, all_operations)
         total = _money(config['reserve_usd']) * count
-        if (budget['currency'] != 'USD' or total > _money(budget['available'])
+        if (budget['currency'] != 'USD' or not budget['provider_managed'] and total > _money(budget['available'])
                 or store._blocking_costs(all_operations, budget, 'judgment')
                 or any(o['budget_id'] == budget_id and o['state'] != 'RECEIVED'
                        for o in all_operations)):

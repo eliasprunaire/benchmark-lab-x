@@ -289,34 +289,39 @@ class RequesterCampaignLaunch(unittest.TestCase):
                 'frozen_at': snapshot['manifest']['conditions']['frozen_at'],
                 'confirm': 'yes'}
 
+    def test_old_oauth_access_without_cap_is_refused_before_budget_creation(self):
+        self.connect()
+        self.store._connection.execute(
+            'UPDATE s2_provider_access SET limit_usd=NULL WHERE session_id=?', (self.sid,))
+        with self.assertRaises(p.Denied) as error:
+            c.launch(self.store, self.sid, 'fixture', self.campaign_id, self.body(),
+                     access_secret=SECRET, access_transport=self.access)
+        self.assertEqual('access_connected', error.exception.code)
+        self.assertIsNone(self.store._connection.execute(
+            'SELECT 1 FROM budgets WHERE budget_id=?', (self.campaign_id,)).fetchone())
+
+    def test_removed_cap_endpoint_cannot_mutate_a_campaign(self):
+        before = c.inspect(self.store, self.campaign_id)
+        with patch.object(p, 'session', return_value=(self.sid, 'csrf', 'token')):
+            with self.assertRaises(p.Denied):
+                web_api.dispatch(self.store, 'POST',
+                    '/preparation/dossiers/fixture/campaigns/' + self.campaign_id + '/cap',
+                    'token', {'csrf_token': 'csrf', 'cap_usd': '99'}, 'a' * 40, True)
+        self.assertEqual(before, c.inspect(self.store, self.campaign_id))
+
     def test_recapitulatif_plafond_admission_et_gel(self):
         self.connect()
         summary = c.launch_view(self.store, self.sid, 'fixture', self.campaign_id,
                                 access_secret=SECRET, access_transport=self.access)
         self.assertEqual(['example_validated', 'example_qualified',
                           'configurations_available', 'access_connected',
-                          'estimate_under_cap'], [check['key'] for check in summary['checks']])
+                          'estimate_available'], [check['key'] for check in summary['checks']])
         self.assertTrue(summary['launchable'])
         self.assertEqual({'limit_remaining_usd': '18.5', 'limit_usd': '20'},
                          summary['checks'][3]['detail'])
         total = c._estimate_total(c.inspect(self.store, self.campaign_id))
         self.assertEqual('Estimation totale : ' + format(total, 'f').replace('.', ',') +
-                         ' USD pour un plafond de 50,00 USD', summary['checks'][4]['detail'])
-        for invalid in ('', ' ', '-1', '+1', 'NaN', 'Infinity', '1,5',
-                        '0.09', '100.01', '1.001', '1e1', 1):
-            with self.subTest(invalid=invalid), self.assertRaisesRegex(
-                    ValueError, 'Plafond hors bornes : 0,10 à 100 USD'):
-                c.set_cap(self.store, self.sid, 'fixture', self.campaign_id,
-                          {'cap_usd': invalid})
-        for unchanged in ('50', '50.0', '50.00'):
-            with self.subTest(unchanged=unchanged), self.assertRaisesRegex(
-                    storage.ConflictError, 'Plafond inchangé'):
-                c.set_cap(self.store, self.sid, 'fixture', self.campaign_id,
-                          {'cap_usd': unchanged})
-        changed = c.set_cap(self.store, self.sid, 'fixture', self.campaign_id,
-                            {'cap_usd': '100'})
-        self.assertEqual(('100.00', 'requester'),
-                         (changed['cap_usd'], changed['cap_source']))
+                         ' USD', summary['checks'][4]['detail'])
         attempts = c.launch(self.store, self.sid, 'fixture', self.campaign_id,
                             self.body(), access_secret=SECRET,
                             access_transport=self.access)
@@ -324,15 +329,12 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.assertEqual(2, len(attempts))
         self.assertEqual('requester:' + self.sid,
                          snapshot['admission']['authority']['authority_id'])
-        self.assertEqual(('100.00', 'USD'),
+        self.assertEqual(('20', 'USD'),
                          (snapshot['budget']['limit'], snapshot['budget']['currency']))
-        with self.assertRaisesRegex(storage.ConflictError, 'Plafond figé au lancement'):
-            c.set_cap(self.store, self.sid, 'fixture', self.campaign_id,
-                      {'cap_usd': '10'})
 
     def test_estimation_affichee_exacte_pres_de_la_limite(self):
         snapshot = c.inspect(self.store, self.campaign_id)
-        for amount, allowed in (('24.99999', True), ('25.00000', True), ('25.00001', False)):
+        for amount, allowed in (('24.99999', True), ('25.00000', True), ('25.00001', True)):
             with self.subTest(amount=amount):
                 snapshot['manifest']['panel'][0]['estimate']['amount_usd'] = amount
                 snapshot['manifest']['panel'][1]['estimate']['amount_usd'] = '25.00000'
@@ -340,15 +342,15 @@ class RequesterCampaignLaunch(unittest.TestCase):
                     selection = c.configurations_view(self.store, self.sid, 'fixture')
                 checks = c._requester_checks(self.store, self.store._connection, snapshot,
                                             self.sid, {'status': 'connected'})
-                budget = next(check for check in checks if check['key'] == 'estimate_under_cap')
+                budget = next(check for check in checks if check['key'] == 'estimate_available')
                 total = format(Decimal(amount) + Decimal('25.00000'), 'f')
-                self.assertEqual(allowed, selection['estimate_under_cap'])
+                self.assertEqual(allowed, selection['estimate_available'])
                 self.assertEqual(allowed, budget['ok'])
                 self.assertEqual(total, selection['estimate_total_usd'])
                 self.assertIn(total.replace('.', ',') + ' USD',
                               views.render(selection, 'csrf').decode())
                 self.assertEqual('Estimation totale : ' + total.replace('.', ',') +
-                                 ' USD pour un plafond de 50,00 USD', budget['detail'])
+                                 ' USD', budget['detail'])
 
     def test_total_tres_petit_reste_en_decimal(self):
         snapshot = c.inspect(self.store, self.campaign_id)
@@ -401,7 +403,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.assertEqual('access_connected', disconnected.exception.code)
         self.connect()
         keys = ['example_validated', 'example_qualified', 'configurations_available',
-                'access_connected', 'estimate_under_cap']
+                'access_connected', 'estimate_available']
         for key in keys:
             checks = [{'key': current, 'ok': current != key, 'detail': current}
                       for current in keys]
@@ -496,7 +498,6 @@ class RequesterCampaignLaunch(unittest.TestCase):
 
                 routes = (
                     ('GET', 'conditions', None),
-                    ('POST', 'cap', {'csrf_token': 'csrf', 'cap_usd': '10'}),
                     ('POST', 'start', {'csrf_token': 'csrf', 'confirm': 'yes'}),
                 )
                 for method, action, body in routes:
@@ -541,9 +542,9 @@ class RequesterCampaignLaunch(unittest.TestCase):
                          access_transport=self.access)
             self.assertEqual([], c.inspect(self.store, self.campaign_id)['attempts'])
 
-    def test_arret_au_plafond_et_incident_fournisseur_distinct(self):
+    def test_ancien_plafond_ignore_et_incident_fournisseur_conserve(self):
         self.connect()
-        c.set_cap(self.store, self.sid, 'fixture', self.campaign_id, {'cap_usd': '0.10'})
+        self.store._connection.execute("UPDATE s4_caps SET cap_usd='0.10' WHERE campaign_id=?", (self.campaign_id,))
         attempts = c.launch(self.store, self.sid, 'fixture', self.campaign_id,
                             self.body(), access_secret=SECRET,
                             access_transport=self.access)
@@ -560,8 +561,8 @@ class RequesterCampaignLaunch(unittest.TestCase):
                          access_transport=self.access)
         snapshot = c.inspect(self.store, self.campaign_id)
         self.assertEqual(2, len(calls))
-        self.assertEqual('CAP_REACHED', snapshot['stop_reason'])
-        self.assertIsNone(snapshot['admission'])
+        self.assertIsNone(snapshot['stop_reason'])
+        self.assertIsNotNone(snapshot['admission'])
 
         second = c.prepare_configurations(
             self.store, self.sid, 'fixture',
@@ -572,7 +573,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
              'node_version': 'v24.0.0', 'node_sha256': '3' * 64,
              'scope': 'Fixture Pi locale'})
         second_id = second['current_campaign_id']
-        c.set_cap(self.store, self.sid, 'fixture', second_id, {'cap_usd': '0.10'})
+
         second_attempts = c.launch(self.store, self.sid, 'fixture', second_id,
                                    self.body_for(second_id), access_secret=SECRET,
                                    access_transport=self.access)

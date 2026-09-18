@@ -99,9 +99,6 @@ class FakeExecutor:
                           and request['path'].endswith('/configurations')):
                         result = {'status': 201, 'value': {'kind': 'configurations'},
                                   'piece': False, 'cookie': None}
-                    elif request['method'] == 'POST' and request['path'].endswith('/cap'):
-                        result = {'status': 200, 'value': {'kind': 'campaign_launch'},
-                                  'piece': False, 'cookie': None}
                     elif request['method'] == 'POST' and request['path'].endswith(('/start', '/evaluate')):
                         result = {'status': 202, 'value': {'kind': 'campaign_launch'},
                                   'piece': False, 'cookie': None}
@@ -175,7 +172,7 @@ class AccessViewTests(unittest.TestCase):
             ],
             'current_campaign_id': 'd1-c1', 'estimate_total_usd': '3.50',
             'cap_usd': '50.00', 'cap_source': 'default', 'superseded': [],
-            'estimate_under_cap': True, 'assumptions': {},
+            'estimate_available': True, 'assumptions': {},
         }
         page = views.render(value, 'csrf').decode()
         self.assertIn('action="/preparation/dossiers/d1/configurations"', page)
@@ -195,7 +192,7 @@ class AccessViewTests(unittest.TestCase):
             self.assertIn('<details><summary>Identifiant technique</summary><code>' +
                           technical + '</code></details>', page)
         self.assertIn('Estimation totale : 3,50 USD', page)
-        self.assertIn('Plafond : 50,00 USD', page)
+        self.assertNotIn('Plafond :', page)
         self.assertIn('estimation 1,20 USD', page)
         self.assertIn('estimation 2,30 USD', page)
         self.assertIn('/campaigns/d1-c1/conditions', page)
@@ -227,15 +224,13 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('Budget insuffisant pour l’évaluation', page)
         self.assertNotIn('>Lancer la comparaison</button>', page)
 
-    def test_cap_starts_disabled_and_uses_the_authorized_page_script(self):
+    def test_no_local_cap_form_or_script_before_launch(self):
         value = self.campaign({'status': 'connected'})
         value.update(checks=[], launchable=False, cap_usd='50.00')
         page = views.render(value, 'csrf').decode()
-        cap_form = page.split('action="/preparation/dossiers/d1/campaigns/c1/cap"', 1)[1].split('</form>', 1)[0]
-        button = next(attrs for tag, attrs in Markup(cap_form.encode()).tags if tag == 'button')
-        self.assertIn('disabled', button)
-        self.assertEqual('sec', button['class'])
-        self.assertIn('<script>' + views.page_script(value) + '</script>', page)
+        self.assertNotIn('/cap"', page)
+        self.assertNotIn('Modifier le plafond', page)
+        self.assertIsNone(views.page_script(value))
 
     def test_recapitulatif_demandeur_passant_et_bloquant(self):
         base = self.campaign({'status': 'connected', 'limit_remaining_usd': '12.50'})
@@ -249,7 +244,7 @@ class AccessViewTests(unittest.TestCase):
                  'detail': 'Tous les modèles sont disponibles'},
                 {'key': 'access_connected', 'ok': True,
                  'detail': {'limit_remaining_usd': '12.50', 'limit_usd': '20'}},
-                {'key': 'estimate_under_cap', 'ok': True,
+                {'key': 'estimate_available', 'ok': True,
                  'detail': 'Estimation totale : 3.50 USD'},
             ],
             launchable=True, cap_usd='50.00', cap_source='default',
@@ -258,20 +253,12 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('✓ Exemple validé', page)
         self.assertIn('Constats de qualification', page)
         self.assertIn('Quantité à confirmer', page)
-        self.assertIn('Crédit restant : 12.50 USD ; limite du compte : 20 USD', page)
-        self.assertIn('action="/preparation/dossiers/d1/campaigns/c1/cap"', page)
-        self.assertIn('L’arrêt intervient après le paiement de l’appel en cours.', page)
-        self.assertIn('La dépense peut donc dépasser le plafond du montant du dernier appel.', page)
-        self.assertIn('min="0.10" max="100.00" step="0.01"', page)
+        self.assertIn('Crédit restant : 12.50 USD ; plafond de la clé : 20 USD', page)
+        self.assertNotIn('action="/preparation/dossiers/d1/campaigns/c1/cap"', page)
+        self.assertNotIn('L’arrêt intervient après le paiement de l’appel en cours.', page)
+        self.assertNotIn('La dépense peut donc dépasser le plafond du montant du dernier appel.', page)
         self.assertIn('>Lancer la comparaison</button>', page)
         parsed = Markup(page.encode())
-        cap = next(attrs for tag, attrs in parsed.tags if attrs.get('id') == 'cap_usd')
-        self.assertEqual('number', cap['type'])
-        self.assertIn('required', cap)
-        self.assertTrue(any(tag == 'label' and attrs.get('for') == 'cap_usd'
-                            for tag, attrs in parsed.tags))
-        css = views.STYLESHEET_PATH.read_text()
-        self.assertIn('input[type="text"], input[type="number"] { font: inherit;', css)
         for tag, attrs in parsed.tags:
             if tag == 'form':
                 self.assertEqual('post', attrs['method'])
@@ -350,7 +337,7 @@ class AccessViewTests(unittest.TestCase):
                     self.assertNotIn('Comparer les résultats et lire les preuves</a>', page)
                 self.assertEqual(active or ready, views.page_script(value) is not None)
 
-    def test_mention_depassement_reste_apres_lancement(self):
+    def test_ancien_plafond_absent_apres_lancement(self):
         value = self.campaign({'status': 'connected', 'limit_remaining_usd': '12.50'})
         value.update(
             checks=[
@@ -360,7 +347,7 @@ class AccessViewTests(unittest.TestCase):
                  'detail': 'Tous les modèles sont disponibles'},
                 {'key': 'access_connected', 'ok': True,
                  'detail': {'limit_remaining_usd': '12.50', 'limit_usd': '20'}},
-                {'key': 'estimate_under_cap', 'ok': True,
+                {'key': 'estimate_available', 'ok': True,
                  'detail': 'Estimation totale : 3,50 USD'},
             ],
             launchable=False, cap_usd='50.00')
@@ -369,7 +356,7 @@ class AccessViewTests(unittest.TestCase):
             cells=[{'configuration_id': 'x', 'state': 'INTENT_RECORDED'}],
             panel=[{'id': 'x', 'model': 'Modèle A'}], admission_open=True)
         page = views.render(value, 'csrf').decode()
-        self.assertIn('La dépense peut donc dépasser le plafond du montant du dernier appel.', page)
+        self.assertNotIn('La dépense peut donc dépasser le plafond du montant du dernier appel.', page)
         self.assertNotIn('id="cap_usd"', page)
         self.assertIn('Lancement enregistré', page)
 
@@ -422,6 +409,8 @@ class AccessServerTests(unittest.TestCase):
                 status, headers, raw = self.request('GET', '/preparation/dossiers/d1/campaigns/c1/conditions')
                 self.assertEqual(200, status)
                 script = views.page_script(value)
+                if state is None:
+                    self.assertIsNone(script)
                 expected = CSP
                 if script:
                     expected += "; script-src 'sha256-" + b64encode(sha256(script.encode()).digest()).decode() + "'"
@@ -452,7 +441,7 @@ class AccessServerTests(unittest.TestCase):
 
     def test_personal_key_is_never_reflected_and_success_redirects(self):
         key = 'sk-or-v1-private-fixture'
-        body = urlencode({'csrf_token': 'csrf', 'key': key, 'assistance_cap': '20'}).encode()
+        body = urlencode({'csrf_token': 'csrf', 'key': key}).encode()
         for code in (200, 403):
             self.executor.raw_response = json.dumps({'status': code,
                 'value': {'error': 'Clé refusée'} if code == 403 else {'connected': True},
@@ -693,7 +682,7 @@ class AccessServerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _public_callback_url('http://benchmark.example')
 
-    def test_post_configurations_et_plafond_redirigent(self):
+    def test_post_configurations_et_lancement_redirigent(self):
         path = '/preparation/dossiers/d1/configurations'
         body = urlencode([('csrf_token', 'csrf'), ('models', 'modele-a'),
                           ('models', 'modele-b'), ('tier', 'standard')]).encode()
@@ -703,15 +692,6 @@ class AccessServerTests(unittest.TestCase):
         self.assertEqual((303, path), (status, headers['Location']))
         request = self.executor.requests.get_nowait()
         self.assertEqual(['modele-a', 'modele-b'], request['body']['models'])
-
-        cap_path = '/preparation/dossiers/d1/campaigns/d1-c1/cap'
-        body = urlencode({'csrf_token': 'csrf', 'cap_usd': '75.00'}).encode()
-        status, headers, _ = self.request('POST', cap_path, body, {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Cookie': 'benchmark_session=session-token'})
-        self.assertEqual((303, '/preparation/dossiers/d1/campaigns/d1-c1/conditions'),
-                         (status, headers['Location']))
-        self.assertEqual(cap_path, self.executor.requests.get_nowait()['path'])
 
         start_path = '/preparation/dossiers/d1/campaigns/d1-c1/start'
         body = urlencode({'csrf_token': 'csrf', 'manifest_version': '1',

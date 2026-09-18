@@ -10,7 +10,7 @@ from benchmark import VERSION
 from benchmark.preparation import binding
 from benchmark.storage import _strict_json as encode
 
-from .campaign_views import (CAP_SCRIPT, COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_history,
+from .campaign_views import (COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_history,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
 from .fragments import date_lisible_utc, form, icon, listing, section, state_block, text
@@ -109,8 +109,6 @@ def page_script(value):
     if value.get('kind') == 'campaign_launch' and value['campaign']['attempts']:
         active, ready, _ = campaign_followup(value['campaign'])
         return PREPARATION_PROGRESS_SCRIPT if active or ready else None
-    if value.get('kind') == 'campaign_launch' and 'checks' in value and not value['campaign']['attempts']:
-        return CAP_SCRIPT
     if preparation_pending(value):
         return PREPARATION_PROGRESS_SCRIPT
     if value.get('kind') == 'configurations' and value.get('personal_preparation'):
@@ -189,7 +187,7 @@ def personal_key_form(csrf, access):
     content = '<details class="corr personal-key"><summary class="button sec">Ajouter ma clé Openrouter</summary><div>'
     if connected:
         content += '<p>Plafond Openrouter : ' + text(access.get('limit_usd') or 'inconnu') + ' USD. Solde annoncé : ' + text(access.get('limit_remaining_usd') or 'inconnu') + ' USD.</p>'
-    content += form(csrf, '/preparation/access/key', {'assistance_cap': '20'},
+    content += form(csrf, '/preparation/access/key', {},
         '<label for="openrouter-key">Clé API Openrouter</label>'
         '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help key-storage">'
         '<p id="key-help">Utilisez une clé dédiée avec un plafond non renouvelable de 50 USD maximum.</p>'
@@ -577,8 +575,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             'interrupted': 'Appels fermés : préparation interrompue ou suspendue. Une intervention du responsable est nécessaire ; aucun rejeu automatique.',
             'restore': 'Appels fermés : restauration à vérifier par le responsable.',
             'unresolved': 'Appels fermés : effets ou coûts non résolus dans l’enveloppe de préparation.',
-            'budget': 'Appels fermés : enveloppe insuffisante pour un nouvel échange.',
-            'daily_cap': 'Appels fermés : plafond quotidien de préparation atteint.'}
+            'budget': 'Appels fermés : enveloppe insuffisante pour un nouvel échange.'}
         status = '<aside id="availability" class="availability" aria-label="État de la préparation"><p><strong>'
         if value.get('personal_preparation'):
             status += ('Préparation disponible' if can_submit else 'Préparation en attente') + '.</strong></p><p>'

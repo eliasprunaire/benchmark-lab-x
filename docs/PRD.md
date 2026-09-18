@@ -42,7 +42,7 @@ Le catalogue distingue le métier ou domaine, qui donne le contexte, et la famil
 | Je veux vérifier une conclusion                  | retrouver tâche, contrat, configuration, sortie et preuves                    | chaîne d'attribution bornée                              |
 | Je cherche une tâche proche de mon besoin        | parcourir le catalogue et sa couverture réelle                               | tâche, version, cas et campagnes pertinents              |
 
-Le demandeur-lecteur exprime son besoin, valide l’exemple qui le représente et autorise le lancement. Il n’a pas à inventer un seuil, une métrique ou une méthode de jugement. Dans le parcours public, préparation, qualification et évaluation suivent automatiquement la méthode du produit ; aucun opérateur humain n’approuve individuellement les résultats. Le responsable de campagne répond de cette méthode. Les autorisations d’appel, les budgets et la publication restent distincts.
+Le demandeur-lecteur exprime son besoin, valide l’exemple qui le représente et autorise le lancement. Il n’a pas à inventer un seuil, une métrique ou une méthode de jugement. Dans le parcours public, préparation, qualification et évaluation suivent automatiquement la méthode du produit ; aucun opérateur humain n’approuve individuellement les résultats. Le responsable de campagne répond de cette méthode. Les autorisations d’appel et la publication restent distinctes. Dans le parcours financé par le demandeur, tous les appels utilisent sa clé OpenRouter et son unique plafond non renouvelable ; aucun plafond local quotidien, par navigateur ou par comparaison ne s’ajoute.
 
 ## 4. Question active
 

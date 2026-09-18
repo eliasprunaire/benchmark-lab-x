@@ -24,14 +24,13 @@ USEFUL_MAX = 800
 CONTEXT_MAX = 200
 MESSAGE_MAX = 1_000
 SESSION_INTERVAL = timedelta(seconds=30)
-PREPARATION_DAILY_CAP_USD = Decimal('50')
 SOURCE_HOURLY_MAX = 20
 SOURCE_RATE_WINDOW = timedelta(hours=1)
 OUT_OF_SCOPE_CATEGORIES = ('math', 'coding', 'other')
 _SOURCE_ACCEPTED = {}
 _CHECK_CODES = frozenset({
     'example_validated', 'example_qualified', 'configurations_available',
-    'access_connected', 'estimate_under_cap',
+    'access_connected', 'estimate_available',
 })
 
 
@@ -96,15 +95,6 @@ def _source_limit(source_sha256, now):
     _SOURCE_ACCEPTED[source_sha256] = accepted
 
 
-def _daily_preparation_reserved(connection, now):
-    start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc).isoformat()
-    amounts = connection.execute(
-        "SELECT r.amount FROM operations o JOIN reservations r USING(operation_id) "
-        "JOIN budgets b USING(budget_id) WHERE o.phase IN ('preparation','correction','qualification') "
-        "AND o.created_at>=? AND b.currency='USD'", (start,)).fetchall()
-    return _sum_money(_money(row[0]) for row in amounts)
-
-
 def _submission_limits(connection, session_id, now, authority):
     if connection.execute(
             "SELECT 1 FROM operations o JOIN s2_dossiers d USING(dossier_id) "
@@ -118,9 +108,6 @@ def _submission_limits(connection, session_id, now, authority):
         (session_id,)).fetchone()
     if latest and now - datetime.fromisoformat(latest[0]) < SESSION_INTERVAL:
         raise Denied('TOO_SOON')
-    if (_daily_preparation_reserved(connection, now) + _money(authority['reserve_amount'])
-            > PREPARATION_DAILY_CAP_USD):
-        raise Denied('DAILY_CAP')
 
 
 def connection_for(store):
@@ -169,11 +156,8 @@ def availability(store, transport):
                     row['budget_id'] == authority['budget_id'] and row['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS')
                     for row in operations)):
                 reason = 'unresolved'
-            elif _money(authority['reserve_amount']) > Decimal(budget['available']):
+            elif not budget['provider_managed'] and _money(authority['reserve_amount']) > Decimal(budget['available']):
                 reason = 'budget'
-            elif (_daily_preparation_reserved(connection, _now()) + _money(authority['reserve_amount'])
-                  > PREPARATION_DAILY_CAP_USD):
-                reason = 'daily_cap'
         return {'assistant_configured': configured, 'admission_open': authority is not None,
                 'can_submit': reason == 'open', 'reason': reason}
 
@@ -210,15 +194,12 @@ def admit(store, authority, *, profile=None):
             if requested != expected or 'reserve_usd' not in expected:
                 raise Denied('CONFIGURATION_CHANGED')
             _usd_budget(authority['reserve_amount'], requested, budget)
-            if (_money(authority['reserve_amount']) > _money(budget['available'])
+            if (not budget['provider_managed'] and _money(authority['reserve_amount']) > _money(budget['available'])
                     or store._blocking_costs(operations, budget, 'preparation')):
                 raise BudgetError('Enveloppe de préparation indisponible')
             if connection.execute(
                     "SELECT 1 FROM operations WHERE state!='RECEIVED' LIMIT 1").fetchone():
                 raise Denied('PREPARATION_IN_PROGRESS')
-            if (_daily_preparation_reserved(connection, _now()) + _money(authority['reserve_amount'])
-                    > PREPARATION_DAILY_CAP_USD):
-                raise Denied('DAILY_CAP')
         connection.execute('UPDATE s2_control SET admission_json=? WHERE singleton=1', (encode(authority),))
 
 
@@ -536,7 +517,7 @@ def piece_bytes(store, session_id, dossier_id, revision, piece_id):
 def _usd_budget(reserved_amount, requested, budget):
     if 'reserve_usd' not in requested:
         return
-    if (budget['currency'] != 'USD' or _money(budget['limit']) > Decimal('100')
+    if (budget['currency'] != 'USD' or not budget['provider_managed'] and _money(budget['limit']) > Decimal('100')
             or (requested['reserve_usd'] is not None
                 and _money(reserved_amount) < _money(requested['reserve_usd']))):
         raise ValueError('Configuration ou réservation OpenRouter divergente')
@@ -733,9 +714,6 @@ def validate_and_qualify(store, session_id, dossier_id, body, source, transport)
             raise Denied('PREPARATION_IN_PROGRESS')
         reserve = str(max(_money(authority['reserve_amount']),
                           _money(configuration.get('reserve_usd', authority['reserve_amount']))))
-        if (_daily_preparation_reserved(connection, _now()) + _money(reserve)
-                > PREPARATION_DAILY_CAP_USD):
-            raise Denied('DAILY_CAP')
         request = _qualification_input(store, connection, dossier_id, revision)
         operation_id = secrets.token_hex(16)
         operation = dict(operation_id=operation_id, phase='qualification', dossier_id=dossier_id,
@@ -875,7 +853,7 @@ def execute(data, operation_id, transport):
                     return
                 budget = store._budget(connection, operation['budget_id'], store._operations(connection))
                 _usd_budget(operation['reserved_amount'], operation['requested_configuration'], budget)
-                if store._blocking_costs(store._operations(connection), budget, operation['phase']) or _sum_money((_money(budget['reserved']), _money(budget['spent']))) > _money(budget['limit']):
+                if store._blocking_costs(store._operations(connection), budget, operation['phase']) or (not budget['provider_managed'] and _sum_money((_money(budget['reserved']), _money(budget['spent']))) > _money(budget['limit'])):
                     return
                 if any(row['operation_id'] != operation_id and row['budget_id'] == operation['budget_id']
                        and row['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') for row in store._operations(connection)):
