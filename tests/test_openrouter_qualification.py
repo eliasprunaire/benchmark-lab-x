@@ -88,7 +88,11 @@ class OpenRouterQualificationTests(unittest.TestCase):
             'quality': [{'label': 'Clarté', 'scale': ['excellent', 'acceptable', 'faible'],
                          'favorable': 'excellent'}]}
         response['cost'].update(amount='0.10', currency='USD')
-        prep.execute(self.data, operation_id, lambda *_: response)
+        with self.assertLogs('benchmark.preparation', level='INFO') as journal:
+            prep.execute(self.data, operation_id, lambda *_: response)
+        self.assertIn('PREPARATION_EMITTING', journal.output[0])
+        self.assertIn('PREPARATION_RECEIVED', journal.output[-1])
+        self.assertNotIn(response['receipt']['result']['reformulation'], '\n'.join(journal.output))
         self.preview = prep.view(self.store, self.session, 'dossier')
 
     def validate(self, result):
@@ -117,7 +121,9 @@ class OpenRouterQualificationTests(unittest.TestCase):
             {'qualified': True, 'findings': [], 'summary': 'Contrôles prouvés'})
         self.assertEqual('PENDING', prep.view(self.store, self.session, 'dossier')['qualification']['status'])
         prep.close_admission(self.store)
-        prep.execute_qualification(self.data, operation_id, transport)
+        with self.assertLogs('benchmark.preparation', level='WARNING') as journal:
+            prep.execute_qualification(self.data, operation_id, transport)
+        self.assertIn('QUALIFICATION_BLOCKED', journal.output[-1])
         for _ in range(2):
             view = prep.view(self.store, self.session, 'dossier')
             self.assertEqual('BLOCKED', view['qualification']['status'])

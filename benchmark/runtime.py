@@ -5,6 +5,7 @@ from contextlib import closing, contextmanager
 import fcntl
 from hashlib import file_digest
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -307,6 +308,7 @@ def main(argv=None):
             else:
                 if args.data is None:
                     raise ValueError('Données requises')
+                logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s')
                 from .provider_access import OpenRouterAccess, parse_secret
                 from .transports.openrouter import OpenRouterPreparation, load_profile
                 access_secret = parse_secret(os.environ.pop('BENCHMARK_ACCESS_SECRET', ''))

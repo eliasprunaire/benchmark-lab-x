@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from hashlib import sha256
 import json
+import logging
 import os
 import re
 import secrets
@@ -816,6 +817,7 @@ def execute_qualification(data, operation_id, transport):
             emitted = True
             operation['state'] = 'EMISSION_POSSIBLE'
             operation['conserved_wire'] = wire
+            logging.getLogger(__name__).info('QUALIFICATION_EMITTING operation=%s', operation_id)
             response = transport(deepcopy(operation), deepcopy(closed))
             _fields(response, ('receipt', 'cost'), 'réponse de qualification')
             result = response['receipt']['result']
@@ -834,15 +836,20 @@ def execute_qualification(data, operation_id, transport):
                     if result['qualified']:
                         from .acquisition.campaigns import _record_comparison_contract
                         _record_comparison_contract(store, connection, operation)
-        except Exception:
+            logging.getLogger(__name__).info('QUALIFICATION_RECEIVED operation=%s usable=%s qualified=%s cost=%s',
+                operation_id, result is not None, None if result is None else result['qualified'], response['cost']['status'])
+        except Exception as error:
             if emitted:
                 store.mark_ambiguous(operation_id, 'QUALIFICATION_RESULT_NOT_VERIFIED')
             else:
                 close_admission(store)
+            logging.getLogger(__name__).error('QUALIFICATION_STOPPED operation=%s emitted=%s error=%s',
+                                              operation_id, emitted, type(error).__name__)
         finally:
             if operation is not None and not emitted and connection.execute('SELECT state FROM operations WHERE operation_id=?',
                     (operation_id,)).fetchone() == ('INTENT_RECORDED',):
                 close_admission(store)
+                logging.getLogger(__name__).warning('QUALIFICATION_BLOCKED operation=%s', operation_id)
 
 
 def execute(data, operation_id, transport):
@@ -883,6 +890,8 @@ def execute(data, operation_id, transport):
                 connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' WHERE operation_id=?", (operation_id,))
             emitted = True
             operation['state'] = 'EMISSION_POSSIBLE'
+            logging.getLogger(__name__).info('PREPARATION_EMITTING operation=%s phase=%s',
+                                            operation_id, operation['phase'])
             request = json.loads(operation['resources'][0])
             closed_request = _closed_preparation_request(request)
             response = transport(_closed_preparation_operation(operation, conserved_wire=(operation['resources'][1] if len(operation['resources']) > 1 else None)),
@@ -890,7 +899,9 @@ def execute(data, operation_id, transport):
             _fields(response, ('receipt', 'cost'), 'transport response')
             try:
                 publish(store, operation, request, response)
-            except Exception:
+                logging.getLogger(__name__).info('PREPARATION_RECEIVED operation=%s usable=True cost=%s',
+                                                operation_id, response['cost']['status'])
+            except Exception as error:
                 # Publication rolled back; keep the original receipt with an unusable revision
                 # RECEIVED and closed admission become visible in the same commit
                 with _transaction(connection, write=True):
@@ -917,16 +928,21 @@ def execute(data, operation_id, transport):
                     connection.execute('UPDATE s2_dossiers SET current_revision=? WHERE dossier_id=?',
                                        (revision, dossier_id))
                     connection.execute('UPDATE s2_control SET admission_json=NULL WHERE singleton=1')
-        except Exception:
+                logging.getLogger(__name__).warning('PREPARATION_RECEIVED operation=%s usable=False error=%s cost=%s',
+                    operation_id, type(error).__name__, response['cost']['status'])
+        except Exception as error:
             # Never log request/response/exception text, which may contain private data
             if emitted:
                 store.mark_ambiguous(operation_id, 'PREPARATION_RESULT_NOT_VERIFIED')
             else:
                 close_admission(store)
+            logging.getLogger(__name__).error('PREPARATION_STOPPED operation=%s emitted=%s error=%s',
+                                              operation_id, emitted, type(error).__name__)
         finally:
             if operation is not None and not emitted and connection.execute('SELECT state FROM operations WHERE operation_id=?',
                     (operation_id,)).fetchone() == ('INTENT_RECORDED',):
                 close_admission(store)
+                logging.getLogger(__name__).warning('PREPARATION_BLOCKED operation=%s', operation_id)
 
 
 def publish(store, operation, request, response):

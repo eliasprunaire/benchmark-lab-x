@@ -156,7 +156,10 @@ class S14Acceptance(unittest.TestCase):
     def test_model_verdict_cannot_create_or_override_official_verdict(self):
         self.answer['findings'][0].update(status='FAIL',attribution='candidate')
         self.set_response()
-        view = self.execute()
+        with self.assertLogs('benchmark.judgment', level='INFO') as journal:
+            view = self.execute()
+        self.assertIn('JUDGMENT_RECEIVED operation=s14-judge usable=True', journal.output[-1])
+        self.assertNotIn(KEY, '\n'.join(journal.output))
         self.assertEqual(self.count(),0)
         self.assertEqual(view['proposal']['proposed_verdict'],'SATISFAIT')
         self.assertEqual(view['proposal']['report']['judgment']['mode'],'assisted')

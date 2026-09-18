@@ -92,7 +92,10 @@ class CampaignLaunch(unittest.TestCase):
         def transport(op, request):
             calls.append(op['operation_id'])
             return response(op, request)
-        execution.execute_launch(self.data, next(r for r in replies if r), transport)
+        with self.assertLogs('benchmark.acquisition.execution', level='INFO') as journal:
+            execution.execute_launch(self.data, next(r for r in replies if r), transport)
+        self.assertEqual(2, sum('ACQUISITION_EMITTING' in line for line in journal.output))
+        self.assertEqual(2, sum('ACQUISITION_RECEIVED' in line for line in journal.output))
         self.assertEqual(2, len(calls))
         self.assertEqual([], self.launch(body))
         self.assertEqual(['RECEIVED'] * 2, [a['state'] for a in c.inspect(self.store, 'local-comparison')['attempts']])
@@ -128,7 +131,9 @@ class CampaignLaunch(unittest.TestCase):
         attempts = self.launch(body)
         c.stop(self.store, 'local-comparison')
         calls = []
-        execution.execute_launch(self.data, attempts, lambda *args: calls.append(args))
+        with self.assertLogs('benchmark.acquisition.execution', level='WARNING') as journal:
+            execution.execute_launch(self.data, attempts, lambda *args: calls.append(args))
+        self.assertIn('ACQUISITION_STOPPED', journal.output[0])
         self.assertEqual([], calls)
         with self.assertRaises(p.Denied):
             self.launch(body)
@@ -150,6 +155,18 @@ class CampaignLaunch(unittest.TestCase):
         (self.data / 'restore.json').write_text('{}')
         with self.assertRaises((ValueError, storage.ConflictError)):
             self.launch(body)
+
+    def test_pre_emission_failure_closes_followup_without_replay(self):
+        attempts = self.launch(self.admit())
+        with patch.object(execution, 'execute', side_effect=storage.BudgetError('PRIVATE_FAILURE')) as worker, \
+                self.assertLogs('benchmark.acquisition.execution', level='WARNING') as journal:
+            execution.execute_launch(self.data, attempts, response)
+        self.assertEqual(1, worker.call_count)
+        snapshot = c.inspect(self.store, 'local-comparison')
+        self.assertIsNone(snapshot['admission'])
+        self.assertEqual('ACQUISITION_STOPPED_BEFORE_EMISSION', snapshot['stop_reason'])
+        self.assertEqual(['INTENT_RECORDED'] * 2, [a['state'] for a in snapshot['attempts']])
+        self.assertNotIn('PRIVATE_FAILURE', '\n'.join(journal.output))
 
     def test_changed_package_requires_new_validation(self):
         from tests.test_s2_review_regressions import response_for
@@ -248,7 +265,9 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.assertEqual(['cost'], [column['id'] for column in result['columns']])
         self.assertEqual([], result['rows'])
         self.assertEqual(2, len(result['pending_attempts']))
-        self.assertIn('Aucune tentative évaluée', views.render(result, 'csrf').decode())
+        self.assertEqual({'JUDGMENT_NOT_CONFIGURED'}, {row['state'] for row in result['pending_attempts']})
+        self.assertTrue(all('Réponse reçue' in row['next_action'] for row in result['pending_attempts']))
+        self.assertIn('En attente d’évaluation', views.render(result, 'csrf').decode())
         contract = c._current_contract(self.store, self.store._connection, 'fixture')
         self.assertEqual('Clarté', projection._libelles_criteres({'qualification': {'contract': contract}})['Q1'])
         message = 'Contrat de comparaison non évaluable par le jugement expert'
@@ -283,11 +302,17 @@ class RequesterCampaignLaunch(unittest.TestCase):
         total = c._estimate_total(c.inspect(self.store, self.campaign_id))
         self.assertEqual('Estimation totale : ' + format(total, 'f').replace('.', ',') +
                          ' USD pour un plafond de 50,00 USD', summary['checks'][4]['detail'])
-        for invalid in ('0.09', '100.01', '1.001', '1e1', 1):
+        for invalid in ('', ' ', '-1', '+1', 'NaN', 'Infinity', '1,5',
+                        '0.09', '100.01', '1.001', '1e1', 1):
             with self.subTest(invalid=invalid), self.assertRaisesRegex(
                     ValueError, 'Plafond hors bornes : 0,10 à 100 USD'):
                 c.set_cap(self.store, self.sid, 'fixture', self.campaign_id,
                           {'cap_usd': invalid})
+        for unchanged in ('50', '50.0', '50.00'):
+            with self.subTest(unchanged=unchanged), self.assertRaisesRegex(
+                    storage.ConflictError, 'Plafond inchangé'):
+                c.set_cap(self.store, self.sid, 'fixture', self.campaign_id,
+                          {'cap_usd': unchanged})
         changed = c.set_cap(self.store, self.sid, 'fixture', self.campaign_id,
                             {'cap_usd': '100'})
         self.assertEqual(('100.00', 'requester'),
@@ -603,8 +628,11 @@ class BackendReadiness(CampaignLaunch):
         c.admit(self.store, 'new-policy', *inputs(snap, budget='local-comparison'))
         c.reserve(self.store, 'new-policy', 'x', 'new-x')
         def broken(op, request):
-            raise OSError('fixture interruption')
-        execution.execute(self.data, 'new-x', broken)
+            raise OSError('PRIVATE_EXCEPTION_CANARY')
+        with self.assertLogs('benchmark.acquisition.execution', level='INFO') as journal:
+            execution.execute(self.data, 'new-x', broken)
+        self.assertIn('ACQUISITION_AMBIGUOUS operation=new-x error=OSError', journal.output[-1])
+        self.assertNotIn('PRIVATE_EXCEPTION_CANARY', '\n'.join(journal.output))
         self.assertIsNone(c.inspect(self.store, 'new-policy')['admission'])
         with self.assertRaises(ValueError):
             c.reserve(self.store, 'new-policy', 'y', 'new-y')

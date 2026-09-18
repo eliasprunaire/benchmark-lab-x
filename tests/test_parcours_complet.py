@@ -372,7 +372,7 @@ class ParcoursComplet(unittest.TestCase):
         comparison = page.link('Comparer les résultats')
         empty, _, _ = self.request(comparison)
         self.examine(empty, comparison, 'jugements absents', 'Revenir au cas d’usage')
-        self.assertIn('Aucune tentative évaluée', empty.visible)
+        self.assertIn('En attente d’évaluation', empty.visible)
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s5_evaluations').fetchone()[0])
         _, headers, _ = self.request('/preparation', cookies=SimpleCookie())

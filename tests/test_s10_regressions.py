@@ -128,7 +128,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn('3 satisfait(s)', summary(page))
         self.assertIn('Comparaison des coûts incomplète', summary(page))
         self.assertIn('body class="s9 comparison"', page)
-        self.assertIn('<h1>Organiser des notes fictives</h1>', page)
+        self.assertIn('<h1>Résultats</h1>', page)
         self.assertLess(page.index('<table>'), page.index('id="method"'))
         self.assertNotIn('open', next(attrs for tag, attrs in Markup(page.encode()).tags if attrs.get('id') == 'filters'))
         self.assertIn('Configuration demandée', page)
@@ -140,6 +140,45 @@ class S10ProofTests(unittest.TestCase):
         hostile = fragments.readable_fields({'parameters': {'<img src=x onerror=alert(1)>': '<script>bad()</script>'}})
         self.assertNotIn('<script>', hostile)
         self.assertFalse(any(tag == 'img' for tag, _ in Markup(hostile.encode()).tags))
+
+    def test_results_method_is_concise_and_received_without_verdict_is_pending(self):
+        value = r.comparison(self.store, self.sid, 'fixture', 'comparison')
+        evaluated_page = views.render(value, '').decode()
+        value.update(history=[], rows=[], population=[], acquisition_dates=['2026-09-18'])
+        value['coverage']['evaluated_attempts'] = 0
+        page = views.render(value, '').decode()
+        self.assertIn('<h1>Résultats</h1>', page)
+        self.assertIn('En attente d’évaluation', page)
+        self.assertNotIn('Identité de la campagne', page)
+        self.assertNotIn('href="#method">Méthode et limites', page)
+        self.assertNotIn('id="filters"', page)
+        self.assertNotIn('id="method"', page)
+        method = evaluated_page.split('<details id="method">', 1)[1].split('</details>', 1)[0]
+        self.assertIn('Travail humain restant', method)
+        self.assertIn('Conditions communes', method)
+        self.assertNotIn('<dl', method)
+        self.assertNotIn('Population entière utilisée', method)
+        self.assertNotIn('Contrat et portée exacte', method)
+        main = page.split('<main', 1)[1].split('</main>', 1)[0]
+        self.assertNotIn('>Mes cas d’usage</a>', main)
+        nav = page.split('<nav class="steps"', 1)[1].split('</nav>', 1)[0]
+        self.assertIn(value['dossier_href'] + '#validation', nav)
+        self.assertIn(value['href'] + '/conditions', nav)
+        self.assertIn('aria-current="step"><span class="n">5</span>Résultats', nav)
+
+    def test_unconfigured_judgment_is_visible_in_empty_results_without_model_failure(self):
+        value = r.comparison(self.store, self.sid, 'fixture', 'comparison')
+        value.update(history=[], rows=[], population=[], pending_attempts=[{
+            'attempt_id': 'private-attempt', 'state': 'JUDGMENT_NOT_CONFIGURED',
+            'next_action': 'Réponse reçue. Le jugement de ce parcours n’est pas encore raccordé.'}])
+        value['coverage']['evaluated_attempts'] = 0
+        page = views.render(value, '').decode()
+        summary = page.split('aria-label="Conclusion de la campagne">', 1)[1].split('</div>', 1)[0]
+        self.assertIn('En attente d’évaluation', summary)
+        self.assertIn('Le jugement de ce parcours n’est pas encore raccordé.', summary)
+        self.assertNotIn('private-attempt', summary)
+        self.assertNotIn('échec', summary.lower())
+        self.assertNotIn('terminé', summary.lower())
 
     def test_publication_empty_html_and_verified_bytes_keep_the_same_boundary(self):
         with tempfile.TemporaryDirectory(prefix='s10-web-') as tmp:

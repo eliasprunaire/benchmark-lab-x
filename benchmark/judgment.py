@@ -4,6 +4,7 @@ from contextlib import closing
 from copy import deepcopy
 from hashlib import sha256
 import json
+import logging
 import os
 import re
 
@@ -175,6 +176,7 @@ def execute(data, operation_id, transport):
                 raise IntegrityError('Profil ou octets modifiés')
             connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' WHERE operation_id=?", (operation_id,))
         operation.update(state='EMISSION_POSSIBLE', conserved_wire=wire)
+        logging.getLogger(__name__).info('JUDGMENT_EMITTING operation=%s', operation_id)
         try:
             response = transport(deepcopy(operation), deepcopy(request))
             _fields(response, ('receipt', 'cost'), 'judgment response')
@@ -186,10 +188,14 @@ def execute(data, operation_id, transport):
                 receipt['observed_configuration']['incident'] = 'UNUSABLE_JUDGMENT_PROPOSAL'
             receipt['result'] = proposal
             store.record_receipt(operation_id, receipt, response['cost'])
-        except BaseException:
+            logging.getLogger(__name__).info('JUDGMENT_RECEIVED operation=%s usable=%s cost=%s',
+                                            operation_id, proposal is not None, response['cost']['status'])
+        except BaseException as error:
             current = next(x for x in store.inspect_operations() if x['operation_id'] == operation_id)
             if current['state'] == 'EMISSION_POSSIBLE':
                 store.mark_ambiguous(operation_id, 'JUDGMENT_EFFECTS_UNKNOWN')
+            logging.getLogger(__name__).error('JUDGMENT_STOPPED operation=%s error=%s',
+                                              operation_id, type(error).__name__)
             raise
 
 

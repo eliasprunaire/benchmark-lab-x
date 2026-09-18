@@ -169,6 +169,18 @@ class DossierPageTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
 
+    def test_five_steps_preserve_revision_and_disable_future_steps(self):
+        value = dict(dossier_id='d1', revision=2, current_revision=3, stage='preview',
+                     package=None, validation=None, qualified=False, explanation='Exemple attendu',
+                     payload=dict(request='Besoin fictif', clarifications=[], validated_assumptions=[],
+                                  reformulation='', fictional_parameters={}))
+        page = views.render(value, 'csrf').decode()
+        nav = page.split('<nav class="steps"', 1)[1].split('</nav>', 1)[0]
+        for number, label in enumerate(('Besoin', 'Exemple', 'Validation', 'Modèles', 'Résultats'), 1):
+            self.assertIn(f'<span class="n">{number}</span>{label}', nav)
+        self.assertEqual(4, nav.count('aria-disabled="true"'))
+        self.assertIn('/preparation/dossiers/d1/revisions/2#besoin', nav)
+
     def test_scope_confirmation_explains_why_benchmark_is_unavailable(self):
         page = views.render({
             'dossier_id': 'd1', 'revision': 2, 'stage': 'scope_confirmation',
@@ -311,23 +323,32 @@ class ComparisonPageTests(unittest.TestCase):
 const vm = require('node:vm'), assert = require('node:assert/strict');
 const script = require('node:fs').readFileSync(0, 'utf8');
 (async () => {
-  for (const outcome of ['waiting', 'finished', 'error', 'input', 'pause']) {
-    const timers = new Map(), events = {}, requests = [], navigations = [];
+  for (const outcome of ['waiting', 'finished', 'error', 'input', 'pause', 'campaign-waiting', 'campaign-finished', 'campaign-stopped']) {
+    const timers = new Map(), events = {}, requests = [], navigations = [], logs = [];
+    const updates = [], campaignStatus = {replaceChildren: (...nodes) => updates.push(nodes)};
+    const campaign = outcome.startsWith('campaign-');
+    const waiting = outcome === 'waiting' || outcome === 'campaign-waiting';
     const status = {}, progress = {}, pause = {addEventListener: (_, fn) => events.pause = fn};
     const link = {href: 'https://fixture.invalid/preparation/dossiers/d1'};
     const nodes = {'a': link, '[role="status"]': status, 'button': pause, 'progress': progress};
     const panel = {querySelector: name => nodes[name]};
     let serial = 0;
     vm.runInNewContext(script, {
-      document: {hidden: false, getElementById: () => panel,
+      console: {info: (...args) => logs.push(args), error: (...args) => logs.push(args)},
+      document: {hidden: false, getElementById: id => id === 'preparation-progress' ? panel : id === 'campaign-status' && campaign ? campaignStatus : null,
                  addEventListener: (event, fn) => events[event] = fn},
       window: {addEventListener: (event, fn) => events[event] = fn},
       location: {replace: url => navigations.push(url)}, AbortController,
       setTimeout: fn => {timers.set(++serial, fn); return serial;},
       clearTimeout: id => timers.delete(id),
-      DOMParser: class {parseFromString() {return {getElementById: () => outcome === 'waiting' ? panel : null};}},
+      DOMParser: class {parseFromString() {return {getElementById: id => {
+        if (id === 'preparation-progress') return waiting ? panel : null;
+        if (id === 'campaign-status' && campaign) return {childNodes: ['Deux réponses reçues']};
+        if (id === 'campaign-followup' && campaign) return {dataset: outcome === 'campaign-finished' ? {resultsHref: '/results'} : {}};
+        return null;
+      }};}},
       fetch: async (url, options) => {requests.push({url, options});
-        return {ok: outcome !== 'error', text: async () => '<html></html>'};}
+        return {status: outcome === 'error' ? 503 : 200, ok: outcome !== 'error', text: async () => '<html></html>'};}
     });
     if (outcome === 'input' || outcome === 'pause') events[outcome]();
     else {const [id, task] = timers.entries().next().value; timers.delete(id); await task();}
@@ -336,8 +357,13 @@ const script = require('node:fs').readFileSync(0, 'utf8');
       assert.equal(url, link.href); assert.equal(options.method, undefined);
       assert.equal(options.body, undefined); assert.equal(options.redirect, 'error');
     }
-    assert.deepEqual(navigations, outcome === 'finished' ? [link.href] : []);
-    assert.equal(timers.size, outcome === 'waiting' ? 1 : 0);
+    assert.deepEqual(navigations, outcome === 'campaign-finished' ? ['/results'] : ['finished', 'campaign-stopped'].includes(outcome) ? [link.href] : []);
+    assert.equal(updates.length, outcome === 'campaign-waiting' ? 1 : 0);
+    for (const entry of logs) {
+      assert.match(entry[0], /^FOLLOWUP_(ACTIVE|COMPLETE|HTTP_ERROR|UNAVAILABLE)$/);
+      assert(entry.length === 1 || entry.length === 2 && [200, 503].includes(entry[1]));
+    }
+    assert.equal(timers.size, waiting ? 1 : 0);
     if (['error', 'input', 'pause'].includes(outcome)) {
       assert.equal(progress.hidden, true); assert.equal(pause.hidden, true);
       assert.match(status.textContent, /interrompu|suspendu/);
@@ -347,6 +373,34 @@ const script = require('node:fs').readFileSync(0, 'utf8');
 '''
         subprocess.run(['node', '-e', program], input=views.PREPARATION_PROGRESS_SCRIPT,
                        text=True, check=True, capture_output=True)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node requis pour la validation du plafond')
+    def test_cap_enables_only_a_changed_native_valid_decimal(self):
+        from benchmark_web.campaign_views import CAP_SCRIPT
+        program = r"""
+const vm = require('node:vm'), assert = require('node:assert/strict');
+const script = require('node:fs').readFileSync(0, 'utf8');
+const events = {}, button = {}, input = {
+  value: '50.00', defaultValue: '50.00', valid: true,
+  setCustomValidity(message) { this.error = message; },
+  checkValidity() { return this.valid && !this.error; },
+  addEventListener(name, fn) { events[name] = fn; },
+  form: {querySelector: () => button, addEventListener(name, fn) { events[name] = fn; }}
+};
+vm.runInNewContext(script, {document: {getElementById: () => input}});
+assert.equal(button.disabled, true);
+for (const value of ['', '50', '50.00', '0.09', '100.01', '1e1', '-1', '1.234', '.5', '1.']) {
+  input.value = value; events.input(); assert.equal(button.disabled, true, value);
+  let blocked = false; events.submit({preventDefault() {blocked = true;}});
+  assert.equal(blocked, true, value);
+}
+for (const value of ['0.10', '1', '1.2', '75.00', '100']) {
+  input.value = value; events.input(); assert.equal(button.disabled, false, value);
+  assert.equal(button.className, '');
+}
+input.valid = false; events.input(); assert.equal(button.disabled, true);
+"""
+        subprocess.run(['node', '-e', program], input=CAP_SCRIPT, text=True, check=True, capture_output=True)
 
     def test_progress_only_for_current_pending_work(self):
         value = dict(dossier_id='d1', revision=1, current_revision=1, stage='waiting',
