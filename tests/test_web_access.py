@@ -102,7 +102,7 @@ class FakeExecutor:
                     elif request['method'] == 'POST' and request['path'].endswith('/cap'):
                         result = {'status': 200, 'value': {'kind': 'campaign_launch'},
                                   'piece': False, 'cookie': None}
-                    elif request['method'] == 'POST' and request['path'].endswith('/start'):
+                    elif request['method'] == 'POST' and request['path'].endswith(('/start', '/evaluate')):
                         result = {'status': 202, 'value': {'kind': 'campaign_launch'},
                                   'piece': False, 'cookie': None}
                     else:
@@ -209,6 +209,24 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('Relevé de modèles indisponible', page)
         self.assertNotIn('<form', page)
 
+    def test_judgment_estimate_is_displayed_before_launch_without_inventing_a_price(self):
+        value = self.campaign({'status': 'connected'})
+        value.update(checks=[], launchable=False, cap_usd='30.00', judgment_estimate_usd='0.125')
+        page = views.render(value, 'csrf').decode()
+        self.assertIn('Évaluation estimée : 0,125 USD', page)
+        self.assertIn('financée par votre clé personnelle', page)
+        value.pop('judgment_estimate_usd')
+        self.assertNotIn('Évaluation estimée', views.render(value, 'csrf').decode())
+
+    def test_judgment_preflight_failure_remains_readable(self):
+        value = self.campaign({'status': 'connected'})
+        value.update(checks=[{'key': 'judgment_available', 'ok': False,
+                              'detail': 'Budget insuffisant pour l’évaluation'}],
+                     launchable=False, cap_usd='30.00')
+        page = views.render(value, 'csrf').decode()
+        self.assertIn('Budget insuffisant pour l’évaluation', page)
+        self.assertNotIn('>Lancer la comparaison</button>', page)
+
     def test_cap_starts_disabled_and_uses_the_authorized_page_script(self):
         value = self.campaign({'status': 'connected'})
         value.update(checks=[], launchable=False, cap_usd='50.00')
@@ -299,6 +317,38 @@ class AccessViewTests(unittest.TestCase):
                 nav = page.split('<nav class="steps"', 1)[1].split('</nav>', 1)[0]
                 self.assertIn('/preparation/dossiers/d1/revisions/2#exemple', nav)
                 self.assertIn('/preparation/dossiers/d1/campaigns/c1', nav)
+
+    def test_automatic_judgment_keeps_followup_until_verdicts_are_complete(self):
+        for status, active, ready in (('NOT_STARTED', False, False),
+                                      ('WAITING', True, False), ('RUNNING', True, False),
+                                      ('COMPLETE', False, True), ('BLOCKED', False, False)):
+            with self.subTest(status=status):
+                value = self.campaign({'status': 'connected'})
+                value.update(checks=[], launchable=False, cap_usd='30.00')
+                value['campaign'].update(
+                    admission_open=True, attempts=[{'state': 'RECEIVED'}],
+                    cells=[{'configuration_id': 'x', 'state': 'RECEIVED'}],
+                    panel=[{'id': 'x', 'model': 'Modèle A'}],
+                    judgment={'status': status, 'total': 1, 'completed': int(ready),
+                              'reason': 'Budget insuffisant' if status == 'BLOCKED' else None,
+                              'can_start': status == 'NOT_STARTED'})
+                page = views.render(value, 'csrf').decode()
+                self.assertEqual(active, 'id="preparation-progress"' in page)
+                self.assertEqual(ready, 'data-results-href=' in page)
+                self.assertIn('1 réponse(s) reçue(s) sur 1', page)
+                self.assertIn(str(int(ready)) + ' évaluation(s) terminée(s) sur 1', page)
+                self.assertEqual(status == 'NOT_STARTED',
+                                 'action="/preparation/dossiers/d1/campaigns/c1/evaluate"' in page)
+                if status == 'NOT_STARTED':
+                    self.assertIn('Évaluer les réponses conservées', page)
+                    self.assertIn('name="confirm" value="yes"', page)
+                    self.assertIn('name="csrf_token" value="csrf"', page)
+                if status == 'BLOCKED':
+                    self.assertIn('Budget insuffisant', page)
+                    self.assertNotIn('id="preparation-progress"', page)
+                if not ready:
+                    self.assertNotIn('Comparer les résultats et lire les preuves</a>', page)
+                self.assertEqual(active or ready, views.page_script(value) is not None)
 
     def test_mention_depassement_reste_apres_lancement(self):
         value = self.campaign({'status': 'connected', 'limit_remaining_usd': '12.50'})
@@ -618,6 +668,24 @@ class AccessServerTests(unittest.TestCase):
         status, _, raw = self.request('GET', '/preparation/access', headers={
             'Cookie': 'benchmark_session=session-token', 'Accept': 'application/json'})
         self.assertEqual(200, status, 'la vue JSON ne dépend pas du jeton CSRF de la page')
+
+    def test_evaluation_post_redirects_to_read_only_followup(self):
+        path = '/preparation/dossiers/d1/campaigns/d1-c1/evaluate'
+        body = urlencode({'csrf_token': 'csrf', 'confirm': 'yes'}).encode()
+        status, headers, _ = self.request('POST', path, body, {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': 'benchmark_session=session-token'})
+        self.assertEqual((303, path.removesuffix('/evaluate') + '/conditions'),
+                         (status, headers.get('Location')))
+        request = self.executor.requests.get_nowait()
+        self.assertEqual(path, request['path'])
+        self.assertEqual({'csrf_token': 'csrf', 'confirm': 'yes'}, request['body'])
+        self.assertTrue(self.executor.requests.empty())
+        status, headers, _ = self.request('POST', path, body, {
+            'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json',
+            'Cookie': 'benchmark_session=session-token'})
+        self.assertEqual(202, status)
+        self.assertNotIn('Location', headers)
 
     def test_url_publique_requise_pour_activer(self):
         self.assertEqual('https://benchmark.example/preparation/access/callback',

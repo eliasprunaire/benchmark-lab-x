@@ -314,6 +314,7 @@ def main(argv=None):
                 access_secret = parse_secret(os.environ.pop('BENCHMARK_ACCESS_SECRET', ''))
                 transport = None
                 qualification_transport = None
+                judgment_transport = None
                 candidate_factory = None
                 candidate_identity = None
                 profile = None
@@ -336,12 +337,17 @@ def main(argv=None):
                     from .transports.openrouter import OpenRouterQualification
                     qualification_transport = OpenRouterQualification(None if args.personal_preparation else key, args.qualification_assistant)
                     qualification_transport.quote()
+                if args.personal_preparation:
+                    from .transports.openrouter import OpenRouterJudgment, AUTOMATIC_JUDGMENT_PROFILE
+                    judgment_transport = OpenRouterJudgment(None, load_profile(str(AUTOMATIC_JUDGMENT_PROFILE)))
+                    judgment_transport.quote()
                 from functools import partial
                 from .model_catalogue import MAX_RESPONSE_BYTES
                 from .transports.prices import fetch_public
                 serve_executor(args.data, args.socket, release_identity(), transport=transport,
                                catalogue_fetch=partial(fetch_public, max_response_bytes=MAX_RESPONSE_BYTES),
                                qualification_transport=qualification_transport, personal_preparation=args.personal_preparation,
+                               judgment_transport=judgment_transport,
                                candidate_transport_factory=candidate_factory,
                                candidate_identity=candidate_identity,
                                access_secret=access_secret, access_transport=OpenRouterAccess(),

@@ -1,4 +1,4 @@
-"""Private assisted proposals; only evaluation.submit_report creates a verdict."""
+"""Retained judge findings; the evaluation engine derives verdicts from checked evidence"""
 from base64 import b64decode
 from contextlib import closing
 from copy import deepcopy
@@ -6,6 +6,7 @@ from hashlib import sha256
 import json
 import logging
 import os
+from pathlib import Path
 import re
 
 from .validation import digest as value_digest, identifier
@@ -26,14 +27,23 @@ def _admission(store, ctx):
     return ctx['campaign']['admission']['admission_id']
 
 
-def _inputs(store, connection, request, *, latest=True):
+def _inputs(store, connection, request, *, latest=True, automatic=False):
     _fields(request, REQUEST_FIELDS, 'judgment request')
-    e._authority(request['authority']['actor'], request['authority'])
-    if request['authority']['actor'] != 'Ayo':
-        raise ValueError('Autorité opérateur requise')
+    if not automatic:
+        e._authority(request['authority']['actor'], request['authority'])
+        if request['authority']['actor'] != 'Ayo':
+            raise ValueError('Autorité opérateur requise')
     for key in ('operation_id', 'campaign_id', 'attempt_id', 'budget_id'):
         identifier(request[key])
-    ctx = e._context(store, connection, request['campaign_id'], request['attempt_id'])
+    if automatic:
+        from . import automatic_judgment as auto, provider_access
+        ctx = auto.context(store, connection, request['campaign_id'], request['attempt_id'])
+        expected = auto.authority(connection, ctx)
+        if (request['authority'] != expected or request['previous_evaluation_id'] is not None
+                or request['budget_id'] != provider_access.preparation_budget_id(expected['authority_id'].split(':', 1)[1])):
+            raise IntegrityError('Autorité personnelle divergente')
+    else:
+        ctx = e._context(store, connection, request['campaign_id'], request['attempt_id'])
     content = e._review_content(store, ctx)
     if content['output'] is None or value_digest(content) != request['review_sha256']:
         raise IntegrityError('Projection ou sortie divergente')
@@ -58,7 +68,7 @@ def _envelope(store, connection, request, operation_id=None):
                    and op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') for op in operations)):
         raise BudgetError('Effets ou coûts non résolus')
     for op in operations:
-        if op['operation_id'] == operation_id or op['engine_version'] != FORMAT:
+        if op['operation_id'] == operation_id or op['engine_version'] not in (FORMAT, 'benchmark-lab-x/automatic-judgment/v1'):
             continue
         source = json.loads(op['resources'][0])['request']
         cost = store._effective_cost(connection, op)
@@ -74,31 +84,44 @@ def reserve(store, request, transport):
         verify(store)
         connection = e.connection_for(store)
         with _transaction(connection, write=True):
-            ctx, content = _inputs(store, connection, request)
-            aid = _admission(store, ctx)
-            _envelope(store, connection, request)
-            contract = ctx['qualification']['contract']
-            operation = dict(operation_id=request['operation_id'], dossier_id=contract['dossier_id'],
-                revision=contract['revision'], phase='judgment', authority=request['authority']['authority_id'],
-                engine_version=FORMAT, requested_configuration=request['requested_configuration'], resources=[])
-            wire = transport.prepare(deepcopy(operation), dict(outgoing_format=outgoing.FORMAT, outgoing=content))
-            operation['resources'] = [encode(dict(request=request, admission_id=aid,
-                context_sha256=value_digest(ctx), context=ctx, content=content)), wire]
-            store._reserve_intent(connection, operation, request['budget_id'], request['reserve_amount'])
+            _reserve(store, connection, request, transport)
     return inspect(store, request['operation_id'])
 
 
+def _reserve(store, connection, request, transport, *, automatic=False):
+    from . import automatic_judgment as auto
+    ctx, content = _inputs(store, connection, request, automatic=automatic)
+    aid = auto.admission(store, connection) if automatic else _admission(store, ctx)
+    _envelope(store, connection, request)
+    contract = ctx['qualification']['contract']
+    operation = dict(operation_id=request['operation_id'], dossier_id=contract['dossier_id'],
+        revision=contract['revision'], phase='judgment', authority=request['authority']['authority_id'],
+        engine_version=auto.FORMAT if automatic else FORMAT,
+        requested_configuration=request['requested_configuration'], resources=[])
+    wire = transport.prepare(deepcopy(operation), dict(outgoing_format=outgoing.FORMAT, outgoing=content))
+    saved = dict(request=request, admission_id=aid, context_sha256=value_digest(ctx), context=ctx, content=content)
+    if automatic:
+        saved['engine_source_sha256'] = sha256(Path(auto.__file__).read_bytes() + Path(e.__file__).read_bytes()).hexdigest()
+    operation['resources'] = [encode(saved), wire]
+    store._reserve_intent(connection, operation, request['budget_id'], request['reserve_amount'])
+
+
 def _bound(store, connection, operation, *, latest=False):
-    if operation['engine_version'] != FORMAT or operation['phase'] != 'judgment' or len(operation['resources']) != 2:
+    from .automatic_judgment import FORMAT as automatic_format
+    automatic = operation['engine_version'] == automatic_format
+    if operation['engine_version'] not in (FORMAT, automatic_format) or operation['phase'] != 'judgment' or len(operation['resources']) != 2:
         raise ValueError('Intention S14 requise')
     saved = json.loads(operation['resources'][0], object_pairs_hook=storage._unique_object)
-    _fields(saved, ('request', 'admission_id', 'context_sha256', 'context', 'content'), 'judgment binding')
+    _fields(saved, ('request', 'admission_id', 'context_sha256', 'context', 'content') +
+            (('engine_source_sha256',) if automatic else ()), 'judgment binding')
+    if automatic:
+        e._hash(saved['engine_source_sha256'])
     request = saved['request']
-    ctx, content = _inputs(store, connection, request, latest=latest)
+    ctx, content = _inputs(store, connection, request, latest=latest, automatic=automatic)
     e._validate_context(saved['context'], ctx)
     if (value_digest(saved['context']) != saved['context_sha256']
-            or saved['context']['campaign']['admission'] is None
-            or saved['context']['campaign']['admission']['admission_id'] != saved['admission_id']):
+            or (not automatic and (saved['context']['campaign']['admission'] is None
+            or saved['context']['campaign']['admission']['admission_id'] != saved['admission_id']))):
         raise IntegrityError('Instantané de jugement divergent')
     contract = ctx['qualification']['contract']
     if (content != saved['content']
@@ -167,8 +190,17 @@ def execute(data, operation_id, transport):
         with _transaction(connection, write=True):
             operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
             saved, ctx = _bound(store, connection, operation, latest=True)
-            if _admission(store, ctx) != saved['admission_id']:
+            from . import automatic_judgment as auto
+            automatic = operation['engine_version'] == auto.FORMAT
+            admission_id = auto.admission(store, connection) if automatic else _admission(store, ctx)
+            if admission_id != saved['admission_id']:
                 raise ConflictError('Admission modifiée')
+            if automatic and (getattr(transport, 'preparation_budget_id', None) != operation['budget_id']
+                              or not transport.authorized(store)):
+                raise ConflictError('Clé personnelle retirée ou remplacée')
+            if automatic and any(ctx['campaign'][key] != saved['context']['campaign'][key]
+                                 for key in ('admission', 'stop_reason', 'restore_pending')):
+                raise ConflictError('Campagne arrêtée depuis la réservation du jugement')
             _envelope(store, connection, saved['request'], operation_id)
             request = dict(outgoing_format=outgoing.FORMAT, outgoing=saved['content'])
             wire = transport.prepare(deepcopy(operation), deepcopy(request))
@@ -220,6 +252,9 @@ def diagnostic(store, connection, operation, ctx):
         return dict(state='RECONCILIATION_REQUIRED' if operation['state'] != 'INTENT_RECORDED' else 'EXECUTION_REQUIRED',
                     reason='Jugement sans reçu ; vérifier les effets avant tout nouvel appel')
     if receipt['result'] is not None:
+        from .automatic_judgment import FORMAT as automatic_format
+        if operation['engine_version'] == automatic_format:
+            return dict(state='EVALUATED', reason='Constats vérifiés ; verdict privé calculé automatiquement')
         return dict(state='OWNER_REVIEW_REQUIRED', reason='Proposition disponible ; relecture et soumission locales requises')
     observed = receipt['observed_configuration']
     http = observed.get('http', {})
@@ -286,7 +321,8 @@ def _retained_proposal(store, connection, operation, ctx):
 
 
 def verify_judgments(store, connection):
+    from .automatic_judgment import FORMAT as automatic_format
     for operation in store._operations(connection):
-        if operation['engine_version'] == FORMAT:
+        if operation['engine_version'] in (FORMAT, automatic_format):
             _, ctx = _bound(store, connection, operation)
             _retained_proposal(store, connection, operation, ctx)

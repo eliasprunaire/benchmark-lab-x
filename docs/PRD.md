@@ -42,7 +42,7 @@ Le catalogue distingue le métier ou domaine, qui donne le contexte, et la famil
 | Je veux vérifier une conclusion                  | retrouver tâche, contrat, configuration, sortie et preuves                    | chaîne d'attribution bornée                              |
 | Je cherche une tâche proche de mon besoin        | parcourir le catalogue et sa couverture réelle                               | tâche, version, cas et campagnes pertinents              |
 
-Le demandeur-lecteur exprime son besoin et valide l’exemple qui le représente. Il n’a pas à inventer un seuil, une métrique ou une méthode de jugement : le responsable de campagne prépare et approuve le contrat avant les appels candidats. L’assistance de préparation exige ses propres autorités. Ces deux rôles peuvent être tenus par la même personne ; leur existence n’impose aucun système de comptes. L’affectation de l’approbateur dans le service public reste à décider.
+Le demandeur-lecteur exprime son besoin, valide l’exemple qui le représente et autorise le lancement. Il n’a pas à inventer un seuil, une métrique ou une méthode de jugement. Dans le parcours public, préparation, qualification et évaluation suivent automatiquement la méthode du produit ; aucun opérateur humain n’approuve individuellement les résultats. Le responsable de campagne répond de cette méthode. Les autorisations d’appel, les budgets et la publication restent distincts.
 
 ## 4. Question active
 
@@ -74,7 +74,7 @@ La sélection d’un modèle ne prouve ni sa disponibilité ni sa compatibilité
 
 Les assistants d’accueil, de préparation et de jugement sont sélectionnés séparément du panel candidat. Aucun assistant n’est déclaré qualifié, disponible ou moins cher sans preuve. Le responsable peut retenir un profil OpenRouter déjà approuvé au démarrage, sans modifier le code ; un fichier de profil ne promeut aucun essai en assistant de production. Les essais de préparation examinent la fidélité au besoin vague, l’utilité des questions, l’absence de besoins inventés, la cohérence et la vérifiabilité du cas, ainsi que la conservation des accords lors des modifications. Coûts et provenance sont examinés séparément de cette qualité ; identifiants, méthode d’essai et budget doivent être décidés avant les appels.
 
-Restent ouverts avant réalisation ou ouverture des fonctions concernées : approbateur du contrat et admission des demandes, identité et sessions, traitement des saisies sensibles et conservation, financement et enveloppes, protection contre les abus, articulation des panels et campagnes réelles, publication et alimentation du catalogue. La confidentialité demeure la règle avant autorisation de publication. Les frontières d’accès et le composant portant l’assistance sont à préciser dans l’[ARD](ARD.md#121-frontières-du-produit). Ces inconnues n’annulent pas le cap produit ; elles n’autorisent aucun choix implicite de compte, quota, prix ou publication automatique.
+Restent ouverts avant réalisation ou ouverture des fonctions concernées : admission des demandes, identité et sessions, traitement des saisies sensibles et conservation, financement et enveloppes, protection contre les abus, articulation des panels et campagnes réelles, publication et alimentation du catalogue. La confidentialité demeure la règle avant autorisation de publication. Les frontières d’accès et le composant portant l’assistance sont à préciser dans l’[ARD](ARD.md#121-frontières-du-produit). Ces inconnues n’annulent pas le cap produit ; elles n’autorisent aucun choix implicite de compte, quota, prix ou publication automatique.
 
 ### 5.2 Extensions
 
@@ -88,7 +88,7 @@ Les abonnements comme objets de comparaison, les produits agentiques et la compa
 
 ## 6. Contrat de réussite
 
-Le contrat d’une version de tâche traduit le besoin en résultat attendu, obligations, erreurs éliminatoires et critères secondaires prévus. Le responsable de campagne l’approuve avant les appels candidats ; confirmer le besoin ne remplace ni cette approbation ni la qualification de la référence. Les [règles](RULES.md#4-contrat-avant-exécution) fixent le contenu minimal, le gel, les verdicts et les conditions d’agrégation.
+Le contrat d’une version de tâche traduit le besoin en résultat attendu, obligations, erreurs éliminatoires et critères secondaires prévus. Dans le parcours public, la qualification automatique de la référence précède le lancement confirmé par le demandeur ; confirmer le besoin seul ne lance aucun candidat. Les [règles](RULES.md#4-contrat-avant-exécution) fixent le contenu minimal, le gel, les verdicts et les conditions d’agrégation.
 
 La tâche annonce ce qu’elle mesure et le travail qui reste à l’utilisateur : brouillon à reprendre, résultat utilisable après relecture ou autre usage explicitement défini. La qualité de l’épreuve dépend aussi de sa référence de jugement et de ses contrôles, qualifiés avant l’approbation du contrat selon les règles ; la réputation d’un modèle ne suffit à elle seule ni à valider l’épreuve ni à l’invalider.
 
@@ -122,7 +122,7 @@ L’invite d’accueil est :
 
 > Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. Nous préparerons avec vous un exemple fictif pour comparer les modèles sur des critères vérifiables et leur coût observé. Les résultats du test vous aideront à faire votre choix.
 
-Le parcours suit : demande → clarification → reformulation → construction du dossier → aperçu et validation du besoin → qualification de la référence → présentation des conditions de campagne → approbations → lancement autorisé → résultats et comparaison. Les appels d’interview, de génération, de correction ou de jugement ont leur propre autorité et leur enveloppe avant consommation, selon les [règles de coût](RULES.md#8-coût-et-bénéfices).
+Le parcours suit : demande → clarification → reformulation → construction du dossier → aperçu et validation du besoin → qualification de la référence → présentation des conditions de campagne → lancement autorisé → acquisition et évaluation automatiques → résultats privés et comparaison. Le lancement couvre l’évaluation automatique annoncée, sans validation humaine supplémentaire. Les appels d’interview, de génération, de correction ou de jugement ont leur propre autorité et leur enveloppe avant consommation, selon les [règles de coût](RULES.md#8-coût-et-bénéfices).
 
 L’agent comprend le travail pour construire son épreuve. Il pose seulement les questions dont la réponse change l’attendu, conserve les besoins et précisions, et distingue hypothèses validées et paramètres fictifs inventés. Il ne simplifie pas silencieusement le travail, ne résout pas l’épreuve dans le prompt candidat et n’adapte pas ce prompt pour favoriser une configuration. Aucun nombre de questions n’est imposé ; l’autorité et le budget bornent la préparation.
 

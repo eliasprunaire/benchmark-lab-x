@@ -545,8 +545,12 @@ class OpenRouterQualification(OpenRouterPreparation):
         return request['outgoing']
 
 
+AUTOMATIC_JUDGMENT_PROFILE = Path(__file__).parent / 'profiles' / 'judgment.profile.json'
+
+
 class OpenRouterJudgment(OpenRouterPreparation):
     phases = ('judgment',)
+    quote = OpenRouterQualification.quote
 
     def __init__(self, api_key, profile):
         super().__init__(api_key, profile)
