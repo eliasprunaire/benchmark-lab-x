@@ -366,11 +366,14 @@ def render_comparison(value):
         return content
     choice = value.get('economic_choice')
     if choice:
-        content += '<div class="economic-choice"><p>Si le coût est votre priorité, <strong>' + text(choice['configuration']['model'])
-        content += ' · ' + text(effort_label(choice['configuration'])) + '</strong> est la configuration conforme la moins coûteuse sur cet exemple ('
-        content += text(montant_lisible(choice['amount']) + ' ' + choice['unit']) + ', parmi ' + text(choice['count']) + ' réponses conformes).</p>'
-        content += '<p class="hint"><a data-result href="' + text(choice['detail_href']) + '">Détails et réserves</a> · '
-        content += 'Un seul exemple ne garantit pas le même résultat sur d’autres tâches.</p></div>'
+        content += '<aside class="economic-choice" aria-labelledby="economic-choice-title"><p class="eyebrow">Notre conseil</p>'
+        content += '<h2 id="economic-choice-title">Si le coût est votre priorité</h2><div class="choice-highlight"><div>'
+        content += '<p class="choice-model">' + text(choice['configuration']['model']) + '</p>'
+        content += '<p>' + text(effort_label(choice['configuration'])) + '</p></div>'
+        content += '<p class="choice-cost">Coût observé<strong>' + text(montant_lisible(choice['amount']) + ' ' + choice['unit']) + '</strong></p></div>'
+        content += '<p>La moins coûteuse parmi ' + text(choice['count']) + ' réponses conformes sur cet exemple.</p>'
+        content += '<a class="button" data-result href="' + text(choice['detail_href']) + '">Détails et réserves</a>'
+        content += '<p class="hint">Un seul exemple ne garantit pas le même résultat sur d’autres tâches.</p></aside>'
     sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
     sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
     options = {
@@ -385,6 +388,8 @@ def render_comparison(value):
                         for v in value['obligations'] for state, label in
                         (('PASS', 'Respectée'), ('FAIL', 'Non respectée'), ('INDETERMINE', 'Indéterminée'))]),
     }
+    content += '<section class="comparison-results"><h2>Comparaison des modèles</h2>'
+    content += '<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
     content += '<details id="filters" class="comparison-filters"' + (' open' if query else '') + '><summary>Tris et filtres</summary>'
     content += '<form method="get" action="' + text(base) + '#filters"><div class="filter-grid">'
     advanced = ''
@@ -417,8 +422,8 @@ def render_comparison(value):
         if not rows:
             continue
         label = 'Cas ' + str(case_number) if multiple_cases else 'Comparaison des modèles'
-        content += '<section class="comparison-results"><h2>' + text(label) + '</h2>'
-        content += '<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
+        if multiple_cases:
+            content += '<h3>' + text(label) + '</h3>'
         content += '<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '">'
         content += '<table><caption>Chaque verdict concerne la réponse obtenue sur cet exemple.</caption><thead><tr>'
         measure_column = sort_column if sort_column and 'criterion_id' in sort_column else None
@@ -449,8 +454,8 @@ def render_comparison(value):
                     content += '<td>' + readable_fields(measure['value'])
                     content += ('' if measure['unit'] in ('bool', 'boolean', 'booléen') else ' ' + text(measure['unit'])) + '</td>'
             content += '<td><a data-result href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
-        content += '</tbody></table></div></section>'
-    content += '<details id="method"><summary>Comment lire ces résultats</summary>'
+        content += '</tbody></table></div>'
+    content += '</section><details id="method"><summary>Comment lire ces résultats</summary>'
     content += '<ul><li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
     content += '<li>Comparez le coût des réponses satisfaisantes, puis consultez leurs qualités et limites dans « Détail et preuves ». Un coût inconnu ne change pas le verdict.</li>'
     content += '<li>Les modèles reçoivent les mêmes consignes et pièces. Ces résultats concernent uniquement cet exemple fictif, sans garantir la même qualité sur d’autres tâches.</li></ul></details>'
