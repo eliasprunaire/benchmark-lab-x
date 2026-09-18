@@ -265,8 +265,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     headers['Location'] = self.path[:-3] + 'conditions'
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
-                if self.command == 'POST' and self.path.endswith('/start') and result['status'] < 400 and not wants_json:
-                    headers['Location'] = self.path[:-5] + 'conditions'
+                if self.command == 'POST' and self.path.endswith(('/start', '/evaluate')) and result['status'] < 400 and not wants_json:
+                    headers['Location'] = self.path.rsplit('/', 1)[0] + '/conditions'
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
                 if result.get('piece'):

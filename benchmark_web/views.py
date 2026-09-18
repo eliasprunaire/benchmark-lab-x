@@ -149,10 +149,13 @@ def preparation_steps(value):
     models_href = base + '/conditions' if base else dossier + '/configurations'
     if not downstream and value.get('qualified') and revision == value.get('current_revision', revision):
         models_href = dossier + '/configurations'
+    results_href = base
+    if campaign.get('judgment') and campaign['judgment']['status'] != 'COMPLETE':
+        results_href = base + '/conditions'
     targets = [reference + '#besoin', reference + '#exemple' if example else None,
                reference + '#validation' if example else None,
                models_href if models else None,
-               (value['href'] if kind == 'comparison' else base) if results else None]
+               (value['href'] if kind == 'comparison' else results_href) if results else None]
     content = '<nav class="steps" aria-label="Étapes de préparation">'
     for number, (label, href) in enumerate(zip(('Besoin', 'Exemple', 'Validation', 'Modèles', 'Résultats'), targets), 1):
         inner = '<span class="n">' + str(number) + '</span>' + label

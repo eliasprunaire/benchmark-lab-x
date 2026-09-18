@@ -465,6 +465,18 @@ CAP_SCRIPT = r"""(() => {
 def campaign_followup(campaign):
     """État d’affichage seulement : ne crée aucune autorité ni reprise"""
     cells = campaign['cells']
+    judgment = campaign.get('judgment')
+    if judgment:
+        status = judgment['status']
+        if status == 'COMPLETE':
+            return False, True, 'Évaluation terminée. Les résultats sont disponibles.'
+        if status == 'BLOCKED':
+            return False, False, judgment.get('reason') or 'Évaluation interrompue. Aucune relance automatique.'
+        if status in ('WAITING', 'RUNNING') and cells and all(c['state'] == 'RECEIVED' for c in cells):
+            return True, False, ('Évaluation en attente. Les réponses sont conservées.' if status == 'WAITING'
+                                 else 'Évaluation en cours. Les réponses sont vérifiées selon les critères de cet exemple.')
+        if status == 'NOT_STARTED' and cells and all(c['state'] == 'RECEIVED' for c in cells):
+            return False, False, 'Réponses conservées. Leur évaluation n’a pas été lancée.'
     if campaign.get('stop_reason') or campaign.get('restore_pending') or not campaign.get('admission_open'):
         return False, False, 'Admission fermée. Suivi automatique arrêté ; les réponses reçues restent consultables.'
     if any(a.get('incident') or a.get('attribution_incident') for a in campaign['attempts']):
@@ -480,7 +492,7 @@ def campaign_followup(campaign):
     return False, False, 'En attente de démarrage. Aucune activité observée ; actualisez pour vérifier le suivi.'
 
 
-def render_campaign_followup(value):
+def render_campaign_followup(value, csrf):
     campaign = value['campaign']
     base = '/preparation/dossiers/' + value['dossier_id'] + '/campaigns/' + campaign['campaign_id']
     active, ready, message = campaign_followup(campaign)
@@ -497,7 +509,11 @@ def render_campaign_followup(value):
         for cell in campaign['cells']))
     received = sum(cell['state'] == 'RECEIVED' for cell in campaign['cells'])
     all_received = bool(campaign['cells']) and received == len(campaign['cells'])
-    content += '<p>' + str(received) + ' réponse(s) reçue(s) sur ' + str(len(campaign['cells'])) + '.</p></div>'
+    content += '<p>' + str(received) + ' réponse(s) reçue(s) sur ' + str(len(campaign['cells'])) + '.</p>'
+    judgment = campaign.get('judgment')
+    if judgment:
+        content += '<p>' + text(judgment['completed']) + ' évaluation(s) terminée(s) sur ' + text(judgment['total']) + '.</p>'
+    content += '</div>'
     if active:
         content += '<div id="preparation-progress"><progress aria-label="Comparaison en cours"></progress>'
         content += '<p class="hint" role="status">Suivi automatique disponible avec JavaScript.</p><div class="actions">'
@@ -505,7 +521,11 @@ def render_campaign_followup(value):
         content += '<button type="button" class="sec" hidden>Suspendre le suivi automatique</button></div></div>'
     else:
         content += '<p><a class="button' + (' sec' if all_received else '') + '" href="' + text(base + '/conditions') + '">Actualiser le suivi</a></p>'
-    if not active:
+    if judgment and judgment['can_start']:
+        content += form(csrf, base + '/evaluate', {'confirm': 'yes'},
+            '<p>Votre clé personnelle finance l’évaluation des réponses déjà reçues. Aucun modèle candidat ne sera relancé.</p>'
+            '<button type="submit">Évaluer les réponses conservées</button>')
+    if not active and (ready or not judgment):
         content += '<p><a class="button' + ('' if all_received else ' sec') + '" href="' + text(base) + '">Comparer les résultats et lire les preuves</a></p>'
     content += '<p>L’arrêt intervient après le paiement de l’appel en cours. La dépense peut donc dépasser le plafond du montant du dernier appel.</p>'
     return content + '</div>'
@@ -515,7 +535,7 @@ def render_campaign_launch_requester(value, csrf):
     """Contrôles, plafond et suivi présentés au demandeur qui lance lui-même"""
     campaign = value['campaign']
     if campaign['attempts']:
-        return render_campaign_followup(value)
+        return render_campaign_followup(value, csrf)
     dossier_url = '/preparation/dossiers/' + value['dossier_id']
     base = dossier_url + '/campaigns/' + campaign['campaign_id']
     content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
@@ -540,6 +560,8 @@ def render_campaign_launch_requester(value, csrf):
         check_content += '</li>'
     check_content += '</ul>'
     content += section('Contrôles avant lancement', check_content)
+    if value.get('judgment_estimate_usd') is not None:
+        content += '<p>Évaluation estimée : ' + text(montant_lisible(value['judgment_estimate_usd'])) + ' USD, financée par votre clé personnelle.</p>'
     content += '<p>Plafond actuel : ' + text(montant_lisible(value['cap_usd'])) + ' USD.</p>'
     content += ('<p>L’arrêt intervient après le paiement de l’appel en cours. '
                 'La dépense peut donc dépasser le plafond du montant du dernier appel.</p>')
@@ -568,8 +590,10 @@ def render_campaign_launch_requester(value, csrf):
         }
         content += '<p role="status">Lancement indisponible : ' + text(
             failed['detail'] if type(failed['detail']) is str else
-            'connectez votre accès Openrouter') + '. <a class="button" href="' + text(
-            links[failed['key']]) + '">Compléter cette étape</a></p>'
+            'connectez votre accès Openrouter') + '.'
+        if failed['key'] in links:
+            content += ' <a class="button" href="' + text(links[failed['key']]) + '">Compléter cette étape</a>'
+        content += '</p>'
     else:
         content += '<p role="status">Lancement indisponible. Le responsable doit vérifier la disponibilité de l’exécution.</p>'
         content += '<p><a class="button" href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
@@ -580,7 +604,7 @@ def render_campaign_launch_operator(value, csrf):
     """Comparaison préparée et admise par l'opérateur, confirmée par le demandeur"""
     campaign = value['campaign']
     if campaign['attempts']:
-        return render_campaign_followup(value)
+        return render_campaign_followup(value, csrf)
     base = '/preparation/dossiers/' + value['dossier_id'] + '/campaigns/' + campaign['campaign_id']
     content = '<p>Le responsable prépare et autorise cette comparaison. Votre confirmation déclenche uniquement les essais qu’il a admis.</p>'
     content += '<p><a href="' + text('/preparation/dossiers/' + value['dossier_id']) + '">Revenir au cas d’usage</a></p>'
