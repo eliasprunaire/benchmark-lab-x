@@ -209,6 +209,16 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('Relevé de modèles indisponible', page)
         self.assertNotIn('<form', page)
 
+    def test_cap_starts_disabled_and_uses_the_authorized_page_script(self):
+        value = self.campaign({'status': 'connected'})
+        value.update(checks=[], launchable=False, cap_usd='50.00')
+        page = views.render(value, 'csrf').decode()
+        cap_form = page.split('action="/preparation/dossiers/d1/campaigns/c1/cap"', 1)[1].split('</form>', 1)[0]
+        button = next(attrs for tag, attrs in Markup(cap_form.encode()).tags if tag == 'button')
+        self.assertIn('disabled', button)
+        self.assertEqual('sec', button['class'])
+        self.assertIn('<script>' + views.page_script(value) + '</script>', page)
+
     def test_recapitulatif_demandeur_passant_et_bloquant(self):
         base = self.campaign({'status': 'connected', 'limit_remaining_usd': '12.50'})
         base.update(
@@ -257,6 +267,36 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('✕ Modèle à choisir de nouveau', page)
         self.assertIn('/preparation/dossiers/d1/configurations', page)
         self.assertNotIn('>Lancer la comparaison</button>', page)
+
+    def test_campaign_followup_only_polls_active_work_and_keeps_received_distinct(self):
+        for state, admission, incident, active, terminal, message in (
+            ('EMISSION_POSSIBLE', True, None, True, False, 'Comparaison en cours'),
+            ('INTENT_RECORDED', True, None, False, False, 'En attente de démarrage'),
+            ('EMISSION_POSSIBLE', False, None, False, False, 'Admission fermée'),
+            ('AMBIGUOUS', True, None, False, False, 'Vérification requise'),
+            ('RECEIVED', True, 'LENGTH', False, False, 'Incident'),
+            ('RECEIVED', True, None, False, True, 'Réponses reçues'),
+        ):
+            with self.subTest(state=state, admission=admission, incident=incident):
+                value = self.campaign({'status': 'connected'})
+                value.update(checks=[], launchable=False, cap_usd='50.00')
+                value['campaign'].update(
+                    task={'revision': 2}, admission_open=admission,
+                    attempts=[{'state': state, 'incident': incident}],
+                    cells=[{'configuration_id': 'x', 'state': state}],
+                    panel=[{'id': 'x', 'model': 'Modèle A'}])
+                page = views.render(value, 'csrf').decode()
+                self.assertEqual(active, 'id="preparation-progress"' in page)
+                self.assertEqual(terminal, 'data-results-href=' in page)
+                self.assertIn(message, page)
+                self.assertNotIn('action=', page)
+                if terminal:
+                    self.assertIn('En attente d’évaluation', page)
+                if active or terminal:
+                    self.assertIn('<script>' + views.page_script(value) + '</script>', page)
+                nav = page.split('<nav class="steps"', 1)[1].split('</nav>', 1)[0]
+                self.assertIn('/preparation/dossiers/d1/revisions/2#exemple', nav)
+                self.assertIn('/preparation/dossiers/d1/campaigns/c1', nav)
 
     def test_mention_depassement_reste_apres_lancement(self):
         value = self.campaign({'status': 'connected', 'limit_remaining_usd': '12.50'})
@@ -313,6 +353,32 @@ class AccessServerTests(unittest.TestCase):
                 'Content-Type': 'application/x-www-form-urlencoded'})
             self.assertEqual(403, status)
             self.assertIsNone(headers['Location'])
+
+    def test_campaign_csp_matches_exact_cap_or_read_only_followup_script(self):
+        from base64 import b64encode
+        from hashlib import sha256
+        value = AccessViewTests.campaign({'status': 'connected'})
+        value.update(checks=[], launchable=False, cap_usd='50.00', csrf_token='csrf')
+        for state in (None, 'EMISSION_POSSIBLE', 'RECEIVED', 'INTENT_RECORDED'):
+            with self.subTest(state=state):
+                if state:
+                    value['campaign'].update(admission_open=True,
+                        attempts=[{'state': state}], cells=[{'state': state, 'configuration_id': 'x'}],
+                        panel=[{'id': 'x', 'model': 'Modèle fictif'}])
+                self.executor.raw_response = json.dumps({'status': 200, 'value': value,
+                    'piece': False, 'cookie': None}).encode() + b'\n'
+                status, headers, raw = self.request('GET', '/preparation/dossiers/d1/campaigns/c1/conditions')
+                self.assertEqual(200, status)
+                script = views.page_script(value)
+                expected = CSP
+                if script:
+                    expected += "; script-src 'sha256-" + b64encode(sha256(script.encode()).digest()).decode() + "'"
+                    if state:
+                        expected += "; connect-src 'self'"
+                    self.assertEqual(script.encode(), raw.split(b'<script>')[1].split(b'</script>')[0])
+                else:
+                    self.assertNotIn(b'<script>', raw)
+                self.assertEqual(expected, headers['Content-Security-Policy'])
 
     def test_cookie_survives_browser_close_and_renews_only_on_success(self):
         _, headers, _ = self.request('GET', '/preparation/access')

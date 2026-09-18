@@ -81,8 +81,8 @@ section h3 { margin-top: 1rem; }
 
 /* Étapes */
 .steps { padding-top: 1.8rem; position: sticky; top: 0; align-self: start; font-size: .92rem; font-family: var(--display); }
-.steps > a, .steps > span { display: flex; align-items: center; gap: .6rem; padding: .5rem .8rem; border-left: 2px solid var(--line); color: var(--muted); text-decoration: none; }
-.steps a[aria-current="step"] { border-left-color: var(--accent); color: var(--ink); font-weight: 700; background: linear-gradient(to right, var(--accent-soft), transparent); }
+.steps > a, .steps > span { display: flex; align-items: center; gap: .6rem; padding: .5rem .8rem; margin-bottom: .4rem; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); text-decoration: none; }
+.steps a[aria-current="step"] { border-color: var(--accent); color: var(--ink); font-weight: 700; background: var(--accent-soft); }
 .steps .n { display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border-radius: 50%; border: 1px solid var(--line-2); font-family: var(--mono); font-size: .74rem; font-weight: 700; flex: none; }
 .steps a[aria-current="step"] .n { background: var(--accent); color: var(--surface); border-color: var(--accent); }
 .steps .done .n { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
@@ -121,9 +121,9 @@ textarea:focus-visible, select:focus-visible { border-color: var(--accent); }
 textarea:disabled, select:disabled { background: var(--soft); color: var(--muted); cursor: not-allowed; }
 button, .button { display: inline-flex; align-items: center; gap: .45rem; padding: .65rem 1.15rem; border-radius: var(--radius); border: 1px solid var(--btn); background: var(--btn); color: var(--on-btn); font: inherit; font-family: var(--display); font-weight: 700; text-decoration: none; cursor: pointer; max-width: 100%; white-space: normal; }
 button:hover, .button:hover { background: var(--btn-hover); border-color: var(--btn-hover); color: var(--on-btn); }
-button:disabled { background: var(--soft); border-color: var(--line); color: var(--muted); cursor: not-allowed; }
 button.sec, .button.sec, summary.button { background: transparent; color: var(--accent-ink); border-color: var(--accent); }
 button.sec:hover, .button.sec:hover, summary.button:hover { background: var(--accent-soft); color: var(--accent-ink); }
+button:disabled, button:disabled:hover { background: var(--soft); border-color: var(--line); color: var(--muted); cursor: not-allowed; }
 .actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin-top: 1rem; }
 form > button, form > .actions { margin-top: 1rem; }
 details.corr { border: 0; background: transparent; margin: 1rem 0 0; }

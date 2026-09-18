@@ -10,9 +10,9 @@ from benchmark import VERSION
 from benchmark.preparation import binding
 from benchmark.storage import _strict_json as encode
 
-from .campaign_views import (COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_history,
+from .campaign_views import (CAP_SCRIPT, COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_history,
                              render_campaign_launch_operator, render_campaign_launch_requester,
-                             render_comparison, render_configurations)
+                             render_comparison, render_configurations, campaign_followup)
 from .fragments import date_lisible_utc, form, icon, listing, section, state_block, text
 from .projection import projection_body
 
@@ -21,6 +21,8 @@ STYLESHEET_PATH = Path(__file__).with_name('static') / 'preparation.css'
 FONTS_PATH = Path(__file__).with_name('static') / 'fonts'
 SOURCE_SHA = ''
 PREPARATION_PROGRESS_SCRIPT = """(() => {
+  const destination = document.getElementById('campaign-followup')?.dataset?.resultsHref;
+  if (destination) { location.replace(destination); return; }
   const panel = document.getElementById('preparation-progress');
   const link = panel.querySelector('a');
   const status = panel.querySelector('[role="status"]');
@@ -42,13 +44,25 @@ PREPARATION_PROGRESS_SCRIPT = """(() => {
       try {
         const response = await fetch(link.href, {headers: {Accept: 'text/html'},
           cache: 'no-store', redirect: 'error', signal: request.signal});
-        if (!response.ok) throw new Error('unavailable');
+        if (!response.ok) {
+          console.error('FOLLOWUP_HTTP_ERROR', response.status);
+          throw new Error('unavailable');
+        }
         const next = new DOMParser().parseFromString(await response.text(), 'text/html');
         if (!stopped && !next.getElementById('preparation-progress')) {
-          location.replace(link.href);
+          const followup = next.getElementById('campaign-followup');
+          console.info('FOLLOWUP_COMPLETE', response.status);
+          location.replace(followup?.dataset?.resultsHref || link.href);
           return;
         }
+        if (!stopped) {
+          const current = document.getElementById('campaign-status');
+          const updated = next.getElementById('campaign-status');
+          if (current && updated) current.replaceChildren(...updated.childNodes);
+          console.info('FOLLOWUP_ACTIVE', response.status);
+        }
       } catch {
+        console.error('FOLLOWUP_UNAVAILABLE');
         if (!stopped) stop('Suivi automatique interrompu. Actualisez pour vérifier l’état du dossier.');
       } finally {
         clearTimeout(timeout);
@@ -75,6 +89,11 @@ def preparation_pending(value):
 
 
 def page_script(value):
+    if value.get('kind') == 'campaign_launch' and value['campaign']['attempts']:
+        active, ready, _ = campaign_followup(value['campaign'])
+        return PREPARATION_PROGRESS_SCRIPT if active or ready else None
+    if value.get('kind') == 'campaign_launch' and 'checks' in value and not value['campaign']['attempts']:
+        return CAP_SCRIPT
     if preparation_pending(value):
         return PREPARATION_PROGRESS_SCRIPT
     if value.get('kind') == 'configurations' and value.get('personal_preparation'):
@@ -106,6 +125,41 @@ def render_task_index(task):
     if not task['versions']:
         content += '<p>Aucune version d’épreuve contractuelle conservée.</p>'
     return content
+
+
+def preparation_steps(value):
+    kind = value.get('kind')
+    if kind not in ('configurations', 'campaign_launch', 'comparison') and 'revision' not in value:
+        return ''
+    dossier = '/preparation/dossiers/' + (value.get('dossier_id') or value['task']['dossier_id'])
+    campaign = value.get('campaign', {})
+    revision = campaign.get('task', {}).get('revision', value.get('revision'))
+    reference = value.get('dossier_href') or (dossier + '/revisions/' + str(revision) if revision else dossier)
+    campaigns = [c for c in value.get('campaigns', []) if c['task']['revision'] == revision]
+    if not campaign and campaigns:
+        campaign = campaigns[-1]
+    base = value['href'] if kind == 'comparison' else dossier + '/campaigns/' + campaign['campaign_id'] if campaign else None
+    downstream = kind in ('configurations', 'campaign_launch', 'comparison')
+    example = downstream or bool(value.get('package'))
+    models = downstream or value.get('qualified') or bool(campaign)
+    results = kind == 'comparison' or bool(campaign.get('attempts'))
+    current = 5 if kind == 'comparison' or kind == 'campaign_launch' and results else 4 if models else 3 if value.get('validation') else 2 if example else 1
+    models_href = base + '/conditions' if base else dossier + '/configurations'
+    if not downstream and value.get('qualified') and revision == value.get('current_revision', revision):
+        models_href = dossier + '/configurations'
+    targets = [reference + '#besoin', reference + '#exemple' if example else None,
+               reference + '#validation' if example else None,
+               models_href if models else None,
+               (value['href'] if kind == 'comparison' else base) if results else None]
+    content = '<nav class="steps" aria-label="Étapes de préparation">'
+    for number, (label, href) in enumerate(zip(('Besoin', 'Exemple', 'Validation', 'Modèles', 'Résultats'), targets), 1):
+        inner = '<span class="n">' + str(number) + '</span>' + label
+        if href is None:
+            content += '<span aria-disabled="true">' + inner + '</span>'
+        else:
+            state = ' aria-current="step"' if number == current else ' class="done"' if number < current else ''
+            content += '<a href="' + text(href) + '"' + state + '>' + inner + '</a>'
+    return content + '<small>Cas d’usage privé · pièces entièrement inventées</small></nav>'
 
 
 def personal_key_form(csrf, access):
@@ -144,7 +198,7 @@ def render(value, csrf, path='/preparation', *, error=False):
     can_submit = state.get('can_submit', False)
     disabled = '' if can_submit else ' disabled aria-describedby="availability"'
     s9 = value.get('kind') != 'projection_preview'
-    navigation = ''
+    navigation = '' if error else preparation_steps(value)
     title = 'Décrire mon cas d’usage'
     current = {'home': '/', 'publication_unavailable': '/index.html'}.get(value.get('kind'), '/preparation')
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
@@ -235,7 +289,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         if not value['tasks']:
             content += '<p>Aucun cas d’usage validé dans cette session.</p>'
     elif value.get('kind') == 'comparison':
-        title = value['need']
+        title = 'Résultats'
         content = render_comparison(value) + '<script>' + COMPARISON_FOCUS_SCRIPT + '</script>'
     elif value.get('kind') == 'projection_preview':
         title = 'Aperçu privé · NON APPROUVÉ'
@@ -291,18 +345,6 @@ def render(value, csrf, path='/preparation', *, error=False):
         editable = not historical and value['stage'] != 'waiting' and not referral
         disabled = '' if can_submit and editable else ' disabled aria-describedby="availability"'
         current_campaigns = [c for c in value.get('campaigns', []) if c['task']['revision'] == revision]
-        navigation = '<nav class="steps" aria-label="Étapes de préparation">'
-        current_step = 'comparaison' if current_campaigns else 'validation' if value['validation'] else 'exemple' if value['package'] else 'besoin'
-        steps = [('besoin', 'Besoin'), ('exemple', 'Exemple'), ('validation', 'Validation')] + ([('comparaison', 'Comparaison')] if current_campaigns else [])
-        order = [anchor for anchor, _ in steps]
-        for number, (anchor, label) in enumerate(steps, start=1):
-            inner = '<span class="n">' + str(number) + '</span>' + label
-            if anchor in ('exemple', 'validation') and not value['package']:
-                navigation += '<span aria-disabled="true">' + inner + '</span>'
-            else:
-                done = ' class="done"' if order.index(anchor) < order.index(current_step) else ''
-                navigation += '<a href="#' + anchor + '"' + (' aria-current="step"' if anchor == current_step else done) + '>' + inner + '</a>'
-        navigation += '<small>Cas d’usage privé · pièces entièrement inventées</small></nav>'
         stages = {'draft': ('unk', 'Brouillon', 'Rien n’a encore été envoyé à l’assistant.'),
                   'waiting': ('wait', 'Préparation en cours', 'L’assistant prépare votre exemple ou les précisions nécessaires.'),
                   'clarification': ('action', 'Une précision est attendue de vous', 'Répondez ci-dessous pour que l’exemple soit préparé.'),
@@ -514,6 +556,8 @@ def render(value, csrf, path='/preparation', *, error=False):
                    else 'La préparation et la qualification sont financées par l’opérateur')
         status += text(reasons[state['reason']]) + '</p><p class="hint">La consultation ne lance aucun appel. ' + funding + ' ; les appels candidats demandent un lancement distinct.</p></aside>'
         content = status + content
+    if not error and value.get('kind') == 'campaign_launch' and value['campaign']['attempts'] and page_script(value):
+        content += '<script>' + page_script(value) + '</script>'
     template = TEMPLATE_PATH.read_text()
     body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''
     version = 'v' + VERSION + ('+' + SOURCE_SHA[:7] if SOURCE_SHA else '')

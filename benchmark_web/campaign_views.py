@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 from benchmark.storage import _strict_json as encode
 
 from .fragments import (badge, date_lisible_utc, form, hidden, icon, listing, montant_lisible,
-                        readable_fields, section, text)
+                        readable_fields, section, state_block, text)
 
 COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
   const link = event.target.closest('tr[id] a[href]');
@@ -243,10 +243,9 @@ def render_comparison(value):
         return content + '<p>Rang ' + text(value['rank']) + '</p>'
 
     base, query = value['href'], value['filter_scope']
-    content = '<nav aria-label="Parcours"><a href="/preparation">Mes cas d’usage</a> · '
-    content += '<a class="button" href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a></nav>'
+    content = '<nav aria-label="Parcours"><a class="button" href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a></nav>'
     content += '<p class="hint">Résultats privés · version d’épreuve ' + text(value['task']['version'])
-    content += '.</p><details><summary>Identité de la campagne</summary><p>' + text(value['campaign_id']) + '</p></details>'
+    content += '.</p>'
     content += '<p class="lead">' + text(value['result_expected']) + '</p>'
     content += '<div class="campaign-summary" aria-label="Conclusion de la campagne"><span class="ic">' + icon('i-scale') + '</span>'
     content += '<p class="eyebrow">Le verdict ne fait pas de moyenne</p>'
@@ -261,7 +260,12 @@ def render_comparison(value):
                       if any(record['decision']['verdict'] == verdict for record in records)]
             content += '<p><strong>Cas ' + text(case_number) + '</strong> : ' + text(' · '.join(counts)) + '.</p>'
     if not latest:
-        content += '<p>Aucun résultat évalué pour cette campagne.</p>'
+        received = any(cell['state'] == 'RECEIVED' for cell in value['cells'])
+        content += '<p>' + ('En attente d’évaluation : des réponses ont été reçues, sans verdict disponible.' if received else
+                             'Aucun résultat évalué pour cette campagne. Consultez le suivi des essais.') + '</p>'
+    pending_reasons = list(dict.fromkeys(item['next_action'] for item in value.get('pending_attempts', [])))
+    if pending_reasons:
+        content += listing(pending_reasons)
     coverage = value['coverage']
     content += '<p role="status">' + text(coverage['evaluated_attempts']) + ' tentative(s) évaluée(s) · '
     content += text(coverage['attempted_cells']) + ' essai(s) lancé(s) sur ' + text(coverage['planned_cells'])
@@ -270,8 +274,7 @@ def render_comparison(value):
     dates = sorted(set(date[:10] for date in value.get('acquisition_dates', [])))
     if dates:
         content += '<p class="hint">Réponses reçues : ' + text(dates[0] if len(dates) == 1 else dates[0] + ' au ' + dates[-1]) + '.</p>'
-    content += '<p class="hint">Verdicts par cas et tentative, sans conclusion globale. '
-    content += 'Un coût inconnu ne change pas le verdict. <a href="#method">Méthode et limites</a></p></div>'
+    content += '</div>'
     content += '<details id="filters" class="comparison-filters"><summary>Tris et filtres'
     content += (' · ' + text(len(query)) + ' sélection(s) active(s)' if query else '') + '</summary>'
     content += '<p id="filter-help">Chaque bouton applique le champ choisi et conserve les autres sélections. '
@@ -357,17 +360,19 @@ def render_comparison(value):
     content += '<p>Travail humain restant : ' + text(value['human_work']) + '</p>'
     content += '<p>Les rangs comparent seulement les valeurs connues d’un même cas. Les égalités sont conservées ; '
     content += 'les valeurs inconnues ou incompatibles restent sans rang. Aucun choix automatique ni total multi-cas.</p>'
-    for pending in value.get('pending_attempts', []):
-        content += '<p>Tentative ' + text(pending['attempt_id']) + ' : ' + text(pending['next_action']) + '</p>'
     content += '<p>' + badge('SATISFAIT') + ' obligations prouvées. ' + badge('NE SATISFAIT PAS') + ' défaut établi. ' + badge(None) + ' pas encore de verdict métier.</p>'
+    if value['obligations']:
+        content += '<h3>Obligations</h3>' + listing(item['description'] for item in value['obligations'])
+    pi = value['conditions'].get('pi', {})
+    content += '<h3>Conditions communes</h3><p>Pi : ' + text(pi.get('package', 'INCONNU')) + ' ' + text(pi.get('version', 'INCONNU'))
+    content += '. Conditions figées le ' + text(date_lisible_utc(value['conditions']['frozen_at'])) + '.</p>'
+    content += '<h3>Mesures et coûts</h3><ul>'
     for column in value['columns']:
-        content += data('Définition, unité, sens favorable et preuve : ' + column['id'], column)
-    content += data('Population entière utilisée pour les rangs, conservée après filtrage', value['population'])
-    content += data('Cellules prévues et couverture manquante', value['cells'])
-    content += data('Conditions communes et date de gel', value['conditions'])
-    content += data('Dates de réception', value.get('acquisition_dates', []))
-    content += data('Contrat et portée exacte de la conclusion', value['conclusion']['scope'])
-    content += data('Base de coût et conversion prévue', value['cost_basis'])
+        label = column['definition'].get('measure', 'Coût observé')
+        favorable = {'lower': 'plus faible', 'higher': 'plus élevé', 'yes': 'oui'}.get(column['favorable'], 'selon le contrat')
+        content += '<li>' + text(label) + ' (' + text(column['unit']) + ') ; sens favorable : ' + text(favorable) + '. '
+        content += text(column['proof']) + '</li>'
+    content += '</ul><p>Un coût inconnu reste inconnu et ne change pas le verdict. Les reçus et sorties disponibles sont accessibles dans le détail de chaque résultat.</p>'
     if value.get('stop_reason'):
         content += '<p>Motif d’arrêt enregistré : ' + text(value['stop_reason']) + '</p>'
     content += '<p><a href="' + text(base + '/preview') + '">Examiner un aperçu privé de la projection</a></p></details>'
@@ -438,9 +443,78 @@ def render_configurations(value, csrf):
     return content
 
 
+CAP_SCRIPT = r"""(() => {
+  const input = document.getElementById('cap_usd');
+  const button = input.form.querySelector('button[type="submit"]');
+  function update() {
+    const decimal = /^[0-9]+(?:\.[0-9]{1,2})?$/.test(input.value);
+    const amount = Number(input.value);
+    input.setCustomValidity(decimal && amount >= 0.10 && amount <= 100 ? '' :
+      'Saisissez un montant de 0,10 à 100 USD, avec au plus deux décimales.');
+    button.disabled = !input.checkValidity() || amount === Number(input.defaultValue);
+    button.className = button.disabled ? 'sec' : '';
+  }
+  input.addEventListener('input', update);
+  input.addEventListener('change', update);
+  input.form.addEventListener('submit', event => {
+    update();
+    if (button.disabled) event.preventDefault();
+  });
+  update();
+})();"""
+
+
+def campaign_followup(campaign):
+    """État d’affichage seulement : ne crée aucune autorité ni reprise"""
+    cells = campaign['cells']
+    if campaign.get('stop_reason') or campaign.get('restore_pending') or not campaign.get('admission_open'):
+        return False, False, 'Admission fermée. Suivi automatique arrêté ; les réponses reçues restent consultables.'
+    if any(a.get('incident') or a.get('attribution_incident') for a in campaign['attempts']):
+        return False, False, 'Incident à vérifier. Suivi automatique arrêté, sans relance.'
+    if any(c['state'] == 'AMBIGUOUS' for c in cells) or campaign.get('state') == 'BLOCKED':
+        return False, False, 'Vérification requise. Une tentative reste incertaine ; aucune relance automatique.'
+    if any(c['state'] == 'EMISSION_POSSIBLE' for c in cells):
+        return True, False, 'Comparaison en cours. Les réponses arrivent progressivement.'
+    if cells and all(c['state'] == 'RECEIVED' for c in cells):
+        return False, True, 'Réponses reçues. En attente d’évaluation pour les réponses sans verdict.'
+    return False, False, 'En attente de démarrage. Aucune activité observée ; actualisez pour vérifier le suivi.'
+
+
+def render_campaign_followup(value):
+    campaign = value['campaign']
+    base = '/preparation/dossiers/' + value['dossier_id'] + '/campaigns/' + campaign['campaign_id']
+    active, ready, message = campaign_followup(campaign)
+    content = '<div id="campaign-followup"' + (' data-results-href="' + text(base) + '"' if ready else '') + '>'
+    content += '<div id="campaign-status" aria-live="polite">'
+    content += state_block('wait' if active else 'done' if ready else 'action', 'Suivi de la comparaison',
+                           'Lancement enregistré', '<p>' + text(message) + '</p>')
+    states = {'NOT_STARTED': 'non démarré', 'INTENT_RECORDED': 'en attente de démarrage',
+              'EMISSION_POSSIBLE': 'en cours', 'RECEIVED': 'réponse reçue',
+              'AMBIGUOUS': 'état incertain, vérification requise'}
+    models = {item['id']: item['model'] for item in campaign['panel']}
+    content += section('Suivi des essais', listing(
+        models.get(cell['configuration_id'], 'Configuration') + ' : ' + states.get(cell['state'], 'état inconnu')
+        for cell in campaign['cells']))
+    received = sum(cell['state'] == 'RECEIVED' for cell in campaign['cells'])
+    all_received = bool(campaign['cells']) and received == len(campaign['cells'])
+    content += '<p>' + str(received) + ' réponse(s) reçue(s) sur ' + str(len(campaign['cells'])) + '.</p></div>'
+    if active:
+        content += '<div id="preparation-progress"><progress aria-label="Comparaison en cours"></progress>'
+        content += '<p class="hint" role="status">Suivi automatique disponible avec JavaScript.</p><div class="actions">'
+        content += '<a class="button" href="' + text(base + '/conditions') + '">Actualiser le suivi</a>'
+        content += '<button type="button" class="sec" hidden>Suspendre le suivi automatique</button></div></div>'
+    else:
+        content += '<p><a class="button' + (' sec' if all_received else '') + '" href="' + text(base + '/conditions') + '">Actualiser le suivi</a></p>'
+    content += '<p><a class="button' + ('' if all_received else ' sec') + '" href="' + text(base) + '">Comparer les résultats et lire les preuves</a></p>'
+    content += '<p>L’arrêt intervient après le paiement de l’appel en cours. La dépense peut donc dépasser le plafond du montant du dernier appel.</p>'
+    return content + '</div>'
+
+
 def render_campaign_launch_requester(value, csrf):
     """Contrôles, plafond et suivi présentés au demandeur qui lance lui-même"""
     campaign = value['campaign']
+    if campaign['attempts']:
+        return render_campaign_followup(value)
     dossier_url = '/preparation/dossiers/' + value['dossier_id']
     base = dossier_url + '/campaigns/' + campaign['campaign_id']
     content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
@@ -473,24 +547,9 @@ def render_campaign_launch_requester(value, csrf):
             '<form method="post" action="' + text(base + '/cap') + '">' + hidden('csrf_token', csrf) +
             '<label for="cap_usd">Plafond en USD, de 0,10 à 100</label>' +
             '<input id="cap_usd" name="cap_usd" type="number" min="0.10" max="100.00" step="0.01" value="' +
-            text(value['cap_usd']) + '" required><button class="sec" type="submit">Modifier le plafond</button></form>')
+            text(value['cap_usd']) + '" required><button class="sec" type="submit" disabled>Modifier le plafond</button></form><script>' + CAP_SCRIPT + '</script>')
     failed = next((check for check in value['checks'] if not check['ok']), None)
-    if campaign['attempts']:
-        received = all(cell['state'] == 'RECEIVED' for cell in campaign['cells'])
-        content += '<p role="status">Lancement enregistré. ' + (
-            'Toutes les réponses sont reçues ; consultez les évaluations disponibles.' if received else
-            'Les essais sont en attente ou en cours ; actualisez pour suivre leur avancement.') + '</p>'
-        states = {'NOT_STARTED': 'non démarré', 'INTENT_RECORDED': 'en attente',
-                  'EMISSION_POSSIBLE': 'en cours', 'RECEIVED': 'réponse reçue',
-                  'AMBIGUOUS': 'état incertain, vérification requise'}
-        models = {item['id']: item['model'] for item in campaign['panel']}
-        content += section('Suivi des essais', listing(
-            models[cell['configuration_id']] + ' : ' + states[cell['state']] for cell in campaign['cells']))
-        if not campaign['admission_open']:
-            content += '<p>Les nouveaux appels sont fermés. Les réponses reçues restent consultables.</p>'
-        content += '<p><a class="button' + (' sec' if received else '') + '" href="' + text(base + '/conditions') + '">Actualiser le suivi</a> '
-        content += '<a class="button' + ('' if received else ' sec') + '" href="' + text(base) + '">Comparer les résultats et lire les preuves</a></p>'
-    elif value['launchable']:
+    if value['launchable']:
         content += '<p role="status">Les contrôles sont satisfaits. Vérifiez le travail, les modèles et le plafond avant de confirmer le lancement.</p>'
         content += form(csrf, base + '/start', {
             'manifest_version': campaign['version'],
@@ -519,6 +578,8 @@ def render_campaign_launch_requester(value, csrf):
 def render_campaign_launch_operator(value, csrf):
     """Comparaison préparée et admise par l'opérateur, confirmée par le demandeur"""
     campaign = value['campaign']
+    if campaign['attempts']:
+        return render_campaign_followup(value)
     base = '/preparation/dossiers/' + value['dossier_id'] + '/campaigns/' + campaign['campaign_id']
     content = '<p>Le responsable prépare et autorise cette comparaison. Votre confirmation déclenche uniquement les essais qu’il a admis.</p>'
     content += '<p><a href="' + text('/preparation/dossiers/' + value['dossier_id']) + '">Revenir au cas d’usage</a></p>'
