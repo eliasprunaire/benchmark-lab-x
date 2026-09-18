@@ -180,7 +180,7 @@ class OpenRouterQualificationTests(unittest.TestCase):
 
     def test_qualification_quote_cannot_exceed_remaining_daily_cap(self):
         transport = QualificationTransport({'qualified': True, 'findings': [], 'summary': 'OK'})
-        transport.quote = lambda: {**transport.configuration(), 'reserve_usd': '20'}
+        transport.quote = lambda: {**transport.configuration(), 'reserve_usd': '50'}
         with self.assertRaisesRegex(prep.Denied, 'DAILY_CAP'):
             prep.validate_and_qualify(
                 self.store, self.session, 'dossier',
