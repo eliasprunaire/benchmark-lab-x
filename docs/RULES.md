@@ -4,7 +4,7 @@ style_gate: pass
 
 # Règles de Bench-X
 
-Ces règles préservent les contrats historiques et n'autorisent aucune exécution. Elles ne portent aucun statut de livraison des versions.
+Ces règles préservent les contrats déjà scellés et n'autorisent aucune exécution. Elles ne portent aucun statut de livraison des versions.
 
 ## 1. Autorité et preuve
 
@@ -26,7 +26,7 @@ Ces règles préservent les contrats historiques et n'autorisent aucune exécuti
 
 ## 3. Périmètre produit
 
-**Canal API et secours officiel.** OpenRouter reste le canal normal des appels modèles du produit. Après diagnostic et épuisement des routes de secours utilisables du même modèle, l’API officielle peut servir de dernier recours sous configuration et admission distinctes, selon l’[ARD](ARD.md#3-pi-comme-frontière-constante). L’admission propriétaire initiale peut préautoriser exactement cette dérivation, sa preuve de canal et sa réserve ; le moteur l’enchaîne alors sans nouvelle interaction. L’identité exacte disponible, les paramètres, l’accès, le budget et les preuves doivent être établis. Un alias redirigé vers une autre version ne constitue pas un secours. Les contrats historiques restent inchangés.
+**Canal API et secours officiel.** OpenRouter reste le canal normal des appels modèles du produit. Après diagnostic et épuisement des routes de secours utilisables du même modèle, l’API officielle peut servir de dernier recours sous configuration et admission distinctes, selon l’[ARD](ARD.md#3-pi-comme-frontière-constante). L’admission propriétaire initiale peut préautoriser exactement cette dérivation, sa preuve de canal et sa réserve ; le moteur l’enchaîne alors sans nouvelle interaction. L’identité exacte disponible, les paramètres, l’accès, le budget et les preuves doivent être établis. Un alias redirigé vers une autre version ne constitue pas un secours. Les contrats déjà scellés restent inchangés.
 
 **Pi obligatoire.** Pi est le harnais commun de chaque comparaison candidate. Son choix n'est pas rouvert par une revue de configuration. Cette contrainte ne choisit pas le transport de l’assistance de préparation ou de jugement.
 
@@ -68,7 +68,7 @@ Ces règles préservent les contrats historiques et n'autorisent aucune exécuti
 
 ## 5. Sortie et provenance
 
-**Frontière sortante.** Chaque projection possède une version ; le reçu identifie l’empreinte des octets du corps HTTP émis, système compris, avec authentification séparée. La validation du paquet lie le format et le contenu à la version de tâche, sans confirmation supplémentaire par appel. Une reprise conserve les mêmes messages figés ; un changement de paramètres ou de route produit une nouvelle empreinte, un changement de messages exige une nouvelle comparaison. Les anciens reçus restent lisibles et vérifiables, sans réémission ni réutilisation implicite de leurs profils dans un nouveau format. Une annotation historique reste séparée. Le kind du workflow de préparation n’est pas transmis à l’assistant. La génération distingue paquet candidat, notes internes et référence de jugement, sans rôle fourni par le modèle. Les champs limits et human_work ne partent pas au candidat : une contrainte utile qui s’y trouve doit être inscrite explicitement dans une nouvelle consigne/version, sans transfert sémantique automatique. La projection ne censure pas le texte libre et ne garantit pas la détection de toute donnée sensible. Le profil d’assistant de préparation, son empreinte, le modèle, la révision, les paramètres, les routes, les capacités, le relevé, la réserve et les limites doivent coïncider entre le profil figé, l’admission et le transport avant toute émission HTTP ; le chemin hôte du fichier de profil n’entre pas dans ces octets.
+**Frontière sortante.** Chaque projection possède une version ; le reçu identifie l’empreinte des octets du corps HTTP émis, système compris, avec authentification séparée. La validation du paquet lie le format et le contenu à la version de tâche, sans confirmation supplémentaire par appel. Une reprise conserve les mêmes messages figés ; un changement de paramètres ou de route produit une nouvelle empreinte, un changement de messages exige une nouvelle comparaison. Les reçus déjà émis restent lisibles et vérifiables, sans réémission ni réutilisation implicite de leurs profils dans un nouveau format. Une annotation de provenance reste séparée. Le kind du workflow de préparation n’est pas transmis à l’assistant. La génération distingue paquet candidat, notes internes et référence de jugement, sans rôle fourni par le modèle. Les champs limits et human_work ne partent pas au candidat : une contrainte utile qui s’y trouve doit être inscrite explicitement dans une nouvelle consigne/version, sans transfert sémantique automatique. La projection ne censure pas le texte libre et ne garantit pas la détection de toute donnée sensible. Le profil d’assistant de préparation, son empreinte, le modèle, la révision, les paramètres, les routes, les capacités, le relevé, la réserve et les limites doivent coïncider entre le profil figé, l’admission et le transport avant toute émission HTTP ; le chemin hôte du fichier de profil n’entre pas dans ces octets.
 
 **Exposition et portée du fictif.** Préparateur, juge et candidats ont des contextes et ressources distincts ; les liens de modèle ou de fournisseur et les expositions connues restent déclarés. Un exemple pédagogique public n’est pas réputé inédit. La validation d’un cas fictif ne prouve ni sa représentativité ni la réussite sur les dossiers réels de l’utilisateur.
 
@@ -88,7 +88,7 @@ Ces règles préservent les contrats historiques et n'autorisent aucune exécuti
 
 **Erreurs éliminatoires d'abord.** Une erreur éliminatoire établie interdit `SATISFAIT`, quel que soit le coût.
 
-**Décision et travail restant.** Une nouvelle décision métier officielle porte `SATISFAIT` ou `NE SATISFAIT PAS`. Une évaluation non concluante reste un travail à reprendre, avec causes et prochaine action, sans verdict métier. Les constats intermédiaires et les évaluations historiques peuvent conserver `INDETERMINE` ; leur lecture ne les transforme pas en nouvelles décisions. Aucun niveau de satisfaction partielle n’est déduit d’une preuve manquante.
+**Décision et travail restant.** Une nouvelle décision métier officielle porte `SATISFAIT` ou `NE SATISFAIT PAS`. Une évaluation non concluante reste un travail à reprendre, avec causes et prochaine action, sans verdict métier. Les constats intermédiaires et les évaluations déjà enregistrées peuvent conserver `INDETERMINE` ; leur lecture ne les transforme pas en nouvelles décisions. Aucun niveau de satisfaction partielle n’est déduit d’une preuve manquante.
 
 **Application des verdicts.** Sur une observation intègre et attribuable, une erreur éliminatoire ou une obligation non remplie établie donne `NE SATISFAIT PAS`, même si un autre contrôle manque. `SATISFAIT` exige le résultat et toutes les obligations prouvés, sans erreur éliminatoire. Le moteur calcule le verdict à partir des constats et des preuves vérifiées ; le verdict proposé par un modèle ne fait pas autorité. Si les preuves ne permettent pas de conclure, les résultats privés affichent cette limite sans attendre une validation humaine. Un incident conserve ses reçus et sa cause, sans relance implicite. Une panne technique seule ne prouve pas une erreur de contenu ; son éventuel effet sur une obligation de service doit être prévu par le contrat.
 
@@ -127,7 +127,7 @@ Le coût ne compense jamais une non-admissibilité. Une mesure valide d’une so
 
 **Contrôle de dépense.** L’autorisation nomme les tentatives et l’enveloppe. Prévision, réservation avant appel, coût observé et limite du fournisseur restent distincts. Les réservations et dépenses actives sont prises en compte ensemble ; aucune même enveloppe ne peut être allouée deux fois. Un coût manquant ne libère pas une réservation et ne reconstitue pas un solde connu. Un contrôle d’admission ne prouve pas un plafond absolu de facturation. Un coût local n’est pas nul par défaut.
 
-**Indication en préparation.** Après une réponse exploitable de préparation ou correction, le produit peut afficher un coût indicatif calculé avec les tokens utilisés et les tarifs du modèle relevés avant appel, sans exiger le prix exact du fournisseur sélectionné. Cette estimation, clairement distincte d’un débit observé ou d’une facture, ne remplace aucune preuve financière. Des tokens ou tarifs absents restent non estimables. Un coût financier inconnu sur une opération de préparation ou correction reçue ne bloque pas à lui seul les nouveaux échanges autorisés ; sa réserve reste comptée et son reçu inchangé. Les effets actifs ou ambigus et l’enveloppe insuffisante restent bloquants. Les contrats candidats et de jugement déjà figés restent inchangés ; aucun reçu historique n’est requalifié.
+**Indication en préparation.** Après une réponse exploitable de préparation ou correction, le produit peut afficher un coût indicatif calculé avec les tokens utilisés et les tarifs du modèle relevés avant appel, sans exiger le prix exact du fournisseur sélectionné. Cette estimation, clairement distincte d’un débit observé ou d’une facture, ne remplace aucune preuve financière. Des tokens ou tarifs absents restent non estimables. Un coût financier inconnu sur une opération de préparation ou correction reçue ne bloque pas à lui seul les nouveaux échanges autorisés ; sa réserve reste comptée et son reçu inchangé. Les effets actifs ou ambigus et l’enveloppe insuffisante restent bloquants. Les contrats candidats et de jugement déjà figés restent inchangés ; aucun reçu déjà enregistré n’est requalifié.
 
 **Ensemble admissible.** Sans configuration `SATISFAIT`, aucune option n’est désignée comme utilisable ; dépenses et mesures valides restent consultables et triables sur une base comparable. Une seule configuration admissible peut être décrite comme telle dans le périmètre observé, sans gain comparatif inventé.
 
@@ -175,15 +175,9 @@ Le coût ne compense jamais une non-admissibilité. Une mesure valide d’une so
 
 **Évolution traçable.** Lorsqu'un besoin est observé, l'itération suivante nomme la preuve, la complexité ajoutée et la condition de retrait ou de révision.
 
-## 12. Histoire
+## 12. Historique Git
 
-**Campagnes immuables.** Les campagnes, preuves et reçus historiques gardent leur identité, leur sémantique et leurs verdicts d'origine. Leur historique documentaire appartient à Git.
-
-**Aucune requalification rétrospective.** Les campagnes et prototypes historiques conservent leurs contrats et conclusions d’origine. La spécification courante ne crée pour ces campagnes aucune qualification, baseline, mesure ou recommandation absente de leur contrat et de leurs preuves.
-
-**Preuve technique bornée.** Un `PASS` de témoin, transport, qualification, verrou ou préparation prouve seulement son objet technique.
-
-**Artefacts historiques non normatifs.** Les générateurs et restitutions historiques restent sous leurs contrats d'origine. Leurs anciennes références ne sont pas remappées implicitement et leur vocabulaire ne remplace pas la spécification courante.
+Les révisions retirées appartiennent à Git et ne définissent jamais le comportement courant. Une preuve technique ne prouve que son objet technique.
 
 ## 13. Arrêt
 
@@ -193,7 +187,7 @@ Le coût ne compense jamais une non-admissibilité. Une mesure valide d’une so
 
 **Version unique.** Bench-X adopte [Semantic Versioning 2.0.0](https://semver.org/lang/fr/) sous la forme `MAJOR.MINOR.PATCH`. Une version identifie le produit du monorepo, frontend et backend ensemble. Les versions de Pi, de Graph Engineering Tool, de l’infrastructure, des modèles, des tâches et des schémas de données restent distinctes.
 
-**Jalon initial.** `0.1.0` désigne le périmètre approuvé dans le [PRD](PRD.md#51-périmètre-010), avec ses critères d’acceptation. Ce numéro ne requalifie aucun prototype ni résultat historique et ne prouve aucune livraison. Aucun autre jalon chiffré n’est déduit de cette décision.
+**Jalon initial.** `0.1.0` désigne le périmètre approuvé dans le [PRD](PRD.md#51-périmètre-010), avec ses critères d’acceptation. Ce numéro ne requalifie aucun résultat déjà scellé et ne prouve aucune livraison. Aucun autre jalon chiffré n’est déduit de cette décision.
 
 **Compatibilité publique.** Le contrat de compatibilité couvre les commandes, options et codes de sortie documentés, les interfaces publiques documentées et les formats de données exposés. Les détails internes ne constituent pas une interface publique. Une modification de schéma possède sa propre identité et explicite les lecteurs compatibles, la migration éventuelle et ses limites ; le numéro du produit ne remplace pas cette information.
 
@@ -201,4 +195,4 @@ Le coût ne compense jamais une non-admissibilité. Une mesure valide d’une so
 
 **Identification d’une livraison.** Une version publiée est reliée à un commit et à des artefacts identifiés, dont le contenu ne change plus sous ce numéro. Un checkout sans version publiée s’identifie par son commit et ses modifications locales ; il ne s’annonce pas automatiquement comme la version cible. Le périmètre et les critères vivent dans le PRD, l’avancement dans GitHub, et la preuve livrée dans les artefacts et reçus. Choisir un numéro n’autorise ni tag, ni release, ni déploiement, ni publication.
 
-**Historique et migration.** La documentation courante emploie les numéros de produit décidés et des noms techniques sans phase de livraison. Les identifiants présents dans les contrats et preuves scellés restent exacts. Leur reconnaissance explicite par un lecteur compatible n’autorise ni réécriture des preuves ni reprise d’une ancienne acquisition ; une nouvelle préparation et ses autorités restent nécessaires.
+**Formats compatibles.** La documentation courante emploie les numéros de produit décidés et des noms techniques sans phase de livraison. Les identifiants présents dans les contrats et preuves scellés restent exacts. Leur reconnaissance explicite par un lecteur compatible n’autorise ni réécriture des preuves ni reprise d’une acquisition déjà clôturée ; une nouvelle préparation et ses autorités restent nécessaires.

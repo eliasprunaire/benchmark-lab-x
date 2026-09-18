@@ -122,8 +122,8 @@ def _aggregation(value):
         raise ValueError('Agrégation incomplète')
 
 
-def _specification(spec, *, legacy=False):
-    if 'local_criterion_ids' not in spec and not legacy:
+def _specification(spec, *, compatible=False):
+    if 'local_criterion_ids' not in spec and not compatible:
         raise ValueError('Critères de preuve locale explicites requis')
     extra = ('local_criterion_ids',) if 'local_criterion_ids' in spec else ()
     _fields(spec, _SPEC_FIELDS + extra, 'specification')
@@ -232,7 +232,7 @@ def _contract(store, connection, fingerprint):
     _identity(contract['dossier_id'], contract['revision'])
     if type(contract['version']) is not int or contract['version'] < 1:
         raise IntegrityError('Version invalide')
-    _specification(contract['specification'], legacy=True)
+    _specification(contract['specification'], compatible=True)
     package, package_hash = _package(store, connection, *row[:2])
     if (contract['package'], contract['package_sha256']) != (package, package_hash):
         raise IntegrityError('Contrat sans paquet exact')

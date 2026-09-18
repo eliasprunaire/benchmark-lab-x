@@ -10,7 +10,7 @@ from benchmark import VERSION
 from benchmark.preparation import binding
 from benchmark.storage import _strict_json as encode
 
-from .campaign_views import (CAP_SCRIPT, COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_history,
+from .campaign_views import (CAP_SCRIPT, COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, campaign_followup)
 from .fragments import date_lisible_utc, form, icon, listing, section, state_block, text
@@ -345,9 +345,9 @@ def render(value, csrf, path='/preparation', *, error=False):
         dossier_id, revision = value['dossier_id'], value['revision']
         url = '/preparation/dossiers/' + dossier_id
         title = 'Est-ce le travail que vous voulez tester ?' if value['package'] else 'Précisons le résultat utile'
-        historical = revision != value.get('current_revision', revision)
+        prior_revision = revision != value.get('current_revision', revision)
         referral = value.get('checks', {}).get('out_of_scope')
-        editable = not historical and value['stage'] != 'waiting' and not referral
+        editable = not prior_revision and value['stage'] != 'waiting' and not referral
         disabled = '' if can_submit and editable else ' disabled aria-describedby="availability"'
         current_campaigns = [c for c in value.get('campaigns', []) if c['task']['revision'] == revision]
         stages = {'draft': ('unk', 'Brouillon', 'Rien n’a encore été envoyé à l’assistant.'),
@@ -377,10 +377,10 @@ def render(value, csrf, path='/preparation', *, error=False):
             else:
                 tone, heading, next_step = 'wait', 'Qualification en cours', 'Votre validation est enregistrée. L’assistant vérifie la cohérence et les critères de l’exemple.'
         content = '<p class="tag">Cas d’usage inventé · révision ' + text(revision) + '</p>'
-        if historical:
+        if prior_revision:
             content += '<p class="notice">Révision précédente en lecture seule. Pour modifier ou valider, ouvrez la révision courante.</p>'
         actions = ''
-        if historical:
+        if prior_revision:
             actions = f'<a class="button" href="{text(url)}">Revenir à la révision courante</a>'
         if pending:
             title = heading
@@ -413,7 +413,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         payload = value['payload']
         content += section('Besoin conservé', '<p>' + text(payload['request']) + '</p>', 'besoin')
         if value.get('task_index'):
-            content += '<details><summary>Historique du cas d’usage et versions d’épreuve</summary>' + render_task_index(value['task_index']) + '</details>'
+            content += '<details><summary>Révisions du cas d’usage et versions d’épreuve</summary>' + render_task_index(value['task_index']) + '</details>'
         if value.get('message') and 'message' in value['message']:
             content += section('Message à l’origine de cette révision', '<p>' + text(value['message']['message']) + '</p>')
         if payload['clarifications'] or payload['validated_assumptions']:
@@ -535,10 +535,10 @@ def render(value, csrf, path='/preparation', *, error=False):
                 'et les limites de jugement sont réservées à l’inspection locale du responsable.</p>')
             content += '</details>'
         if value.get('qualified'):
-            content += '<p><a class="button' + (' sec' if current_campaigns or historical else '') + '" href="' + text(
+            content += '<p><a class="button' + (' sec' if current_campaigns or prior_revision else '') + '" href="' + text(
                 url + '/configurations') + '">Choisir les modèles</a></p>'
         if 'campaigns' in value:
-            content += render_campaign_history(value['campaigns'], url)
+            content += render_campaign_records(value['campaigns'], url)
     if state and s9 and not pending and not value.get('checks', {}).get('out_of_scope'):
         reasons = {
             'access': 'Ajoutez votre clé Openrouter pour préparer un exemple avec votre propre accès.',

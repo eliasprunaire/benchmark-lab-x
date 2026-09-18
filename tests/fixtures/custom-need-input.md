@@ -6,10 +6,10 @@ Les messages ci-dessous sont présentés **hors ordre chronologique**. Les champ
 
 ### Message A
 
-**Expéditeur :** claire.renaud@atelier-boisclair.example
-**Destinataire :** m.perrin@studio-novagraphe.example
+**Expéditeur :** claire.renaud@test-alpha.example
+**Destinataire :** m.perrin@studio-test.example
 **Date :** 12 février 2026, 9 h 14
-**Objet :** Re: Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Re: Devis de refonte du site vitrine — Test Alpha
 
 Bonjour Matthieu,
 
@@ -18,21 +18,21 @@ J'ai bien reçu le devis V2. Nous approuvons le montant de **4 850 € HT** et l
 Pouvez-vous me confirmer que la livraison des maquettes pour ordinateur et mobile est toujours prévue le **13 mars 2026** ?
 
 Bien cordialement,
-Claire Renaud
-Gérante — Atelier Boisclair SAS
+Élodie Martin
+Gérante — Test Alpha SAS
 
 ---
 
 ### Message B
 
-**Expéditeur :** m.perrin@studio-novagraphe.example
-**Destinataire :** claire.renaud@atelier-boisclair.example
+**Expéditeur :** m.perrin@studio-test.example
+**Destinataire :** claire.renaud@test-alpha.example
 **Date :** 5 février 2026, 11 h 02
-**Objet :** Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Devis de refonte du site vitrine — Test Alpha
 
 Bonjour Claire,
 
-À la suite de notre échange téléphonique de lundi, vous trouverez ci-joint le devis no NG-2026-041 pour la refonte du site vitrine d'Atelier Boisclair.
+À la suite de notre échange téléphonique de lundi, vous trouverez ci-joint le devis no TA-2026-001 pour la refonte du site vitrine d'Test Alpha.
 
 **Montant :** 4 200 € HT
 **Périmètre :** identité visuelle épurée, 5 pages, intégration WordPress, formation de 2 heures
@@ -43,17 +43,17 @@ Bonjour Claire,
 N'hésitez pas à me contacter si vous avez des questions.
 
 Bien cordialement,
-Matthieu Perrin
-Studio Novagraphe SAS — 12 rue des Tilleuls, 69002 Lyon
+Alex Durand
+Studio Test SAS — 12 rue des Tilleuls, 69002 Lyon
 
 ---
 
 ### Message C
 
-**Expéditeur :** claire.renaud@atelier-boisclair.example
-**Destinataire :** m.perrin@studio-novagraphe.example
+**Expéditeur :** claire.renaud@test-alpha.example
+**Destinataire :** m.perrin@studio-test.example
 **Date :** 18 février 2026, 16 h 40
-**Objet :** Re: Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Re: Devis de refonte du site vitrine — Test Alpha
 
 Matthieu,
 
@@ -68,10 +68,10 @@ Claire
 
 ### Message D
 
-**Expéditeur :** m.perrin@studio-novagraphe.example
-**Destinataire :** claire.renaud@atelier-boisclair.example
+**Expéditeur :** m.perrin@studio-test.example
+**Destinataire :** claire.renaud@test-alpha.example
 **Date :** 10 février 2026, 14 h 27
-**Objet :** Re: Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Re: Devis de refonte du site vitrine — Test Alpha
 
 Claire,
 
@@ -82,16 +82,16 @@ Nouveau montant proposé : **4 850 € HT** (au lieu de 4 200 € HT).
 Pour le moment, je maintiens la livraison des maquettes au **13 mars 2026**, sauf retard du cahier des charges photographique.
 
 Bien à vous,
-Matthieu Perrin
+Alex Durand
 
 ---
 
 ### Message E
 
-**Expéditeur :** claire.renaud@atelier-boisclair.example
-**Destinataire :** m.perrin@studio-novagraphe.example
+**Expéditeur :** claire.renaud@test-alpha.example
+**Destinataire :** m.perrin@studio-test.example
 **Date :** 6 février 2026, 8 h 55
-**Objet :** Re: Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Re: Devis de refonte du site vitrine — Test Alpha
 
 Bonjour Matthieu,
 
@@ -102,20 +102,20 @@ Nous aurons toutefois besoin d'ajouter deux pages : « Réalisations » et « Ma
 Par ailleurs, qui assurera l'hébergement après la mise en ligne : vous, ou devons-nous nous en charger ?
 
 Bien cordialement,
-Claire Renaud
+Élodie Martin
 
 ---
 
 ### Message F
 
-**Expéditeur :** m.perrin@studio-novagraphe.example
-**Destinataire :** claire.renaud@atelier-boisclair.example
+**Expéditeur :** m.perrin@studio-test.example
+**Destinataire :** claire.renaud@test-alpha.example
 **Date :** 11 février 2026, 10 h 05
-**Objet :** Re: Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Re: Devis de refonte du site vitrine — Test Alpha
 
 Bonjour Claire,
 
-Voici le devis V2 (no NG-2026-041-R) :
+Voici le devis V2 (no TA-2026-001-R) :
 
 - **Montant :** 4 850 € HT
 - **Périmètre :** 7 pages (les 5 pages initiales + Réalisations + Matériaux), identité visuelle épurée, WordPress, formation de 2 heures
@@ -126,16 +126,16 @@ Voici le devis V2 (no NG-2026-041-R) :
 Dès réception de votre accord écrit, nous réserverons le créneau de démarrage pendant la semaine du 2 mars.
 
 Bien cordialement,
-Matthieu Perrin
+Alex Durand
 
 ---
 
 ### Message G
 
-**Expéditeur :** m.perrin@studio-novagraphe.example
-**Destinataire :** claire.renaud@atelier-boisclair.example
+**Expéditeur :** m.perrin@studio-test.example
+**Destinataire :** claire.renaud@test-alpha.example
 **Date :** 13 février 2026, 15 h 18
-**Objet :** Re: Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Re: Devis de refonte du site vitrine — Test Alpha
 
 Claire,
 
@@ -151,10 +151,10 @@ Matthieu
 
 ### Message H
 
-**Expéditeur :** claire.renaud@atelier-boisclair.example
-**Destinataire :** m.perrin@studio-novagraphe.example
+**Expéditeur :** claire.renaud@test-alpha.example
+**Destinataire :** m.perrin@studio-test.example
 **Date :** 9 février 2026, 17 h 33
-**Objet :** Re: Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Re: Devis de refonte du site vitrine — Test Alpha
 
 Matthieu,
 
@@ -169,14 +169,14 @@ Claire
 
 ### Message I
 
-**Expéditeur :** m.perrin@studio-novagraphe.example
-**Destinataire :** claire.renaud@atelier-boisclair.example
+**Expéditeur :** m.perrin@studio-test.example
+**Destinataire :** claire.renaud@test-alpha.example
 **Date :** 19 février 2026, 9 h 02
-**Objet :** Re: Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Re: Devis de refonte du site vitrine — Test Alpha
 
 Bonjour Claire,
 
-Vous trouverez ci-joint le PDF à signer du devis V2 (no NG-2026-041-R).
+Vous trouverez ci-joint le PDF à signer du devis V2 (no TA-2026-001-R).
 
 Récapitulatif arrêté :
 - Montant : **4 850 € HT**
@@ -187,36 +187,36 @@ Récapitulatif arrêté :
 Dès réception de l'exemplaire signé, nous confirmerons le démarrage pendant la semaine du 2 mars.
 
 Bien cordialement,
-Matthieu Perrin
-Studio Novagraphe SAS
+Alex Durand
+Studio Test SAS
 
 ---
 
 ### Message J
 
-**Expéditeur :** claire.renaud@atelier-boisclair.example
-**Destinataire :** m.perrin@studio-novagraphe.example
-**Copie :** comptabilite@atelier-boisclair.example
+**Expéditeur :** claire.renaud@test-alpha.example
+**Destinataire :** m.perrin@studio-test.example
+**Copie :** comptabilite@test-alpha.example
 **Date :** 20 février 2026, 11 h 47
-**Objet :** Re: Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Re: Devis de refonte du site vitrine — Test Alpha
 
 Matthieu,
 
 Devis signé en pièce jointe. L'acompte de 40 % sera viré d'ici au samedi 21 février.
 
-Pouvez-vous me confirmer par retour que le montant de **4 200 € HT** figurant sur notre bon de commande interne, repris de votre premier devis, est obsolète et que **4 850 € HT** est le montant applicable ?
+Pouvez-vous me confirmer par retour que le montant de **4 200 € HT** figurant sur notre bon de commande interne, repris de votre premier devis, est remplacé par **4 850 € HT** ?
 
 Merci,
-Claire Renaud
+Élodie Martin
 
 ---
 
 ### Message K
 
-**Expéditeur :** m.perrin@studio-novagraphe.example
-**Destinataire :** claire.renaud@atelier-boisclair.example
+**Expéditeur :** m.perrin@studio-test.example
+**Destinataire :** claire.renaud@test-alpha.example
 **Date :** 20 février 2026, 14 h 10
-**Objet :** Re: Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Re: Devis de refonte du site vitrine — Test Alpha
 
 Claire,
 
@@ -233,10 +233,10 @@ Matthieu
 
 ### Message L
 
-**Expéditeur :** claire.renaud@atelier-boisclair.example
-**Destinataire :** m.perrin@studio-novagraphe.example
+**Expéditeur :** claire.renaud@test-alpha.example
+**Destinataire :** m.perrin@studio-test.example
 **Date :** 14 février 2026, 10 h 22
-**Objet :** Re: Devis de refonte du site vitrine — Atelier Boisclair
+**Objet :** Re: Devis de refonte du site vitrine — Test Alpha
 
 La date du 20 mars pour les maquettes nous convient. Nous l'approuvons.
 

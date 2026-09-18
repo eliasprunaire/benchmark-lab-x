@@ -42,11 +42,11 @@ def _dashscope_endpoint(base_url):
         or host.endswith('.cn-hongkong.maas.aliyuncs.com')
         or host.endswith('.eu-central-1.maas.aliyuncs.com')
         or host.endswith('.us-east-1.maas.aliyuncs.com')))
-    legacy_hosts = {'dashscope-us.aliyuncs.com', 'dashscope.aliyuncs.com',
-                    'dashscope-intl.aliyuncs.com', 'cn-hongkong.dashscope.aliyuncs.com'}
+    compatible_hosts = {'dashscope-us.aliyuncs.com', 'dashscope.aliyuncs.com',
+                        'dashscope-intl.aliyuncs.com', 'cn-hongkong.dashscope.aliyuncs.com'}
     if (parsed.scheme != 'https' or parsed.username or parsed.password or parsed.port not in (None, 443)
             or parsed.query or parsed.fragment or parsed.path.rstrip('/') != '/compatible-mode/v1'
-            or not (workspace_host or host in legacy_hosts)):
+            or not (workspace_host or host in compatible_hosts)):
         raise ValueError('DASHSCOPE_BASE_URL HTTPS officiel Alibaba requis')
     path = parsed.path.rstrip('/') + '/responses'
     return host, path

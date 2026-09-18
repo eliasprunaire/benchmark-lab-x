@@ -27,7 +27,7 @@ verify_storage() -> {schema_version: 1, integrity_ok: bool, broken_pieces: [id],
   ambiguous_operations: [id], unknown_cost_operations: [id]}
 Inspection is observational; no deletion/repair/resume. Fresh schema version 1
 adds operations/budgets/reservations to the two canary tables. Recognize the
-exact legacy canary schema without changing it; legacy operation API must
+exact compatible canary schema without changing it; its operation API must
 raise SchemaError rather than migrate it. Unknown schemas are never rewritten
 Fixtures below are entirely invented; assertions are frozen before Graph
 """
@@ -50,7 +50,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from benchmark import storage as product
 
-LEGACY_SCHEMA = ('CREATE TABLE dossier_revisions (\n        dossier_id TEXT NOT NULL,\n        revision INTEGER NOT NULL CHECK(revision > 0),\n        payload_json TEXT NOT NULL,\n        PRIMARY KEY (dossier_id, revision)\n    )', "CREATE TABLE pieces (\n        piece_id TEXT PRIMARY KEY NOT NULL,\n        dossier_id TEXT NOT NULL,\n        revision INTEGER NOT NULL,\n        name TEXT NOT NULL,\n        role TEXT NOT NULL CHECK(role IN ('candidate', 'judge')),\n        media_type TEXT NOT NULL,\n        relative_path TEXT UNIQUE NOT NULL,\n        sha256 TEXT NOT NULL,\n        size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),\n        FOREIGN KEY (dossier_id, revision)\n            REFERENCES dossier_revisions (dossier_id, revision)\n    )")
+COMPATIBLE_SCHEMA = ('CREATE TABLE dossier_revisions (\n        dossier_id TEXT NOT NULL,\n        revision INTEGER NOT NULL CHECK(revision > 0),\n        payload_json TEXT NOT NULL,\n        PRIMARY KEY (dossier_id, revision)\n    )', "CREATE TABLE pieces (\n        piece_id TEXT PRIMARY KEY NOT NULL,\n        dossier_id TEXT NOT NULL,\n        revision INTEGER NOT NULL,\n        name TEXT NOT NULL,\n        role TEXT NOT NULL CHECK(role IN ('candidate', 'judge')),\n        media_type TEXT NOT NULL,\n        relative_path TEXT UNIQUE NOT NULL,\n        sha256 TEXT NOT NULL,\n        size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),\n        FOREIGN KEY (dossier_id, revision)\n            REFERENCES dossier_revisions (dossier_id, revision)\n    )")
 
 PAYLOAD = {"request": "Suivi fictif Orme", "clarifications": ["Retour prévu"],
            "reformulation": "Préparer un suivi fictif", "validated_assumptions": ["Accord témoin"],
@@ -406,19 +406,19 @@ class StorageTests(unittest.TestCase):
                 with self.assertRaises(product.SchemaError):call(self.root)
                 self.assertEqual(file_hashes(self.root),before)
 
-    def test_legacy_canary_schema_is_readable_without_implicit_migration(self):
-        root=self.base/"legacy";root.mkdir(mode=0o700);(root/"pieces").mkdir(mode=0o700)
+    def test_compatible_canary_schema_is_readable_without_implicit_migration(self):
+        root=self.base/"compatible";root.mkdir(mode=0o700);(root/"pieces").mkdir(mode=0o700)
         dbpath=root/"metadata.sqlite3"
         with closing(sqlite3.connect(dbpath)) as db, db:
-            for ddl in LEGACY_SCHEMA:db.execute(ddl)
+            for ddl in COMPATIBLE_SCHEMA:db.execute(ddl)
             db.execute("PRAGMA user_version=1")
             db.execute("INSERT INTO dossier_revisions VALUES (?,?,?)",("d",1,json.dumps(PAYLOAD)))
         dbpath.chmod(0o600);before=file_hashes(root)
-        product.initialize(root);legacy=product.Store(root)
+        product.initialize(root);compatible=product.Store(root)
         try:
-            self.assertEqual(legacy.get_dossier("d",1),PAYLOAD)
-            with self.assertRaises(product.SchemaError):legacy.create_budget("b","10","TEST")
-        finally:legacy.close()
+            self.assertEqual(compatible.get_dossier("d",1),PAYLOAD)
+            with self.assertRaises(product.SchemaError):compatible.create_budget("b","10","TEST")
+        finally:compatible.close()
         self.assertEqual(file_hashes(root),before)
 
     def test_process_cuts_preserve_revisions_detect_orphans_and_never_reference_partial_bytes(self):

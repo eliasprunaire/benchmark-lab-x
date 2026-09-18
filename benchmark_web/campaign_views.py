@@ -3,7 +3,7 @@
 Ce module met en forme tout ce qui porte sur une campagne d'un cas d'usage :
 le choix des configurations, les deux formes de lancement (demandeur et
 opérateur), la comparaison et ses filtres, le détail d'une tentative, les
-évaluations et l'historique des campagnes.
+évaluations et les comparaisons déjà enregistrées.
 
 Il ne possède ni le gabarit de page, ni les erreurs, ni l'accès fournisseur, ni
 la préparation : ces domaines restent dans `views`. Il n'importe pas `views`,
@@ -161,7 +161,7 @@ def render_evaluations(evaluations, dossier_url):
         labels = {item['id']: item['description'] for item in spec['obligations'] + spec['eliminatory_errors']}
         reason = re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)',
                         lambda match: labels[match[0]], record['reason'])
-        label = ('Évaluation à reprendre (valeur historique : INDETERMINE)' if record['verdict'] == 'INDETERMINE'
+        label = ('Évaluation à reprendre (valeur enregistrée : INDETERMINE)' if record['verdict'] == 'INDETERMINE'
                  else record['verdict'] or 'Évaluation à reprendre')
         content += '<section id="evaluation-' + text(eid) + '"><h5>' + text(label) + '</h5>'
         content += '<p role="status">' + text(reason) + '</p><details><summary>Identifiants de cette évaluation</summary><p>Cas ' + text(record['case_id'])
@@ -662,13 +662,13 @@ def render_attempt_detail(value):
     content += '<a href="/preparation">Mes cas d’usage</a></nav><p class="lead">' + text(value['need']) + '</p>'
     content += '<p>Consultation privée · version d’épreuve ' + text(value['task']['version']) + '.</p>'
     content += '<details><summary>Identité de la campagne</summary><p>' + text(value['campaign_id']) + '</p></details>'
-    content += '<p>Les pièces exactes et leurs passages restent inertes. Historique conservé ; la dernière évaluation est affichée en premier.</p>'
+    content += '<p>Les pièces exactes et leurs passages restent inertes. Les évaluations enregistrées restent consultables ; la dernière est affichée en premier.</p>'
     content += render_evaluations(list(reversed(value['history'])), value['back_href'])
     return content
 
 
-def render_campaign_history(campaigns, url):
-    """Historique replié des campagnes d'un cas d'usage, cellules et tentatives comprises"""
+def render_campaign_records(campaigns, url):
+    """Comparaisons enregistrées d'un cas d'usage, cellules et tentatives comprises"""
     content = '<p>Suivi privé des comparaisons fictives de ce cas d’usage. '
     content += 'L’acquisition conserve des reçus ; elle ne juge pas le contenu des sorties.</p>'
     technical = {'NOT_STARTED': 'Non lancée : aucune tentative', 'INTENT_RECORDED': 'Intention enregistrée',
@@ -738,4 +738,4 @@ def render_campaign_history(campaigns, url):
         content += '</article>'
     if not campaigns:
         content += '<p>Aucune campagne liée à ce dossier.</p>'
-    return '<details><summary>Historique et détails des comparaisons de ce cas d’usage</summary>' + content + '</details>'
+    return '<details><summary>Comparaisons enregistrées et détails de ce cas d’usage</summary>' + content + '</details>'

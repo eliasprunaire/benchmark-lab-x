@@ -374,7 +374,7 @@ class OfficialTransportTests(unittest.TestCase):
         self.assertEqual('gpt-6-astra', native.native_identity('openai', 'openai/gpt-6-astra'))
         self.assertEqual('qwen3.8-max', native.native_identity('dashscope', 'qwen/qwen3.8-max'))
         with self.assertRaisesRegex(ValueError, 'aucun alias'):
-            native.native_identity('deepseek', 'deepseek/deepseek-v4-flash-0731')
+            native.native_identity('deepseek', 'deepseek/deepseek-v3.2')
         with self.assertRaisesRegex(ValueError, 'aucun alias'):
             native.native_identity('moonshot', 'moonshotai/another-model')
 

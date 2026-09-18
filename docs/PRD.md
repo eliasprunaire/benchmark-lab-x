@@ -8,7 +8,7 @@ style_gate: pass
 
 Ce document fixe la vision durable, le besoin, l’audience et les résultats attendus de Bench-X. Les parcours et principes décrivent le produit à long terme ; un périmètre associé à une version borne seulement son jalon. Le document ne porte aucun statut de livraison et les options non décidées ne deviennent pas des exigences par leur seule mention.
 
-L'approbation de ce document n'autorise aucune campagne ni publication. Les campagnes historiques restent sous leurs contrats d'origine.
+L'approbation de ce document n'autorise aucune campagne ni publication. Les campagnes déjà enregistrées restent sous leurs contrats figés.
 
 L'[ARD](ARD.md) fixe le contrat d'architecture. Les [règles](RULES.md) portent les invariants. Le glossaire fixe le vocabulaire.
 
@@ -68,7 +68,7 @@ Ce jalon réunit les capacités ci-dessous et les [critères d’acceptation pro
 
 Le parcours fondé sur les demandes des utilisateurs remplace le corpus prédéfini de deux à neuf tâches. Comparer des salles pour une association et transformer des notes de réunion en suivi des décisions et actions deviennent des exemples pédagogiques, sans périmètre obligatoire ni preuve de couverture métier. Les cas de chaque tâche restent à construire et à qualifier. Les réponses d’une campagne sont réellement acquises sous autorisation ; une simulation ne constitue pas un résultat de benchmark. Le choix et le nombre des campagnes réelles nécessaires à 0.1.0 restent à décider.
 
-Le produit est agnostique des modèles et de leurs versions. Les choix courants relèvent du registre de modèles, des profils d’assistance approuvés et des manifestes de campagne. Ils peuvent évoluer sans modifier les spécifications. Chaque campagne fige son panel et les identités exactes requises avant admission ; les résultats historiques conservent leurs configurations d’origine.
+Le produit est agnostique des modèles et de leurs versions. Les choix courants relèvent du registre de modèles, des profils d’assistance approuvés et des manifestes de campagne. Ils peuvent évoluer sans modifier les spécifications. Chaque campagne fige son panel et les identités exactes requises avant admission ; les résultats déjà enregistrés conservent leurs configurations d’origine.
 
 La sélection d’un modèle ne prouve ni sa disponibilité ni sa compatibilité avec le harnais. Les contrats, cas, configurations exactes, accès, routes, agrégations et budgets sont arrêtés avant les manifestes de campagne. Aucun alias ou modèle de substitution n’est déduit du nom retenu. La capacité logicielle sur données synthétiques prouve seulement le logiciel ; 0.1.0 exige aussi les résultats réels autorisés.
 
@@ -104,15 +104,15 @@ La comparaison ne désigne aucune option automatiquement. Chaque tri annonce son
 
 ## 8. Preuve et transparence
 
-Les conditions de test communes sont exposées une fois par comparaison : état de Pi, environnement et date de gel. Chaque configuration observée expose ensuite ses valeurs propres : fournisseur, modèle, accès API via OpenRouter, route, paramètres et effort de raisonnement, demandés puis observés. Les preuves historiques conservent leur accès d’origine. Les champs exacts sont ceux de l'[ARD](ARD.md#4-objets-et-responsabilités).
+Les conditions de test communes sont exposées une fois par comparaison : état de Pi, environnement et date de gel. Chaque configuration observée expose ensuite ses valeurs propres : fournisseur, modèle, accès API via OpenRouter, route, paramètres et effort de raisonnement, demandés puis observés. Les reçus déjà scellés conservent leur accès d’origine. Les champs exacts sont ceux de l'[ARD](ARD.md#4-objets-et-responsabilités).
 
 Une valeur non observée reste `INCONNU`. La restitution porte l'avertissement suivant ou une formulation équivalente :
 
 > Le verdict porte sur la configuration observée sous les conditions de test communes déclarées. Il n'attribue pas au seul modèle un effet que le fournisseur, l'effort, Pi ou ses réglages peuvent influencer, et ne démontre pas que le modèle isolé aurait produit le même résultat sous un autre harnais, fournisseur, contexte ou environnement.
 
-## 9. Contrats historiques
+## 9. Historique Git
 
-Les campagnes historiques conservent leurs questions, contrats, observations et verdicts. Leur bilan opérationnel appartient aux preuves d’origine ; il ne vaut pas validation de la méthode courante.
+Les révisions retirées appartiennent à Git. Elles ne définissent ni le périmètre ni la méthode du produit courant.
 
 ## 10. Restitution publique
 

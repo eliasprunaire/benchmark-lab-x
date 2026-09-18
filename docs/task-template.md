@@ -62,7 +62,7 @@ Usage du résultat et intervention humaine : `<ce que le destinataire peut en fa
 - podium général ou graphique trompeur
 - effet causal du modèle isolé, ou effet attribué au seul modèle alors que le fournisseur, l'effort, Pi ou ses réglages peuvent l'influencer
 - conclusion hors de la tâche ou du contrat
-- requalification des campagnes historiques
+- réinterprétation d'une sortie ou d'une preuve hors son contrat figé
 
 ## 3. Entrées et sortie brute
 
@@ -80,7 +80,7 @@ Règle d’agrégation : `<forme et portée du résultat ; cas et tentatives pri
 
 ### Entrées et outils autorisés
 
-Format de contenu sortant : `<version de projection liée au paquet validé>`. Déclarer les fichiers candidats par manifeste fermé avec rôles `instructions` et `input` ; aucune découverte automatique de Markdown. Conserver méthode, statuts, historique et pièces de jugement hors des messages candidats. La génération de l’épreuve sépare le contenu candidat, les notes internes et la référence de jugement, sans rôle fourni par le modèle. Toute contrainte nécessaire issue de notes internes est rédigée explicitement dans la consigne de cette version. Après émission, conserver séparément l’empreinte du corps HTTP réel, système inclus, sans authentification.
+Format de contenu sortant : `<version de projection liée au paquet validé>`. Déclarer les fichiers candidats par manifeste fermé avec rôles `instructions` et `input` ; aucune découverte automatique de Markdown. Conserver méthode, statuts, journal d’exécution et pièces de jugement hors des messages candidats. La génération de l’épreuve sépare le contenu candidat, les notes internes et la référence de jugement, sans rôle fourni par le modèle. Toute contrainte nécessaire issue de notes internes est rédigée explicitement dans la consigne de cette version. Après émission, conserver séparément l’empreinte du corps HTTP réel, système inclus, sans authentification.
 
 Consigne exacte commune aux candidats : `<texte ou pièce identifiée, sans réponse attendue réservée au jugement>`.
 

@@ -139,7 +139,7 @@ class TransportBoundary(unittest.TestCase):
         self.assertEqual(sha256(raw.encode()).hexdigest(), obs['outgoing']['request_body_sha256'])
         self.assertTrue(obs['pi']['terminal'])
         with self.assertRaises(ValueError):
-            f.transport.prepare({}, {'outgoing_format':'legacy'})
+            f.transport.prepare({}, {'outgoing_format':'unsupported'})
 
     def test_fictional_non_pi_transport_uses_outgoing_v1(self):
         f=comparison_fixture.PrivateEvaluationTests();f.setUp();self.addCleanup(f.doCleanups)

@@ -21,7 +21,7 @@ def build(repo, source, destination):
         raise ValueError('Identité source divergente')
     recipe = git(repo, 'show', source + ':tools/build_runtime.py')
     if recipe != Path(__file__).read_bytes():
-        raise ValueError('Recette de build différente du commit demandé')
+        raise ValueError('Configuration de build différente du commit demandé')
     files = {}
     modes = {}
     blobs = {}

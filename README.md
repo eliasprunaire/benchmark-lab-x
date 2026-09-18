@@ -30,8 +30,7 @@ Le projet sépare clairement la préparation, l’acquisition, l’évaluation e
 - exécute les candidats sous Pi, normalement via OpenRouter ;
 - conserve les sorties, incidents, coûts et configurations observées ;
 - produit des évaluations explicables et une restitution reliée aux preuves ;
-- publie uniquement une projection explicitement approuvée ;
-- relit les résultats historiques scellés sans relancer d’acquisition.
+- publie uniquement une projection explicitement approuvée.
 
 Le jalon visé est `0.1.0`. Ce numéro décrit un périmètre produit ; il ne prouve ni release, ni déploiement, ni campagne réelle terminée.
 
@@ -48,37 +47,23 @@ Depuis la racine du dépôt :
 ```bash
 git clone https://github.com/eliasprunaire/benchmark-lab-x.git
 cd benchmark-lab-x
-uv run --python 3.12 python -m benchmark.runtime --help
+uv run --python 3.12 python -m benchmark --help
 ```
 
 Pour préparer un environnement privé, copiez le fichier d’exemple puis renseignez uniquement les accès nécessaires :
 
 ```bash
 cp .env.example .env
-uv run --env-file .env python -m benchmark.runtime --help
+uv run --env-file .env python -m benchmark --help
 ```
 
 Le fichier `.env` reste local et ne doit jamais être versionné. Renseigner une clé ne lance aucun appel et ne crée aucune autorité.
 
+`python -m benchmark`, `python -m benchmark.runtime` et `benchmark/benchmark-runtime` appellent le même moteur.
+
 Dans le parcours web configuré en mode personnel, **Ajouter ma clé Openrouter** permet de fournir votre clé depuis le navigateur, sans modifier le `.env` du serveur. Elle finance vos préparations, qualifications et comparaisons sous leurs plafonds respectifs. Enregistrer la clé ne lance aucun modèle.
 
-### Lire un résultat historique
-
-Le lecteur historique vérifie les sceaux avant d’ouvrir une page existante :
-
-```bash
-python3 -B -m benchmark show --run-dir runs/ma-campagne
-```
-
-Il peut aussi construire une nouvelle présentation locale à partir des mêmes résultats, sans modifier la source ni relancer de candidat :
-
-```bash
-python3 -B -m benchmark present \
-  --source-run runs/ma-campagne \
-  --run-dir runs/ma-presentation
-```
-
-Le [guide opérateur](benchmark/README.md) décrit l’initialisation, les autorités, les transports et le déroulement d’une comparaison privée.
+Pour les commandes opérateur, utilisez `python -m benchmark --help`. Le PRD, l’ARD et les règles en définissent la portée et les conditions.
 
 ## Vérification
 
@@ -97,7 +82,6 @@ Les transports sont simulés dans les tests. Un résultat vert prouve les compor
 benchmark/
 ├── acquisition/       campagnes, émissions et reprises préautorisées
 ├── transports/        OpenRouter, Pi, secours officiels et profils
-├── prototype/         lecteur des preuves historiques scellées
 ├── preparation.py     dossier fictif et validation du besoin
 ├── qualification.py   qualification du contrat
 ├── evaluation.py      constats, mesures et verdicts
@@ -106,27 +90,25 @@ benchmark/
 └── runtime.py         commandes opérateur
 
 benchmark_web/         interface web et projections publiques
-docs/                  produit, architecture, règles et recettes
+docs/                  sources canoniques du produit
 tests/                 régressions hors ligne et parcours locaux
 tools/                 construction reproductible du runtime
 ```
 
-Les identifiants techniques historiques conservent le préfixe `benchmark-lab-x`. Ils appartiennent aux formats de données et restent stables malgré le nom public Bench-X.
+Les identifiants techniques du produit conservent le préfixe `benchmark-lab-x`. Ils appartiennent aux formats de données et restent stables malgré le nom public Bench-X.
 
 ## Documentation
 
 - [PRD](docs/PRD.md) : besoin, utilisateurs, parcours et périmètre ;
 - [ARD](docs/ARD.md) : objets, responsabilités, flux et exploitation ;
 - [Règles](docs/RULES.md) : contrats, preuves, coûts, autorités et versions ;
-- [Gabarit de tâche](docs/task-template.md) : contenu minimal d’une future tâche ;
-- [Guide opérateur](benchmark/README.md) : commandes et parcours locaux ;
-- [Vérification locale](benchmark/verify.md) : portée des tests et limites des preuves.
+- [Gabarit de tâche](docs/task-template.md) : contenu minimal d’une future tâche.
 
 Les [Issues GitHub](https://github.com/eliasprunaire/benchmark-lab-x/issues) et le [Project](https://github.com/users/eliasprunaire/projects/5) portent le travail de livraison et son avancement.
 
 ## Contribuer
 
-Une contribution doit préserver les preuves historiques, les frontières d’autorité et la distinction entre simulation et résultat réel. Consultez le PRD, l’ARD et les règles, puis exécutez le test le plus proche du changement et la suite complète avant livraison.
+Une contribution doit préserver les frontières d’autorité et la distinction entre simulation et résultat réel. Consultez le PRD, l’ARD et les règles, puis exécutez le test le plus proche du changement et la suite complète avant livraison.
 
 ## Licence
 

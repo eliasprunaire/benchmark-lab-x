@@ -240,7 +240,7 @@ def main(argv=None):
     parser.add_argument('--listen', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--preparation-assistant', metavar='ALIAS_OR_PROFILE',
-                        help='Alias preparation, alias historique glm-5.3-flash ou chemin d’un profil JSON local')
+                        help='Alias preparation, alias de secours preparation-fallback ou chemin d’un profil JSON local')
     parser.add_argument('--personal-preparation', action='store_true',
                         help='Exiger la clé personnelle de la session pour préparer et qualifier')
     parser.add_argument('--qualification-assistant', metavar='ALIAS_OR_PROFILE',

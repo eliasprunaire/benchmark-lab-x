@@ -223,10 +223,10 @@ class S14Acceptance(unittest.TestCase):
         self.assertEqual(self.store.inspect_budget('s14-budget')['reserved'],self.reserve_amount)
         self.assertEqual(self.count(),0)
 
-    def test_history_and_correction_require_latest_predecessor(self):
-        historical=self.fixture.evaluate()
+    def test_previous_evaluation_and_correction_require_latest_predecessor(self):
+        prior=self.fixture.evaluate()
         first=self.submit(self.execute())
-        self.assertEqual(evaluation.inspect(self.store,historical['evaluation_id']),historical)
+        self.assertEqual(evaluation.inspect(self.store,prior['evaluation_id']),prior)
         view=self.execute('correction')
         second=self.submit(view)
         self.assertEqual(second['previous_evaluation_id'],first['evaluation_id'])
