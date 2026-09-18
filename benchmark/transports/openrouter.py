@@ -379,12 +379,22 @@ class OpenRouterPreparation:
     def authorized(self, store):
         if not hasattr(self, '_session_id'):
             return True
-        from ..provider_access import decrypt
+        from ..provider_access import authorize_session, decrypt
+        from ..storage import IntegrityError
         from hmac import compare_digest
-        row = store._connection.execute(
+        connection = store._connection_checked()
+        authorize_session(connection, self._session_id)
+        row = connection.execute(
             "SELECT key_cipher FROM s2_provider_access WHERE session_id=? AND status='connected'",
             (self._session_id,)).fetchone()
-        return row is not None and compare_digest(decrypt(self._access_secret, row[0]), self._api_key)
+        if row is None:
+            return False
+        try:
+            key = decrypt(self._access_secret, row[0], self._session_id, 'key')
+        except IntegrityError:
+            from ..preparation import Denied
+            raise Denied('ACCESS_UNAVAILABLE') from None
+        return compare_digest(key.encode(), self._api_key.encode())
 
     def prepare(self, operation, request, api_key=None):
         key = self._api_key if api_key is None else api_key

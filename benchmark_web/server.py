@@ -5,6 +5,8 @@ stockage, ni aux secrets, ni aux fournisseurs.
 """
 from base64 import b64encode, urlsafe_b64decode, urlsafe_b64encode
 from hashlib import sha256
+from datetime import datetime, timezone
+from email.utils import format_datetime
 from html import escape
 from http.cookies import SimpleCookie, CookieError
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -27,6 +29,16 @@ from . import views
 def _session_cookie(token):
     return ('benchmark_session=' + token
             + '; HttpOnly; Secure; SameSite=Strict; Path=/preparation; Max-Age=2592000')
+
+
+def _management_cookie(value):
+    if type(value) is not dict or set(value) != {'token', 'expires_at'} or not re.fullmatch('[0-9a-f]{64}', value['token']):
+        raise ValueError('Accès de contribution invalide')
+    expires = datetime.fromisoformat(value['expires_at'])
+    if expires.tzinfo is None:
+        raise ValueError('Échéance de contribution invalide')
+    return ('benchmark_contributions=' + value['token'] + '; HttpOnly; Secure; SameSite=Strict; Path=/preparation; Expires='
+            + format_datetime(expires.astimezone(timezone.utc), usegmt=True))
 
 
 def _source_fingerprint(headers, client_address, salt):
@@ -110,10 +122,17 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
             self.send_header('Cache-Control', 'no-store')
             self.send_header('X-Content-Type-Options', 'nosniff')
             policy = "default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+            privacy_script = media_type.startswith('text/html') and b'src="/preparation/privacy.js"' in raw
             if script is not None:
                 policy += "; script-src 'sha256-" + b64encode(sha256(script.encode()).digest()).decode() + "'"
+                if privacy_script:
+                    policy += " 'self'"
                 if script in (views.PREPARATION_PROGRESS_SCRIPT, views.CUSTOM_MODELS_SCRIPT, views.COMPARISON_FOCUS_SCRIPT):
                     policy += "; connect-src 'self'"
+            elif privacy_script:
+                policy += "; script-src 'self'"
+            if privacy_script and 'connect-src' not in policy:
+                policy += "; connect-src 'self'"
             self.send_header('Content-Security-Policy', policy)
             self.send_header('Referrer-Policy', 'no-referrer')
             for name, value in (headers.items() if type(headers) is dict else headers or ()):
@@ -123,6 +142,9 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                 self.wfile.write(raw)
 
         def preparation(self):
+            if self.path == '/preparation/privacy.js' and self.command in ('GET', 'HEAD'):
+                self.respond(200, (Path(__file__).parent / 'privacy.js').read_bytes(), 'text/javascript; charset=utf-8')
+                return
             if self.path == '/preparation/style.css' and self.command in ('GET', 'HEAD'):
                 self.respond(200, views.STYLESHEET_PATH.read_bytes(), 'text/css; charset=utf-8')
                 return
@@ -140,6 +162,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                 cookies = SimpleCookie(self.headers.get('Cookie', ''))
                 cookie = cookies.get('benchmark_session')
                 token = cookie.value if cookie else None
+                manager = cookies.get('benchmark_contributions')
+                management_token = manager.value if manager else None
                 if self.command == 'GET' and self.path.startswith('/preparation/access/callback'):
                     parsed = urlsplit(self.path)
                     values = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
@@ -190,9 +214,15 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                             for k, v in values.items()}
                         if 'revision' in form_body:
                             revision = values['revision'][0]
-                            if not re.fullmatch('[1-9][0-9]*', revision):
+                            if not re.fullmatch('0|[1-9][0-9]*' if self.path.endswith('/contribution') else '[1-9][0-9]*', revision):
                                 raise ValueError('Révision invalide')
                             form_body['revision'] = int(revision)
+                        if self.path.endswith('/contribution'):
+                            revision = form_body.get('example_revision', '')
+                            if not re.fullmatch('[1-9][0-9]*', revision) or form_body.get('enabled') not in (None, 'true'):
+                                raise ValueError('Choix de contribution invalide')
+                            form_body['example_revision'] = int(revision)
+                            form_body['enabled'] = form_body.get('enabled') == 'true'
                         if 'manifest_version' in form_body:
                             manifest_version = values['manifest_version'][0]
                             if not re.fullmatch('[1-9][0-9]*', manifest_version):
@@ -201,6 +231,13 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                         body = form_body
                     else:
                         raise ValueError('Type de formulaire inconnu')
+                    if self.path == '/preparation/session/open':
+                        expected = public_url.rstrip('/') if public_url else f'http://{address}:{port}'
+                        if (self.headers.get('Origin') != expected or
+                                self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin', 'none')):
+                            raise ValueError('Origine de session invalide')
+                        if 'return_path' in body:
+                            return_path = _return_path(body.pop('return_path'))
                     if self.path == '/preparation/access/start':
                         if callback_url is None:
                             value = {'kind': 'access', 'connected': False, 'status': 'unavailable',
@@ -222,13 +259,32 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                         body.pop('website', None)
                         body['source_sha256'] = _source_fingerprint(self.headers, self.client_address, source_salt)
                 result = preparation_request(socket_path, 'GET' if self.command == 'HEAD' else self.command,
-                                             self.path, token, body)
+                                             self.path, token, body, management_token=management_token)
                 relayed = True
                 headers = {}
                 if result.get('cookie'):
                     token = result['cookie']
-                if result['status'] < 400 and token:
+                if result['status'] < 400 and token and (result.get('cookie') or self.command == 'POST'
+                        and not self.path.startswith('/preparation/contributions')
+                        and self.path != '/preparation/session/open' and not self.path.endswith('/delete')):
                     headers['Set-Cookie'] = _session_cookie(token)
+                if result.get('management_cookie'):
+                    existing = [('Set-Cookie', headers.pop('Set-Cookie'))] if 'Set-Cookie' in headers else []
+                    management_headers = existing + [('Set-Cookie', _management_cookie(result['management_cookie']))]
+                else:
+                    management_headers = []
+                if self.command == 'POST' and result['status'] < 400 and self.path.endswith(('/contribution', '/withdraw', '/delete')):
+                    if not wants_json:
+                        target = ('/preparation/data' if self.path.endswith('/delete') else
+                                  '/preparation/contributions' if self.path.endswith('/withdraw') else self.path.rsplit('/', 1)[0])
+                        self.respond(303, b'', 'text/html; charset=utf-8', list(headers.items()) + management_headers + [('Location', target)])
+                    else:
+                        self.respond(result['status'], result['value'], headers=list(headers.items()) + management_headers)
+                    return
+                if self.path == '/preparation/session/open' and result['status'] < 400 and not wants_json:
+                    headers['Location'] = return_path or '/preparation'
+                    self.respond(303, b'', 'text/html; charset=utf-8', headers)
+                    return
                 if (self.command == 'POST' and result['status'] < 400 and not wants_json
                         and (self.path == '/preparation/dossiers' or re.fullmatch(
                             r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/(?:messages|validation)', self.path))):
@@ -272,7 +328,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                 else:
                     csrf = body.get('csrf_token', '') if type(body) is dict else ''
                     view_path = self.path
-                    if result['status'] < 400:
+                    if result['status'] < 400 and result['value'].get('kind') not in ('privacy_data', 'privacy_notice', 'session_bootstrap', 'contributions'):
                         home = preparation_request(socket_path, 'GET', '/preparation', token)
                         csrf = home['value']['csrf_token']
                         if self.path == '/preparation/access':
@@ -340,7 +396,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                 try:
                     health = executor_health(socket_path)
                     ready = (source != 'inconnu' and health['source_sha'] == source
-                             and health['storage'] == 'ok')
+                             and health['storage'] == 'ok' and not health['restore_pending'])
                     self.respond(200 if ready else 503, {'web': 'ok', 'executor': 'ok' if ready else 'unavailable', 'storage': 'ok' if ready else 'unavailable', 'source_sha': source})
                 except (OSError, ValueError):
                     self.respond(503, {'web': 'ok', 'executor': 'unavailable', 'storage': 'unknown', 'source_sha': source})

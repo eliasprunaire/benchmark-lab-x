@@ -181,6 +181,10 @@ Le coût ne compense jamais une non-admissibilité. Une mesure valide d’une so
 
 Les révisions retirées appartiennent à Git et ne définissent jamais le comportement courant. Une preuve technique ne prouve que son objet technique.
 
+**Preuves conservées.** Leur identité, leur sémantique et leurs verdicts ne sont pas réécrits. Cette immuabilité n’impose pas une conservation illimitée des données privées : leur purge suit le PRD et l’ARD, sans les requalifier.
+
+**Conservation et retrait.** Une suppression ou expiration interdit tout nouvel appel et empêche les écritures tardives de réactiver un dossier ou une contribution. Un coût inconnu reste inconnu, sans imposer la conservation des textes. Les marqueurs techniques sont limités à la reprise et à la prévention des réémissions. Le refus de contribuer ne pénalise aucune fonction. La publication et la contribution demeurent des autorisations distinctes.
+
 ## 13. Arrêt
 
 À l'épuisement de l'autorité ou en présence d'une preuve bloquante, la tranche s'arrête en `HOLD` sans retry, fallback, dépense ou extension implicite.

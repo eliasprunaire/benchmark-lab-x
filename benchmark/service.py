@@ -27,6 +27,7 @@ finale, valeur objet ou chaîne hexadécimale de pièce, `piece` et `cookie` fac
 typés. Le web n'a donc plus à se défendre champ par champ, et une réponse hors contrat devient
 une indisponibilité annoncée plutôt qu'un corps nul ou une page rompue.
 """
+from copy import copy
 from contextlib import closing
 from concurrent.futures import Future
 from http.client import HTTPException
@@ -48,6 +49,7 @@ import time
 from .storage import ConflictError, BudgetError, IntegrityError, SchemaError, _unique_object
 
 from .provider_access import CALLBACK_BUDGET_SECONDS, READ_CHUNK_BYTES, remaining_budget
+from .privacy import Gone
 from .storage import Store
 from .runtime import encode, status, stop, verify
 
@@ -141,9 +143,14 @@ def executor_health(path):
 def denied_response(error):
     generic = ('Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier '
                'ou demandez au responsable de vérifier son autorisation.')
+    if error.code == 'NOT_FOUND':
+        return {'status': 404, 'value': {'error': 'Ressource inaccessible', 'error_code': 'NOT_FOUND'}}
     if not error.code:
         return {'status': 403, 'value': {'error': generic}}
     messages = {
+        'SESSION_EXPIRED': 'Votre accès au serveur a expiré. Vos copies locales restent consultables dans Mes données.',
+        'RESTORE_PENDING': 'Accès temporairement fermé : une restauration doit être vérifiée.',
+        'CONTRIBUTION_SENSITIVE_DATA': 'Un contenu potentiellement sensible empêche cette contribution. Votre benchmark reste accessible.',
         'TEXT_TOO_SHORT': 'Ce texte est trop court.',
         'TEXT_TOO_LONG': 'Ce texte est trop long.',
         'PREPARATION_IN_PROGRESS': 'Une préparation est déjà en cours.',
@@ -193,11 +200,12 @@ def _envelope(raw):
     if len(raw) > 1048576 or not raw.endswith(b'\n'):
         raise ValueError('Enveloppe de requête hors limites ou incomplète')
     message = json.loads(raw, object_pairs_hook=_unique_object)
-    if type(message) is not dict or set(message) != {'method', 'path', 'token', 'body'}:
+    if type(message) is not dict or not {'method', 'path', 'token', 'body'} <= set(message) or set(message) - {'method', 'path', 'token', 'body', 'management_token'}:
         raise ValueError('Enveloppe de requête invalide')
     if (type(message['method']) is not str or type(message['path']) is not str
             or type(message['token']) not in (str, type(None))
-            or type(message['body']) not in (dict, type(None))):
+            or type(message['body']) not in (dict, type(None))
+            or type(message.get('management_token')) not in (str, type(None))):
         raise ValueError('Champs d’enveloppe de requête invalides')
     return message
 
@@ -225,6 +233,8 @@ def executor_result(raw, health, handle):
         return handle(message)
     except preparation.Denied as error:
         return denied_response(error)
+    except Gone:
+        return {'status': 410, 'value': {'error': 'Ce cas d’usage n’est plus conservé sur le serveur.', 'error_code': 'DOSSIER_EXPIRED'}}
     except (ConflictError, BudgetError):
         return {'status': 409, 'value': {'error': CONFLICT_MESSAGE}}
     except (IntegrityError, SchemaError, sqlite3.Error) as error:
@@ -251,6 +261,31 @@ def personal_transports(store, token, preparation_transport, qualification_trans
         return None, None
     return tuple(t.for_session(key, session_id, secret) if t is not None else None
                  for t in (preparation_transport, qualification_transport))
+
+
+def needs_personal_transport(method, path):
+    return method == 'POST' and (path == '/preparation/dossiers' or re.fullmatch(
+        r'/preparation/dossiers/[A-Za-z0-9_-]+/(?:messages|validation|campaigns/[A-Za-z0-9_-]+/(?:start|evaluate))', path) is not None)
+
+
+def personal_read_profiles(store, token, *profiles):
+    """Les pages lisent la configuration sans charger de clé ni initialiser un transport"""
+    from . import preparation, provider_access
+    try:
+        session_id, _, _ = preparation.session(store, token)
+        if not provider_access.status_only(store, session_id)['connected']:
+            return (None,) * len(profiles)
+    except preparation.Denied:
+        return (None,) * len(profiles)
+    result = []
+    for profile in profiles:
+        bound = copy(profile) if profile is not None else None
+        if bound is not None:
+            bound._api_key = None
+            bound._session_id = session_id
+            bound.preparation_budget_id = provider_access.preparation_budget_id(session_id)
+        result.append(bound)
+    return tuple(result)
 
 
 def _refresh_catalogue(data, stopping, fetch):
@@ -323,6 +358,20 @@ def _campaign_worker(data, start, candidate_transport, factory, secret, access_t
         logging.getLogger(__name__).error('AUTOMATIC_JUDGMENT_STOPPED error=%s', type(error).__name__)
 
 
+def _retention_worker(data, dossier_id, function, *args):
+    from . import privacy, privacy_archive
+    from .runtime import worker_lock
+    with closing(Store(data)) as store, worker_lock(store, shared=True):
+        try:
+            function(*args)
+        finally:
+            if dossier_id and privacy.available(store._connection):
+                try:
+                    privacy_archive.refresh_contributions(store, dossier_id)
+                except Exception as error:
+                    logging.getLogger(__name__).warning('CONTRIBUTION_UPDATE_PENDING error=%s', type(error).__name__)
+
+
 def serve_executor(data, socket_path, source, *, transport=None, qualification_transport=None,
                    candidate_transport=None, candidate_transport_factory=None,
                    candidate_identity=None, judgment_transport=None,
@@ -334,6 +383,9 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             verify(store)
+            from . import privacy
+            if privacy.available(store._connection) and not privacy.quarantined(store):
+                privacy.replay_revocations(store)
             from .provider_access import expire
             expire(store)
             stop(data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
@@ -350,15 +402,24 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
             probe_jobs = {}
 
             def handle_message(message):
+                from .runtime import worker_lock
+                with worker_lock(store, shared=True):
+                    return handle_locked(message)
+
+            def handle_locked(message):
                 from . import preparation, provider_access, web_api
                 active_transport, active_qualification = transport, qualification_transport
                 active_judgment = None
                 if personal_preparation:
-                    active_transport, active_qualification = personal_transports(
-                        store, message['token'], transport, qualification_transport, access_secret, access_transport)
-                    if active_transport is not None and judgment_transport is not None:
-                        active_judgment = judgment_transport.for_session(active_transport._api_key,
-                            active_transport._session_id, access_secret)
+                    if needs_personal_transport(message['method'], message['path']):
+                        active_transport, active_qualification = personal_transports(
+                            store, message['token'], transport, qualification_transport, access_secret, access_transport)
+                        if active_transport is not None and judgment_transport is not None:
+                            active_judgment = judgment_transport.for_session(active_transport._api_key,
+                                active_transport._session_id, access_secret)
+                    else:
+                        active_transport, active_qualification, active_judgment = personal_read_profiles(
+                            store, message['token'], transport, qualification_transport, judgment_transport)
                 code, value, cookie, start = web_api.dispatch(
                     store, message['method'], message['path'], message['token'], message['body'],
                     source, active_transport, candidate_transport=candidate_transport or candidate_transport_factory,
@@ -366,16 +427,19 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                     qualification_transport=active_qualification,
                     judgment_transport=active_judgment,
                     access_secret=access_secret, access_transport=access_transport,
-                    presentation=presentation, personal_preparation=personal_preparation)
+                    presentation=presentation, personal_preparation=personal_preparation,
+                    management_token=message.get('management_token'))
                 if personal_preparation and isinstance(value, dict):
                     value['personal_preparation'] = True
                     if 'availability' in value and active_transport is None:
                         value['availability'].update(can_submit=False, reason='access',
                                                      assistant_configured=transport is not None)
-                    if code < 400:
-                        session_id, _, _ = preparation.session(store, cookie or message['token'])
-                        value['personal_access'] = provider_access.view(
-                            store, session_id, access_secret, access_transport, refresh=False)
+                    if code < 400 and value.get('kind') not in ('session_bootstrap', 'privacy_data', 'privacy_notice', 'contributions'):
+                        try:
+                            session_id, _, _ = preparation.session(store, cookie or message['token'])
+                            value['personal_access'] = provider_access.status_only(store, session_id)
+                        except preparation.Denied:
+                            pass
                 if isinstance(start, dict):
                     if 'model_probe' in start:
                         job = probe_jobs.get(start['session_id'])
@@ -393,18 +457,19 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                                 catalogue_fetch, access_secret, access_transport, model_probe_transport),
                                 daemon=True).start()
                     elif 'qualification_operation' in start:
-                        threading.Thread(target=preparation.execute_qualification,
-                                         args=(data, start['qualification_operation'], active_qualification),
+                        threading.Thread(target=_retention_worker,
+                                         args=(data, value.get('dossier_id'), preparation.execute_qualification,
+                                               data, start['qualification_operation'], active_qualification),
                                          daemon=True).start()
                     elif 'judgment_operations' in start:
                         from .automatic_judgment import execute_campaign
-                        threading.Thread(target=execute_campaign,
-                            args=(data, start['judgment_operations'], active_judgment), daemon=True).start()
+                        threading.Thread(target=_retention_worker,
+                            args=(data, value.get('dossier_id'), execute_campaign, data, start['judgment_operations'], active_judgment), daemon=True).start()
                     else:
-                        threading.Thread(target=_campaign_worker, args=(data, start, candidate_transport,
+                        threading.Thread(target=_retention_worker, args=(data, value.get('dossier_id'), _campaign_worker, data, start, candidate_transport,
                             candidate_transport_factory, access_secret, access_transport, active_judgment), daemon=True).start()
                 elif start:
-                    threading.Thread(target=preparation.execute, args=(data, start, active_transport), daemon=True).start()
+                    threading.Thread(target=_retention_worker, args=(data, value.get('dossier_id'), preparation.execute, data, start, active_transport), daemon=True).start()
                 if isinstance(value, dict) and value.get('kind') == 'configurations':
                     session_id, _, _ = preparation.session(store, message['token'])
                     job = probe_jobs.get(session_id)
@@ -412,8 +477,12 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
                         value['probe_request'] = {key: job[key] for key in ('request_id', 'slug')}
                         value['probe_request'].update(job['future'].result() if job['future'].done()
                                                       else {'pending': True})
-                return {'status': code, 'value': value.hex() if isinstance(value, bytes) else value,
-                        'piece': isinstance(value, bytes), 'cookie': cookie}
+                management_cookie = value.pop('_management_cookie', None) if isinstance(value, dict) else None
+                result = {'status': code, 'value': value.hex() if isinstance(value, bytes) else value,
+                          'piece': isinstance(value, bytes), 'cookie': cookie}
+                if management_cookie:
+                    result['management_cookie'] = management_cookie
+                return result
 
             class Handler(socketserver.StreamRequestHandler):
                 def handle(self):
@@ -469,20 +538,28 @@ def _relayed_result(result):
         return False
     if type(result.get('cookie')) not in (str, type(None)):
         return False
+    manager = result.get('management_cookie')
+    if manager is not None and (type(manager) is not dict or set(manager) != {'token', 'expires_at'}
+            or type(manager['token']) is not str or re.fullmatch('[0-9a-f]{64}', manager['token']) is None
+            or type(manager['expires_at']) is not str):
+        return False
     if result.get('piece'):
         return (type(result['value']) is str
                 and re.fullmatch('(?:[0-9a-fA-F]{2})*', result['value']) is not None)
     return type(result['value']) is dict
 
 
-def preparation_request(socket_path, method, path, token, body=None):
+def preparation_request(socket_path, method, path, token, body=None, *, management_token=None):
     """Relais borné par `RELAY_BUDGET_SECONDS` en délai total ; voir le contrat en tête de module"""
     deadline = time.monotonic() + RELAY_BUDGET_SECONDS
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(remaining_budget(deadline))
         connection.connect(str(socket_path))
         connection.settimeout(remaining_budget(deadline))
-        connection.sendall((encode(dict(method=method, path=path, token=token, body=body)) + '\n').encode())
+        message = dict(method=method, path=path, token=token, body=body)
+        if management_token is not None:
+            message['management_token'] = management_token
+        connection.sendall((encode(message) + '\n').encode())
         raw = _read_line(connection, 8388609, deadline)
     # Trame, encodage ou forme illisibles : panne de transport, jamais une saisie de l'appelant
     if len(raw) > 8388608 or not raw.endswith(b'\n'):

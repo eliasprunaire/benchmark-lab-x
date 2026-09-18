@@ -238,9 +238,9 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn('id="evaluation-' + detail['history'][-1]['evaluation_id'] + '"', fragment)
 
     def test_standard_reasoning_label_does_not_claim_reasoning_is_disabled(self):
-        self.assertEqual('Standard · niveau de raisonnement non imposé',
+        self.assertEqual('Niveau de raisonnement non renseigné',
                          campaign_views.effort_label({'effort': 'off'}))
-        self.assertEqual('Raisonnement élevé', campaign_views.effort_label({'effort': 'high'}))
+        self.assertEqual('Raisonnement demandé : high', campaign_views.effort_label({'effort': 'high'}))
 
     def test_results_filters_stay_with_the_table(self):
         for query in ({}, {'verdict': 'SATISFAIT'}, {'verdict': 'NE SATISFAIT PAS'}):

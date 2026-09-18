@@ -35,6 +35,17 @@ class ModelCatalogueTests(unittest.TestCase):
             return {'data': {'id': model_id, 'endpoints': [endpoint]}}
         return fetch
 
+    def test_reasoning_options_follow_provider_metadata(self):
+        from tests.test_configurations import model
+        value, endpoints = model('openai/gpt-5.6-sol', 'openai', ['none', 'low', 'high'])
+        value['reasoning']['mandatory'] = True
+        self.assertEqual(['low', 'high'], catalogue.model_view(value, endpoints, [])['reasoning_levels'])
+        value['reasoning']['supported_efforts'] = None
+        self.assertEqual(['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+                         catalogue.model_view(value, endpoints, [])['reasoning_levels'])
+        value['reasoning'].pop('supported_efforts')
+        self.assertEqual([], catalogue.model_view(value, endpoints, [])['reasoning_levels'])
+
     def test_fixture_exerce_toutes_les_regles_et_la_vue(self):
         self.assertEqual(60, len(FIXTURE['data']))
         with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:

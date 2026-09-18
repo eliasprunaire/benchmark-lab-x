@@ -291,3 +291,14 @@ footer.site details > :not(summary) { margin: .4rem 0 0; }
 #preparation-progress [role="status"] { border: 0; padding: .4rem 0; background: transparent; }
 #preparation-progress button { padding: 0; border: 0; background: transparent; font: inherit; color: var(--accent-ink); text-decoration: underline; }
 #preparation-progress [hidden] { display: none; }
+
+/* Données privées : commandes compactes, copies lisibles sur petit écran */
+.privacy-controls, .privacy-consent { margin: 1rem 0; }
+.privacy-controls p, .privacy-consent p { font-size: .9rem; }
+.privacy-controls fieldset, .privacy-consent fieldset { padding: .6rem; margin: .5rem 0; }
+.privacy-consent label { display: flex; gap: .6rem; align-items: baseline; }
+.privacy-consent input[type="checkbox"] { width: auto; flex: none; }
+[data-privacy-list] pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+[data-privacy-history] [hidden], [data-privacy-controls] [hidden] { display: none; }
+[data-privacy-list] > details { min-width: 0; }
+[data-privacy-status]:empty { display: none; }

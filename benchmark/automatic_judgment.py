@@ -90,10 +90,12 @@ def guard_budget(store, connection, budget_id, *, campaign_id=None):
             raise BudgetError('Enveloppe personnelle réservée à l’évaluation de la comparaison en cours')
 
 
-def preflight(store, session_id, dossier_id, campaign_id, transport):
+def preflight(store, session_id, dossier_id, campaign_id, transport, *, check_access=True):
     if transport is None or getattr(transport, '_session_id', None) != session_id:
         raise p.Denied('ACCESS_REQUIRED')
-    if not transport.authorized(store):
+    if check_access and not transport.authorized(store):
+        raise p.Denied('ACCESS_REQUIRED')
+    if not check_access and not provider_access.status_only(store, session_id)['connected']:
         raise p.Denied('ACCESS_REQUIRED')
     config = transport.quote()
     connection = e.connection_for(store)

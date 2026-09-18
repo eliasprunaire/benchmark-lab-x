@@ -12,7 +12,7 @@ d'échange n'est garantie ici. Un rappel enchaîne l'échange puis la vérificat
 `CALLBACK_BUDGET_SECONDS` dont le relais de `service` dérive son propre délai. Aucun réessai
 n'est ajouté : un budget épuisé est un échec observé, enregistré comme tel.
 """
-from base64 import urlsafe_b64decode, urlsafe_b64encode
+from base64 import b64decode, urlsafe_b64encode
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -26,6 +26,9 @@ import socket
 import threading
 import time
 from urllib.parse import urlencode, urlsplit
+
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from . import storage
 from .storage import IntegrityError, SchemaError, _strict_json as encode, _transaction
@@ -99,7 +102,7 @@ def initialize(data):
         connection = store._connection_checked()
         with _transaction(connection, write=True):
             layout = storage._check_schema(connection)
-            if layout == 's6':
+            if layout in ('s6', 's7'):
                 return
             if layout != 's5':
                 raise SchemaError('Extension explicite sur une base S5 requise')
@@ -114,6 +117,18 @@ def available(store):
     return connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s6_control'").fetchone() is not None
 
 
+def _privacy(connection):
+    from . import privacy
+    return privacy if privacy.available(connection) else None
+
+
+def authorize_session(connection, session_id, current=None):
+    """Délègue les dates S7 sans introduire de politique de session dans S6"""
+    privacy = _privacy(connection)
+    if privacy is not None:
+        privacy.authorize_session(connection, session_id, current=current)
+
+
 def parse_secret(value):
     if value in (None, ''):
         return None
@@ -122,42 +137,95 @@ def parse_secret(value):
     return bytes.fromhex(value)
 
 
-def _stream(secret, nonce, size):
-    output = bytearray()
-    counter = 0
-    while len(output) < size:
-        output.extend(hmac.digest(secret, nonce + counter.to_bytes(8, 'big'), 'sha256'))
-        counter += 1
-    return output[:size]
+CIPHER_VERSION = 'aes256gcm-v1'
 
 
-def encrypt(secret, value):
-    if type(secret) is not bytes or len(secret) != 32 or type(value) is not str:
-        raise ValueError('Secret et texte valides requis')
-    raw = value.encode('utf-8')
-    nonce = secrets.token_bytes(16)
-    cipher = bytes(a ^ b for a, b in zip(raw, _stream(secret, nonce, len(raw))))
-    tag = hmac.digest(secret, b'access-v1' + nonce + cipher, 'sha256')
-    return urlsafe_b64encode(nonce + cipher + tag).decode('ascii')
+def _cipher_context(secret, session_id, purpose):
+    if type(secret) is not bytes or len(secret) != 32:
+        raise ValueError('Secret de 32 octets requis')
+    if type(session_id) is not str or not session_id or purpose not in ('key', 'oauth'):
+        raise ValueError('Session et usage key/oauth requis')
 
 
-def decrypt(secret, value):
-    if type(secret) is not bytes or len(secret) != 32 or type(value) is not str:
-        raise ValueError('Secret et chiffré valides requis')
+def _base64(value):
     try:
-        raw = urlsafe_b64decode(value.encode('ascii'))
+        raw = b64decode(value.encode('ascii'), altchars=b'-_', validate=True)
+        if urlsafe_b64encode(raw).decode('ascii') != value:
+            raise ValueError('Base64 non canonique')
+        return raw
     except (ValueError, UnicodeError) as error:
         raise IntegrityError('Accès chiffré invalide') from error
-    if len(raw) < 48:
+
+
+def _envelope(value):
+    if type(value) is not str:
         raise IntegrityError('Accès chiffré invalide')
-    nonce, cipher, tag = raw[:16], raw[16:-32], raw[-32:]
-    expected = hmac.digest(secret, b'access-v1' + nonce + cipher, 'sha256')
-    if not hmac.compare_digest(tag, expected):
-        raise IntegrityError('Étiquette d’accès invalide')
+    parts = value.split(':')
+    if (len(parts) != 3 or parts[0] != CIPHER_VERSION
+            or re.fullmatch(r'[0-9a-f]{32}', parts[1]) is None):
+        raise IntegrityError('Version ou enveloppe d’accès invalide')
+    raw = _base64(parts[2])
+    if len(raw) < 28:
+        raise IntegrityError('Accès chiffré invalide')
+    return parts[1], raw[:12], raw[12:]
+
+
+def validate(cipher):
+    """Valide le wrapper AEAD v1 sans secret ; ne prouve pas son authenticité
+
+    Retourne None ou lève IntegrityError, y compris pour une enveloppe legacy
+    """
+    _envelope(cipher)
+
+
+def _aad(session_id, credential_id, purpose):
+    return encode([CIPHER_VERSION, session_id, credential_id, purpose]).encode('utf-8')
+
+
+def encrypt(secret, value, session_id, purpose):
+    """Nouvelle écriture AES-256-GCM liée à la session et à l'usage key/oauth"""
+    _cipher_context(secret, session_id, purpose)
+    if type(value) is not str:
+        raise ValueError('Texte requis')
+    credential_id, nonce = secrets.token_hex(16), secrets.token_bytes(12)
+    cipher = AESGCM(secret).encrypt(nonce, value.encode('utf-8'),
+                                    _aad(session_id, credential_id, purpose))
+    return ':'.join((CIPHER_VERSION, credential_id,
+                     urlsafe_b64encode(nonce + cipher).decode('ascii')))
+
+
+def decrypt(secret, value, session_id, purpose):
+    """Lecture AEAD uniquement ; aucune migration implicite"""
+    _cipher_context(secret, session_id, purpose)
+    credential_id, nonce, cipher = _envelope(value)
     try:
-        return bytes(a ^ b for a, b in zip(cipher, _stream(secret, nonce, len(cipher)))).decode('utf-8')
+        return AESGCM(secret).decrypt(nonce, cipher,
+            _aad(session_id, credential_id, purpose)).decode('utf-8')
+    except (InvalidTag, UnicodeError) as error:
+        raise IntegrityError('Accès chiffré indisponible') from error
+
+
+def reencrypt_legacy(secret, cipher, session_id, purpose):
+    """Migration pure HMAC/XOR vers AEAD ; l'appelant porte la liaison legacy
+
+    Aucun accès au stockage, aucune écriture legacy, aucun fallback en lecture
+    """
+    _cipher_context(secret, session_id, purpose)
+    if type(cipher) is not str:
+        raise IntegrityError('Accès legacy invalide')
+    raw = _base64(cipher)
+    if len(raw) < 48:
+        raise IntegrityError('Accès legacy invalide')
+    nonce, ciphertext, tag = raw[:16], raw[16:-32], raw[-32:]
+    if not hmac.compare_digest(tag, hmac.digest(secret, b'access-v1' + nonce + ciphertext, 'sha256')):
+        raise IntegrityError('Accès legacy indisponible')
+    stream = b''.join(hmac.digest(secret, nonce + counter.to_bytes(8, 'big'), 'sha256')
+                      for counter in range((len(ciphertext) + 31) // 32))
+    try:
+        plaintext = bytes(a ^ b for a, b in zip(ciphertext, stream)).decode('utf-8')
     except UnicodeError as error:
-        raise IntegrityError('Accès chiffré invalide') from error
+        raise IntegrityError('Accès legacy invalide') from error
+    return encrypt(secret, plaintext, session_id, purpose)
 
 
 def challenge(verifier):
@@ -183,8 +251,10 @@ def _delete(connection, session_id):
 def expire(store, now=None):
     if not available(store):
         return
-    now = now or _now()
     connection = store._connection_checked()
+    if _privacy(connection) is not None:
+        return
+    now = now or _now()
     with _transaction(connection, write=True):
         sessions = [row[0] for row in connection.execute(
             'SELECT session_id FROM s2_provider_access WHERE COALESCE(verified_at, created_at)<=?',
@@ -208,16 +278,17 @@ def start(store, session_id, secret, callback_url, now=None):
     if secret is None or not available(store):
         return None
     callback_url = _callback_url(callback_url)
-    now = now or _now()
     verifier = secrets.token_urlsafe(32)
     connection = store._connection_checked()
+    authorize_session(connection, session_id, current=now)
+    now = now or _now()
     with _transaction(connection, write=True):
         _no_preparation_in_progress(connection, session_id)
         _delete(connection, session_id)
         connection.execute('INSERT INTO s2_provider_access '
                            '(session_id,verifier_cipher,key_cipher,created_at,verified_at,checked_at,limit_usd,limit_remaining_usd,is_free_tier,status,status_reason) '
                            "VALUES (?,?,NULL,?,NULL,NULL,NULL,NULL,0,'pending',NULL)",
-                           (session_id, encrypt(secret, verifier), now.isoformat()))
+                           (session_id, encrypt(secret, verifier, session_id, 'oauth'), now.isoformat()))
     query = urlencode({'callback_url': callback_url, 'code_challenge': challenge(verifier),
                        'code_challenge_method': 'S256'})
     return {'authorize_url': AUTHORIZE_URL + '?' + query}
@@ -409,6 +480,7 @@ def import_key(store, session_id, secret, key, transport=None):
         raise Denied('ACCESS_KEY_REJECTED')
     _credential(key)
     connection = store._connection_checked()
+    authorize_session(connection, session_id)
     now = _now()
     with _transaction(connection, write=True):
         _no_preparation_in_progress(connection, session_id)
@@ -440,7 +512,7 @@ def import_key(store, session_id, secret, key, transport=None):
             'ON CONFLICT(session_id) DO UPDATE SET verifier_cipher=NULL,key_cipher=excluded.key_cipher,'
             'created_at=excluded.created_at,verified_at=excluded.verified_at,checked_at=excluded.checked_at,'
             "limit_usd=excluded.limit_usd,limit_remaining_usd=excluded.limit_remaining_usd,is_free_tier=excluded.is_free_tier,status='connected',status_reason=NULL",
-            (session_id, encrypt(secret, key), now.isoformat(), now.isoformat(), now.isoformat(),
+            (session_id, encrypt(secret, key, session_id, 'key'), now.isoformat(), now.isoformat(), now.isoformat(),
              limit, remaining, int(document['is_free_tier'])))
     return view(store, session_id, secret, transport, refresh=False)
 
@@ -448,6 +520,10 @@ def import_key(store, session_id, secret, key, transport=None):
 def _verify(store, session_id, transport, key, now):
     connection = store._connection_checked()
     with _transaction(connection, write=True):
+        authorize_session(connection, session_id)
+        if not connection.execute("SELECT 1 FROM s2_provider_access WHERE session_id=? AND status!='pending'",
+                                  (session_id,)).fetchone():
+            return
         event_id = _event_intent(connection, session_id, 'verify', now)
     try:
         status, raw = transport.verify(key)
@@ -494,20 +570,22 @@ def callback(store, session_id, secret, code, transport=None, now=None):
     if type(code) is not str or not code:
         raise ValueError('Code d’autorisation requis')
     transport = transport or OpenRouterAccess()
-    now = now or _now()
-    expire(store, now)
     connection = store._connection_checked()
+    authorize_session(connection, session_id, current=now)
+    now = now or _now()
     row = connection.execute("SELECT verifier_cipher FROM s2_provider_access WHERE session_id=? AND status='pending'",
                              (session_id,)).fetchone()
     from .preparation import Denied
     if row is None:
         raise Denied('ACCESS_NO_PENDING')
     try:
-        verifier = decrypt(secret, row[0])
+        verifier = decrypt(secret, row[0], session_id, 'oauth')
     except IntegrityError:
-        with _transaction(connection, write=True):
-            _delete(connection, session_id)
-        raise Denied('ACCESS_NO_PENDING') from None
+        raise Denied('ACCESS_UNAVAILABLE') from None
+    expire(store, now)
+    if not connection.execute("SELECT 1 FROM s2_provider_access WHERE session_id=? AND status='pending'",
+                              (session_id,)).fetchone():
+        raise Denied('ACCESS_NO_PENDING')
     with _transaction(connection, write=True):
         event_id = _event_intent(connection, session_id, 'exchange', now)
     try:
@@ -528,7 +606,7 @@ def callback(store, session_id, secret, code, transport=None, now=None):
             _delete(connection, session_id)
         else:
             connection.execute("UPDATE s2_provider_access SET verifier_cipher=NULL,key_cipher=?,status='connected',status_reason=NULL WHERE session_id=?",
-                               (encrypt(secret, document['key']), session_id))
+                               (encrypt(secret, document['key'], session_id, 'key'), session_id))
     if document is None:
         from .preparation import Denied
         error = Denied('ACCESS_EXCHANGE_FAILED')
@@ -555,48 +633,78 @@ def _row_view(row, reason=None):
     return value
 
 
+def status_only(store, session_id, now=None):
+    """Métadonnées seules : aucune preuve de déchiffrement ni de validité fournisseur"""
+    if not available(store):
+        return {'connected': False, 'status': 'unavailable'}
+    connection = store._connection_checked()
+    row = connection.execute(
+        'SELECT status,NULL,verified_at,limit_usd,limit_remaining_usd,is_free_tier,checked_at,status_reason '
+        'FROM s2_provider_access WHERE session_id=?', (session_id,)).fetchone()
+    value = _row_view(row)
+    from .preparation import Denied
+    try:
+        authorize_session(connection, session_id, current=now)
+    except Denied as error:
+        if error.code != 'SESSION_EXPIRED':
+            raise
+        value.update(connected=False, status='unavailable', reason='SESSION_EXPIRED')
+    return value
+
+
 def view(store, session_id, secret, transport=None, now=None, *, refresh=True):
     if secret is None or not available(store):
         return {'connected': False, 'status': 'unavailable'}
     transport = transport or OpenRouterAccess()
-    now = now or _now()
-    expire(store, now)
     connection = store._connection_checked()
-    row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier,checked_at,status_reason '
-                             'FROM s2_provider_access WHERE session_id=?', (session_id,)).fetchone()
-    if row and row[0] in ('connected', 'invalid'):
+    authorize_session(connection, session_id, current=now)
+    now = now or _now()
+    query = ('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier,'
+             'checked_at,status_reason,verifier_cipher FROM s2_provider_access WHERE session_id=?')
+    row = connection.execute(query, (session_id,)).fetchone()
+    key = None
+    if row:
         try:
-            key = decrypt(secret, row[1])
+            if row[0] == 'pending':
+                decrypt(secret, row[8], session_id, 'oauth')
+            else:
+                key = decrypt(secret, row[1], session_id, 'key')
         except IntegrityError:
-            with _transaction(connection, write=True):
-                _delete(connection, session_id)
-            return _row_view(None, 'SECRET_CHANGED')
+            return {'connected': False, 'status': 'unavailable', 'reason': 'ACCESS_UNAVAILABLE'}
+    expire(store, now)
+    row = connection.execute(query, (session_id,)).fetchone()
+    if row and key is not None:
         if refresh and (row[6] is None or now - _date(row[6]) > REFRESH_INTERVAL):
             _verify(store, session_id, transport, key, now)
-            row = connection.execute('SELECT status,key_cipher,verified_at,limit_usd,limit_remaining_usd,is_free_tier,checked_at,status_reason '
-                                     'FROM s2_provider_access WHERE session_id=?', (session_id,)).fetchone()
+            row = connection.execute(query, (session_id,)).fetchone()
     return _row_view(row)
 
 
 def key_for_session(store, session_id, secret, transport=None, now=None):
+    from .preparation import Denied
     state = view(store, session_id, secret, transport, now)
     if not state.get('connected'):
-        from .preparation import Denied
-        raise Denied('ACCESS_REQUIRED')
+        raise Denied('ACCESS_UNAVAILABLE' if state['status'] == 'unavailable' else 'ACCESS_REQUIRED')
     row = store._connection_checked().execute(
         'SELECT status,key_cipher FROM s2_provider_access WHERE session_id=?', (session_id,)).fetchone()
     if row is None or row[0] != 'connected':
-        from .preparation import Denied
         raise Denied('ACCESS_REQUIRED')
-    return decrypt(secret, row[1])
+    try:
+        return decrypt(secret, row[1], session_id, 'key')
+    except IntegrityError:
+        raise Denied('ACCESS_UNAVAILABLE') from None
 
 
 def disconnect(store, session_id, secret):
-    if secret is None or not available(store):
+    if not available(store):
         return None
     connection = store._connection_checked()
+    authorize_session(connection, session_id)
+    privacy = _privacy(connection)
     with _transaction(connection, write=True):
-        _no_preparation_in_progress(connection, session_id)
+        if privacy is not None:
+            event = privacy.journal_intent(store, 'key', session_id)
+            privacy.apply_revocation(connection, event)
         _delete(connection, session_id)
     return _row_view(None)
 

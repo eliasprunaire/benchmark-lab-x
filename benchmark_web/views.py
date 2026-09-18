@@ -15,6 +15,8 @@ from .campaign_views import (COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, rend
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
 from .fragments import date_lisible_utc, form, icon, listing, section, state_block, text
 from .projection import projection_body
+from .privacy_views import (PRIVACY_SCRIPT, render_privacy_page, render_privacy_controls,
+                            render_contribution, render_contributions, render_bootstrap)
 
 TEMPLATE_PATH = Path(__file__).with_name('templates') / 'preparation.html'
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'preparation.css'
@@ -160,7 +162,7 @@ def preparation_steps(value):
     example = downstream or bool(value.get('package'))
     models = downstream or value.get('qualified') or bool(campaign)
     results = kind in ('comparison', 'campaign_models') or bool(campaign.get('attempts'))
-    current = 5 if kind == 'comparison' or kind == 'campaign_launch' and results else 4 if models else 3 if value.get('validation') else 2 if example else 1
+    current = 5 if kind == 'comparison' or kind == 'campaign_launch' and results else 4 if downstream else 3 if value.get('validation') or value.get('qualified') else 2 if example else 1
     models_href = base + ('/configurations' if results else '/conditions') if base else dossier + '/configurations'
     if not downstream and not results and value.get('qualified') and revision == value.get('current_revision', revision):
         models_href = dossier + '/configurations'
@@ -220,9 +222,9 @@ def render(value, csrf, path='/preparation', *, error=False):
     s9 = value.get('kind') != 'projection_preview'
     navigation = '' if error else preparation_steps(value)
     title = 'Décrire mon cas d’usage'
-    current = {'home': '/', 'publication_unavailable': '/index.html'}.get(value.get('kind'), '/preparation')
+    current = {'home': '/', 'publication_unavailable': '/index.html', 'privacy_data': '/preparation/data'}.get(value.get('kind'), '/preparation')
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
-                   for href, label in (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/index.html', 'Comparaisons publiées')))
+                   for href, label in (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données'), ('/index.html', 'Comparaisons publiées')))
     if error:
         title = 'Préparation indisponible' if value.get('unavailable') else 'Action non aboutie'
         submitted = value.get('form')
@@ -245,6 +247,12 @@ def render(value, csrf, path='/preparation', *, error=False):
                 '<button type="submit">Corriger et renvoyer</button>')
         back_class = 'button sec' if type(submitted) is dict and ('request' in submitted or 'message' in submitted) else 'button'
         content += '<p><a class="' + back_class + '" href="/preparation">Retrouver mes cas d’usage</a></p>'
+    elif value.get('kind') == 'contributions':
+        title, content = render_contributions(value)
+    elif value.get('kind') == 'session_bootstrap':
+        title, content = render_bootstrap(value)
+    elif value.get('kind') in ('privacy_data', 'privacy_notice'):
+        title, content = render_privacy_page(value, csrf)
     elif value.get('kind') == 'access':
         title = 'Accès Openrouter'
         status = value['status']
@@ -509,6 +517,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             content += '<p>Coût rapproché : ' + text(cost['amount'] + ' ' + cost['currency']) + '. Source : ' + text(
                 proof['source']) + ', attestée par ' + text(proof['actor']) + ' le ' + text(proof['observed_at']) + \
                 '. Le reçu original reste inchangé.</p>'
+        content += render_contribution(value, csrf)
         content += '<section id="validation"><h2>Validation du cas d’usage</h2>'
         if value['validation']:
             content += '<p role="status">Votre validation est enregistrée pour ce cas d’usage, cette révision et cet exemple exact.</p>'
@@ -590,6 +599,14 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<script>' + page_script(value) + '</script>'
     if not error and page_script(value) == STEP_SCRIPT:
         content += '<script>' + STEP_SCRIPT + '</script>'
+    if not error:
+        if value.get('kind') == 'home':
+            content += '<span data-privacy-home hidden></span>'
+        if 'dossiers' in value and value.get('privacy'):
+            content += render_privacy_page({'kind': 'privacy_data'})[1]
+        content += render_privacy_controls(value, csrf)
+        if value.get('privacy') or value.get('kind') in ('home', 'privacy_data', 'contributions', 'session_bootstrap'):
+            content += PRIVACY_SCRIPT
     template = TEMPLATE_PATH.read_text()
     body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''
     version = 'v' + VERSION + ('+' + SOURCE_SHA[:7] if SOURCE_SHA else '')

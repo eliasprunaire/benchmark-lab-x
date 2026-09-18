@@ -70,7 +70,7 @@ Pour les commandes opérateur, utilisez `python -m benchmark --help`. Le PRD, l�
 La suite locale et la CI utilisent la même commande principale :
 
 ```bash
-uv run --with requests --with mpmath==1.3.0 \
+uv run --with-requirements benchmark/requirements.txt --with requests --with mpmath==1.3.0 \
   python -m unittest discover -s tests
 ```
 

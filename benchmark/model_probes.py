@@ -198,16 +198,18 @@ def submit(store, session_id, dossier_id, body, fetch, secret, access_transport=
 
 def run(data, session_id, dossier_id, body, fetch, secret, access_transport=None, transport=None):
     """Métadonnées gratuites puis appel réservé dans le worker de l'exécuteur"""
-    with closing(storage.Store(data)) as store:
+    from .runtime import worker_lock
+    with closing(storage.Store(data)) as store, worker_lock(store, shared=True):
         operation_id, key = submit(store, session_id, dossier_id, body, fetch, secret, access_transport)
-    if key is not None:
-        execute(data, operation_id, key, transport)
+        if key is not None:
+            execute(data, operation_id, key, transport)
     return operation_id
 
 
 def execute(data, operation_id, key, transport=None):
     transport = post if transport is None else transport
-    with closing(storage.Store(data)) as store:
+    from .runtime import worker_lock
+    with closing(storage.Store(data)) as store, worker_lock(store, shared=True):
         operation = store._operations(store._connection_checked(), operation_ids={operation_id})[0]
         if operation['engine_version'] != ENGINE or operation['state'] != 'EMISSION_POSSIBLE':
             return

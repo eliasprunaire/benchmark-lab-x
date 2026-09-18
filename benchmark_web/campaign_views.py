@@ -318,11 +318,14 @@ def cost_bar(value, known):
 
 
 def effort_label(configuration):
-    effort = configuration['effort']
-    return {'off': 'Standard · niveau de raisonnement non imposé', 'on': 'Raisonnement renforcé',
-            'low': 'Raisonnement faible', 'medium': 'Raisonnement moyen',
-            'high': 'Raisonnement élevé', 'xhigh': 'Raisonnement très élevé',
-            'max': 'Raisonnement maximal'}.get(effort, effort)
+    if configuration.get('effort_limit') == 'not_adjustable':
+        return 'Raisonnement non réglable'
+    effort = configuration.get('parameters', {}).get('reasoning', {}).get('effort', configuration.get('effort', 'off'))
+    if effort == 'off':
+        return 'Niveau de raisonnement non renseigné'
+    if effort == 'on':
+        return 'Raisonnement activé · niveau non renseigné'
+    return 'Raisonnement demandé : ' + effort
 
 
 def render_comparison(value):
@@ -480,7 +483,7 @@ def render_configurations(value, csrf):
     """Choix des modèles et du palier, puis estimation de la sélection courante"""
     dossier_url = '/preparation/dossiers/' + value['dossier_id']
     content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
-    content += '<p role="status">Choisissez au moins deux modèles et un palier de raisonnement. Aucun appel candidat ne part à cette étape.</p>'
+    content += '<p role="status">Choisissez au moins deux modèles et un niveau de raisonnement. Aucun appel candidat ne part à cette étape.</p>'
     if not value.get('catalogue_available', True):
         content += '<p>' + text(value['detail']) + '</p>'
         if value.get('personal_preparation'):
@@ -496,23 +499,22 @@ def render_configurations(value, csrf):
             if model['not_adjustable']:
                 choices += ' · palier de raisonnement non réglable'
             choices += '</label>'
-        tiers = ''.join(
-            '<label><input type="radio" form="configurations-form" name="tier" aria-describedby="tier-help-' + tier + '" value="' + tier + '"' +
-            (' checked' if value['current_tier'] == tier else '') + '> ' +
-            ('Standard' if tier == 'standard' else 'Renforcé') + '</label>' +
-            '<p class="hint" id="tier-help-' + tier + '">' +
-            ('Aucun niveau de raisonnement n’est imposé. Le fournisseur applique le réglage par défaut du modèle ; cela ne signifie pas que son raisonnement est désactivé.'
-             if tier == 'standard' else
-             'Demande un raisonnement plus approfondi, lorsque le modèle le permet. '
-             'Cela peut allonger l’attente et augmenter le coût, sans garantir une meilleure réponse. '
-             'Sans effet sur les modèles indiqués comme non réglables.') + '</p>'
-            for tier in value['available_tiers'])
+        labels = {'none': 'none (désactivé)', 'minimal': 'minimal', 'low': 'low (faible)',
+                  'medium': 'medium (moyen)', 'high': 'high (élevé)', 'xhigh': 'xhigh', 'max': 'max',
+                  'standard': 'Non réglable'}
+        tiers = '<label for="reasoning-effort">Niveau de raisonnement demandé</label>'
+        tiers += '<select id="reasoning-effort" form="configurations-form" name="tier" aria-describedby="reasoning-help">'
+        tiers += ''.join('<option value="' + text(tier) + '"' +
+                         (' selected' if value['current_tier'] == tier else '') + '>' +
+                         text(labels.get(tier, tier)) + '</option>' for tier in value['available_tiers'])
+        tiers += '</select><p class="hint" id="reasoning-help">Le niveau choisi est envoyé aux modèles qui le permettent. '
+        tiers += 'Un niveau incompatible est refusé, sans remplacement automatique. Un effort plus élevé peut augmenter le délai et le coût, sans garantir une meilleure réponse.</p>'
         content += ('<form id="configurations-form" method="post" action="' + text(dossier_url + '/configurations') + '">' +
                     hidden('csrf_token', csrf) + '<fieldset id="model-choices"><legend>Modèles à comparer</legend>' +
                     choices + '</fieldset></form>')
         if value.get('personal_preparation'):
             content += render_custom_models(value, csrf, dossier_url)
-        content += ('<fieldset><legend>Palier de raisonnement</legend>' + tiers +
+        content += ('<fieldset><legend>Raisonnement</legend>' + tiers +
                     '</fieldset><button form="configurations-form"' + (' class="sec"' if value['configurations'] else '') +
                     ' type="submit">Enregistrer les configurations</button>')
     if value['configurations']:
@@ -523,8 +525,7 @@ def render_configurations(value, csrf):
             technical = configuration['model']
             detail = ' · estimation ' + (
                 'non estimable' if amount is None else montant_lisible(amount) + ' USD')
-            if configuration.get('effort_limit') == 'not_adjustable':
-                detail += ' · palier de raisonnement non réglable'
+            detail += ' · ' + effort_label(configuration)
             summary += '<li>' + text(model_names.get(technical, technical)) + text(detail) + (
                 '<details><summary>Identifiant technique</summary><code>' +
                 text(technical) + '</code></details></li>')

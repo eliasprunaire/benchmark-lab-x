@@ -164,7 +164,7 @@ class AccessViewTests(unittest.TestCase):
                 {'id': 'modele-b', 'name': 'Modèle B', 'selected': True,
                  'not_adjustable': True},
             ],
-            'current_tier': 'enhanced', 'available_tiers': ['standard', 'enhanced'],
+            'current_tier': 'high', 'available_tiers': ['low', 'medium', 'high'],
             'configurations': [
                 {'model': 'modele-a', 'estimate': {'amount_usd': '1.20'}},
                 {'model': 'modele-b', 'estimate': {'amount_usd': '2.30'},
@@ -178,14 +178,13 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('action="/preparation/dossiers/d1/configurations"', page)
         self.assertEqual(2, page.count('name="models"'))
         markup = Markup(page.encode())
-        radios = {attrs['value']: attrs for tag, attrs in markup.tags
-                  if tag == 'input' and attrs.get('name') == 'tier'}
-        self.assertIn('checked', radios['enhanced'])
-        self.assertNotIn('checked', radios['standard'])
-        descriptions = {attrs.get('id') for tag, attrs in markup.tags if tag == 'p'}
-        for radio in radios.values():
-            self.assertIn(radio['aria-describedby'], descriptions)
-        self.assertIn('Aucun niveau de raisonnement n’est imposé', page)
+        options = {attrs['value']: attrs for tag, attrs in markup.tags if tag == 'option'}
+        self.assertIn('selected', options['high'])
+        self.assertNotIn('selected', options['low'])
+        self.assertTrue(any(tag == 'select' and attrs.get('name') == 'tier'
+                            and attrs.get('aria-describedby') == 'reasoning-help'
+                            for tag, attrs in markup.tags))
+        self.assertIn('Un niveau incompatible est refusé', page)
         self.assertIn('sans garantir une meilleure réponse', page)
         self.assertIn('palier de raisonnement non réglable', page)
         for technical in ('modele-a', 'modele-b'):
@@ -421,7 +420,7 @@ class AccessServerTests(unittest.TestCase):
                     self.assertNotIn(b'<script>', raw)
                 self.assertEqual(expected, headers['Content-Security-Policy'])
 
-    def test_cookie_survives_browser_close_and_renews_only_on_success(self):
+    def test_cookie_persistant_non_renouvele_par_une_lecture(self):
         _, headers, _ = self.request('GET', '/preparation/access')
         cookie = SimpleCookie(headers['Set-Cookie'])['benchmark_session']
         self.assertEqual('2592000', cookie['max-age'])
@@ -433,9 +432,7 @@ class AccessServerTests(unittest.TestCase):
         request_headers = {'Cookie': 'benchmark_session=' + cookie.value,
                            'Accept': 'application/json'}
         _, renewed, _ = self.request('GET', '/preparation', headers=request_headers)
-        again = SimpleCookie(renewed['Set-Cookie'])['benchmark_session']
-        self.assertEqual(cookie.value, again.value)
-        self.assertEqual('2592000', again['max-age'])
+        self.assertIsNone(renewed.get('Set-Cookie'))
         _, refused, _ = self.request('GET', '/preparation/unknown', headers=request_headers)
         self.assertIsNone(refused.get('Set-Cookie'))
 

@@ -12,7 +12,7 @@ import shutil
 import sqlite3
 import sys
 
-from .storage import IntegrityError, Store, initialize, initialize_preparation, _unique_object, _private, _strict_json as encode
+from .storage import ConflictError, IntegrityError, Store, initialize, initialize_preparation, _unique_object, _private, _strict_json as encode
 
 
 def private_path(path, directory=False):
@@ -39,10 +39,22 @@ def worker_lock(store, *, shared=False):
     # The existing directory descriptor pins the same lock across processes
     # ponytail: one lock per database, per-worker locks if finer recovery is needed
     fd = store._root_fd
+    depth = getattr(store, '_worker_lock_depth', 0)
+    if depth:
+        if not shared and store._worker_lock_shared:
+            raise ConflictError('Promotion d’un verrou de travail interdite')
+        store._worker_lock_depth += 1
+        try:
+            yield
+        finally:
+            store._worker_lock_depth -= 1
+        return
     fcntl.flock(fd, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+    store._worker_lock_depth, store._worker_lock_shared = 1, shared
     try:
         yield
     finally:
+        store._worker_lock_depth = 0
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 
@@ -54,6 +66,8 @@ def status(root, store):
         if json.loads(marker.read_text()) != {'state': 'RESTORED_RECONCILIATION_REQUIRED'}:
             raise IntegrityError('État de restauration inconnu')
     connection = store._s1_connection()
+    from .privacy import boot_pending
+    restored = restored or boot_pending(connection)
     extended = connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s2_control'").fetchone()
     opened = False
     if extended:
@@ -227,8 +241,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     campaign_actions = ('create-campaign', 'inspect-campaign', 'admit-campaign', 'stop-campaign', 'resume-campaign')
     campaign_actions += ('inspect-attempt-status',)
-    parser.add_argument('action', choices=campaign_actions + ('reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'inspect-preparation', 'close-preparation', 'admit-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
+    parser.add_argument('action', choices=campaign_actions + ('migrate-privacy', 'privacy-status', 'purge-privacy', 'reconcile-privacy', 'reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'inspect-preparation', 'close-preparation', 'admit-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
     parser.add_argument('--data', type=Path)
+    parser.add_argument('--migration-id')
+    parser.add_argument('--journal-sha256')
     parser.add_argument('--authority', type=Path)
     parser.add_argument('--allow-owner-launch', action='store_true', help='Autoriser explicitement le propriétaire à déclencher les cellules admises')
     parser.add_argument('--destination', type=Path)
@@ -272,6 +288,23 @@ def main(argv=None):
             raise ValueError('Assistant réservé à l’exécuteur')
         if args.qualification_assistant is not None and args.action != 'executor':
             raise ValueError('Qualificateur réservé à l’exécuteur')
+        if args.action in ('migrate-privacy', 'privacy-status', 'purge-privacy', 'reconcile-privacy'):
+            from . import privacy
+            from .provider_access import parse_secret
+            if args.data is None:
+                raise ValueError('Données requises')
+            if args.action == 'migrate-privacy':
+                secret = parse_secret(os.environ.pop('BENCHMARK_ACCESS_SECRET', ''))
+                result = privacy.migrate(args.data, secret, args.migration_id)
+            elif args.action == 'purge-privacy':
+                result = privacy.purge(args.data)
+            elif args.action == 'reconcile-privacy':
+                result = privacy.reconcile(args.data, args.journal_sha256)
+            else:
+                with closing(Store(args.data)) as store:
+                    result = privacy.migration_status(store)
+            print(encode(result))
+            return 0
         if args.action == 'inspect-pi':
             from .transports.pi import identity
             if args.pi_package is None or args.node is None:
