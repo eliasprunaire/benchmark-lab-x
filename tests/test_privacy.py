@@ -196,6 +196,13 @@ class PrivacyTests(unittest.TestCase):
                 self.assertFalse(runtime.status(self.data, self.store)['admission'])
                 self.assertEqual(('PURGED',), self.store._connection.execute('SELECT state FROM s7_dossiers').fetchone())
 
+    def test_first_boot_reconciliation_works_before_any_revocation(self):
+        from hashlib import sha256
+        self.assertEqual(b'', privacy.journal_path(self.store).read_bytes())
+        with patch.object(privacy, 'boot_identity', return_value='new-boot'):
+            self.assertTrue(privacy.boot_pending(self.store._connection))
+            self.assertFalse(privacy.reconcile(self.data, sha256(b'').hexdigest())['restore_pending'])
+
     def test_expired_access_releases_only_retired_technical_markers(self):
         session, _ = self.dossier()
         with patch.object(privacy, 'now', return_value=NOW):

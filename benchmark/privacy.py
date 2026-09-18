@@ -1,5 +1,5 @@
 """Accès, échéances et suppression des données privées"""
-from contextlib import closing, nullcontext
+from contextlib import closing, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 import fcntl
 from hashlib import sha256
@@ -231,6 +231,8 @@ def migrate(data, secret, migration_id, *, now=None):
 def finish_migration(store):
     connection = store._connection_checked()
     if connection.execute('SELECT phase FROM s7_control').fetchone() == ('MIGRATED',):
+        with journal_writer(store):
+            pass
         # VACUUM traite une seule fois les anciennes pages libres avant réouverture
         connection.execute('VACUUM')
         with _transaction(connection, write=True):
@@ -351,28 +353,20 @@ def journal_path(store):
     return path
 
 
-def journal_intent(store, kind, identifier, now=None):
-    if kind not in ('dossier', 'contribution', 'key') or type(identifier) is not str or not identifier:
-        raise ValueError('Révocation invalide')
-    current = now or globals()['now']()
+@contextmanager
+def journal_writer(store):
     path = journal_path(store)
     path.parent.mkdir(mode=0o700, parents=False, exist_ok=True)
     info = path.parent.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise IntegrityError('Répertoire de révocation non privé')
-    event = dict(event_id=secrets.token_hex(16), kind=kind, identifier=identifier, at=current.isoformat())
-    raw = (storage._strict_json(event) + '\n').encode()
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o077:
             raise IntegrityError('Journal de révocation non privé')
         fcntl.flock(fd, fcntl.LOCK_EX)
-        while raw:
-            written = os.write(fd, raw)
-            if written <= 0:
-                raise OSError('Écriture du journal interrompue')
-            raw = raw[written:]
+        yield fd
         os.fsync(fd)
         directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
@@ -381,6 +375,20 @@ def journal_intent(store, kind, identifier, now=None):
             os.close(directory)
     finally:
         os.close(fd)
+
+
+def journal_intent(store, kind, identifier, now=None):
+    if kind not in ('dossier', 'contribution', 'key') or type(identifier) is not str or not identifier:
+        raise ValueError('Révocation invalide')
+    current = now or globals()['now']()
+    event = dict(event_id=secrets.token_hex(16), kind=kind, identifier=identifier, at=current.isoformat())
+    raw = (storage._strict_json(event) + '\n').encode()
+    with journal_writer(store) as fd:
+        while raw:
+            written = os.write(fd, raw)
+            if written <= 0:
+                raise OSError('Écriture du journal interrompue')
+            raw = raw[written:]
     return event
 
 
