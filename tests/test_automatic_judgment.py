@@ -11,7 +11,7 @@ from benchmark.transports import openrouter
 from benchmark_web import views
 from tests import test_campaign_launch as campaign_fixture
 from tests.test_openrouter_preparation import SYNTHETIC_PROFILE, estimate_for
-from tests.test_provider_access import SECRET
+from tests.test_provider_access import KEY, SECRET
 from tests.test_s4_regressions import response
 
 
@@ -158,11 +158,43 @@ class AutomaticJudgment(unittest.TestCase):
             rows = restitution.comparison(self.store, self.sid, 'fixture', self.cid)['rows']
             self.assertEqual(['NE SATISFAIT PAS'] * 2, [r['verdict'] for r in rows])
             self.assertEqual('COMPLETE', auto.status(self.store, self.store._connection, self.cid)['status'])
+            detail = restitution.detail(self.store, self.sid, 'fixture', self.cid, rows[0]['attempt_id'])
+            self.assertIn('NE SATISFAIT PAS', views.render(detail, 'csrf').decode())
+            other, _, _ = preparation.session(self.store, None, create=True)
+            proof = rows[0]['proof_links'][0]
+            with self.assertRaises(preparation.Denied):
+                evaluation.piece_bytes(self.store, other, 'fixture', ids[0], proof['piece_id'])
         self.assertEqual(before, self.store.inspect_operations())
         records = auto.records(self.store, self.store._connection, self.cid)
         self.assertTrue(records[0]['judgment']['evidence_binding']['recovered_from_receipt'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
         self.assertEqual(2, self.http.request.call_count)
+
+    def test_malformed_message_stays_a_consultable_incident(self):
+        from benchmark import automatic_judgment as auto
+        self.response_update = lambda doc: doc['choices'][0].update(message=None)
+        self.acquire()
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        auto.execute_campaign(self.data, ids, self.transport)
+        self.assertEqual([], restitution.comparison(self.store, self.sid, 'fixture', self.cid)['rows'])
+        self.assertEqual('BLOCKED', auto.status(self.store, self.store._connection, self.cid)['status'])
+
+    def test_encoded_reflected_key_is_redacted_even_when_judgment_format_is_invalid(self):
+        from benchmark import automatic_judgment as auto
+        def reflected(doc):
+            answer = json.loads(doc['choices'][0]['message']['content'])
+            answer['proposed_verdict'] = 'invalid'
+            answer['limits'] = [KEY]
+            doc['choices'][0]['message']['content'] = json.dumps(answer).replace(
+                KEY, ''.join('\\u%04x' % ord(char) for char in KEY))
+        self.response_update = reflected
+        self.acquire()
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        auto.execute_campaign(self.data, ids, self.transport)
+        received = [op for op in self.store.inspect_operations() if op['operation_id'] in ids and op['receipt']]
+        self.assertTrue(received)
+        for op in received:
+            self.assertTrue(op['receipt']['observed_configuration']['http']['credential_redacted'])
 
     def test_missing_or_foreign_passages_remain_unusable_despite_hash_binding(self):
         from benchmark import automatic_judgment as auto

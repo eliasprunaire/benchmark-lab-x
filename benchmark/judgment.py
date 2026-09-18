@@ -308,7 +308,7 @@ def diagnostic(store, connection, operation, ctx):
         _proposal(store, connection, operation, ctx, answer)
     except IntegrityError:
         return dict(state='EVIDENCE_REVIEW_REQUIRED', reason='Identifiant, empreinte ou passage de preuve divergent ; relire la même sortie et corriger explicitement le jugement')
-    except (ValueError, KeyError, TypeError, IndexError):
+    except (ValueError, KeyError, TypeError, IndexError, AttributeError):
         return dict(state='JUDGE_FORMAT_REVIEW_REQUIRED', reason='Structure ou critères de la proposition invalides ; corriger le jugement sur la même sortie')
     return dict(state='JUDGE_EXECUTION_REQUIRED', reason='Incident de provenance du juge ; rapprocher les observations conservées')
 
@@ -362,7 +362,7 @@ def _retained_proposal(store, connection, operation, ctx, *, recover_metadata=Fa
                     repaired['evidence_binding'].update(recovered_from_receipt=True,
                         source_receipt_id=receipt['receipt_id'], normalizer_sha256=sha256(Path(__file__).read_bytes()).hexdigest())
                     return repaired
-            except (ValueError, KeyError, TypeError, IndexError):
+            except (ValueError, KeyError, TypeError, IndexError, AttributeError):
                 return None
     if proposal is not None:
         document = json.loads(raw, object_pairs_hook=storage._unique_object)

@@ -478,12 +478,17 @@ class OpenRouterPreparation:
                 redacted = True
             if status != 200 or not complete or redacted or document.get('model') not in operation['requested_configuration']['model_identities']:
                 raise ValueError('Réponse non attribuable')
+            # Check the decoded inner JSON before format validation can reject it
+            decoded = json.loads(document['choices'][0]['message']['content'], object_pairs_hook=_unique_object)
+            if key in encode(decoded):
+                redacted = True
+                raise ValueError('Réponse confidentielle')
             result = self.retained_answer(operation, document, safe_headers)
             if key in encode(result):
                 redacted = True
                 raise ValueError('Réponse confidentielle')
             incident = None
-        except (ValueError, TypeError, KeyError, AttributeError):
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError):
             result = None
         if redacted:
             raw, document = b'[REDACTED_CREDENTIAL]', None
