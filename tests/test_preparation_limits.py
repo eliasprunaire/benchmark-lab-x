@@ -164,7 +164,7 @@ class PreparationLimitTests(unittest.TestCase):
         self.assertEqual(request, captured['request'])
 
     def test_daily_cap_blocks_next_reservation_and_availability(self):
-        data, store, _, csrf, token = self.fixture(reserve='11')
+        data, store, _, csrf, token = self.fixture(reserve='26')
         start = datetime(2026, 9, 14, 8, tzinfo=timezone.utc)
         with patch.object(prep, '_now', return_value=start):
             operation = self.create(store, token, csrf, 'first', 'x' * 40)[3]
@@ -177,6 +177,13 @@ class PreparationLimitTests(unittest.TestCase):
                 self.create(store, token2, csrf2, 'second', 'x' * 40)
         self.assertEqual('DAILY_CAP', caught.exception.code)
         self.assertEqual(before, self.state(store))
+
+    def test_daily_cap_accepts_fifty_usd_but_no_more(self):
+        data, store, _, csrf, token = self.fixture(reserve='50')
+        code, _, _, operation = self.create(store, token, csrf, 'at-limit', 'x' * 40)
+        self.assertEqual(202, code)
+        self.receive(data, operation)
+        self.assertEqual('daily_cap', prep.availability(store, True)['reason'])
 
     def test_source_limit_is_independent_and_sliding(self):
         data, store, _, _, _ = self.fixture(reserve='0')
