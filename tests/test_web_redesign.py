@@ -121,7 +121,7 @@ class TemplateTests(unittest.TestCase):
         self.assertIn('aria-current="page">Accueil</a>', home)
         self.assertIn('href="/preparation"', home)
         self.assertIn('href="/index.html"', home)
-        self.assertIn('Le verdict ne fait pas de moyenne', home)
+        self.assertIn('Chaque exigence compte', home)
         self.assertIn('<footer class="site">', home)
         self.assertIn('v0.1.0+abcdef0', home)
         self.assertIn('<div class="bottom"><span>Version : v0.1.0+abcdef0</span></div>', home)
@@ -439,7 +439,7 @@ input.valid = false; events.input(); assert.equal(button.disabled, true);
         self.assertIn('<span class="badge b-ok">', page)
         self.assertIn('<span class="badge b-ko">', page)
         self.assertIn('class="costbar"', page)
-        self.assertIn('Le verdict ne fait pas de moyenne', page)
+        self.assertIn('Chaque exigence compte', page)
         self.assertNotIn('SHA-256', page)
 
     def test_libelles_du_filtre_correspondent_aux_titres_des_cas(self):

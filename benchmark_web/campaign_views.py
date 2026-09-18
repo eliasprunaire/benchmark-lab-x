@@ -11,7 +11,6 @@ pour qu'aucun cycle ne soit possible.
 """
 import re
 import secrets
-from urllib.parse import urlencode
 
 from benchmark.storage import _strict_json as encode
 
@@ -230,35 +229,32 @@ def cost_bar(value, known):
     return '<div class="costbar" aria-hidden="true" style="--w:' + str(round(100 * float(value) / max(known))) + '%"></div>'
 
 
+def effort_label(configuration):
+    effort = configuration['effort']
+    return {'off': 'Réglages habituels', 'on': 'Raisonnement renforcé',
+            'low': 'Raisonnement faible', 'medium': 'Raisonnement moyen',
+            'high': 'Raisonnement élevé', 'xhigh': 'Raisonnement très élevé',
+            'max': 'Raisonnement maximal'}.get(effort, effort)
+
+
 def render_comparison(value):
-    def data(label, value):
-        return '<details><summary>' + text(label) + '</summary>' + readable_fields(value) + '</details>'
-
-    def metric(value):
-        source = 'INCONNU' if value['value'] is None else value['value']
-        content = '<span class="source-value">' + readable_fields(source)
-        content += ('' if value['unit'] in ('bool', 'boolean', 'booléen') else ' ' + text(value['unit'])) + '</span>'
-        if value['rank'] is None:
-            return content + '<p>Sans rang : ' + text(value['reason']) + '</p>'
-        return content + '<p>Rang ' + text(value['rank']) + '</p>'
-
     base, query = value['href'], value['filter_scope']
+    multiple_cases = len(value['cases']) > 1
     content = '<nav aria-label="Parcours"><a class="button" href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a></nav>'
-    content += '<p class="hint">Résultats privés · version d’épreuve ' + text(value['task']['version'])
-    content += '.</p>'
-    content += '<p class="lead">' + text(value['result_expected']) + '</p>'
+    content += '<p class="hint">Résultats privés · version d’épreuve ' + text(value['task']['version']) + '.</p>'
     content += '<div class="campaign-summary" aria-label="Conclusion de la campagne"><span class="ic">' + icon('i-scale') + '</span>'
-    content += '<p class="eyebrow">Le verdict ne fait pas de moyenne</p>'
+    content += '<p class="eyebrow">Bilan de la comparaison</p>'
     latest = {record['attempt_id']: record for record in value['history']}
-    # Décompter les verdicts conservés par cas, sans créer de verdict agrégé
     for case_number, case in enumerate(value['cases'], 1):
         records = [record for record in latest.values() if record['case_id'] == case['id']]
         if records:
-            counts = [str(sum(record['decision']['verdict'] == verdict for record in records)) + ' ' + label
-                      for verdict, label in (('SATISFAIT', 'satisfait(s)'), ('NE SATISFAIT PAS', 'non satisfait(s)'),
-                                             (None, 'évaluation(s) à reprendre'))
-                      if any(record['decision']['verdict'] == verdict for record in records)]
-            content += '<p><strong>Cas ' + text(case_number) + '</strong> : ' + text(' · '.join(counts)) + '.</p>'
+            counts = []
+            for verdict, label in (('SATISFAIT', 'conforme'), ('NE SATISFAIT PAS', 'non conforme'), (None, 'à réévaluer')):
+                count = sum(record['decision']['verdict'] == verdict for record in records)
+                if count:
+                    counts.append(str(count) + ' ' + label + ('s' if count > 1 and verdict else ''))
+            prefix = '<strong>Cas ' + text(case_number) + '</strong> : ' if multiple_cases else ''
+            content += '<p>' + prefix + 'Réponses : ' + text(' · '.join(counts)) + '.</p>'
     if not latest:
         received = any(cell['state'] == 'RECEIVED' for cell in value['cells'])
         content += '<p>' + ('En attente d’évaluation : des réponses ont été reçues, sans verdict disponible.' if received else
@@ -267,113 +263,112 @@ def render_comparison(value):
     if pending_reasons:
         content += listing(pending_reasons)
     coverage = value['coverage']
-    content += '<p role="status">' + text(coverage['evaluated_attempts']) + ' tentative(s) évaluée(s) · '
-    content += text(coverage['attempted_cells']) + ' essai(s) lancé(s) sur ' + text(coverage['planned_cells'])
-    content += ' prévu(s) · ' + text(coverage['not_started']) + ' non lancé(s). '
-    content += ('Comparaison des coûts complète.' if value['economic_status'] == 'COMPLETE' else 'Comparaison des coûts incomplète.') + '</p>'
+    content += '<p role="status">Réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : '
+    content += text(coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '. '
+    if value['economic_status'] != 'COMPLETE':
+        content += 'Comparaison des coûts incomplète. '
+    content += '</p>'
+    if value.get('stop_reason') and (coverage['not_started'] or pending_reasons):
+        content += '<p>Comparaison incomplète : les essais ont été arrêtés. Les réponses déjà reçues restent consultables.</p>'
     dates = sorted(set(date[:10] for date in value.get('acquisition_dates', [])))
     if dates:
         content += '<p class="hint">Réponses reçues : ' + text(dates[0] if len(dates) == 1 else dates[0] + ' au ' + dates[-1]) + '.</p>'
     content += '</div>'
     if not value['population']:
         return content
-    content += '<details id="filters" class="comparison-filters"><summary>Tris et filtres'
-    content += (' · ' + text(len(query)) + ' sélection(s) active(s)' if query else '') + '</summary>'
-    content += '<p id="filter-help">Chaque bouton applique le champ choisi et conserve les autres sélections. '
-    content += 'Les filtres changent seulement les lignes visibles. Les rangs et la couverture gardent la population entière.</p>'
-    sort_label = next((('Coût observé' if 'criterion_id' not in column else column['definition']['measure'])
-                       for column in value['columns'] if column['id'] == query.get('sort')), 'descriptif, sans préférence')
-    content += '<p>Ordre actuel : ' + text(sort_label)
-    content += (', ' + ('décroissant' if query.get('direction') == 'desc' else 'croissant') if 'sort' in query else '') + '.</p>'
+    sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
+    sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
     options = {
-        'case': ('Cas', [(v['id'], 'Cas ' + str(number))
-                         for number, v in enumerate(value['cases'], 1)]),
-        'sort': ('Critère de tri', [(v['id'], 'Coût observé' if 'criterion_id' not in v else v['definition']['measure']) for v in value['columns']]),
-        'direction': ('Ordre d’affichage', [('asc', 'Croissant'), ('desc', 'Décroissant')]),
-        'verdict': ('Décision ou travail restant', [('SATISFAIT', 'SATISFAIT'), ('NE SATISFAIT PAS', 'NE SATISFAIT PAS'), ('A_REPRENDRE', 'À reprendre')]),
-        'obligation': ('Constat par obligation', [(v['id'] + ':' + state, v['description'] + ' : ' + label)
+        'case': ('Cas d’essai', 'Tous les cas', [(v['id'], 'Cas ' + str(number))
+                         for number, v in enumerate(value['cases'], 1)] if multiple_cases else []),
+        'configuration': ('Modèle', 'Tous les modèles', [(v['id'], v['model'] +
+                           (' · ' + effort_label(v) if sum(p['model'] == v['model'] for p in value['panel']) > 1 else '')) for v in value['panel']]),
+        'verdict': ('Résultat', 'Tous les résultats', [('SATISFAIT', 'Satisfait'), ('NE SATISFAIT PAS', 'Ne satisfait pas'), ('A_REPRENDRE', 'À reprendre')]),
+        'sort': ('Trier par', 'Sans tri', [(v['id'], v['definition'].get('measure', 'Coût observé')) for v in value['columns']]),
+        'direction': ('Sens du tri', 'Croissant', [('desc', 'Décroissant')]),
+        'obligation': ('Exigence à examiner', 'Toutes les exigences', [(v['id'] + ':' + state, v['description'] + ' : ' + label)
                         for v in value['obligations'] for state, label in
                         (('PASS', 'Respectée'), ('FAIL', 'Non respectée'), ('INDETERMINE', 'Indéterminée'))]),
-        'configuration': ('Configuration', [(v['id'], v['model'] + ' · ' + v['id']) for v in value['panel']]),
     }
-    if query:
-        content += '<ul aria-label="Sélections actives">'
-        for key, val in query.items():
-            remaining = {k: v for k, v in query.items() if k != key}
-            target = base + ('?' + urlencode(remaining) if remaining else '') + '#filters'
-            label = next((label for option, label in options[key][1] if option == val), val)
-            content += '<li>' + text(options[key][0] + ' : ' + label) + ' · <a href="' + text(target)
-            content += '">Enlever ' + text(options[key][0].lower()) + '</a></li>'
-        content += '</ul>'
-    else:
-        content += '<p>Aucun filtre ni tri appliqué.</p>'
-    content += '<div class="filter-grid">'
-    for key, (label, values) in options.items():
+    content += '<details id="filters" class="comparison-filters"' + (' open' if query else '') + '><summary>Tris et filtres</summary>'
+    content += '<form method="get" action="' + text(base) + '#filters"><div class="filter-grid">'
+    advanced = ''
+    for key, (label, default, values) in options.items():
         if not values:
             continue
-        content += '<form method="get" action="' + text(base) + '" aria-describedby="filter-help">'
-        for k, v in query.items():
-            if k != key:
-                content += '<input type="hidden" name="' + text(k) + '" value="' + text(v) + '">'
-        content += '<label for="filter-' + key + '">' + label + '</label><select id="filter-' + key + '" name="' + key + '">'
-        for val, title in values:
-            content += '<option value="' + text(val) + '"' + (' selected' if query.get(key) == val else '') + '>' + text(title) + '</option>'
-        content += '</select><button type="submit">Appliquer : ' + label.lower() + '</button></form>'
-    content += '</div><p><a href="' + text(base) + '#filters">Enlever tous les filtres et le tri</a></p></details>'
-    content += '<p class="view-scope">' + text(len(value['rows'])) + ' ligne(s) affichée(s) sur '
-    content += text(len(value['population'])) + ' tentatives évaluées · ordre ' + text(sort_label)
-    content += (', décroissant' if query.get('direction') == 'desc' else ', croissant') if 'sort' in query else ''
-    content += '. Les filtres ne changent pas le bilan de campagne.</p>'
+        selected = query.get(key, '')
+        if key == 'direction' and selected == 'asc':
+            selected = ''
+        control = '<div><label for="filter-' + key + '">' + label + '</label><select id="filter-' + key + '" name="' + key + '">'
+        for val, title in [('', default)] + values:
+            control += '<option value="' + text(val) + '"' + (' selected' if selected == val else '') + '>' + text(title) + '</option>'
+        control += '</select></div>'
+        if key == 'obligation':
+            advanced = '<details class="filter-advanced"' + (' open' if key in query else '') + '><summary>Filtrer par exigence</summary>'
+            advanced += '<p class="hint">Pour retrouver les réponses qui respectent ou non une exigence précise.</p>' + control + '</details>'
+        else:
+            content += control
+    content += '</div>' + advanced + '<div class="actions"><button type="submit">Appliquer</button>'
+    content += '<a class="button sec" href="' + text(base) + '#filters">Effacer</a></div></form></details>'
+    content += '<p class="view-scope" role="status">Résultats affichés : ' + text(len(value['rows'])) + ' sur '
+    content += text(len(value['population'])) + ' · ' + text(sort_label)
+    if sort_column:
+        content += ', décroissant' if query.get('direction') == 'desc' else ', croissant'
+    content += '.</p>'
     if not value['rows']:
-        content += '<p role="status">' + ('Aucune ligne ne correspond aux filtres ; les observations de la campagne restent conservées.'
-                     if value['population'] else 'Aucune tentative évaluée dans cette campagne.') + '</p>'
+        content += '<p role="status">Aucune ligne ne correspond aux filtres ; les observations de la campagne restent conservées.</p>'
     for case_number, case in enumerate(value['cases'], 1):
         rows = [r for r in value['rows'] if r['case_id'] == case['id']]
         if not rows:
             continue
-        content += '<section class="comparison-results"><h2>Cas ' + text(case_number) + '</h2>'
-        content += '<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement pour lire coûts et preuves.</p>'
-        content += '<div class="table-scroll" role="region" tabindex="0" aria-label="Observations du cas ' + text(case_number) + '">'
-        content += '<table><caption>Cas ' + text(case_number) + ' · valeurs par tentative, sans agrégation</caption><thead><tr>'
-        for title in ('Configuration et tentative', 'Verdict et motif', 'Coût observé', 'Mesures prévues', 'Preuves'):
-            content += '<th scope="col">' + title + '</th>'
+        label = 'Cas ' + str(case_number) if multiple_cases else 'Comparaison des modèles'
+        content += '<section class="comparison-results"><h2>' + text(label) + '</h2>'
+        content += '<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
+        content += '<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '">'
+        content += '<table><caption>Chaque verdict concerne la réponse obtenue sur cet exemple.</caption><thead><tr>'
+        measure_column = sort_column if sort_column and 'criterion_id' in sort_column else None
+        titles = ['Modèle', 'Résultat', 'Coût observé'] + ([sort_label] if measure_column else []) + ['Détails']
+        for title in titles:
+            content += '<th scope="col">' + text(title) + '</th>'
         content += '</tr></thead><tbody>'
-        known = [float(r['cost']['value']) for r in rows if r['cost']['value'] is not None and _numeric(r['cost']['value'])]
+        known = [float(r['cost']['value']) for r in rows
+                 if r['cost']['value'] is not None and _numeric(r['cost']['value'])]
         for row in rows:
             content += '<tr id="attempt-' + text(row['attempt_id']) + '"' + ('' if row['verdict'] == 'SATISFAIT' else ' class="out"') + ' tabindex="-1"><th scope="row">'
             content += '<strong>' + text(row['requested_configuration']['model']) + '</strong>'
-            content += data('Demandée, observée et sources', {k: row[k] for k in ('requested_configuration', 'observed_configuration', 'observation_sources')}) + '</th>'
-            spec = row['qualification']['contract']['specification']
-            labels = {item['id']: item['description'] for item in spec['obligations'] + spec['eliminatory_errors']}
-            reason = re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)',
-                            lambda match: labels[match[0]], row['reason'])
-            content += '<td>' + badge(row['verdict']) + '<p>' + text(reason) + '</p>'
-            if row.get('decision', {}).get('next_action'):
-                content += '<p>' + text(row['decision']['next_action']) + '</p>'
-            if row['incident']:
-                content += '<p>Incident : ' + text(row['incident']) + '</p>'
-            content += '</td><td>' + metric(row['cost']) + cost_bar(row['cost']['value'], known) + '</td><td>'
-            for measure in row['measures']:
-                content += '<p>' + text(measure['definition']['measure']) + '</p>' + metric(measure)
-            content += '</td><td><a href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
+            content += '<p class="hint">' + text(effort_label(row['requested_configuration'])) + '</p></th>'
+            reason = {'SATISFAIT': 'Toutes les exigences sont respectées.',
+                      'NE SATISFAIT PAS': 'Un critère requis n’est pas respecté.'}.get(row['verdict'], 'Évaluation à compléter.')
+            content += '<td>' + badge(row['verdict']) + '<p class="hint">' + reason + '</p></td><td>'
+            cost = row['cost']
+            content += '<span class="source-value">' + text('Inconnu' if cost['value'] is None else montant_lisible(cost['value']) + ' ' + cost['unit']) + '</span>'
+            if cost['value'] is not None and cost['rank'] is None:
+                content += '<p class="hint">Coût non comparable</p>'
+            content += cost_bar(cost['value'], known) + '</td>'
+            if measure_column:
+                measure = next(m for m in row['measures'] if m['criterion_id'] == measure_column['criterion_id'])
+                if measure['rank'] is None:
+                    content += '<td>' + ('Inconnu' if measure['value'] is None else 'Non comparable')
+                    content += '<p class="hint">' + text(measure['reason']) + '</p></td>'
+                else:
+                    content += '<td>' + readable_fields(measure['value'])
+                    content += ('' if measure['unit'] in ('bool', 'boolean', 'booléen') else ' ' + text(measure['unit'])) + '</td>'
+            content += '<td><a href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
         content += '</tbody></table></div></section>'
     content += '<details id="method"><summary>Comment lire ces résultats</summary>'
-    content += '<p>Chaque réponse est vérifiée selon les obligations ci-dessous. Le verdict concerne cet essai et ses conditions, sans garantir le même résultat sur une autre tâche.</p>'
-    content += '<p>Travail humain restant : ' + text(value['human_work']) + '</p>'
-    if value['obligations']:
-        content += '<h3>Obligations</h3>' + listing(item['description'] for item in value['obligations'])
-    content += '<h3>Conditions communes</h3><p>Les modèles reçoivent les mêmes consignes et pièces, avec les réglages confirmés avant le lancement.</p>'
-    content += '<h3>Mesures et coûts</h3><ul>'
-    for column in value['columns']:
-        label = column['definition'].get('measure', 'Coût observé')
-        favorable = {'lower': 'plus faible', 'higher': 'plus élevé', 'yes': 'oui'}.get(column['favorable'], 'selon le contrat')
-        content += '<li>' + text(label) + ' (' + text(column['unit']) + ') ; sens favorable : ' + text(favorable) + '. '
-        content += text(column['proof']) + '</li>'
-    content += '</ul><p>Un coût inconnu reste inconnu et ne change pas le verdict. Les reçus et sorties disponibles sont accessibles dans le détail de chaque résultat.</p>'
-    content += '<h3>Limites</h3>' + listing(value['conclusion']['limits'])
-    if value.get('stop_reason'):
-        content += '<p>La comparaison a été interrompue. Les réponses reçues sont conservées.</p>'
-    content += '</details>'
+    content += '<ul><li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
+    content += '<li>Comparez le coût des réponses satisfaisantes, puis consultez leurs qualités et limites dans « Détail et preuves ». Un coût inconnu ne change pas le verdict.</li>'
+    content += '<li>Les modèles reçoivent les mêmes consignes et pièces. Ces résultats concernent uniquement cet exemple fictif, sans garantir la même qualité sur d’autres tâches.</li></ul></details>'
+    return content
+
+
+def render_campaign_models(value):
+    content = '<p>Voici les modèles et réglages retenus pour cette comparaison. Cette consultation ne modifie pas la comparaison et ne lance aucun appel.</p>'
+    for model in value['panel']:
+        content += section(model['model'], '<p>' + text(effort_label(model)) + '</p>' +
+                           '<details><summary>Réglages utilisés</summary>' + readable_fields(model['parameters']) + '</details>')
+    content += '<p><a class="button" href="' + text(value['href']) + '">Revenir aux résultats</a></p>'
+    content += '<p class="hint">Pour changer les modèles ou l’exemple, préparez une nouvelle comparaison depuis le cas d’usage. Les résultats actuels seront conservés.</p>'
     return content
 
 

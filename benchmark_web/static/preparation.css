@@ -193,9 +193,13 @@ dl.kv dd { margin: 0; }
 .campaign-summary [role="status"] { border: 0; padding: 0; background: transparent; }
 .comparison-filters summary { font-weight: 600; }
 .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: .8rem; margin: .6rem 0; }
-.filter-grid form { min-width: 0; padding: .6rem .8rem; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); }
+.comparison-filters > form { padding: .25rem 1.2rem 1.2rem; }
+.filter-grid > div { min-width: 0; }
+.filter-advanced { margin: 1rem 0; }
+.comparison-results th:first-child { width: 27%; overflow-wrap: anywhere; }
+.comparison-results td:last-child { width: 8rem; }
+.comparison-results td .hint { font-size: .85rem; }
 .filter-grid label { margin-top: .2rem; }
-.filter-grid button { margin-top: .6rem; padding: .45rem .8rem; font-size: .9rem; }
 .view-scope { color: var(--muted); font-size: .9rem; }
 .table-hint { display: none; }
 .table-scroll { overflow-x: auto; }
