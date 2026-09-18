@@ -188,7 +188,7 @@ class AccessViewTests(unittest.TestCase):
         descriptions = {attrs.get('id') for tag, attrs in markup.tags if tag == 'p'}
         for radio in radios.values():
             self.assertIn(radio['aria-describedby'], descriptions)
-        self.assertIn('Le modèle utilise ses réglages habituels', page)
+        self.assertIn('Aucun niveau de raisonnement n’est imposé', page)
         self.assertIn('sans garantir une meilleure réponse', page)
         self.assertIn('palier de raisonnement non réglable', page)
         for technical in ('modele-a', 'modele-b'):

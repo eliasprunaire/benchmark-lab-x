@@ -202,22 +202,23 @@ class S10ProofTests(unittest.TestCase):
         value = r.comparison(self.store, self.sid, 'fixture', 'proof')
         row = value['rows'][0]
         page = views.render(value, '').decode()
-        self.assertNotIn('coût est votre priorité', page)
+        self.assertNotIn('economic-choice-title', page)
         value['economic_choice'] = dict(configuration=row['requested_configuration'], count=2,
                                         amount='0.00113885', unit='USD', detail_href=row['detail_href'])
         page = views.render(value, '').decode()
         parsed = Markup(page.encode())
         self.assertEqual(1, sum(tag == 'dialog' for tag, _ in parsed.tags))
         self.assertEqual(1, sum(tag == 'form' for tag, _ in parsed.tags))
-        self.assertEqual([row['detail_href']] * 2,
+        self.assertEqual([row['detail_href']],
                          [attrs['href'] for tag, attrs in parsed.tags if tag == 'a' and 'data-result' in attrs])
-        self.assertLess(page.index('coût est votre priorité'), page.index('id="filters"'))
-        self.assertIn('<h2 id="economic-choice-title">Si le coût est votre priorité</h2>', page)
+        self.assertLess(page.index('economic-choice-title'), page.index('id="filters"'))
+        self.assertIn('<h2 id="economic-choice-title">Notre conseil</h2>', page)
+        self.assertNotIn('Si le coût est votre priorité', page)
         self.assertIn('<p class="choice-model">' + row['requested_configuration']['model'] + '</p>', page)
         self.assertIn(campaign_views.effort_label(row['requested_configuration']), page)
         self.assertIn('La moins coûteuse parmi 2 réponses conformes sur cet exemple.', page)
         self.assertIn('<strong>0,00113885 USD</strong>', page)
-        self.assertIn('>Détails et réserves</a>', page)
+        self.assertNotIn('>Détails et réserves</a>', page)
         for word in ('recommand', 'meilleur', 'innerHTML', 'gagnant'):
             self.assertNotIn(word, page.lower())
         self.assertFalse(any(k.startswith('on') for _, attrs in parsed.tags for k in attrs))
@@ -235,6 +236,11 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn(escape(self.output[:200].strip(), quote=True) + '…', fragment)
         self.assertLess(fragment.index('Début de la réponse'), fragment.index('Lire la réponse complète'))
         self.assertIn('id="evaluation-' + detail['history'][-1]['evaluation_id'] + '"', fragment)
+
+    def test_standard_reasoning_label_does_not_claim_reasoning_is_disabled(self):
+        self.assertEqual('Standard · niveau de raisonnement non imposé',
+                         campaign_views.effort_label({'effort': 'off'}))
+        self.assertEqual('Raisonnement élevé', campaign_views.effort_label({'effort': 'high'}))
 
     def test_results_filters_stay_with_the_table(self):
         for query in ({}, {'verdict': 'SATISFAIT'}, {'verdict': 'NE SATISFAIT PAS'}):
