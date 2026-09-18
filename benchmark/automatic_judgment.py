@@ -170,7 +170,7 @@ def status(store, connection, campaign_id):
     snapshot = c._inspect(store, connection, campaign_id)
     ops = operations(store, connection, campaign_id)
     total = len(snapshot['manifest']['plan'])
-    completed = sum(o['state'] == 'RECEIVED' and o['receipt']['result'] is not None for o in ops)
+    completed = len(records(store, connection, campaign_id))
     result = dict(status='NOT_STARTED', total=total, completed=completed, reason=None, can_start=False)
     if completed == total:
         result['status'] = 'COMPLETE'
@@ -201,7 +201,7 @@ def records(store, connection, campaign_id):
     result = []
     for op in operations(store, connection, campaign_id):
         saved, ctx = judgment._bound(store, connection, op)
-        proposal = judgment._retained_proposal(store, connection, op, ctx)
+        proposal = judgment._retained_proposal(store, connection, op, ctx, recover_metadata=True)
         if proposal is None:
             continue
         result.append(e._record(store, connection, saved['context'], proposal['report'], evaluation_id=op['operation_id'],

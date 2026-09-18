@@ -656,7 +656,8 @@ def piece_bytes(store, session_id, dossier_id, evaluation_id, piece_id):
                 raise Denied('Évaluation inaccessible')
             from . import judgment
             _, ctx = judgment._bound(store, connection, operation)
-            if judgment._retained_proposal(store, connection, operation, ctx) is None or piece_id not in _resources(store, ctx):
+            if (judgment._retained_proposal(store, connection, operation, ctx, recover_metadata=True) is None
+                    or piece_id not in _resources(store, ctx)):
                 raise Denied('Pièce non liée à cette évaluation')
             return store.read_piece(piece_id)
         record = next(r for r in _records(store, connection, row[0]) if r['evaluation_id'] == evaluation_id)
