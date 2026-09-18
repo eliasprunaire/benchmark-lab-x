@@ -117,9 +117,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         if method == 'POST' and path == '/preparation/access/key':
             if not personal_preparation:
                 raise p.Denied('ACCESS_UNAVAILABLE')
-            _fields(body, ('key', 'assistance_cap'), 'personal access')
-            if body['assistance_cap'] != '20':
-                raise p.Denied('ACCESS_CAP_REQUIRED')
+            _fields(body, ('key',), 'personal access')
             return 200, provider_access.import_key(store, session_id, access_secret, body['key'],
                                                    access_transport), None, None
         if method == 'POST' and path == '/preparation/access/start':
@@ -134,7 +132,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
             _fields(body, (), 'access disconnect')
             return 200, provider_access.disconnect(store, session_id, access_secret), None, None
         raise p.Denied('Action inaccessible')
-    launch_route = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/campaigns/([A-Za-z0-9_-]{1,128})/(conditions|cap|start|evaluate)', path)
+    launch_route = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/campaigns/([A-Za-z0-9_-]{1,128})/(conditions|start|evaluate)', path)
     if launch_route:
         from .acquisition import campaigns
         dossier_id, campaign_id, action = launch_route.groups()
@@ -155,11 +153,6 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         else:
             p.require_qualification(store, p.connection_for(store), dossier_id,
                                     snapshot['task']['revision'])
-        if method == 'POST' and action == 'cap':
-            value = campaigns.set_cap(
-                store, session_id, dossier_id, campaign_id, body,
-                access_secret=access_secret, access_transport=access_transport)
-            return 200, value, None, None
         if method == 'POST' and action == 'start':
             if not callable(candidate_transport):
                 raise p.Denied('Acquisition indisponible')

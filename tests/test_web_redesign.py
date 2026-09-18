@@ -78,15 +78,12 @@ class TemplateTests(unittest.TestCase):
 
     def test_chaque_motif_de_disponibilite_a_son_libelle(self):
         motifs = set(re.findall(r"reason = '(\w+)'", inspect.getsource(prep.availability)))
-        self.assertIn('daily_cap', motifs)
+        self.assertNotIn('daily_cap', motifs)
         for motif in motifs:
             page = views.render({'dossiers': [], 'availability': dict(
                 AVAILABILITY, can_submit=motif == 'open', reason=motif)}, 'csrf').decode()
             aside = re.search(r'<aside id="availability".*?</aside>', page, re.S).group()
             self.assertRegex(aside, r'<p>[^<]{20,}</p>', motif)
-        cap = views.render({'dossiers': [], 'availability': dict(
-            AVAILABILITY, can_submit=False, reason='daily_cap')}, 'csrf').decode()
-        self.assertIn('plafond quotidien de préparation', cap)
 
     def test_contrastes_des_deux_themes(self):
         css = views.STYLESHEET_PATH.read_text()
@@ -373,34 +370,6 @@ const script = require('node:fs').readFileSync(0, 'utf8');
 '''
         subprocess.run(['node', '-e', program], input=views.PREPARATION_PROGRESS_SCRIPT,
                        text=True, check=True, capture_output=True)
-
-    @unittest.skipUnless(shutil.which('node'), 'Node requis pour la validation du plafond')
-    def test_cap_enables_only_a_changed_native_valid_decimal(self):
-        from benchmark_web.campaign_views import CAP_SCRIPT
-        program = r"""
-const vm = require('node:vm'), assert = require('node:assert/strict');
-const script = require('node:fs').readFileSync(0, 'utf8');
-const events = {}, button = {}, input = {
-  value: '50.00', defaultValue: '50.00', valid: true,
-  setCustomValidity(message) { this.error = message; },
-  checkValidity() { return this.valid && !this.error; },
-  addEventListener(name, fn) { events[name] = fn; },
-  form: {querySelector: () => button, addEventListener(name, fn) { events[name] = fn; }}
-};
-vm.runInNewContext(script, {document: {getElementById: () => input}});
-assert.equal(button.disabled, true);
-for (const value of ['', '50', '50.00', '0.09', '100.01', '1e1', '-1', '1.234', '.5', '1.']) {
-  input.value = value; events.input(); assert.equal(button.disabled, true, value);
-  let blocked = false; events.submit({preventDefault() {blocked = true;}});
-  assert.equal(blocked, true, value);
-}
-for (const value of ['0.10', '1', '1.2', '75.00', '100']) {
-  input.value = value; events.input(); assert.equal(button.disabled, false, value);
-  assert.equal(button.className, '');
-}
-input.valid = false; events.input(); assert.equal(button.disabled, true);
-"""
-        subprocess.run(['node', '-e', program], input=CAP_SCRIPT, text=True, check=True, capture_output=True)
 
     def test_progress_only_for_current_pending_work(self):
         value = dict(dossier_id='d1', revision=1, current_revision=1, stage='waiting',

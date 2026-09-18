@@ -64,7 +64,7 @@ def _envelope(store, connection, request, operation_id=None):
             or _money(request['reserve_amount']) != _money(config['reserve_usd'])):
         raise BudgetError('Réserve USD liée au profil requise')
     if (store._blocking_costs(operations, budget, 'judgment')
-            or _money(budget['available']) < 0
+            or not budget['provider_managed'] and _money(budget['available']) < 0
             or any(op['operation_id'] != operation_id and op['budget_id'] == request['budget_id']
                    and op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') for op in operations)):
         raise BudgetError('Effets ou coûts non résolus')

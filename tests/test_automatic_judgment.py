@@ -133,12 +133,14 @@ class AutomaticJudgment(unittest.TestCase):
             self.assertIn('Ne satisfait pas', views.render(detail, 'csrf').decode())
         self.assertEqual(2, self.http.request.call_count)
 
-    def test_budget_refuses_before_any_candidate_or_judge_and_is_not_renewed(self):
+    def test_old_local_budget_does_not_block_judgment_and_is_not_reset(self):
         self.transport._quote['reserve_usd'] = '11'
-        with self.assertRaises(storage.BudgetError):
-            self.dispatch('POST', '/start', dict(self.fixture.body(), csrf_token='csrf'))
-        self.assertEqual([], campaigns.inspect(self.store, self.cid)['attempts'])
-        self.assertEqual('20', self.store.inspect_budget(self.budget)['limit'])
+        self.dispatch('POST', '/start', dict(self.fixture.body(), csrf_token='csrf'))
+        self.assertEqual(2, len(campaigns.inspect(self.store, self.cid)['attempts']))
+        budget = self.store.inspect_budget(self.budget)
+        self.assertEqual('20', budget['limit'])
+        self.assertTrue(budget['provider_managed'])
+        self.assertIsNone(budget['available'])
         self.http.request.assert_not_called()
 
     def test_server_binds_citations_and_reports_bad_hash_without_losing_results(self):

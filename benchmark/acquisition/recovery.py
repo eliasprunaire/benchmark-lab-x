@@ -346,7 +346,7 @@ def _proposal(store, connection, operation_id, capabilities, *, check_budget=Tru
                             earlier_output_chars=_progress_chars(store, connection, snapshot['manifest'], observed))
     if check_budget:
         budget = c._envelope(store, connection, snapshot, snapshot['admissions'][-1]['authority'])
-        if _money(proposal['reserve_amount']) > Decimal(budget['available']):
+        if not budget['provider_managed'] and _money(proposal['reserve_amount']) > Decimal(budget['available']):
             raise BudgetError('Budget de reprise insuffisant')
     return proposal
 
@@ -380,7 +380,7 @@ def _official_proposal(store, connection, operation_id, grant, budget_id, *, che
                     source_receipt=observed, capabilities_sha256=value_digest(item))
     if check_budget:
         budget = c._envelope(store, connection, snapshot, snapshot['admissions'][-1]['authority'])
-        if _money(proposal['reserve_amount']) > Decimal(budget['available']):
+        if not budget['provider_managed'] and _money(proposal['reserve_amount']) > Decimal(budget['available']):
             raise BudgetError('Budget de secours officiel insuffisant')
     return proposal
 

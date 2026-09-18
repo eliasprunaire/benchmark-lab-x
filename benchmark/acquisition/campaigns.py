@@ -586,9 +586,8 @@ def configurations_view(store, session_id, dossier_id):
             return page_view({'kind': 'configurations', 'dossier_id': dossier_id,
                               'current_campaign_id': None, 'configurations': [], 'models': models,
                               'current_tier': 'standard', 'superseded': [],
-                              'available_tiers': ['standard', 'enhanced'], 'cap_usd': str(DEFAULT_CAP_USD),
-                              'cap_source': 'default', 'estimate_total_usd': None,
-                              'estimate_under_cap': False, 'assumptions': None,
+                              'available_tiers': ['standard', 'enhanced'], 'estimate_total_usd': None,
+                              'estimate_available': False, 'assumptions': None,
                               'fetched_at': None if catalogue is None else catalogue['fetched_at'],
                               **catalogue_status})
         current = prepared[-1]
@@ -604,9 +603,8 @@ def configurations_view(store, session_id, dossier_id):
                                                item.get('effort_limit') == 'not_adjustable'
                                                for item in current['manifest']['panel']) else 'standard'),
             'superseded': [snapshot['manifest']['campaign_id'] for snapshot in prepared[:-1]],
-            'available_tiers': ['standard', 'enhanced'], 'cap_usd': current['cap_usd'],
-            'cap_source': current['cap_source'], 'estimate_total_usd': total,
-            'estimate_under_cap': total is not None and _money(total) <= _money(current['cap_usd']),
+            'available_tiers': ['standard', 'enhanced'], 'estimate_total_usd': total,
+            'estimate_available': total is not None,
             'assumptions': first['assumptions'], 'fetched_at': first['fetched_at'],
             **catalogue_status})
 
@@ -950,7 +948,7 @@ def _envelope(store, connection, snapshot, authority):
     if budget['currency'] != snapshot['manifest']['cost_basis']['unit']:
         raise BudgetError('Unité du budget différente de la base de coût')
     retained = _retained_costs(snapshot, store, connection)
-    if (set(budget['unknown_cost_operations']) - retained or Decimal(budget['available']) < 0
+    if (set(budget['unknown_cost_operations']) - retained or not budget['provider_managed'] and Decimal(budget['available']) < 0
             or any((_attribution(op['receipt'], op['requested_configuration']) and not routing_error(op))
                    or op['receipt']['result']['emission'] != 'ESTABLISHED' for op in dependent_receipts)
             or any(op['budget_id'] == authority['budget_id'] and op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') for op in operations)
@@ -1006,7 +1004,7 @@ def _admit(store, connection, campaign_id, authority, evidence, *, owner_launch=
             needed.append(_money(authority['reserve_amounts'][cid]))
         elif attempt['state'] != 'INTENT_RECORDED' or attempt['operation']['reserved_amount'] != authority['reserve_amounts'][cid]:
             raise ConflictError('Cellule déjà émise ou réserve divergente')
-    if _sum_money(needed) > Decimal(budget['available']):
+    if not budget['provider_managed'] and _sum_money(needed) > Decimal(budget['available']):
         raise BudgetError('Enveloppe insuffisante pour les cellules autorisées')
     aid = secrets.token_hex(16)
     record = dict(admission_id=aid, campaign_id=campaign_id, authority=authority, evidence=evidence, created_at=_now())
@@ -1041,13 +1039,6 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
     engine = _engine()
     digest = value_digest(request)
     authority = admission['authority']
-    if manifest.get('funding') == 'requester':
-        spent = _sum_money(_money(attempt['operation']['observed_cost']['amount'])
-                           for attempt in snapshot['attempts']
-                           if attempt['operation']['observed_cost'] is not None
-                           and attempt['operation']['observed_cost']['status'] == 'KNOWN')
-        if _money(authority['reserve_amounts'][cell_id]) > _money(snapshot['cap_usd']) - spent:
-            raise BudgetError('Réserve supérieure au plafond restant')
     operation = dict(operation_id=attempt_id, phase='acquisition', dossier_id=contract['dossier_id'], revision=contract['revision'],
                      authority=authority['authority_id'], engine_version=FORMAT_IDENTITY + ':' + value_digest(engine),
                      requested_configuration=request['requested_configuration'], resources=[digest])
@@ -1092,7 +1083,6 @@ def _requester_checks(store, connection, snapshot, session_id, access):
     except LookupError:
         missing = [configuration['model'] for configuration in snapshot['manifest']['panel']]
     total = _estimate_total(snapshot)
-    cap = _money(snapshot['cap_usd'])
     access_detail = {
         'limit_remaining_usd': access.get('limit_remaining_usd'),
         'limit_usd': access.get('limit_usd'),
@@ -1108,42 +1098,11 @@ def _requester_checks(store, connection, snapshot, session_id, access):
                     'Modèles à choisir de nouveau : ' + ', '.join(missing))},
         {'key': 'access_connected', 'ok': access.get('status') == 'connected',
          'detail': access_detail},
-        {'key': 'estimate_under_cap', 'ok': total is not None and total <= cap,
+        {'key': 'estimate_available', 'ok': total is not None,
          'detail': ('Estimation totale : non estimable' if total is None else
                     'Estimation totale : ' + format(total, 'f').replace('.', ',') +
-                    ' USD pour un plafond de ' + format(cap, '.2f').replace('.', ',') + ' USD')},
+                    ' USD')},
     ]
-
-
-def set_cap(store, session_id, dossier_id, campaign_id, body, *, access_secret=None,
-            access_transport=None):
-    from ..preparation import owner
-    _fields(body, ('cap_usd',), 'plafond')
-    raw = body['cap_usd']
-    try:
-        if type(raw) is not str or re.fullmatch(r'[0-9]+(?:\.[0-9]{1,2})?', raw) is None:
-            raise ValueError
-        cap = Decimal(raw)
-        if not Decimal('0.10') <= cap <= Decimal('100.00'):
-            raise ValueError
-    except (ValueError, ArithmeticError):
-        raise ValueError('Plafond hors bornes : 0,10 à 100 USD') from None
-    _intact(store)
-    connection = connection_for(store)
-    with _transaction(connection, write=True):
-        owner(connection, session_id, dossier_id)
-        snapshot = _inspect(store, connection, campaign_id)
-        if (snapshot['task']['dossier_id'] != dossier_id
-                or snapshot['manifest'].get('funding') != 'requester'):
-            raise ValueError('Campagne demandeur requise')
-        if snapshot['admissions'] or snapshot['attempts']:
-            raise ConflictError('Plafond figé au lancement')
-        if cap == _money(snapshot['cap_usd']):
-            raise ConflictError('Plafond inchangé')
-        connection.execute('UPDATE s4_caps SET cap_usd=?, cap_source=? WHERE campaign_id=?',
-                           (str(cap.quantize(Decimal('0.01'))), 'requester', campaign_id))
-    return launch_view(store, session_id, dossier_id, campaign_id,
-                       access_secret=access_secret, access_transport=access_transport)
 
 
 def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=None,
@@ -1188,7 +1147,6 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
                 criteria=criteria, checks=checks,
                 launchable=all(check['ok'] for check in checks)
                 and not snapshot['admissions'] and not snapshot['attempts'],
-                cap_usd=snapshot['cap_usd'], cap_source=snapshot['cap_source'],
                 judgment_estimate_usd=judgment_estimate,
                 estimate_total_usd=None if total is None else str(total), access=access))
         admission = snapshot['admission']
@@ -1254,7 +1212,7 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
                 raise Denied(failed['key'])
             if snapshot['admissions'] or snapshot['attempts']:
                 raise ConflictError('Lancement déjà enregistré')
-            cap = snapshot['cap_usd']
+            cap = access['limit_usd']
             try:
                 connection.execute('INSERT INTO budgets VALUES (?,?,?)',
                                    (campaign_id, cap, 'USD'))
@@ -1406,7 +1364,7 @@ def _projected(store, connection, campaign_id, snapshot) -> dict:
         unresolved = budget['unknown_cost_operations'] or any(
             op['budget_id'] == budget['budget_id'] and op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS')
             for op in store._operations(connection))
-        budget['balance_status'] = 'INCONNU' if unresolved else 'KNOWN'
+        budget['balance_status'] = 'PROVIDER_MANAGED' if budget['provider_managed'] else 'INCONNU' if unresolved else 'KNOWN'
         if unresolved:
             budget['available'] = None
     projected = dict(recovery_of=manifest.get('recovery_of'), campaign_id=campaign_id, manifest_sha256=snapshot['manifest_sha256'],

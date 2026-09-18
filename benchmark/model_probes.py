@@ -186,9 +186,6 @@ def submit(store, session_id, dossier_id, body, fetch, secret, access_transport=
         if connection.execute("SELECT 1 FROM operations WHERE phase IN ('preparation','correction','qualification') "
                               "AND state!='RECEIVED'").fetchone():
             raise p.Denied('PREPARATION_IN_PROGRESS')
-        if (p._daily_preparation_reserved(connection, p._now()) + storage._money(config['reserve_usd'])
-                > p.PREPARATION_DAILY_CAP_USD):
-            raise p.Denied('DAILY_CAP')
         operation = dict(operation_id=operation_id, phase='preparation', dossier_id=dossier_id,
             revision=revision, authority='requester-model-probe:' + body['action_id'], engine_version=ENGINE,
             requested_configuration=config, resources=[wire])

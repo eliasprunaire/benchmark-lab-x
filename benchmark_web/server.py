@@ -260,11 +260,6 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                                            if self.path.endswith('/custom-models') else self.path)
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
-                if (self.command == 'POST' and self.path.endswith('/cap')
-                        and result['status'] < 400 and not wants_json):
-                    headers['Location'] = self.path[:-3] + 'conditions'
-                    self.respond(303, b'', 'text/html; charset=utf-8', headers)
-                    return
                 if self.command == 'POST' and self.path.endswith(('/start', '/evaluate')) and result['status'] < 400 and not wants_json:
                     headers['Location'] = self.path.rsplit('/', 1)[0] + '/conditions'
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
