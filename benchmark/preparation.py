@@ -119,6 +119,9 @@ def connection_for(store):
 
 def admission(store, connection=None, *, transport=None):
     connection = connection if connection is not None else connection_for(store)
+    from .privacy import boot_pending
+    if boot_pending(connection):
+        return None
     raw = connection.execute('SELECT admission_json FROM s2_control WHERE singleton=1').fetchone()[0]
     if raw is None:
         return None
@@ -180,10 +183,11 @@ def close_admission(store):
 
 
 def admit(store, authority, *, profile=None):
+    from .privacy import quarantined
     check_authority(authority)
     connection = connection_for(store)
     with _transaction(connection, write=True):
-        if os.path.lexists(store._root / 'restore.json'):
+        if quarantined(store):
             raise Denied('Restauration à rapprocher')
         operations = store._operations(connection)
         budget = store._budget(connection, authority['budget_id'], operations)
@@ -211,6 +215,8 @@ def session(store, token, *, create=False):
         row = connection.execute('SELECT session_id FROM s2_sessions WHERE token_sha256=?',
                                  (sha256(raw).hexdigest(),)).fetchone()
         if row:
+            from .privacy import authorize_session
+            authorize_session(connection, row[0])
             return row[0], sha256(b'csrf:' + raw).hexdigest(), token
     if not create:
         raise Denied('Session requise')
@@ -218,11 +224,15 @@ def session(store, token, *, create=False):
     session_id = secrets.token_hex(16)
     with _transaction(connection, write=True):
         connection.execute('INSERT INTO s2_sessions VALUES (?, ?)', (session_id, sha256(raw).hexdigest()))
+        from .privacy import register_session
+        register_session(connection, session_id)
     return session_id, sha256(b'csrf:' + raw).hexdigest(), raw.hex()
 
 
 def owner(connection, session_id, dossier_id):
     identifier(dossier_id)
+    from .privacy import authorize_dossier
+    authorize_dossier(connection, session_id, dossier_id)
     row = connection.execute('SELECT current_revision FROM s2_dossiers WHERE dossier_id=? AND session_id=?',
                              (dossier_id, session_id)).fetchone()
     if not row:
@@ -569,6 +579,7 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
         if not create and not existing:
             raise Denied('Dossier inaccessible')
         if existing:
+            owner(connection, session_id, dossier_id)
             previous = connection.execute('SELECT request_json,operation_id FROM s2_actions WHERE dossier_id=? AND action_id=?',
                                           (dossier_id, body['action_id'])).fetchone()
             if previous:
@@ -604,6 +615,8 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
                            fictional_parameters={}, state='EN_ATTENTE')
             store.save_dossier(dossier_id, revision, payload)
             connection.execute('INSERT INTO s2_dossiers VALUES (?,?,?)', (dossier_id, session_id, revision))
+            from .privacy import register_dossier
+            register_dossier(connection, session_id, dossier_id)
             connection.execute('INSERT INTO s2_revisions VALUES (?,?,?, ?,NULL,NULL,?,?)',
                                (dossier_id, revision, 'draft', '', '[]', '{}'))
         operation_id = secrets.token_hex(16)
@@ -751,7 +764,8 @@ def _qualification_result(result):
 
 
 def execute_qualification(data, operation_id, transport):
-    with closing(Store(data)) as store:
+    from .runtime import worker_lock
+    with closing(Store(data)) as store, worker_lock(store, shared=True):
         connection = connection_for(store)
         emitted = False
         operation = None
@@ -832,7 +846,8 @@ def execute_qualification(data, operation_id, transport):
 
 def execute(data, operation_id, transport):
     """Only the submitting executor starts this work, never inspection or startup."""
-    with closing(Store(data)) as store:
+    from .runtime import worker_lock
+    with closing(Store(data)) as store, worker_lock(store, shared=True):
         connection = connection_for(store)
         emitted = False
         operation = None

@@ -204,7 +204,7 @@ def refresh(store, fetch):
     connection = store._connection_checked()
     with storage._transaction(connection, write=True):
         layout = storage._check_schema(connection)
-        if layout not in ('s2', 's3', 's4', 's5', 's6'):
+        if layout not in ('s2', 's3', 's4', 's5', 's6', 's7'):
             raise storage.SchemaError('Catalogue de modèles sur stockage S2 ou ultérieur requis')
         connection.execute(TABLE_SQL.replace('CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'))
         connection.execute('DELETE FROM s2_model_catalogue')

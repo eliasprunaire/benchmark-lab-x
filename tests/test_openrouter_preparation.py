@@ -251,19 +251,67 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual(before, self.store.inspect_budget(bound.preparation_budget_id))
         self.assertFalse(bound.authorized(self.store))
 
-    def test_personal_key_change_waits_for_pending_preparation(self):
+    def test_personal_key_removal_blocks_pending_preparation(self):
         from benchmark import provider_access
         bound, secret, _ = self.personal_transport()
         operation, _ = prep.submit(self.store, self.session, 'personal',
             dict(action_id='create', request=NEED), 'a' * 40, bound)
-        with self.assertRaisesRegex(prep.Denied, 'PREPARATION_IN_PROGRESS'):
-            provider_access.disconnect(self.store, self.session, secret)
-        self.http.request.assert_not_called()
-        prep.execute(self.data, operation, bound)
         provider_access.disconnect(self.store, self.session, secret)
+        prep.execute(self.data, operation, bound)
+        self.http.request.assert_not_called()
         self.assertFalse(bound.authorized(self.store))
+        self.assertEqual('INTENT_RECORDED', self.store.inspect_operations()[0]['state'])
         self.assertEqual((None, None), service.personal_transports(
             self.store, self.token, self.transport, None, secret, None))
+
+    def test_personal_key_replacement_still_waits_for_pending_preparation(self):
+        from benchmark import provider_access
+        from tests.test_provider_access import AccessTransport
+        bound, secret, key = self.personal_transport()
+        prep.submit(self.store, self.session, 'personal',
+                    dict(action_id='create', request=NEED), 'a' * 40, bound)
+        access = AccessTransport()
+        with self.assertRaisesRegex(prep.Denied, '^PREPARATION_IN_PROGRESS$'):
+            provider_access.import_key(self.store, self.session, secret, key + '-replacement', access)
+        with self.assertRaisesRegex(prep.Denied, '^PREPARATION_IN_PROGRESS$'):
+            provider_access.start(self.store, self.session, secret,
+                                  'https://example.test/preparation/access/callback')
+        self.assertEqual([], access.verifications)
+        self.assertTrue(bound.authorized(self.store))
+
+    def test_personal_key_removal_keeps_receipt_in_flight_and_blocks_next_call(self):
+        from benchmark import provider_access
+        bound, secret, _ = self.personal_transport()
+        operation, _ = prep.submit(self.store, self.session, 'personal',
+            dict(action_id='create', request=NEED), 'a' * 40, bound)
+
+        def disconnect(*args, **kwargs):
+            with closing(storage.Store(self.data)) as other:
+                self.assertEqual('EMISSION_POSSIBLE', other.inspect_operations()[0]['state'])
+                provider_access.disconnect(other, self.session, secret)
+        self.http.request.side_effect = disconnect
+        prep.execute(self.data, operation, bound)
+        self.assertEqual('RECEIVED', self.store.inspect_operations()[0]['state'])
+        self.assertFalse(bound.authorized(self.store))
+        revision = prep.view(self.store, self.session, 'personal')['revision']
+        next_op, _ = prep.submit(self.store, self.session, 'personal',
+            dict(action_id='next', revision=revision, kind='correct', message=CORRECTION), 'a' * 40, bound)
+        self.http.request.reset_mock()
+        prep.execute(self.data, next_op, bound)
+        self.http.request.assert_not_called()
+        self.assertEqual('INTENT_RECORDED', next(op for op in self.store.inspect_operations()
+                                              if op['operation_id'] == next_op)['state'])
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
+
+    def test_personal_authorization_reports_unavailable_without_destroying_access(self):
+        from benchmark import provider_access
+        bound, secret, key = self.personal_transport()
+        unavailable = self.transport.for_session(key, self.session, b'\x22' * 32)
+        before = list(self.store._connection.iterdump())
+        with self.assertRaisesRegex(prep.Denied, '^ACCESS_UNAVAILABLE$'):
+            unavailable.authorized(self.store)
+        self.assertEqual(before, list(self.store._connection.iterdump()))
+        self.assertTrue(bound.authorized(self.store))
 
     def test_exact_wire_is_durable_before_http_and_unknown_cost_keeps_reserve(self):
         def at_request(method, path, *, body, headers):

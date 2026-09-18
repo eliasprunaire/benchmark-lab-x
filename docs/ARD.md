@@ -193,7 +193,7 @@ Les campagnes historiques restent dans leurs questions, panels, schémas et verd
 ## 10. Sécurité et autorité
 
 - dossiers du parcours 0.1.0 entièrement inventés ; aucun téléversement de dossier réel ni accès aux données de l’ordinateur ou du téléphone
-- description générale sans donnée personnelle ou confidentielle ; la consigne ne garantit pas leur absence, la politique de traitement et de conservation d’une saisie sensible doit être approuvée avant ouverture
+- description générale sans donnée personnelle ou confidentielle ; la consigne ne garantit pas leur absence, le stockage privé suit la politique de conservation et de retrait du PRD
 - secrets absents des tâches, sorties publiées et reçus publics
 - permissions minimales et outils déclarés
 - sorties brutes privées par défaut avant décision de publication
@@ -223,7 +223,7 @@ Le frontend et le backend appartiennent au même dépôt produit et sont servis 
 
 Les comptes du web, de l’exécuteur et de la livraison limitent chacun l’accès à leur responsabilité. Une projection contrôlée est remise au serveur public sous autorité de publication ; exposer directement un dossier privé n’est pas une interface de publication. Les secrets sont injectés séparément du code et de la projection. Les journaux d’exploitation doivent permettre le diagnostic sans exposer secrets, entrées privées ou sorties brutes.
 
-Soumission d’une demande, consultation autorisée de son dossier et publication ouverte sont des accès distincts. Le parcours public ne rend pas ses dossiers ni ses résultats publics par défaut. Avant réalisation de ces accès, décider l’identité ou session, les droits, l’isolation et le composant existant responsable de la préparation assistée et de ses accès fournisseur. Aucune attribution de secrets au serveur public n’est déduite de l’ouverture du formulaire. Ces choix n’imposent ni nouveau service ni gestion de comptes ; ils bloquent les fonctions qui en dépendent tant qu’ils ne sont pas approuvés. Les décisions de traitement des saisies, conservation, financement, abus et publication relèvent du [PRD](PRD.md#51-périmètre-010).
+Soumission d’une demande, consultation autorisée de son dossier et publication ouverte sont des accès distincts. Le parcours public ne rend pas ses dossiers ni ses résultats publics par défaut. L’accès privé repose sur une session opaque de navigateur et des contrôles de propriétaire côté exécuteur. La clé fournisseur reste chiffrée chez l’exécuteur ; le serveur public la relaie seulement à son enregistrement. Aucune attribution de secrets au serveur public n’est déduite de l’ouverture du formulaire. Ces choix n’imposent ni nouveau service ni gestion de comptes ; ils bloquent les fonctions qui en dépendent tant qu’ils ne sont pas approuvés. Les décisions de traitement des saisies, conservation, financement, abus et publication relèvent du [PRD](PRD.md#51-périmètre-010).
 
 ### 12.2 Persistance et intégrité
 
@@ -232,6 +232,28 @@ SQLite sur disque local conserve les métadonnées transactionnelles. Les pièce
 La version du schéma de stockage et les versions des contrats et formats historiques sont distinctes. Le runtime vérifie leur compatibilité avant d’écrire ; une version inconnue ou une migration non autorisée bloque l’opération sans réinterpréter les preuves. Les contraintes de référence, l’unicité des tentatives et la réservation budgétaire doivent tenir aussi lorsque plusieurs opérations se présentent simultanément, sans imposer ici une politique de sérialisation.
 
 L’écriture d’une pièce et celle de sa référence doivent laisser un état détectable après interruption. Une pièce incomplète ne peut pas devenir une preuve valide. Initialisation, migration, sauvegarde et restauration couvrent ensemble SQLite, les pièces et leurs liens ; une sauvegarde réussie n’atteste pas une restauration réussie.
+
+### 12.2.1 Conservation privée
+
+L’extension de stockage `s7` ajoute les échéances de sessions et dossiers, la version de contenu, les consentements, les copies autorisées, les suppressions en attente et l’identité de migration. Le schéma complet reste vérifié strictement. Les objets anciens reçoivent une date de début de conservation distincte de l’activité humaine, une seule fois. Aucun consentement n’est déduit de leur présence.
+
+La clé et le vérificateur OAuth utilisent AES-256-GCM, un secret maître existant de 32 octets, un nonce aléatoire de 96 bits et un format versionné. Les données associées lient session stable, identité de clé et usage. Une erreur de déchiffrement conserve le chiffré. Les routes de consultation, export et suppression ne résolvent pas le transport fournisseur.
+
+Le cookie principal et celui des contributions sont `HttpOnly`, `Secure`, `SameSite=Strict`, sans `Domain`. Leurs autorités et protections intersites sont distinctes. Un premier GET sans cookie présente une entrée neutre : la requête de même origine retrouve l’accès existant avant toute création. Le parcours sans JavaScript propose « Continuer » et évite les boucles si les cookies sont refusés.
+
+L’archive personnelle repose sur un manifeste figé, versionné, vérifié puis transféré par blocs d’au plus 1 Mio brut. La limite du relais reste inchangée. IndexedDB conserve une archive provisoire avant remplacement atomique de la dernière copie complète. Versions et marqueurs d’effacement empêchent les réponses tardives et les autres onglets de rétablir une copie supprimée. Le rendu utilise des nœuds texte ; l’archive locale ne constitue pas une certification serveur. Aucun service worker ni réimport moteur n’est requis.
+
+La copie de contribution utilise une liste de champs autorisés distincte de l’archive personnelle. Elle est construite par le serveur, autonome, sans lien physique vers les pièces temporaires. Chaque écriture revérifie consentement, version d’exemple, échéance et absence de retrait dans la transaction. Son accès de gestion est enregistré sous forme d’empreinte du jeton.
+
+Le cycle d’un dossier est `ACTIVE → DELETE_REQUESTED → PURGING → PURGED`. La demande ferme immédiatement les nouveaux appels et accès ordinaires. Le verrou partagé couvre la dernière écriture de tout travailleur ; un reçu déjà engagé peut terminer. La purge obtient ensuite le verrou exclusif et supprime les dépendances enfants avant leurs parents. Toute référence entrante inattendue bloque cette purge sans élargir son périmètre. Les règles d’immuabilité n’autorisent une suppression que pour le dossier effectivement en purge.
+
+La transaction de purge conserve le manifeste exact des fichiers à retirer et les seules métadonnées nécessaires à la prévention des réémissions et au suivi des coûts inconnus. La suppression des fichiers reprend après interruption, contrôle leur répertoire, leur identité et les liens, puis confirme leur absence. `secure_delete=ON` et un nettoyage initial des pages libres traitent SQLite actif ; ils ne prétendent pas effacer les snapshots ou le support physique. Le mode de journal SQLite reste `DELETE`. Les anciens dossiers financés par l’opérateur nécessitent un traitement distinct préservant leur comptabilité ; aucun nouveau dossier personnel n’entre dans cette exception.
+
+Un journal minimal de révocation hors des sauvegardes applicatives précède chaque retrait. Il ne contient ni clé ni texte. La restauration reste en quarantaine jusqu’à application des révocations, expirations et purges. Sans preuve indépendante d’actualité du journal après restauration complète de VM, l’accès privé reste fermé. L’identité du démarrage Linux est enregistrée : tout nouveau démarrage, y compris normal, demande un rapprochement explicite avec le journal actuel attesté hors de la VM. Ce rapprochement laisse les admissions fermées. Une restauration à chaud qui conserve cette identité exige une mise en quarantaine explicite avant tout accès.
+
+La migration explicite arme une barrière persistante de démarrage avant quiescence. Après sauvegarde et restauration isolée vérifiée, les services restent arrêtés et le contrôleur conserve son exclusion pendant que le candidat acquiert ses propres verrous de migration. L’identité est enregistrée dans la transaction `s7`. Après commit, seul un programme compatible peut reprendre ; aucun rollback automatique de données n’est permis. Le programme compatible est activé durablement avant levée de la barrière. Un déploiement ordinaire ne migre jamais implicitement.
+
+Un traitement planifié natif exécute purges et expiration des sauvegardes sans visite du site. La rétention applicative, les copies de travail, snapshots et sauvegardes VM/PBS doivent être inventoriés et vérifiés avant de promettre la durée publique. Une demande de suppression ou une attestation non étayée ne prouve pas l’effacement.
 
 ### 12.3 Interfaces et cycle de vie
 

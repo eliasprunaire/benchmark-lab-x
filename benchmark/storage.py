@@ -435,6 +435,10 @@ def _connect(root, mode):
             raise IntegrityError("database identity changed during opening")
         connection.execute("PRAGMA trusted_schema=OFF")
         connection.execute("PRAGMA foreign_keys=ON")
+        if mode != 'ro':
+            connection.execute('PRAGMA secure_delete=ON')
+            if connection.execute('PRAGMA secure_delete').fetchone() != (1,):
+                raise SchemaError('SQLite secure delete unavailable')
         if connection.execute("PRAGMA foreign_keys").fetchone() != (1,):
             raise SchemaError("SQLite foreign keys unavailable")
         return connection
@@ -520,7 +524,7 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
                                    ('s2_revisions', 1), ('s2_actions', 2),
                                    ('s2_validations', 1), ('s2_qualifications', 2), ('s2_comparison_contracts', 2))
                for number in range(1, count + 1)]
-        s3 = s4 = s5 = s6 = None
+        s3 = s4 = s5 = s6 = s7 = None
         if any(name == 's3_control' for _, name, _, _ in rows):
             from .qualification import schema_objects
             s3 = s2 + schema_objects()
@@ -533,6 +537,9 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
         if s5 is not None and any(name == 's6_control' for _, name, _, _ in rows):
             from .provider_access import schema_objects
             s6 = s5 + schema_objects()
+        if s6 is not None and 's7_control' in names:
+            from .privacy import extended_schema
+            s7 = extended_schema(s6)
         actual = _observed_schema(tuple(rows))
         layout = ('canary' if actual == _expected_schema(tuple(expected)) else
                   's1' if actual == _expected_schema(tuple(extended)) else
@@ -540,29 +547,30 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
                   's3' if s3 is not None and actual == _expected_schema(tuple(s3)) else
                   's4' if s4 is not None and actual == _expected_schema(tuple(s4)) else
                   's5' if s5 is not None and actual == _expected_schema(tuple(s5)) else
-                  's6' if s6 is not None and actual == _expected_schema(tuple(s6)) else None)
-        if layout in ('s2', 's3', 's4', 's5', 's6') and connection.execute(
+                  's6' if s6 is not None and actual == _expected_schema(tuple(s6)) else
+                  's7' if s7 is not None and actual == _expected_schema(tuple(s7)) else None)
+        if layout in ('s2', 's3', 's4', 's5', 's6', 's7') and connection.execute(
                 'SELECT singleton, format_identity FROM s2_control').fetchall() != [(1, PREPARATION_IDENTITY)]:
             raise SchemaError('unsupported preparation identity')
-        if layout in ('s3', 's4', 's5', 's6'):
+        if layout in ('s3', 's4', 's5', 's6', 's7'):
             from .qualification import FORMAT_IDENTITY
             if connection.execute('SELECT * FROM s3_control').fetchall() != [(1, FORMAT_IDENTITY)]:
                 raise SchemaError('unsupported qualification identity')
-        if layout in ('s4', 's5', 's6'):
+        if layout in ('s4', 's5', 's6', 's7'):
             from .acquisition.campaigns import FORMAT_IDENTITY
             if connection.execute('SELECT * FROM s4_control').fetchall() != [(1, FORMAT_IDENTITY)]:
                 raise SchemaError('unsupported campaigns identity')
-        if layout in ('s5', 's6'):
+        if layout in ('s5', 's6', 's7'):
             from .evaluation import FORMAT_IDENTITY
             if connection.execute('SELECT * FROM s5_control').fetchall() != [(1, FORMAT_IDENTITY)]:
                 raise SchemaError('unsupported evaluations identity')
-        if layout == 's6':
+        if layout in ('s6', 's7'):
             from .provider_access import FORMAT_IDENTITY
             if connection.execute('SELECT * FROM s6_control').fetchall() != [(1, FORMAT_IDENTITY)]:
                 raise SchemaError('unsupported provider access identity')
         if layout is None or (reconciliation and layout == 'canary'):
             raise SchemaError("unsupported storage schema structure")
-        if catalogue and layout not in ('s2', 's3', 's4', 's5', 's6'):
+        if catalogue and layout not in ('s2', 's3', 's4', 's5', 's6', 's7'):
             raise SchemaError('le catalogue de modèles exige un stockage S2 ou ultérieur')
         if connection.execute("PRAGMA journal_mode").fetchone()[0] != "delete":
             raise SchemaError("S1 requires the standard DELETE journal")
@@ -633,7 +641,7 @@ def initialize_preparation(root: Path) -> None:
         connection = store._connection_checked()
         with _transaction(connection, write=True):
             layout = _check_schema(connection)
-            if layout in ('s2', 's3', 's4', 's5', 's6'):
+            if layout in ('s2', 's3', 's4', 's5', 's6', 's7'):
                 return
             if layout != 's1' or os.listdir(store._pieces_fd) or any(connection.execute(
                     'SELECT 1 FROM ' + table + ' LIMIT 1').fetchone()
@@ -908,7 +916,9 @@ class Store:
                                      (budget_id,)).fetchone()
             if row:
                 return json.loads(row[0], object_pairs_hook=_unique_object).get('funding') == 'requester'
-        return False
+        from . import privacy
+        return bool(privacy.available(connection) and connection.execute(
+            'SELECT 1 FROM s7_retired_operations WHERE budget_id=? AND provider_managed=1', (budget_id,)).fetchone())
 
     def _budget(self, connection, budget_id, operations=None):
         if operations is None:
@@ -930,7 +940,9 @@ class Store:
         except ValueError as error:
             raise IntegrityError('invalid stored budget') from error
         reserves, costs, unknown = [], [], []
-        for operation in operations:
+        from .privacy import retired_operations
+        known_ids = {operation['operation_id'] for operation in operations}
+        for operation in list(operations) + [row for row in retired_operations(connection) if row['operation_id'] not in known_ids]:
             if operation['budget_id'] != budget_id:
                 continue
             cost = self._effective_cost(connection, operation)
@@ -981,7 +993,9 @@ class Store:
         values = [operation[key] for key in _OPERATION_KEYS]
         values[6] = _strict_json(operation['requested_configuration'])
         values[7] = _strict_json(operation['resources'])
-        operations = self._operations(connection)
+        from .privacy import operation_allowed, retired_operations
+        operation_allowed(connection, operation['dossier_id'])
+        operations = self._operations(connection) + retired_operations(connection)
         if any(row['operation_id'] == operation['operation_id'] for row in operations):
             raise ConflictError('operation identity already exists')
         budget = self._budget(connection, budget_id, operations)
@@ -1011,6 +1025,9 @@ class Store:
             if record['operation_id'] == operation_id:
                 if record['state'] not in allowed:
                     raise ConflictError('operation transition is not permitted')
+                if record['state'] == 'INTENT_RECORDED':
+                    from .privacy import operation_allowed
+                    operation_allowed(connection, record['dossier_id'])
                 return record
         raise KeyError(operation_id)
 
@@ -1091,29 +1108,35 @@ class Store:
                 except IntegrityError:
                     broken.append(piece_id)
             # Inventory names only: do not follow links or remove partial/orphan bytes
+            from . import privacy
+            expected_purge = set(privacy.pending_files(self, connection)) if layout == 's7' else set()
+            references.update(expected_purge)
             orphans = sorted('pieces/' + name for name in os.listdir(self._pieces_fd)
                              if 'pieces/' + name not in references)
-            operations = self._operations(connection) if layout in ('s1', 's2', 's3', 's4', 's5', 's6') else []
-            if layout in ('s1', 's2', 's3', 's4', 's5', 's6'):
+            operations = self._operations(connection) if layout in ('s1', 's2', 's3', 's4', 's5', 's6', 's7') else []
+            if layout in ('s1', 's2', 's3', 's4', 's5', 's6', 's7'):
                 for (budget_id,) in connection.execute('SELECT budget_id FROM budgets').fetchall():
                     self._budget(connection, budget_id, operations)
-            if layout in ('s2', 's3', 's4', 's5', 's6'):
+            if layout in ('s2', 's3', 's4', 's5', 's6', 's7'):
                 from .preparation import verify_preparation
                 verify_preparation(self, connection)
-            if layout in ('s3', 's4', 's5', 's6'):
+            if layout in ('s3', 's4', 's5', 's6', 's7'):
                 from .qualification import verify_qualification
                 verify_qualification(self, connection)
-            if layout in ('s4', 's5', 's6'):
+            if layout in ('s4', 's5', 's6', 's7'):
                 from .acquisition.campaigns import verify_campaigns
                 verify_campaigns(self, connection)
-            if layout in ('s5', 's6'):
+            if layout in ('s5', 's6', 's7'):
                 from .evaluation import verify_evaluations
                 verify_evaluations(self, connection)
                 from .judgment import verify_judgments
                 verify_judgments(self, connection)
-            if layout == 's6':
+            if layout in ('s6', 's7'):
                 from .provider_access import verify_provider_access
                 verify_provider_access(self, connection)
+            if layout == 's7':
+                from .privacy import verify as verify_privacy
+                verify_privacy(self, connection)
             return {
                 'schema_version': SCHEMA_VERSION, 'integrity_ok': intact and not broken,
                 'cost_reconciliation_format': RECONCILIATION_IDENTITY if connection.execute(

@@ -317,15 +317,15 @@ class ProviderAccessTests(unittest.TestCase):
         cipher = self.store._connection.execute(
             'SELECT verifier_cipher FROM s2_provider_access WHERE session_id=?',
             (self.session,)).fetchone()[0]
-        verifier = provider_access.decrypt(SECRET, cipher)
+        verifier = provider_access.decrypt(SECRET, cipher, self.session, 'oauth')
         self.assertEqual(43, len(verifier))
         self.assertEqual([provider_access.challenge(verifier)], query['code_challenge'])
         self.assertEqual(['S256'], query['code_challenge_method'])
         self.assertNotIn(verifier, result['authorize_url'])
-        self.assertEqual(verifier, provider_access.decrypt(SECRET, provider_access.encrypt(SECRET, verifier)))
-        damaged = provider_access.encrypt(SECRET, verifier)[:-2] + 'AA'
+        self.assertEqual(verifier, provider_access.decrypt(SECRET, provider_access.encrypt(SECRET, verifier, self.session, 'oauth'), self.session, 'oauth'))
+        damaged = provider_access.encrypt(SECRET, verifier, self.session, 'oauth')[:-2] + 'AA'
         with self.assertRaises(storage.IntegrityError):
-            provider_access.decrypt(SECRET, damaged)
+            provider_access.decrypt(SECRET, damaged, self.session, 'oauth')
 
     def test_callback_verification_invalidation_et_panne_transitoire(self):
         accepted = self.transport.verify_result
@@ -365,7 +365,7 @@ class ProviderAccessTests(unittest.TestCase):
                 key_cipher, reason = self.store._connection.execute(
                     'SELECT key_cipher,status_reason FROM s2_provider_access WHERE session_id=?',
                     (self.session,)).fetchone()
-                self.assertEqual(KEY, provider_access.decrypt(SECRET, key_cipher))
+                self.assertEqual(KEY, provider_access.decrypt(SECRET, key_cipher, self.session, 'key'))
                 self.assertEqual('KEY_REJECTED', reason)
                 verification_count = len(self.transport.verifications)
                 self.assertEqual('invalid', provider_access.view(
@@ -375,15 +375,118 @@ class ProviderAccessTests(unittest.TestCase):
                     provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
         self.assertNotEqual(verified_at, old)
 
-    def test_secret_change_efface_acces_et_evenements(self):
+    def test_secret_change_preserve_acces_et_evenements(self):
         self.connect()
+        connection = self.store._connection
+        before = list(connection.iterdump())
+        calls = len(self.transport.verifications)
         changed_secret = bytes.fromhex('22' * 32)
         value = provider_access.view(self.store, self.session, changed_secret, self.transport)
-        self.assertEqual(('disconnected', 'SECRET_CHANGED'), (value['status'], value['reason']))
-        self.assertEqual(0, self.store._connection.execute(
-            'SELECT count(*) FROM s2_provider_access').fetchone()[0])
-        self.assertEqual(0, self.store._connection.execute(
-            'SELECT count(*) FROM s6_access_events').fetchone()[0])
+        self.assertEqual(('unavailable', 'ACCESS_UNAVAILABLE'), (value['status'], value['reason']))
+        with self.assertRaisesRegex(preparation.Denied, '^ACCESS_UNAVAILABLE$'):
+            provider_access.key_for_session(self.store, self.session, changed_secret, self.transport)
+        self.assertEqual(before, list(connection.iterdump()))
+        self.assertEqual(calls, len(self.transport.verifications))
+        self.assertEqual(KEY, provider_access.key_for_session(self.store, self.session, SECRET, self.transport))
+
+    def test_invalid_or_substituted_cipher_is_unavailable_without_cleanup(self):
+        for pending in (False, True):
+            for mutation in ('damaged', 'session', 'purpose', 'legacy'):
+                with self.subTest(pending=pending, mutation=mutation):
+                    if pending:
+                        provider_access.start(self.store, self.session, SECRET,
+                                              'https://example.test/preparation/access/callback')
+                    else:
+                        self.connect()
+                    column, purpose = ('verifier_cipher', 'oauth') if pending else ('key_cipher', 'key')
+                    cipher = provider_access.encrypt(SECRET, KEY,
+                        'another-session' if mutation == 'session' else self.session,
+                        ('key' if pending else 'oauth') if mutation == 'purpose' else purpose)
+                    if mutation == 'damaged':
+                        cipher = cipher[:-5] + 'AAAA='
+                    if mutation == 'legacy':
+                        cipher = ('AAECAwQFBgcICQoLDA0OD_cNulwbX3b_LA2oFwctDiyEuyDEz4dOqCfYJAqIweUk'
+                                  '6Vy74ta1xBfiQDE9eWpARQ9kfYsu0TQ=')
+                    old = (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()
+                    self.store._connection.execute(
+                        f'UPDATE s2_provider_access SET {column}=?,created_at=?,verified_at=? WHERE session_id=?',
+                        (cipher, old, None if pending else old, self.session))
+                    self.store._connection.commit()
+                    before = list(self.store._connection.iterdump())
+                    calls = (len(self.transport.exchanges), len(self.transport.verifications))
+                    state = provider_access.view(self.store, self.session, SECRET, self.transport)
+                    self.assertEqual('unavailable', state['status'])
+                    with self.assertRaisesRegex(preparation.Denied, '^ACCESS_UNAVAILABLE$'):
+                        if pending:
+                            provider_access.callback(self.store, self.session, SECRET, 'code', self.transport)
+                        else:
+                            provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
+                    self.assertEqual(before, list(self.store._connection.iterdump()))
+                    self.assertEqual(calls, (len(self.transport.exchanges), len(self.transport.verifications)))
+
+    def test_status_only_is_pure_metadata_even_when_cipher_is_unreadable(self):
+        self.connect()
+        expected = provider_access.view(self.store, self.session, SECRET, self.transport, refresh=False)
+        old = (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()
+        self.store._connection.execute('UPDATE s2_provider_access SET key_cipher=?,checked_at=?',
+                                       ('unreadable', old))
+        self.store._connection.commit()
+        before = list(self.store._connection.iterdump())
+        with patch.object(provider_access, 'decrypt', side_effect=AssertionError('décryptage interdit')), \
+                patch.object(provider_access.OpenRouterAccess, '_request', side_effect=AssertionError('réseau interdit')):
+            self.assertEqual(expected, provider_access.status_only(self.store, self.session))
+        self.assertEqual(before, list(self.store._connection.iterdump()))
+        self.assertEqual('unavailable', provider_access.view(self.store, self.session, SECRET,
+                                                           self.transport, refresh=False)['status'])
+
+    def test_s7_authority_owns_expiry_not_provider_verification_age(self):
+        from types import ModuleType
+        from benchmark.transports.openrouter import OpenRouterPreparation
+        self.connect()
+        connection = self.store._connection
+        old = (datetime.now(timezone.utc) - timedelta(days=31)).isoformat()
+        connection.execute('UPDATE s2_provider_access SET verified_at=?,checked_at=?', (old, old))
+        deadline = datetime.now(timezone.utc) + timedelta(days=1)
+        expires_at = [deadline]
+        connection.commit()
+        privacy = ModuleType('benchmark.privacy')
+        privacy.available = lambda conn: conn is connection
+        calls = []
+
+        def authorize_session(conn, session_id, current=None):
+            calls.append(session_id)
+            self.assertIs(connection, conn)
+            if (current or privacy.now()) >= expires_at[0]:
+                raise preparation.Denied('SESSION_EXPIRED')
+        privacy.authorize_session = authorize_session
+        privacy.now = lambda: datetime.now(timezone.utc)
+        with patch.dict('sys.modules', {'benchmark.privacy': privacy}), \
+                patch('benchmark.privacy', privacy, create=True):
+            before = list(connection.iterdump())
+            provider_access.expire(self.store)
+            self.assertEqual(before, list(connection.iterdump()))
+            self.assertTrue(provider_access.view(self.store, self.session, SECRET,
+                                                 self.transport, refresh=False)['connected'])
+            self.assertEqual(KEY, provider_access.key_for_session(self.store, self.session, SECRET, self.transport))
+            bound = OpenRouterPreparation(None).for_session(KEY, self.session, SECRET)
+            self.assertTrue(bound.authorized(self.store))
+            self.assertGreaterEqual(len(calls), 3)
+            before = list(connection.iterdump())
+            self.assertTrue(provider_access.status_only(self.store, self.session)['connected'])
+            self.assertEqual(before, list(connection.iterdump()))
+            privacy.now = lambda: deadline + timedelta(seconds=1)
+            before = list(connection.iterdump())
+            calls_before = len(self.transport.verifications)
+            metadata = provider_access.status_only(self.store, self.session)
+            self.assertFalse(metadata['connected'])
+            self.assertEqual('SESSION_EXPIRED', metadata['reason'])
+            for action in (lambda: provider_access.view(self.store, self.session, SECRET, self.transport),
+                           lambda: provider_access.key_for_session(self.store, self.session, SECRET, self.transport),
+                           lambda: bound.authorized(self.store)):
+                with self.assertRaisesRegex(preparation.Denied, '^SESSION_EXPIRED$'):
+                    action()
+            self.assertEqual(before, list(connection.iterdump()))
+            self.assertEqual(calls_before, len(self.transport.verifications))
 
     def test_callback_expire_avant_echange(self):
         old = datetime.now(timezone.utc) - timedelta(days=31)
@@ -393,16 +496,28 @@ class ProviderAccessTests(unittest.TestCase):
             provider_access.callback(self.store, self.session, SECRET, 'code', self.transport)
         self.assertEqual([], self.transport.exchanges)
 
-    def test_callback_secret_change_efface_pending(self):
+    def test_callback_secret_change_preserve_pending(self):
         provider_access.start(self.store, self.session, SECRET,
                               'https://example.test/preparation/access/callback')
-        with self.assertRaisesRegex(preparation.Denied, '^ACCESS_NO_PENDING$') as caught:
-            provider_access.callback(self.store, self.session, bytes.fromhex('22' * 32),
-                                     'code', self.transport)
-        self.assertEqual('ACCESS_NO_PENDING', caught.exception.code)
+        before = list(self.store._connection.iterdump())
+        wrong_secret = bytes.fromhex('22' * 32)
+        value = provider_access.view(self.store, self.session, wrong_secret, self.transport)
+        self.assertEqual('unavailable', value['status'])
+        with self.assertRaisesRegex(preparation.Denied, '^ACCESS_UNAVAILABLE$'):
+            provider_access.callback(self.store, self.session, wrong_secret, 'code', self.transport)
         self.assertEqual([], self.transport.exchanges)
-        self.assertEqual(0, self.store._connection.execute(
-            'SELECT count(*) FROM s2_provider_access').fetchone()[0])
+        self.assertEqual(before, list(self.store._connection.iterdump()))
+        self.assertTrue(provider_access.callback(
+            self.store, self.session, SECRET, 'code', self.transport)['connected'])
+
+    def test_removal_during_oauth_exchange_blocks_following_verification(self):
+        provider_access.start(self.store, self.session, SECRET,
+                              'https://example.test/preparation/access/callback')
+        self.transport.observe = lambda kind: provider_access.disconnect(self.store, self.session, SECRET)
+        state = provider_access.callback(self.store, self.session, SECRET, 'code', self.transport)
+        self.assertEqual('disconnected', state['status'])
+        self.assertEqual([], self.transport.verifications)
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
     def test_evenements_expurges_et_effaces_avec_acces(self):
         observed = []
@@ -474,18 +589,20 @@ class ProviderAccessTests(unittest.TestCase):
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', None)):
             code, value, _, _ = web_api.dispatch(
                 self.store, 'GET', '/preparation/access', 'token', None, 'a' * 40, None)
-        self.assertEqual(503, code)
-        self.assertEqual({'connected': False, 'status': 'unavailable',
-                          'error_code': 'ACCESS_UNAVAILABLE'}, value)
+        self.assertEqual(200, code)
+        self.assertFalse(value['connected'])
+        self.assertEqual('disconnected', value['status'])
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', None)):
             for path, body in (
                     ('/preparation/access/start', {'callback_url': 'https://example.test/preparation/access/callback'}),
-                    ('/preparation/access/callback', {'code': 'code'}),
-                    ('/preparation/access/disconnect', {})):
+                    ('/preparation/access/callback', {'code': 'code'})):
                 code, value, _, _ = web_api.dispatch(
                     self.store, 'POST', path, 'token', (body if path.endswith('/callback') else
                                                        dict(body, csrf_token='csrf')), 'a' * 40, None)
                 self.assertEqual((503, 'ACCESS_UNAVAILABLE'), (code, value['error_code']))
+            code, value, _, _ = web_api.dispatch(self.store, 'POST', '/preparation/access/disconnect',
+                'token', {'csrf_token': 'csrf'}, 'a' * 40, None)
+            self.assertEqual((200, 'disconnected'), (code, value['status']))
 
     def test_secret_invalide_bloque_le_demarrage(self):
         socket_path = self.data.parent / 'executor.sock'
@@ -531,6 +648,22 @@ class ProviderAccessTests(unittest.TestCase):
             supplied.append((channel_id, api_key))
             return response
 
+        original = self.store._connection.execute(
+            'SELECT key_cipher FROM s2_provider_access WHERE session_id=?', (self.session,)).fetchone()[0]
+        for session, purpose in (('another-session', 'key'), (self.session, 'oauth')):
+            cipher = provider_access.encrypt(SECRET, KEY, session, purpose)
+            self.store._connection.execute('UPDATE s2_provider_access SET key_cipher=? WHERE session_id=?',
+                                           (cipher, self.session))
+            self.store._connection.commit()
+            before = list(self.store._connection.iterdump())
+            with self.assertRaisesRegex(preparation.Denied, '^ACCESS_UNAVAILABLE$'):
+                execution.execute(self.data, attempts[0], transport_factory=factory,
+                                  access_secret=SECRET, access_transport=self.transport)
+            self.assertEqual([], supplied)
+            self.assertEqual(before, list(self.store._connection.iterdump()))
+        self.store._connection.execute('UPDATE s2_provider_access SET key_cipher=? WHERE session_id=?',
+                                       (original, self.session))
+        self.store._connection.commit()
         execution.execute_launch(self.data, attempts, transport_factory=factory,
                                  access_secret=SECRET, access_transport=self.transport)
         self.assertEqual([KEY, KEY], [key for _, key in supplied])

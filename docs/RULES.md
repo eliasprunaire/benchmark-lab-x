@@ -179,13 +179,15 @@ Le coût ne compense jamais une non-admissibilité. Une mesure valide d’une so
 
 ## 12. Histoire
 
-**Campagnes immuables.** Les campagnes, preuves et reçus historiques gardent leur identité, leur sémantique et leurs verdicts d'origine. Leur historique documentaire appartient à Git.
+**Campagnes immuables.** Les campagnes, preuves et reçus conservés gardent leur identité, leur sémantique et leurs verdicts d’origine. Leur historique documentaire appartient à Git. Cette immuabilité interdit la réécriture ; elle n’impose pas une conservation illimitée des données privées. La purge suit la politique du PRD et le cycle de suppression de l’ARD, sans requalifier les preuves.
 
 **Aucune requalification rétrospective.** Les campagnes et prototypes historiques conservent leurs contrats et conclusions d’origine. La spécification courante ne crée pour ces campagnes aucune qualification, baseline, mesure ou recommandation absente de leur contrat et de leurs preuves.
 
 **Preuve technique bornée.** Un `PASS` de témoin, transport, qualification, verrou ou préparation prouve seulement son objet technique.
 
 **Artefacts historiques non normatifs.** Les générateurs et restitutions historiques restent sous leurs contrats d'origine. Leurs anciennes références ne sont pas remappées implicitement et leur vocabulaire ne remplace pas la spécification courante.
+
+**Conservation et retrait.** Une suppression ou expiration interdit tout nouvel appel et empêche les écritures tardives de réactiver un dossier ou une contribution. Un coût inconnu reste inconnu, sans imposer la conservation des textes. Les marqueurs techniques sont limités à la reprise et à la prévention des réémissions. Le refus de contribuer ne pénalise aucune fonction. La publication et la contribution demeurent des autorisations distinctes.
 
 ## 13. Arrêt
 

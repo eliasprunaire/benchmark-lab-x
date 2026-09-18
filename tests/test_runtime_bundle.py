@@ -59,7 +59,7 @@ class RuntimeBundleTests(unittest.TestCase):
                             ignore=shutil.ignore_patterns('__pycache__', 'test_*.py'))
             web = repo / 'benchmark_web'
             source_web = source_package.parent / 'benchmark_web'
-            for name in ('__init__.py', 'server.py', 'views.py', 'campaign_views.py', 'fragments.py', 'projection.py', 'templates/preparation.html', 'static/preparation.css'):
+            for name in ('__init__.py', 'server.py', 'views.py', 'privacy_views.py', 'privacy.js', 'campaign_views.py', 'fragments.py', 'projection.py', 'templates/preparation.html', 'static/preparation.css'):
                 (web / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_web / name, web / name)
             (repo / 'tools').mkdir()
@@ -80,6 +80,7 @@ class RuntimeBundleTests(unittest.TestCase):
             manifest = json.loads((unpacked / 'release.json').read_text())
             self.assertEqual(commit, manifest['source_sha'])
             self.assertIn('benchmark/models.toml', manifest['files'])
+            self.assertIn('benchmark/requirements.txt', manifest['files'])
             for name, expected in manifest['files'].items():
                 self.assertEqual(expected, hashlib.sha256((unpacked / name).read_bytes()).hexdigest())
             self.assertEqual(0o755, (unpacked / 'benchmark/benchmark-runtime').stat().st_mode & 0o777)

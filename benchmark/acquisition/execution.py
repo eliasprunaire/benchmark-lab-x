@@ -124,12 +124,18 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
             closed_operation = _transport_operation(attempt['operation'])
             if transport_factory is not None:
                 if snapshot['manifest'].get('funding', 'operator') == 'requester':
-                    from ..provider_access import decrypt
+                    from ..provider_access import authorize_session, decrypt
+                    authorize_session(connection, session_id)
                     row = connection.execute("SELECT key_cipher FROM s2_provider_access WHERE session_id=? AND status='connected'",
                                              (session_id,)).fetchone()
-                    if (row is None or requester_key is None or not hmac.compare_digest(
-                            decrypt(access_secret, row[0]).encode(), requester_key.encode())):
-                        from ..preparation import Denied
+                    from ..preparation import Denied
+                    if row is None or requester_key is None:
+                        raise Denied('ACCESS_REQUIRED')
+                    try:
+                        current_key = decrypt(access_secret, row[0], session_id, 'key')
+                    except IntegrityError:
+                        raise Denied('ACCESS_UNAVAILABLE') from None
+                    if not hmac.compare_digest(current_key.encode(), requester_key.encode()):
                         raise Denied('ACCESS_REQUIRED')
                     transport = transport_factory(
                         closed_request['requested_configuration']['channel_id'], requester_key)

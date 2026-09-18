@@ -85,7 +85,7 @@ Le [guide opérateur](benchmark/README.md) décrit l’initialisation, les autor
 La suite locale et la CI utilisent la même commande principale :
 
 ```bash
-uv run --with requests --with mpmath==1.3.0 \
+uv run --with-requirements benchmark/requirements.txt --with requests --with mpmath==1.3.0 \
   python -m unittest discover -s tests
 ```
 

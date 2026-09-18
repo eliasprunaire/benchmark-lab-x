@@ -26,7 +26,7 @@ Le nom du modèle ne suffit toutefois pas comme preuve. Le modèle est l'identif
 
 Le produit s’adresse à la communauté du Lab-X et aux utilisateurs qui cherchent une configuration adaptée à une tâche. Les tâches représentent des besoins de métiers et de domaines variés ; le catalogue n’est pas limité aux usages informatiques ou administratifs. Dès 0.1.0, le parcours public permet de décrire un besoin et de préparer une épreuve avec une assistance IA. L’approbation du contrat, l’exécution et la publication gardent leurs autorités propres. Le site permet aussi de consulter les résultats dont la publication a été approuvée.
 
-La description reste générale, sans donnée personnelle ni information confidentielle. Les personnes, organismes, échanges et pièces du dossier sont entièrement inventés ; un dossier réel simplement anonymisé ne convient pas. Le parcours 0.1.0 ne comprend aucun téléversement de dossier réel, accès à l’ordinateur, connecteur vers les données de l’utilisateur ou action sur son téléphone. Une consigne de saisie ne garantit pas l’absence de contenu sensible et aucune anonymisation automatique, notamment dans le navigateur, n’est promise. Les modalités d’accès, de conservation et de traitement d’une saisie sensible restent à décider avant ouverture.
+La description reste générale, sans donnée personnelle ni information confidentielle. Les personnes, organismes, échanges et pièces du dossier sont entièrement inventés ; un dossier réel simplement anonymisé ne convient pas. Le parcours 0.1.0 ne comprend aucun téléversement de dossier réel, accès à l’ordinateur, connecteur vers les données de l’utilisateur ou action sur son téléphone. Une consigne de saisie ne garantit pas l’absence de contenu sensible et aucune anonymisation automatique, notamment dans le navigateur, n’est promise. Les modalités de conservation et de retrait sont définies dans la section « Historique et contributions ».
 
 Le catalogue distingue le métier ou domaine, qui donne le contexte, et la famille de tâche, qui décrit le travail, par exemple : extraire, rapprocher, synthétiser, rédiger, décider, organiser, rechercher ou argumenter. Ces repères peuvent se croiser et évoluer. Ils servent à trouver un usage proche, sans promettre une compétence générale sur une profession.
 
@@ -74,7 +74,7 @@ La sélection d’un modèle ne prouve ni sa disponibilité ni sa compatibilité
 
 Les assistants d’accueil, de préparation et de jugement sont sélectionnés séparément du panel candidat. Aucun assistant n’est déclaré qualifié, disponible ou moins cher sans preuve. Le responsable peut retenir un profil OpenRouter déjà approuvé au démarrage, sans modifier le code ; un fichier de profil ne promeut aucun essai en assistant de production. Les essais de préparation examinent la fidélité au besoin vague, l’utilité des questions, l’absence de besoins inventés, la cohérence et la vérifiabilité du cas, ainsi que la conservation des accords lors des modifications. Coûts et provenance sont examinés séparément de cette qualité ; identifiants, méthode d’essai et budget doivent être décidés avant les appels.
 
-Restent ouverts avant réalisation ou ouverture des fonctions concernées : admission des demandes, identité et sessions, traitement des saisies sensibles et conservation, financement et enveloppes, protection contre les abus, articulation des panels et campagnes réelles, publication et alimentation du catalogue. La confidentialité demeure la règle avant autorisation de publication. Les frontières d’accès et le composant portant l’assistance sont à préciser dans l’[ARD](ARD.md#121-frontières-du-produit). Ces inconnues n’annulent pas le cap produit ; elles n’autorisent aucun choix implicite de compte, quota, prix ou publication automatique.
+Restent ouverts avant réalisation ou ouverture des fonctions concernées : protection contre les abus, articulation des campagnes réelles, publication et alimentation du catalogue. Les sessions, la conservation et le financement personnel suivent les décisions ci-dessous. La confidentialité demeure la règle avant autorisation de publication. Les frontières d’accès et le composant portant l’assistance sont à préciser dans l’[ARD](ARD.md#121-frontières-du-produit). Ces inconnues n’annulent pas le cap produit ; elles n’autorisent aucun choix implicite de compte, quota, prix ou publication automatique.
 
 ### 5.2 Extensions
 
@@ -138,9 +138,34 @@ Les critères sont fixés avant approbation du contrat. La présentation du pane
 
 ### Accès OpenRouter personnel
 
-Le demandeur peut saisir sa clé OpenRouter dans le parcours web pour financer ses préparations, qualifications et comparaisons. La clé est liée à sa session de navigateur et conservée chiffrée côté exécuteur. Elle n’est ni réaffichée ni stockée dans le navigateur. Son enregistrement vérifie l’accès sans lancer de modèle ; les enveloppes et autorisations d’appel restent distinctes. Le mode personnel n’utilise jamais la clé opérateur en secours. Remplacer la clé ne renouvelle pas l’enveloppe de préparation de cette session. La retirer interdit les nouveaux appels avec cette clé, sans révoquer l’accès chez OpenRouter ni annuler les appels déjà émis. L’arrêt global du service s’applique aussi au mode personnel.
+Le demandeur peut saisir sa clé OpenRouter dans le parcours web pour financer ses préparations, qualifications et comparaisons. La clé est liée à sa session de navigateur et conservée chiffrée côté exécuteur. Elle n’est ni réaffichée ni stockée dans le navigateur. Son enregistrement vérifie l’accès sans lancer de modèle ; les enveloppes et autorisations d’appel restent distinctes. Le mode personnel n’utilise jamais la clé opérateur en secours. Remplacer la clé ne crée aucun crédit local. La retirer interdit les nouveaux appels avec cette clé, sans révoquer l’accès chez OpenRouter ni annuler les appels déjà émis. L’arrêt global du service s’applique aussi au mode personnel.
 
-Un cookie protégé conserve l’accès dans le même navigateur après sa fermeture, pendant 30 jours maximum sans visite du parcours privé. La clé reste soumise à son expiration côté serveur et peut être retirée depuis la page. L’expiration ou le retrait ne renouvelle aucun budget et ne supprime pas les cas d’usage.
+Un cookie protégé conserve l’accès dans le même navigateur après sa fermeture, pendant 30 jours maximum sans interaction réelle dans une page visible. Une lecture, un suivi automatique ou un téléchargement ne prolonge pas cette durée ; le serveur contrôle aussi l’expiration. La clé reste soumise à son expiration côté serveur et peut être retirée depuis la page. L’expiration ou le retrait ne renouvelle aucun budget et ne supprime pas les cas d’usage.
+
+### Historique et contributions
+
+Le responsable du traitement est **Cybrel RSSI**, joignable à **contact@cybrel.fr**. La notice explique les finalités, emplacements, durées et retraits avant le choix de contribution. Les textes sont potentiellement sensibles malgré la consigne de données fictives ; aucun anonymat parfait n’est annoncé.
+
+| Données | Emplacement et durée |
+|---|---|
+| Clé personnelle | Chiffrée sur le serveur ; retrait immédiat ou expiration après 30 jours d’inactivité réelle |
+| Accès privé | Cookie protégé sans clé ; même échéance contrôlée côté serveur |
+| Cas et résultats nécessaires au traitement | Serveur privé, 7 jours d’inactivité de chaque dossier |
+| Historique personnel | IndexedDB du navigateur, jusqu’à son effacement par l’utilisateur ou le navigateur |
+| Contribution facultative | Copie privée distincte, au plus 6 mois calendaires après consentement |
+| Sauvegardes | Résidu limité à 7 jours après suppression active, à vérifier avant activation de cette notice |
+
+L’activité sur un dossier renouvelle seulement ce dossier et l’accès principal. L’activité sur l’accueil renouvelle seulement l’accès. Un accès expiré ne se réactive pas par une requête d’activité.
+
+L’historique local permet de lire les copies complètes et d’exporter chaque cas après expiration de l’accès serveur. Il ne contient ni secret ni référence privée du juge. Une copie incomplète ne remplace jamais la précédente. Le navigateur peut refuser une écriture ou supprimer ses données ; cet historique ne constitue pas une sauvegarde garantie. Toute personne utilisant le même profil de navigateur peut le consulter.
+
+Après présentation de l’exemple, une case décochée propose d’autoriser son utilisation et celle de ses résultats pour améliorer Bench-X. Le consentement porte sur cette version : toute nouvelle version nécessite un nouveau choix. La copie comprend l’exemple généré, ses pièces, sa qualification, les configurations, réponses, verdicts et coûts autorisés. Elle exclut le besoin initial, les corrections et messages libres, les clés, cookies, adresses réseau et journaux bruts. Un contrôle déterministe exclut les contenus manifestement sensibles sans garantir une anonymisation. Aucun entraînement, transfert tiers ou publication n’est déclenché.
+
+Refuser ou retirer une contribution ne dégrade pas le benchmark. Le stockage temporaire et les échanges nécessaires avec Openrouter et les fournisseurs continuent selon leurs conditions propres. Les ajouts ultérieurs de résultats ne prolongent pas les six mois. Les dérivés identifiables restent rattachés à leur contribution et sont retirés avec elle.
+
+« Mes données » distingue retirer la clé, effacer l’historique local, retirer une contribution et supprimer un cas d’usage. Cette dernière action efface la copie locale, demande la purge du dossier serveur et retire sa contribution associée. L’interface distingue un effacement local réussi d’une suppression serveur non confirmée. Un onglet ancien ne recrée pas automatiquement une archive effacée.
+
+Un cookie protégé distinct permet de retirer les contributions jusqu’à leur dernière échéance, même après expiration de l’accès principal. Il ne permet ni de lire les dossiers temporaires ni d’utiliser la clé. La perte de ce cookie ne permet pas de récupérer automatiquement l’identité ; la notice indique le contact et cette limite.
 
 ### Exemple pédagogique : Orme & Signal
 

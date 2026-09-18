@@ -420,7 +420,7 @@ class AccessServerTests(unittest.TestCase):
                     self.assertNotIn(b'<script>', raw)
                 self.assertEqual(expected, headers['Content-Security-Policy'])
 
-    def test_cookie_survives_browser_close_and_renews_only_on_success(self):
+    def test_cookie_persistant_non_renouvele_par_une_lecture(self):
         _, headers, _ = self.request('GET', '/preparation/access')
         cookie = SimpleCookie(headers['Set-Cookie'])['benchmark_session']
         self.assertEqual('2592000', cookie['max-age'])
@@ -432,9 +432,7 @@ class AccessServerTests(unittest.TestCase):
         request_headers = {'Cookie': 'benchmark_session=' + cookie.value,
                            'Accept': 'application/json'}
         _, renewed, _ = self.request('GET', '/preparation', headers=request_headers)
-        again = SimpleCookie(renewed['Set-Cookie'])['benchmark_session']
-        self.assertEqual(cookie.value, again.value)
-        self.assertEqual('2592000', again['max-age'])
+        self.assertIsNone(renewed.get('Set-Cookie'))
         _, refused, _ = self.request('GET', '/preparation/unknown', headers=request_headers)
         self.assertIsNone(refused.get('Set-Cookie'))
 

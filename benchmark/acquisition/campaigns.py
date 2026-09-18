@@ -15,7 +15,7 @@ import re
 import secrets
 import sqlite3
 
-from .. import qualification as q, storage
+from .. import privacy, qualification as q, storage
 from ..model_catalogue import REASONING_EFFORTS as _EFFORT_ORDER
 from ..validation import digest as value_digest, identifier, _hash, _texts
 from ..storage import BudgetError, ConflictError, IntegrityError, SchemaError, _fields, _money, _sum_money, _text, _transaction, _strict_json as encode
@@ -147,7 +147,7 @@ def initialize(data):
         connection = store._connection_checked()
         with _transaction(connection, write=True):
             layout = storage._check_schema(connection)
-            if layout in ('s4', 's5', 's6'):
+            if layout in ('s4', 's5', 's6', 's7'):
                 return
             if layout != 's3':
                 raise SchemaError('Extension explicite sur une base S3 requise')
@@ -913,7 +913,7 @@ def _inspect(store, connection, campaign_id):
                 state=state, admission=active, admissions=list(admissions.values()),
                 stop_reason=status[1], stopped_at=status[2], cells=cells, attempts=attempts, budget=budget,
                 cap_usd=str(cap_usd), cap_source=cap[1],
-                restore_pending=os.path.lexists(store._root / 'restore.json'))
+                restore_pending=privacy.quarantined(store))
 
 
 def inspect(store, campaign_id):
@@ -1128,13 +1128,13 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
         requester = snapshot['manifest'].get('funding') == 'requester'
     access = {'connected': False, 'status': 'unavailable'}
     if requester:
-        from ..provider_access import view as access_view
-        access = access_view(store, session_id, access_secret, access_transport, refresh=False)
+        from ..provider_access import status_only
+        access = status_only(store, session_id)
     judgment_estimate, judgment_error = None, None
     if requester and judgment_transport is not None and not snapshot['attempts']:
         from .. import automatic_judgment as auto
         try:
-            _, judgment_estimate = auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport)
+            _, judgment_estimate = auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport, check_access=False)
         except (ValueError, ConflictError, BudgetError):
             judgment_error = 'Évaluation indisponible : vérifiez votre clé, le budget restant ou la disponibilité du service'
     with _transaction(connection):
