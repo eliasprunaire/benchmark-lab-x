@@ -6,8 +6,13 @@ import subprocess
 from pathlib import Path
 
 
-SEMVER = re.compile(r'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')
-COMMIT = re.compile(r'^(?P<kind>[a-z]+)(?:\([^)]*\))?(?P<breaking>!)?:\s')
+SEMVER_IDENTIFIER = r'(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+SEMVER = re.compile(
+    rf'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+    rf'(?:-{SEMVER_IDENTIFIER}(?:\.{SEMVER_IDENTIFIER})*)?'
+    rf'(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$')
+PRE_RELEASE = re.compile(rf'^{SEMVER_IDENTIFIER}(?:\.{SEMVER_IDENTIFIER})*$')
+COMMIT = re.compile(r'^(?P<kind>[a-z]+)(?:\((?P<scope>[^)]*)\))?(?P<breaking>!)?:\s')
 
 
 def git(repo, *arguments):
@@ -18,13 +23,16 @@ def classify(subject, body=''):
     match = COMMIT.match(subject)
     if match is None:
         return None
+    if match['scope'] == 'ci':
+        return None
     if match['breaking'] or re.search(r'^BREAKING CHANGE:', body, re.MULTILINE):
         return 'breaking'
     return {'feat': 'minor', 'fix': 'patch'}.get(match['kind'])
 
 
 def bump(version, level):
-    major, minor, patch = (int(part) for part in version.split('.'))
+    core = version.split('+', 1)[0].split('-', 1)[0]
+    major, minor, patch = (int(part) for part in core.split('.'))
     if level == 'breaking':
         return f'{major + 1}.0.0' if major else f'0.{minor + 1}.0'
     if level == 'minor':
@@ -32,6 +40,14 @@ def bump(version, level):
     if level == 'patch':
         return f'{major}.{minor}.{patch + 1}'
     raise ValueError('Niveau SemVer inconnu')
+
+
+def with_pre_release(version, suffix):
+    if not suffix:
+        return version
+    if PRE_RELEASE.fullmatch(suffix) is None:
+        raise ValueError('Suffixe de préversion invalide')
+    return f'{version}-{suffix}'
 
 
 def next_level(messages):
@@ -72,11 +88,12 @@ def latest_tag(repo, head):
         if not tag.startswith('v') or SEMVER.fullmatch(tag[1:]) is None:
             continue
         if subprocess.run(['git', '-C', str(repo), 'merge-base', '--is-ancestor', tag, head]).returncode == 0:
-            candidates.append((tuple(int(part) for part in tag[1:].split('.')), tag))
+            core = tag[1:].split('+', 1)[0].split('-', 1)[0]
+            candidates.append((tuple(int(part) for part in core.split('.')), tag))
     return max(candidates)[1] if candidates else None
 
 
-def decision(repo, head, base=None):
+def decision(repo, head, base=None, pre_release=None):
     repo = Path(repo).resolve()
     head = git(repo, 'rev-parse', head + '^{commit}')
     tag = latest_tag(repo, head)
@@ -87,8 +104,8 @@ def decision(repo, head, base=None):
         base_commit = git(repo, 'rev-parse', base_commit + '^{commit}')
         current = source_version(repo, head)
     level = next_level(messages(repo, base_commit, head))
-    return {'base': base_commit, 'head': head, 'level': level,
-            'version': None if level is None else bump(current, level)}
+    version = None if level is None else with_pre_release(bump(current, level), pre_release)
+    return {'base': base_commit, 'head': head, 'level': level, 'version': version}
 
 
 def main():
@@ -96,8 +113,9 @@ def main():
     parser.add_argument('--repo', type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument('--head', required=True)
     parser.add_argument('--base')
+    parser.add_argument('--pre-release', default='')
     args = parser.parse_args()
-    print(json.dumps(decision(args.repo, args.head, args.base), sort_keys=True))
+    print(json.dumps(decision(args.repo, args.head, args.base, args.pre_release), sort_keys=True))
 
 
 if __name__ == '__main__':
