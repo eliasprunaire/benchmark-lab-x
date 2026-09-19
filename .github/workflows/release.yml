@@ -1,0 +1,140 @@
+name: Release Bench-X
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Commit main à publier; vide pour le commit courant
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: ${{ vars.BENCHMARK_RELEASE_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Récupérer le commit exact
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configurer uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.3"
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Déterminer la version depuis l’historique
+        id: version
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base="$BEFORE_SHA"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then base="$(git rev-parse "$SOURCE_SHA^")"; fi
+          python3 tools/release.py --head "$SOURCE_SHA" --base "$base" > release-decision.json
+          version="$(python3 -c 'import json; print(json.load(open("release-decision.json"))["version"] or "")')"
+          if [ -z "$version" ]; then
+            echo "Aucune modification feat/fix éligible; aucune release"
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Construire et vérifier l’artefact
+        if: steps.version.outputs.eligible == 'true'
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv run --with-requirements benchmark/requirements.lock --python 3.12 python tools/build_runtime.py \
+            --source "$SOURCE_SHA" --version "$VERSION" --output benchmark-runtime.tar.gz > build-receipt.json
+          uv run --with-requirements benchmark/requirements.lock --python 3.12 python tools/build_runtime.py \
+            --source "$SOURCE_SHA" --version "$VERSION" --output benchmark-runtime-repeat.tar.gz > /dev/null
+          cmp benchmark-runtime.tar.gz benchmark-runtime-repeat.tar.gz
+          test "$(sha256sum benchmark-runtime.tar.gz | cut -d' ' -f1)" = "$(python3 -c 'import json; print(json.load(open("build-receipt.json"))["artifact_sha256"])')"
+          printf '%s  %s\n' "$(sha256sum benchmark-runtime.tar.gz | cut -d' ' -f1)" benchmark-runtime.tar.gz > SHA256SUMS
+          printf '%s  %s\n' "$(sha256sum build-receipt.json | cut -d' ' -f1)" build-receipt.json >> SHA256SUMS
+
+      - name: Refuser une release déjà attribuée à un autre commit
+        if: steps.version.outputs.eligible == 'true'
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            target="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
+            test "$target" = "$SOURCE_SHA" || { echo "::error::La release $TAG vise un autre commit"; exit 1; }
+            echo "Release déjà présente pour le même commit; aucune seconde création"
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Le tag $TAG existe sans release vérifiable"
+            exit 1
+          fi
+          echo "present=false" >> "$GITHUB_OUTPUT"
+
+      - name: Créer la release et ses preuves
+        if: steps.version.outputs.eligible == 'true' && steps.existing.outputs.present != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          Bench-X $VERSION
+
+          Commit source: $SOURCE_SHA
+          Artefact et reçu de build: voir les fichiers joints et SHA256SUMS.
+          La provenance est vérifiée par le constructeur et le contrôleur de livraison.
+          EOF
+          gh release create "$TAG" benchmark-runtime.tar.gz build-receipt.json SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --title "$TAG" --notes-file release-notes.md
+
+      - name: Vérifier la release créée
+        if: steps.version.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)" = "$SOURCE_SHA"
+
+      - name: Publier le reçu dans le résumé
+        if: always() && steps.version.outputs.eligible == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          {
+            echo "Version: $VERSION"
+            echo "Commit: $SOURCE_SHA"
+            echo "Artefact SHA-256: $(sha256sum benchmark-runtime.tar.gz | cut -d' ' -f1)"
+            echo "Reçu de build SHA-256: $(sha256sum build-receipt.json | cut -d' ' -f1)"
+          } >> "$GITHUB_STEP_SUMMARY"

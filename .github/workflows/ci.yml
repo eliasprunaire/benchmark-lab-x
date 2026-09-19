@@ -50,15 +50,15 @@ jobs:
         run: |
           uv run --with-requirements benchmark/requirements.txt --python 3.12 python -m benchmark.runtime inspect-pi \
             --pi-package "$BENCHMARK_TEST_PI_PACKAGE" --node "$(command -v node)"
-          uv run --with-requirements benchmark/requirements.txt --with requests --with mpmath==1.3.0 python -m unittest -v tests.test_private_comparison
+          uv run --with-requirements benchmark/requirements.lock --python 3.12 python -m unittest -v tests.test_private_comparison
 
       - name: Exécuter les tests
         env:
           BENCHMARK_TEST_PI_PACKAGE: ${{ runner.temp }}/benchmark-pi/node_modules/@earendil-works/pi-coding-agent
-        run: uv run --with-requirements benchmark/requirements.txt --with requests --with mpmath==1.3.0 python -m unittest discover -s tests
+        run: uv run --with-requirements benchmark/requirements.lock --python 3.12 python -m unittest discover -s tests
 
       - name: Vérifier la version cryptographique du runtime Linux
-        run: uv run --with cryptography==41.0.7 --with requests --with mpmath==1.3.0 python -m unittest tests.test_provider_crypto tests.test_privacy
+        run: uv run --with-requirements benchmark/requirements.lock --python 3.12 python -m unittest tests.test_provider_crypto tests.test_privacy
 
       - name: Vérifier les archives dans Chromium
         run: |
@@ -70,7 +70,11 @@ jobs:
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          uv run --python 3.12 python tools/build_runtime.py --source "$SOURCE_SHA" --output "$RUNNER_TEMP/benchmark-runtime.tar.gz"
+          uv run --with-requirements benchmark/requirements.lock --python 3.12 python tools/build_runtime.py --source "$SOURCE_SHA" --output "$RUNNER_TEMP/benchmark-runtime.tar.gz"
+          uv run --with-requirements benchmark/requirements.lock --python 3.12 python tools/build_runtime.py --source "$SOURCE_SHA" --output "$RUNNER_TEMP/benchmark-runtime-repeat.tar.gz" > "$RUNNER_TEMP/build-receipt.json"
+          cmp "$RUNNER_TEMP/benchmark-runtime.tar.gz" "$RUNNER_TEMP/benchmark-runtime-repeat.tar.gz"
+          test "$(sha256sum "$RUNNER_TEMP/benchmark-runtime.tar.gz" | cut -d' ' -f1)" = "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artifact_sha256"])' "$RUNNER_TEMP/build-receipt.json")"
+          python3 tools/release.py --head "$SOURCE_SHA" --base "${{ github.event.pull_request.base.sha }}" > "$RUNNER_TEMP/release-decision.json"
 
   pi-version:
     if: github.event_name == 'schedule'

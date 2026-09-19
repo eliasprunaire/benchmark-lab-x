@@ -82,6 +82,10 @@ class RuntimeBundleTests(unittest.TestCase):
             (package / 'storage.py').write_text('Invalid uncommitted content')
             second = build(repo, commit, root / 'second.tar.gz')
             self.assertEqual(first, second)
+            versioned = build(repo, commit, root / 'versioned.tar.gz', '0.2.0')
+            self.assertEqual('0.2.0', versioned['version'])
+            with tarfile.open(root / 'versioned.tar.gz') as archive:
+                self.assertIn(b"VERSION = '0.2.0'", archive.extractfile('benchmark/__init__.py').read())
             unpacked = root / 'release'
             unpacked.mkdir()
             with tarfile.open(root / 'first.tar.gz') as archive:
