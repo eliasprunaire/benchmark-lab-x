@@ -107,7 +107,6 @@ jobs:
           test "$(sha256sum "$first" | cut -d' ' -f1)" = "$(uv run --with-requirements benchmark/requirements-runtime.lock --python 3.14.7 python -c \
             'import json,sys; print(json.load(open(sys.argv[1]))["artifact_sha256"])' "$receipt")"
           cp release-decision.json "$RUNNER_TEMP/release-decision.json"
-          cp "$receipt" "$RUNNER_TEMP/build-receipt.json"
           printf '%s  %s\n' "$(sha256sum "$first" | cut -d' ' -f1)" benchmark-runtime.tar.gz > "$RUNNER_TEMP/SHA256SUMS"
           printf '%s  %s\n' "$(sha256sum "$receipt" | cut -d' ' -f1)" build-receipt.json >> "$RUNNER_TEMP/SHA256SUMS"
           printf '%s  %s\n' "$(sha256sum release-decision.json | cut -d' ' -f1)" release-decision.json >> "$RUNNER_TEMP/SHA256SUMS"

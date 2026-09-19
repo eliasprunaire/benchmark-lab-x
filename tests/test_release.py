@@ -63,6 +63,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertNotIn('useradmin@10.10.0.33', workflow)
         self.assertIn('isPrerelease', workflow)
         self.assertIn('main_sha="$(git rev-parse origin/main^{commit})"', workflow)
+        self.assertNotIn('cp "$receipt" "$RUNNER_TEMP/build-receipt.json"', workflow)
 
 
 if __name__ == '__main__':
