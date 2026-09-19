@@ -207,6 +207,8 @@ def personal_key_form(csrf, access):
 
 def render(value, csrf, path='/preparation', *, error=False):
     """Native HTML forms, inert evidence and a fixed comparison focus script"""
+    if value.get('kind') == 'attempt_detail':
+        return render_attempt_detail(value).encode('utf-8')
     def field_attributes(name):
         return f' aria-describedby="{text(name)}-error"' if value.get('error_field') == name else ''
 
@@ -338,9 +340,6 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<p>Cette vue privée reprend le contenu de la projection avec des liens privés vers les seules pièces '
         content += 'sélectionnées. Son habillage n’est pas un fichier approuvé. Le reçu fictif devra porter sur les octets du paquet.</p>'
         content += '<hr>' + projection_body(value['comparison'], value['selected_links'])
-    elif value.get('kind') == 'attempt_detail':
-        title = 'Détail et preuves du résultat'
-        content = render_attempt_detail(value)
     elif 'dossiers' in value:
         title = 'Mes cas d’usage'
         content = personal_key_form(csrf, value.get('personal_access', {})) if value.get('personal_preparation') and path == '/preparation' else ''

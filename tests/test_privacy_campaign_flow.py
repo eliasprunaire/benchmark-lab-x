@@ -124,7 +124,7 @@ class PrivacyCampaignFlow(unittest.TestCase):
             sha256='1' * 64, bridge_sha256='2' * 64, node_version='v24.0.0',
             node_sha256='3' * 64, scope='Fixture locale sans exécution Pi')
         current = campaigns.prepare_configurations(self.store, self.sid, dossier,
-            dict(models=['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], tier='standard'), identity)
+            dict(models=['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], tier='low'), identity)
         cid = current['current_campaign_id']
         snapshot = campaigns.inspect(self.store, cid)
         body = dict(manifest_version=snapshot['manifest']['version'],

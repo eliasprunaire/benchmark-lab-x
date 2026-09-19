@@ -187,7 +187,7 @@ Les campagnes déjà enregistrées conservent leurs questions, panels, schémas 
 - fabriquer des répétitions ou une stabilité
 - déduire un rang qualitatif des `FAIL G-001`
 - transformer un `PASS` de qualification du harnais en `PASS` produit
-- produire une baseline, un coût par résultat acceptable ou une recommandation absente
+- produire une baseline, un coût par résultat acceptable ou un conseil borné aux qualités et coûts observés
 - remplacer une inconnue par une estimation
 
 ## 10. Sécurité et autorité

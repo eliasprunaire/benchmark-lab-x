@@ -33,10 +33,22 @@ def query_parameters(raw):
 
 def _orderable(definition):
     unit = definition.get('unit', '').strip().lower()
+    scale = definition.get('scale')
+    ordinal = (type(scale) is list and len(scale) > 1 and len(set(scale)) == len(scale)
+               and all(type(value) is str and value for value in scale)
+               and definition.get('favorable') in (scale[0], scale[-1]))
     return (bool(definition.get('measure', '').strip()) and bool(definition.get('proof', '').strip())
-            and bool(unit) and unit not in ('descriptif', 'descriptive', 'texte', 'text', 'description')
+            and (ordinal or (bool(unit) and unit not in ('descriptif', 'descriptive', 'texte', 'text', 'description')
             and definition.get('favorable', '') in ('lower', 'higher', 'yes')
-            and (definition.get('favorable', '') != 'yes' or unit in ('bool', 'boolean', 'booléen')))
+            and (definition.get('favorable', '') != 'yes' or unit in ('bool', 'boolean', 'booléen')))))
+
+
+def _criterion_definition(criterion):
+    definition = deepcopy(criterion)
+    if 'scale' in definition:
+        definition.update(measure=definition['label'], proof='Passages de la sortie cités exactement',
+                          unit='descriptif', aggregation='Aucune agrégation')
+    return definition
 
 
 def _number(value, unit):
@@ -74,6 +86,11 @@ def _metric(row, column):
 
 
 def _metric_number(metric):
+    definition = metric.get('definition', {})
+    scale = definition.get('scale')
+    if type(scale) is list and metric.get('value') in scale:
+        index = scale.index(metric['value'])
+        return Decimal(len(scale) - index if definition.get('favorable') == scale[0] else index + 1)
     value = _number(metric['value'], metric['unit'])
     if value is None:
         raise ValueError('Mesure non ordonnable')
@@ -92,22 +109,32 @@ def _rank(rows, columns):
                 metric['rank'] = 1 + sum(other > value if higher else other < value for other in values)
 
 
-def _economic_choice(rows, case_count, coverage, pending):
-    """Conditional cost advice, independent of display filters and without aggregation"""
+def _recommendation(rows, columns, case_count, coverage, pending):
+    """Recommend only a quality-dominant response or the cheapest exact quality tie"""
     if (case_count != 1 or pending or coverage['not_started']
             or coverage['decided_attempts'] != coverage['planned_cells']
             or len({row['configuration_id'] for row in rows}) != len(rows)):
         return None
     eligible = [row for row in rows if row['verdict'] == 'SATISFAIT']
-    if len(eligible) < 2 or any(row['cost']['rank'] is None for row in eligible):
+    quality = [column for column in columns if 'criterion_id' in column]
+    if (len(eligible) < 2 or not quality or any(row['cost']['rank'] is None for row in eligible)
+            or any(_metric(row, column)['rank'] is None for row in eligible for column in quality)):
         return None
-    minimum = min(_metric_number(row['cost']) for row in eligible)
-    cheapest = [row for row in eligible if _metric_number(row['cost']) == minimum]
-    if len(cheapest) != 1:
+    quality_vectors = {row['attempt_id']: tuple(_metric_number(_metric(row, column)) for column in quality)
+                       for row in eligible}
+    vectors = {row['attempt_id']: quality_vectors[row['attempt_id']] + (-_metric_number(row['cost']),)
+               for row in eligible}
+    frontier = [row for row in eligible if not any(
+        all(left >= right for left, right in zip(vectors[other['attempt_id']], vectors[row['attempt_id']]))
+        and any(left > right for left, right in zip(vectors[other['attempt_id']], vectors[row['attempt_id']]))
+        for other in eligible if other is not row)]
+    basis = ('equal_quality_cost' if len(set(quality_vectors.values())) == 1 else 'quality_and_cost')
+    if len(frontier) != 1:
         return None
-    row = cheapest[0]
+    row = frontier[0]
     return dict(configuration=deepcopy(row['requested_configuration']), count=len(eligible),
-                amount=row['cost']['value'], unit=row['cost']['unit'], detail_href=row['detail_href'])
+                amount=row['cost']['value'], unit=row['cost']['unit'], basis=basis,
+                quality=[deepcopy(column['definition']) for column in quality], detail_href=row['detail_href'])
 
 
 def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
@@ -123,15 +150,19 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                     proof='Coût observé et source du reçu candidat de chaque tentative')]
     used = {'cost'} | {m['id'] for m in spec['secondary_criteria']}
     for measure in spec['secondary_criteria']:
-        if not _orderable(measure):
+        definition = _criterion_definition(measure)
+        if not _orderable(definition):
             continue
         key = measure['id']
         if key == 'cost':
             while key in used:
                 key = 'criterion:' + key
         used.add(key)
-        columns.append(dict(id=key, criterion_id=measure['id'], definition=deepcopy(measure),
-                            unit=measure['unit'], favorable=measure['favorable'], proof=measure['proof']))
+        scale = definition.get('scale')
+        favorable = ('higher' if type(scale) is list and definition.get('favorable') == scale[0]
+                     else 'lower' if type(scale) is list else measure['favorable'])
+        columns.append(dict(id=key, criterion_id=measure['id'], definition=definition,
+                            unit=definition['unit'], favorable=favorable, proof=definition['proof']))
     _queries(query, campaign, spec, columns)
     records = e.projection(store, connection, dossier_id, campaign_id)
     latest = {record['attempt_id']: record for record in records}
@@ -178,8 +209,11 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                     measure['reason'] = 'Observation descriptive : aucune échelle ordonnable déclarée'
                 elif measure['status'] != 'KNOWN' or not measure['evidence']:
                     measure['reason'] = 'Mesure ou preuve absente'
-                elif _number(measure['value'], measure['unit']) is None:
-                    measure['reason'] = 'Valeur non interprétable sur l’échelle déclarée'
+                else:
+                    try:
+                        _metric_number(measure)
+                    except ValueError:
+                        measure['reason'] = 'Valeur non interprétable sur l’échelle déclarée'
         row['detail_href'] = base + '/attempts/' + identifier(row['attempt_id']) + suffix
         rows.append(row)
     _rank(rows, columns)
@@ -226,7 +260,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 result_expected=spec['result_expected'], human_work=contract['package']['human_work'],
                 conclusion=conclusion, coverage=coverage, population=population, filter_scope=deepcopy(query),
                 economic_status='COMPLETE' if complete else 'INCOMPLETE', columns=columns, rows=ordered,
-                economic_choice=_economic_choice(rows, len(campaign['cases']), coverage, pending),
+                recommendation=_recommendation(rows, columns, len(campaign['cases']), coverage, pending),
                 cases=campaign['cases'], panel=campaign['panel'], conditions=campaign['conditions'],
                 obligations=spec['obligations'], cost_basis=basis, cells=campaign['cells'],
                 campaign_state=campaign['state'], history=records, href=base, pending_attempts=pending,

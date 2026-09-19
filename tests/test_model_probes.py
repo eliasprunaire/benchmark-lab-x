@@ -75,7 +75,7 @@ class ModelProbeTests(unittest.TestCase):
         self.assertNotIn(KEY, storage._strict_json(view))
         self.assertEqual((operation_id, None), self.submit(action='double-click'))
         prepared = campaigns.prepare_configurations(self.store, self.session, 'fixture',
-            {'models': [SLUG, 'openai/gpt-5.6-sol'], 'tier': 'enhanced'}, self.identity)
+            {'models': [SLUG, 'openai/gpt-5.6-sol'], 'tier': 'high'}, self.identity)
         custom = prepared['configurations'][0]
         self.assertEqual(SLUG, custom['model'])
         self.assertEqual(operation_id, custom['estimate']['probe_operation_id'])
@@ -267,7 +267,7 @@ class ModelProbeTests(unittest.TestCase):
         operation_id, key = self.submit()
         self.respond(operation_id, key)
         prepared = campaigns.prepare_configurations(self.store, self.session, 'fixture',
-            {'models': [SLUG, 'openai/gpt-5.6-sol'], 'tier': 'standard'}, self.identity)
+            {'models': [SLUG, 'openai/gpt-5.6-sol'], 'tier': 'low'}, self.identity)
         campaign = campaigns.inspect(self.store, prepared['current_campaign_id'])
         checked_at = prepared['configurations'][0]['estimate']['fetched_at']
         with patch.object(model_probes.model_catalogue, '_now',

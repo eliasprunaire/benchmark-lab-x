@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from email.utils import format_datetime
 from html import escape
 from http.cookies import SimpleCookie, CookieError
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
 import logging
@@ -457,5 +457,5 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                     self.respond(404, {'error': 'NO_VERIFIED_PUBLICATION'})
 
     # Le proxy termine TLS ; le pare-feu réserve ce port aux deux proxys
-    with HTTPServer((address, port), Handler) as server:
+    with ThreadingHTTPServer((address, port), Handler) as server:
         run(server)

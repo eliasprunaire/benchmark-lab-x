@@ -502,7 +502,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
             or len(set(body['models'])) != len(body['models'])
             or any(type(model_id) is not str for model_id in body['models'])):
         raise ValueError('Au moins deux modèles distincts sont requis')
-    if body['tier'] not in (*_EFFORT_ORDER, 'standard', 'enhanced'):
+    if body['tier'] not in ('low', 'high'):
         raise ValueError('Palier inconnu')
     if type(candidate_identity) is not dict:
         raise LookupError('CANDIDATE_PI_UNAVAILABLE')
@@ -589,11 +589,8 @@ def configurations_view(store, session_id, dossier_id):
             models.append({'id': model['id'], 'name': model['name'] or model['id'],
                            'selected': model['id'] in selected,
                            'not_adjustable': not levels})
-        available_tiers = [level for level in _EFFORT_ORDER if any(
-            level in model['reasoning_levels'] for model in ([] if catalogue is None else catalogue['models'])
-            if model['excluded'] is None and model['route'] is not None)]
-        available_tiers = available_tiers or ['standard']
-        default_tier = 'medium' if 'medium' in available_tiers else next(iter(available_tiers), 'medium')
+        available_tiers = ['low', 'high']
+        default_tier = 'low'
         if not prepared:
             return page_view({'kind': 'configurations', 'dossier_id': dossier_id,
                               'current_campaign_id': None, 'configurations': [], 'models': models,
