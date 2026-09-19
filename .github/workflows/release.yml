@@ -55,7 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           source_sha="$(git rev-parse "$REQUESTED_SHA^{commit}")"
-          main_sha="$(git rev-parse origin/main^{commit}")"
+          main_sha="$(git rev-parse origin/main^{commit})"
           test "$source_sha" = "$main_sha"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
 

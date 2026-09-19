@@ -62,6 +62,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('benchmark-release identity', workflow)
         self.assertNotIn('useradmin@10.10.0.33', workflow)
         self.assertIn('isPrerelease', workflow)
+        self.assertIn('main_sha="$(git rev-parse origin/main^{commit})"', workflow)
 
 
 if __name__ == '__main__':
