@@ -243,10 +243,10 @@ jobs:
           eval "$(ssh-agent -s)"
           trap 'ssh-agent -k >/dev/null' EXIT
           printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
-          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p 2222 useradmin@10.10.0.33)
-          ssh "${ssh_args[@]}" true
-          controller_sha="$(ssh "${ssh_args[@]}" 'sudo -n /usr/bin/python3 -c "import json; print(json.load(open(\"/etc/benchmark-lab-x/operations.json\"))[\"controller_sha\"])"')"
-          worker_sha256="$(ssh "${ssh_args[@]}" 'sudo -n sha256sum /usr/local/sbin/benchmark_release.py' | cut -d' ' -f1)"
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p 2222 benchmark-delivery@10.10.0.33)
+          identity="$(ssh "${ssh_args[@]}" 'sudo -n /usr/local/sbin/benchmark-release identity')"
+          controller_sha="$(uv run --python 3.14.7 python -c 'import json,sys; print(json.loads(sys.argv[1])["controller_sha"])' "$identity")"
+          worker_sha256="$(uv run --python 3.14.7 python -c 'import json,sys; print(json.loads(sys.argv[1])["worker_sha256"])' "$identity")"
           artifact_sha256="$(sha256sum release-bundle/benchmark-runtime.tar.gz | cut -d' ' -f1)"
           receipt_sha256="$(sha256sum release-bundle/build-receipt.json | cut -d' ' -f1)"
           transaction="$(uv run --python 3.14.7 python -c 'import uuid; print(uuid.uuid4().hex)')"
@@ -285,7 +285,7 @@ jobs:
           eval "$(ssh-agent -s)"
           trap 'ssh-agent -k >/dev/null' EXIT
           printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
-          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p 2222 useradmin@10.10.0.33)
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p 2222 benchmark-delivery@10.10.0.33)
           transaction="$(uv run --python 3.14.7 python -c 'import json; print(json.load(open("request.json"))["transaction"])')"
           for attempt in $(seq 1 120); do
             set +e
