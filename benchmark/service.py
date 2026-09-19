@@ -67,7 +67,7 @@ INTERNAL_MESSAGE = ('Défaillance interne du service : l’état de cette action
 PROTOCOL_MESSAGE = 'Réponse d’exécuteur illisible'
 
 
-def release_identity():
+def release_metadata():
     root = Path(__file__).resolve().parents[1]
     try:
         document = (root / 'release.json').read_text()
@@ -77,12 +77,18 @@ def release_identity():
         raise ValueError('Identité de release invalide') from error
     if document is not None:
         try:
-            source = json.loads(document)['source_sha']
+            release = json.loads(document)
+            source = release['source_sha']
         except (ValueError, KeyError, TypeError) as error:
             raise ValueError('Identité de release invalide') from error
         if type(source) is not str or re.fullmatch('[0-9a-f]{40}', source) is None:
             raise ValueError('Identité de release invalide')
-        return source
+        version = release.get('version')
+        if version is not None and (type(version) is not str or not re.fullmatch(
+                r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?',
+                version)):
+            raise ValueError('Identité de release invalide')
+        return {'source_sha': source, 'version': version}
     environment = dict(os.environ)
     environment['GIT_TERMINAL_PROMPT'] = '0'
     try:
@@ -98,14 +104,18 @@ def release_identity():
             except ProcessLookupError:
                 pass
             process.communicate()
-            return 'inconnu'
+            return {'source_sha': 'inconnu', 'version': None}
     except OSError:
-        return 'inconnu'
+        return {'source_sha': 'inconnu', 'version': None}
     lines = stdout.splitlines()
     if (process.returncode != 0 or len(lines) != 2
             or Path(lines[0]).resolve() != root or re.fullmatch('[0-9a-f]{40}', lines[1]) is None):
-        return 'inconnu'
-    return lines[1]
+        return {'source_sha': 'inconnu', 'version': None}
+    return {'source_sha': lines[1], 'version': None}
+
+
+def release_identity():
+    return release_metadata()['source_sha']
 
 
 def _read_line(connection, limit, deadline):
@@ -135,7 +145,8 @@ def executor_health(path):
         if len(raw) > 4096 or not raw.endswith(b'\n'):
             raise ValueError('Réponse de santé invalide')
         result = json.loads(raw)
-        if set(result) != {'source_sha', 'storage', 'admission', 'restore_pending', 'operations'}:
+        expected = {'source_sha', 'storage', 'admission', 'restore_pending', 'operations'}
+        if set(result) not in (expected, expected | {'version'}):
             raise ValueError('Réponse de santé invalide')
         return result
 
@@ -372,7 +383,7 @@ def _retention_worker(data, dossier_id, function, *args):
                     logging.getLogger(__name__).warning('CONTRIBUTION_UPDATE_PENDING error=%s', type(error).__name__)
 
 
-def serve_executor(data, socket_path, source, *, transport=None, qualification_transport=None,
+def serve_executor(data, socket_path, source, *, version=None, transport=None, qualification_transport=None,
                    candidate_transport=None, candidate_transport_factory=None,
                    candidate_identity=None, judgment_transport=None,
                    access_secret=None, access_transport=None, presentation=None, personal_preparation=False,
@@ -397,7 +408,10 @@ def serve_executor(data, socket_path, source, *, transport=None, qualification_t
 
             def health():
                 verify(store)
-                return {'source_sha': source, 'storage': 'ok', **status(data, store)}
+                health = {'source_sha': source, 'storage': 'ok', **status(data, store)}
+                if version is not None:
+                    health['version'] = version
+                return health
 
             probe_jobs = {}
 

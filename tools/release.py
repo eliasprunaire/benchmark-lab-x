@@ -93,9 +93,24 @@ def latest_tag(repo, head):
     return max(candidates)[1] if candidates else None
 
 
-def decision(repo, head, base=None, pre_release=None):
+def tag_at(repo, head):
+    tags = []
+    for tag in git(repo, 'tag', '--points-at', head).splitlines():
+        if tag.startswith('v') and SEMVER.fullmatch(tag[1:]):
+            tags.append(tag)
+    if len(tags) > 1:
+        raise ValueError('Plusieurs tags SemVer sur le même commit')
+    return tags[0] if tags else None
+
+
+def decision(repo, head, base=None, pre_release=None, bootstrap_pre_release=False):
     repo = Path(repo).resolve()
+    if bootstrap_pre_release and not pre_release:
+        raise ValueError('L’amorçage de préversion exige un suffixe explicite')
     head = git(repo, 'rev-parse', head + '^{commit}')
+    exact_tag = tag_at(repo, head)
+    if exact_tag:
+        return {'base': exact_tag, 'head': head, 'level': 'existing', 'version': exact_tag[1:]}
     tag = latest_tag(repo, head)
     if tag:
         base_commit, current = tag, tag[1:]
@@ -104,6 +119,8 @@ def decision(repo, head, base=None, pre_release=None):
         base_commit = git(repo, 'rev-parse', base_commit + '^{commit}')
         current = source_version(repo, head)
     level = next_level(messages(repo, base_commit, head))
+    if level is None and bootstrap_pre_release:
+        level = 'minor'
     version = None if level is None else with_pre_release(bump(current, level), pre_release)
     return {'base': base_commit, 'head': head, 'level': level, 'version': version}
 
@@ -114,8 +131,11 @@ def main():
     parser.add_argument('--head', required=True)
     parser.add_argument('--base')
     parser.add_argument('--pre-release', default='')
+    parser.add_argument('--bootstrap-pre-release', action='store_true')
     args = parser.parse_args()
-    print(json.dumps(decision(args.repo, args.head, args.base, args.pre_release), sort_keys=True))
+    print(json.dumps(decision(
+        args.repo, args.head, args.base, args.pre_release,
+        args.bootstrap_pre_release), sort_keys=True))
 
 
 if __name__ == '__main__':

@@ -74,7 +74,9 @@ def build(repo, source, destination, version=None):
     match = re.search(rb'^SCHEMA_VERSION = ([0-9]+)$', files['benchmark/storage.py'], re.MULTILINE)
     if match is None:
         raise ValueError('Version de stockage absente')
-    manifest = {'source_sha': source, 'schema_version': int(match[1]), 'files': {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()}}
+    manifest = {'source_sha': source, 'version': product_version,
+                'schema_version': int(match[1]),
+                'files': {name: hashlib.sha256(raw).hexdigest() for name, raw in files.items()}}
     files['release.json'] = (json.dumps(manifest, sort_keys=True) + '\n').encode()
     with Path(destination).open('xb') as target:
         with gzip.GzipFile(filename='', mode='wb', fileobj=target, mtime=0) as compressed:

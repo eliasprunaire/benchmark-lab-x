@@ -329,7 +329,9 @@ def main(argv=None):
             return 0
         if args.action in ('web', 'executor'):
             from importlib import import_module
-            from .service import release_identity, serve_executor
+            from .service import release_identity, release_metadata, serve_executor
+            source = release_identity()
+            version = release_metadata()['version']
             if args.socket is None:
                 raise ValueError('Socket requise')
             if args.action == 'web':
@@ -337,7 +339,8 @@ def main(argv=None):
                     raise ValueError('Projection et port requis')
                 # Racine de composition : la présentation dépend du moteur, jamais l'inverse
                 import_module(args.presentation.rsplit('.', 1)[0] + '.server').serve_web(
-                    args.listen, args.port, args.public, args.socket, release_identity(), args.public_url)
+                    args.listen, args.port, args.public, args.socket, source, args.public_url,
+                    version=version)
             else:
                 if args.data is None:
                     raise ValueError('Données requises')
@@ -377,7 +380,7 @@ def main(argv=None):
                 from functools import partial
                 from .model_catalogue import MAX_RESPONSE_BYTES
                 from .transports.prices import fetch_public
-                serve_executor(args.data, args.socket, release_identity(), transport=transport,
+                serve_executor(args.data, args.socket, source, version=version, transport=transport,
                                catalogue_fetch=partial(fetch_public, max_response_bytes=MAX_RESPONSE_BYTES),
                                qualification_transport=qualification_transport, personal_preparation=args.personal_preparation,
                                judgment_transport=judgment_transport,
