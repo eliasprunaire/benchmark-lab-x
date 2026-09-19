@@ -9,7 +9,11 @@ import re
 import subprocess
 import tarfile
 
-SEMVER = re.compile(r'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$')
+SEMVER_IDENTIFIER = r'(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+SEMVER = re.compile(
+    rf'^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+    rf'(?:-{SEMVER_IDENTIFIER}(?:\.{SEMVER_IDENTIFIER})*)?'
+    rf'(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$')
 
 
 def git(repo, *arguments):

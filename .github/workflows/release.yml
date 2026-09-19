@@ -10,6 +10,10 @@ on:
         description: Commit main à publier; vide pour le commit courant
         required: false
         type: string
+      pre_release:
+        description: Suffixe de préversion explicite, par exemple alpha.1
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -36,7 +40,7 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.3"
-          python-version: "3.12"
+          python-version: "3.14.7"
           enable-cache: false
 
       - name: Déterminer la version depuis l’historique
@@ -44,11 +48,12 @@ jobs:
         env:
           SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
           BEFORE_SHA: ${{ github.event.before }}
+          PRE_RELEASE: ${{ inputs.pre_release || '' }}
         run: |
           set -euo pipefail
           base="$BEFORE_SHA"
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then base="$(git rev-parse "$SOURCE_SHA^")"; fi
-          python3 tools/release.py --head "$SOURCE_SHA" --base "$base" > release-decision.json
+          python3 tools/release.py --head "$SOURCE_SHA" --base "$base" --pre-release "$PRE_RELEASE" > release-decision.json
           version="$(python3 -c 'import json; print(json.load(open("release-decision.json"))["version"] or "")')"
           if [ -z "$version" ]; then
             echo "Aucune modification feat/fix éligible; aucune release"
@@ -66,9 +71,9 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          uv run --with-requirements benchmark/requirements.lock --python 3.12 python tools/build_runtime.py \
+          uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python tools/build_runtime.py \
             --source "$SOURCE_SHA" --version "$VERSION" --output benchmark-runtime.tar.gz > build-receipt.json
-          uv run --with-requirements benchmark/requirements.lock --python 3.12 python tools/build_runtime.py \
+          uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python tools/build_runtime.py \
             --source "$SOURCE_SHA" --version "$VERSION" --output benchmark-runtime-repeat.tar.gz > /dev/null
           cmp benchmark-runtime.tar.gz benchmark-runtime-repeat.tar.gz
           test "$(sha256sum benchmark-runtime.tar.gz | cut -d' ' -f1)" = "$(python3 -c 'import json; print(json.load(open("build-receipt.json"))["artifact_sha256"])')"
