@@ -96,7 +96,7 @@ def _callback_state(value):
     return token, _return_path(return_path)
 
 
-def serve_web(address, port, public, socket_path, source, public_url=None):
+def serve_web(address, port, public, socket_path, source, public_url=None, *, version=None):
     public = Path(public)
     callback_url = _public_callback_url(public_url)
     views.SOURCE_SHA = '' if source == 'inconnu' else source or ''
@@ -390,16 +390,27 @@ def serve_web(address, port, public, socket_path, source, public_url=None):
                 self.respond(200, views.render({'kind': 'home'}, ''), 'text/html; charset=utf-8')
                 return
             if self.path == '/healthz':
-                self.respond(200, {'web': 'ok', 'source_sha': source})
+                health = {'web': 'ok', 'source_sha': source}
+                if version is not None:
+                    health['version'] = version
+                self.respond(200, health)
                 return
             if self.path == '/readyz':
                 try:
                     health = executor_health(socket_path)
                     ready = (source != 'inconnu' and health['source_sha'] == source
+                             and (version is None or health.get('version') == version)
                              and health['storage'] == 'ok' and not health['restore_pending'])
-                    self.respond(200 if ready else 503, {'web': 'ok', 'executor': 'ok' if ready else 'unavailable', 'storage': 'ok' if ready else 'unavailable', 'source_sha': source})
+                    body = {'web': 'ok', 'executor': 'ok' if ready else 'unavailable',
+                            'storage': 'ok' if ready else 'unavailable', 'source_sha': source}
+                    if version is not None:
+                        body['version'] = version
+                    self.respond(200 if ready else 503, body)
                 except (OSError, ValueError):
-                    self.respond(503, {'web': 'ok', 'executor': 'unavailable', 'storage': 'unknown', 'source_sha': source})
+                    body = {'web': 'ok', 'executor': 'unavailable', 'storage': 'unknown', 'source_sha': source}
+                    if version is not None:
+                        body['version'] = version
+                    self.respond(503, body)
                 return
             if self.path.startswith('/publications/'):
                 match = re.fullmatch(r'/publications/([0-9a-f]{64})/([A-Za-z0-9_-]+\.(?:html|css|txt))', self.path)

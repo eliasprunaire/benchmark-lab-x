@@ -92,6 +92,7 @@ class RuntimeBundleTests(unittest.TestCase):
                 archive.extractall(unpacked, filter='data')
             manifest = json.loads((unpacked / 'release.json').read_text())
             self.assertEqual(commit, manifest['source_sha'])
+            self.assertEqual('0.1.0', manifest['version'])
             self.assertIn('benchmark/models.toml', manifest['files'])
             self.assertIn('benchmark/requirements.txt', manifest['files'])
             for name, expected in manifest['files'].items():

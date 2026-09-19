@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Commit main à publier; vide pour le commit courant
+        description: Commit exact de main à publier; vide pour le main courant
         required: false
         type: string
       pre_release:
-        description: Suffixe de préversion explicite, par exemple alpha.1
+        description: Suffixe SemVer optionnel, par exemple alpha.1
         required: false
         type: string
 
@@ -23,16 +23,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  prepare:
     if: ${{ vars.BENCHMARK_RELEASE_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+    outputs:
+      eligible: ${{ steps.version.outputs.eligible }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
-      - name: Récupérer le commit exact
+      - name: Récupérer main sans identifiants persistants
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.source_sha || github.sha }}
+          ref: main
           fetch-depth: 0
           persist-credentials: false
 
@@ -43,18 +48,38 @@ jobs:
           python-version: "3.14.7"
           enable-cache: false
 
-      - name: Déterminer la version depuis l’historique
+      - name: Refuser une source qui n’est pas le main courant
+        id: source
+        env:
+          REQUESTED_SHA: ${{ inputs.source_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse "$REQUESTED_SHA^{commit}")"
+          main_sha="$(git rev-parse origin/main^{commit}")"
+          test "$source_sha" = "$main_sha"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Déterminer la version unique
         id: version
         env:
-          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           BEFORE_SHA: ${{ github.event.before }}
-          PRE_RELEASE: ${{ inputs.pre_release || '' }}
+          INPUT_PRE_RELEASE: ${{ inputs.pre_release || '' }}
+          DEFAULT_PRE_RELEASE: ${{ vars.BENCHMARK_PRE_RELEASE || '' }}
         run: |
           set -euo pipefail
           base="$BEFORE_SHA"
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then base="$(git rev-parse "$SOURCE_SHA^")"; fi
-          python3 tools/release.py --head "$SOURCE_SHA" --base "$base" --pre-release "$PRE_RELEASE" > release-decision.json
-          version="$(python3 -c 'import json; print(json.load(open("release-decision.json"))["version"] or "")')"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base="$(git rev-parse "$SOURCE_SHA^")"
+          fi
+          pre_release="$INPUT_PRE_RELEASE"
+          if [ -z "$pre_release" ]; then pre_release="$DEFAULT_PRE_RELEASE"; fi
+          bootstrap=()
+          if [ -n "$INPUT_PRE_RELEASE" ]; then bootstrap+=(--bootstrap-pre-release); fi
+          uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python tools/release.py \
+            --head "$SOURCE_SHA" --base "$base" --pre-release "$pre_release" "${bootstrap[@]}" > release-decision.json
+          version="$(uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python -c \
+            'import json,sys; print(json.load(open(sys.argv[1]))["version"] or "")' release-decision.json)"
           if [ -z "$version" ]; then
             echo "Aucune modification feat/fix éligible; aucune release"
             echo "eligible=false" >> "$GITHUB_OUTPUT"
@@ -64,82 +89,218 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Construire et vérifier l’artefact
+      - name: Construire deux fois et promouvoir le premier artefact
         if: steps.version.outputs.eligible == 'true'
         env:
-          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python tools/build_runtime.py \
-            --source "$SOURCE_SHA" --version "$VERSION" --output benchmark-runtime.tar.gz > build-receipt.json
-          uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python tools/build_runtime.py \
-            --source "$SOURCE_SHA" --version "$VERSION" --output benchmark-runtime-repeat.tar.gz > /dev/null
-          cmp benchmark-runtime.tar.gz benchmark-runtime-repeat.tar.gz
-          test "$(sha256sum benchmark-runtime.tar.gz | cut -d' ' -f1)" = "$(python3 -c 'import json; print(json.load(open("build-receipt.json"))["artifact_sha256"])')"
-          printf '%s  %s\n' "$(sha256sum benchmark-runtime.tar.gz | cut -d' ' -f1)" benchmark-runtime.tar.gz > SHA256SUMS
-          printf '%s  %s\n' "$(sha256sum build-receipt.json | cut -d' ' -f1)" build-receipt.json >> SHA256SUMS
+          first="$RUNNER_TEMP/benchmark-runtime.tar.gz"
+          second="$RUNNER_TEMP/benchmark-runtime-repeat.tar.gz"
+          receipt="$RUNNER_TEMP/build-receipt.json"
+          uv run --with-requirements benchmark/requirements-runtime.lock --python 3.14.7 python tools/build_runtime.py \
+            --source "$SOURCE_SHA" --version "$VERSION" --output "$first" > "$receipt"
+          uv run --with-requirements benchmark/requirements-runtime.lock --python 3.14.7 python tools/build_runtime.py \
+            --source "$SOURCE_SHA" --version "$VERSION" --output "$second" > /dev/null
+          cmp "$first" "$second"
+          test "$(sha256sum "$first" | cut -d' ' -f1)" = "$(uv run --with-requirements benchmark/requirements-runtime.lock --python 3.14.7 python -c \
+            'import json,sys; print(json.load(open(sys.argv[1]))["artifact_sha256"])' "$receipt")"
+          cp release-decision.json "$RUNNER_TEMP/release-decision.json"
+          cp "$receipt" "$RUNNER_TEMP/build-receipt.json"
+          printf '%s  %s\n' "$(sha256sum "$first" | cut -d' ' -f1)" benchmark-runtime.tar.gz > "$RUNNER_TEMP/SHA256SUMS"
+          printf '%s  %s\n' "$(sha256sum "$receipt" | cut -d' ' -f1)" build-receipt.json >> "$RUNNER_TEMP/SHA256SUMS"
+          printf '%s  %s\n' "$(sha256sum release-decision.json | cut -d' ' -f1)" release-decision.json >> "$RUNNER_TEMP/SHA256SUMS"
 
-      - name: Refuser une release déjà attribuée à un autre commit
+      - name: Publier le lot validé pour les jobs suivants
         if: steps.version.outputs.eligible == 'true'
-        id: existing
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bench-x-release-${{ steps.version.outputs.tag }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/benchmark-runtime.tar.gz
+            ${{ runner.temp }}/build-receipt.json
+            ${{ runner.temp }}/release-decision.json
+            ${{ runner.temp }}/SHA256SUMS
+
+  release:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.eligible == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Récupérer les références Git sans identifiants persistants
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Récupérer le lot validé
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: bench-x-release-${{ needs.prepare.outputs.tag }}
+          path: release-bundle
+
+      - name: Créer ou reprendre la release sans réécrire le tag
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
         run: |
           set -euo pipefail
+          cd release-bundle
+          if git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git fetch --no-tags origin "refs/tags/$TAG:refs/tags/$TAG"
+            test "$(git rev-list -n1 "$TAG")" = "$SOURCE_SHA"
+          fi
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             target="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
-            test "$target" = "$SOURCE_SHA" || { echo "::error::La release $TAG vise un autre commit"; exit 1; }
-            echo "Release déjà présente pour le même commit; aucune seconde création"
-            echo "present=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            test "$target" = "$SOURCE_SHA" || test "$target" = "$TAG"
+          else
+            flags=()
+            case "$VERSION" in *-*) flags+=(--prerelease);; esac
+            gh release create "$TAG" benchmark-runtime.tar.gz build-receipt.json release-decision.json SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --title "$TAG" \
+              --notes "Bench-X $VERSION\n\nCommit source: $SOURCE_SHA\nLa provenance est vérifiée par le constructeur et le contrôleur.\n" "${flags[@]}"
           fi
-          if git ls-remote --exit-code origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "::error::Le tag $TAG existe sans release vérifiable"
-            exit 1
-          fi
-          echo "present=false" >> "$GITHUB_OUTPUT"
 
-      - name: Créer la release et ses preuves
-        if: steps.version.outputs.eligible == 'true' && steps.existing.outputs.present != 'true'
+      - name: Vérifier ou compléter chaque asset sans écraser une divergence
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.version }}
-          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          cat > release-notes.md <<EOF
-          Bench-X $VERSION
+          cd release-bundle
+          remote_dir="$RUNNER_TEMP/release-assets"
+          mkdir -p "$remote_dir"
+          for name in benchmark-runtime.tar.gz build-receipt.json release-decision.json SHA256SUMS; do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              rm -rf "$remote_dir/$name"
+              mkdir -p "$remote_dir/$name"
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir "$remote_dir/$name"
+              cmp "$name" "$remote_dir/$name/$name"
+            else
+              gh release upload "$TAG" "$name" --repo "$GITHUB_REPOSITORY"
+            fi
+          done
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish,assets,isPrerelease
 
-          Commit source: $SOURCE_SHA
-          Artefact et reçu de build: voir les fichiers joints et SHA256SUMS.
-          La provenance est vérifiée par le constructeur et le contrôleur de livraison.
-          EOF
-          gh release create "$TAG" benchmark-runtime.tar.gz build-receipt.json SHA256SUMS \
-            --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --title "$TAG" --notes-file release-notes.md
+  deploy:
+    needs: [prepare, release]
+    if: ${{ needs.release.result == 'success' && vars.BENCHMARK_DEPLOY_ENABLED == 'true' }}
+    runs-on: [self-hosted, linux, x64, bench-deploy]
+    environment:
+      name: production
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Configurer uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.3"
+          python-version: "3.14.7"
+          enable-cache: false
 
-      - name: Vérifier la release créée
-        if: steps.version.outputs.eligible == 'true'
+      - name: Télécharger exactement les assets de la release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: bench-x-release-${{ needs.prepare.outputs.tag }}
+          path: release-bundle
+
+      - name: Vérifier l’artefact validé avant transfert
+        run: (cd release-bundle && sha256sum -c SHA256SUMS)
+
+      - name: Préparer la liste d’hôtes SSH connue
         env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          SSH_KNOWN_HOSTS: ${{ secrets.BENCHMARK_SSH_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)" = "$SOURCE_SHA"
+          test -n "$SSH_KNOWN_HOSTS"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Publier le reçu dans le résumé
-        if: always() && steps.version.outputs.eligible == 'true'
+      - name: Soumettre la transaction au contrôleur
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          SSH_PRIVATE_KEY: ${{ secrets.BENCHMARK_SSH_PRIVATE_KEY }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
         run: |
+          set -euo pipefail
+          test -n "$SSH_PRIVATE_KEY"
+          eval "$(ssh-agent -s)"
+          trap 'ssh-agent -k >/dev/null' EXIT
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p 2222 useradmin@10.10.0.33)
+          ssh "${ssh_args[@]}" true
+          controller_sha="$(ssh "${ssh_args[@]}" 'sudo -n /usr/bin/python3 -c "import json; print(json.load(open(\"/etc/benchmark-lab-x/operations.json\"))[\"controller_sha\"])"')"
+          worker_sha256="$(ssh "${ssh_args[@]}" 'sudo -n sha256sum /usr/local/sbin/benchmark_release.py' | cut -d' ' -f1)"
+          artifact_sha256="$(sha256sum release-bundle/benchmark-runtime.tar.gz | cut -d' ' -f1)"
+          receipt_sha256="$(sha256sum release-bundle/build-receipt.json | cut -d' ' -f1)"
+          transaction="$(uv run --python 3.14.7 python -c 'import uuid; print(uuid.uuid4().hex)')"
+          uv run --python 3.14.7 python - "$transaction" "$SOURCE_SHA" "$artifact_sha256" "$controller_sha" "$worker_sha256" "$receipt_sha256" > request.json <<'PY'
+          import json, sys
+          transaction, source, artifact, controller, worker, receipt = sys.argv[1:]
+          print(json.dumps({'transaction': transaction, 'action': 'deploy', 'source_sha': source,
+                            'artifact_sha256': artifact, 'controller_sha': controller,
+                            'worker_sha256': worker, 'build_receipt_sha256': receipt,
+                            'client': 'labx-benchmark', 'vmid': 2016, 'address': '10.10.0.33'}))
+          PY
           {
-            echo "Version: $VERSION"
-            echo "Commit: $SOURCE_SHA"
-            echo "Artefact SHA-256: $(sha256sum benchmark-runtime.tar.gz | cut -d' ' -f1)"
-            echo "Reçu de build SHA-256: $(sha256sum build-receipt.json | cut -d' ' -f1)"
-          } >> "$GITHUB_STEP_SUMMARY"
+            uv run --python 3.14.7 python - request.json release-bundle/build-receipt.json <<'PY'
+          import base64, json, pathlib, sys
+          request = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          receipt = base64.b64encode(pathlib.Path(sys.argv[2]).read_bytes()).decode()
+          print(json.dumps({'request': request, 'build_receipt': receipt}))
+          PY
+            cat release-bundle/benchmark-runtime.tar.gz
+          } | ssh "${ssh_args[@]}" 'sudo -n /usr/local/sbin/benchmark-release submit' > submission.json
+          uv run --python 3.14.7 python - submission.json "$transaction" <<'PY'
+          import json, sys
+          value = json.load(open(sys.argv[1]))
+          assert value.get('transaction') == sys.argv[2]
+          assert value.get('state') in {'SUBMITTED', 'READY_ADMISSION_CLOSED'}
+          PY
+
+      - name: Attendre le reçu terminal et arrêter en cas de HOLD
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.BENCHMARK_SSH_PRIVATE_KEY }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -n "$SSH_PRIVATE_KEY"
+          eval "$(ssh-agent -s)"
+          trap 'ssh-agent -k >/dev/null' EXIT
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p 2222 useradmin@10.10.0.33)
+          transaction="$(uv run --python 3.14.7 python -c 'import json; print(json.load(open("request.json"))["transaction"])')"
+          for attempt in $(seq 1 120); do
+            set +e
+            ssh "${ssh_args[@]}" "sudo -n /usr/local/sbin/benchmark-release status --transaction-id $transaction" > deployment-receipt.json
+            rc=$?
+            set -e
+            test "$rc" -eq 0 || { echo "Contrôleur inaccessible; état non confirmé" >&2; exit 1; }
+            state="$(uv run --python 3.14.7 python -c 'import json; print(json.load(open("deployment-receipt.json"))["state"])')"
+            case "$state" in
+              READY_ADMISSION_CLOSED) break ;;
+              HOLD|UNKNOWN) echo "Déploiement en état $state" >&2; exit 1 ;;
+            esac
+            sleep 5
+          done
+          uv run --python 3.14.7 python - "$SOURCE_SHA" "$VERSION" <<'PY'
+          import json, sys
+          value = json.load(open('deployment-receipt.json'))
+          assert value['state'] == 'READY_ADMISSION_CLOSED'
+          assert value['source_sha'] == sys.argv[1]
+          assert value['version'] == sys.argv[2]
+          assert value['artifact_sha256'] == json.load(open('release-bundle/build-receipt.json'))['artifact_sha256']
+          PY
+          cat deployment-receipt.json >> "$GITHUB_STEP_SUMMARY"
