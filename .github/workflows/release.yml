@@ -198,7 +198,7 @@ jobs:
   deploy:
     needs: [prepare, release]
     if: ${{ needs.release.result == 'success' && vars.BENCHMARK_DEPLOY_ENABLED == 'true' }}
-    runs-on: [self-hosted, linux, x64, bench-deploy]
+    runs-on: [bench-deploy]
     environment:
       name: production
     permissions:
