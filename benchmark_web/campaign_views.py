@@ -384,7 +384,7 @@ def render_comparison(value):
             definition = ('Dans Bench-X, la qualité correspond aux critères définis pour ce cas d’usage '
                           'et vérifiés dans la réponse' + (text(' : ' + ' ; '.join(criteria)) if criteria else '') + '.')
             content += '<p>Notre conseil se base sur la <span class="quality-term"><span class="quality-help" tabindex="0" '
-            content += 'aria-describedby="quality-definition">qualité observée <span aria-hidden="true">?</span></span>'
+            content += 'aria-describedby="quality-definition">qualité observée</span>'
             content += '<span id="quality-definition" class="quality-tooltip" role="tooltip">' + definition + '</span></span>. '
             content += 'Le coût vient ensuite départager les réponses de qualité équivalente.</p>'
         else:
