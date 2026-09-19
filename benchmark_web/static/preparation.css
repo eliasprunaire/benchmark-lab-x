@@ -124,6 +124,7 @@ button:hover, .button:hover { background: var(--btn-hover); border-color: var(--
 button.sec, .button.sec, summary.button { background: transparent; color: var(--accent-ink); border-color: var(--accent); }
 button.sec:hover, .button.sec:hover, summary.button:hover { background: var(--accent-soft); color: var(--accent-ink); }
 button:disabled, button:disabled:hover { background: var(--soft); border-color: var(--line); color: var(--muted); cursor: not-allowed; }
+.text-link, .text-link:hover { padding: 0; border: 0; background: none; color: var(--accent-ink); font: inherit; font-family: inherit; font-weight: 400; text-decoration: underline; }
 .actions { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin-top: 1rem; }
 form > button, form > .actions { margin-top: 1rem; }
 details.corr { border: 0; background: transparent; margin: 1rem 0 0; }
@@ -210,6 +211,7 @@ thead th { font-family: var(--display); font-size: .72rem; letter-spacing: .05em
 tbody th { font-weight: 400; }
 tbody th strong { font-weight: 600; }
 td p, th p { margin: .3rem 0; }
+.quality-list { margin: 0; padding-left: 1.1rem; }
 table details { font-size: .88rem; margin: .4rem 0; }
 .source-value { font-variant-numeric: tabular-nums; font-weight: 600; }
 .costbar { height: .45rem; border-radius: 3px; background: linear-gradient(to right, var(--accent) var(--w), var(--soft) var(--w)); margin-top: .35rem; min-width: 6rem; }
@@ -226,7 +228,7 @@ tr.out th strong { color: var(--muted); }
 .choice-cost { padding: .6rem 1rem; background: var(--surface); border: 1px solid var(--accent-soft-2); border-radius: var(--radius); color: var(--ink-2); font-size: .85rem; }
 .choice-cost strong { display: block; color: var(--accent-ink); font-size: 1.2rem; font-variant-numeric: tabular-nums; }
 
-/* Détail et preuves : fragment partagé par la page directe et la modale */
+/* Détail et preuves */
 .result-dialog { width: min(100% - 2rem, 44rem); max-height: 90vh; overflow: auto; padding: 1rem 1.4rem 1.2rem; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--paper); color: var(--ink); }
 .result-dialog::backdrop { background: rgba(0, 0, 0, .45); }
 body:has(dialog[open]) { overflow: hidden; }
@@ -234,7 +236,6 @@ body:has(dialog[open]) { overflow: hidden; }
 .result-head button { margin: 0; }
 .result-status[role="status"] { margin: 0; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: .9rem; }
 .result-body progress { width: 100%; }
-.result-foot { margin: 1rem 0 0; }
 .result { margin: 0; padding: 0; border: 0; }
 .result h2 { margin: 0; max-width: none; }
 .result h3 { margin: 1.4rem 0 .4rem; font-size: 1.05rem; }

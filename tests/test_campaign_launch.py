@@ -243,7 +243,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
             current = c.prepare_configurations(
                 self.store, self.sid, 'fixture',
                 {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
-                 'tier': 'standard'}, identity)
+                 'tier': 'low'}, identity)
         self.campaign_id = current['current_campaign_id']
         self.access = AccessTransport()
 
@@ -252,7 +252,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
                               'https://example.test/preparation/access/callback')
         provider_access.callback(self.store, self.sid, SECRET, 'code', self.access)
 
-    def test_restitution_sans_colonne_qualitative_et_refus_du_jugement_expert(self):
+    def test_restitution_expose_le_critere_qualitatif_et_refuse_le_jugement_expert(self):
         self.connect()
         attempts = c.launch(self.store, self.sid, 'fixture', self.campaign_id,
                             self.body(), access_secret=SECRET, access_transport=self.access)
@@ -262,7 +262,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
             return value
         execution.execute_launch(self.data, attempts, received, access_secret=SECRET, access_transport=self.access)
         result = restitution.comparison(self.store, self.sid, 'fixture', self.campaign_id)
-        self.assertEqual(['cost'], [column['id'] for column in result['columns']])
+        self.assertEqual(['cost', 'Q1'], [column['id'] for column in result['columns']])
         self.assertEqual([], result['rows'])
         self.assertEqual(2, len(result['pending_attempts']))
         self.assertEqual({'EVALUATION_NOT_STARTED'}, {row['state'] for row in result['pending_attempts']})
@@ -567,7 +567,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
         second = c.prepare_configurations(
             self.store, self.sid, 'fixture',
             {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
-             'tier': 'standard'},
+             'tier': 'low'},
             {'package': '@earendil-works/pi-coding-agent', 'version': '0.85.1',
              'sha256': '1' * 64, 'bridge_sha256': '2' * 64,
              'node_version': 'v24.0.0', 'node_sha256': '3' * 64,

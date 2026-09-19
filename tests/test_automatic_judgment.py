@@ -92,6 +92,8 @@ class AutomaticJudgment(unittest.TestCase):
             answer = json.loads(document['choices'][0]['message']['content'])
             for finding in answer['findings']:
                 finding['status'] = 'PASS'
+            answer['measures'] = [dict(criterion_id='Q1', value='excellent', unit='descriptif',
+                                       evidence=answer['findings'][0]['evidence'])]
             document['choices'][0]['message']['content'] = storage._strict_json(answer)
 
         self.response_update = satisfied
@@ -100,15 +102,16 @@ class AutomaticJudgment(unittest.TestCase):
         auto.execute_campaign(self.data, ids, self.transport)
         before = deepcopy(self.store.inspect_operations())
         value = restitution.comparison(self.store, self.sid, 'fixture', self.cid)
-        choice = value['economic_choice']
+        choice = value['recommendation']
         self.assertEqual('0.01', choice['amount'])
         self.assertEqual(2, choice['count'])
         expensive = next(row for row in value['rows'] if row['cost']['value'] == '0.2')
         filtered = restitution.comparison(self.store, self.sid, 'fixture', self.cid,
                                          query={'configuration': expensive['configuration_id']})
         self.assertEqual([expensive['attempt_id']], [row['attempt_id'] for row in filtered['rows']])
-        self.assertEqual(choice['configuration'], filtered['economic_choice']['configuration'])
-        self.assertEqual(choice['amount'], filtered['economic_choice']['amount'])
+        self.assertEqual('equal_quality_cost', choice['basis'])
+        self.assertEqual(choice['configuration'], filtered['recommendation']['configuration'])
+        self.assertEqual(choice['amount'], filtered['recommendation']['amount'])
         self.assertEqual(before, self.store.inspect_operations())
         self.assertEqual(2, self.http.request.call_count)
 

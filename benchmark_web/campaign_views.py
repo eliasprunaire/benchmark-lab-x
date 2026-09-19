@@ -18,7 +18,7 @@ from .fragments import (badge, date_lisible_utc, form, hidden, icon, listing, mo
                         readable_fields, section, state_block, text)
 
 COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
-  const link = event.target.closest('tr[id] a[href]');
+  const link = event.target.closest('tr[id] [data-result]');
   if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   history.replaceState({...history.state, comparisonFocus: link.closest('tr').id}, '');
 });
@@ -29,8 +29,7 @@ window.addEventListener('pageshow', () => {
 (() => {
   const dialog = document.getElementById('result-dialog');
   if (!dialog || typeof dialog.showModal !== 'function') return;
-  const status = dialog.querySelector('.result-status'), body = dialog.querySelector('.result-body'),
-        full = dialog.querySelector('a.full');
+  const status = dialog.querySelector('.result-status'), body = dialog.querySelector('.result-body');
   let request = null, opener = null;
   const element = (tag, textContent, attrs = {}) => Object.assign(document.createElement(tag), {textContent}, attrs);
   function fail(href) {
@@ -39,7 +38,7 @@ window.addEventListener('pageshow', () => {
     alert.setAttribute('role', 'alert');
     const retry = element('button', 'Réessayer', {type: 'button', className: 'sec'});
     retry.addEventListener('click', () => load(href));
-    alert.append(retry, ' ou ouvrez la page complète.');
+    alert.append(retry);
     body.replaceChildren(alert);
   }
   function load(href) {
@@ -70,13 +69,12 @@ window.addEventListener('pageshow', () => {
       });
   }
   document.addEventListener('click', event => {
-    const link = event.target.closest('a[data-result]');
+    const link = event.target.closest('[data-result]');
     if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     opener = link;
-    full.href = link.href;
     if (!dialog.open) dialog.showModal();
-    load(link.href);
+    load(link.dataset.url);
   });
   dialog.addEventListener('click', event => {
     if (event.target.closest('[data-close]')) { dialog.close(); return; }
@@ -328,6 +326,11 @@ def effort_label(configuration):
     return 'Raisonnement demandé : ' + effort
 
 
+def short_label(value, words=9):
+    parts = value.split()
+    return value if len(parts) <= words else ' '.join(parts[:words]) + '…'
+
+
 def render_comparison(value):
     base, query = value['href'], value['filter_scope']
     multiple_cases = len(value['cases']) > 1
@@ -367,14 +370,17 @@ def render_comparison(value):
     content += '</div>'
     if not value['population']:
         return content
-    choice = value.get('economic_choice')
+    choice = value.get('recommendation')
     if choice:
         content += '<aside class="economic-choice" aria-labelledby="economic-choice-title">'
         content += '<h2 id="economic-choice-title">Notre conseil</h2><div class="choice-highlight"><div>'
         content += '<p class="choice-model">' + text(choice['configuration']['model']) + '</p>'
         content += '<p>' + text(effort_label(choice['configuration'])) + '</p></div>'
         content += '<p class="choice-cost">Coût observé<strong>' + text(montant_lisible(choice['amount']) + ' ' + choice['unit']) + '</strong></p></div>'
-        content += '<p>La moins coûteuse parmi ' + text(choice['count']) + ' réponses conformes sur cet exemple.</p>'
+        if choice['basis'] == 'quality_and_cost':
+            content += '<p>Cette réponse domine les autres sur les qualités et le coût observés pour ce cas.</p>'
+        else:
+            content += '<p>Qualité observée équivalente ; c’est la moins coûteuse parmi ' + text(choice['count']) + ' réponses conformes.</p>'
         content += '<p class="hint">Un seul exemple ne garantit pas le même résultat sur d’autres tâches.</p></aside>'
     sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
     sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
@@ -386,7 +392,7 @@ def render_comparison(value):
         'verdict': ('Résultat', 'Tous les résultats', [('SATISFAIT', 'Satisfait'), ('NE SATISFAIT PAS', 'Ne satisfait pas'), ('A_REPRENDRE', 'À reprendre')]),
         'sort': ('Trier par', 'Sans tri', [(v['id'], v['definition'].get('measure', 'Coût observé')) for v in value['columns']]),
         'direction': ('Sens du tri', 'Croissant', [('desc', 'Décroissant')]),
-        'obligation': ('Exigence à examiner', 'Toutes les exigences', [(v['id'] + ':' + state, v['description'] + ' : ' + label)
+        'obligation': ('Exigence à examiner', 'Toutes les exigences', [(v['id'] + ':' + state, short_label(v['description']) + ' : ' + label)
                         for v in value['obligations'] for state, label in
                         (('PASS', 'Respectée'), ('FAIL', 'Non respectée'), ('INDETERMINE', 'Indéterminée'))]),
     }
@@ -428,8 +434,8 @@ def render_comparison(value):
             content += '<h3>' + text(label) + '</h3>'
         content += '<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '">'
         content += '<table><caption>Chaque verdict concerne la réponse obtenue sur cet exemple.</caption><thead><tr>'
-        measure_column = sort_column if sort_column and 'criterion_id' in sort_column else None
-        titles = ['Modèle', 'Résultat', 'Coût observé'] + ([sort_label] if measure_column else []) + ['Détails']
+        quality_columns = [column for column in value['columns'] if 'criterion_id' in column]
+        titles = ['Modèle', 'Résultat'] + (['Qualité observée'] if quality_columns else []) + ['Coût observé', 'Détails']
         for title in titles:
             content += '<th scope="col">' + text(title) + '</th>'
         content += '</tr></thead><tbody>'
@@ -441,31 +447,32 @@ def render_comparison(value):
             content += '<p class="hint">' + text(effort_label(row['requested_configuration'])) + '</p></th>'
             reason = {'SATISFAIT': 'Toutes les exigences sont respectées.',
                       'NE SATISFAIT PAS': 'Un critère requis n’est pas respecté.'}.get(row['verdict'], 'Évaluation à compléter.')
-            content += '<td>' + badge(row['verdict']) + '<p class="hint">' + reason + '</p></td><td>'
+            content += '<td>' + badge(row['verdict']) + '<p class="hint">' + reason + '</p></td>'
+            if quality_columns:
+                content += '<td><ul class="quality-list">'
+                for column in quality_columns:
+                    measure = next(m for m in row['measures'] if m['criterion_id'] == column['criterion_id'])
+                    shown = 'Inconnue' if measure['value'] is None else str(measure['value']).capitalize()
+                    content += '<li><strong>' + text(column['definition']['measure']) + '</strong> : ' + text(shown) + '</li>'
+                    if measure['rank'] is None:
+                        content += '<li class="hint">Non comparable : ' + text(measure['reason']) + '</li>'
+                content += '</ul></td>'
+            content += '<td>'
             cost = row['cost']
             content += '<span class="source-value">' + text('Inconnu' if cost['value'] is None else montant_lisible(cost['value']) + ' ' + cost['unit']) + '</span>'
             if cost['value'] is not None and cost['rank'] is None:
                 content += '<p class="hint">Coût non comparable</p>'
             content += cost_bar(cost['value'], known) + '</td>'
-            if measure_column:
-                measure = next(m for m in row['measures'] if m['criterion_id'] == measure_column['criterion_id'])
-                if measure['rank'] is None:
-                    content += '<td>' + ('Inconnu' if measure['value'] is None else 'Non comparable')
-                    content += '<p class="hint">' + text(measure['reason']) + '</p></td>'
-                else:
-                    content += '<td>' + readable_fields(measure['value'])
-                    content += ('' if measure['unit'] in ('bool', 'boolean', 'booléen') else ' ' + text(measure['unit'])) + '</td>'
-            content += '<td><a data-result href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
+            content += '<td><button type="button" class="text-link" data-result data-url="' + text(row['detail_href']) + '">Détail et preuves</button></td></tr>'
         content += '</tbody></table></div>'
     content += '</section><details id="method"><summary>Comment lire ces résultats</summary>'
     content += '<ul><li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
     content += '<li>Comparez le coût des réponses satisfaisantes, puis consultez leurs qualités et limites dans « Détail et preuves ». Un coût inconnu ne change pas le verdict.</li>'
     content += '<li>Les modèles reçoivent les mêmes consignes et pièces. Ces résultats concernent uniquement cet exemple fictif, sans garantir la même qualité sur d’autres tâches.</li></ul></details>'
-    # Conteneur vide de la modale : sans JavaScript il reste invisible et les liens naviguent vers la page directe
     content += '<dialog id="result-dialog" class="result-dialog" aria-label="Détail et preuves">'
     content += '<div class="result-head"><button type="button" class="sec" data-close autofocus>Fermer</button>'
     content += '<p class="result-status" role="status"></p></div><div class="result-body"></div>'
-    content += '<p class="result-foot"><a class="full" href="' + text(base) + '">Ouvrir la page complète</a></p></dialog>'
+    content += '</dialog>'
     return content
 
 
@@ -870,12 +877,9 @@ def render_result(record):
 
 
 def render_attempt_detail(value):
-    """Page directe d’une tentative et fragment partagé avec la modale"""
-    content = '<nav aria-label="Retour"><a class="button" href="' + text(value['back_href']) + '">Revenir à la comparaison avec ses filtres</a>'
-    content += '</nav>'
-    content += '<p class="hint">Consultation privée · version d’épreuve ' + text(value['task']['version']) + '.</p>'
+    """Private fragment loaded only by the result modal"""
     history = value['history']
-    content += '<div id="attempt-detail">' + render_result(history[-1])
+    content = '<div id="attempt-detail">' + render_result(history[-1])
     for record in reversed(history[:-1]):
         content += '<details><summary>Évaluation précédente, remplacée (' + text(date_lisible_utc(record['created_at'])) + ')</summary>'
         content += render_result(record) + '</details>'

@@ -164,7 +164,7 @@ class AccessViewTests(unittest.TestCase):
                 {'id': 'modele-b', 'name': 'Modèle B', 'selected': True,
                  'not_adjustable': True},
             ],
-            'current_tier': 'high', 'available_tiers': ['low', 'medium', 'high'],
+            'current_tier': 'high', 'available_tiers': ['low', 'high'],
             'configurations': [
                 {'model': 'modele-a', 'estimate': {'amount_usd': '1.20'}},
                 {'model': 'modele-b', 'estimate': {'amount_usd': '2.30'},

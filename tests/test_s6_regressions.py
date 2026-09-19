@@ -254,9 +254,10 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual([('script', {})], [(tag, attrs) for tag, attrs in markup.tags if tag == 'script'])
         self.assertFalse(any(k.startswith('on') for _, attrs in markup.tags for k in attrs))
         self.assertEqual(views.COMPARISON_FOCUS_SCRIPT.encode(), comparison_html.split(b'<script>')[1].split(b'</script>')[0])
-        self.assertEqual('CCXvslT7aeBVUJkC26TP8/XafRTVx/P3Oqn9DHFTKsc=',
+        self.assertEqual('4JYjiqZNZfBuB599Ij0Xkc4E3182/UxSNQd6+mpeDNM=',
                          b64encode(sha256(views.COMPARISON_FOCUS_SCRIPT.encode()).digest()).decode())
-        detail = next(link for link in markup.links if '/attempts/attempt-error' in link)
+        detail = next(attrs['data-url'] for tag, attrs in markup.tags
+                      if tag == 'button' and '/attempts/attempt-error' in attrs.get('data-url', ''))
         code, value, _, _ = web_api.dispatch(self.store, 'GET', detail, self.token, None, 'a' * 40, False)
         raw = views.render(value, '')
         self.assertEqual(200, code)
@@ -264,7 +265,7 @@ class S6Regressions(unittest.TestCase):
         self.assertIn(b'  &lt;script&gt;candidate()&lt;/script&gt;\n  source error\n', raw)
         parsed = Markup(raw)
         self.assertFalse(any(tag == 'script' or any(k.startswith('on') for k in attrs) for tag, attrs in parsed.tags))
-        self.assertIn(self.base + query + '#attempt-attempt-error', parsed.links)
+        self.assertTrue(raw.startswith(b'<div id="attempt-detail">'))
         for link in parsed.links:
             if '/pieces/' in link:
                 code, proof, _, _ = web_api.dispatch(self.store, 'GET', link, self.token, None, 'a' * 40, False)
@@ -324,8 +325,7 @@ class S6Regressions(unittest.TestCase):
                     raw = result.read()
                     expected = policy
                     if path == self.base and accept == 'text/html':
-                        # Le script de la modale récupère la page directe : connect-src 'self' seulement ici
-                        expected += "; script-src 'sha256-CCXvslT7aeBVUJkC26TP8/XafRTVx/P3Oqn9DHFTKsc='; connect-src 'self'"
+                        expected += "; script-src 'sha256-4JYjiqZNZfBuB599Ij0Xkc4E3182/UxSNQd6+mpeDNM='; connect-src 'self'"
                         self.assertEqual(1, raw.count(b'<script>'))
                         self.assertNotIn(b'innerHTML', raw)
                         self.assertEqual(1, raw.count(b'<dialog '))
@@ -468,14 +468,14 @@ class S6Regressions(unittest.TestCase):
 
     def test_filtre_obligations_libelles_lisibles_et_valeurs_stables(self):
         value = self.compare()
-        value['obligations'][0]['description'] = 'Action <requise> & vérifiée'
+        value['obligations'][0]['description'] = 'Traiter toutes les demandes présentes dans les pièces et rendre lisible la situation complète'
         for rows in (value['rows'], []):
             with self.subTest(rows=bool(rows)):
                 value['rows'] = rows
                 page = views.render(value, '').decode()
                 for state, label in (('PASS', 'Respectée'), ('FAIL', 'Non respectée'),
                                      ('INDETERMINE', 'Indéterminée')):
-                    self.assertIn('value="O1:' + state + '">Action &lt;requise&gt; &amp; vérifiée : ' +
+                    self.assertIn('value="O1:' + state + '">Traiter toutes les demandes présentes dans les pièces et… : ' +
                                   label + '</option>', page)
                 self.assertNotIn('>O1 : PASS</option>', page)
 

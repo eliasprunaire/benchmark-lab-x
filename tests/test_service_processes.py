@@ -70,6 +70,52 @@ def fake_executor(path, respond):
 
 
 class ServiceProcessesTests(unittest.TestCase):
+    def test_web_liveness_responds_while_deep_readiness_waits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            public, sock = root / 'public', root / 'executor.sock'
+            public.mkdir()
+            started, release = threading.Event(), threading.Event()
+
+            def delayed_health(connection):
+                started.set()
+                release.wait(3)
+                connection.sendall((_strict_json({'source_sha': 'a' * 40, 'storage': 'ok',
+                    'admission': False, 'restore_pending': False, 'operations': {}}) + '\n').encode())
+
+            with socket.socket() as probe:
+                probe.bind(('127.0.0.1', 0))
+                port = probe.getsockname()[1]
+            context = multiprocessing.get_context('spawn')
+            web = context.Process(target=serve_web,
+                                  args=('127.0.0.1', port, public, sock, 'a' * 40))
+            with fake_executor(sock, delayed_health):
+                web.start()
+                try:
+                    deadline = time.monotonic() + 5
+                    while True:
+                        try:
+                            with urlopen(f'http://127.0.0.1:{port}/healthz', timeout=1):
+                                break
+                        except OSError:
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(.02)
+                    waiting = threading.Thread(target=lambda: urlopen(
+                        f'http://127.0.0.1:{port}/readyz', timeout=4).read())
+                    waiting.start()
+                    self.assertTrue(started.wait(2))
+                    with urlopen(f'http://127.0.0.1:{port}/healthz', timeout=1) as response:
+                        self.assertEqual(200, response.status)
+                    release.set()
+                    waiting.join(4)
+                    self.assertFalse(waiting.is_alive())
+                finally:
+                    release.set()
+                    if web.is_alive():
+                        web.terminate()
+                    web.join(5)
+
     def test_catalogue_outage_waits_before_retry_and_stops_between_requests(self):
         from benchmark import model_catalogue
         from benchmark.storage import initialize_preparation

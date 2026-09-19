@@ -303,7 +303,7 @@ class ParcoursComplet(unittest.TestCase):
         form = page.form('/configurations')
         _, _, raw = self.request(form['action'], form['fields'] | {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
-            'tier': 'standard'}, status=201, json_response=True)
+            'tier': 'high'}, status=201, json_response=True)
         self.assertEqual('configurations', json.loads(raw)['kind'])
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s3_contracts').fetchone()[0])
@@ -398,7 +398,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(configurations)
         self.submit(page, '/configurations', {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
-            'tier': 'standard'}, status=303)
+            'tier': 'high'}, status=303)
         page, _, _ = self.request(dossier)
         campaign_links = [n for n in page.nodes if n['tag'] == 'a'
                           and '/campaigns/' in n['attrs'].get('href', '')

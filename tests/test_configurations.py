@@ -71,7 +71,7 @@ class ConfigurationsTests(unittest.TestCase):
             'scope': 'Fixture Pi locale',
         }
 
-    def prepare(self, models, tier='standard'):
+    def prepare(self, models, tier='low'):
         with patch.object(model_catalogue, '_now', return_value=NOW):
             return campaigns.prepare_configurations(
                 self.store, self.session, 'fixture', {'models': models, 'tier': tier}, self.identity)
@@ -83,7 +83,7 @@ class ConfigurationsTests(unittest.TestCase):
         preview = preparation.view(self.store, self.session, 'public')
         qualify_fixture(self.data, self.store, self.session, 'public', preview)
         body = {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
-                'tier': 'standard', 'csrf_token': 'csrf'}
+                'tier': 'low', 'csrf_token': 'csrf'}
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', 'token')), \
                 patch.object(model_catalogue, '_now', return_value=NOW):
             code, created, _, _ = web_api.dispatch(
@@ -109,46 +109,40 @@ class ConfigurationsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'exclu'):
             self.prepare(['openai/gpt-5.6-sol', 'openai/gpt-5.5-sol'])
 
-    def test_explicit_effort_is_sent_without_silent_substitution(self):
-        prepared = self.prepare(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'medium')
+    def test_only_low_and_high_are_accepted_without_silent_substitution(self):
+        prepared = self.prepare(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'low')
         configurations = prepared['configurations']
-        self.assertEqual({'effort': 'medium'}, configurations[0]['parameters']['reasoning'])
-        self.assertEqual('medium', configurations[0]['effort'])
+        self.assertEqual({'effort': 'low'}, configurations[0]['parameters']['reasoning'])
+        self.assertEqual('low', configurations[0]['effort'])
         self.assertNotIn('reasoning', configurations[1]['parameters'])
         self.assertEqual('not_adjustable', configurations[1]['effort_limit'])
-        self.assertEqual('medium', prepared['current_tier'])
-        self.assertNotIn('standard', prepared['available_tiers'])
-        with self.assertRaisesRegex(ValueError, 'mistralai/mistral-medium-3-5'):
-            self.prepare(['openai/gpt-5.6-sol', 'mistralai/mistral-medium-3-5'], 'medium')
+        self.assertEqual('low', prepared['current_tier'])
+        self.assertEqual(['low', 'high'], prepared['available_tiers'])
+        for tier in ('none', 'minimal', 'medium', 'xhigh', 'max', 'standard', 'enhanced'):
+            with self.subTest(tier=tier), self.assertRaisesRegex(ValueError, 'Palier inconnu'):
+                self.prepare(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], tier)
 
-    def test_resout_standard_high_tiers_et_non_reglable_sans_low(self):
-        standard = self.prepare(
+    def test_low_high_and_non_adjustable_models(self):
+        low = self.prepare(
             ['openai/gpt-5.6-sol', 'mistralai/mistral-medium-3-5'])
-        self.assertEqual(['off', 'off'], [item['effort'] for item in standard['configurations']])
-        self.assertTrue(all('reasoning' not in item['parameters']
-                            for item in standard['configurations']))
+        self.assertEqual(['low', 'low'], [item['effort'] for item in low['configurations']])
 
-        enhanced = self.prepare(
-            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'enhanced')
-        by_model = {item['model']: item for item in enhanced['configurations']}
+        high = self.prepare(
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'high')
+        by_model = {item['model']: item for item in high['configurations']}
         self.assertEqual({'effort': 'high'},
                          by_model['openai/gpt-5.6-sol']['parameters']['reasoning'])
-        self.assertEqual({'enabled': True},
-                         by_model['deepseek/deepseek-v4.1-flash']['parameters']['reasoning'])
-        self.assertEqual('on', by_model['deepseek/deepseek-v4.1-flash']['effort'])
-        self.assertIn('low', enhanced['available_tiers'])
+        self.assertNotIn('reasoning', by_model['deepseek/deepseek-v4.1-flash']['parameters'])
+        self.assertEqual('off', by_model['deepseek/deepseek-v4.1-flash']['effort'])
+        self.assertEqual(['low', 'high'], high['available_tiers'])
 
-        fixed = self.prepare(
-            ['mistralai/mistral-medium-3-5', 'openai/gpt-5.6-sol'], 'enhanced')
-        unadjustable = next(item for item in fixed['configurations']
-                            if item['model'] == 'mistralai/mistral-medium-3-5')
-        self.assertEqual('not_adjustable', unadjustable['effort_limit'])
-        self.assertNotIn('reasoning', unadjustable['parameters'])
+        with self.assertRaisesRegex(ValueError, 'mistralai/mistral-medium-3-5'):
+            self.prepare(['mistralai/mistral-medium-3-5', 'openai/gpt-5.6-sol'], 'high')
 
         transport = object.__new__(pi_openrouter.PiOpenRouter)
         payload = transport._payload(by_model['deepseek/deepseek-v4.1-flash'], [])
-        self.assertEqual({'enabled': True}, payload['reasoning'])
-        for item in enhanced['configurations']:
+        self.assertNotIn('reasoning', payload)
+        for item in high['configurations']:
             self.assertEqual('deny', item['parameters']['provider']['data_collection'])
         self.assertEqual('deny', payload['provider']['data_collection'])
 
@@ -171,7 +165,7 @@ class ConfigurationsTests(unittest.TestCase):
         first = self.prepare(
             ['openai/gpt-5.6-sol', 'mistralai/mistral-medium-3-5'])
         second = self.prepare(
-            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'enhanced')
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'high')
         self.assertEqual('fixture-c2', second['current_campaign_id'])
         self.assertEqual(['fixture-c1'], second['superseded'])
         self.assertEqual(2, self.store._connection.execute(
@@ -205,7 +199,7 @@ class ConfigurationsTests(unittest.TestCase):
         token = 'token'
         body = {'csrf_token': 'csrf', 'models': ['openai/gpt-5.6-sol',
                                                  'mistralai/mistral-medium-3-5'],
-                'tier': 'standard'}
+                'tier': 'low'}
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', token)):
             code, view, _, _ = web_api.dispatch(
                 self.store, 'POST', '/preparation/dossiers/fixture/configurations',

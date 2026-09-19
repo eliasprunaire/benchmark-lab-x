@@ -44,7 +44,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertNotIn('Demandée, observée et sources', table)
         self.assertNotIn('Sans rang', table)
         self.assertIn('Détail et preuves', table)
-        self.assertEqual(4, sum(tag == 'th' and attrs.get('scope') == 'col' for tag, attrs in parsed.tags))
+        self.assertEqual(5, sum(tag == 'th' and attrs.get('scope') == 'col' for tag, attrs in parsed.tags))
 
     def test_campaign_models_are_private_frozen_and_read_only(self):
         value = r.comparison(self.store, self.sid, 'fixture', 'proof')
@@ -103,7 +103,6 @@ class S10ProofTests(unittest.TestCase):
                                       query=detail['filter_scope'])
             page = views.render(comparison, '').decode()
             proof = Markup(views.render(detail, ''))
-        self.assertIn(detail['back_href'], proof.links)
         self.assertTrue(detail['back_href'].endswith('#attempt-long'))
         parsed = Markup(page.encode())
         row = next(attrs for tag, attrs in parsed.tags if attrs.get('id') == 'attempt-long')
@@ -111,7 +110,7 @@ class S10ProofTests(unittest.TestCase):
         region = next(attrs for tag, attrs in parsed.tags if attrs.get('class') == 'table-scroll')
         self.assertEqual(('region', '0', 'Comparaison des modèles'),
                          (region['role'], region['tabindex'], region['aria-label']))
-        self.assertEqual(4, sum(tag == 'th' and attrs.get('scope') == 'col' for tag, attrs in parsed.tags))
+        self.assertEqual(5, sum(tag == 'th' and attrs.get('scope') == 'col' for tag, attrs in parsed.tags))
         self.assertEqual(1, page.count('<script>'))
         self.assertIn('<script>' + views.COMPARISON_FOCUS_SCRIPT + '</script>', page)
         self.assertFalse(any(tag == 'script' for tag, attrs in proof.tags))
@@ -159,9 +158,7 @@ class S10ProofTests(unittest.TestCase):
         parsed = Markup(page)
         self.assertFalse(any(tag == 'script' or any(k.startswith('on') for k in attrs)
                              for tag, attrs in parsed.tags))
-        self.assertEqual([{'src': '/bench-x.svg', 'width': '32', 'height': '32', 'alt': ''}] * 2,
-                         [attrs for tag, attrs in parsed.tags if tag == 'img'])
-        self.assertIn(detail['back_href'], parsed.links)
+        self.assertEqual([], [attrs for tag, attrs in parsed.tags if tag == 'img'])
         self.assertTrue(detail['back_href'].endswith('#attempt-long'))
         self.assertEqual(query, detail['filter_scope'])
         self.assertTrue(any(tag == 'details' and attrs.get('class') == 'proof-content' for tag, attrs in parsed.tags))
@@ -203,20 +200,22 @@ class S10ProofTests(unittest.TestCase):
         row = value['rows'][0]
         page = views.render(value, '').decode()
         self.assertNotIn('economic-choice-title', page)
-        value['economic_choice'] = dict(configuration=row['requested_configuration'], count=2,
-                                        amount='0.00113885', unit='USD', detail_href=row['detail_href'])
+        value['recommendation'] = dict(configuration=row['requested_configuration'], count=2,
+                                       amount='0.00113885', unit='USD', basis='equal_quality_cost',
+                                       quality=[], detail_href=row['detail_href'])
         page = views.render(value, '').decode()
         parsed = Markup(page.encode())
         self.assertEqual(1, sum(tag == 'dialog' for tag, _ in parsed.tags))
         self.assertEqual(1, sum(tag == 'form' for tag, _ in parsed.tags))
         self.assertEqual([row['detail_href']],
-                         [attrs['href'] for tag, attrs in parsed.tags if tag == 'a' and 'data-result' in attrs])
+                         [attrs['data-url'] for tag, attrs in parsed.tags if tag == 'button' and 'data-result' in attrs])
         self.assertLess(page.index('economic-choice-title'), page.index('id="filters"'))
         self.assertIn('<h2 id="economic-choice-title">Notre conseil</h2>', page)
         self.assertNotIn('Si le coût est votre priorité', page)
         self.assertIn('<p class="choice-model">' + row['requested_configuration']['model'] + '</p>', page)
         self.assertIn(campaign_views.effort_label(row['requested_configuration']), page)
-        self.assertIn('La moins coûteuse parmi 2 réponses conformes sur cet exemple.', page)
+        self.assertIn('Qualité observée équivalente ; c’est la moins coûteuse parmi 2 réponses conformes.', page)
+        self.assertNotIn('Ouvrir la page complète', page)
         self.assertIn('<strong>0,00113885 USD</strong>', page)
         self.assertNotIn('>Détails et réserves</a>', page)
         for word in ('recommand', 'meilleur', 'innerHTML', 'gagnant'):
