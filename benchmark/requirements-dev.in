@@ -1,0 +1,3 @@
+-r requirements.txt
+requests
+mpmath==1.3.0
