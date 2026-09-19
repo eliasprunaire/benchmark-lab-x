@@ -378,7 +378,15 @@ def render_comparison(value):
         content += '<p>' + text(effort_label(choice['configuration'])) + '</p></div>'
         content += '<p class="choice-cost">Coût observé<strong>' + text(montant_lisible(choice['amount']) + ' ' + choice['unit']) + '</strong></p></div>'
         if choice['basis'] == 'quality_then_cost':
-            content += '<p>Cette réponse offre la meilleure qualité observée ; le coût départage les réponses de qualité équivalente.</p>'
+            criteria = list(dict.fromkeys(definition.get('measure') or definition.get('label')
+                                          for definition in choice['quality']
+                                          if definition.get('measure') or definition.get('label')))
+            definition = ('Dans Bench-X, la qualité correspond aux critères définis pour ce cas d’usage '
+                          'et vérifiés dans la réponse' + (text(' : ' + ' ; '.join(criteria)) if criteria else '') + '.')
+            content += '<p>Notre conseil se base sur la <span class="quality-term"><span class="quality-help" tabindex="0" '
+            content += 'aria-describedby="quality-definition">qualité observée <span aria-hidden="true">?</span></span>'
+            content += '<span id="quality-definition" class="quality-tooltip" role="tooltip">' + definition + '</span></span>. '
+            content += 'Le coût vient ensuite départager les réponses de qualité équivalente.</p>'
         else:
             content += '<p>Qualité observée équivalente ; c’est la moins coûteuse parmi ' + text(choice['count']) + ' réponses conformes.</p>'
         content += '<p class="hint">Un seul exemple ne garantit pas le même résultat sur d’autres tâches.</p></aside>'
