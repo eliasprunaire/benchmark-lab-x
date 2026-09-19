@@ -56,6 +56,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('actions/download-artifact@', workflow)
         self.assertIn('BENCHMARK_DEPLOY_ENABLED', workflow)
         self.assertIn('StrictHostKeyChecking=yes', workflow)
+        self.assertIn('isPrerelease', workflow)
 
 
 if __name__ == '__main__':
