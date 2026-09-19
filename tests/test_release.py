@@ -55,6 +55,8 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('actions/upload-artifact@', workflow)
         self.assertIn('actions/download-artifact@', workflow)
         self.assertIn('BENCHMARK_DEPLOY_ENABLED', workflow)
+        self.assertIn('runs-on: [bench-deploy]', workflow)
+        self.assertNotIn('runs-on: [self-hosted,', workflow)
         self.assertIn('StrictHostKeyChecking=yes', workflow)
         self.assertIn('benchmark-delivery@10.10.0.33', workflow)
         self.assertIn('benchmark-release identity', workflow)
