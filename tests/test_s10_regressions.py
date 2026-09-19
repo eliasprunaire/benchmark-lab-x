@@ -215,6 +215,17 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn('<p class="choice-model">' + row['requested_configuration']['model'] + '</p>', page)
         self.assertIn(campaign_views.effort_label(row['requested_configuration']), page)
         self.assertIn('Qualité observée équivalente ; c’est la moins coûteuse parmi 2 réponses conformes.', page)
+        value['recommendation'].update(
+            basis='quality_then_cost',
+            quality=[{'measure': 'Clarté du résultat'}, {'measure': 'Précision des arbitrages'}],
+        )
+        page = views.render(value, '').decode()
+        self.assertIn('Notre conseil se base sur la <span class="quality-term"', page)
+        self.assertIn('<span class="quality-help" tabindex="0"', page)
+        self.assertIn('Le coût vient ensuite départager les réponses de qualité équivalente.', page)
+        self.assertIn('role="tooltip"', page)
+        self.assertIn('Clarté du résultat', page)
+        self.assertIn('Précision des arbitrages', page)
         self.assertNotIn('Ouvrir la page complète', page)
         self.assertIn('<strong>0,00113885 USD</strong>', page)
         self.assertNotIn('>Détails et réserves</a>', page)

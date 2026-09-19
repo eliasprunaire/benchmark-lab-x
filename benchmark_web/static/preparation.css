@@ -227,6 +227,11 @@ tr.out th strong { color: var(--muted); }
 .choice-model { font-family: var(--display); font-size: clamp(1.2rem, 2.5vw, 1.75rem); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
 .choice-cost { padding: .6rem 1rem; background: var(--surface); border: 1px solid var(--accent-soft-2); border-radius: var(--radius); color: var(--ink-2); font-size: .85rem; }
 .choice-cost strong { display: block; color: var(--accent-ink); font-size: 1.2rem; font-variant-numeric: tabular-nums; }
+.quality-term { position: relative; display: inline-block; }
+.quality-help { cursor: help; text-decoration: underline dotted; text-underline-offset: .18em; }
+.quality-help:focus { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+.quality-tooltip { position: absolute; z-index: 3; left: 0; bottom: calc(100% + .5rem); width: min(24rem, 75vw); padding: .65rem .8rem; border: 1px solid var(--line-2); border-radius: .4rem; background: var(--ink); color: var(--paper); font-size: .82rem; line-height: 1.4; opacity: 0; visibility: hidden; pointer-events: none; }
+.quality-term:hover .quality-tooltip, .quality-term:focus-within .quality-tooltip { opacity: 1; visibility: visible; }
 
 /* Détail et preuves */
 .result-dialog { width: min(100% - 2rem, 44rem); max-height: 90vh; overflow: auto; padding: 1rem 1.4rem 1.2rem; border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--paper); color: var(--ink); }
