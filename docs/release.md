@@ -19,13 +19,13 @@ La CI PR exécute les tests, valide la syntaxe des workflows, construit deux foi
 
 Le workflow GitHub reste inactif tant que la variable de dépôt `BENCHMARK_RELEASE_ENABLED` n’est pas définie à `true`. Le déploiement ajoute `BENCHMARK_DEPLOY_ENABLED=true` et l’environnement `production`. Ces variables sont absentes actuellement. L’activation doit être faite après fusion et revue de la PR, avec un premier déclenchement manuel sur le commit `main` voulu et `pre_release=alpha.1`; cette entrée autorise explicitement l’amorçage `0.2.0-alpha.1` même si l’historique de la branche ne contient que des changements CI. Aucun tag, release ou déploiement n’est créé par cette PR.
 
-Le dépôt et l’artefact ciblent désormais Python `3.14.7` via `.python-version`, la CI, la construction et les commandes locales. Les deux VMs observées utilisent encore Python `3.12.3`; aucune release ou bascule ne doit donc être activée avant l’installation vérifiée de Python `3.14.7` sur `labx-bench` et sur le futur runner GitHub, puis l’exécution explicite des services avec cet interpréteur.
+Le dépôt et l’artefact ciblent Python `3.14.7` via `.python-version`, la CI, la construction et les commandes locales. Le runner et `labx-bench` ont été qualifiés sous Ubuntu 26.04.1 avec Python système 3.14.4 ; `labx-bench` possède en plus le runtime applicatif isolé Python 3.14.7 construit depuis `benchmark/requirements-runtime.lock`. Le contrôleur refuse une release si l’empreinte de son lock diffère de celle du runtime provisionné.
 
 Le choix cible retenu pour la suite est de convertir la VM dédiée `librenet-benchrunner` (VM1013) en runner GitHub réutilisable, plutôt que de conserver le runner Forgejo isolé. La VM existe, mais `forgejo-runner@benchmark-delivery` est actuellement en échec après des `503 Service Unavailable` lors de `Declare`; aucun redémarrage ou changement distant n’est inclus ici.
 
 ### Réseau du runner
 
-L’état observé de cette VM est `10.20.0.9` sur le management et `10.60.0.9` sur le KMS; elle n’a pas d’adresse VLAN10 et sa route par défaut est `10.20.0.1`. Pour le futur runner GitHub, l’adresse de service devra être sur VLAN10, avec administration séparée sur VLAN20 et KMS conservé seulement si réellement nécessaire.
+La VM utilise désormais `10.10.0.34` sur VLAN10 pour sa route par défaut et `10.20.0.9` sur VLAN20 pour l’administration. Une route explicite conserve le retour vers `172.16.100.0/24` par VLAN20. L’interface VLAN60 a été retirée et l’accès au KMS est refusé ; le runner GitHub n’en a pas besoin.
 
 Un runner GitHub n’a pas besoin d’un nom de domaine `librenet.work` ni d’une connexion entrante depuis GitHub : il établit des connexions sortantes HTTPS vers GitHub, reçoit ainsi les jobs, puis peut atteindre `labx-bench` en SSH interne pendant le job de déploiement. Les jobs de PR et de build restent sur des runners GitHub hébergés ; seul le déploiement de `main`, après validation, doit utiliser le runner interne. Les domaines GitHub requis et les security groups doivent être autorisés dans le dépôt d’infrastructure. Le domaine existant `bench.librenet.work` concerne le service Bench-X, pas l’enregistrement du runner.
 
