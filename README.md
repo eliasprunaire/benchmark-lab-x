@@ -6,7 +6,7 @@
   <p>
     <a href="https://github.com/eliasprunaire/benchmark-lab-x/actions/workflows/ci.yml"><img alt="CI Python" src="https://github.com/eliasprunaire/benchmark-lab-x/actions/workflows/ci.yml/badge.svg"></a>
     <a href="LICENSE"><img alt="Licence AGPL-3.0" src="https://img.shields.io/badge/licence-AGPL--3.0-blue.svg"></a>
-    <img alt="Python 3.12 ou supérieur" src="https://img.shields.io/badge/python-3.12%2B-3776AB.svg">
+    <img alt="Python 3.14.7" src="https://img.shields.io/badge/python-3.14.7-3776AB.svg">
   </p>
   <p>
     <a href="#ce-que-fait-bench-x">Fonctionnalités</a> ·
@@ -38,7 +38,7 @@ Le jalon visé est `0.1.0`. Ce numéro décrit un périmètre produit ; il ne pr
 
 ### Prérequis
 
-- Python 3.12 ou supérieur ;
+- Python 3.14.7 ;
 - [uv](https://docs.astral.sh/uv/) ;
 - Node.js et Pi uniquement pour les parcours candidats qui les utilisent.
 
@@ -47,7 +47,7 @@ Depuis la racine du dépôt :
 ```bash
 git clone https://github.com/eliasprunaire/benchmark-lab-x.git
 cd benchmark-lab-x
-uv run --python 3.12 python -m benchmark --help
+uv run --python 3.14.7 python -m benchmark --help
 ```
 
 Pour préparer un environnement privé, copiez le fichier d’exemple puis renseignez uniquement les accès nécessaires :
@@ -70,7 +70,7 @@ Pour les commandes opérateur, utilisez `python -m benchmark --help`. Le PRD, l�
 La suite locale et la CI utilisent la même commande principale :
 
 ```bash
-uv run --with-requirements benchmark/requirements.txt --with requests --with mpmath==1.3.0 \
+uv run --with-requirements benchmark/requirements.lock --python 3.14.7 \
   python -m unittest discover -s tests
 ```
 

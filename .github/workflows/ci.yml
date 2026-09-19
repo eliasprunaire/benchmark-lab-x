@@ -25,7 +25,7 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.3"
-          python-version: "3.12"
+          python-version: "3.14.7"
           enable-cache: false
 
       - name: Configurer Node pour la qualification Pi
@@ -35,7 +35,10 @@ jobs:
           package-manager-cache: false
 
       - name: Lire la version Pi du produit
-        run: echo "BENCHMARK_PI_VERSION=$(python3 -c 'from benchmark.transports.pi import VERSION; print(VERSION)')" >> "$GITHUB_ENV"
+        run: echo "BENCHMARK_PI_VERSION=$(uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python -c 'from benchmark.transports.pi import VERSION; print(VERSION)')" >> "$GITHUB_ENV"
+
+      - name: Valider la syntaxe des workflows
+        run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' .github/workflows/*.yml
 
       - name: Installer Pi pour les réponses fictives
         run: |
@@ -48,17 +51,17 @@ jobs:
         env:
           BENCHMARK_TEST_PI_PACKAGE: ${{ runner.temp }}/benchmark-pi/node_modules/@earendil-works/pi-coding-agent
         run: |
-          uv run --with-requirements benchmark/requirements.txt --python 3.12 python -m benchmark.runtime inspect-pi \
+          uv run --with-requirements benchmark/requirements.txt --python 3.14.7 python -m benchmark.runtime inspect-pi \
             --pi-package "$BENCHMARK_TEST_PI_PACKAGE" --node "$(command -v node)"
-          uv run --with-requirements benchmark/requirements.txt --with requests --with mpmath==1.3.0 python -m unittest -v tests.test_private_comparison
+          uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python -m unittest -v tests.test_private_comparison
 
       - name: Exécuter les tests
         env:
           BENCHMARK_TEST_PI_PACKAGE: ${{ runner.temp }}/benchmark-pi/node_modules/@earendil-works/pi-coding-agent
-        run: uv run --with-requirements benchmark/requirements.txt --with requests --with mpmath==1.3.0 python -m unittest discover -s tests
+        run: uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python -m unittest discover -s tests
 
       - name: Vérifier la version cryptographique du runtime Linux
-        run: uv run --with cryptography==41.0.7 --with requests --with mpmath==1.3.0 python -m unittest tests.test_provider_crypto tests.test_privacy
+        run: uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python -m unittest tests.test_provider_crypto tests.test_privacy
 
       - name: Vérifier les archives dans Chromium
         run: |
@@ -70,7 +73,11 @@ jobs:
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          uv run --python 3.12 python tools/build_runtime.py --source "$SOURCE_SHA" --output "$RUNNER_TEMP/benchmark-runtime.tar.gz"
+          uv run --with-requirements benchmark/requirements-runtime.lock --python 3.14.7 python tools/build_runtime.py --source "$SOURCE_SHA" --output "$RUNNER_TEMP/benchmark-runtime.tar.gz"
+          uv run --with-requirements benchmark/requirements-runtime.lock --python 3.14.7 python tools/build_runtime.py --source "$SOURCE_SHA" --output "$RUNNER_TEMP/benchmark-runtime-repeat.tar.gz" > "$RUNNER_TEMP/build-receipt.json"
+          cmp "$RUNNER_TEMP/benchmark-runtime.tar.gz" "$RUNNER_TEMP/benchmark-runtime-repeat.tar.gz"
+          test "$(sha256sum "$RUNNER_TEMP/benchmark-runtime.tar.gz" | cut -d' ' -f1)" = "$(uv run --with-requirements benchmark/requirements-runtime.lock --python 3.14.7 python -c 'import json,sys; print(json.load(open(sys.argv[1]))["artifact_sha256"])' "$RUNNER_TEMP/build-receipt.json")"
+          uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python tools/release.py --head "$SOURCE_SHA" --base "${{ github.event.pull_request.base.sha }}" > "$RUNNER_TEMP/release-decision.json"
 
   pi-version:
     if: github.event_name == 'schedule'
@@ -84,7 +91,7 @@ jobs:
 
       - name: Vérifier la dernière version Pi publiée
         run: |
-          attendue="$(python3 -c 'from benchmark.transports.pi import VERSION; print(VERSION)')"
+          attendue="$(uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python -c 'from benchmark.transports.pi import VERSION; print(VERSION)')"
           publiee="$(npm view @earendil-works/pi-coding-agent version)"
           test "$attendue" = "$publiee" || {
             echo "::error::Pi $publiee est publié, mais le produit épingle $attendue"

@@ -82,12 +82,17 @@ class RuntimeBundleTests(unittest.TestCase):
             (package / 'storage.py').write_text('Invalid uncommitted content')
             second = build(repo, commit, root / 'second.tar.gz')
             self.assertEqual(first, second)
+            versioned = build(repo, commit, root / 'versioned.tar.gz', '0.2.0-alpha.1')
+            self.assertEqual('0.2.0-alpha.1', versioned['version'])
+            with tarfile.open(root / 'versioned.tar.gz') as archive:
+                self.assertIn(b"VERSION = '0.2.0-alpha.1'", archive.extractfile('benchmark/__init__.py').read())
             unpacked = root / 'release'
             unpacked.mkdir()
             with tarfile.open(root / 'first.tar.gz') as archive:
                 archive.extractall(unpacked, filter='data')
             manifest = json.loads((unpacked / 'release.json').read_text())
             self.assertEqual(commit, manifest['source_sha'])
+            self.assertEqual('0.1.0', manifest['version'])
             self.assertIn('benchmark/models.toml', manifest['files'])
             self.assertIn('benchmark/requirements.txt', manifest['files'])
             for name, expected in manifest['files'].items():
