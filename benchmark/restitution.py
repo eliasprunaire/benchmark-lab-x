@@ -110,7 +110,7 @@ def _rank(rows, columns):
 
 
 def _recommendation(rows, columns, case_count, coverage, pending):
-    """Recommend only a quality-dominant response or the cheapest exact quality tie"""
+    """Recommend the strongest observed quality, using cost only to break an exact tie"""
     if (case_count != 1 or pending or coverage['not_started']
             or coverage['decided_attempts'] != coverage['planned_cells']
             or len({row['configuration_id'] for row in rows}) != len(rows)):
@@ -122,16 +122,20 @@ def _recommendation(rows, columns, case_count, coverage, pending):
         return None
     quality_vectors = {row['attempt_id']: tuple(_metric_number(_metric(row, column)) for column in quality)
                        for row in eligible}
-    vectors = {row['attempt_id']: quality_vectors[row['attempt_id']] + (-_metric_number(row['cost']),)
-               for row in eligible}
     frontier = [row for row in eligible if not any(
-        all(left >= right for left, right in zip(vectors[other['attempt_id']], vectors[row['attempt_id']]))
-        and any(left > right for left, right in zip(vectors[other['attempt_id']], vectors[row['attempt_id']]))
+        all(left >= right for left, right in zip(quality_vectors[other['attempt_id']],
+                                                quality_vectors[row['attempt_id']]))
+        and any(left > right for left, right in zip(quality_vectors[other['attempt_id']],
+                                                   quality_vectors[row['attempt_id']]))
         for other in eligible if other is not row)]
-    basis = ('equal_quality_cost' if len(set(quality_vectors.values())) == 1 else 'quality_and_cost')
-    if len(frontier) != 1:
+    if len({quality_vectors[row['attempt_id']] for row in frontier}) != 1:
         return None
-    row = frontier[0]
+    cheapest = min(_metric_number(row['cost']) for row in frontier)
+    winners = [row for row in frontier if _metric_number(row['cost']) == cheapest]
+    if len(winners) != 1:
+        return None
+    row = winners[0]
+    basis = ('equal_quality_cost' if len(set(quality_vectors.values())) == 1 else 'quality_then_cost')
     return dict(configuration=deepcopy(row['requested_configuration']), count=len(eligible),
                 amount=row['cost']['value'], unit=row['cost']['unit'], basis=basis,
                 quality=[deepcopy(column['definition']) for column in quality], detail_href=row['detail_href'])

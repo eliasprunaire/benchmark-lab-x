@@ -32,7 +32,7 @@ class RecommendationTests(unittest.TestCase):
         before = deepcopy(self.rows)
         value = self.choice()
         self.assertEqual('vendor/a', value['configuration']['model'])
-        self.assertEqual('quality_and_cost', value['basis'])
+        self.assertEqual('quality_then_cost', value['basis'])
         self.assertEqual(('0.001', 'USD', 2), (value['amount'], value['unit'], value['count']))
         self.assertEqual(before, self.rows)
         self.rows[1]['verdict'] = 'NE SATISFAIT PAS'
@@ -72,11 +72,13 @@ class RecommendationTests(unittest.TestCase):
                    dict(id='Q2', criterion_id='Q2', definition=self.quality)]
         self.assertIsNone(r._recommendation(rows, columns, 1, self.coverage, []))
 
-    def test_abstains_when_better_quality_costs_more(self):
+    def test_prefers_better_quality_then_uses_cost_for_equal_quality(self):
         rows = deepcopy(self.rows)
         rows[0]['cost'].update(value='0.12', rank=2)
         rows[1]['cost'].update(value='0.001', rank=1)
-        self.assertIsNone(r._recommendation(rows, self.columns, 1, self.coverage, []))
+        value = r._recommendation(rows, self.columns, 1, self.coverage, [])
+        self.assertEqual('vendor/a', value['configuration']['model'])
+        self.assertEqual('quality_then_cost', value['basis'])
 
     def test_closed_quality_scale_is_orderable_without_numeric_score(self):
         definition = {'measure': 'Clarté', 'proof': 'Citation', 'unit': 'descriptif',

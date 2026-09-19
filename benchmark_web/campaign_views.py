@@ -377,8 +377,8 @@ def render_comparison(value):
         content += '<p class="choice-model">' + text(choice['configuration']['model']) + '</p>'
         content += '<p>' + text(effort_label(choice['configuration'])) + '</p></div>'
         content += '<p class="choice-cost">Coût observé<strong>' + text(montant_lisible(choice['amount']) + ' ' + choice['unit']) + '</strong></p></div>'
-        if choice['basis'] == 'quality_and_cost':
-            content += '<p>Cette réponse domine les autres sur les qualités et le coût observés pour ce cas.</p>'
+        if choice['basis'] == 'quality_then_cost':
+            content += '<p>Cette réponse offre la meilleure qualité observée ; le coût départage les réponses de qualité équivalente.</p>'
         else:
             content += '<p>Qualité observée équivalente ; c’est la moins coûteuse parmi ' + text(choice['count']) + ' réponses conformes.</p>'
         content += '<p class="hint">Un seul exemple ne garantit pas le même résultat sur d’autres tâches.</p></aside>'
