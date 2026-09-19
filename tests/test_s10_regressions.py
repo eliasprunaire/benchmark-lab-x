@@ -222,6 +222,7 @@ class S10ProofTests(unittest.TestCase):
         page = views.render(value, '').decode()
         self.assertIn('Notre conseil se base sur la <span class="quality-term"', page)
         self.assertIn('<span class="quality-help" tabindex="0"', page)
+        self.assertNotIn('aria-hidden="true">?</span>', page)
         self.assertIn('Le coût vient ensuite départager les réponses de qualité équivalente.', page)
         self.assertIn('role="tooltip"', page)
         self.assertIn('Clarté du résultat', page)
