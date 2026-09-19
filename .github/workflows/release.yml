@@ -160,7 +160,12 @@ jobs:
           fi
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             target="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
+            prerelease="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)"
             test "$target" = "$SOURCE_SHA" || test "$target" = "$TAG"
+            case "$VERSION" in
+              *-*) test "$prerelease" = true ;;
+              *) test "$prerelease" = false ;;
+            esac
           else
             flags=()
             case "$VERSION" in *-*) flags+=(--prerelease);; esac
