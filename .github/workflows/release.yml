@@ -233,29 +233,39 @@ jobs:
       - name: Soumettre la transaction au contrôleur
         env:
           SSH_PRIVATE_KEY: ${{ secrets.BENCHMARK_SSH_PRIVATE_KEY }}
+          SSH_TARGET: ${{ secrets.BENCHMARK_SSH_TARGET }}
+          SSH_PORT: ${{ secrets.BENCHMARK_SSH_PORT }}
+          DEPLOY_TARGET: ${{ secrets.BENCHMARK_DEPLOY_TARGET }}
           TAG: ${{ needs.prepare.outputs.tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
         run: |
           set -euo pipefail
           test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_TARGET"
+          test -n "$SSH_PORT"
+          test -n "$DEPLOY_TARGET"
           eval "$(ssh-agent -s)"
           trap 'ssh-agent -k >/dev/null' EXIT
           printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
-          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p 2222 benchmark-delivery@10.10.0.33)
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p "$SSH_PORT" "$SSH_TARGET")
           identity="$(ssh "${ssh_args[@]}" 'sudo -n /usr/local/sbin/benchmark-release identity')"
           controller_sha="$(uv run --python 3.14.7 python -c 'import json,sys; print(json.loads(sys.argv[1])["controller_sha"])' "$identity")"
           worker_sha256="$(uv run --python 3.14.7 python -c 'import json,sys; print(json.loads(sys.argv[1])["worker_sha256"])' "$identity")"
           artifact_sha256="$(sha256sum release-bundle/benchmark-runtime.tar.gz | cut -d' ' -f1)"
           receipt_sha256="$(sha256sum release-bundle/build-receipt.json | cut -d' ' -f1)"
           transaction="$(uv run --python 3.14.7 python -c 'import uuid; print(uuid.uuid4().hex)')"
-          uv run --python 3.14.7 python - "$transaction" "$SOURCE_SHA" "$artifact_sha256" "$controller_sha" "$worker_sha256" "$receipt_sha256" > request.json <<'PY'
+          uv run --python 3.14.7 python - "$transaction" "$SOURCE_SHA" "$artifact_sha256" "$controller_sha" "$worker_sha256" "$receipt_sha256" "$DEPLOY_TARGET" > request.json <<'PY'
           import json, sys
-          transaction, source, artifact, controller, worker, receipt = sys.argv[1:]
+          transaction, source, artifact, controller, worker, receipt, target = sys.argv[1:]
+          # La cible de déploiement décrit une machine interne : elle vit dans un
+          # secret, jamais dans ce fichier, qui est public
+          descriptor = json.loads(target)
+          assert {'client', 'vmid', 'address'} <= set(descriptor), 'BENCHMARK_DEPLOY_TARGET incomplet'
           print(json.dumps({'transaction': transaction, 'action': 'deploy', 'source_sha': source,
                             'artifact_sha256': artifact, 'controller_sha': controller,
                             'worker_sha256': worker, 'build_receipt_sha256': receipt,
-                            'client': 'labx-benchmark', 'vmid': 2016, 'address': '10.10.0.33'}))
+                            **descriptor}))
           PY
           {
             uv run --python 3.14.7 python - request.json release-bundle/build-receipt.json <<'PY'
@@ -276,15 +286,19 @@ jobs:
       - name: Attendre le reçu terminal et arrêter en cas de HOLD
         env:
           SSH_PRIVATE_KEY: ${{ secrets.BENCHMARK_SSH_PRIVATE_KEY }}
+          SSH_TARGET: ${{ secrets.BENCHMARK_SSH_TARGET }}
+          SSH_PORT: ${{ secrets.BENCHMARK_SSH_PORT }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_TARGET"
+          test -n "$SSH_PORT"
           eval "$(ssh-agent -s)"
           trap 'ssh-agent -k >/dev/null' EXIT
           printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
-          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p 2222 benchmark-delivery@10.10.0.33)
+          ssh_args=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -p "$SSH_PORT" "$SSH_TARGET")
           transaction="$(uv run --python 3.14.7 python -c 'import json; print(json.load(open("request.json"))["transaction"])')"
           for attempt in $(seq 1 120); do
             set +e

@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import unittest
 from unittest.mock import patch
 
@@ -58,12 +59,20 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('runs-on: [bench-deploy]', workflow)
         self.assertNotIn('runs-on: [self-hosted,', workflow)
         self.assertIn('StrictHostKeyChecking=yes', workflow)
-        self.assertIn('benchmark-delivery@10.10.0.33', workflow)
+        self.assertIn('secrets.BENCHMARK_SSH_TARGET', workflow)
+        self.assertIn('secrets.BENCHMARK_SSH_PORT', workflow)
         self.assertIn('benchmark-release identity', workflow)
-        self.assertNotIn('useradmin@10.10.0.33', workflow)
         self.assertIn('isPrerelease', workflow)
         self.assertIn('main_sha="$(git rev-parse origin/main^{commit})"', workflow)
         self.assertNotIn('cp "$receipt" "$RUNNER_TEMP/build-receipt.json"', workflow)
+
+    def test_workflows_expose_no_private_address(self):
+        # Le dépôt est public : une cible de déploiement vit dans un secret,
+        # jamais dans un fichier versionné
+        private = re.compile(r'(?<![\d.])(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}(?![\d.])')
+        for workflow in sorted(Path('.github/workflows').glob('*.yml')):
+            found = private.findall(workflow.read_text())
+            self.assertEqual([], found, f'adresse privée dans {workflow}')
 
 
 if __name__ == '__main__':
