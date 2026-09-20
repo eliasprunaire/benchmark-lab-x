@@ -90,7 +90,7 @@ La CI :
 - refuse deux archives différentes ;
 - calcule la décision de release attendue.
 
-Les jobs de pull request ne reçoivent aucun secret de production et ne peuvent pas utiliser le runner de déploiement interne.
+Les jobs de pull request ne reçoivent aucun secret de production et ne disposent d’aucun accès de déploiement.
 
 ## Relire et fusionner
 
@@ -110,13 +110,13 @@ Le push dans `main` déclenche automatiquement la chaîne de release :
 4. double construction reproductible de l’artefact ;
 5. production du reçu, de la décision et des empreintes ;
 6. création ou reprise sûre du tag et de la release GitHub ;
-7. téléchargement du même artefact par le runner interne ;
-8. soumission au contrôleur de déploiement ;
+7. téléchargement du même artefact par le job de déploiement ;
+8. soumission au service de déploiement ;
 9. vérification de la transaction, de la version, du SHA et de la santé.
 
-Une réussite n’est annoncée que lorsque le contrôleur renvoie un état terminal accepté. Un état `HOLD`, `UNKNOWN`, une divergence d’empreinte ou un contrôle de santé rouge fait échouer le workflow.
+Une réussite n’est annoncée qu’après un état terminal accepté. Un état `HOLD`, `UNKNOWN`, une divergence d’empreinte ou un contrôle de santé rouge fait échouer le workflow.
 
-Les préversions et leur promotion relèvent d’une décision opérateur. Ne modifiez pas les variables d’activation, l’environnement GitHub `production`, les secrets, le runner ou le contrôleur dans le cadre d’une contribution produit ordinaire.
+Les préversions et leur promotion relèvent d’une décision opérateur. Ne modifiez pas la configuration de livraison ou ses secrets dans le cadre d’une contribution produit ordinaire.
 
 ## Autorités séparées
 
@@ -126,7 +126,7 @@ Une contribution de code n’autorise pas :
 - une campagne ;
 - la publication de résultats privés ;
 - un déploiement manuel ;
-- le contournement du contrôleur ;
+- le contournement du chemin de déploiement ;
 - la réécriture d’un tag ou d’une release.
 
 La fusion autorise seulement l’automatisation déjà configurée. Toute opération exceptionnelle suit le runbook et conserve ses propres autorisations.
