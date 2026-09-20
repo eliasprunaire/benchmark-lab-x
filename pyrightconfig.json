@@ -1,0 +1,9 @@
+{
+  "include": [
+    "benchmark",
+    "benchmark_web"
+  ],
+  "pythonVersion": "3.14",
+  "pythonPlatform": "Linux",
+  "typeCheckingMode": "standard"
+}

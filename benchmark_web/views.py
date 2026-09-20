@@ -167,7 +167,7 @@ def preparation_steps(value):
     if not downstream and not results and value.get('qualified') and revision == value.get('current_revision', revision):
         models_href = dossier + '/configurations'
     results_href = base
-    if campaign.get('judgment') and campaign['judgment']['status'] != 'COMPLETE':
+    if base is not None and campaign.get('judgment') and campaign['judgment']['status'] != 'COMPLETE':
         results_href = base + '/conditions'
     targets = [reference + '#besoin', reference + '#exemple' if example else None,
                reference + '#validation' if example else None,
@@ -594,9 +594,10 @@ def render(value, csrf, path='/preparation', *, error=False):
                    else 'La préparation et la qualification sont financées par l’opérateur')
         status += text(reasons[state['reason']]) + '</p><p class="hint">La consultation ne lance aucun appel. ' + funding + ' ; les appels candidats demandent un lancement distinct.</p></aside>'
         content = status + content
-    if not error and value.get('kind') == 'campaign_launch' and value['campaign']['attempts'] and page_script(value):
-        content += '<script>' + page_script(value) + '</script>'
-    if not error and page_script(value) == STEP_SCRIPT:
+    script = page_script(value) if not error else None
+    if script is not None and value.get('kind') == 'campaign_launch' and value['campaign']['attempts']:
+        content += '<script>' + script + '</script>'
+    if script == STEP_SCRIPT:
         content += '<script>' + STEP_SCRIPT + '</script>'
     if not error:
         if value.get('kind') == 'home':

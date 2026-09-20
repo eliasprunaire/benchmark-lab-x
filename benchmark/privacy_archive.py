@@ -10,6 +10,7 @@ import hmac
 import json
 import re
 import secrets
+from typing import cast
 
 from . import preparation as p, restitution
 from .storage import (ConflictError, IntegrityError, SchemaError, _strict_json as encode, _transaction,
@@ -175,19 +176,21 @@ def _configuration(name, value):
 
 
 def _campaigns(store, session_id, dossier_id, campaigns):
-    result = []
+    result: list[dict] = []
     for campaign in campaigns:
         cid = campaign['campaign_id']
         comparison = restitution.comparison(store, session_id, dossier_id, cid)
-        models = []
+        models: list[dict] = []
         for row in comparison['rows']:
             detail = restitution.detail(store, session_id, dossier_id, cid, row['attempt_id'])
-            record = next(x for x in detail['history'] if x['evaluation_id'] == row['evaluation_id'])
+            history = cast(list[dict], detail['history'])
+            record = next(x for x in history if x['evaluation_id'] == row['evaluation_id'])
             candidate_ids = {piece['id'] for piece in record['qualification']['contract']['package']['pieces']}
             output_id = record['output_piece_id']
             # Judge references can appear in proof_links but never in this allowlist
-            evidence = [dict(name=_text(link['name']), text=_text(record['proof_contents'][link['piece_id']]))
-                        for link in record['proof_links'] if link['piece_id'] in candidate_ids]
+            evidence: list[dict] = [
+                dict(name=_text(link['name']), text=_text(record['proof_contents'][link['piece_id']]))
+                for link in record['proof_links'] if link['piece_id'] in candidate_ids]
             evidence += [_configuration('Configuration demandée', row['requested_configuration']),
                          _configuration('Configuration observée', row.get('observed_configuration') or {}),
                          dict(name='Motif du résultat', text=_text(row['reason']))]
@@ -387,10 +390,15 @@ def change_contribution(store, session_token, dossier_id, body, manager_token=No
     if not body['enabled'] and existing is None:
         return dict(kind='contribution', contribution=None), None
     payload = _contribution_payload(store, session_id, dossier_id, current) if body['enabled'] else None
+    privacy = None
+    event = None
     if not body['enabled']:
         from . import privacy
+        if existing is None:
+            raise IntegrityError('Contribution à retirer absente')
         event = privacy.journal_intent(store, 'contribution', existing['contribution_id'], now=now)
     new_token = None
+    manager_id = None
     with _transaction(connection, write=True):
         now = _now(requested_now)
         expiry = _six_months(now).isoformat()
@@ -414,13 +422,19 @@ def change_contribution(store, session_token, dossier_id, body, manager_token=No
             connection.execute('UPDATE s7_contribution_managers SET expires_at=max(expires_at,?) WHERE manager_id=?',
                                (manager_expiry, manager_id))
         if not body['enabled']:
+            if privacy is None or event is None:
+                raise IntegrityError('Retrait non préparé')
             privacy.apply_revocation(connection, event)
         elif existing is not None and existing['status'] == 'active':
+            if manager_id is None:
+                raise IntegrityError('Gestionnaire de contribution absent')
             connection.execute('UPDATE s7_contributions SET revision=revision+1,content_version=?,status=?,payload_json=?,manager_id=? '
                 "WHERE contribution_id=? AND revision=? AND status='active'",
                 (version, 'active', payload, manager_id,
                  existing['contribution_id'], body['revision']))
         else:
+            if manager_id is None:
+                raise IntegrityError('Gestionnaire de contribution absent')
             connection.execute('INSERT INTO s7_contributions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (secrets.token_hex(16), manager_id, dossier_id, current, body['revision'] + 1, version, now.isoformat(), expiry, 'active', payload, NOTICE_VERSION))
         return dict(kind='contribution', contribution=_metadata(_contribution(connection, dossier_id, current))), new_token

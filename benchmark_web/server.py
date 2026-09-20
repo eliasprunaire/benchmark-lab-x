@@ -218,7 +218,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                                 raise ValueError('Révision invalide')
                             form_body['revision'] = int(revision)
                         if self.path.endswith('/contribution'):
-                            revision = form_body.get('example_revision', '')
+                            revision = values.get('example_revision', [''])[0]
                             if not re.fullmatch('[1-9][0-9]*', revision) or form_body.get('enabled') not in (None, 'true'):
                                 raise ValueError('Choix de contribution invalide')
                             form_body['example_revision'] = int(revision)

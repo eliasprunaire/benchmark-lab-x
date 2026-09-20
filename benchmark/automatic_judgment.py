@@ -22,6 +22,8 @@ def context(store, connection, campaign_id, attempt_id):
     fingerprint = campaign['manifest']['contract_sha256']
     contract = deepcopy(c._comparison_contract(store, connection, fingerprint))
     qualified = p._automatic_qualification(store, connection, contract['dossier_id'], contract['revision'])
+    if qualified is None:
+        raise IntegrityError('Qualification automatique absente')
     operation = store._operation_for_update(connection, qualified['operation_id'], ('RECEIVED',))
     references = json.loads(operation['resources'][0])['judgment_reference']
     outputs = {r[0] for r in connection.execute('SELECT output_piece_id FROM s4_results WHERE output_piece_id IS NOT NULL')}

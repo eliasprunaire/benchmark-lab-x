@@ -1,7 +1,7 @@
 """Autorisation et routage HTTP côté exécuteur pour la préparation privée."""
 import hmac
-import os
 import re
+from typing import cast
 from urllib.parse import urlsplit, parse_qsl
 
 from . import preparation as p
@@ -74,10 +74,13 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
                     _fields(payload, (), 'suppression')
                     return 202, privacy.request_delete(store, session_id, dossier_id), None, None
                 value, new_token = archives.change_contribution(store, token, dossier_id, payload, management_token)
+                value = cast(dict, value)
                 privacy.activity(store, session_id, dossier_id)
                 if payload['enabled'] and (new_token or management_token):
                     manager = new_token or management_token
-                    state = archives.manager_view(store, manager)
+                    if manager is None:
+                        raise p.Denied('Accès de gestion absent')
+                    state = cast(dict, archives.manager_view(store, manager))
                     value['_management_cookie'] = {'token': manager, 'expires_at': max(c['expires_at'] for c in state['contributions'])}
                 return 200, value, token, None
             raise p.Denied('NOT_FOUND')
@@ -95,15 +98,17 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
             privacy.activity(store, session_id, dossier_id)
             cookie = cookie or token
         state = store._connection.execute('SELECT expires_at FROM s7_sessions WHERE session_id=?', (session_id,)).fetchone()
-        value['privacy'] = {'csrf_token': csrf, 'session_expires_at': state[0]}
+        privacy_state: dict = {'csrf_token': csrf, 'session_expires_at': state[0]}
+        value['privacy'] = privacy_state
         if dossier_id:
             row = store._connection.execute('SELECT content_version FROM s7_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()
             if row:
-                value['privacy'].update(dossier_id=dossier_id, content_version=row[0])
+                privacy_state.update(dossier_id=dossier_id, content_version=row[0])
                 from . import privacy_archive as archives
                 current = p.owner(store._connection, session_id, dossier_id)
                 contribution = archives.contribution_view(store, session_id, dossier_id)['contribution']
-                value['privacy']['contribution'] = dict(contribution or {},
+                contribution = contribution if isinstance(contribution, dict) else None
+                privacy_state['contribution'] = dict(contribution or {},
                     enabled=bool(contribution and contribution['status'] == 'active'),
                     revision=contribution['revision'] if contribution else 0, example_revision=current)
     return code, value, cookie, work
@@ -278,10 +283,10 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                 value['launchable'] = False
             else:
                 value['can_launch'] = False
-            start = {'candidate_attempts': attempts} if attempts else None
-            if start and personal_preparation and requester:
-                start.update(judgment_campaign=campaign_id, session_id=session_id, dossier_id=dossier_id)
-            return 202, value, None, start
+            launch_work: dict[str, object] | None = {'candidate_attempts': attempts} if attempts else None
+            if launch_work and personal_preparation and requester:
+                launch_work.update(judgment_campaign=campaign_id, session_id=session_id, dossier_id=dossier_id)
+            return 202, value, None, launch_work
         if method == 'POST' and action == 'evaluate':
             from . import automatic_judgment as auto
             _fields(body, ('confirm',), 'évaluation')

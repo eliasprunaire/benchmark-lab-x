@@ -40,6 +40,14 @@ jobs:
       - name: Valider la syntaxe des workflows
         run: ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' .github/workflows/*.yml
 
+      - name: Vérifier statiquement Python et JavaScript
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pyright" --ignore-scripts --no-audit --no-fund --save-exact pyright@1.1.414
+          "$RUNNER_TEMP/pyright/node_modules/.bin/pyright" --project pyrightconfig.json
+          uvx --from ruff==0.16.3 ruff check --no-cache --select F benchmark benchmark_web
+          node --check benchmark_web/privacy.js
+          node --check tests/privacy_browser.test.cjs
+
       - name: Installer Pi pour les réponses fictives
         run: |
           npm install --prefix "$RUNNER_TEMP/benchmark-pi" --ignore-scripts --no-audit --no-fund --save-exact \

@@ -110,7 +110,7 @@ def _metadata(slug, fetch):
     allowed = UNITS.keys() | {'discount', 'overrides'}
     if type(pricing) is not dict or pricing.keys() - allowed:
         raise ValueError('Tarification non prise en charge')
-    parameters = {'max_tokens': MAX_OUTPUT_TOKENS, 'stream': False,
+    parameters: dict = {'max_tokens': MAX_OUTPUT_TOKENS, 'stream': False,
         'provider': {'only': [metadata['route']], 'order': [metadata['route']],
                      'allow_fallbacks': False, 'require_parameters': True, 'data_collection': 'deny'}}
     levels = metadata['reasoning_levels']
@@ -123,7 +123,7 @@ def _metadata(slug, fetch):
     input_tokens = len(storage._strict_json(MESSAGES).encode()) + MAX_OUTPUT_TOKENS
     overrides = pricing.get('overrides', [])
     if type(overrides) is not list or any(type(row) is not dict or row.keys() - (UNITS.keys() | {'min_prompt_tokens'})
-            or type(row.get('min_prompt_tokens')) is not int or row['min_prompt_tokens'] < 0 for row in overrides):
+            or type(minimum := row.get('min_prompt_tokens')) is not int or minimum < 0 for row in overrides):
         raise ValueError('Tarification conditionnelle non prise en charge')
     quantities = {'prompt': input_tokens, 'completion': MAX_OUTPUT_TOKENS,
                   'request': 1, 'internal_reasoning': MAX_OUTPUT_TOKENS}
@@ -177,7 +177,10 @@ def submit(store, session_id, dossier_id, body, fetch, secret, access_transport=
     except (OSError, HTTPException, KeyError, TypeError, ValueError) as error:
         raise p.Denied('PROBE_MODEL_UNAVAILABLE') from error
     config['key_binding'] = binding
-    wire = storage._strict_json({'model': slug, 'messages': MESSAGES, **config['parameters']})
+    parameters = config.get('parameters')
+    if type(parameters) is not dict:
+        raise p.Denied('PROBE_MODEL_UNAVAILABLE')
+    wire = storage._strict_json({'model': slug, 'messages': MESSAGES, **parameters})
     with storage._transaction(connection, write=True):
         if (p.owner(connection, session_id, dossier_id) != revision or
                 _key_binding(connection, session_id) != binding or not p.admission(store, connection)
@@ -241,7 +244,8 @@ def execute(data, operation_id, key, transport=None):
         charge = consumption(document, complete=complete)
         choices = document.get('choices') if type(document) is dict else None
         choice = choices[0] if type(choices) is list and len(choices) == 1 and type(choices[0]) is dict else {}
-        message = choice.get('message') if type(choice.get('message')) is dict else {}
+        candidate_message = choice.get('message')
+        message: dict = candidate_message if type(candidate_message) is dict else {}
         observed = document.get('model') if type(document) is dict else None
         content = message.get('content')
         success = (status == 200 and complete and not sensitive and type(document) is dict

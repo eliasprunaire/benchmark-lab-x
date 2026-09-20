@@ -178,10 +178,14 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                           (campaign['contract_sha256'],)).fetchone():
         from . import automatic_judgment as auto
         progress = campaign.get('judgment') or auto.status(store, connection, campaign_id)
+        progress_status = progress.get('status')
+        progress_reason = progress.get('reason')
+        if type(progress_status) is not str or (progress_reason is not None and type(progress_reason) is not str):
+            raise ValueError('Progression du jugement invalide')
         for attempt in pending:
             if attempt['state'] == 'REVIEW_REQUIRED':
-                attempt.update(state='EVALUATION_' + progress['status'],
-                    next_action=progress['reason'] or 'Réponse reçue et conservée. Son évaluation automatique reste à terminer.')
+                attempt.update(state='EVALUATION_' + progress_status,
+                    next_action=progress_reason or 'Réponse reçue et conservée. Son évaluation automatique reste à terminer.')
     pending += [dict(attempt_id=record['attempt_id'], **record['decision'])
                 for record in latest.values() if record['decision']['verdict'] is None]
     pending += e.pending_judgments(store, connection, campaign_id, latest)
@@ -323,7 +327,6 @@ def _task_index(store, connection, dossier_id, current, campaigns):
 
 
 def catalogue(store, session_id):
-    connection = p.connection_for(store)
     with store.read_snapshot() as connection:
         if not connection.execute('SELECT 1 FROM s2_sessions WHERE session_id=?', (session_id,)).fetchone():
             raise p.Denied('Session requise')
