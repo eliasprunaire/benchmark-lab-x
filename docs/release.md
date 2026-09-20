@@ -1,7 +1,3 @@
----
-style_gate: pass
----
-
 # Release et livraison Bench-X
 
 ## Règle de version
@@ -13,11 +9,11 @@ style_gate: pass
 - `docs`, `test`, `chore`, `ci`, `style`, `refactor`, ainsi que les scopes `ci`, et autres types : aucune release ;
 - `!` ou `BREAKING CHANGE:` : rupture ; `MAJOR` à partir de `1.0.0`.
 
-La version calculée est passée au constructeur, injectée dans `benchmark.VERSION` et `release.json`, utilisée pour le tag et la release GitHub, puis affichée par `/healthz` et `/readyz`. Une préversion avec un suffixe comme `alpha.N` est demandée par l’entrée `pre_release` du déclenchement manuel ou par la variable `BENCHMARK_PRE_RELEASE`; elle est publiée avec le marqueur GitHub prerelease. Le même commit et la même version ne peuvent créer deux releases : la concurrence est sérialisée, un tag existant pour un autre commit arrête le workflow et une release partielle est vérifiée puis complétée sans écraser une divergence.
+La version calculée est passée au constructeur, injectée dans `benchmark.VERSION` et `release.json`, puis utilisée pour le tag et la release GitHub. Une préversion avec un suffixe comme `alpha.N` est demandée par l’entrée `pre_release` du déclenchement manuel ou par la variable `BENCHMARK_PRE_RELEASE`; elle est publiée avec le marqueur GitHub prerelease. Le même commit et la même version ne peuvent créer deux releases : la concurrence est sérialisée, un tag existant pour un autre commit arrête le workflow et une release partielle est vérifiée puis complétée sans écraser une divergence.
 
 ## Preuves
 
-La CI PR exécute les tests, valide la syntaxe des workflows, construit deux fois le runtime et compare les octets. La release produit un lot Actions puis attache le premier artefact validé à la release avec `release-decision.json`, `build-receipt.json` et `SHA256SUMS`. Le contrôleur existant vérifie ensuite le commit, la version, l’empreinte de l’archive, le reçu de build, les blobs, le schéma et `/readyz`.
+La CI PR exécute les tests, valide la syntaxe des workflows, construit deux fois le runtime et compare les octets. La release produit un lot Actions puis attache le premier artefact validé à la release avec `release-decision.json`, `build-receipt.json` et `SHA256SUMS`. Le service de déploiement vérifie ensuite la provenance, l’intégrité et la santé de la version livrée.
 
 ## Exploitation active
 
@@ -29,13 +25,13 @@ Le dépôt, la CI et l’artefact ciblent la version de Python définie dans `.p
 
 Le déploiement utilise un runner GitHub dédié portant le seul label `bench-deploy`. Un hook local refuse avant les étapes tout job qui ne provient pas du dépôt, de `main`, du workflow de release et d’un événement autorisé.
 
-### Isolement du runner
+### Déployer depuis un fork
 
-Le runner établit des connexions sortantes vers GitHub et atteint le service de déploiement par le réseau interne. Il ne reçoit aucun job de pull request et ne nécessite aucun service public entrant.
+La CI d’une pull request peut fonctionner sur les runners hébergés par GitHub sans accès à l’environnement de déploiement du projet d’origine.
 
-Les jobs de PR et de construction restent sur des runners GitHub hébergés. Seul le déploiement validé utilise le runner dédié.
+Pour publier et déployer depuis un fork, son propriétaire doit fournir son propre runner GitHub, sa propre cible, son environnement protégé et ses secrets. Un fork n’a accès ni au runner, ni aux secrets, ni à la production du projet d’origine. Le workflow doit être adapté à l’infrastructure du fork sans recopier une topologie ou des identifiants privés.
 
-Le runner télécharge l’artefact Actions produit par la même exécution, vérifie `SHA256SUMS`, charge la clé dans un agent SSH temporaire et utilise un compte restreint avec une vérification stricte de l’hôte. Le workflow reste rouge tant que le reçu terminal, `/healthz` et `/readyz` ne concordent pas.
+Le runner du fork doit télécharger l’artefact produit par la même exécution, vérifier `SHA256SUMS` et utiliser un accès restreint à sa propre cible. Le workflow reste rouge tant que le reçu terminal et les contrôles de santé ne concordent pas.
 
 ## Urgence manuelle
 

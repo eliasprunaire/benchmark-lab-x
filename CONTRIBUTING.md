@@ -1,7 +1,3 @@
----
-style_gate: pass
----
-
 # Contribuer à Bench-X
 
 Une contribution doit préserver les preuves, les frontières d’autorité et la distinction entre simulation, campagne réelle, release et déploiement. La CI vérifie le changement proposé. Après revue et fusion dans `main`, la chaîne de release et de déploiement prend le relais sans intervention humaine lorsque le commit est éligible.
@@ -42,6 +38,19 @@ git switch -c feat/nom-court origin/main
 ```
 
 Utilisez un préfixe adapté, par exemple `feat/`, `fix/`, `docs/` ou `refactor/`. Travaillez sur une branche dédiée et préservez les changements locaux qui ne relèvent pas de votre contribution.
+
+## Enregistrer et pousser le changement
+
+Vérifiez d’abord les fichiers modifiés, puis ajoutez uniquement ceux de la contribution :
+
+```bash
+git status --short
+git add chemin/du/fichier autre/fichier
+git commit -m "feat(web): ajouter un filtre de comparaison"
+git push -u origin feat/nom-court
+```
+
+N’utilisez pas `git add .` sans avoir vérifié le worktree. Ne mélangez pas une correction indépendante, un fichier privé ou une modification locale préexistante dans le même commit.
 
 ## Écrire les commits
 
@@ -92,11 +101,13 @@ La CI :
 
 Les jobs de pull request ne reçoivent aucun secret de production et ne disposent d’aucun accès de déploiement.
 
-## Relire et fusionner
+## Revue et fusion
 
 Utilisez `Rebase and Merge` lorsque chaque commit est propre, utile et conforme à Conventional Commits. Chaque message conservé dans `main` participe alors à la décision SemVer.
 
-Si la branche contient des commits intermédiaires ou des messages non conformes, utilisez `Squash and Merge` avec un titre final Conventional Commit. La fusion reste une décision humaine : vérifiez le diff, le check `tests` et le message qui arrivera dans `main`.
+Si la branche contient des commits intermédiaires ou des messages non conformes, le mainteneur peut utiliser `Squash and Merge` avec un titre final Conventional Commit.
+
+La fusion appartient exclusivement au mainteneur du dépôt. Un contributeur prépare la PR et répond à la revue, mais ne fusionne pas sa contribution. L’auto-merge n’est pas utilisé. La branche doit être à jour avec `main`, le check `tests` doit être vert et toutes les conversations doivent être résolues. Le mainteneur vérifie ensuite le diff et le message qui arrivera dans `main`, puis décide de fusionner ou non.
 
 Ne créez pas manuellement un tag ou une release pour une contribution ordinaire.
 
@@ -117,6 +128,21 @@ Le push dans `main` déclenche automatiquement la chaîne de release :
 Une réussite n’est annoncée qu’après un état terminal accepté. Un état `HOLD`, `UNKNOWN`, une divergence d’empreinte ou un contrôle de santé rouge fait échouer le workflow.
 
 Les préversions et leur promotion relèvent d’une décision opérateur. Ne modifiez pas la configuration de livraison ou ses secrets dans le cadre d’une contribution produit ordinaire.
+
+## Préversions
+
+Le suffixe de préversion est fourni par l’opérateur avec l’entrée `pre_release` d’un déclenchement manuel ou avec la variable de dépôt prévue à cet effet. Exemples de suffixes valides : `alpha.2`, `beta.1` ou `rc.1`.
+
+Il n’existe aucune transition automatique de `alpha` vers `beta`, puis vers une version stable. Le numéro du suffixe n’est pas incrémenté automatiquement non plus. Chaque changement de phase est une décision humaine.
+
+Le moteur calcule d’abord le prochain cœur SemVer à partir des commits, puis ajoute le suffixe demandé. À partir d’une préversion `X.Y.Z-alpha.1` :
+
+- un `fix` calcule `X.Y.(Z+1)` ;
+- un `feat` calcule `X.(Y+1).0` ;
+- le suffixe fourni est ensuite ajouté à ce nouveau cœur ;
+- sans suffixe, la prochaine release éligible est stable sur ce nouveau cœur.
+
+Le tag alpha existant n’est jamais transformé ou supprimé. La production reste sur la dernière version déployée tant qu’une nouvelle release éligible n’a pas été fusionnée et déployée avec succès. Une promotion du même cœur, par exemple de `X.Y.Z-alpha.1` vers `X.Y.Z`, n’est pas automatisée par le mécanisme actuel.
 
 ## Autorités séparées
 
