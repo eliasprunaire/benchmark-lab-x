@@ -127,8 +127,9 @@ def admission(store, connection=None, *, transport=None):
         return None
     result = json.loads(raw, object_pairs_hook=_unique_object)
     check_authority(result)
-    if getattr(transport, 'preparation_budget_id', None) is not None:
-        result = {**result, 'budget_id': transport.preparation_budget_id}
+    preparation_budget_id = getattr(transport, 'preparation_budget_id', None)
+    if preparation_budget_id is not None:
+        result = {**result, 'budget_id': preparation_budget_id}
     return result
 
 
@@ -421,7 +422,6 @@ def require_requester_steps(store, connection, session_id, dossier_id, revision)
 
 
 def view(store, session_id, dossier_id, revision=None, *, include_history=False):
-    connection = connection_for(store)
     with store.read_snapshot() as connection:
         current = owner(connection, session_id, dossier_id)
         if revision is None:

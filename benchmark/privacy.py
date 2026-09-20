@@ -585,11 +585,14 @@ def purge(data, *, _reconciled_store=None):
                 except IntegrityError:
                     deferred.append(dossier_id)
             for path in pending_files(store, connection):
+                pieces_fd = store._pieces_fd
+                if pieces_fd is None:
+                    raise IntegrityError('Répertoire des pièces fermé')
                 try:
-                    os.unlink(path.split('/')[1], dir_fd=store._pieces_fd)
+                    os.unlink(path.split('/')[1], dir_fd=pieces_fd)
                 except FileNotFoundError:
                     pass
-                os.fsync(store._pieces_fd)
+                os.fsync(pieces_fd)
                 with _transaction(connection, write=True):
                     connection.execute('DELETE FROM s7_purge_files WHERE relative_path=?', (path,))
             with _transaction(connection, write=True):
@@ -646,8 +649,11 @@ def reconcile(data, journal_sha256):
             result = purge(data, _reconciled_store=store)
             if result['pending']:
                 raise ConflictError('Purge non terminée ; rapprochement non validé')
-            with _transaction(store._connection, write=True):
-                store._connection.execute('UPDATE s7_control SET verified_boot=?', (identity,))
+            connection = store._connection
+            if connection is None:
+                raise IntegrityError('Stockage fermé')
+            with _transaction(connection, write=True):
+                connection.execute('UPDATE s7_control SET verified_boot=?', (identity,))
             # La quarantaine financière restore.json appartient au rapprochement existant
             return migration_status(store)
         finally:

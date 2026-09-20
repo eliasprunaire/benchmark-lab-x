@@ -13,7 +13,7 @@ from . import campaigns as c, recovery as r
 from .. import storage
 from ..validation import digest as value_digest
 from ..storage import (Store, BudgetError, ConflictError, IntegrityError,
-                       _fields, _money, _transaction)
+                       _fields, _transaction)
 
 
 def _transport_view(request) -> dict:

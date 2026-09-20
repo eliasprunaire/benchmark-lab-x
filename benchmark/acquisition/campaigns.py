@@ -9,9 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
 import json
-import os
 from pathlib import Path
-import re
 import secrets
 import sqlite3
 
@@ -562,7 +560,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
 
 
 def configurations_view(store, session_id, dossier_id):
-    from .. import model_catalogue, model_probes
+    from .. import model_probes
     from ..preparation import owner, page_view
     connection = connection_for(store)
     with _transaction(connection):
@@ -1211,6 +1209,8 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
         if snapshot['task']['dossier_id'] != dossier_id:
             raise Denied('Campagne non autorisée')
         if requester:
+            if access is None:
+                raise Denied('Accès demandeur indisponible')
             if (body['manifest_version'], body['frozen_at']) != (
                     snapshot['manifest']['version'], snapshot['manifest']['conditions']['frozen_at']):
                 raise ConflictError('Conditions périmées')

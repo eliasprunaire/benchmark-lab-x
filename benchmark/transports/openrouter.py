@@ -341,10 +341,11 @@ def post(api_key, wire, timeout=TIMEOUT_SECONDS, max_response_bytes=MAX_RESPONSE
     return status, safe_headers, raw, complete, started, clock
 
 
-def validate_key(api_key):
+def validate_key(api_key) -> str:
     if (type(api_key) is not str or not api_key or not api_key.isascii()
             or any(character.isspace() or ord(character) < 32 for character in api_key)):
         raise ValueError('Clé OpenRouter explicite requise côté exécuteur')
+    return api_key
 
 
 class OpenRouterPreparation:
@@ -365,6 +366,9 @@ class OpenRouterPreparation:
             validate_key(api_key)
         self._api_key = api_key
         self._profile = frozen_profile(profile)
+        self._session_id = None
+        self._access_secret = None
+        self.preparation_budget_id = None
 
     def for_session(self, key, session_id, secret):
         from ..provider_access import preparation_budget_id
@@ -377,7 +381,7 @@ class OpenRouterPreparation:
         return bound
 
     def authorized(self, store):
-        if not hasattr(self, '_session_id'):
+        if self._session_id is None:
             return True
         from ..provider_access import authorize_session, decrypt
         from ..storage import IntegrityError
@@ -389,16 +393,17 @@ class OpenRouterPreparation:
             (self._session_id,)).fetchone()
         if row is None:
             return False
+        if self._access_secret is None:
+            return False
         try:
             key = decrypt(self._access_secret, row[0], self._session_id, 'key')
         except IntegrityError:
             from ..preparation import Denied
             raise Denied('ACCESS_UNAVAILABLE') from None
-        return compare_digest(key.encode(), self._api_key.encode())
+        return compare_digest(key.encode(), validate_key(self._api_key).encode())
 
     def prepare(self, operation, request, api_key=None):
-        key = self._api_key if api_key is None else api_key
-        validate_key(key)
+        key = validate_key(self._api_key if api_key is None else api_key)
         requested = operation['requested_configuration']
         expected = configuration(requested.get('reservation_estimate'), self._profile)
         if (('reserve_usd' not in expected and operation['phase'] != 'qualification') or requested != expected
@@ -456,8 +461,7 @@ class OpenRouterPreparation:
         return result
 
     def __call__(self, operation, request, api_key=None):
-        key = self._api_key if api_key is None else api_key
-        validate_key(key)
+        key = validate_key(self._api_key if api_key is None else api_key)
         if operation['state'] != 'EMISSION_POSSIBLE':
             raise ValueError('Intention HTTP persistée requise')
         if operation['requested_configuration'].get('outgoing_format') != outgoing.FORMAT:
@@ -481,7 +485,8 @@ class OpenRouterPreparation:
             document = parsed
             if key in encode(document):
                 redacted = True
-            if status != 200 or not complete or redacted or document.get('model') not in operation['requested_configuration']['model_identities']:
+            if (status != 200 or not complete or redacted or type(document) is not dict
+                    or document.get('model') not in operation['requested_configuration']['model_identities']):
                 raise ValueError('Réponse non attribuable')
             # Check the decoded inner JSON before format validation can reject it
             decoded = json.loads(document['choices'][0]['message']['content'], object_pairs_hook=_unique_object)
