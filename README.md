@@ -1,3 +1,7 @@
+---
+style_gate: pass
+---
+
 <div align="center">
   <img src="benchmark_web/static/bench-x.svg" width="96" height="96" alt="Logo Bench-X : trois barres de comparaison">
   <h1 id="bench-x">Bench-X</h1>
@@ -6,13 +10,13 @@
   <p>
     <a href="https://github.com/eliasprunaire/benchmark-lab-x/actions/workflows/ci.yml"><img alt="CI Python" src="https://github.com/eliasprunaire/benchmark-lab-x/actions/workflows/ci.yml/badge.svg"></a>
     <a href="LICENSE"><img alt="Licence AGPL-3.0" src="https://img.shields.io/badge/licence-AGPL--3.0-blue.svg"></a>
-    <img alt="Python 3.14.7" src="https://img.shields.io/badge/python-3.14.7-3776AB.svg">
   </p>
   <p>
     <a href="#ce-que-fait-bench-x">Fonctionnalités</a> ·
     <a href="#démarrage-local">Démarrage</a> ·
     <a href="#architecture-du-dépôt">Architecture</a> ·
-    <a href="#documentation">Documentation</a>
+    <a href="#documentation">Documentation</a> ·
+    <a href="CONTRIBUTING.md">Contribuer</a>
   </p>
 </div>
 
@@ -32,13 +36,11 @@ Le projet sépare clairement la préparation, l’acquisition, l’évaluation e
 - produit des évaluations explicables et une restitution reliée aux preuves ;
 - publie uniquement une projection explicitement approuvée.
 
-Le jalon visé est `0.1.0`. Ce numéro décrit un périmètre produit ; il ne prouve ni release, ni déploiement, ni campagne réelle terminée.
-
 ## Démarrage local
 
 ### Prérequis
 
-- Python 3.14.7 ;
+- la version de Python définie dans [`.python-version`](.python-version) ;
 - [uv](https://docs.astral.sh/uv/) ;
 - Node.js et Pi uniquement pour les parcours candidats qui les utilisent.
 
@@ -47,7 +49,7 @@ Depuis la racine du dépôt :
 ```bash
 git clone https://github.com/eliasprunaire/benchmark-lab-x.git
 cd benchmark-lab-x
-uv run --python 3.14.7 python -m benchmark --help
+uv run python -m benchmark --help
 ```
 
 Pour préparer un environnement privé, copiez le fichier d’exemple puis renseignez uniquement les accès nécessaires :
@@ -61,7 +63,7 @@ Le fichier `.env` reste local et ne doit jamais être versionné. Renseigner une
 
 `python -m benchmark`, `python -m benchmark.runtime` et `benchmark/benchmark-runtime` appellent le même moteur.
 
-Dans le parcours web configuré en mode personnel, **Ajouter ma clé Openrouter** permet de fournir votre clé depuis le navigateur, sans modifier le `.env` du serveur. Elle finance vos préparations, qualifications et comparaisons sous leurs plafonds respectifs. Enregistrer la clé ne lance aucun modèle.
+Dans le parcours web configuré en mode personnel, **Ajouter ma clé OpenRouter** permet de fournir votre clé depuis le navigateur, sans modifier le `.env` du serveur. Elle finance vos préparations, qualifications et comparaisons sous leurs plafonds respectifs. Enregistrer la clé ne lance aucun modèle.
 
 Pour les commandes opérateur, utilisez `python -m benchmark --help`. Le PRD, l’ARD et les règles en définissent la portée et les conditions.
 
@@ -70,7 +72,7 @@ Pour les commandes opérateur, utilisez `python -m benchmark --help`. Le PRD, l�
 La suite locale et la CI utilisent la même commande principale :
 
 ```bash
-uv run --with-requirements benchmark/requirements.lock --python 3.14.7 \
+uv run --with-requirements benchmark/requirements.lock \
   python -m unittest discover -s tests
 ```
 
@@ -102,13 +104,15 @@ Les identifiants techniques du produit conservent le préfixe `benchmark-lab-x`.
 - [PRD](docs/PRD.md) : besoin, utilisateurs, parcours et périmètre ;
 - [ARD](docs/ARD.md) : objets, responsabilités, flux et exploitation ;
 - [Règles](docs/RULES.md) : contrats, preuves, coûts, autorités et versions ;
-- [Gabarit de tâche](docs/task-template.md) : contenu minimal d’une future tâche.
+- [Gabarit de tâche](docs/task-template.md) : contenu minimal d’une future tâche ;
+- [Guide de contribution](CONTRIBUTING.md) : branches, commits, CI, revue, fusion et livraison automatique ;
+- [Release et livraison](docs/release.md) : versionnement, artefacts, runner et reprise opérateur.
 
 Les [Issues GitHub](https://github.com/eliasprunaire/benchmark-lab-x/issues) et le [Project](https://github.com/users/eliasprunaire/projects/5) portent le travail de livraison et son avancement.
 
 ## Contribuer
 
-Une contribution doit préserver les frontières d’autorité et la distinction entre simulation et résultat réel. Consultez le PRD, l’ARD et les règles, puis exécutez le test le plus proche du changement et la suite complète avant livraison.
+Consultez [CONTRIBUTING.md](CONTRIBUTING.md) avant de créer une branche ou une pull request. Après revue et fusion dans `main`, la version, la release et le déploiement sont traités automatiquement lorsque le changement est éligible.
 
 ## Licence
 
