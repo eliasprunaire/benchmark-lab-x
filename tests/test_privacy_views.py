@@ -37,13 +37,15 @@ class PrivacyViewsTests(unittest.TestCase):
         self.assertNotIn('data-privacy-activity', page)
         notice = views.render({'kind': 'privacy_notice'}, '').decode()
         for term in ('Cybrel', 'RSSI', 'contact@cybrel.fr', '7 jours', '30 jours', '6 mois',
-                     '11 jours', 'fournisseurs'):
+                     'fournisseurs'):
             self.assertIn(term, notice)
+        self.assertNotIn('11 jours', notice)
         self.assertNotIn('data-privacy-activity', notice)
         self.assertNotIn('copies chiffrées', notice)
         inactive = views.render({'kind': 'privacy_notice', 'privacy_enabled': False}, '').decode()
         self.assertIn('n’est pas encore activée', inactive)
-        self.assertNotIn('supprimés du serveur après 7 jours', inactive)
+        self.assertIn('N’y saisissez aucune donnée personnelle', inactive)
+        self.assertNotIn('7 jours d’inactivité', inactive)
 
     def test_authenticated_controls_use_metadata_csrf_and_keep_key_form(self):
         metadata = {'csrf_token': 'privacy-token', 'session_expires_at': '2099-01-01T00:00:00Z',
@@ -100,10 +102,15 @@ class PrivacyViewsTests(unittest.TestCase):
         self.assertIn('efface la copie locale', controls)
         self.assertIn('contribution', controls)
         self.assertNotIn('conserve votre copie locale', controls)
-        self.assertIn('7 jours d’inactivité', controls)
+        self.assertIn('Accès aux cas fermé après 7 jours d’inactivité', controls)
         notice = views.render({'kind': 'privacy_notice'}, '').decode()
-        self.assertIn('7 jours d’inactivité', notice)
-        self.assertIn('11 jours après leur suppression du service actif', notice)
+        self.assertIn('l’accès est fermé après 7 jours d’inactivité', notice)
+        self.assertIn('Cette fermeture n’est pas un effacement', notice)
+        self.assertIn('Accès à la clé fermé après 30 jours d’inactivité', controls)
+        self.assertNotIn('Clé retirée après', controls)
+        self.assertNotIn('supprimés du serveur', notice)
+        self.assertNotIn('11 jours', notice)
+        self.assertNotIn('11 jours', controls)
         self.assertIn('ne sont pas remises en service', notice)
         self.assertNotIn('effacement physique', notice)
         self.assertIn('Openrouter', notice)

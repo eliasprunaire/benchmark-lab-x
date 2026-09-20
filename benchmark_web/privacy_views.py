@@ -22,13 +22,13 @@ def render_privacy_page(value, csrf=''):
             '<section><h2>Usage et conservation</h2><p>Vos saisies servent à préparer un exemple fictif '
             'et à comparer les modèles. Ne saisissez aucune donnée personnelle ni information confidentielle. '
             'Aucune anonymisation automatique n’est garantie.</p><ul>'
-            '<li>Cas d’usage et résultats : supprimés du serveur après 7 jours d’inactivité.</li>'
+            '<li>Cas d’usage et résultats : l’accès est fermé après 7 jours d’inactivité. '
+            'Cette fermeture n’est pas un effacement.</li>'
             '<li>Clé API chiffrée et accès de session : 30 jours d’inactivité. '
             'Seules vos interactions réelles prolongent cet accès, pas une page laissée ouverte.</li>'
             '<li>Contribution facultative : 6 mois, avec votre consentement après examen de l’exemple.</li>'
-            '<li>Des copies peuvent subsister dans les sauvegardes jusqu’à 11 jours après '
-            'leur suppression du service actif. Elles ne sont pas remises en service avant application '
-            'des révocations et expirations.</li>'
+            '<li>Des copies peuvent subsister dans les sauvegardes après la fermeture de l’accès. '
+            'Elles ne sont pas remises en service avant application des révocations et expirations.</li>'
             '</ul></section><section><h2>Historique dans ce navigateur</h2><p>' + LOCAL_WARNING + '</p>'
             '<p>Les copies complètes déjà enregistrées restent consultables ici même après expiration '
             'de la clé. La clé API n’est pas incluse dans cet historique ni dans les exports.</p></section>'
@@ -91,7 +91,7 @@ def render_privacy_controls(value, csrf):
         if type(privacy.get('content_version')) is int:
             attrs += ' data-content-version="' + str(privacy['content_version']) + '"'
     content = '<details class="privacy-controls"' + attrs + '><summary>Mes données et ma confidentialité</summary>'
-    content += '<p>Cas conservés sur le serveur pendant 7 jours d’inactivité. Clé retirée après 30 jours d’inactivité.</p>'
+    content += '<p>Accès aux cas fermé après 7 jours d’inactivité. Accès à la clé fermé après 30 jours d’inactivité.</p>'
     expiry = privacy.get('session_expires_at')
     if expiry:
         content += '<p>Expiration de l’accès au dernier chargement : <time datetime="' + text(expiry) + '">' + text(date_lisible_utc(expiry)) + '</time>.</p>'
@@ -104,7 +104,7 @@ def render_privacy_controls(value, csrf):
         content += privacy_form('delete', csrf, '/preparation/dossiers/' + quote(dossier, safe='') + '/delete', {},
             '<p>Cette action efface la copie locale de ce cas d’usage et demande sa suppression '
             'sur le serveur, ainsi que celle de sa contribution éventuelle. Des copies peuvent '
-            'subsister dans les sauvegardes jusqu’à 11 jours après cette suppression.</p>'
+            'subsister dans les sauvegardes après cette demande.</p>'
             '<noscript><p>Sans JavaScript, seule la suppression sur le serveur et de la contribution '
             'est demandée. Effacez aussi la copie locale depuis Mes données avec JavaScript.</p></noscript>'
             '<button type="submit" class="sec">Supprimer ce cas d’usage</button>'

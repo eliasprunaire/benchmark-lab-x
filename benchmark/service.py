@@ -245,7 +245,7 @@ def executor_result(raw, health, handle):
     except preparation.Denied as error:
         return denied_response(error)
     except Gone:
-        return {'status': 410, 'value': {'error': 'Ce cas d’usage n’est plus conservé sur le serveur.', 'error_code': 'DOSSIER_EXPIRED'}}
+        return {'status': 410, 'value': {'error': 'Ce cas d’usage n’est plus accessible sur le serveur.', 'error_code': 'DOSSIER_EXPIRED'}}
     except (ConflictError, BudgetError):
         return {'status': 409, 'value': {'error': CONFLICT_MESSAGE}}
     except (IntegrityError, SchemaError, sqlite3.Error) as error:
