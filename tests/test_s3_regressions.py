@@ -1,13 +1,14 @@
 """S3 persistence and admission regressions, using only fictional local inputs"""
-from contextlib import closing
+from contextlib import closing, redirect_stdout
 from copy import deepcopy
+import io
 import json
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
 
-from benchmark import preparation as prep, qualification as q, storage
+from benchmark import preparation as prep, qualification as q, runtime, storage
 from tests.test_s2_review_regressions import response_for
 
 ACTOR = 'responsable-fictif-S3'
@@ -208,6 +209,49 @@ class S3Regressions(unittest.TestCase):
             return check(contract, resources)
         self.approve(self.qualify(competing))
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
+
+
+class S3OperatorCLI(unittest.TestCase):
+    """L'extension S2 vers S3 doit être atteignable avec les seules actions de la CLI"""
+
+    def test_full_initialization_sequence_uses_operator_actions_only(self):
+        temporary = tempfile.TemporaryDirectory(prefix='s3-cli-')
+        self.addCleanup(temporary.cleanup)
+        data = Path(temporary.name).resolve() / 'private'
+        sequence = (
+            ('initialize', 'INITIALIZED_ADMISSION_BLOCKED', 's1'),
+            ('initialize-preparation', 'PREPARATION_INITIALIZED_ADMISSION_BLOCKED', 's2'),
+            ('initialize-qualification', 'QUALIFICATION_INITIALIZED', 's3'),
+            ('initialize-campaigns', 'CAMPAIGNS_INITIALIZED', 's4'),
+            ('initialize-evaluations', 'EVALUATIONS_INITIALIZED_REAL_JUDGMENT_CLOSED', 's5'),
+            ('initialize-provider-access', 'PROVIDER_ACCESS_INITIALIZED', 's6'),
+        )
+        for action, state, layout in sequence:
+            with self.subTest(action=action):
+                with io.StringIO() as output, redirect_stdout(output):
+                    code = runtime.main([action, '--data', str(data)])
+                    printed = output.getvalue()
+                self.assertEqual(0, code, printed)
+                self.assertEqual(state, json.loads(printed)['state'])
+                with closing(storage.Store(data)) as store:
+                    self.assertEqual(layout, storage._check_schema(store._connection_checked()))
+                    self.assertTrue(store.verify_storage()['integrity_ok'])
+
+    def test_qualification_extension_is_idempotent_and_refuses_an_absent_base(self):
+        temporary = tempfile.TemporaryDirectory(prefix='s3-cli-refus-')
+        self.addCleanup(temporary.cleanup)
+        data = Path(temporary.name).resolve() / 'private'
+        with io.StringIO() as output, redirect_stdout(output):
+            runtime.main(['initialize', '--data', str(data)])
+            refused = runtime.main(['initialize-qualification', '--data', str(data)])
+            printed = output.getvalue().splitlines()[-1]
+            runtime.main(['initialize-preparation', '--data', str(data)])
+            for _ in range(2):
+                self.assertEqual(0, runtime.main(['initialize-qualification', '--data', str(data)]))
+        self.assertEqual(78, refused)
+        self.assertEqual({'state': 'HOLD', 'reason': 'OPERATION_NOT_VERIFIED'}, json.loads(printed))
+        with closing(storage.Store(data)) as store:
+            self.assertEqual('s3', storage._check_schema(store._connection_checked()))
 
 
 if __name__ == '__main__':

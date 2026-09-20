@@ -241,7 +241,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     campaign_actions = ('create-campaign', 'inspect-campaign', 'admit-campaign', 'stop-campaign', 'resume-campaign')
     campaign_actions += ('inspect-attempt-status',)
-    parser.add_argument('action', choices=campaign_actions + ('migrate-privacy', 'privacy-status', 'purge-privacy', 'reconcile-privacy', 'reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'inspect-preparation', 'close-preparation', 'admit-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
+    parser.add_argument('action', choices=campaign_actions + ('migrate-privacy', 'privacy-status', 'purge-privacy', 'reconcile-privacy', 'reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'initialize-qualification', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'inspect-preparation', 'close-preparation', 'admit-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
     parser.add_argument('--data', type=Path)
     parser.add_argument('--migration-id')
     parser.add_argument('--journal-sha256')
@@ -399,6 +399,10 @@ def main(argv=None):
         elif args.action == 'initialize-preparation':
             initialize_preparation(args.data)
             result = {'state': 'PREPARATION_INITIALIZED_ADMISSION_BLOCKED'}
+        elif args.action == 'initialize-qualification':
+            from .qualification import initialize as initialize_qualification
+            initialize_qualification(args.data)
+            result = {'state': 'QUALIFICATION_INITIALIZED'}
         elif args.action == 'initialize-campaigns':
             from .acquisition.campaigns import initialize as initialize_campaigns
             initialize_campaigns(args.data)
