@@ -282,7 +282,7 @@ def authorize_dossier(connection, session_id, dossier_id, current=None):
     if row is None:
         raise Denied('NOT_FOUND')
     if row[0] != 'ACTIVE' or date(row[1]) <= (current or now()):
-        raise Gone('Ce cas d’usage n’est plus conservé sur le serveur')
+        raise Gone('Ce cas d’usage n’est plus accessible sur le serveur')
 
 
 def activity(store, session_id, dossier_id=None, *, current=None):
