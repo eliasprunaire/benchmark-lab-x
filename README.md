@@ -1,7 +1,3 @@
----
-style_gate: pass
----
-
 <div align="center">
   <img src="benchmark_web/static/bench-x.svg" width="96" height="96" alt="Logo Bench-X : trois barres de comparaison">
   <h1 id="bench-x">Bench-X</h1>
@@ -113,6 +109,10 @@ Les [Issues GitHub](https://github.com/eliasprunaire/benchmark-lab-x/issues) et 
 ## Contribuer
 
 Consultez [CONTRIBUTING.md](CONTRIBUTING.md) avant de créer une branche ou une pull request. Après revue et fusion dans `main`, la version, la release et le déploiement sont traités automatiquement lorsque le changement est éligible.
+
+## Sécurité
+
+Ne publiez pas une vulnérabilité dans une Issue, une pull request ou une Discussion. Utilisez le bouton **Report a vulnerability** dans l’onglet [Security](https://github.com/eliasprunaire/benchmark-lab-x/security) afin de transmettre le rapport de manière privée aux mainteneurs. La procédure et les informations utiles sont précisées dans [SECURITY.md](SECURITY.md).
 
 ## Licence
 
