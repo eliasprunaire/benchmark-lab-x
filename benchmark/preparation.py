@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import secrets
+import threading
 from typing import Any, TypeVar, cast
 import unicodedata
 
@@ -28,6 +29,8 @@ SOURCE_HOURLY_MAX = 20
 SOURCE_RATE_WINDOW = timedelta(hours=1)
 OUT_OF_SCOPE_CATEGORIES = ('math', 'coding', 'other')
 _SOURCE_ACCEPTED = {}
+# Registre de module partagé par tous les fils de travail de l'exécuteur
+_SOURCE_GUARD = threading.Lock()
 _CHECK_CODES = frozenset({
     'example_validated', 'example_qualified', 'configurations_available',
     'access_connected', 'estimate_available',
@@ -81,18 +84,31 @@ def _normalized_submission(body, create):
 
 
 def _source_limit(source_sha256, now):
+    """Plafond horaire par source, effectif sous concurrence
+
+    Le verrou protège le registre lui-même. L'intervalle entre ce contrôle et l'inscription de
+    `_source_accepted` tient dans la même transaction d'écriture `BEGIN IMMEDIATE` que l'appelant :
+    deux soumissions parallèles ne peuvent pas franchir le plafond ensemble
+    """
     threshold = now - SOURCE_RATE_WINDOW
-    # Balayage global en mémoire, à partitionner seulement si le débit le justifie
-    for key in tuple(_SOURCE_ACCEPTED):
-        retained = [date for date in _SOURCE_ACCEPTED[key] if date > threshold]
-        if retained:
-            _SOURCE_ACCEPTED[key] = retained
-        else:
-            del _SOURCE_ACCEPTED[key]
-    accepted = _SOURCE_ACCEPTED.get(source_sha256, [])
-    if len(accepted) >= SOURCE_HOURLY_MAX:
-        raise Denied('SOURCE_RATE_LIMIT')
-    _SOURCE_ACCEPTED[source_sha256] = accepted
+    with _SOURCE_GUARD:
+        # Balayage global en mémoire, à partitionner seulement si le débit le justifie
+        for key in tuple(_SOURCE_ACCEPTED):
+            retained = [date for date in _SOURCE_ACCEPTED[key] if date > threshold]
+            if retained:
+                _SOURCE_ACCEPTED[key] = retained
+            else:
+                del _SOURCE_ACCEPTED[key]
+        accepted = _SOURCE_ACCEPTED.get(source_sha256, [])
+        if len(accepted) >= SOURCE_HOURLY_MAX:
+            raise Denied('SOURCE_RATE_LIMIT')
+        _SOURCE_ACCEPTED[source_sha256] = accepted
+
+
+def _source_accepted(source_sha256, now):
+    # `setdefault` : un balayage concurrent peut avoir retiré la clé réservée par `_source_limit`
+    with _SOURCE_GUARD:
+        _SOURCE_ACCEPTED.setdefault(source_sha256, []).append(now)
 
 
 def _submission_limits(connection, session_id, now, authority):
@@ -649,7 +665,7 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
         connection.execute('INSERT INTO s2_actions VALUES (?,?,?,?,?,?)',
                            (dossier_id, body['action_id'], revision, kind, request_json, operation_id))
         if enforce_limits:
-            _SOURCE_ACCEPTED[source_sha256].append(now)
+            _source_accepted(source_sha256, now)
         return operation_id, True
 
 
