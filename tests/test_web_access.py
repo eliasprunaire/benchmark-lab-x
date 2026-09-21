@@ -709,6 +709,114 @@ class AccessServerTests(unittest.TestCase):
         self.assertEqual(400, status)
         self.assertTrue(self.executor.requests.empty())
 
+    def test_lecture_indisponible_annonce_qu_aucune_donnee_n_est_modifiee(self):
+        self.executor.raw_response = b'not-json\n'
+        status, _, raw = self.request('GET', '/preparation/access',
+                                      headers={'Accept': 'application/json'})
+        self.assertEqual(503, status)
+        self.assertIn('Aucune donnée n’a été modifiée', json.loads(raw)['error'])
+        self.assertNotIn('un envoi précédent', json.loads(raw)['error'])
+
+        body = urlencode({'csrf_token': 'csrf'}).encode()
+        status, _, raw = self.request('POST', '/preparation/dossiers', body, {
+            'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'})
+        self.assertEqual(503, status)
+        self.assertIn('un envoi précédent peut avoir été enregistré', json.loads(raw)['error'])
+
+        status, _, raw = self.request('GET', '/preparation', headers={'Accept': 'application/json'})
+        self.assertEqual(503, status)
+        self.assertIn('Aucune donnée n’a été modifiée', json.loads(raw)['error'])
+
+        # La ligne HTML du tableau : gabarit français et en-têtes de sécurité sur le même 503
+        status, headers, raw = self.request('GET', '/preparation/access',
+                                            headers={'Accept': 'text/html'})
+        self.assertEqual(503, status)
+        self.assertIn(b'<html lang="fr">', raw)
+        self.assertIn('Aucune donnée n’a été modifiée', raw.decode())
+        self.assertEqual(CSP, headers['Content-Security-Policy'])
+        self.assertEqual('nosniff', headers['X-Content-Type-Options'])
+        self.assertEqual('no-referrer', headers['Referrer-Policy'])
+
+    def test_retour_openrouter_indisponible_garde_le_message_d_incertitude(self):
+        # Ce GET relaie un envoi : son échec ne peut pas promettre qu'aucune donnée n'a bougé
+        _, headers, _ = self.request('GET', '/preparation/access')
+        session_cookie = headers['Set-Cookie'].split(';', 1)[0]
+        body = urlencode({'csrf_token': 'csrf', 'return': '/preparation/dossiers/d1'}).encode()
+        _, headers, _ = self.request('POST', '/preparation/access/start', body, {
+            'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': session_cookie})
+        callback_cookie = next(value.split(';', 1)[0] for value in headers.get_all('Set-Cookie')
+                               if value.startswith('benchmark_access_callback='))
+
+        self.executor.raw_response = b'not-json\n'
+        status, _, raw = self.request('GET', '/preparation/access/callback?code=retour',
+                                      headers={'Cookie': callback_cookie, 'Accept': 'application/json'})
+        self.assertEqual(503, status)
+        self.assertIn('un envoi précédent peut avoir été enregistré', json.loads(raw)['error'])
+        self.assertNotIn('Aucune donnée', json.loads(raw)['error'])
+
+    def test_verbe_non_servi_rend_405_en_francais_avec_les_entetes(self):
+        for method in ('PUT', 'DELETE', 'OPTIONS'):
+            status, headers, raw = self.request(method, '/preparation',
+                                                headers={'Accept': 'text/html'})
+            self.assertEqual(405, status, method)
+            self.assertEqual('GET, HEAD, POST', headers['Allow'], method)
+            self.assertEqual(CSP, headers['Content-Security-Policy'], method)
+            self.assertEqual('nosniff', headers['X-Content-Type-Options'], method)
+            self.assertEqual('no-referrer', headers['Referrer-Policy'], method)
+            self.assertIn(b'<html lang="fr">', raw, method)
+            self.assertNotIn(b'Error response', raw, method)
+
+            # Sans en-tête Accept, un client en ligne de commande reçoit la même page française
+            status, headers, raw = self.request(method, '/preparation')
+            self.assertEqual((405, 'GET, HEAD, POST'), (status, headers['Allow']), method)
+            self.assertIn(b'<html lang="fr">', raw, method)
+
+            status, headers, raw = self.request(method, '/preparation',
+                                                headers={'Accept': 'application/json'})
+            self.assertEqual((405, 'GET, HEAD, POST'), (status, headers['Allow']), method)
+            self.assertEqual('no-referrer', headers['Referrer-Policy'], method)
+            self.assertIn('méthode', json.loads(raw)['error'])
+
+    def test_url_inconnue_rend_une_page_au_navigateur_et_le_contrat_json_au_client(self):
+        for method, path in (('GET', '/inconnu'), ('GET', '/publications/pas-une-identite/page.html'),
+                             ('POST', '/inconnu')):
+            status, headers, raw = self.request(method, path, headers={
+                'Accept': 'text/html,application/xhtml+xml,*/*;q=0.8'})
+            self.assertEqual(404, status, path)
+            self.assertIn(b'<html lang="fr">', raw, path)
+            self.assertIn('Page introuvable', raw.decode(), path)
+            self.assertNotIn('aria-current', raw.decode(), path)
+            self.assertEqual(CSP, headers['Content-Security-Policy'], path)
+            self.assertEqual('nosniff', headers['X-Content-Type-Options'], path)
+            self.assertEqual('no-referrer', headers['Referrer-Policy'], path)
+
+            for accept in ({'Accept': 'application/json'}, None):
+                status, _, raw = self.request(method, path, headers=accept)
+                self.assertEqual((404, {'error': 'NOT_FOUND'}), (status, json.loads(raw)), path)
+
+        # La police introuvable n'est pas une URL publique inconnue : son contrat reste JSON
+        status, _, raw = self.request('GET', '/preparation/fonts/Absente.woff2',
+                                      headers={'Accept': 'text/html'})
+        self.assertEqual((404, {'error': 'NOT_FOUND'}), (status, json.loads(raw)))
+
+    def test_refus_avant_les_entetes_reste_court_et_garde_les_entetes_de_securite(self):
+        # Ces refus précèdent la lecture des en-têtes : aucun navigateur à servir, `self.headers` peut manquer
+        for ligne, attendu in ((b'GET /preparation HTTP/9\r\n\r\n', b'400 Bad Request'),
+                               (b'GET /' + b'a' * 70000 + b' HTTP/1.1\r\n\r\n',
+                                b'414 URI Too Long')):
+            with socket.create_connection(('127.0.0.1', self.port), 3) as raw:
+                raw.sendall(ligne)
+                response = b''
+                while True:
+                    part = raw.recv(4096)
+                    if not part:
+                        break
+                    response += part
+            self.assertIn(attendu, response, attendu)
+            self.assertIn(b'Referrer-Policy: no-referrer', response, attendu)
+            self.assertIn(b'X-Content-Type-Options: nosniff', response, attendu)
+            self.assertNotIn(b'Error response', response, attendu)
+            self.assertNotIn(b'<html', response, attendu)
 
 if __name__ == '__main__':
     unittest.main()

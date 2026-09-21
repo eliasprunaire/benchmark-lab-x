@@ -224,11 +224,12 @@ def render(value, csrf, path='/preparation', *, error=False):
     s9 = value.get('kind') != 'projection_preview'
     navigation = '' if error else preparation_steps(value)
     title = 'Décrire mon cas d’usage'
-    current = {'home': '/', 'publication_unavailable': '/index.html', 'privacy_data': '/preparation/data'}.get(value.get('kind'), '/preparation')
+    # Une page d'erreur n'est aucune des entrées du menu : pas d'`aria-current` menteur
+    current = None if error else {'home': '/', 'publication_unavailable': '/index.html', 'privacy_data': '/preparation/data'}.get(value.get('kind'), '/preparation')
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
                    for href, label in (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données'), ('/index.html', 'Comparaisons publiées')))
     if error:
-        title = 'Préparation indisponible' if value.get('unavailable') else 'Action non aboutie'
+        title = value.get('title') or ('Préparation indisponible' if value.get('unavailable') else 'Action non aboutie')
         submitted = value.get('form')
         attached = (value.get('error_field') if type(submitted) is dict
                     and value.get('error_field') in submitted else None)
