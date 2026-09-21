@@ -208,7 +208,7 @@ Les campagnes déjà enregistrées conservent leurs questions, panels, schémas 
 
 Les extensions de périmètre suivent le PRD et les règles KISS. Aucun microservice, Kubernetes, bus de messages, système de plugins ou moteur d'inférence supplémentaire n'est requis par cette architecture.
 
-## 12. Composants et exploitation
+## 12. Composants et frontières
 
 ### 12.1 Frontières du produit
 
@@ -272,30 +272,6 @@ Interruption et reprise couvrent aussi les appels assistés de préparation et d
 | Publier | projection et pièces explicitement approuvées | identité de publication et cohérence des références visibles ; aucune ouverture implicite des données privées |
 
 L’état de campagne décrit préparation, admission, activité, interruption ou clôture à partir des reçus. Une clôture peut être partielle ; elle ne prouve ni satisfaction ni publication. Les tentatives conservent leur état propre et les cellules non lancées restent distinguées. Une correction d’évaluation autorisée crée une nouvelle évaluation reliée à la précédente ; elle ne remplace pas silencieusement le verdict déjà publié.
-
-### 12.4 Exploitation vérifiable
-
-Avant usage opérationnel, le produit doit fournir à l’infrastructure les interfaces suivantes avec leur preuve de validation.
-
-| Besoin | Contrat à vérifier |
-|---|---|
-| Démarrage et santé | disponibilité du web et de sa projection, disponibilité distincte de l’exécuteur et du stockage ; aucun appel candidat utilisé comme test de santé |
-| Arrêt et maintenance | inhibition des nouveaux appels, arrêt contrôlé et état des travaux actifs ou ambigus, y compris après arrêt forcé ; aucun redémarrage ne reprend implicitement une campagne |
-| Livraison | provenance reliant l’artefact au commit produit approuvé, empreinte des octets installés, compatibilité des données et reçu ; un identifiant déclaratif de commit ne prouve pas la construction |
-| Sauvegarde | point cohérent de SQLite et des pièces associées, manifeste d’intégrité, accès privé et résultat observable |
-| Restauration | cible autorisée et données existantes à préserver identifiées, intégrité et compatibilité, lisibilité des pièces et validité des liens métier, puis autorité distincte avant reprise ; restaurer un état antérieur ne prouve pas qu’un appel ultérieur n’a jamais eu lieu |
-
-Une reprise après restauration doit rapprocher les preuves de tentatives potentiellement postérieures à la sauvegarde ; si leurs effets ou leur coût restent inconnus, les opérations dépendantes restent bloquées. Une bascule inverse de code ne vaut pas rollback de données.
-
-Les noms de commandes, le format d’artefact, le lieu de build, le transport de livraison, la politique de concurrence, les fenêtres de sauvegarde, le maintien du web pendant celles-ci et les modalités concrètes de reprise restent à décider. Le candidat local de cybrel-infrastructure n’accorde aucune valeur normative à ses choix sur ces points. Les affectations VM, réseau, domaine, ressources, sauvegarde et supervision doivent être fixées dans un contrat d’exploitation à approuver dans ce dépôt indépendant.
-
-### 12.5 Dépôts et infrastructure
-
-GitHub porte le produit et le backlog ; Forgejo pilote la livraison et le déploiement contrôlés. Le contrôleur appartient à cybrel-infrastructure. Ses accès au runner, au réseau et aux secrets doivent être définis avant son installation. Aucun miroir bidirectionnel ni deuxième backlog produit n’est requis.
-
-Le provisionnement utilise les primitives Terraform, l’orchestrateur Bash et Ansible de Cybrel. L’exposition respecte la chaîne Consul, consul-template et HAProxy, notamment la déclaration initiale du backend avant son référencement dynamique. Une release produit ne relance pas implicitement le provisionnement.
-
-Graph Engineering Tool reste dans son dépôt indépendant pour l’exécution agentique des Stories. Il ne remplace ni le moteur des campagnes ni leurs autorisations. Son identité est épinglée dans chaque contrat de run ; aucun numéro de version de cet outil n’est fixé ici. La piste d’une VM macOS Graph est exclue.
 
 ## 13. Historique Git
 
