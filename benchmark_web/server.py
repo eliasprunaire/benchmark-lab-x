@@ -141,6 +141,40 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             if self.command != 'HEAD':
                 self.wfile.write(raw)
 
+        def error_page(self, code, title, message, headers=None):
+            """Toute erreur emprunte respond() : en-têtes de sécurité et gabarit français"""
+            # Ici la page est le défaut, le tableau de BX-04 la demande en curl ; `not_found` garde le contrat JSON
+            if 'application/json' in self.headers.get('Accept', ''):
+                self.respond(code, {'error': message}, headers=headers)
+                return
+            try:
+                page = views.render({'error': message, 'title': title}, '', error=True)
+            except Exception:
+                page = _failure_document(message)
+            self.respond(code, page, 'text/html; charset=utf-8', headers)
+
+        def not_found(self):
+            # Le contrat JSON garde le code NOT_FOUND ; seul un navigateur reçoit la page
+            accept = self.headers.get('Accept', '')
+            if 'text/html' in accept and 'application/json' not in accept:
+                self.error_page(404, 'Page introuvable',
+                                'Cette adresse n’existe pas sur ce service. Vérifiez le lien ou revenez à l’accueil.')
+            else:
+                self.respond(404, {'error': 'NOT_FOUND'})
+
+        def send_error(self, code, message=None, explain=None):
+            """Sans cette surcharge, les verbes non servis reçoivent la page anglaise de la bibliothèque standard, sans en-tête de sécurité"""
+            self.close_connection = True
+            headers = {'Connection': 'close'}
+            if code in (405, 501):
+                headers['Allow'] = 'GET, HEAD, POST'
+                self.error_page(405, 'Méthode non autorisée',
+                                'Cette méthode n’est pas admise sur ce service. '
+                                'Seules la consultation et l’envoi de formulaire le sont.', headers)
+                return
+            # Ligne de requête refusée avant les en-têtes : aucun navigateur à servir, et `self.headers` peut manquer
+            self.respond(code, {'error': 'Cette requête n’a pas pu être traitée.'}, headers=headers)
+
         def preparation(self):
             if self.path == '/preparation/privacy.js' and self.command in ('GET', 'HEAD'):
                 self.respond(200, (Path(__file__).parent / 'privacy.js').read_bytes(), 'text/javascript; charset=utf-8')
@@ -360,7 +394,12 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 self.respond(400, value if wants_json else views.render(value, '', error=True),
                              'application/json' if wants_json else 'text/html; charset=utf-8')
             except OSError:
-                value = {'error': 'Service temporairement indisponible : l’état de votre demande ne peut pas être vérifié. '
+                # Le retour Openrouter est le seul GET qui relaie un envoi : il garde le message d'incertitude
+                read_only = self.command in ('GET', 'HEAD') and not self.path.startswith('/preparation/access/callback')
+                value = {'error': 'Service temporairement indisponible : cette page ne peut pas être affichée '
+                         'pour le moment. Aucune donnée n’a été modifiée ; réessayez dans un instant.'
+                         if read_only else
+                         'Service temporairement indisponible : l’état de votre demande ne peut pas être vérifié. '
                          'Aucune nouvelle soumission disponible. Consultez le dossier avant tout nouvel envoi ; '
                          'un envoi précédent peut avoir été enregistré.', 'unavailable': True}
                 self.respond(503, value if wants_json else views.render(value, '', error=True),
@@ -370,7 +409,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             if self.path == '/preparation' or self.path.startswith('/preparation/'):
                 self.preparation()
             else:
-                self.respond(404, {'error': 'NOT_FOUND'})
+                self.not_found()
 
         def do_HEAD(self):
             self.do_GET()
@@ -415,7 +454,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             if self.path.startswith('/publications/'):
                 match = re.fullmatch(r'/publications/([0-9a-f]{64})/([A-Za-z0-9_-]+\.(?:html|css|txt))', self.path)
                 if not match:
-                    self.respond(404, {'error': 'NOT_FOUND'})
+                    self.not_found()
                     return
                 identity, name = match.groups()
                 try:
@@ -430,7 +469,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             # Seuls les fichiers d'une projection approuvée sont consultables
             name = self.path.removeprefix('/')
             if not re.fullmatch(r'[a-zA-Z0-9_-]+\.(html|css|png|jpg|txt|json)', name):
-                self.respond(404, {'error': 'NOT_FOUND'})
+                self.not_found()
                 return
             try:
                 if (public / 'active.json').is_symlink():
