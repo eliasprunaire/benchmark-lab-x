@@ -98,7 +98,7 @@ Les identifiants techniques du produit conservent le préfixe `benchmark-lab-x`.
 ## Documentation
 
 - [PRD](docs/PRD.md) : besoin, utilisateurs, parcours et périmètre ;
-- [ARD](docs/ARD.md) : objets, responsabilités, flux et exploitation ;
+- [ARD](docs/ARD.md) : objets, responsabilités, frontières et flux ;
 - [Règles](docs/RULES.md) : contrats, preuves, coûts, autorités et versions ;
 - [Gabarit de tâche](docs/task-template.md) : contenu minimal d’une future tâche ;
 - [Guide de contribution](CONTRIBUTING.md) : branches, commits, CI, revue, fusion et livraison automatique ;
