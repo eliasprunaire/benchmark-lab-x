@@ -3,6 +3,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -199,6 +200,69 @@ class PreparationLimitTests(unittest.TestCase):
         stored = store._connection.execute('SELECT request_json FROM s2_actions WHERE dossier_id=?',
                                            ('released',)).fetchone()[0]
         self.assertNotIn('source_sha256', stored)
+
+    def parallel_submissions(self, data, store, source, count, now):
+        """`count` soumissions réellement simultanées, un `Store` par fil comme dans l'exécuteur"""
+        identities = [prep.session(store, None, create=True) for _ in range(count)]
+        outcomes, guard = [], threading.Lock()
+
+        def submit(index):
+            _, csrf, token = identities[index]
+            with closing(storage.Store(data)) as own:
+                try:
+                    code = web_api.dispatch(own, 'POST', '/preparation/dossiers', token,
+                                            {'csrf_token': csrf, 'dossier_id': f'c{index}',
+                                             'action_id': f'c{index}', 'request': 'x' * 40,
+                                             'source_sha256': source}, 'a' * 40, True)[0]
+                except prep.Denied as denied:
+                    code = denied.code or 'DENIED'
+                except Exception as error:
+                    code = type(error).__name__
+            with guard:
+                outcomes.append(code)
+
+        with patch.object(prep, '_now', return_value=now):
+            threads = [threading.Thread(target=submit, args=(index,)) for index in range(count)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(60)
+        self.assertEqual(count, len(outcomes))
+        return outcomes
+
+    def test_le_plafond_par_source_atteint_refuse_toutes_les_soumissions_paralleles(self):
+        """Le plafond horaire par source reste effectif sous concurrence (BX-02)
+
+        Le registre `_SOURCE_ACCEPTED` est un dictionnaire de module partagé par tous les fils de
+        travail. Rempli au plafond, aucune soumission simultanée ne doit passer, et le balayage
+        concurrent de la fenêtre glissante ne doit pas laisser le registre incohérent
+        """
+        data, store, _, _, _ = self.fixture(reserve='0')
+        now = datetime(2026, 9, 21, 9, tzinfo=timezone.utc)
+        source = 'c' * 64
+        prep._SOURCE_ACCEPTED[source] = [now] * prep.SOURCE_HOURLY_MAX
+        outcomes = self.parallel_submissions(data, store, source, 24, now)
+        self.assertEqual({'SOURCE_RATE_LIMIT'}, set(outcomes))
+        self.assertEqual(prep.SOURCE_HOURLY_MAX, len(prep._SOURCE_ACCEPTED[source]))
+
+    def test_une_place_restante_n_admet_qu_un_seul_effet_simultane(self):
+        """Une place sous le plafond : une seule soumission aboutit, les autres sont refusées
+
+        Ce test ne prouve pas le plafond par source : le garde S2 « un seul effet à la fois »
+        refuse les perdantes avant que `_source_limit` soit atteint, et le test reste vert si on
+        retire le plafond. C'est `test_le_plafond_par_source_atteint_refuse_toutes_les_soumissions_paralleles`
+        qui porte le critère de BX-02, et qui échoue sans le plafond. Le refus opérant est figé ici
+        pour que personne ne relise ce vert comme une preuve du plafond
+        """
+        data, store, _, _, _ = self.fixture(reserve='0')
+        now = datetime(2026, 9, 21, 9, tzinfo=timezone.utc)
+        source = 'd' * 64
+        prep._SOURCE_ACCEPTED[source] = [now] * (prep.SOURCE_HOURLY_MAX - 1)
+        outcomes = self.parallel_submissions(data, store, source, 24, now)
+        self.assertEqual(1, outcomes.count(202), outcomes)
+        # Un refus de verrou SQLite rendrait le vert vide : seul le refus de domaine est admis
+        self.assertEqual({202, 'PREPARATION_IN_PROGRESS'}, set(outcomes), outcomes)
+        self.assertEqual(prep.SOURCE_HOURLY_MAX, len(prep._SOURCE_ACCEPTED[source]))
 
 
 if __name__ == '__main__':

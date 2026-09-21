@@ -3,6 +3,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from hashlib import sha256
 import json
+import os
 import socket
 import threading
 import time
@@ -240,6 +241,94 @@ class ModelProbeTests(unittest.TestCase):
                 if servers:
                     servers[0].shutdown()
                 worker.join(5)
+                self.assertFalse(worker.is_alive())
+
+    def test_un_seul_resultat_gratuit_courant_malgre_des_demandes_simultanees(self):
+        """Le registre des vérifications gratuites reste sûr sous concurrence (BX-02)
+
+        `probe_jobs` est partagé par tous les fils de travail de l'exécuteur. Huit demandes
+        simultanées portant chacune son propre `action_id`, donc son propre identifiant de
+        requête, ne doivent en lancer qu'une : sans garde, plusieurs franchissent ensemble le
+        contrôle « aucune vérification en cours » et déclenchent autant d'appels gratuits.
+
+        L'entrelacement est forcé en ralentissant la construction du `Future`, qui se trouve
+        entre ce contrôle et l'inscription au registre. Sans cette attente la fenêtre tient en
+        quelques instructions et le test passerait même sans verrou, donc ne prouverait rien.
+        """
+
+        class SlowFuture(service.Future):
+            def __init__(self):
+                time.sleep(.05)
+                super().__init__()
+
+        token = 'ab' * 32
+        self.store._connection.execute('UPDATE s2_sessions SET token_sha256=? WHERE session_id=?',
+            (sha256(bytes.fromhex(token)).hexdigest(), self.session))
+        _, csrf, _ = preparation.session(self.store, token)
+        authority = preparation.admission(self.store)
+        ready, fetching, release = threading.Event(), threading.Event(), threading.Event()
+        servers = []
+        sock = self.data.parent / 'probe-concurrent.sock'
+
+        def run(server):
+            servers.append(server)
+            ready.set()
+            server.serve_forever(poll_interval=.01)
+
+        def fetch(path):
+            if path.startswith('/api/v1/model/'):
+                fetching.set()
+                if not release.wait(10):
+                    raise TimeoutError('fixture blocked')
+            return self.fetch(path)
+
+        self.response = {'id': 'gen-fixture', 'model': SLUG, 'usage': {'cost': 0.0004},
+            'choices': [{'finish_reason': 'stop', 'message': {'content': 'OK'}}]}
+        count = 8
+        statuses, guard = [], threading.Lock()
+        start_line = threading.Barrier(count)
+
+        def ask(index):
+            start_line.wait(15)
+            result = service.preparation_request(sock, 'POST',
+                '/preparation/dossiers/fixture/custom-models', token,
+                {'slug': SLUG, 'action_id': f'action-{index}', 'csrf_token': csrf})
+            with guard:
+                statuses.append(result['status'])
+
+        # Concurrence épinglée : un exécuteur à un seul fil sérialiserait la rafale et viderait la preuve
+        with patch.dict(os.environ, {'BENCHMARK_EXECUTOR_WORKERS': str(count)}), \
+                patch('socket.socket.connect', SOCKET_CONNECT), patch.object(service, 'run', run), \
+                patch.object(service, 'Future', SlowFuture), \
+                patch.object(service, '_refresh_catalogue'):
+            worker = threading.Thread(target=service.serve_executor, args=(self.data, sock, 'a' * 40),
+                kwargs=dict(candidate_identity=self.identity, personal_preparation=True,
+                    access_secret=SECRET, access_transport=self.access,
+                    catalogue_fetch=fetch, model_probe_transport=self.post))
+            worker.start()
+            try:
+                self.assertTrue(ready.wait(5))
+                preparation.admit(self.store, authority)
+                askers = [threading.Thread(target=ask, args=(index,)) for index in range(count)]
+                for asker in askers:
+                    asker.start()
+                for asker in askers:
+                    asker.join(30)
+                self.assertEqual(count, len(statuses), statuses)
+                self.assertEqual(1, statuses.count(202), statuses)
+                self.assertEqual({202, 403}, set(statuses), statuses)
+                self.assertTrue(fetching.wait(5))
+                release.set()
+                deadline = time.monotonic() + 10
+                while not self.calls and time.monotonic() < deadline:
+                    time.sleep(.01)
+                # Un seul appel gratuit, donc un seul fil de vérification lancé
+                self.assertEqual(1, len(self.calls))
+            finally:
+                release.set()
+                if servers:
+                    servers[0].shutdown()
+                worker.join(10)
                 self.assertFalse(worker.is_alive())
 
     def test_reponse_ne_conserve_pas_une_cle_echappee_en_json(self):

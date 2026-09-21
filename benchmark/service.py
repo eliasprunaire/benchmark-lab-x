@@ -7,9 +7,14 @@ s'applique en délai total : le budget monotone restant est réparti sur la conn
 et chaque réception de la réponse, qu'un délai d'inactivité ne bornerait pas. `executor_health`
 garde le seul budget local : la santé ne doit pas attendre derrière un échange fournisseur.
 
-Limites assumées. L'exécuteur reste sériel et le serveur web mono-thread : une requête lente
-retarde les suivantes, `executor_health` peut expirer et `/readyz` répondre 503 pendant qu'un
-rappel fournisseur occupe l'exécuteur. Le relais ne borne que son propre côté : la résolution
+Limites assumées. L'exécuteur traite plusieurs requêtes à la fois, mais sa concurrence est
+bornée : `EXECUTOR_WORKERS` fils de travail, chacun avec son propre `Store` ouvert une seule fois
+au démarrage. Quand tous travaillent, la connexion suivante est fermée aussitôt plutôt que mise en
+attente derrière `RELAY_BUDGET_SECONDS` ; `executor_health` peut alors échouer et `/readyz`
+répondre 503. Les écritures restent sérialisées par SQLite : une écriture concurrente attend le
+délai d'occupation de 5 secondes, puis échoue en `SQLITE_BUSY` plutôt que d'attendre davantage, et
+la frontière la rend en 500. Le cas le plus long est `preparation.submit`, qui tient sa transaction
+d'écriture pendant l'échange fournisseur. Le relais ne borne que son propre côté : la résolution
 DNS du fournisseur, faite dans l'exécuteur et non interruptible, consomme le temps de l'appel
 sans être majorée ici, donc `RELAY_BUDGET_SECONDS` n'est pas une garantie de durée totale de
 bout en bout. Côté exécuteur, la lecture de la requête et l'écriture de la réponse gardent un
@@ -19,7 +24,10 @@ web local.
 Frontière d'erreurs. `executor_result` valide l'enveloppe et le type de ses champs avant tout
 acheminement : une enveloppe fautive vaut 400, un refus reste 403 ou 409, une validation de
 domaine reste 400, et une défaillance interne (stockage, programmation, entrée-sortie, santé)
-répond 500 sans message d'exception, sans trace, sans requête ni secret. Côté client,
+répond 500 sans message d'exception, sans trace, sans requête ni secret. Un verrou de stockage occupé
+n'y fait pas exception : `SQLITE_BUSY` reste un 500, parce qu'une requête enchaîne parfois deux
+transactions d'écriture, `preparation.submit` puis `privacy.activity`, et que la seconde peut se
+refuser alors que la première est commise. Annoncer un refus y perdrait un dossier déjà créé. Côté client,
 `preparation_request` traite une trame ou une réponse d'exécuteur illisible en
 `ConnectionError` : c'est une panne de transport, jamais une saisie fautive de l'appelant. La
 forme de la réponse y est vérifiée une seule fois, pour tous ses appelants : statut de réponse
@@ -36,6 +44,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import queue
 import re
 import signal
 import socket
@@ -58,6 +67,15 @@ from .runtime import encode, status, stop, verify
 LOCAL_BUDGET_SECONDS = 5
 RELAY_BUDGET_SECONDS = CALLBACK_BUDGET_SECONDS + LOCAL_BUDGET_SECONDS
 
+# Concurrence de production, modeste : un Store par fil, ouvert une fois et gardé jusqu'à l'arrêt
+EXECUTOR_WORKERS = 8
+# La file d'écoute du noyau suit la concurrence : une rafale attend l'acceptation, jamais un refus
+EXECUTOR_BACKLOG_FACTOR = 8
+EXECUTOR_BACKLOG_MINIMUM = 64
+EXECUTOR_START_SECONDS = 30
+# Un fil de travail par Store ; chaque connexion SQLite appartient au fil qui l'a créée
+_worker_store = threading.local()
+
 BAD_REQUEST_MESSAGE = 'Action non vérifiée. Vérifiez les champs ou consultez le dossier courant.'
 CONFLICT_MESSAGE = ('Action refusée : révision périmée, opération en attente ou budget indisponible. '
                     'Consultez le dossier courant.')
@@ -65,6 +83,109 @@ CONFLICT_MESSAGE = ('Action refusée : révision périmée, opération en attent
 INTERNAL_MESSAGE = ('Défaillance interne du service : l’état de cette action n’est pas confirmé. '
                     'Consultez le dossier avant tout nouvel envoi.')
 PROTOCOL_MESSAGE = 'Réponse d’exécuteur illisible'
+
+
+def executor_workers():
+    """Concurrence de l'exécuteur, ajustable sans toucher au code pour une mesure de charge"""
+    raw = os.environ.get('BENCHMARK_EXECUTOR_WORKERS')
+    if raw is None:
+        return EXECUTOR_WORKERS
+    if re.fullmatch('[1-9][0-9]{0,2}', raw) is None:
+        raise ValueError('Concurrence d’exécuteur invalide')
+    return int(raw)
+
+
+class BoundedUnixServer(socketserver.UnixStreamServer):
+    """Concurrence bornée : la boucle d'acceptation confie la connexion à un fil libre
+
+    Le nombre de fils borne le travail simultané. Quand tous travaillent, la connexion est fermée
+    sans réponse : le relais le lit comme une indisponibilité de transport et rend 503 tout de
+    suite, au lieu d'attendre le budget de relais. `run` reste inchangée, donc le serveur web garde
+    exactement la boucle d'aujourd'hui
+    """
+
+    def __init__(self, socket_path, handler, *, data, workers):
+        self.request_queue_size = max(EXECUTOR_BACKLOG_MINIMUM, EXECUTOR_BACKLOG_FACTOR * workers)
+        super().__init__(socket_path, handler)
+        self._jobs = queue.SimpleQueue()
+        self._free = threading.Semaphore(workers)
+        self._stopped = False
+        self._opened = queue.SimpleQueue()
+        # Démons : une jointure bornée honore la requête en cours sans retenir le processus à jamais
+        self._workers = [threading.Thread(target=self._work, args=(data,), name=f'executor-{index}',
+                                          daemon=True) for index in range(workers)]
+        try:
+            for worker in self._workers:
+                worker.start()
+            for _ in self._workers:
+                # Un Store qui ne s'ouvre pas rend la main tout de suite : pas d'attente du délai
+                failure = self._opened.get(timeout=EXECUTOR_START_SECONDS)
+                if failure is not None:
+                    logging.getLogger(__name__).error('EXECUTOR_WORKER_UNAVAILABLE %s', failure)
+                    raise IntegrityError('Fil de travail de l’exécuteur indisponible')
+        except BaseException:
+            self.server_close()
+            raise
+
+    def _work(self, data):
+        try:
+            store = Store(data)
+        except BaseException as error:
+            self._opened.put(type(error).__name__)
+            raise
+        # Une place perdue ne doit pas promettre une capacité absente au reste de la boucle
+        with closing(store):
+            _worker_store.store = store
+            self._opened.put(None)
+            while True:
+                # Un fil qui disparaît laisserait sa place au sémaphore : la boucle survit à tout
+                try:
+                    job = self._jobs.get()
+                    if job is None:
+                        return
+                    try:
+                        try:
+                            self.finish_request(*job)
+                        except Exception:
+                            self.handle_error(*job)
+                    finally:
+                        self.shutdown_request(job[0])
+                        self._free.release()
+                except Exception as error:
+                    logging.getLogger(__name__).error('EXECUTOR_WORKER_RECOVERED %s',
+                                                      type(error).__name__)
+
+    def process_request(self, request, client_address):
+        if not self._free.acquire(blocking=False):
+            # Capacité saturée : fermeture immédiate, jamais une attente derrière le budget de relais
+            self.shutdown_request(request)
+            return
+        self._jobs.put((request, client_address))
+
+    def stop_workers(self):
+        """Arrêt propre : la requête en cours se termine dans son budget, puis chaque Store est fermé
+
+        Idempotent : `serve_executor` arrête le pool avant de fermer l'admission, et `server_close`
+        repasse ici à la sortie du bloc. Sans ce garde, un fil déjà coincé ferait attendre deux
+        budgets de relais au lieu d'un, en retenant `executor.lock` d'autant
+        """
+        if self._stopped:
+            return
+        self._stopped = True
+        for _ in self._workers:
+            self._jobs.put(None)
+        deadline = time.monotonic() + RELAY_BUDGET_SECONDS
+        for worker in self._workers:
+            if worker.ident is None:
+                continue
+            worker.join(max(0.0, deadline - time.monotonic()))
+            if worker.is_alive():
+                logging.getLogger(__name__).error('EXECUTOR_WORKER_STUCK %s', worker.name)
+
+    def server_close(self):
+        # Filet : un abandon avant la boucle passe par ici, sinon `serve_executor` a déjà arrêté
+        self.stop_workers()
+        super().server_close()
 
 
 def release_metadata():
@@ -407,20 +528,23 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                 socket_path.unlink()
 
             def health():
-                verify(store)
-                health = {'source_sha': source, 'storage': 'ok', **status(data, store)}
+                worker = _worker_store.store
+                verify(worker)
+                health = {'source_sha': source, 'storage': 'ok', **status(data, worker)}
                 if version is not None:
                     health['version'] = version
                 return health
 
-            probe_jobs = {}
+            # Registre partagé par tous les fils de travail : ses lectures et écritures sont gardées
+            probe_jobs, probe_guard = {}, threading.Lock()
 
             def handle_message(message):
                 from .runtime import worker_lock
-                with worker_lock(store, shared=True):
-                    return handle_locked(message)
+                worker = _worker_store.store
+                with worker_lock(worker, shared=True):
+                    return handle_locked(worker, message)
 
-            def handle_locked(message):
+            def handle_locked(store, message):
                 from . import preparation, provider_access, web_api
                 active_transport, active_qualification = transport, qualification_transport
                 active_judgment = None
@@ -456,20 +580,21 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                             pass
                 if isinstance(start, dict):
                     if 'model_probe' in start:
-                        job = probe_jobs.get(start['session_id'])
-                        if (job is not None and job['request_id'] == start['model_probe']
-                                and job['slug'] != start['body']['slug'].strip()):
-                            raise ConflictError('Identité déjà utilisée avec un autre slug')
-                        if job is None or job['request_id'] != start['model_probe']:
-                            if any(not item['future'].done() for item in probe_jobs.values()):
-                                raise preparation.Denied('PREPARATION_IN_PROGRESS')
-                            # Un seul résultat gratuit courant par session ; les appels restent dans le registre
-                            job = dict(request_id=start['model_probe'], dossier_id=start['dossier_id'],
-                                       slug=start['body']['slug'].strip(), future=Future())
-                            probe_jobs[start['session_id']] = job
-                            threading.Thread(target=_probe_worker, args=(job['future'], data, start,
-                                catalogue_fetch, access_secret, access_transport, model_probe_transport),
-                                daemon=True).start()
+                        with probe_guard:
+                            job = probe_jobs.get(start['session_id'])
+                            if (job is not None and job['request_id'] == start['model_probe']
+                                    and job['slug'] != start['body']['slug'].strip()):
+                                raise ConflictError('Identité déjà utilisée avec un autre slug')
+                            if job is None or job['request_id'] != start['model_probe']:
+                                if any(not item['future'].done() for item in probe_jobs.values()):
+                                    raise preparation.Denied('PREPARATION_IN_PROGRESS')
+                                # Un seul résultat gratuit courant par session ; les appels restent dans le registre
+                                job = dict(request_id=start['model_probe'], dossier_id=start['dossier_id'],
+                                           slug=start['body']['slug'].strip(), future=Future())
+                                probe_jobs[start['session_id']] = job
+                                threading.Thread(target=_probe_worker, args=(job['future'], data, start,
+                                    catalogue_fetch, access_secret, access_transport, model_probe_transport),
+                                    daemon=True).start()
                     elif 'qualification_operation' in start:
                         threading.Thread(target=_retention_worker,
                                          args=(data, value.get('dossier_id'), preparation.execute_qualification,
@@ -486,7 +611,8 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     threading.Thread(target=_retention_worker, args=(data, value.get('dossier_id'), preparation.execute, data, start, active_transport), daemon=True).start()
                 if isinstance(value, dict) and value.get('kind') == 'configurations':
                     session_id, _, _ = preparation.session(store, message['token'])
-                    job = probe_jobs.get(session_id)
+                    with probe_guard:
+                        job = probe_jobs.get(session_id)
                     if job is not None and job['dossier_id'] == value['dossier_id']:
                         value['probe_request'] = {key: job[key] for key in ('request_id', 'slug')}
                         value['probe_request'].update(job['future'].result() if job['future'].done()
@@ -515,7 +641,8 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     except OSError:
                         return
 
-            with socketserver.UnixStreamServer(str(socket_path), Handler) as server:
+            with BoundedUnixServer(str(socket_path), Handler, data=data,
+                                   workers=executor_workers()) as server:
                 os.chmod(socket_path, 0o660)
                 stopping = threading.Event()
                 catalogue_worker = None
@@ -527,6 +654,7 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     run(server)
                 finally:
                     stopping.set()
+                    server.stop_workers()
                     from .preparation import close_admission
                     close_admission(store)
                     if catalogue_worker is not None:

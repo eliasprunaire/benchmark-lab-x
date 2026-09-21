@@ -1,11 +1,15 @@
 """Preuve avec deux vrais processus et une socket locale, sans fournisseur."""
+from collections import Counter
 from contextlib import closing, contextmanager
 from email.message import Message
 from hashlib import sha256
+from http.client import HTTPConnection, HTTPException
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -648,3 +652,165 @@ class ServiceProcessesTests(unittest.TestCase):
                     if child.poll() is None:
                         child.terminate()
                         child.wait(timeout=5)
+
+
+
+def _established(port, timeout, deadline):
+    """Connexion TCP ouverte avant la mesure, avec reprise du seul refus hors périmètre
+
+    La file d'acceptation du serveur HTTP n'est pas l'objet de cette Issue, et son débordement
+    ne se signale pas de la même manière sous Linux et sous macOS. L'ouvrir avant la barrière
+    sort ce bruit de la mesure : les requêtes partent ensuite réellement en même temps, et une
+    indisponibilité de l'exécuteur arrive en 503, jamais en erreur de connexion
+    """
+    retries = 0
+    while True:
+        connection = HTTPConnection('127.0.0.1', port, timeout=timeout)
+        try:
+            connection.connect()
+            return connection, retries
+        except OSError:
+            connection.close()
+            if time.monotonic() >= deadline:
+                raise
+            retries += 1
+            time.sleep(0.01)
+
+
+def _concurrent_profile(port, path, headers, count, *, timeout=30):
+    """Relevé d'un profil de charge : statuts obtenus, reprises TCP et requête la plus lente"""
+    start_line = threading.Barrier(count)
+    codes, retries, elapsed, guard = [], [], [], threading.Lock()
+    deadline = time.monotonic() + timeout
+
+    def once(index):
+        # Ouvertures étalées : la file d'acceptation du serveur HTTP n'est pas l'objet de la mesure
+        time.sleep(index * 0.005)
+        connection = retried = None
+        began = time.monotonic()
+        try:
+            connection, retried = _established(port, timeout, deadline)
+            start_line.wait(timeout)
+            began = time.monotonic()
+            connection.request('GET', path, headers=headers)
+            response = connection.getresponse()
+            response.read()
+            code = response.status
+        except (OSError, HTTPException, threading.BrokenBarrierError) as error:
+            code = type(error).__name__
+        finally:
+            if connection is not None:
+                connection.close()
+        with guard:
+            codes.append(code)
+            retries.append(retried or 0)
+            elapsed.append(time.monotonic() - began)
+
+    threads = [threading.Thread(target=once, args=(index,)) for index in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout + 10)
+    return Counter(codes), sum(retries), max(elapsed, default=0.0)
+
+
+@contextmanager
+def _loaded_stack(workers):
+    """Exécuteur et serveur web réels sur un stockage d'essai, concurrence fixée par le test"""
+    from tests.test_privacy import initialize as initialize_storage
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        data, public = root / 'private', root / 'public'
+        public.mkdir()
+        initialize_storage(data)
+        with closing(Store(data)) as store:
+            _, _, token = preparation.session(store, None, create=True)
+        # Chemin de socket court : AF_UNIX échoue au-delà d'une centaine d'octets
+        socket_root = Path(tempfile.mkdtemp())
+        sock = socket_root / 'x.sock'
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            port = probe.getsockname()[1]
+        repository = Path(__file__).resolve().parents[1]
+        command = [sys.executable, '-B', '-m', 'benchmark.runtime']
+        environment = dict(os.environ, BENCHMARK_EXECUTOR_WORKERS=str(workers))
+        children = []
+        try:
+            children.append(subprocess.Popen(command + ['executor', '--data', str(data), '--socket', str(sock)],
+                                             cwd=repository, env=environment, start_new_session=True))
+            deadline = time.monotonic() + 30
+            while True:
+                try:
+                    executor_health(sock)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.02)
+            children.append(subprocess.Popen(command + ['web', '--public', str(public), '--socket', str(sock),
+                                                        '--port', str(port)],
+                                             cwd=repository, env=environment, start_new_session=True))
+            deadline = time.monotonic() + 30
+            while True:
+                try:
+                    with urlopen(f'http://127.0.0.1:{port}/readyz', timeout=2):
+                        break
+                except HTTPError as error:
+                    error.close()
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.02)
+            yield port, token
+        finally:
+            for child in children:
+                if child.poll() is None:
+                    child.terminate()
+                    try:
+                        child.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(os.getpgid(child.pid), signal.SIGKILL)
+                        child.wait()
+            shutil.rmtree(socket_root, ignore_errors=True)
+
+
+class ExecutorConcurrencyTests(unittest.TestCase):
+    """Charge du parcours privé : cible de 50 requêtes simultanées par profil (BX-01)"""
+
+    TARGET = 50
+
+    def test_parcours_prive_tient_cinquante_visiteurs_simultanes(self):
+        with _loaded_stack(workers=64) as (port, token):
+            session = {'Cookie': 'benchmark_session=' + token}
+            activity = dict(session, Accept='application/json')
+            observed = {}
+            for label, path, headers in (('avec cookie', '/preparation', session),
+                                         ('sans cookie', '/preparation', {}),
+                                         ('activite', '/preparation/activity', activity)):
+                codes, retries, slowest = _concurrent_profile(port, path, headers, self.TARGET)
+                observed[label] = {'statuts': dict(codes), 'reprises_tcp': retries,
+                                   'plus_lente_s': round(slowest, 3)}
+            print('\nBX-01 profils :', json.dumps(observed, ensure_ascii=False))
+            for label, mesure in observed.items():
+                self.assertEqual({200: self.TARGET}, mesure['statuts'], label)
+
+    def test_au_dela_de_la_capacite_l_echec_est_immediat(self):
+        """Un seul fil admis : le surplus est refusé tout de suite, pas mis en attente
+
+        Le nombre de succès est rattaché à la concurrence configurée. Sans cela le test passerait
+        aussi sur l'exécuteur sériel d'avant, qui refusait le surplus par débordement de la file
+        d'écoute et servait autant de requêtes
+        """
+        with _loaded_stack(workers=1) as (port, token):
+            codes, retries, slowest = _concurrent_profile(
+                port, '/preparation', {'Cookie': 'benchmark_session=' + token}, self.TARGET)
+            print('\nBX-01 saturation :', json.dumps(
+                {'statuts': dict(codes), 'reprises_tcp': retries, 'plus_lente_s': round(slowest, 3)},
+                ensure_ascii=False))
+            self.assertEqual(set(), set(codes) - {200, 503})
+            self.assertGreater(codes[503], 0, codes)
+            # Un `Counter` rend 0 sur une clé absente : borner par le haut seul laissait passer 50 × 503
+            self.assertGreaterEqual(codes[200], 1, codes)
+            self.assertLessEqual(codes[200], 2, codes)
+            self.assertLess(slowest, 1)
