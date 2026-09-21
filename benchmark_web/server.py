@@ -17,6 +17,7 @@ from pathlib import Path
 import posixpath
 import re
 import secrets
+from time import monotonic
 from urllib.parse import parse_qs, urlsplit
 
 from benchmark.runtime import encode
@@ -24,6 +25,60 @@ from benchmark.service import executor_health, preparation_request, run
 from benchmark.storage import _unique_object
 
 from . import views
+
+
+_ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*',
+                  '<projection>': r'[0-9a-f]{64}', '<police>': r'[A-Za-z]+',
+                  '<piece>': r'[A-Za-z0-9_-]+\.(?:html|css|txt)',
+                  '<fichier>': r'[A-Za-z0-9_-]+\.(?:html|css|png|jpg|txt|json)'}
+
+# Motifs servis, essayés dans l'ordre : un chemin absent de cette liste se journalise `<inconnu>`
+_ROUTE_PATTERNS = (
+    '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico',
+    '/preparation', '/preparation/privacy.js', '/preparation/style.css',
+    '/preparation/fonts/<police>.woff2',
+    '/preparation/data', '/preparation/privacy', '/preparation/activity', '/preparation/catalogue',
+    '/preparation/session/open',
+    '/preparation/access', '/preparation/access/start', '/preparation/access/key',
+    '/preparation/access/callback', '/preparation/access/disconnect',
+    '/preparation/contributions', '/preparation/contributions/<id>/withdraw',
+    '/preparation/dossiers', '/preparation/dossiers/<id>',
+    '/preparation/dossiers/<id>/messages', '/preparation/dossiers/<id>/validation',
+    '/preparation/dossiers/<id>/configurations', '/preparation/dossiers/<id>/custom-models',
+    '/preparation/dossiers/<id>/contribution', '/preparation/dossiers/<id>/delete',
+    '/preparation/dossiers/<id>/archive', '/preparation/dossiers/<id>/archive/items/record',
+    '/preparation/dossiers/<id>/revisions/<n>',
+    '/preparation/dossiers/<id>/revisions/<n>/pieces/<id>',
+    '/preparation/dossiers/<id>/campaigns/<id>',
+    '/preparation/dossiers/<id>/campaigns/<id>/conditions',
+    '/preparation/dossiers/<id>/campaigns/<id>/start',
+    '/preparation/dossiers/<id>/campaigns/<id>/evaluate',
+    '/preparation/dossiers/<id>/campaigns/<id>/preview',
+    '/preparation/dossiers/<id>/campaigns/<id>/configurations',
+    '/preparation/dossiers/<id>/campaigns/<id>/attempts/<id>',
+    '/preparation/dossiers/<id>/evaluations/<id>/pieces/<id>',
+    '/publications/<projection>/<piece>',
+    '/<fichier>',
+)
+_ROUTES = tuple((re.compile(re.sub('<[a-z]+>', lambda marker: _ROUTE_MARKERS[marker[0]], re.escape(pattern))), pattern)
+                for pattern in _ROUTE_PATTERNS)
+_METHODS = frozenset(('GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'TRACE', 'CONNECT'))
+
+
+def canonical_route(path):
+    """Motif de route journalisable : le motif servi, jamais le chemin concret ni sa chaîne de requête"""
+    try:
+        parsed = urlsplit(path)
+    except ValueError:
+        return '<inconnu>'
+    # Une URL en forme absolue n'est servie par aucune route : la journaliser comme locale masquerait un test de proxy
+    if parsed.scheme or parsed.netloc or parsed.fragment:
+        return '<inconnu>'
+    target = parsed.path
+    for expression, pattern in _ROUTES:
+        if expression.fullmatch(target):
+            return pattern
+    return '<inconnu>'
 
 
 def _session_cookie(token):
@@ -111,8 +166,22 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             super().setup()
 
         def log_message(self, format, *args):
-            # Les URL peuvent contenir une saisie privée ; ne pas les journaliser
+            # Les gabarits de la bibliothèque standard reprennent la ligne de requête brute : les taire
             pass
+
+        def parse_request(self):
+            self.received_at = monotonic()
+            return super().parse_request()
+
+        def log_request(self, code='-', size='-'):
+            """Une ligne par requête : méthode, motif de route, statut, durée. Ni URL concrète, ni corps"""
+            started = getattr(self, 'received_at', None)
+            method = getattr(self, 'command', None)
+            logging.getLogger(__name__).info(
+                'WEB_ACCESS %s %s %s %dms', method if method in _METHODS else '<inconnu>',
+                canonical_route(getattr(self, 'path', '') or ''),
+                int(code) if isinstance(code, int) else '<inconnu>',
+                0 if started is None else round((monotonic() - started) * 1000))
 
         def respond(self, code, value, media_type='application/json', headers=None, *, script=None):
             raw = value if isinstance(value, bytes) else encode(value).encode()
