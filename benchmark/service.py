@@ -528,9 +528,10 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                 socket_path.unlink()
 
             def health():
-                worker = _worker_store.store
-                verify(worker)
-                health = {'source_sha': source, 'storage': 'ok', **status(data, worker)}
+                # source_sha vient de l'exécuteur ; status() porte restauration, opérations et le contrôle de schéma
+                # L'intégrité complète reste au démarrage et dans `runtime verify`
+                # Le Store du fil : la connexion SQLite appartient au fil qui l'a créée
+                health = {'source_sha': source, 'storage': 'ok', **status(data, _worker_store.store)}
                 if version is not None:
                     health['version'] = version
                 return health
