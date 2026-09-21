@@ -334,6 +334,7 @@ def main(argv=None):
             version = release_metadata()['version']
             if args.socket is None:
                 raise ValueError('Socket requise')
+            logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s')
             if args.action == 'web':
                 if args.public is None or not 1024 <= args.port <= 65535:
                     raise ValueError('Projection et port requis')
@@ -344,7 +345,6 @@ def main(argv=None):
             else:
                 if args.data is None:
                     raise ValueError('Données requises')
-                logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s')
                 from .provider_access import OpenRouterAccess, parse_secret
                 from .transports.openrouter import OpenRouterPreparation, load_profile
                 access_secret = parse_secret(os.environ.pop('BENCHMARK_ACCESS_SECRET', ''))

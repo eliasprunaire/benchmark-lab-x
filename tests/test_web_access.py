@@ -2,9 +2,11 @@
 from http.client import HTTPConnection
 from http.cookies import SimpleCookie
 import json
+import logging
 import multiprocessing
 from pathlib import Path
 import queue
+import re
 import socket
 import tempfile
 import threading
@@ -15,7 +17,7 @@ from urllib.parse import urlencode
 
 from benchmark.storage import _strict_json
 from benchmark_web import views
-from benchmark_web.server import _public_callback_url, serve_web
+from benchmark_web.server import _public_callback_url, canonical_route, serve_web
 from tests.test_s6_regressions import Markup
 
 
@@ -40,6 +42,7 @@ class FakeExecutor:
         self.home_value = {'csrf_token': 'csrf', 'availability': {}}
         self.raw_response = None
         self.start_cookie = None
+        self.forced_status = None
 
     def __enter__(self):
         self.worker.start()
@@ -83,6 +86,11 @@ class FakeExecutor:
                     if self.raw_response is not None:
                         # Trame brute imposée par le test : le web doit y voir une panne
                         connection.sendall(self.raw_response)
+                        continue
+                    if self.forced_status is not None:
+                        connection.sendall((_strict_json(
+                            {'status': self.forced_status, 'value': {'error': 'DENIED'},
+                             'piece': False, 'cookie': None}) + '\n').encode())
                         continue
                     if request['path'] == '/preparation/access' and request['method'] == 'GET':
                         result = {'status': 200, 'value': {'connected': False, 'status': 'disconnected'},
@@ -368,7 +376,62 @@ class AccessViewTests(unittest.TestCase):
                          views.date_lisible_utc('2026-09-15T12:00:00+00:00'))
 
 
-class AccessServerTests(unittest.TestCase):
+def _serve_web_logged(journal, *arguments):
+    """Cible de processus : le runtime règle le journal sur INFO, cette fixture l'envoie dans un fichier"""
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s',
+                        filename=journal, force=True)
+    serve_web(*arguments)
+
+
+class WebServerCase(unittest.TestCase):
+    """Serveur web réel devant un exécuteur fictif, sur socket Unix"""
+    journal_expected = False
+
+    def request(self, method, path, body=None, headers=None):
+        connection = HTTPConnection('127.0.0.1', self.port, timeout=3)
+        connection.request(method, path, body=body, headers=headers or {})
+        response = connection.getresponse()
+        raw = response.read()
+        result = response.status, response.headers, raw
+        connection.close()
+        return result
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='web-access-')
+        root = Path(self.temporary.name)
+        public = root / 'public'
+        public.mkdir()
+        self.executor = FakeExecutor(root / 'executor.sock')
+        self.executor.__enter__()
+        self.port = _port()
+        arguments = ('127.0.0.1', self.port, public, self.executor.path, 'a' * 40,
+                     'https://benchmark.example')
+        if self.journal_expected:
+            self.journal = root / 'acces.log'
+            target, arguments = _serve_web_logged, (str(self.journal),) + arguments
+        else:
+            target = serve_web
+        self.web = multiprocessing.get_context('spawn').Process(target=target, args=arguments)
+        self.web.start()
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                status, _, _ = self.request('GET', '/healthz')
+                if status == 200:
+                    break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.02)
+
+    def tearDown(self):
+        self.web.terminate()
+        self.web.join(5)
+        self.executor.__exit__(None, None, None)
+        self.temporary.cleanup()
+
+
+class AccessServerTests(WebServerCase):
     def test_preparation_posts_redirect_only_successful_html_to_dossier(self):
         for path, code in (('/preparation/dossiers', 202),
                            ('/preparation/dossiers/d1/messages', 202),
@@ -452,45 +515,6 @@ class AccessServerTests(unittest.TestCase):
             if code == 200:
                 self.assertEqual('/preparation', headers['Location'])
                 self.assertEqual('2592000', SimpleCookie(headers['Set-Cookie'])['benchmark_session']['max-age'])
-
-    def request(self, method, path, body=None, headers=None):
-        connection = HTTPConnection('127.0.0.1', self.port, timeout=3)
-        connection.request(method, path, body=body, headers=headers or {})
-        response = connection.getresponse()
-        raw = response.read()
-        result = response.status, response.headers, raw
-        connection.close()
-        return result
-
-    def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix='web-access-')
-        root = Path(self.temporary.name)
-        public = root / 'public'
-        public.mkdir()
-        self.executor = FakeExecutor(root / 'executor.sock')
-        self.executor.__enter__()
-        self.port = _port()
-        self.web = multiprocessing.get_context('spawn').Process(
-            target=serve_web,
-            args=('127.0.0.1', self.port, public, self.executor.path, 'a' * 40,
-                  'https://benchmark.example'))
-        self.web.start()
-        deadline = time.monotonic() + 5
-        while True:
-            try:
-                status, _, _ = self.request('GET', '/healthz')
-                if status == 200:
-                    break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(.02)
-
-    def tearDown(self):
-        self.web.terminate()
-        self.web.join(5)
-        self.executor.__exit__(None, None, None)
-        self.temporary.cleanup()
 
     def test_depart_callback_et_csp(self):
         status, headers, _ = self.request('GET', '/preparation/access')
@@ -817,6 +841,137 @@ class AccessServerTests(unittest.TestCase):
             self.assertIn(b'X-Content-Type-Options: nosniff', response, attendu)
             self.assertNotIn(b'Error response', response, attendu)
             self.assertNotIn(b'<html', response, attendu)
+
+class RouteCanonicalizationTests(unittest.TestCase):
+    def test_un_chemin_servi_devient_son_motif_sans_identifiant_ni_requete(self):
+        for path, expected in (
+                ('/', '/'),
+                ('/healthz', '/healthz'),
+                ('/preparation', '/preparation'),
+                ('/preparation/fonts/Inter.woff2', '/preparation/fonts/<police>.woff2'),
+                ('/preparation/access/callback?code=jeton-secret', '/preparation/access/callback'),
+                ('/preparation/dossiers/7f3a9c2e-4b1d', '/preparation/dossiers/<id>'),
+                ('/preparation/dossiers/7f3a9c2e-4b1d/messages', '/preparation/dossiers/<id>/messages'),
+                ('/preparation/dossiers/d1/revisions/12?campaign=d1-c1',
+                 '/preparation/dossiers/<id>/revisions/<n>'),
+                ('/preparation/dossiers/d1/campaigns/d1-c1/start',
+                 '/preparation/dossiers/<id>/campaigns/<id>/start'),
+                ('/preparation/dossiers/d1/campaigns/d1-c1',
+                 '/preparation/dossiers/<id>/campaigns/<id>'),
+                ('/preparation/dossiers/d1/campaigns/d1-c1/attempts/a1',
+                 '/preparation/dossiers/<id>/campaigns/<id>/attempts/<id>'),
+                ('/preparation/dossiers/d1/campaigns/d1-c1/preview?piece=p1&piece=p2',
+                 '/preparation/dossiers/<id>/campaigns/<id>/preview'),
+                ('/preparation/dossiers/d1/campaigns/d1-c1/configurations',
+                 '/preparation/dossiers/<id>/campaigns/<id>/configurations'),
+                ('/preparation/dossiers/d1/evaluations/e1/pieces/p1',
+                 '/preparation/dossiers/<id>/evaluations/<id>/pieces/<id>'),
+                ('/preparation/dossiers/d1/archive/items/record?snapshot=s7&part=0',
+                 '/preparation/dossiers/<id>/archive/items/record'),
+                ('/publications/' + 'a' * 64 + '/index.html', '/publications/<projection>/<piece>'),
+                ('/index.html', '/<fichier>'), ('/apercu.png', '/<fichier>')):
+            self.assertEqual(expected, canonical_route(path), path)
+
+    def test_un_chemin_non_servi_ne_ressort_jamais(self):
+        for path in ('', '/inconnu', '/../etc/passwd', '/preparation/dossiers/d1/',
+                     '/preparation/' + 'a' * 300, '/wp-login.php?user=admin&pass=motdepasse',
+                     # Une pièce hors des trois formats servis sous /publications/
+                     '/publications/' + 'a' * 64 + '/logo.png',
+                     # Test de proxy ouvert : la forme absolue n'est servie par aucune route
+                     'http://cible-externe.example/preparation',
+                     '/preparation#fragment'):
+            self.assertEqual('<inconnu>', canonical_route(path), path)
+
+    def test_le_runtime_active_le_journal_du_service_web(self):
+        # Sans ce réglage, la ligne d'accès reste sous le seuil du dernier recours et le journal est vide
+        from benchmark import runtime
+        root = logging.getLogger()
+        handlers, level = root.handlers[:], root.level
+        self.addCleanup(root.setLevel, level)
+        self.addCleanup(root.handlers.extend, handlers)
+        self.addCleanup(root.handlers.clear)
+        enabled = []
+        with patch('benchmark_web.server.serve_web',
+                   lambda *args, **kwargs: enabled.append(
+                       logging.getLogger('benchmark_web.server').isEnabledFor(logging.INFO))):
+            runtime.main(['web', '--socket', '/tmp/bench-x-test.sock', '--public', '/tmp', '--port', '8099'])
+        self.assertEqual([True], enabled)
+
+
+class AccessJournalTests(WebServerCase):
+    """Critère BX-14 : une ligne exploitable par requête, aucune saisie dedans"""
+    journal_expected = True
+
+    def lines(self):
+        return [line for line in self.journal.read_text().splitlines() if 'WEB_ACCESS' in line]
+
+    def test_chaque_requete_laisse_une_ligne_sans_identifiant_ni_saisie(self):
+        dossier = '7f3a9c2e-4b1d-4a77-9f00-000000000001'
+        session = 'benchmark_session=' + 'b' * 64
+        start = len(self.lines())
+
+        status, _, _ = self.request('GET', '/preparation/access', headers={'Accept': 'application/json'})
+        self.assertEqual(200, status)
+
+        status, _, _ = self.request('PUT', '/preparation', headers={'Accept': 'application/json'})
+        self.assertEqual(405, status)
+
+        status, _, _ = self.request('GET', '/inconnu?cle=saisie-a-ne-pas-journaliser',
+                                    headers={'Accept': 'application/json'})
+        self.assertEqual(404, status)
+
+        status, _, _ = self.request('POST', '/preparation/dossiers', b'saisie-brute',
+                                    {'Content-Type': 'text/plain', 'Accept': 'application/json'})
+        self.assertEqual(400, status)
+
+        self.executor.forced_status = 403
+        status, _, _ = self.request('GET', '/preparation/dossiers/' + dossier + '?campaign=d1-c1',
+                                    headers={'Accept': 'application/json', 'Cookie': session})
+        self.assertEqual(403, status)
+        self.executor.forced_status = None
+
+        self.executor.raw_response = b'not-json\n'
+        status, _, _ = self.request('GET', '/preparation', headers={'Accept': 'application/json'})
+        self.assertEqual(503, status)
+        self.executor.raw_response = None
+
+        lines = self.lines()[start:]
+        self.assertEqual(6, len(lines), lines)
+        self.assertEqual(
+            [('GET', '/preparation/access', '200'), ('PUT', '/preparation', '405'),
+             ('GET', '<inconnu>', '404'), ('POST', '/preparation/dossiers', '400'),
+             ('GET', '/preparation/dossiers/<id>', '403'), ('GET', '/preparation', '503')],
+            [self.parsed(line) for line in lines])
+        for line in lines:
+            self.assertNotIn(dossier, line)
+            self.assertNotIn('b' * 64, line)
+            self.assertNotIn('saisie', line)
+            self.assertNotIn('?', line)
+
+    def test_un_refus_avant_l_analyse_laisse_une_ligne_sans_chemin(self):
+        # Ces refus précèdent `parse_request` : ni chemin ni horloge, la ligne ne doit rien inventer
+        start = len(self.lines())
+        for line, expected in ((b'GET /preparation HTTP/9\r\n\r\n', b'400 Bad Request'),
+                               (b'GET /' + b'a' * 70000 + b' HTTP/1.1\r\n\r\n', b'414 URI Too Long')):
+            with socket.create_connection(('127.0.0.1', self.port), 3) as raw:
+                raw.sendall(line)
+                response = b''
+                while True:
+                    part = raw.recv(4096)
+                    if not part:
+                        break
+                    response += part
+            self.assertIn(expected, response, expected)
+        self.assertEqual([('<inconnu>', '<inconnu>', '400'), ('<inconnu>', '<inconnu>', '414')],
+                         [self.parsed(line) for line in self.lines()[start:]])
+
+    @staticmethod
+    def parsed(line):
+        match = re.fullmatch(r'INFO benchmark_web\.server WEB_ACCESS (\S+) (\S+) (\d{3}) \d+ms', line)
+        if match is None:
+            raise AssertionError('Ligne de journal hors contrat : ' + line)
+        return match.groups()
+
 
 if __name__ == '__main__':
     unittest.main()
