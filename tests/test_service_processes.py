@@ -69,6 +69,40 @@ def fake_executor(path, respond):
             Path(path).unlink(missing_ok=True)
 
 
+@contextmanager
+def service_lance(data, source='a' * 40):
+    """Web et exécuteur réels, prêts quand les deux sondes répondent"""
+    public, sock = data.parent / 'public', data.parent / 'x.sock'
+    public.mkdir()
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    context = multiprocessing.get_context('spawn')
+    children = [context.Process(target=serve_executor, args=(data, sock, source)),
+                context.Process(target=serve_web, args=('127.0.0.1', port, public, sock, source))]
+    for child in children:
+        child.start()
+    base = f'http://127.0.0.1:{port}'
+    try:
+        deadline = time.monotonic() + 8
+        while True:
+            try:
+                if executor_health(sock)['storage'] == 'ok':
+                    with urlopen(base + '/healthz', timeout=2) as response:
+                        response.read()
+                    break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.02)
+        yield base
+    finally:
+        for child in children:
+            if child.is_alive():
+                child.terminate()
+            child.join(5)
+
+
 class ServiceProcessesTests(unittest.TestCase):
     def test_web_liveness_responds_while_deep_readiness_waits(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -648,3 +682,97 @@ class ServiceProcessesTests(unittest.TestCase):
                     if child.poll() is None:
                         child.terminate()
                         child.wait(timeout=5)
+
+    def test_readyz_avec_pieces_reste_du_meme_ordre_que_healthz(self):
+        """`/readyz` reste du même ordre de grandeur que `/healthz` sur un stockage qui contient une pièce
+
+        Les durées sont en millisecondes. Cinq appels, puis la médiane. Le plancher de 1 ms
+        évite qu'un `/healthz` sous la milliseconde exige une sonde plus rapide que
+        l'aller-retour local. La sonde doit aussi rester sous le cinquième de `verify` :
+        un `/healthz` lent ne peut pas masquer le retour du re-hachage.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory).resolve() / 'private'
+            initialize(data)
+            with closing(Store(data)) as store:
+                store.save_dossier('d', 1, PAYLOAD)
+                store.put_piece('d', 1, 'piece', name='fictif.txt', role='candidate',
+                                media_type='text/plain', content=b'fictif-x' * (8 * 1024 * 1024))
+            with service_lance(data) as base:
+                for path in ('/healthz', '/readyz'):
+                    with urlopen(base + path, timeout=2) as response:
+                        self.assertEqual(200, response.status)
+                        response.read()
+                samples = {}
+                for path in ('/healthz', '/readyz'):
+                    taken = []
+                    for _ in range(5):
+                        started = time.perf_counter()
+                        with urlopen(base + path, timeout=2) as response:
+                            self.assertEqual(200, response.status)
+                            response.read()
+                        taken.append((time.perf_counter() - started) * 1000)
+                    samples[path] = taken
+            from benchmark.runtime import verify
+            with closing(Store(data)) as store:
+                started = time.perf_counter()
+                verify(store)
+                verify_ms = (time.perf_counter() - started) * 1000
+            health_ms = sorted(samples['/healthz'])[2]
+            ready_ms = sorted(samples['/readyz'])[2]
+            detail = (f"healthz {health_ms:.2f} ms {[f'{item:.2f}' for item in samples['/healthz']]}, "
+                      f"readyz {ready_ms:.2f} ms {[f'{item:.2f}' for item in samples['/readyz']]}, "
+                      f"verify {verify_ms:.2f} ms")
+            self.assertLess(ready_ms, max(health_ms, 1.0) * 10, detail)
+            self.assertLess(ready_ms * 5, verify_ms, detail)
+
+    def test_restauration_en_attente_laisse_readyz_indisponible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory).resolve() / 'private'
+            initialize(data)
+            with service_lance(data) as base:
+                marker = data / 'restore.json'
+                marker.write_text(json.dumps({'state': 'RESTORED_RECONCILIATION_REQUIRED'}), encoding='utf-8')
+                marker.chmod(0o600)
+                with self.assertRaises(HTTPError) as unavailable:
+                    urlopen(base + '/readyz', timeout=2)
+                self.assertEqual(503, unavailable.exception.code)
+                self.assertEqual('unavailable', json.load(unavailable.exception)['storage'])
+                unavailable.exception.close()
+                with urlopen(base + '/healthz', timeout=2) as response:
+                    self.assertEqual(200, response.status)
+
+    def test_schema_incompatible_laisse_readyz_indisponible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory).resolve() / 'private'
+            initialize(data)
+            with service_lance(data) as base:
+                with closing(sqlite3.connect(data / 'metadata.sqlite3')) as connection:
+                    connection.execute('CREATE TABLE sonde_bruit (marqueur INTEGER)')
+                    connection.commit()
+                with self.assertRaises(HTTPError) as unavailable:
+                    urlopen(base + '/readyz', timeout=2)
+                self.assertEqual(503, unavailable.exception.code)
+                self.assertEqual('unknown', json.load(unavailable.exception)['storage'])
+                unavailable.exception.close()
+                with urlopen(base + '/healthz', timeout=2) as response:
+                    self.assertEqual(200, response.status)
+                with closing(sqlite3.connect(data / 'metadata.sqlite3')) as connection:
+                    connection.execute('DROP TABLE sonde_bruit')
+                    connection.commit()
+
+    def test_piece_alteree_laisse_la_sonde_prete(self):
+        """Une pièce altérée après le démarrage ne retire pas le sens « prêt » : la sonde ne re-hache pas"""
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory).resolve() / 'private'
+            initialize(data)
+            with closing(Store(data)) as store:
+                store.save_dossier('d', 1, PAYLOAD)
+                meta = store.put_piece('d', 1, 'piece', name='fictif.txt', role='candidate',
+                                       media_type='text/plain', content=b'fictif')
+            with service_lance(data) as base:
+                with (data / meta['relative_path']).open('r+b') as stream:
+                    stream.write(b'y')
+                with urlopen(base + '/readyz', timeout=2) as response:
+                    self.assertEqual(200, response.status)
+                    self.assertEqual('ok', json.load(response)['storage'])

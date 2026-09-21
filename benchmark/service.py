@@ -407,7 +407,8 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                 socket_path.unlink()
 
             def health():
-                verify(store)
+                # source_sha vient de l'exécuteur ; status() porte restauration, opérations et le contrôle de schéma
+                # L'intégrité complète reste au démarrage et dans `runtime verify`
                 health = {'source_sha': source, 'storage': 'ok', **status(data, store)}
                 if version is not None:
                     health['version'] = version
