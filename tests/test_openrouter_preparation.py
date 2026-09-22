@@ -823,7 +823,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
         clock = context.Value('d', time.time())
         for target, args in [(executor_process, (self.data, sock, None, clock)),
                              (serve_web, ('127.0.0.1', port, public, sock, 'a' * 40))]:
-            process = context.Process(target=target, args=args)
+            process = context.Process(target=target, args=args,
+                                      kwargs={'readiness_clients': ('127.0.0.1',)} if target is serve_web else {})
             process.start()
             children.append(process)
         base = f'http://127.0.0.1:{port}'

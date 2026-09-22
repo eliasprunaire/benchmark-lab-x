@@ -151,9 +151,23 @@ def _callback_state(value):
     return token, _return_path(return_path)
 
 
-def serve_web(address, port, public, socket_path, source, public_url=None, *, version=None):
+def _address(value):
+    address = ipaddress.ip_address(value)
+    return getattr(address, 'ipv4_mapped', None) or address
+
+
+def _addresses(values):
+    return frozenset(_address(value) for value in values)
+
+
+def serve_web(address, port, public, socket_path, source, public_url=None, *, version=None,
+              trusted_proxies=(), readiness_clients=()):
     public = Path(public)
     callback_url = _public_callback_url(public_url)
+    # Deux questions distinctes : qui relaie le public (BX-15) et qui supervise ; vides, rien n'est ouvert
+    trusted_proxies, readiness_clients = _addresses(trusted_proxies), _addresses(readiness_clients)
+    if trusted_proxies & readiness_clients:
+        raise ValueError('Un proxy de confiance ne peut pas voir /readyz : tout le trafic public porte son adresse')
     views.SOURCE_SHA = '' if source == 'inconnu' else source or ''
     source_salt = secrets.token_bytes(32)
 
@@ -498,12 +512,13 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 self.respond(200, views.render({'kind': 'home'}, ''), 'text/html; charset=utf-8')
                 return
             if self.path == '/healthz':
-                health = {'web': 'ok', 'source_sha': source}
-                if version is not None:
-                    health['version'] = version
-                self.respond(200, health)
+                self.respond(200, {'web': 'ok'})
                 return
             if self.path == '/readyz':
+                # Le pair TCP seul : un en-tête de proxy se forge
+                if _address(self.client_address[0]) not in readiness_clients:
+                    self.not_found()
+                    return
                 try:
                     health = executor_health(socket_path)
                     ready = (source != 'inconnu' and health['source_sha'] == source

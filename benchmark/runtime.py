@@ -4,6 +4,7 @@ from collections import Counter
 from contextlib import closing, contextmanager
 import fcntl
 from hashlib import file_digest
+import ipaddress
 import json
 import logging
 import os
@@ -237,6 +238,15 @@ def candidate_transport_factory(package, node, openrouter_key):
     return resolve
 
 
+def _ip_address(value):
+    """Type argparse : une adresse fausse s'arrête ici avec sa cause, pas sous HOLD"""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError('Adresse IP invalide : ' + value) from None
+    return getattr(address, 'ipv4_mapped', None) or address
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     campaign_actions = ('create-campaign', 'inspect-campaign', 'admit-campaign', 'stop-campaign', 'resume-campaign')
@@ -254,6 +264,10 @@ def main(argv=None):
     parser.add_argument('--presentation', default='benchmark_web.projection', metavar='MODULE',
                         help='Module de présentation injecté dans l’exécuteur pour les projections ; son paquet fournit le serveur web')
     parser.add_argument('--listen', default='127.0.0.1')
+    parser.add_argument('--trusted-proxy', action='append', default=[], type=_ip_address, metavar='ADRESSE',
+                        help='Adresse source d’un proxy inverse de confiance ; répétable')
+    parser.add_argument('--readyz-client', action='append', default=[], type=_ip_address, metavar='ADRESSE',
+                        help='Adresse autorisée à lire /readyz ; répétable, aucune par défaut')
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--preparation-assistant', metavar='ALIAS_OR_PROFILE',
                         help='Alias preparation, alias de secours preparation-fallback ou chemin d’un profil JSON local')
@@ -272,6 +286,8 @@ def main(argv=None):
     parser.add_argument('--output-tokens', type=int)
     parser.add_argument('--cached-input-tokens', type=int, default=0)
     args = parser.parse_args(argv)
+    if set(args.trusted_proxy) & set(args.readyz_client):
+        parser.error('un proxy de confiance ne peut pas lire /readyz : tout le trafic public porte son adresse')
     os.umask(0o077)
     try:
         if args.candidate_provider != 'openrouter' and args.action != 'execute-candidate':
@@ -341,7 +357,7 @@ def main(argv=None):
                 # Racine de composition : la présentation dépend du moteur, jamais l'inverse
                 import_module(args.presentation.rsplit('.', 1)[0] + '.server').serve_web(
                     args.listen, args.port, args.public, args.socket, source, args.public_url,
-                    version=version)
+                    version=version, trusted_proxies=args.trusted_proxy, readiness_clients=args.readyz_client)
             else:
                 if args.data is None:
                     raise ValueError('Données requises')

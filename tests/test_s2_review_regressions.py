@@ -168,7 +168,8 @@ class S2ReviewRegressions(unittest.TestCase):
         self.addCleanup(stop_children)
         for target, args in ((service.serve_executor, (self.data, sock, 'a' * 40)),
                              (serve_web, ('127.0.0.1', port, public, sock, 'a' * 40))):
-            process = context.Process(target=target, args=args)
+            process = context.Process(target=target, args=args,
+                                      kwargs={'readiness_clients': ('127.0.0.1',)} if target is serve_web else {})
             process.start()
             children.append(process)
         base = f'http://127.0.0.1:{port}'

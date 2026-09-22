@@ -83,7 +83,8 @@ def service_lance(data, source='a' * 40):
         port = probe.getsockname()[1]
     context = multiprocessing.get_context('spawn')
     children = [context.Process(target=serve_executor, args=(data, sock, source)),
-                context.Process(target=serve_web, args=('127.0.0.1', port, public, sock, source))]
+                context.Process(target=serve_web, args=('127.0.0.1', port, public, sock, source),
+                                kwargs={'readiness_clients': ('127.0.0.1',)})]
     for child in children:
         child.start()
     base = f'http://127.0.0.1:{port}'
@@ -126,7 +127,8 @@ class ServiceProcessesTests(unittest.TestCase):
                 port = probe.getsockname()[1]
             context = multiprocessing.get_context('spawn')
             web = context.Process(target=serve_web,
-                                  args=('127.0.0.1', port, public, sock, 'a' * 40))
+                                  args=('127.0.0.1', port, public, sock, 'a' * 40),
+                                  kwargs={'readiness_clients': ('127.0.0.1',)})
             with fake_executor(sock, delayed_health):
                 web.start()
                 try:
@@ -261,7 +263,8 @@ class ServiceProcessesTests(unittest.TestCase):
             context = multiprocessing.get_context('spawn')
             children = [context.Process(target=serve_executor, args=(data, sock, 'inconnu')),
                         context.Process(target=serve_web,
-                                        args=('127.0.0.1', port, public, sock, 'inconnu'))]
+                                        args=('127.0.0.1', port, public, sock, 'inconnu'),
+                                        kwargs={'readiness_clients': ('127.0.0.1',)})]
             try:
                 for child in children:
                     child.start()
@@ -609,7 +612,8 @@ class ServiceProcessesTests(unittest.TestCase):
                 with socket.socket() as probe:
                     probe.bind(('127.0.0.1', 0))
                     port = probe.getsockname()[1]
-                web = subprocess.Popen(command + ['web', '--public', str(public), '--socket', str(sock), '--port', str(port)], cwd=root)
+                web = subprocess.Popen(command + ['web', '--public', str(public), '--socket', str(sock), '--port', str(port),
+                                                  '--readyz-client', '127.0.0.1'], cwd=root)
                 children.append(web)
                 base = f'http://127.0.0.1:{port}'
                 deadline = time.monotonic() + 5
@@ -875,7 +879,7 @@ def _loaded_stack(workers):
                         raise
                     time.sleep(0.02)
             children.append(subprocess.Popen(command + ['web', '--public', str(public), '--socket', str(sock),
-                                                        '--port', str(port)],
+                                                        '--port', str(port), '--readyz-client', '127.0.0.1'],
                                              cwd=repository, env=environment, start_new_session=True))
             deadline = time.monotonic() + 30
             while True:
