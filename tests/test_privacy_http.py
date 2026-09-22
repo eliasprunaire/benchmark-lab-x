@@ -83,7 +83,8 @@ def _executor(data, sock, clock, provider_calls, blocked, journal):
 
 def _web(port, public, sock, blocked):
     with _local_network_only(blocked):
-        serve_web('127.0.0.1', port, public, sock, SOURCE, public_url=PUBLIC_ORIGIN)
+        serve_web('127.0.0.1', port, public, sock, SOURCE, public_url=PUBLIC_ORIGIN,
+                  readiness_clients=('127.0.0.1',))
 
 
 class PrivacyHTTPTests(unittest.TestCase):

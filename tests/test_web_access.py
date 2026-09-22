@@ -1,6 +1,7 @@
 """Connexion Openrouter relayée par le web, sans appel fournisseur."""
 from http.client import HTTPConnection
 from http.cookies import SimpleCookie
+import io
 import json
 import logging
 import multiprocessing
@@ -376,16 +377,17 @@ class AccessViewTests(unittest.TestCase):
                          views.date_lisible_utc('2026-09-15T12:00:00+00:00'))
 
 
-def _serve_web_logged(journal, *arguments):
+def _serve_web_logged(journal, *arguments, **options):
     """Cible de processus : le runtime règle le journal sur INFO, cette fixture l'envoie dans un fichier"""
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s',
                         filename=journal, force=True)
-    serve_web(*arguments)
+    serve_web(*arguments, **options)
 
 
 class WebServerCase(unittest.TestCase):
     """Serveur web réel devant un exécuteur fictif, sur socket Unix"""
     journal_expected = False
+    web_options = {}
 
     def request(self, method, path, body=None, headers=None):
         connection = HTTPConnection('127.0.0.1', self.port, timeout=3)
@@ -411,7 +413,8 @@ class WebServerCase(unittest.TestCase):
             target, arguments = _serve_web_logged, (str(self.journal),) + arguments
         else:
             target = serve_web
-        self.web = multiprocessing.get_context('spawn').Process(target=target, args=arguments)
+        self.web = multiprocessing.get_context('spawn').Process(target=target, args=arguments,
+                                                                kwargs=self.web_options)
         self.web.start()
         deadline = time.monotonic() + 5
         while True:
@@ -841,6 +844,80 @@ class AccessServerTests(WebServerCase):
             self.assertIn(b'X-Content-Type-Options: nosniff', response, attendu)
             self.assertNotIn(b'Error response', response, attendu)
             self.assertNotIn(b'<html', response, attendu)
+
+class ProbeTests(WebServerCase):
+    """Critère BX-13 : vivacité publique et muette, disponibilité réservée au plan d'administration"""
+    web_options = {'readiness_clients': ('::ffff:127.0.0.1',), 'trusted_proxies': ('192.0.2.30',),
+                   'version': '0.1.0'}
+
+    def test_healthz_ne_repond_que_la_vivacite(self):
+        for method in ('GET', 'HEAD'):
+            self.assertEqual(200, self.request(method, '/healthz')[0])
+        self.assertEqual({'web': 'ok'}, json.loads(self.request('GET', '/healthz')[2]))
+
+    def test_readyz_joignable_depuis_un_client_autorise(self):
+        status, _, raw = self.request('GET', '/readyz')
+        self.assertIn(status, (200, 503))
+        self.assertIn('executor', json.loads(raw))
+
+
+class ClosedProbeTests(WebServerCase):
+    """Sans configuration, `/readyz` refuse tout le monde, boucle locale comprise"""
+
+    def test_readyz_introuvable_sans_allowlist(self):
+        status, _, raw = self.request('GET', '/readyz', headers={'Accept': 'application/json'})
+        self.assertEqual((404, {'error': 'NOT_FOUND'}), (status, json.loads(raw)))
+        self.assertEqual((404, b''), self.request('HEAD', '/readyz')[::2])
+
+
+class SpoofedProbeTests(WebServerCase):
+    """Seul le pair TCP compte : un en-tête de proxy ne fait entrer personne"""
+    web_options = {'readiness_clients': ('192.0.2.20',)}
+
+    def test_readyz_ignore_les_en_tetes_de_proxy(self):
+        for header in ('X-Real-IP', 'X-Forwarded-For'):
+            with self.subTest(header=header):
+                status, _, _ = self.request('GET', '/readyz', headers={header: '192.0.2.20'})
+                self.assertEqual(404, status)
+
+
+class ProbeConfigurationTests(unittest.TestCase):
+    """Deux données distinctes, validées avant toute écoute"""
+
+    def test_configuration_invalide_refusee_au_demarrage(self):
+        for options in ({'readiness_clients': ('pas-une-adresse',)},
+                        {'trusted_proxies': ('192.0.2.300',)},
+                        {'readiness_clients': ('192.0.2.30',), 'trusted_proxies': ('192.0.2.30',)}):
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(ValueError):
+                    serve_web('127.0.0.1', 0, directory, directory + '/absent.sock', 'a' * 40, **options)
+
+    def test_le_runtime_transmet_les_deux_listes(self):
+        from benchmark import runtime
+        received = []
+        with patch('benchmark_web.server.serve_web', lambda *args, **kwargs: received.append(kwargs)), \
+                patch('logging.basicConfig'):
+            runtime.main(['web', '--socket', '/tmp/bench-x-test.sock', '--public', '/tmp', '--port', '8099',
+                          '--readyz-client', '127.0.0.1', '--readyz-client', '192.0.2.20',
+                          '--trusted-proxy', '192.0.2.30'])
+        self.assertEqual(('127.0.0.1', '192.0.2.20'), tuple(map(str, received[0]['readiness_clients'])))
+        self.assertEqual(('192.0.2.30',), tuple(map(str, received[0]['trusted_proxies'])))
+
+    def test_le_runtime_nomme_la_cause_d_une_configuration_refusee(self):
+        # Sans cause, l'erreur se confond avec une panne de socket sous HOLD OPERATION_NOT_VERIFIED
+        from benchmark import runtime
+        for options, cause in ((['--readyz-client', '192.0.2.300'], 'Adresse IP invalide : 192.0.2.300'),
+                               (['--trusted-proxy', 'proxy'], 'Adresse IP invalide : proxy'),
+                               (['--readyz-client', '192.0.2.30', '--trusted-proxy', '::ffff:192.0.2.30'],
+                                'un proxy de confiance ne peut pas lire /readyz')):
+            with self.subTest(options=options), patch('benchmark_web.server.serve_web') as serve, \
+                    patch('sys.stderr', new_callable=io.StringIO) as erreur, self.assertRaises(SystemExit) as sortie:
+                runtime.main(['web', '--socket', '/tmp/bench-x-test.sock', '--public', '/tmp', '--port', '8099']
+                             + options)
+            self.assertEqual(2, sortie.exception.code)
+            self.assertIn(cause, erreur.getvalue())
+            serve.assert_not_called()
+
 
 class RouteCanonicalizationTests(unittest.TestCase):
     def test_un_chemin_servi_devient_son_motif_sans_identifiant_ni_requete(self):
