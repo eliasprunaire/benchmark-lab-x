@@ -861,6 +861,12 @@ class ProbeTests(WebServerCase):
         self.assertIn(status, (200, 503))
         self.assertIn('executor', json.loads(raw))
 
+    def test_pied_de_page_sous_identite_de_release(self):
+        # BX-09 : la version reçue par `serve_web` atteint le rendu, avec le lien vers l'arbre servi
+        page = self.request('GET', '/preparation', headers={'Accept': 'text/html'})[2].decode()
+        self.assertIn('<span>Version : v0.1.0 (aaaaaaa)</span>'
+                      '<a href="https://github.com/eliasprunaire/benchmark-lab-x/tree/' + 'a' * 40 + '">Code source</a>', page)
+
 
 class ClosedProbeTests(WebServerCase):
     """Sans configuration, `/readyz` refuse tout le monde, boucle locale comprise"""

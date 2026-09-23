@@ -151,6 +151,7 @@ class ParcoursComplet(unittest.TestCase):
             web.serve_forever(poll_interval=.01)
         self.enterContext(patch.object(server, 'run', run))
         self.enterContext(patch.object(views, 'SOURCE_SHA', views.SOURCE_SHA))
+        self.enterContext(patch.object(views, 'RELEASE_VERSION', views.RELEASE_VERSION))
         web_thread = threading.Thread(target=server.serve_web,
             args=('127.0.0.1', 0, root, self.sock, 'a' * 40, 'https://fixture.example'))
         web_thread.start()
@@ -230,7 +231,8 @@ class ParcoursComplet(unittest.TestCase):
             self.assertTrue(any(n['attrs'].get('role') in ('status', 'alert') and n['text'].strip()
                                 for n in page.nodes), 'Phrase d’état absente')
             self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b|\b(?:configuration|cell|attempt|case)-\d+\b|\b(?:O1|E1)\b|python -m|package_sha256')
-            self.assertIn('Version : v0.1.0+aaaaaaa', page.visible)
+            self.assertIn('Révision : aaaaaaa', page.visible)
+            self.assertNotIn('v0.1.0', page.visible)
             self.assertNotIn(KEY, page.visible)
             focus = [n for n in page.nodes if not n['hidden'] and not n['details']
                      and 'disabled' not in n['attrs'] and n['attrs'].get('type') != 'hidden'

@@ -6,7 +6,6 @@ forme les vues structurées renvoyées par l'exécuteur.
 from pathlib import Path
 import secrets
 
-from benchmark import VERSION
 from benchmark.preparation import binding
 from benchmark.storage import _strict_json as encode
 
@@ -22,6 +21,9 @@ TEMPLATE_PATH = Path(__file__).with_name('templates') / 'preparation.html'
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'preparation.css'
 FONTS_PATH = Path(__file__).with_name('static') / 'fonts'
 SOURCE_SHA = ''
+# Fixé par `serve_web` depuis `release.json` : sans lui, le pied de page ne donne que la révision
+RELEASE_VERSION = None
+REPOSITORY_URL = 'https://github.com/eliasprunaire/benchmark-lab-x'
 PREPARATION_PROGRESS_SCRIPT = """(() => {
   const destination = document.getElementById('campaign-followup')?.dataset?.resultsHref;
   if (destination) { location.replace(destination); return; }
@@ -610,7 +612,13 @@ def render(value, csrf, path='/preparation', *, error=False):
             content += PRIVACY_SCRIPT
     template = TEMPLATE_PATH.read_text()
     body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''
-    version = 'v' + VERSION + ('+' + SOURCE_SHA[:7] if SOURCE_SHA else '')
+    # Offre de source AGPL §13 : un numéro et un lien vers l'arbre du commit seulement sous identité de release,
+    # construite depuis ce commit ; un checkout peut être modifié ou non poussé, il renvoie au dépôt
+    identity = ''
+    if SOURCE_SHA:
+        identity = '<span>' + text(('Version : v' + RELEASE_VERSION + ' (' + SOURCE_SHA[:7] + ')') if RELEASE_VERSION
+                                   else 'Révision : ' + SOURCE_SHA[:7]) + '</span>'
+    identity += '<a href="' + text(REPOSITORY_URL + ('/tree/' + SOURCE_SHA if SOURCE_SHA and RELEASE_VERSION else '')) + '">Code source</a>'
     return (template.replace('{{title}}', text(title)).replace('{{body_class}}', body_class).replace('{{menu}}', menu)
             .replace('{{navigation}}', navigation).replace('{{layout_class}}', 'layout' if navigation else '')
-            .replace('{{version}}', text(version)).replace('{{content}}', content).encode('utf-8'))
+            .replace('{{identity}}', identity).replace('{{content}}', content).encode('utf-8'))

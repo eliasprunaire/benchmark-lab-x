@@ -177,6 +177,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
     if trusted_proxies & readiness_clients:
         raise ValueError('Un proxy de confiance ne peut pas voir /readyz : tout le trafic public porte son adresse')
     views.SOURCE_SHA = '' if source == 'inconnu' else source or ''
+    views.RELEASE_VERSION = version
     source_salt = secrets.token_bytes(32)
 
     class Handler(BaseHTTPRequestHandler):
