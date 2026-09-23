@@ -165,6 +165,11 @@ def _addresses(values):
 
 def serve_web(address, port, public, socket_path, source, public_url=None, *, version=None,
               trusted_proxies=(), readiness_clients=()):
+    """Sert le public jusqu'à interruption.
+
+    Le journal d'accès est émis au niveau INFO et n'est pas configuré ici : l'appelant
+    règle `logging`, comme le fait `runtime.main`, sinon les lignes disparaissent.
+    """
     public = Path(public)
     callback_url = _public_callback_url(public_url)
     # Deux questions distinctes : qui relaie le public (BX-15) et qui supervise ; vides, rien n'est ouvert
@@ -186,6 +191,12 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             # Les gabarits de la bibliothèque standard reprennent la ligne de requête brute : les taire
             pass
 
+        def log_error(self, format, *args):
+            # Seul le délai expiré de `handle_one_request` passe une exception : aucune réponse, donc aucune ligne sans ceci
+            # Pas de plafond : une ligne mal formée en produit déjà une sans attendre les 2 s
+            if args and isinstance(args[0], TimeoutError):
+                self.log_request('<abandon>')
+
         def parse_request(self):
             self.received_at = monotonic()
             return super().parse_request()
@@ -197,7 +208,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             logging.getLogger(__name__).info(
                 'WEB_ACCESS %s %s %s %dms', method if method in _METHODS else '<inconnu>',
                 canonical_route(getattr(self, 'path', '') or ''),
-                int(code) if isinstance(code, int) else '<inconnu>',
+                int(code) if isinstance(code, int) else '<abandon>' if code == '<abandon>' else '<inconnu>',
                 0 if started is None else round((monotonic() - started) * 1000))
 
         def respond(self, code, value, media_type='application/json', headers=None, *, script=None):
@@ -223,9 +234,13 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             self.send_header('Referrer-Policy', 'no-referrer')
             for name, value in (headers.items() if type(headers) is dict else headers or ()):
                 self.send_header(name, value)
-            self.end_headers()
-            if self.command != 'HEAD':
-                self.wfile.write(raw)
+            try:
+                self.end_headers()
+                if self.command != 'HEAD':
+                    self.wfile.write(raw)
+            except OSError:
+                # La ligne est déjà partie : un `except OSError` appelant enverrait un second statut sur le fil
+                self.close_connection = True
 
         def error_page(self, code, title, message, headers=None):
             """Toute erreur emprunte respond() : en-têtes de sécurité et gabarit français"""
@@ -315,7 +330,13 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     length = self.headers.get('Content-Length', '')
                     if not length.isdecimal() or not 0 < int(length) <= 524288 or self.headers.get('Transfer-Encoding'):
                         raise ValueError('Corps invalide')
-                    raw = self.rfile.read(int(length))
+                    try:
+                        raw = self.rfile.read(int(length))
+                    except TimeoutError:
+                        # L'appelant s'est tu : le `except OSError` plus bas en ferait une panne de l'exécuteur
+                        self.log_request('<abandon>')
+                        self.close_connection = True
+                        return
                     if len(raw) != int(length):
                         raise ValueError('Corps incomplet')
                     media = self.headers.get_content_type()
