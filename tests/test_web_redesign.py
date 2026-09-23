@@ -120,8 +120,20 @@ class TemplateTests(unittest.TestCase):
         self.assertIn('href="/index.html"', home)
         self.assertIn('Chaque exigence compte', home)
         self.assertIn('<footer class="site">', home)
-        self.assertIn('v0.1.0+abcdef0', home)
-        self.assertIn('<div class="bottom"><span>Version : v0.1.0+abcdef0</span></div>', home)
+        # Sans identité de release : la révision seule, jamais le numéro cible (RULES) ; un checkout modifié
+        # ou un commit non poussé ne doit pas renvoyer vers un arbre qui n'est pas le code servi (AGPL §13)
+        self.assertIn('<div class="bottom"><span>Révision : abcdef0</span>'
+                      '<a href="https://github.com/eliasprunaire/benchmark-lab-x">Code source</a></div>', home)
+        self.assertNotIn('/tree/', home)
+        self.assertNotIn('v0.1.0', home)
+        with patch.object(views, 'SOURCE_SHA', 'abcdef0123456789'), patch.object(views, 'RELEASE_VERSION', '0.2.0'):
+            released = views.render({'kind': 'home'}, '').decode()
+        self.assertIn('<span>Version : v0.2.0 (abcdef0)</span>'
+                      '<a href="https://github.com/eliasprunaire/benchmark-lab-x/tree/abcdef0123456789">Code source</a>', released)
+        with patch.object(views, 'SOURCE_SHA', ''), patch.object(views, 'RELEASE_VERSION', '0.2.0'):
+            unknown = views.render({'kind': 'home'}, '').decode()
+        self.assertIn('<div class="bottom"><a href="https://github.com/eliasprunaire/benchmark-lab-x">Code source</a></div>', unknown)
+        self.assertNotIn('v0.2.0', unknown)
         self.assertNotIn('Version du site', home)
         self.assertNotIn('Aucune ressource externe chargée.', home)
         self.assertNotIn('sha256', home.lower())
