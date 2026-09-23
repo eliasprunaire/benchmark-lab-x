@@ -1,6 +1,7 @@
 """Connexion Openrouter relayée par le web, sans appel fournisseur."""
 from http.client import HTTPConnection
 from http.cookies import SimpleCookie
+import hashlib
 import io
 import json
 import logging
@@ -1042,9 +1043,60 @@ class AccessJournalTests(WebServerCase):
         self.assertEqual([('<inconnu>', '<inconnu>', '400'), ('<inconnu>', '<inconnu>', '414')],
                          [self.parsed(line) for line in self.lines()[start:]])
 
+    def test_une_connexion_muette_laisse_une_seule_ligne_sans_saisie(self):
+        # #378 point 1 : sans réponse, `log_request` n'est jamais appelée et l'abandon restait invisible
+        start = len(self.lines())
+        with socket.create_connection(('127.0.0.1', self.port), 5) as raw:
+            raw.sendall(b'GET /preparation/dossiers/saisie-a-ne-pas-journaliser')
+            self.assertEqual(b'', raw.recv(4096))
+        lines = self.lines()[start:]
+        self.assertEqual([('<inconnu>', '<inconnu>', '<abandon>')], [self.parsed(line) for line in lines])
+        self.assertNotIn('saisie', lines[0])
+
+    def test_une_ecriture_interrompue_garde_une_seule_ligne(self):
+        # Le délai peut aussi expirer à l'écriture : la réponse a déjà sa ligne, ni second statut ni abandon
+        public = Path(self.temporary.name) / 'public'
+        raw = b'a' * (64 << 20)
+        manifest = json.dumps({'files': {'grand.txt': hashlib.sha256(raw).hexdigest()}}).encode()
+        directory = hashlib.sha256(manifest).hexdigest()
+        (public / directory).mkdir()
+        (public / directory / 'publication.json').write_bytes(manifest)
+        (public / directory / 'grand.txt').write_bytes(raw)
+        (public / 'active.json').write_text(json.dumps({'directory': directory}))
+        start = len(self.lines())
+        with socket.create_connection(('127.0.0.1', self.port), 10) as client:
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+            client.sendall(b'GET /grand.txt HTTP/1.0\r\n\r\n')
+            # Au-delà des 2 s du serveur : un second `respond` aurait déjà écrit sa ligne
+            time.sleep(3)
+        time.sleep(.5)
+        self.assertEqual([('GET', '/<fichier>', '200')], [self.parsed(line) for line in self.lines()[start:]])
+
+    def test_un_corps_muet_est_un_abandon_et_non_une_panne(self):
+        # Le délai de lecture du corps venait de l'appelant : un 503 accuserait l'exécuteur
+        start = len(self.lines())
+        with socket.create_connection(('127.0.0.1', self.port), 5) as raw:
+            raw.sendall(b'POST /preparation/dossiers HTTP/1.0\r\nContent-Type: application/json\r\n'
+                        b'Accept: application/json\r\nContent-Length: 100\r\n\r\n{"saisie"')
+            self.assertEqual(b'', raw.recv(4096))
+        lines = self.lines()[start:]
+        self.assertEqual([('POST', '/preparation/dossiers', '<abandon>')], [self.parsed(line) for line in lines])
+        self.assertNotIn('saisie', lines[0])
+        self.assertTrue(self.executor.requests.empty())
+
+    def test_les_connexions_restent_non_persistantes(self):
+        # #378 point 3 : garde-fou, pas une préférence
+        with socket.create_connection(('127.0.0.1', self.port), 3) as raw:
+            raw.sendall(b'GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n')
+            response = raw.recv(4096)
+        self.assertTrue(response.startswith(b'HTTP/1.0 '), (
+            'protocol_version a changé : en connexion persistante, `log_request` reprendrait le chemin '
+            'et l\'horloge de la requête précédente. Réinitialiser self.path et self.received_at en tête '
+            'd\'un `handle_one_request` surchargé, avec un test sur deux requêtes d\'une même connexion (#378)'))
+
     @staticmethod
     def parsed(line):
-        match = re.fullmatch(r'INFO benchmark_web\.server WEB_ACCESS (\S+) (\S+) (\d{3}) \d+ms', line)
+        match = re.fullmatch(r'INFO benchmark_web\.server WEB_ACCESS (\S+) (\S+) (\d{3}|<abandon>) \d+ms', line)
         if match is None:
             raise AssertionError('Ligne de journal hors contrat : ' + line)
         return match.groups()
