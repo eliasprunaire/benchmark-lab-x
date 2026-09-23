@@ -96,11 +96,14 @@ def _management_cookie(value):
             + format_datetime(expires.astimezone(timezone.utc), usegmt=True))
 
 
-def _source_fingerprint(headers, client_address, salt):
-    value = headers.get('X-Real-IP')
-    if value is None:
-        forwarded = headers.get('X-Forwarded-For')
-        value = forwarded.split(',', 1)[0] if forwarded is not None else client_address[0]
+def _source_fingerprint(headers, client_address, salt, trusted_proxies):
+    value = client_address[0]
+    # Un en-tête de proxy se forge : ne le croire que venant d'un proxy déclaré
+    if _address(value) in trusted_proxies:
+        value = headers.get('X-Real-IP')
+        if value is None:
+            forwarded = headers.get('X-Forwarded-For')
+            value = forwarded.split(',', 1)[0] if forwarded is not None else client_address[0]
     try:
         address = ipaddress.ip_address(value.strip())
         if address.version == 6:
@@ -374,7 +377,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     if submission:
                         body = dict(body)
                         body.pop('website', None)
-                        body['source_sha256'] = _source_fingerprint(self.headers, self.client_address, source_salt)
+                        body['source_sha256'] = _source_fingerprint(self.headers, self.client_address, source_salt, trusted_proxies)
                 result = preparation_request(socket_path, 'GET' if self.command == 'HEAD' else self.command,
                                              self.path, token, body, management_token=management_token)
                 relayed = True
@@ -590,6 +593,6 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 else:
                     self.respond(404, {'error': 'NO_VERIFIED_PUBLICATION'})
 
-    # Le proxy termine TLS ; le pare-feu réserve ce port aux deux proxys
+    # Le proxy termine TLS ; ses en-têtes ne comptent que depuis une adresse --trusted-proxy
     with ThreadingHTTPServer((address, port), Handler) as server:
         run(server)
