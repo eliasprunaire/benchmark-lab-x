@@ -4,6 +4,7 @@ from contextlib import closing, contextmanager
 from email.message import Message
 from hashlib import sha256
 from http.client import HTTPConnection, HTTPException
+import ipaddress
 import json
 import multiprocessing
 import os
@@ -303,28 +304,46 @@ class ServiceProcessesTests(unittest.TestCase):
 
     def test_web_source_fingerprint_precedence_and_invalid_bucket(self):
         salt = b's' * 32
+        proxies = frozenset({ipaddress.ip_address('127.0.0.1')})
         headers = Message()
         headers['X-Real-IP'] = '2001:db8:1:2::9'
         headers['X-Forwarded-For'] = '192.0.2.1, 192.0.2.2'
-        first = _source_fingerprint(headers, ('127.0.0.1', 1), salt)
+        first = _source_fingerprint(headers, ('127.0.0.1', 1), salt, proxies)
         same_prefix = Message()
         same_prefix['X-Real-IP'] = '2001:db8:1:2::ffff'
-        self.assertEqual(first, _source_fingerprint(same_prefix, ('127.0.0.1', 1), salt))
+        self.assertEqual(first, _source_fingerprint(same_prefix, ('127.0.0.1', 1), salt, proxies))
         other = Message()
         other['X-Real-IP'] = '2001:db8:1:3::1'
-        self.assertNotEqual(first, _source_fingerprint(other, ('127.0.0.1', 1), salt))
+        self.assertNotEqual(first, _source_fingerprint(other, ('127.0.0.1', 1), salt, proxies))
         forwarded = Message()
         forwarded['X-Forwarded-For'] = '192.0.2.1, 192.0.2.2'
         direct = Message()
         direct['X-Real-IP'] = '192.0.2.1'
-        self.assertEqual(_source_fingerprint(forwarded, ('127.0.0.1', 1), salt),
-                         _source_fingerprint(direct, ('127.0.0.1', 1), salt))
+        self.assertEqual(_source_fingerprint(forwarded, ('127.0.0.1', 1), salt, proxies),
+                         _source_fingerprint(direct, ('127.0.0.1', 1), salt, proxies))
         invalid = Message()
         invalid['X-Real-IP'] = 'illisible'
         another_invalid = Message()
         another_invalid['X-Real-IP'] = ''
-        self.assertEqual(_source_fingerprint(invalid, ('127.0.0.1', 1), salt),
-                         _source_fingerprint(another_invalid, ('127.0.0.1', 1), salt))
+        self.assertEqual(_source_fingerprint(invalid, ('127.0.0.1', 1), salt, proxies),
+                         _source_fingerprint(another_invalid, ('127.0.0.1', 1), salt, proxies))
+
+    def test_web_source_fingerprint_ignores_proxy_headers_from_untrusted_peer(self):
+        salt = b's' * 32
+        proxies = frozenset({ipaddress.ip_address('192.0.2.30')})
+        peer = ('198.51.100.7', 1)
+        direct = _source_fingerprint(Message(), peer, salt, proxies)
+        for name, value in (('X-Real-IP', '203.0.113.1'), ('X-Real-IP', '203.0.113.2'),
+                            ('X-Forwarded-For', '203.0.113.3, 192.0.2.30'), ('X-Real-IP', 'illisible')):
+            forged = Message()
+            forged[name] = value
+            self.assertEqual(direct, _source_fingerprint(forged, peer, salt, proxies))
+            self.assertEqual(direct, _source_fingerprint(forged, peer, salt, frozenset()))
+        relayed = Message()
+        relayed['X-Real-IP'] = '198.51.100.7'
+        # Le proxy peut arriver en adresse IPv4 mappée : c'est la même machine
+        self.assertEqual(direct, _source_fingerprint(relayed, ('::ffff:192.0.2.30', 1), salt, proxies))
+        self.assertNotEqual(direct, _source_fingerprint(Message(), ('192.0.2.30', 1), salt, proxies))
 
     def test_honeypot_acknowledges_without_executor_socket(self):
         with tempfile.TemporaryDirectory() as directory:
