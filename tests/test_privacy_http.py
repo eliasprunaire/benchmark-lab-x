@@ -424,6 +424,26 @@ class PrivacyHTTPTests(unittest.TestCase):
         self.assertEqual([], list((self.data / 'pieces').iterdir()))
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
+    def test_requests_during_purge_get_maintenance_not_internal_error(self):
+        from benchmark.runtime import maintenance_gate, worker_lock
+        owner = self.new_session()
+        before = self.dates()
+        # La porte seule ferme l'admission ; le verrou exclusif seul est celui qu'une purge tient
+        for held in (lambda: maintenance_gate(self.store, exclusive=True), lambda: worker_lock(self.store)):
+            with held():
+                code, _, value = self.request('GET', '/preparation', cookies=owner['cookies'])
+                self.assertEqual((503, 'MAINTENANCE'), (code, value.get('error_code')), value)
+                self.assertNotEqual(service.INTERNAL_MESSAGE, value['error'])
+                code, _, value = self.request('POST', '/preparation/activity', cookies=owner['cookies'],
+                                              body={'csrf_token': owner['csrf']})
+                self.assertEqual((503, 'MAINTENANCE'), (code, value.get('error_code')), value)
+                code, _, page = self.request('GET', '/preparation', cookies=owner['cookies'], native=True)
+                self.assertEqual(503, code)
+                self.assertIn('maintenance', page)
+                self.assertEqual(200, self.request('GET', '/readyz')[0])
+        self.assertEqual(before, self.dates())
+        self.assertEqual(200, self.request('GET', '/preparation', cookies=owner['cookies'])[0])
+
     def test_delete_pending_receipt_does_not_start_another_provider_call(self):
         owner = self.new_session()
         view = self.seed_case(owner)
@@ -449,7 +469,7 @@ class PrivacyHTTPTests(unittest.TestCase):
             code, headers, value = self.request('POST', path + '/delete', cookies=cookies, body={'csrf_token': owner['csrf']})
             self.assertEqual((202, 'delete_requested'), (code, value['status']))
             self.assertFalse(headers.get_all('Set-Cookie'))
-            self.assertEqual({'purged': [], 'pending': True}, privacy.purge(self.data))
+            self.assertEqual({'purged': [], 'pending': True, 'lock': 'UNAVAILABLE'}, privacy.purge(self.data))
             self.assertEqual(410, self.request('GET', path + '/archive', cookies=cookies)[0])
             self.assertEqual([], self.request('GET', '/preparation/contributions', cookies=cookies)[2]['contributions'])
             self.assertEqual([operation], calls)
