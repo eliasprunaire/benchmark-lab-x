@@ -390,7 +390,7 @@ class PrivacyCampaignFlow(unittest.TestCase):
             self.assertTrue(entered.wait(10))
             self.assertEqual('EMISSION_POSSIBLE', self.operation(operation)['state'])
             privacy.request_delete(self.store, self.sid, 'erase')
-            self.assertEqual({'purged': [], 'pending': True}, privacy.purge(self.data))
+            self.assertEqual({'purged': [], 'pending': True, 'lock': 'UNAVAILABLE'}, privacy.purge(self.data))
             with self.assertRaises(privacy.Gone):
                 prep.view(self.store, self.sid, 'erase')
         finally:

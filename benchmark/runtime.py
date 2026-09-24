@@ -7,11 +7,13 @@ from hashlib import file_digest
 import ipaddress
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import shutil
 import sqlite3
 import sys
+import time
 
 from .storage import ConflictError, IntegrityError, Store, initialize, initialize_preparation, _unique_object, _private, _strict_json as encode
 
@@ -35,8 +37,48 @@ def verify(store):
     return proof
 
 
+# Contrat consommé par l'ordonnanceur externe : ne pas changer sans prévenir l'infrastructure
+PURGE_EXIT_CODES = {'PURGED': 0, 'NOTHING_TO_PURGE': 10, 'LOCK_UNAVAILABLE': 75, 'FAILED': 78}
+MAINTENANCE_GATE = 'maintenance.lock'
+# Attente des tâches de fond en cours, service ouvert ; l'ordonnanceur peut la changer par --lock-wait
+PURGE_WAIT_SECONDS = 600
+
+
+def _flock_within(fd, operation, wait):
+    """Tentatives non bloquantes jusqu'à `wait` secondes ; BlockingIOError au-delà, attente libre si None"""
+    if wait is None:
+        fcntl.flock(fd, operation)
+        return
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(fd, operation | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+
+
 @contextmanager
-def worker_lock(store, *, shared=False):
+def maintenance_gate(store, *, exclusive=False, wait: float | None = 0.0):
+    """Porte de maintenance, prise avant le verrou de travail et toujours dans cet ordre
+
+    Une requête la tient le temps de prendre son verrou de travail ; une tâche de fond la tient
+    jusqu'à sa fin. La purge la prend en exclusif quand aucune tâche ne tourne, puis n'attend plus
+    que les requêtes en cours. Sans elle, des verrous partagés qui se chevauchent sans fin, sous un
+    exécuteur parallèle, priveraient la purge du verrou exclusif
+    """
+    fd = os.open(MAINTENANCE_GATE, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=store._root_fd)
+    try:
+        _flock_within(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH, wait)
+        yield
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def worker_lock(store, *, shared=False, wait=0.0):
     # The existing directory descriptor pins the same lock across processes
     # ponytail: one lock per database, per-worker locks if finer recovery is needed
     fd = store._root_fd
@@ -50,7 +92,7 @@ def worker_lock(store, *, shared=False):
         finally:
             store._worker_lock_depth -= 1
         return
-    fcntl.flock(fd, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+    _flock_within(fd, fcntl.LOCK_SH if shared else fcntl.LOCK_EX, wait)
     store._worker_lock_depth, store._worker_lock_shared = 1, shared
     try:
         yield
@@ -238,6 +280,45 @@ def candidate_transport_factory(package, node, openrouter_key):
     return resolve
 
 
+def purge_command(data, wait):
+    """Une ligne JSON sur la sortie standard et un code de sortie par issue, voir PURGE_EXIT_CODES"""
+    started, outcome = time.monotonic(), 'FAILED'
+    report: dict[str, object] = dict(event='privacy_purge', purged_count=0, operator_review_count=0,
+                                     lock='UNKNOWN', reason=None)
+    try:
+        from . import privacy
+        if data is None:
+            raise ValueError('Données requises')
+        from .service import RELAY_BUDGET_SECONDS
+        # Une requête relayée en cours se termine dans ce budget : au-delà, la porte se rouvre
+        result = privacy.purge(data, wait=PURGE_WAIT_SECONDS if wait is None else wait, drain=RELAY_BUDGET_SECONDS)
+        report.update(purged_count=len(result['purged']), operator_review_count=len(result.get('operator_review', ())),
+                      lock=result['lock'], reason=result.get('reason'))
+        if result['lock'] == 'UNAVAILABLE':
+            outcome = 'LOCK_UNAVAILABLE'
+        elif result['pending']:
+            report['reason'] = report['reason'] or 'OPERATOR_REVIEW'
+        else:
+            outcome = 'PURGED' if result['purged'] else 'NOTHING_TO_PURGE'
+    except Exception as error:
+        # Toute défaillance garde la ligne du contrat ; la classe suffit, ni message ni chemin privé
+        report['reason'] = type(error).__name__
+    report.update(outcome=outcome, duration_seconds=round(time.monotonic() - started, 3))
+    print(encode(report))
+    return PURGE_EXIT_CODES[outcome]
+
+
+def _seconds(value):
+    """Type argparse : durée finie et positive ou nulle"""
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = math.nan
+    if not (math.isfinite(seconds) and seconds >= 0):
+        raise argparse.ArgumentTypeError('Durée invalide : ' + value)
+    return seconds
+
+
 def _ip_address(value):
     """Type argparse : une adresse fausse s'arrête ici avec sa cause, pas sous HOLD"""
     try:
@@ -268,6 +349,8 @@ def main(argv=None):
                         help='Adresse source d’un proxy inverse de confiance ; répétable')
     parser.add_argument('--readyz-client', action='append', default=[], type=_ip_address, metavar='ADRESSE',
                         help='Adresse autorisée à lire /readyz ; répétable, aucune par défaut')
+    parser.add_argument('--lock-wait', type=_seconds, metavar='SECONDES',
+                        help='Attente des tâches de fond par purge-privacy, service ouvert ; 600 secondes par défaut')
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--preparation-assistant', metavar='ALIAS_OR_PROFILE',
                         help='Alias preparation, alias de secours preparation-fallback ou chemin d’un profil JSON local')
@@ -304,7 +387,11 @@ def main(argv=None):
             raise ValueError('Assistant réservé à l’exécuteur')
         if args.qualification_assistant is not None and args.action != 'executor':
             raise ValueError('Qualificateur réservé à l’exécuteur')
-        if args.action in ('migrate-privacy', 'privacy-status', 'purge-privacy', 'reconcile-privacy'):
+        if args.lock_wait is not None and args.action != 'purge-privacy':
+            raise ValueError('Fenêtre de verrou réservée à la purge')
+        if args.action == 'purge-privacy':
+            return purge_command(args.data, args.lock_wait)
+        if args.action in ('migrate-privacy', 'privacy-status', 'reconcile-privacy'):
             from . import privacy
             from .provider_access import parse_secret
             if args.data is None:
@@ -312,8 +399,6 @@ def main(argv=None):
             if args.action == 'migrate-privacy':
                 secret = parse_secret(os.environ.pop('BENCHMARK_ACCESS_SECRET', ''))
                 result = privacy.migrate(args.data, secret, args.migration_id)
-            elif args.action == 'purge-privacy':
-                result = privacy.purge(args.data)
             elif args.action == 'reconcile-privacy':
                 result = privacy.reconcile(args.data, args.journal_sha256)
             else:

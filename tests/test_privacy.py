@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -66,8 +67,8 @@ class PrivacyTests(unittest.TestCase):
             privacy.migrate(self.data, SECRET, 'other-migration', now=NOW)
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
-    def dossier(self, name='private-case'):
-        with patch.object(privacy, 'now', return_value=NOW):
+    def dossier(self, name='private-case', at=NOW):
+        with patch.object(privacy, 'now', return_value=at):
             session, _, _ = preparation.session(self.store, None, create=True)
             budget = 'personal-preparation-' + session
             self.store.create_budget(budget, '100', 'TEST')
@@ -144,7 +145,7 @@ class PrivacyTests(unittest.TestCase):
             try:
                 self.assertTrue(entered.wait(5))
                 privacy.request_delete(self.store, session, 'in-flight')
-                self.assertEqual({'purged': [], 'pending': True}, privacy.purge(self.data))
+                self.assertEqual({'purged': [], 'pending': True, 'lock': 'UNAVAILABLE'}, privacy.purge(self.data))
             finally:
                 released.set()
                 worker.join(5)
@@ -223,3 +224,163 @@ class PrivacyTests(unittest.TestCase):
             with closing(storage.Store(self.data)) as other:
                 with self.assertRaises(BlockingIOError), worker_lock(other):
                     pass
+
+    def holding(self, lock):
+        """Tient `lock(store)` dans un autre fil jusqu'à `release`, comme une requête ou une tâche"""
+        held, release = threading.Event(), threading.Event()
+        def holder():
+            with closing(storage.Store(self.data)) as other, lock(other):
+                held.set()
+                release.wait(5)
+        thread = threading.Thread(target=holder)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(release.set)
+        self.assertTrue(held.wait(5))
+        return release
+
+    def test_purge_attend_la_fin_des_requetes_en_cours_dans_sa_fenetre(self):
+        from benchmark.runtime import worker_lock
+        session, _ = self.dossier()
+        release = self.holding(lambda store: worker_lock(store, shared=True))
+        with patch.object(privacy, 'now', return_value=NOW):
+            privacy.request_delete(self.store, session, 'private-case')
+            self.assertEqual({'purged': [], 'pending': True, 'lock': 'UNAVAILABLE'},
+                             privacy.purge(self.data, wait=5, drain=0.1))
+            threading.Timer(0.2, release.set).start()
+            result = privacy.purge(self.data, wait=5, drain=5)
+        self.assertEqual((['private-case'], 'ACQUIRED'), (result['purged'], result['lock']))
+
+    def test_purge_attend_la_fin_des_taches_sans_fermer_le_service(self):
+        from benchmark.runtime import maintenance_gate
+        session, _ = self.dossier()
+        release = self.holding(maintenance_gate)
+        with patch.object(privacy, 'now', return_value=NOW):
+            privacy.request_delete(self.store, session, 'private-case')
+            self.assertEqual('UNAVAILABLE', privacy.purge(self.data, wait=0.1)['lock'])
+            done = []
+            purge = threading.Thread(target=lambda: done.append(privacy.purge(self.data, wait=5, drain=1)))
+            purge.start()
+            time.sleep(0.2)
+            # La purge attend la tâche sans tenir la porte : une requête passe encore
+            with closing(storage.Store(self.data)) as other, maintenance_gate(other):
+                pass
+            release.set()
+            purge.join(5)
+        self.assertEqual((['private-case'], 'ACQUIRED'), (done[0]['purged'], done[0]['lock']))
+
+    def test_tache_de_fond_attend_la_purge_au_lieu_d_echouer(self):
+        from benchmark import service
+        from benchmark.runtime import maintenance_gate
+        ran = threading.Event()
+        release = self.holding(lambda store: maintenance_gate(store, exclusive=True))
+        job = threading.Thread(target=service._retention_worker, args=(self.data, None, ran.set))
+        job.start()
+        self.assertFalse(ran.wait(0.3))
+        release.set()
+        job.join(5)
+        self.assertTrue(ran.is_set())
+
+    def test_purge_lit_les_operations_une_fois_par_passage(self):
+        sessions = [self.dossier(f'case-{index}')[0] for index in range(4)]
+        original, reads = storage.Store._operations, []
+        def counted(store, connection, **kwargs):
+            reads.append(1)
+            return original(store, connection, **kwargs)
+        def pass_reads(indexes):
+            for index in indexes:
+                privacy.request_delete(self.store, sessions[index], f'case-{index}')
+            del reads[:]
+            with patch.object(storage.Store, '_operations', counted):
+                self.assertEqual(len(indexes), len(privacy.purge(self.data)['purged']))
+            return len(reads)
+        with patch.object(privacy, 'now', return_value=NOW):
+            # Coût linéaire : le nombre de lectures ne suit pas le nombre de dossiers purgés
+            self.assertEqual(pass_reads([0]), pass_reads([1, 2, 3]))
+
+    def test_porte_de_maintenance_refuse_les_nouveaux_travaux_pendant_la_purge(self):
+        from benchmark.runtime import maintenance_gate, worker_lock
+        with closing(storage.Store(self.data)) as other:
+            with maintenance_gate(self.store, exclusive=True):
+                with self.assertRaises(BlockingIOError), maintenance_gate(other):
+                    pass
+            with maintenance_gate(other), worker_lock(other, shared=True):
+                pass
+
+
+class PurgeCommandTests(unittest.TestCase):
+    """Contrat de sortie de `purge-privacy`, seul point de contact avec l'ordonnanceur"""
+
+    setUp, dossier = PrivacyTests.setUp, PrivacyTests.dossier
+
+    def run_purge(self, at, *extra):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        import json
+        from benchmark import runtime
+        output = StringIO()
+        with patch.object(privacy, 'now', return_value=at), redirect_stdout(output):
+            code = runtime.main(['purge-privacy', '--data', str(self.data), *extra])
+        lines = output.getvalue().splitlines()
+        self.assertEqual(1, len(lines), lines)
+        line = json.loads(lines[0])
+        self.assertEqual({'event', 'outcome', 'purged_count', 'operator_review_count', 'lock', 'duration_seconds', 'reason'},
+                         set(line))
+        self.assertIsInstance(line['duration_seconds'], float)
+        return code, line
+
+    def pieces(self):
+        return sorted(path.name for path in (self.data / 'pieces').iterdir())
+
+    def test_dossier_echu_disparait_actif_reste_et_second_passage_sans_effet(self):
+        expired, _ = self.dossier('expired-case')
+        before = self.pieces()
+        active, _ = self.dossier('active-case', at=NOW + timedelta(days=3))
+        active_pieces = sorted(set(self.pieces()) - set(before))
+        self.assertTrue(before and active_pieces)
+        code, line = self.run_purge(NOW + timedelta(days=7))
+        self.assertEqual((0, 'PURGED', 1, 'ACQUIRED', None),
+                         (code, line['outcome'], line['purged_count'], line['lock'], line['reason']))
+        self.assertEqual(active_pieces, self.pieces())
+        with patch.object(privacy, 'now', return_value=NOW + timedelta(days=7)):
+            self.assertEqual('active-case', preparation.view(self.store, active, 'active-case')['dossier_id'])
+        snapshot = (self.pieces(), (self.data / 'metadata.sqlite3').read_bytes())
+        code, line = self.run_purge(NOW + timedelta(days=7))
+        self.assertEqual((10, 'NOTHING_TO_PURGE', 0, 'ACQUIRED'), (code, line['outcome'], line['purged_count'], line['lock']))
+        self.assertEqual(snapshot, (self.pieces(), (self.data / 'metadata.sqlite3').read_bytes()))
+
+    def test_verrou_non_obtenu_a_son_propre_code(self):
+        from benchmark.runtime import maintenance_gate
+        self.dossier()
+        # Une tâche de fond tient la porte pendant toute la fenêtre
+        with closing(storage.Store(self.data)) as other, maintenance_gate(other):
+            code, line = self.run_purge(NOW + timedelta(days=7), '--lock-wait', '0')
+        self.assertEqual((75, 'LOCK_UNAVAILABLE', 0, 'UNAVAILABLE'), (code, line['outcome'], line['purged_count'], line['lock']))
+        self.assertTrue(self.pieces())
+
+    def test_echec_a_son_propre_code_sans_detail_prive(self):
+        with patch.object(privacy, 'purge', side_effect=RuntimeError(str(self.data))):
+            code, line = self.run_purge(NOW)
+        self.assertEqual((78, 'FAILED', 'RuntimeError'), (code, line['outcome'], line['reason']))
+        self.assertNotIn(str(self.data), encode_line(line))
+
+    def test_quatre_issues_ont_quatre_codes_distincts(self):
+        from benchmark.runtime import PURGE_EXIT_CODES
+        self.assertEqual({'PURGED', 'NOTHING_TO_PURGE', 'LOCK_UNAVAILABLE', 'FAILED'}, set(PURGE_EXIT_CODES))
+        self.assertEqual(4, len(set(PURGE_EXIT_CODES.values())))
+
+
+def encode_line(line):
+    import json
+    return json.dumps(line, ensure_ascii=False)
+
+
+class ReconcileGateTests(unittest.TestCase):
+    setUp = PrivacyTests.setUp
+
+    def test_rapprochement_ne_bute_pas_sur_une_requete_refusee_a_la_porte(self):
+        from hashlib import sha256
+        from benchmark.runtime import maintenance_gate
+        with patch.object(privacy, 'boot_identity', return_value='new-boot'), \
+                closing(storage.Store(self.data)) as other, maintenance_gate(other):
+            self.assertFalse(privacy.reconcile(self.data, sha256(b'').hexdigest())['restore_pending'])

@@ -27,7 +27,9 @@ domaine reste 400, et une défaillance interne (stockage, programmation, entrée
 répond 500 sans message d'exception, sans trace, sans requête ni secret. Un verrou de stockage occupé
 n'y fait pas exception : `SQLITE_BUSY` reste un 500, parce qu'une requête enchaîne parfois deux
 transactions d'écriture, `preparation.submit` puis `privacy.activity`, et que la seconde peut se
-refuser alors que la première est commise. Annoncer un refus y perdrait un dossier déjà créé. Côté client,
+refuser alors que la première est commise. Annoncer un refus y perdrait un dossier déjà créé. Le verrou
+de travail, lui, se prend avant tout acheminement : quand une maintenance (purge, sauvegarde) le tient
+ou que la purge a fermé sa porte, la requête répond 503 `MAINTENANCE` sans avoir été traitée. Côté client,
 `preparation_request` traite une trame ou une réponse d'exécuteur illisible en
 `ConnectionError` : c'est une panne de transport, jamais une saisie fautive de l'appelant. La
 forme de la réponse y est vérifiée une seule fois, pour tous ses appelants : statut de réponse
@@ -36,7 +38,7 @@ typés. Le web n'a donc plus à se défendre champ par champ, et une réponse ho
 une indisponibilité annoncée plutôt qu'un corps nul ou une page rompue.
 """
 from copy import copy
-from contextlib import closing
+from contextlib import ExitStack, closing
 from concurrent.futures import Future
 from http.client import HTTPException
 import fcntl
@@ -83,6 +85,9 @@ CONFLICT_MESSAGE = ('Action refusée : révision périmée, opération en attent
 INTERNAL_MESSAGE = ('Défaillance interne du service : l’état de cette action n’est pas confirmé. '
                     'Consultez le dossier avant tout nouvel envoi.')
 PROTOCOL_MESSAGE = 'Réponse d’exécuteur illisible'
+MAINTENANCE_RESULT = {'status': 503, 'value': {
+    'error': 'Service en maintenance : cette action n’a pas été traitée et aucune donnée n’a été modifiée. '
+             'Réessayez dans quelques minutes.', 'error_code': 'MAINTENANCE', 'unavailable': True}}
 
 
 def executor_workers():
@@ -454,9 +459,11 @@ def _refresh_catalogue(data, stopping, fetch):
 
 def _probe_worker(future, data, request, fetch, secret, access_transport, transport):
     from . import model_probes, preparation
+    from .runtime import maintenance_gate
     try:
-        operation_id = model_probes.run(data, request['session_id'], request['dossier_id'],
-            request['body'], fetch, secret, access_transport, transport)
+        with closing(Store(data)) as store, maintenance_gate(store, wait=None):
+            operation_id = model_probes.run(data, request['session_id'], request['dossier_id'],
+                request['body'], fetch, secret, access_transport, transport)
         result = {'operation_id': operation_id}
     except preparation.Denied as error:
         result = {'error': denied_response(error)['value']['error']}
@@ -492,8 +499,11 @@ def _campaign_worker(data, start, candidate_transport, factory, secret, access_t
 
 def _retention_worker(data, dossier_id, function, *args):
     from . import privacy, privacy_archive
-    from .runtime import worker_lock
-    with closing(Store(data)) as store, worker_lock(store, shared=True):
+    from .runtime import maintenance_gate, worker_lock
+    # Porte tenue jusqu'à la fin : une purge attend la tâche, la tâche attend une purge commencée
+    # Attente libre : la purge ne garde la porte que le temps de vider et purger, et un flock meurt avec son processus
+    with closing(Store(data)) as store, maintenance_gate(store, wait=None), \
+            worker_lock(store, shared=True):
         try:
             function(*args)
         finally:
@@ -540,9 +550,15 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
             probe_jobs, probe_guard = {}, threading.Lock()
 
             def handle_message(message):
-                from .runtime import worker_lock
+                from .runtime import maintenance_gate, worker_lock
                 worker = _worker_store.store
-                with worker_lock(worker, shared=True):
+                with ExitStack() as held:
+                    try:
+                        with maintenance_gate(worker):
+                            held.enter_context(worker_lock(worker, shared=True))
+                    except BlockingIOError:
+                        # Refus avant tout acheminement : rien n'a été écrit pour cette requête
+                        return MAINTENANCE_RESULT
                     return handle_locked(worker, message)
 
             def handle_locked(store, message):

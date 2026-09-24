@@ -1,5 +1,5 @@
 """Accès, échéances et suppression des données privées"""
-from contextlib import closing, contextmanager, nullcontext
+from contextlib import ExitStack, closing, contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 import fcntl
 from hashlib import sha256
@@ -470,8 +470,9 @@ def _contains_reference(value, identifiers):
     return False
 
 
-def _purge_dossier(store, connection, dossier_id, session_id):
-    operations = [op for op in store._operations(connection) if op['dossier_id'] == dossier_id]
+def _purge_dossier(store, connection, dossier_id, session_id, remaining, manifests):
+    """`remaining` et `manifests` sont l'état courant du passage ; le dossier purgé en est retiré"""
+    operations = [op for op in remaining if op['dossier_id'] == dossier_id]
     if any(not store._provider_managed_budget(connection, op['budget_id']) for op in operations):
         return False
     contracts = {r[0] for table in ('s3_contracts', 's2_comparison_contracts') for r in connection.execute(
@@ -479,11 +480,11 @@ def _purge_dossier(store, connection, dossier_id, session_id):
     campaigns = {row[0] for row in connection.execute('SELECT campaign_id,contract_sha256 FROM s4_campaigns') if row[1] in contracts}
     pieces = connection.execute('SELECT piece_id,relative_path,sha256,size_bytes FROM pieces WHERE dossier_id=?', (dossier_id,)).fetchall()
     identifiers = contracts | campaigns | {op['operation_id'] for op in operations} | {p[0] for p in pieces} | {dossier_id}
-    for op in store._operations(connection):
+    for op in remaining:
         if op['dossier_id'] != dossier_id and _contains_reference(op['resources'], identifiers):
             raise IntegrityError('Référence entrante depuis un dossier conservé')
-    for campaign_id, raw in connection.execute('SELECT campaign_id,manifest_json FROM s4_campaigns'):
-        if campaign_id not in campaigns and _contains_reference(json.loads(raw), identifiers):
+    for campaign_id, manifest in manifests.items():
+        if campaign_id not in campaigns and _contains_reference(manifest, identifiers):
             raise IntegrityError('Référence de campagne conservée')
     connection.execute("UPDATE s7_dossiers SET state='PURGING' WHERE dossier_id=?", (dossier_id,))
     for _, path, digest, size in pieces:
@@ -519,6 +520,9 @@ def _purge_dossier(store, connection, dossier_id, session_id):
     for table in ('pieces', 's2_revisions', 's2_dossiers', 'dossier_revisions'):
         connection.execute(f'DELETE FROM {table} WHERE dossier_id=?', (dossier_id,))
     connection.execute('DELETE FROM s7_archives WHERE dossier_id=?', (dossier_id,))
+    remaining[:] = [op for op in remaining if op['dossier_id'] != dossier_id]
+    for campaign_id in campaigns:
+        manifests.pop(campaign_id, None)
     return True
 
 
@@ -549,14 +553,19 @@ def pending_files(store, connection):
     return [row[0] for row in rows]
 
 
-def purge(data, *, _reconciled_store=None):
-    from .runtime import worker_lock
+def purge(data, *, wait=0.0, drain=0.0, _reconciled_store=None):
+    """Purge sous verrou exclusif
+
+    `wait` borne l'attente de la porte : les tâches de fond la tiennent et le service reste ouvert.
+    `drain` borne ensuite l'attente des requêtes en cours, porte fermée : c'est la seule attente en 503
+    """
+    from .runtime import maintenance_gate, worker_lock
     with closing(storage.Store(Path(data))) if _reconciled_store is None else nullcontext(_reconciled_store) as store:
         connection = store._connection_checked()
         if not available(connection):
             raise SchemaError('Initialisation de la confidentialité requise')
         if _reconciled_store is None and quarantined(store):
-            return {'purged': [], 'pending': True, 'reason': 'RESTORE_PENDING'}
+            return {'purged': [], 'pending': True, 'reason': 'RESTORE_PENDING', 'lock': 'NOT_ATTEMPTED'}
         replay_revocations(store)
         current = now().isoformat()
         with _transaction(connection, write=True):
@@ -566,20 +575,26 @@ def purge(data, *, _reconciled_store=None):
                 _delete(connection, session_id)
             from .privacy_archive import expire_contributions
             expire_contributions(connection)
-        try:
-            guard = worker_lock(store)
-            guard.__enter__()
-        except BlockingIOError:
-            return {'purged': [], 'pending': True}
-        try:
+        with ExitStack() as held:
+            try:
+                # Le rapprochement tient déjà le verrou exclusif : la porte n'y ajouterait qu'un refus
+                if _reconciled_store is None:
+                    held.enter_context(maintenance_gate(store, exclusive=True, wait=wait))
+                held.enter_context(worker_lock(store, wait=drain))
+            except BlockingIOError:
+                return {'purged': [], 'pending': True, 'lock': 'UNAVAILABLE'}
             proof = store.verify_storage()
             if not proof['integrity_ok'] or proof['orphan_files']:
                 raise IntegrityError('Stockage à rapprocher avant purge')
             deferred = []
+            # Le verrou exclusif fige le stockage : une lecture par passage au lieu de deux par dossier
+            remaining = store._operations(connection)
+            manifests = {campaign_id: json.loads(raw) for campaign_id, raw in
+                         connection.execute('SELECT campaign_id,manifest_json FROM s4_campaigns')}
             for dossier_id, session_id in connection.execute("SELECT dossier_id,session_id FROM s7_dossiers WHERE state='DELETE_REQUESTED'").fetchall():
                 try:
                     with _transaction(connection, write=True):
-                        finished = _purge_dossier(store, connection, dossier_id, session_id)
+                        finished = _purge_dossier(store, connection, dossier_id, session_id, remaining, manifests)
                     if not finished:
                         deferred.append(dossier_id)
                 except IntegrityError:
@@ -599,9 +614,7 @@ def purge(data, *, _reconciled_store=None):
                 completed = [row[0] for row in connection.execute("SELECT dossier_id FROM s7_dossiers WHERE state='PURGING' AND dossier_id NOT IN (SELECT dossier_id FROM s7_purge_files)")]
                 connection.executemany("UPDATE s7_dossiers SET state='PURGED' WHERE dossier_id=?", [(d,) for d in completed])
                 retire_expired_access(connection, date(current))
-            return {'purged': completed, 'pending': bool(deferred), 'operator_review': deferred}
-        finally:
-            guard.__exit__(None, None, None)
+            return {'purged': completed, 'pending': bool(deferred), 'operator_review': deferred, 'lock': 'ACQUIRED'}
 
 
 def retired_operations(connection):
