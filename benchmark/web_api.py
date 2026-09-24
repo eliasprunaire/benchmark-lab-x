@@ -1,10 +1,14 @@
 """Autorisation et routage HTTP côté exécuteur pour la préparation privée."""
+from contextlib import contextmanager, nullcontext
 import hmac
+import logging
 import re
+import sqlite3
 from typing import cast
 from urllib.parse import urlsplit, parse_qsl
 
 from . import preparation as p
+from . import storage
 from .storage import _fields
 
 
@@ -73,9 +77,11 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
                 if action == 'delete':
                     _fields(payload, (), 'suppression')
                     return 202, privacy.request_delete(store, session_id, dossier_id), None, None
-                value, new_token = archives.change_contribution(store, token, dossier_id, payload, management_token)
+                with _activity_with_effect(store, session_id, dossier_id) as joined:
+                    value, new_token = archives.change_contribution(store, token, dossier_id, payload, management_token)
                 value = cast(dict, value)
-                privacy.activity(store, session_id, dossier_id)
+                if not joined:
+                    privacy.activity(store, session_id, dossier_id)
                 if payload['enabled'] and (new_token or management_token):
                     manager = new_token or management_token
                     if manager is None:
@@ -84,34 +90,73 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
                     value['_management_cookie'] = {'token': manager, 'expires_at': max(c['expires_at'] for c in state['contributions'])}
                 return 200, value, token, None
             raise p.Denied('NOT_FOUND')
-    result = _dispatch(store, method, path, token, body, source, transport,
-        qualification_transport=qualification_transport, candidate_transport=candidate_transport,
-        candidate_identity=candidate_identity, judgment_transport=judgment_transport,
-        access_secret=access_secret, access_transport=access_transport, presentation=presentation,
-        personal_preparation=personal_preparation)
+    if enabled and method == 'POST' and path != '/preparation/activity':
+        dossier = re.match(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})(?:/|$)', path)
+        created = body.get('dossier_id') if path == '/preparation/dossiers' and isinstance(body, dict) else None
+        effect = _activity_with_effect(store, p.session(store, token)[0], dossier.group(1) if dossier else created)
+    else:
+        effect = nullcontext([])
+    with effect as joined:
+        result = _dispatch(store, method, path, token, body, source, transport,
+            qualification_transport=qualification_transport, candidate_transport=candidate_transport,
+            candidate_identity=candidate_identity, judgment_transport=judgment_transport,
+            access_secret=access_secret, access_transport=access_transport, presentation=presentation,
+            personal_preparation=personal_preparation)
     code, value, cookie, work = result
     if enabled and code < 400 and isinstance(value, dict):
-        session_id, csrf, _ = p.session(store, cookie or token)
         dossier = re.match(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})(?:/|$)', path)
         dossier_id = dossier.group(1) if dossier else value.get('dossier_id')
         if method == 'POST' and path != '/preparation/activity':
-            privacy.activity(store, session_id, dossier_id)
             cookie = cookie or token
-        state = store._connection.execute('SELECT expires_at FROM s7_sessions WHERE session_id=?', (session_id,)).fetchone()
-        privacy_state: dict = {'csrf_token': csrf, 'session_expires_at': state[0]}
-        value['privacy'] = privacy_state
-        if dossier_id:
-            row = store._connection.execute('SELECT content_version FROM s7_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()
-            if row:
-                privacy_state.update(dossier_id=dossier_id, content_version=row[0])
-                from . import privacy_archive as archives
-                current = p.owner(store._connection, session_id, dossier_id)
-                contribution = archives.contribution_view(store, session_id, dossier_id)['contribution']
-                contribution = contribution if isinstance(contribution, dict) else None
-                privacy_state['contribution'] = dict(contribution or {},
-                    enabled=bool(contribution and contribution['status'] == 'active'),
-                    revision=contribution['revision'] if contribution else 0, example_revision=current)
+        try:
+            session_id, csrf, _ = p.session(store, cookie or token)
+            if method == 'POST' and path != '/preparation/activity' and not joined:
+                privacy.activity(store, session_id, dossier_id)
+            state = store._connection.execute('SELECT expires_at FROM s7_sessions WHERE session_id=?', (session_id,)).fetchone()
+            privacy_state: dict = {'csrf_token': csrf, 'session_expires_at': state[0]}
+            value['privacy'] = privacy_state
+            if dossier_id:
+                row = store._connection.execute('SELECT content_version FROM s7_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()
+                if row:
+                    privacy_state.update(dossier_id=dossier_id, content_version=row[0])
+                    from . import privacy_archive as archives
+                    current = p.owner(store._connection, session_id, dossier_id)
+                    contribution = archives.contribution_view(store, session_id, dossier_id)['contribution']
+                    contribution = contribution if isinstance(contribution, dict) else None
+                    privacy_state['contribution'] = dict(contribution or {},
+                        enabled=bool(contribution and contribution['status'] == 'active'),
+                        revision=contribution['revision'] if contribution else 0, example_revision=current)
+        except (sqlite3.Error, storage.SchemaError) as error:
+            if not joined:
+                raise
+            # Effet commis : une décoration illisible ne doit ni le démentir ni retenir son travail
+            logging.getLogger(__name__).warning('EXECUTOR_DECORATION_SKIPPED %s', type(error).__name__)
+            value.pop('privacy', None)
     return code, value, cookie, work
+
+
+@contextmanager
+def _activity_with_effect(store, session_id, dossier_id):
+    """Écrit l'activité dans chaque transaction d'écriture de l'effet, avant son COMMIT
+
+    Écrite à part après un effet commis, elle pourrait échouer seule et faire annoncer comme non
+    confirmée une action enregistrée. La jonction ne lève pas : une échéance échue pendant la requête
+    reste échue sans annuler l'écriture, journalisation d'échec comprise. Une tentative refusée après
+    une écriture commise compte comme une activité (décision d'Ayo, 2026-09-24). Rend la liste des écritures
+    jointes : vide, l'effet n'a rien commis et l'activité reste à écrire seule, sans rien démentir
+    """
+    from . import privacy
+    joined = []
+
+    def join(connection):
+        if connection is store._connection:
+            privacy.extend_activity(connection, session_id, dossier_id)
+            joined.append(connection)
+    reset = storage.before_commit.set(join)
+    try:
+        yield joined
+    finally:
+        storage.before_commit.reset(reset)
 
 
 def _dispatch(store, method, path, token, body, source, transport, *, qualification_transport=None, candidate_transport=None,
