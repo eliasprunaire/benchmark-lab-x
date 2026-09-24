@@ -8,44 +8,6 @@ LOCAL_WARNING = ('L’historique local n’est pas garanti : le navigateur peut 
 
 
 def render_privacy_page(value, csrf=''):
-    if value['kind'] == 'privacy_notice':
-        if value.get('privacy_enabled') is False:
-            return 'Confidentialité', (
-                '<p>La nouvelle politique de conservation n’est pas encore activée sur ce serveur. '
-                'N’y saisissez aucune donnée personnelle ni information confidentielle.</p>'
-                '<p>Responsable : Cybrel RSSI. Contact : '
-                '<a href="mailto:contact@cybrel.fr">contact@cybrel.fr</a>.</p>')
-        return 'Confidentialité', (
-            '<section><h2>Responsable et contact</h2><p>Responsable : Cybrel RSSI. '
-            'Pour une question ou une demande concernant vos données : '
-            '<a href="mailto:contact@cybrel.fr">contact@cybrel.fr</a>.</p></section>'
-            '<section><h2>Usage et conservation</h2><p>Vos saisies servent à préparer un exemple fictif '
-            'et à comparer les modèles. Ne saisissez aucune donnée personnelle ni information confidentielle. '
-            'Aucune anonymisation automatique n’est garantie.</p><ul>'
-            '<li>Cas d’usage et résultats : l’accès est fermé après 7 jours d’inactivité. '
-            'Cette fermeture n’est pas un effacement.</li>'
-            '<li>Clé API chiffrée et accès de session : 30 jours d’inactivité. '
-            'Seules vos interactions réelles prolongent cet accès, pas une page laissée ouverte.</li>'
-            '<li>Contribution facultative : 6 mois, avec votre consentement après examen de l’exemple.</li>'
-            '<li>Des copies peuvent subsister dans les sauvegardes après la fermeture de l’accès. '
-            'Elles ne sont pas remises en service avant application des révocations et expirations.</li>'
-            '</ul></section><section><h2>Historique dans ce navigateur</h2><p>' + LOCAL_WARNING + '</p>'
-            '<p>Les copies complètes déjà enregistrées restent consultables ici même après expiration '
-            'de la clé. La clé API n’est pas incluse dans cet historique ni dans les exports.</p></section>'
-            '<section><h2>Fournisseurs et contribution</h2><p>Les données nécessaires aux appels sont '
-            'transmises à Openrouter et aux fournisseurs des modèles utilisés. Leurs propres conditions '
-            'de traitement et de conservation s’appliquent. Une suppression dans Bench-X ne garantit '
-            'pas l’effacement de copies déjà traitées par ces fournisseurs.</p>'
-            '<p>Contribuer est facultatif et sans effet sur votre accès au benchmark. Ce choix autorise '
-            'Cybrel à conserver l’exemple affiché pour améliorer Bench-X pendant 6 mois. '
-            'Il n’autorise pas sa publication. Vous pouvez retirer ce consentement depuis '
-            '<a href="/preparation/contributions">Mes contributions</a>.</p></section>'
-            '<p>La contribution comprend l’exemple fictif, ses pièces, sa qualification et ses résultats. '
-            'Le besoin initial, vos messages et corrections libres, la clé, les cookies et les journaux bruts en sont exclus. '
-            'Ces copies privées restent potentiellement sensibles. Aucun entraînement automatique n’est déclenché.</p>'
-            '<p>L’accès aux contributions repose sur un cookie distinct, valable jusqu’à leur dernière échéance. '
-            'Si vous perdez ce cookie, nous ne pouvons pas retrouver automatiquement votre accès ; contactez-nous.</p>'
-            '<p><a href="/preparation/data">Mes données</a></p>')
     return 'Mes données', (
         '<section data-privacy-history><h2>Historique local</h2><p>' + LOCAL_WARNING + '</p>'
         '<p role="status" data-privacy-status>Chargement de l’historique local…</p>'
@@ -56,7 +18,7 @@ def render_privacy_page(value, csrf=''):
         'l’historique enregistré dans ce navigateur.</p></noscript></section>'
         '<p><a href="/preparation">Gérer ma clé et mes cas sur le serveur</a> · '
         '<a href="/preparation/contributions">Mes contributions</a> · '
-        '<a href="/preparation/privacy">Confidentialité</a></p>')
+        '<a href="/confidentialite">Confidentialité</a></p>')
 
 
 def active_session(privacy):
@@ -110,7 +72,7 @@ def render_privacy_controls(value, csrf):
             '<button type="submit" class="sec">Supprimer ce cas d’usage</button>'
             '<p role="status" data-privacy-status></p>', disabled=not active)
     content += '<p>' + LOCAL_WARNING + '</p><p><a href="/preparation/data">Mes données</a> · '
-    content += '<a href="/preparation/contributions">Mes contributions</a> · <a href="/preparation/privacy">Confidentialité</a></p></details>'
+    content += '<a href="/preparation/contributions">Mes contributions</a> · <a href="/confidentialite">Confidentialité</a></p></details>'
     return content
 
 
@@ -126,7 +88,7 @@ def render_contribution(value, csrf):
     body = ('<legend>Contribuer à Bench-X (facultatif)</legend><p>J’autorise Cybrel à conserver cet exemple '
             'pendant 6 mois pour améliorer Bench-X, sans autoriser sa publication. '
             'Mon choix ne conditionne pas mon accès au benchmark. '
-            '<a href="/preparation/privacy">Lire la notice</a>.</p>'
+            '<a href="/confidentialite">Lire la politique de confidentialité</a>.</p>'
             '<label><input type="checkbox" name="enabled" value="true"' + (' checked' if enabled else '') + '>'
             ' Je souhaite contribuer avec cet exemple</label><button type="submit" class="sec">Enregistrer mon choix</button>'
             '<p role="status" data-privacy-status>' + ('Contribution activée.' if enabled else 'Aucune contribution activée.') + '</p>')

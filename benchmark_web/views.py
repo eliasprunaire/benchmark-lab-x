@@ -14,6 +14,7 @@ from .campaign_views import (COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, rend
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
 from .fragments import date_lisible_utc, form, icon, listing, section, state_block, text
 from .projection import projection_body
+from .legal_views import LEGAL_PAGES
 from .privacy_views import (PRIVACY_SCRIPT, render_privacy_page, render_privacy_controls,
                             render_contribution, render_contributions, render_bootstrap)
 
@@ -227,7 +228,8 @@ def render(value, csrf, path='/preparation', *, error=False):
     navigation = '' if error else preparation_steps(value)
     title = 'Décrire mon cas d’usage'
     # Une page d'erreur n'est aucune des entrées du menu : pas d'`aria-current` menteur
-    current = None if error else {'home': '/', 'publication_unavailable': '/index.html', 'privacy_data': '/preparation/data'}.get(value.get('kind'), '/preparation')
+    current = None if error else {'home': '/', 'publication_unavailable': '/index.html', 'privacy_data': '/preparation/data',
+                                   'legal': None}.get(value.get('kind'), '/preparation')
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
                    for href, label in (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données'), ('/index.html', 'Comparaisons publiées')))
     if error:
@@ -256,7 +258,9 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, content = render_contributions(value)
     elif value.get('kind') == 'session_bootstrap':
         title, content = render_bootstrap(value)
-    elif value.get('kind') in ('privacy_data', 'privacy_notice'):
+    elif value.get('kind') == 'legal':
+        title, content = LEGAL_PAGES[value['path']]
+    elif value.get('kind') == 'privacy_data':
         title, content = render_privacy_page(value, csrf)
     elif value.get('kind') == 'access':
         title = 'Accès Openrouter'

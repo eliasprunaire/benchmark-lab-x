@@ -868,6 +868,30 @@ class ProbeTests(WebServerCase):
                       '<a href="https://github.com/eliasprunaire/benchmark-lab-x/tree/' + 'a' * 40 + '">Code source</a>', page)
 
 
+    def test_pages_legales_publiques_sans_cookie_ni_executeur(self):
+        # BX-08 : servies par le web seul, sans session ni relais, sous la CSP sans script
+        for path in ('/mentions-legales', '/cgu', '/confidentialite'):
+            for method, accept in (('GET', 'text/html'), ('HEAD', 'text/html'), ('GET', 'application/json')):
+                with self.subTest(path=path, method=method, accept=accept):
+                    status, headers, raw = self.request(method, path, headers={'Accept': accept})
+                    self.assertEqual(200, status)
+                    self.assertEqual('text/html; charset=utf-8', headers['Content-Type'])
+                    self.assertEqual(CSP, headers['Content-Security-Policy'])
+                    self.assertIsNone(headers.get('Set-Cookie'))
+                    if method == 'GET':
+                        self.assertIn('<html lang="fr">', raw.decode())
+        self.assertTrue(self.executor.requests.empty())
+
+    def test_ancienne_notice_renvoie_vers_la_politique_publique(self):
+        for method, accept in (('GET', 'text/html'), ('HEAD', 'text/html'), ('GET', 'application/json')):
+            with self.subTest(method=method, accept=accept):
+                status, headers, _ = self.request(method, '/preparation/privacy', headers={'Accept': accept})
+                self.assertEqual(301, status)
+                self.assertEqual('/confidentialite', headers['Location'])
+                self.assertIsNone(headers.get('Set-Cookie'))
+        self.assertTrue(self.executor.requests.empty())
+
+
 class ClosedProbeTests(WebServerCase):
     """Sans configuration, `/readyz` refuse tout le monde, boucle locale comprise"""
 
@@ -953,6 +977,8 @@ class RouteCanonicalizationTests(unittest.TestCase):
                 ('/preparation/dossiers/d1/archive/items/record?snapshot=s7&part=0',
                  '/preparation/dossiers/<id>/archive/items/record'),
                 ('/publications/' + 'a' * 64 + '/index.html', '/publications/<projection>/<piece>'),
+                ('/mentions-legales', '/mentions-legales'), ('/cgu', '/cgu'),
+                ('/confidentialite', '/confidentialite'),
                 ('/index.html', '/<fichier>'), ('/apercu.png', '/<fichier>')):
             self.assertEqual(expected, canonical_route(path), path)
 

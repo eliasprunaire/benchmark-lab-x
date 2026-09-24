@@ -68,7 +68,7 @@ class RuntimeBundleTests(unittest.TestCase):
                             ignore=shutil.ignore_patterns('__pycache__', 'test_*.py'))
             web = repo / 'benchmark_web'
             source_web = source_package.parent / 'benchmark_web'
-            for name in ('__init__.py', 'server.py', 'views.py', 'privacy_views.py', 'privacy.js', 'campaign_views.py', 'fragments.py', 'projection.py', 'templates/preparation.html', 'static/preparation.css'):
+            for name in ('__init__.py', 'server.py', 'views.py', 'privacy_views.py', 'legal_views.py', 'privacy.js', 'campaign_views.py', 'fragments.py', 'projection.py', 'templates/preparation.html', 'static/preparation.css'):
                 (web / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source_web / name, web / name)
             (repo / 'tools').mkdir()

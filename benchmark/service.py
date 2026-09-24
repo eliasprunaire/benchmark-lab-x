@@ -600,7 +600,7 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     if 'availability' in value and active_transport is None:
                         value['availability'].update(can_submit=False, reason='access',
                                                      assistant_configured=transport is not None)
-                    if code < 400 and value.get('kind') not in ('session_bootstrap', 'privacy_data', 'privacy_notice', 'contributions'):
+                    if code < 400 and value.get('kind') not in ('session_bootstrap', 'privacy_data', 'contributions'):
                         try:
                             session_id, _, _ = preparation.session(store, cookie or message['token'])
                             value['personal_access'] = provider_access.status_only(store, session_id)

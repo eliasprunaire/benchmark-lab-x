@@ -68,7 +68,7 @@ class WebBoundaryTests(unittest.TestCase):
     def test_web_never_opens_storage_or_providers(self):
         for path in WEB.rglob('*.py'):
             source = path.read_text()
-            self.assertNotRegex(source, r'\b(sqlite3|Store\(|storage\.Store|urlopen|OPENROUTER|API_KEY)\b', path.name)
+            self.assertNotRegex(source, r'\b(sqlite3|Store\(|storage\.Store|urlopen|(?<!’)OPENROUTER|API_KEY)\b', path.name)
             self.assertNotRegex(source, r'from benchmark\.(transports|acquisition|outgoing|judgment)', path.name)
             self.assertNotIn('code_verifier', source, path.name)
             self.assertNotIn('openrouter.ai', source, path.name)

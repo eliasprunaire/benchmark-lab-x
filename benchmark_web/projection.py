@@ -110,4 +110,6 @@ def public_page(value, selected):
     return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" '
             'content="width=device-width, initial-scale=1"><title>Projection fictive · Bench-X</title>'
             '<link rel="stylesheet" href="style.css"></head><body><a class="skip" href="#main">Aller au contenu</a>'
-            '<main id="main">' + body + '</main></body></html>').encode('utf-8')
+            '<main id="main">' + body + '</main><footer><nav aria-label="Informations légales">'
+            '<a href="/mentions-legales">Mentions légales</a> · <a href="/cgu">Conditions d’utilisation</a> · '
+            '<a href="/confidentialite">Confidentialité</a></nav></footer></body></html>').encode('utf-8')

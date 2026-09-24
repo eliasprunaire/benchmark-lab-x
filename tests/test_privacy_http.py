@@ -221,8 +221,7 @@ class PrivacyHTTPTests(unittest.TestCase):
             ('contributions', 'SELECT contribution_id,created_at,expires_at FROM s7_contributions ORDER BY contribution_id'))}
 
     def test_bootstrap_origin_new_reused_session_and_public_shells(self):
-        for path, kind in (('/preparation', 'session_bootstrap'), ('/preparation/data', 'privacy_data'),
-                           ('/preparation/privacy', 'privacy_notice')):
+        for path, kind in (('/preparation', 'session_bootstrap'), ('/preparation/data', 'privacy_data')):
             code, headers, value = self.request('GET', path)
             self.assertEqual((200, kind), (code, value['kind']))
             self.assertFalse(headers.get_all('Set-Cookie'))
@@ -389,7 +388,7 @@ class PrivacyHTTPTests(unittest.TestCase):
         self.advance(2)
         for route, native in (('/preparation', False), ('/preparation', True), (path, False), (path, True),
                               (path + '/archive', False), (item, False), ('/preparation/contributions', False),
-                              ('/preparation/contributions', True), ('/preparation/data', True), ('/preparation/privacy', True)):
+                              ('/preparation/contributions', True), ('/preparation/data', True), ('/confidentialite', True)):
             with self.subTest(route=route, html=native):
                 code, headers, value = self.request('GET', route, cookies=cookies, native=native)
                 self.assertEqual(200, code, value)
