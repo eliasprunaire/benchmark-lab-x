@@ -679,8 +679,9 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                 stopping = threading.Event()
                 catalogue_worker = None
                 if catalogue_fetch is not None:
+                    # Démon : une récupération distante bloquée ne retient pas la sortie du processus
                     catalogue_worker = threading.Thread(target=_refresh_catalogue,
-                        args=(data, stopping, catalogue_fetch), name='model-catalogue')
+                        args=(data, stopping, catalogue_fetch), name='model-catalogue', daemon=True)
                     catalogue_worker.start()
                 try:
                     run(server)
@@ -690,7 +691,12 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     from .preparation import close_admission
                     close_admission(store)
                     if catalogue_worker is not None:
-                        catalogue_worker.join()
+                        # `fetch_unless_stopping` empêche d'écrire un relevé récupéré après `stopping` ; le budget
+                        # local couvre une écriture déjà lancée, qui tient dans une transaction : interrompue, SQLite
+                        # l'annule. Le délai de 20 s de `fetch_public` n'est qu'une inactivité, pas un total
+                        catalogue_worker.join(LOCAL_BUDGET_SECONDS)
+                        if catalogue_worker.is_alive():
+                            logging.getLogger(__name__).error('EXECUTOR_WORKER_STUCK %s', catalogue_worker.name)
             stop(data, store, 'PROCESS_STOPPED_ADMISSION_BLOCKED', after_process_exit=True)
         finally:
             os.close(lock_fd)

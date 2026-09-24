@@ -4,6 +4,7 @@ from contextlib import closing, contextmanager
 from email.message import Message
 from hashlib import sha256
 from http.client import HTTPConnection, HTTPException
+import fcntl
 import ipaddress
 import json
 import multiprocessing
@@ -47,6 +48,25 @@ def catalogue_executor(data, sock, fetching, release, completed):
     with patch.object(model_catalogue, '_now', return_value=catalogue_fixture.NOW):
         serve_executor(data, sock, 'a' * 40, catalogue_fetch=fetch)
     completed.put(calls)
+
+
+def stuck_catalogue_executor(data, sock, fetching, completed):
+    import logging
+    records = []
+
+    class Recorder(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    logging.getLogger('benchmark.service').addHandler(Recorder())
+
+    def fetch(path):
+        # Récupération distante qui ne rend jamais la main
+        fetching.set()
+        threading.Event().wait()
+
+    serve_executor(data, sock, 'a' * 40, catalogue_fetch=fetch)
+    completed.put(records)
 
 
 @contextmanager
@@ -238,6 +258,35 @@ class ServiceProcessesTests(unittest.TestCase):
                 self.assertEqual(6, len(calls))
             finally:
                 release.set()
+                if child.is_alive():
+                    child.kill()
+                child.join(5)
+
+    def test_stop_during_stuck_catalogue_fetch_is_bounded_and_releases_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data, sock = Path(directory).resolve() / 'private', Path(directory).resolve() / 'executor.sock'
+            initialize(data)
+            from benchmark.storage import initialize_preparation
+            initialize_preparation(data)
+            context = multiprocessing.get_context('spawn')
+            fetching, completed = context.Event(), context.Queue()
+            child = context.Process(target=stuck_catalogue_executor, args=(data, sock, fetching, completed))
+            child.start()
+            try:
+                self.assertTrue(fetching.wait(5))
+                self.assertEqual('ok', executor_health(sock)['storage'])
+                child.terminate()
+                child.join(service.LOCAL_BUDGET_SECONDS + 10)
+                self.assertFalse(child.is_alive())
+                self.assertEqual(0, child.exitcode)
+                self.assertIn('EXECUTOR_WORKER_STUCK model-catalogue', completed.get(timeout=1))
+                # Un exécuteur de remplacement doit pouvoir prendre le verrou
+                lock_fd = os.open(data / 'executor.lock', os.O_WRONLY)
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                finally:
+                    os.close(lock_fd)
+            finally:
                 if child.is_alive():
                     child.kill()
                 child.join(5)
