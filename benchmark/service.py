@@ -71,8 +71,10 @@ from .runtime import encode, status, stop, verify
 LOCAL_BUDGET_SECONDS = 5
 RELAY_BUDGET_SECONDS = CALLBACK_BUDGET_SECONDS + LOCAL_BUDGET_SECONDS
 
-# Concurrence de production, modeste : un Store par fil, ouvert une fois et gardé jusqu'à l'arrêt
-EXECUTOR_WORKERS = 8
+# Concurrence de production : un Store par fil, ouvert une fois et gardé jusqu'à l'arrêt. Cible de
+# BX-27, 50 visiteurs simultanés et le plus lent sous 5 s. Relevé Linux : 56 fils suffisent, 64
+# gardent une marge ; la latence suit le nombre de requêtes admises, pas le nombre de fils
+EXECUTOR_WORKERS = 64
 # La file d'écoute du noyau suit la concurrence : une rafale attend l'acceptation, jamais un refus
 EXECUTOR_BACKLOG_FACTOR = 8
 EXECUTOR_BACKLOG_MINIMUM = 64

@@ -914,8 +914,11 @@ def _concurrent_profile(port, path, headers, count, *, timeout=30):
 
 
 @contextmanager
-def _loaded_stack(workers):
-    """Exécuteur et serveur web réels sur un stockage d'essai, concurrence fixée par le test"""
+def _loaded_stack(workers=None):
+    """Exécuteur et serveur web réels sur un stockage d'essai
+
+    Sans `workers`, la concurrence est le défaut livré, jamais une valeur héritée de l'environnement
+    """
     from tests.test_privacy import initialize as initialize_storage
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory).resolve()
@@ -932,7 +935,10 @@ def _loaded_stack(workers):
             port = probe.getsockname()[1]
         repository = Path(__file__).resolve().parents[1]
         command = [sys.executable, '-B', '-m', 'benchmark.runtime']
-        environment = dict(os.environ, BENCHMARK_EXECUTOR_WORKERS=str(workers))
+        environment = dict(os.environ)
+        environment.pop('BENCHMARK_EXECUTOR_WORKERS', None)
+        if workers is not None:
+            environment['BENCHMARK_EXECUTOR_WORKERS'] = str(workers)
         children = []
         try:
             children.append(subprocess.Popen(command + ['executor', '--data', str(data), '--socket', str(sock)],
@@ -975,12 +981,17 @@ def _loaded_stack(workers):
 
 
 class ExecutorConcurrencyTests(unittest.TestCase):
-    """Charge du parcours privé : cible de 50 requêtes simultanées par profil (BX-01)"""
+    """Charge du parcours privé : 50 visiteurs simultanés servis sur la configuration livrée (BX-27)
+
+    Le plafond de 5 s pour le plus lent se mesure sur la machine qui sert, pas sur un runner
+    partagé : la durée est imprimée, jamais bornée ici
+    """
 
     TARGET = 50
 
     def test_parcours_prive_tient_cinquante_visiteurs_simultanes(self):
-        with _loaded_stack(workers=64) as (port, token):
+        # Configuration livrée : un réglage propre au test ne prouverait rien sur la production
+        with _loaded_stack() as (port, token):
             session = {'Cookie': 'benchmark_session=' + token}
             activity = dict(session, Accept='application/json')
             observed = {}
@@ -990,7 +1001,7 @@ class ExecutorConcurrencyTests(unittest.TestCase):
                 codes, retries, slowest = _concurrent_profile(port, path, headers, self.TARGET)
                 observed[label] = {'statuts': dict(codes), 'reprises_tcp': retries,
                                    'plus_lente_s': round(slowest, 3)}
-            print('\nBX-01 profils :', json.dumps(observed, ensure_ascii=False))
+            print('\nBX-27 profils :', json.dumps(observed, ensure_ascii=False))
             for label, mesure in observed.items():
                 self.assertEqual({200: self.TARGET}, mesure['statuts'], label)
 
