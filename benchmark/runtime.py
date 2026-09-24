@@ -69,7 +69,20 @@ def maintenance_gate(store, *, exclusive=False, wait: float | None = 0.0):
     que les requêtes en cours. Sans elle, des verrous partagés qui se chevauchent sans fin, sous un
     exécuteur parallèle, priveraient la purge du verrou exclusif
     """
-    fd = os.open(MAINTENANCE_GATE, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=store._root_fd)
+    # Sous macOS, `O_CREAT` concurrent sur un fichier neuf rend parfois ENOENT : ouvrir l'existant,
+    # sinon le créer en exclusif, et reprendre quand un autre fil a gagné la création
+    while True:
+        try:
+            fd = os.open(MAINTENANCE_GATE, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=store._root_fd)
+            break
+        except FileNotFoundError:
+            pass
+        try:
+            fd = os.open(MAINTENANCE_GATE, os.O_RDONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600,
+                         dir_fd=store._root_fd)
+            break
+        except FileExistsError:
+            pass
     try:
         _flock_within(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH, wait)
         yield

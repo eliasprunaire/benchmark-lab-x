@@ -444,6 +444,29 @@ class PrivacyTests(unittest.TestCase):
             with maintenance_gate(other), worker_lock(other, shared=True):
                 pass
 
+    def test_porte_de_maintenance_tient_une_premiere_rafale_concurrente(self):
+        """La première rafale crée `maintenance.lock` : sous macOS, `O_CREAT` concurrent rendait ENOENT"""
+        from benchmark.runtime import MAINTENANCE_GATE, maintenance_gate
+        errors = []
+        for _ in range(20):
+            (self.data / MAINTENANCE_GATE).unlink(missing_ok=True)
+            start = threading.Barrier(64)
+
+            def take():
+                start.wait()
+                try:
+                    with maintenance_gate(self.store):
+                        pass
+                except OSError as error:
+                    errors.append(type(error).__name__)
+
+            threads = [threading.Thread(target=take) for _ in range(64)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(10)
+        self.assertEqual([], errors)
+
 
 class PurgeCommandTests(unittest.TestCase):
     """Contrat de sortie de `purge-privacy`, seul point de contact avec l'ordonnanceur"""
