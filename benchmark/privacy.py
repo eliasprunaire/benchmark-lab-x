@@ -285,6 +285,21 @@ def authorize_dossier(connection, session_id, dossier_id, current=None):
         raise Gone('Ce cas d’usage n’est plus accessible sur le serveur')
 
 
+def extend_activity(connection, session_id, dossier_id=None, current=None):
+    """Prolonge seulement les échéances encore ouvertes, sans lever
+
+    Jointe à une écriture déjà autorisée, elle ne doit ni l'annuler ni rouvrir un accès échu
+    """
+    current = current or now()
+    at = current.isoformat()
+    if dossier_id is not None:
+        connection.execute("UPDATE s7_dossiers SET last_activity_at=?,expires_at=? "
+                           "WHERE dossier_id=? AND session_id=? AND state='ACTIVE' AND expires_at>?",
+                           (at, (current + DOSSIER_LIFETIME).isoformat(), dossier_id, session_id, at))
+    connection.execute('UPDATE s7_sessions SET last_activity_at=?,expires_at=? WHERE session_id=? AND expires_at>?',
+                       (at, (current + SESSION_LIFETIME).isoformat(), session_id, at))
+
+
 def activity(store, session_id, dossier_id=None, *, current=None):
     connection = store._connection_checked()
     current = current or now()

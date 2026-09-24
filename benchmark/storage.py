@@ -8,8 +8,10 @@ Each extension has its own structure identity; no implicit migration is performe
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, localcontext, MAX_EMAX, MIN_EMIN
@@ -283,11 +285,18 @@ def _receipt(value, cost):
     return _strict_json(value), _strict_json(cost)
 
 
+# Écriture jointe à chaque transaction d'écriture du contexte courant, juste avant son COMMIT
+before_commit: ContextVar[Callable[[sqlite3.Connection], object] | None] = ContextVar('before_commit', default=None)
+
+
 @contextmanager
 def _transaction(connection, *, write=False):
     connection.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
     try:
         yield
+        joined = before_commit.get() if write else None
+        if joined is not None:
+            joined(connection)
         connection.execute('COMMIT')
     except BaseException:
         if connection.in_transaction:

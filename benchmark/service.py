@@ -13,8 +13,9 @@ au démarrage. Quand tous travaillent, la connexion suivante est fermée aussit�
 attente derrière `RELAY_BUDGET_SECONDS` ; `executor_health` peut alors échouer et `/readyz`
 répondre 503. Les écritures restent sérialisées par SQLite : une écriture concurrente attend le
 délai d'occupation de 5 secondes, puis échoue en `SQLITE_BUSY` plutôt que d'attendre davantage, et
-la frontière la rend en 500. Le cas le plus long est `preparation.submit`, qui tient sa transaction
-d'écriture pendant l'échange fournisseur. Le relais ne borne que son propre côté : la résolution
+la frontière la rend en 500. `preparation.submit` construit le corps sortant dans sa transaction
+d'écriture (`transport.prepare`, local, sans réseau) ; l'appel fournisseur part ensuite dans
+`preparation.execute`, hors de cette transaction. Le relais ne borne que son propre côté : la résolution
 DNS du fournisseur, faite dans l'exécuteur et non interruptible, consomme le temps de l'appel
 sans être majorée ici, donc `RELAY_BUDGET_SECONDS` n'est pas une garantie de durée totale de
 bout en bout. Côté exécuteur, la lecture de la requête et l'écriture de la réponse gardent un
@@ -25,9 +26,10 @@ Frontière d'erreurs. `executor_result` valide l'enveloppe et le type de ses cha
 acheminement : une enveloppe fautive vaut 400, un refus reste 403 ou 409, une validation de
 domaine reste 400, et une défaillance interne (stockage, programmation, entrée-sortie, santé)
 répond 500 sans message d'exception, sans trace, sans requête ni secret. Un verrou de stockage occupé
-n'y fait pas exception : `SQLITE_BUSY` reste un 500, parce qu'une requête enchaîne parfois deux
-transactions d'écriture, `preparation.submit` puis `privacy.activity`, et que la seconde peut se
-refuser alors que la première est commise. Annoncer un refus y perdrait un dossier déjà créé. Le verrou
+n'y fait pas exception : `SQLITE_BUSY` reste un 500, parce qu'une requête enchaîne parfois plusieurs
+transactions d'écriture, comme `provider_access.import_key` (intention, puis clé), et que la dernière
+peut se refuser alors que la première est commise. Annoncer un refus y perdrait un effet déjà engagé.
+L'activité, elle, est écrite dans la transaction de l'effet (`web_api._activity_with_effect`). Le verrou
 de travail, lui, se prend avant tout acheminement : quand une maintenance (purge, sauvegarde) le tient
 ou que la purge a fermé sa porte, la requête répond 503 `MAINTENANCE` sans avoir été traitée. Côté client,
 `preparation_request` traite une trame ou une réponse d'exécuteur illisible en
@@ -347,6 +349,13 @@ def _envelope(raw):
     return message
 
 
+def _decoration_skipped(message, error):
+    """Après un POST traité, une lecture de décoration illisible ne dément pas l'effet rendu par `dispatch`"""
+    if message['method'] != 'POST':
+        raise error
+    logging.getLogger(__name__).warning('EXECUTOR_DECORATION_SKIPPED %s', type(error).__name__)
+
+
 def _internal_result(error, code):
     """Journalise un code de diagnostic sûr : ni message d'exception, ni trace, ni requête"""
     logging.getLogger(__name__).error('EXECUTOR_INTERNAL %s %s', code, type(error).__name__)
@@ -595,6 +604,8 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                             value['personal_access'] = provider_access.status_only(store, session_id)
                         except preparation.Denied:
                             pass
+                        except (sqlite3.Error, SchemaError) as error:
+                            _decoration_skipped(message, error)
                 if isinstance(start, dict):
                     if 'model_probe' in start:
                         with probe_guard:
@@ -627,7 +638,11 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                 elif start:
                     threading.Thread(target=_retention_worker, args=(data, value.get('dossier_id'), preparation.execute, data, start, active_transport), daemon=True).start()
                 if isinstance(value, dict) and value.get('kind') == 'configurations':
-                    session_id, _, _ = preparation.session(store, message['token'])
+                    try:
+                        session_id, _, _ = preparation.session(store, message['token'])
+                    except (sqlite3.Error, SchemaError) as error:
+                        _decoration_skipped(message, error)
+                        session_id = None
                     with probe_guard:
                         job = probe_jobs.get(session_id)
                     if job is not None and job['dossier_id'] == value['dossier_id']:

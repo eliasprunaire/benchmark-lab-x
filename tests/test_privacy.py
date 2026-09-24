@@ -69,7 +69,7 @@ class PrivacyTests(unittest.TestCase):
 
     def dossier(self, name='private-case', at=NOW):
         with patch.object(privacy, 'now', return_value=at):
-            session, _, _ = preparation.session(self.store, None, create=True)
+            session, _, self.token = preparation.session(self.store, None, create=True)
             budget = 'personal-preparation-' + session
             self.store.create_budget(budget, '100', 'TEST')
             preparation.admit(self.store, dict(authority_id='TEST_ONLY', budget_id=budget,
@@ -100,6 +100,143 @@ class PrivacyTests(unittest.TestCase):
         with patch.object(privacy, 'now', return_value=NOW + timedelta(days=7)):
             with self.assertRaises(privacy.Gone):
                 preparation.view(self.store, session, 'private-case')
+
+    def test_ecriture_concurrente_apres_l_effet_ne_dement_pas_l_action_enregistree(self):
+        import json
+        import sqlite3
+        from benchmark import service
+        self.dossier()
+        later = NOW + timedelta(days=3)
+        blocker = sqlite3.connect(self.data / 'metadata.sqlite3', isolation_level=None, timeout=0)
+        self.addCleanup(blocker.close)
+        submit = preparation.submit
+
+        def submit_then_lock(*args, **kwargs):
+            # Un autre écrivain prend la base dès que l'effet est commis
+            result = submit(*args, **kwargs)
+            blocker.execute('BEGIN IMMEDIATE')
+            return result
+
+        def handle(message):
+            code, value, _, _ = web_api.dispatch(self.store, message['method'], message['path'], message['token'],
+                                                 message['body'], 'a' * 40, True)
+            return {'status': code, 'value': value}
+        with patch.object(privacy, 'now', return_value=later):
+            _, csrf, _ = preparation.session(self.store, self.token)
+            raw = json.dumps({'method': 'POST', 'path': '/preparation/dossiers/private-case/messages', 'token': self.token,
+                              'body': {'csrf_token': csrf, 'action_id': 'clarify', 'revision': 2, 'kind': 'clarify',
+                                       'message': 'Préciser le contexte fictif', 'source_sha256': 'c' * 64}}).encode() + b'\n'
+            with patch.object(preparation, 'submit', submit_then_lock), \
+                    patch.object(preparation, '_now', return_value=datetime.now(timezone.utc) + timedelta(hours=1)):
+                try:
+                    response = service.executor_result(raw, None, handle)
+                finally:
+                    if blocker.in_transaction:
+                        blocker.execute('ROLLBACK')
+        self.assertEqual(202, response['status'], response['value'])
+        self.assertEqual(1, self.store._connection.execute(
+            "SELECT count(*) FROM s2_actions WHERE dossier_id='private-case' AND action_id='clarify'").fetchone()[0])
+        # L'effet et ses échéances partagent la même transaction
+        self.assertEqual(((later + privacy.SESSION_LIFETIME).isoformat(), (later + privacy.DOSSIER_LIFETIME).isoformat()),
+                         self.store._connection.execute(
+                             "SELECT s.expires_at,d.expires_at FROM s7_sessions s JOIN s7_dossiers d USING(session_id) "
+                             "WHERE d.dossier_id='private-case'").fetchone())
+
+    def test_lecture_bloquee_apres_l_effet_rend_l_effet_et_son_travail(self):
+        import sqlite3
+        self.dossier()
+        later = NOW + timedelta(days=3)
+        blocker = sqlite3.connect(self.data / 'metadata.sqlite3', isolation_level=None, timeout=0)
+        self.addCleanup(blocker.close)
+        self.store._connection.execute('PRAGMA busy_timeout=50')
+        submit = preparation.submit
+
+        def submit_then_lock(*args, **kwargs):
+            # Un autre écrivain tient la base en exclusif : même les lectures attendent
+            result = submit(*args, **kwargs)
+            blocker.execute('BEGIN EXCLUSIVE')
+            return result
+        with patch.object(privacy, 'now', return_value=later):
+            _, csrf, _ = preparation.session(self.store, self.token)
+            with patch.object(preparation, 'submit', submit_then_lock), \
+                    patch.object(preparation, '_now', return_value=datetime.now(timezone.utc) + timedelta(hours=1)):
+                try:
+                    code, value, _, work = web_api.dispatch(self.store, 'POST', '/preparation/dossiers/private-case/messages',
+                        self.token, {'csrf_token': csrf, 'action_id': 'clarify', 'revision': 2, 'kind': 'clarify',
+                                     'message': 'Préciser le contexte fictif', 'source_sha256': 'd' * 64}, 'a' * 40, True)
+                finally:
+                    if blocker.in_transaction:
+                        blocker.execute('ROLLBACK')
+        self.assertEqual((202, value['operation_id']), (code, work))
+        self.assertNotIn('privacy', value)
+        self.assertEqual(1, self.store._connection.execute(
+            "SELECT count(*) FROM s2_actions WHERE dossier_id='private-case' AND action_id='clarify'").fetchone()[0])
+
+    def test_executeur_lance_la_preparation_malgre_une_lecture_bloquee_apres_l_effet(self):
+        import sqlite3
+        from benchmark import service
+        self.dossier()
+        later = NOW + timedelta(days=3)
+        blocker = sqlite3.connect(self.data / 'metadata.sqlite3', isolation_level=None, timeout=0, check_same_thread=False)
+        self.addCleanup(blocker.close)
+        submit, dispatch, servers, ready = preparation.submit, web_api.dispatch, [], threading.Event()
+
+        def submit_then_lock(*args, **kwargs):
+            result = submit(*args, **kwargs)
+            blocker.execute('BEGIN EXCLUSIVE')
+            return result
+
+        def dispatch_then_release(*args, **kwargs):
+            # Verrou rendu avant le lancement du travail : seules les lectures de décoration l'ont subi
+            try:
+                return dispatch(*args, **kwargs)
+            finally:
+                if blocker.in_transaction:
+                    blocker.execute('ROLLBACK')
+
+        def run(server):
+            servers.append(server)
+            ready.set()
+            server.serve_forever(poll_interval=.01)
+        sock = self.data.parent / 'executor.sock'
+        with patch.object(privacy, 'now', return_value=later), patch.object(service, 'run', run), \
+                patch.object(preparation, 'submit', submit_then_lock), patch.object(web_api, 'dispatch', dispatch_then_release), \
+                patch.object(preparation, '_now', return_value=datetime.now(timezone.utc) + timedelta(hours=1)):
+            _, csrf, _ = preparation.session(self.store, self.token)
+            authority = preparation.admission(self.store)
+            worker = threading.Thread(target=service.serve_executor, args=(self.data, sock, 'a' * 40),
+                                      kwargs=dict(transport=lambda op, request: response_for(op)))
+            worker.start()
+            try:
+                self.assertTrue(ready.wait(5))
+                preparation.admit(self.store, authority)
+                response = service.preparation_request(sock, 'POST', '/preparation/dossiers/private-case/messages',
+                    self.token, {'csrf_token': csrf, 'action_id': 'clarify', 'revision': 2, 'kind': 'clarify',
+                                 'message': 'Préciser le contexte fictif', 'source_sha256': 'e' * 64})
+                self.assertEqual(202, response['status'], response['value'])
+                operation = response['value']['operation_id']
+                deadline = time.monotonic() + 10
+                while {o['operation_id']: o['state'] for o in self.store.inspect_operations()}[operation] != 'RECEIVED':
+                    self.assertLess(time.monotonic(), deadline, 'Préparation jamais lancée')
+                    time.sleep(.02)
+            finally:
+                if servers:
+                    servers[0].shutdown()
+                worker.join(10)
+                self.assertFalse(worker.is_alive())
+
+    def test_activite_jointe_n_annule_pas_l_ecriture_et_ne_ressuscite_pas_une_echeance(self):
+        session, _ = self.dossier()
+        connection = self.store._connection
+        before = connection.execute("SELECT expires_at,content_version FROM s7_dossiers WHERE dossier_id='private-case'").fetchone()
+        # Le dossier expire entre l'autorisation de l'effet et le COMMIT d'une écriture de journalisation
+        with patch.object(privacy, 'now', return_value=NOW + privacy.DOSSIER_LIFETIME):
+            with web_api._activity_with_effect(self.store, session, 'private-case') as joined:
+                with storage._transaction(connection, write=True):
+                    connection.execute("UPDATE s7_dossiers SET content_version=content_version+1 WHERE dossier_id='private-case'")
+        self.assertEqual([connection], joined)
+        self.assertEqual((before[0], before[1] + 1), connection.execute(
+            "SELECT expires_at,content_version FROM s7_dossiers WHERE dossier_id='private-case'").fetchone())
 
     def test_premier_get_n_ecrase_pas_un_cookie_absent_sur_navigation_externe(self):
         status, value, cookie, work = web_api.dispatch(self.store, 'GET', '/preparation', None,
