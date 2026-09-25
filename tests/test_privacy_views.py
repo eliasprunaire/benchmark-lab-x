@@ -190,6 +190,19 @@ class LegalViewsTests(unittest.TestCase):
         self.assertIn('AGPL-3.0-only', legal)
         self.assertIn('href="https://github.com/eliasprunaire/benchmark-lab-x"', legal)
 
+    def test_local_history_is_described_as_delivered_by_bx_10(self):
+        privacy = views.render({'kind': 'legal', 'path': '/confidentialite'}, '').decode()
+        self.assertNotIn('N’ÉCRIRE QU’APRÈS', privacy)
+        self.assertNotIn("N'ÉCRIRE QU'APRÈS", privacy)
+        row = privacy[privacy.index('Historique local dans votre navigateur'):]
+        self.assertIn('Votre consentement (art. 6.1.a)', row[:row.index('</tr>')])
+        for term in ('désactivé par défaut', 'deux effets', 'contribution pour cet exemple',
+                     'votre besoin, vos messages et les révisions', 'que la contribution exclut',
+                     'retire la copie de contribution conservée sur le serveur', 'ne concerne que la contribution',
+                     'n’arrête pas l’historique local', 'restent dans ce navigateur',
+                     '<a href="/preparation/data">Mes données</a>'):
+            self.assertIn(term, privacy)
+
     def test_editorial_notes_are_not_published(self):
         pages = ''.join(views.render({'kind': 'legal', 'path': path}, '').decode() for path in LEGAL_PAGES)
         for note in ('aucune route ne les expose', 'Formulation à retenir', 'N’annoncez pas',
