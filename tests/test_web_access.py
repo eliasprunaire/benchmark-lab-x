@@ -900,11 +900,11 @@ class IndexationTests(WebServerCase):
     """Critère BX-21 : le public est indexable avec titre, description et adresse canonique ; le privé ne l'est pas"""
     public = ('/', '/mentions-legales', '/cgu', '/confidentialite')
 
-    def test_robots_txt_ferme_le_parcours_prive_et_designe_le_plan(self):
+    def test_robots_txt_laisse_lire_le_noindex_et_designe_le_plan(self):
+        # Un Disallow sur /preparation cacherait son noindex : l'adresse resterait indexable sans contenu
         status, headers, raw = self.request('GET', '/robots.txt')
         self.assertEqual((200, 'text/plain; charset=utf-8'), (status, headers['Content-Type']))
-        self.assertEqual('User-agent: *\nAllow: /preparation/style.css\nAllow: /preparation/fonts/\n'
-                         'Allow: /preparation/privacy.js\nDisallow: /preparation\nDisallow: /publications\n\n'
+        self.assertEqual('User-agent: *\nDisallow: /publications\n\n'
                          'Sitemap: https://benchmark.example/sitemap.xml\n', raw.decode())
         self.assertTrue(self.executor.requests.empty())
 
@@ -923,9 +923,6 @@ class IndexationTests(WebServerCase):
                 status, headers, raw = self.request('GET', path, headers={'Accept': 'text/html'})
                 self.assertEqual(200, status)
                 self.assertIsNone(headers.get('X-Robots-Tag'))
-                # Ressources chargées sous le Disallow : chacune doit avoir sa ligne Allow dans robots.txt
-                for resource in re.findall(r'(?:src|rel="stylesheet" href)="(/preparation/[^"]*)"', raw.decode()):
-                    self.assertIn(resource, ('/preparation/style.css', '/preparation/privacy.js'))
                 tags = Markup(raw).tags
                 self.assertRegex(re.search(r'<title>(.*)</title>', raw.decode())[1], r'\S — Bench-X$')
                 descriptions = [attrs['content'] for tag, attrs in tags if tag == 'meta' and attrs.get('name') == 'description']

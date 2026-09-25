@@ -545,9 +545,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 self.respond(200, views.render({'kind': 'home'}, ''), 'text/html; charset=utf-8')
                 return
             if self.path == '/robots.txt':
-                # Les pages publiques chargent ces trois ressources : sans elles, un moteur les rend sans style
-                rules = ('User-agent: *\nAllow: /preparation/style.css\nAllow: /preparation/fonts/\n'
-                         'Allow: /preparation/privacy.js\nDisallow: /preparation\nDisallow: /publications\n')
+                # /preparation reste lisible : un Disallow y cacherait le noindex, l'adresse resterait indexable sans contenu
+                rules = 'User-agent: *\nDisallow: /publications\n'
                 if origin:
                     rules += '\nSitemap: ' + origin + '/sitemap.xml\n'
                 self.respond(200, rules.encode(), 'text/plain; charset=utf-8')
