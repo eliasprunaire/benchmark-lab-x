@@ -314,8 +314,13 @@ class S6Regressions(unittest.TestCase):
         policy = "default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
         paths = [(self.base, 'text/html'), (self.base, 'application/json'),
                  (self.base + '/attempts/attempt-error', 'text/html'),
-                 (self.base + '/preview', 'text/html'),
-                 ('/publications/' + bundle['projection_sha256'] + '/index.html', 'text/html')]
+                 (self.base + '/preview', 'text/html')]
+        # BX-12 : la projection matérialisée ne sort par aucun chemin public
+        with self.assertRaises(HTTPError) as closed:
+            urlopen(Request(base + '/publications/' + bundle['projection_sha256'] + '/index.html',
+                            headers={'Accept': 'text/html'}), timeout=5)
+        with closed.exception as response:
+            self.assertEqual(404, response.code)
         row = next(row for row in self.compare()['rows'] if row['attempt_id'] == 'attempt-error')
         paths += [(link['href'], 'text/plain') for link in row['proof_links']]
         for path, accept in paths:

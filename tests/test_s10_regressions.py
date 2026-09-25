@@ -337,7 +337,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertNotIn('échec', summary.lower())
         self.assertNotIn('terminé', summary.lower())
 
-    def test_publication_empty_html_and_verified_bytes_keep_the_same_boundary(self):
+    def test_no_public_path_renders_a_projection_even_when_one_is_active(self):
         with tempfile.TemporaryDirectory(prefix='s10-web-') as tmp:
             public = Path(tmp).resolve()
             with socket.socket() as probe:
@@ -357,35 +357,35 @@ class S10ProofTests(unittest.TestCase):
                         if time.monotonic() >= deadline:
                             raise
                         time.sleep(.02)
-                for accept, method in [('text/html', 'GET'), ('application/json', 'GET'), ('text/html', 'HEAD')]:
-                    with self.assertRaises(HTTPError) as denied:
-                        urlopen(Request(base + '/index.html', headers={'Accept': accept}, method=method), timeout=2)
-                    with denied.exception as response:
-                        self.assertEqual(404, response.code)
-                        self.assertEqual('no-store', response.headers['Cache-Control'])
-                        raw = response.read()
-                        if method == 'HEAD':
-                            self.assertEqual(b'', raw)
-                        elif accept == 'text/html':
-                            self.assertIn('text/html', response.headers['Content-Type'])
-                            self.assertIn('Aucune publication vérifiée disponible'.encode(), raw)
-                            self.assertIn(b'href="/preparation"', raw)
-                            self.assertNotIn(b'PRIVATE_UNSELECTED', raw)
-                        else:
-                            self.assertEqual({'error': 'NO_VERIFIED_PUBLICATION'}, json.loads(raw))
-                self.assertFalse((public / 'active.json').exists())
                 bundle = r.preview(self.store, self.sid, 'fixture', 'comparison', piece_ids=[], presentation=projection)
-                pub.materialize(bundle, dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
-                    projection_sha256=bundle['projection_sha256'], catalogue=False), public)
-                with urlopen(Request(base + '/index.html', headers={'Accept': 'text/html'}), timeout=2) as response:
-                    self.assertEqual(bundle['files']['index.html'], response.read())
-                    self.assertIn('/publications/' + bundle['projection_sha256'], response.url)
-                (public / bundle['projection_sha256'] / 'index.html').write_bytes(b'UNVERIFIED_BYTES')
-                with self.assertRaises(HTTPError) as denied:
-                    urlopen(Request(base + '/index.html', headers={'Accept': 'text/html'}), timeout=2)
-                with denied.exception as response:
-                    self.assertEqual(404, response.code)
-                    self.assertNotIn(b'UNVERIFIED_BYTES', response.read())
+                identity = bundle['projection_sha256']
+                paths = ('/index.html', '/style.css', '/publications/' + identity + '/index.html',
+                         '/publications/' + identity + '/style.css')
+                # BX-12 : aucune restitution réelle n'est approuvée, aucun chemin public ne rend une projection
+                for materialized in (False, True):
+                    if materialized:
+                        pub.materialize(bundle, dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
+                            projection_sha256=identity, catalogue=False), public)
+                        self.assertEqual(bundle['files']['index.html'], pub.public_bytes(public, identity, 'index.html'))
+                        self.assertTrue((public / 'active.json').exists())
+                    for path in paths:
+                        for accept, method in [('text/html', 'GET'), ('application/json', 'GET'), ('text/html', 'HEAD')]:
+                            with self.subTest(materialized=materialized, path=path, accept=accept, method=method):
+                                with self.assertRaises(HTTPError) as denied:
+                                    urlopen(Request(base + path, headers={'Accept': accept}, method=method), timeout=2)
+                                with denied.exception as response:
+                                    self.assertEqual(404, response.code)
+                                    self.assertEqual('no-store', response.headers['Cache-Control'])
+                                    self.assertIsNone(response.headers['X-Benchmark-Publication'])
+                                    raw = response.read()
+                                    if method == 'HEAD':
+                                        self.assertEqual(b'', raw)
+                                    elif accept == 'text/html':
+                                        self.assertIn('Page introuvable'.encode(), raw)
+                                        self.assertNotIn('Projection fictive'.encode(), raw)
+                                        self.assertNotIn(b'href="/index.html"', raw)
+                                    else:
+                                        self.assertEqual({'error': 'NOT_FOUND'}, json.loads(raw))
             finally:
                 if process.is_alive():
                     process.terminate()

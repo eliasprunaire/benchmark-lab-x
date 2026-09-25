@@ -160,7 +160,7 @@ class LegalViewsTests(unittest.TestCase):
 
     def test_every_rendered_page_links_the_three_legal_pages_from_its_footer(self):
         values = [({'kind': 'home'}, False), ({'kind': 'privacy_data'}, False), ({'dossiers': []}, False),
-                  (example_view(), False), ({'kind': 'publication_unavailable'}, False),
+                  (example_view(), False),
                   ({'error': 'Échec', 'title': 'Page introuvable'}, True)]
         values += [({'kind': 'legal', 'path': path}, False) for path in LEGAL_PAGES]
         for value, error in values:

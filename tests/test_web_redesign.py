@@ -117,7 +117,8 @@ class TemplateTests(unittest.TestCase):
             home = views.render({'kind': 'home'}, '').decode()
         self.assertIn('aria-current="page">Accueil</a>', home)
         self.assertIn('href="/preparation"', home)
-        self.assertIn('href="/index.html"', home)
+        self.assertNotIn('href="/index.html"', home)
+        self.assertNotIn('Comparaisons publiées', home)
         self.assertIn('Chaque exigence compte', home)
         self.assertIn('<footer class="site">', home)
         # Sans identité de release : la révision seule, jamais le numéro cible (RULES) ; un checkout modifié

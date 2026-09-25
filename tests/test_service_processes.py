@@ -709,7 +709,7 @@ class ServiceProcessesTests(unittest.TestCase):
                         self.assertIsNone(response.headers.get('Set-Cookie'))
                         home = response.read()
                         self.assertIn(b'href="/preparation"', home)
-                        self.assertIn(b'href="/index.html"', home)
+                        self.assertNotIn(b'href="/index.html"', home)
                         self.assertNotIn(b'must never be public', home)
                     return home
 
@@ -722,14 +722,12 @@ class ServiceProcessesTests(unittest.TestCase):
                 (projection / 'publication.json').write_bytes(manifest)
                 (projection / 'index.html').write_bytes(page)
                 (public / 'active.json').write_text(json.dumps({'directory': publication}))
-                with urlopen(base + '/index.html', timeout=2) as response:
-                    self.assertEqual(page, response.read())
-                self.assertEqual(home, check_home())
-                (projection / 'index.html').write_bytes(b'tampered')
-                with self.assertRaises(HTTPError) as corrupt:
+                # BX-12 : même vérifiable, une projection active ne sort par aucun chemin public
+                with self.assertRaises(HTTPError) as closed:
                     urlopen(base + '/index.html', timeout=2)
-                self.assertEqual(404, corrupt.exception.code)
-                corrupt.exception.close()
+                self.assertEqual(404, closed.exception.code)
+                self.assertNotIn(page, closed.exception.read())
+                closed.exception.close()
                 self.assertEqual(home, check_home())
                 executor.terminate()
                 self.assertEqual(0, executor.wait(timeout=5))

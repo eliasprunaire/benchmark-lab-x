@@ -378,10 +378,13 @@ class AccessViewTests(unittest.TestCase):
                          views.date_lisible_utc('2026-09-15T12:00:00+00:00'))
 
 
-def _serve_web_logged(journal, *arguments, **options):
+def _serve_web_logged(journal, *arguments, home_size=0, **options):
     """Cible de processus : le runtime règle le journal sur INFO, cette fixture l'envoie dans un fichier"""
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s',
                         filename=journal, force=True)
+    if home_size:
+        # Un rendu assez lourd pour que l'écriture dépasse le délai du serveur
+        views.render = lambda *args, **kwargs: b'a' * home_size
     serve_web(*arguments, **options)
 
 
@@ -976,17 +979,15 @@ class RouteCanonicalizationTests(unittest.TestCase):
                  '/preparation/dossiers/<id>/evaluations/<id>/pieces/<id>'),
                 ('/preparation/dossiers/d1/archive/items/record?snapshot=s7&part=0',
                  '/preparation/dossiers/<id>/archive/items/record'),
-                ('/publications/' + 'a' * 64 + '/index.html', '/publications/<projection>/<piece>'),
                 ('/mentions-legales', '/mentions-legales'), ('/cgu', '/cgu'),
-                ('/confidentialite', '/confidentialite'),
-                ('/index.html', '/<fichier>'), ('/apercu.png', '/<fichier>')):
+                ('/confidentialite', '/confidentialite')):
             self.assertEqual(expected, canonical_route(path), path)
 
     def test_un_chemin_non_servi_ne_ressort_jamais(self):
         for path in ('', '/inconnu', '/../etc/passwd', '/preparation/dossiers/d1/',
                      '/preparation/' + 'a' * 300, '/wp-login.php?user=admin&pass=motdepasse',
-                     # Une pièce hors des trois formats servis sous /publications/
-                     '/publications/' + 'a' * 64 + '/logo.png',
+                     # BX-12 : plus aucune projection servie, ni par empreinte ni par le pointeur actif
+                     '/publications/' + 'a' * 64 + '/index.html', '/index.html', '/apercu.png',
                      # Test de proxy ouvert : la forme absolue n'est servie par aucune route
                      'http://cible-externe.example/preparation',
                      '/preparation#fragment'):
@@ -1085,25 +1086,6 @@ class AccessJournalTests(WebServerCase):
         self.assertEqual([('<inconnu>', '<inconnu>', '<abandon>')], [self.parsed(line) for line in lines])
         self.assertNotIn('saisie', lines[0])
 
-    def test_une_ecriture_interrompue_garde_une_seule_ligne(self):
-        # Le délai peut aussi expirer à l'écriture : la réponse a déjà sa ligne, ni second statut ni abandon
-        public = Path(self.temporary.name) / 'public'
-        raw = b'a' * (64 << 20)
-        manifest = json.dumps({'files': {'grand.txt': hashlib.sha256(raw).hexdigest()}}).encode()
-        directory = hashlib.sha256(manifest).hexdigest()
-        (public / directory).mkdir()
-        (public / directory / 'publication.json').write_bytes(manifest)
-        (public / directory / 'grand.txt').write_bytes(raw)
-        (public / 'active.json').write_text(json.dumps({'directory': directory}))
-        start = len(self.lines())
-        with socket.create_connection(('127.0.0.1', self.port), 10) as client:
-            client.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
-            client.sendall(b'GET /grand.txt HTTP/1.0\r\n\r\n')
-            # Au-delà des 2 s du serveur : un second `respond` aurait déjà écrit sa ligne
-            time.sleep(3)
-        time.sleep(.5)
-        self.assertEqual([('GET', '/<fichier>', '200')], [self.parsed(line) for line in self.lines()[start:]])
-
     def test_un_corps_muet_est_un_abandon_et_non_une_panne(self):
         # Le délai de lecture du corps venait de l'appelant : un 503 accuserait l'exécuteur
         start = len(self.lines())
@@ -1132,6 +1114,24 @@ class AccessJournalTests(WebServerCase):
         if match is None:
             raise AssertionError('Ligne de journal hors contrat : ' + line)
         return match.groups()
+
+
+class InterruptedWriteJournalTests(WebServerCase):
+    journal_expected = True
+    web_options = {'home_size': 64 << 20}
+    lines = AccessJournalTests.lines
+    parsed = staticmethod(AccessJournalTests.parsed)
+
+    def test_une_ecriture_interrompue_garde_une_seule_ligne(self):
+        # Le délai peut aussi expirer à l'écriture : la réponse a déjà sa ligne, ni second statut ni abandon
+        start = len(self.lines())
+        with socket.create_connection(('127.0.0.1', self.port), 10) as client:
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+            client.sendall(b'GET / HTTP/1.0\r\n\r\n')
+            # Au-delà des 2 s du serveur : un second `respond` aurait déjà écrit sa ligne
+            time.sleep(3)
+        time.sleep(.5)
+        self.assertEqual([('GET', '/', '200')], [self.parsed(line) for line in self.lines()[start:]])
 
 
 if __name__ == '__main__':

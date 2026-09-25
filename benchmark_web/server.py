@@ -1,4 +1,4 @@
-"""Serveur HTTP public : formulaires, cookies, rendu HTML et projections approuvées.
+"""Serveur HTTP public : formulaires, cookies et rendu HTML.
 
 Il consomme les vues structurées de l'exécuteur par socket Unix et n'accède ni au
 stockage, ni aux secrets, ni aux fournisseurs.
@@ -27,10 +27,7 @@ from benchmark.storage import _unique_object
 from . import views
 
 
-_ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*',
-                  '<projection>': r'[0-9a-f]{64}', '<police>': r'[A-Za-z]+',
-                  '<piece>': r'[A-Za-z0-9_-]+\.(?:html|css|txt)',
-                  '<fichier>': r'[A-Za-z0-9_-]+\.(?:html|css|png|jpg|txt|json)'}
+_ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*', '<police>': r'[A-Za-z]+'}
 
 # Motifs servis, essayés dans l'ordre : un chemin absent de cette liste se journalise `<inconnu>`
 _ROUTE_PATTERNS = (
@@ -58,8 +55,6 @@ _ROUTE_PATTERNS = (
     '/preparation/dossiers/<id>/campaigns/<id>/configurations',
     '/preparation/dossiers/<id>/campaigns/<id>/attempts/<id>',
     '/preparation/dossiers/<id>/evaluations/<id>/pieces/<id>',
-    '/publications/<projection>/<piece>',
-    '/<fichier>',
 )
 _ROUTES = tuple((re.compile(re.sub('<[a-z]+>', lambda marker: _ROUTE_MARKERS[marker[0]], re.escape(pattern))), pattern)
                 for pattern in _ROUTE_PATTERNS)
@@ -170,8 +165,9 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
 
     Le journal d'accès est émis au niveau INFO et n'est pas configuré ici : l'appelant
     règle `logging`, comme le fait `runtime.main`, sinon les lignes disparaissent.
+    `public` reste accepté pour le contrat CLI : aucune projection n'est servie tant
+    qu'aucune restitution réelle n'est approuvée (BX-12).
     """
-    public = Path(public)
     callback_url = _public_callback_url(public_url)
     # Deux questions distinctes : qui relaie le public (BX-15) et qui supervise ; vides, rien n'est ouvert
     trusted_proxies, readiness_clients = _addresses(trusted_proxies), _addresses(readiness_clients)
@@ -524,7 +520,6 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             self.do_GET()
 
         def do_GET(self):
-            from benchmark import publications
             assets = {'/bench-x.svg': ('bench-x.svg', 'image/svg+xml'),
                       '/favicon.ico': ('favicon.ico', 'image/vnd.microsoft.icon')}
             if self.path in assets:
@@ -568,60 +563,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                         body['version'] = version
                     self.respond(503, body)
                 return
-            if self.path.startswith('/publications/'):
-                match = re.fullmatch(r'/publications/([0-9a-f]{64})/([A-Za-z0-9_-]+\.(?:html|css|txt))', self.path)
-                if not match:
-                    self.not_found()
-                    return
-                identity, name = match.groups()
-                try:
-                    raw = publications.public_bytes(public, identity, name)
-                    media = {'.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
-                             '.txt': 'text/plain; charset=utf-8'}[Path(name).suffix]
-                    self.respond(200, raw, media, {'X-Benchmark-Publication': 'APPROVED_FICTIONAL_S6',
-                                                 'X-Benchmark-Projection-SHA256': identity})
-                except (OSError, ValueError, KeyError, TypeError):
-                    self.respond(404, {'error': 'NO_VERIFIED_PUBLICATION'})
-                return
-            # Seuls les fichiers d'une projection approuvée sont consultables
-            name = self.path.removeprefix('/')
-            if not re.fullmatch(r'[a-zA-Z0-9_-]+\.(html|css|png|jpg|txt|json)', name):
-                self.not_found()
-                return
-            try:
-                if (public / 'active.json').is_symlink():
-                    raise ValueError('Pointeur lié interdit')
-                publication = json.loads((public / 'active.json').read_text())['directory']
-                if not isinstance(publication, str) or not re.fullmatch('[0-9a-f]{64}', publication):
-                    raise ValueError('Projection invalide')
-                resolved = public / publication
-                if resolved.is_symlink():
-                    raise ValueError('Projection liée interdite')
-                if (resolved / 'publication.json').is_symlink():
-                    raise ValueError('Manifeste lié interdit')
-                manifest_bytes = (resolved / 'publication.json').read_bytes()
-                if sha256(manifest_bytes).hexdigest() != publication:
-                    raise ValueError('Manifeste public altéré')
-                manifest = json.loads(manifest_bytes)
-                if manifest.get('schema_version') == publications.SCHEMA:
-                    publications.public_bytes(public, publication, name)
-                    self.respond(303, b'', 'text/plain; charset=utf-8',
-                                 {'Location': '/publications/' + publication + '/' + name})
-                    return
-                expected = manifest['files'][name]
-                path = resolved / name
-                if path.is_symlink() or not path.is_file():
-                    raise ValueError('Pièce publique invalide')
-                raw = path.read_bytes()
-                if sha256(raw).hexdigest() != expected:
-                    raise ValueError('Projection altérée')
-                media_type = {'.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg'}[path.suffix]
-                self.respond(200, raw, media_type)
-            except (OSError, ValueError, KeyError):
-                if name == 'index.html' and 'text/html' in self.headers.get('Accept', '') and 'application/json' not in self.headers.get('Accept', ''):
-                    self.respond(404, views.render({'kind': 'publication_unavailable'}, ''), 'text/html; charset=utf-8')
-                else:
-                    self.respond(404, {'error': 'NO_VERIFIED_PUBLICATION'})
+            self.not_found()
 
     # Le proxy termine TLS ; ses en-têtes ne comptent que depuis une adresse --trusted-proxy
     with ThreadingHTTPServer((address, port), Handler) as server:
