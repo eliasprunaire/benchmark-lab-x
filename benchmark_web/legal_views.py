@@ -236,8 +236,13 @@ CONFIDENTIALITE = (
     'à jour figure en tête. En cas de changement substantiel affectant une finalité fondée sur votre consentement, '
     'un nouveau choix vous sera demandé.</p></section>')
 
+# Chemin : titre, description pour les moteurs de recherche, contenu
 LEGAL_PAGES = {
-    '/mentions-legales': ('Mentions légales', MENTIONS_LEGALES),
-    '/cgu': ('Conditions générales d’utilisation', CGU),
-    '/confidentialite': ('Politique de confidentialité', CONFIDENTIALITE),
+    '/mentions-legales': ('Mentions légales', 'Éditeur, hébergeur, nature du service et code source de Bench-X, '
+                          'logiciel libre sous licence AGPL-3.0-only.', MENTIONS_LEGALES),
+    '/cgu': ('Conditions générales d’utilisation', 'Conditions d’utilisation de Bench-X : ce que le service fait et ne '
+             'fait pas, accès sans compte, vos engagements et publication des résultats.', CGU),
+    '/confidentialite': ('Politique de confidentialité', 'Données traitées par Bench-X, finalités et bases légales, '
+                         'destinataires, transferts hors Union européenne, cookies et exercice de vos droits.',
+                         CONFIDENTIALITE),
 }

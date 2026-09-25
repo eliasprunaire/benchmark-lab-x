@@ -25,6 +25,14 @@ SOURCE_SHA = ''
 # Fixé par `serve_web` depuis `release.json` : sans lui, le pied de page ne donne que la révision
 RELEASE_VERSION = None
 REPOSITORY_URL = 'https://github.com/eliasprunaire/benchmark-lab-x'
+# Fixé par `serve_web` depuis `--public-url` : sans origine publique, aucune adresse canonique ni plan du site
+PUBLIC_URL = None
+# Pages indexables et leur description ; une page légale y entre par `LEGAL_PAGES` (BX-21)
+PUBLIC_PAGES = {
+    '/': 'Décrivez une tâche de votre travail : Bench-X prépare avec vous un exemple entièrement inventé, puis '
+         'compare les modèles dans les mêmes conditions, coût observé compris.',
+    **{path: description for path, (_, description, _) in LEGAL_PAGES.items()},
+}
 PREPARATION_PROGRESS_SCRIPT = """(() => {
   const destination = document.getElementById('campaign-followup')?.dataset?.resultsHref;
   if (destination) { location.replace(destination); return; }
@@ -259,7 +267,7 @@ def render(value, csrf, path='/preparation', *, error=False):
     elif value.get('kind') == 'session_bootstrap':
         title, content = render_bootstrap(value)
     elif value.get('kind') == 'legal':
-        title, content = LEGAL_PAGES[value['path']]
+        title, _, content = LEGAL_PAGES[value['path']]
     elif value.get('kind') == 'privacy_data':
         title, content = render_privacy_page(value, csrf)
     elif value.get('kind') == 'access':
@@ -614,6 +622,12 @@ def render(value, csrf, path='/preparation', *, error=False):
         identity = '<span>' + text(('Version : v' + RELEASE_VERSION + ' (' + SOURCE_SHA[:7] + ')') if RELEASE_VERSION
                                    else 'Révision : ' + SOURCE_SHA[:7]) + '</span>'
     identity += '<a href="' + text(REPOSITORY_URL + ('/tree/' + SOURCE_SHA if SOURCE_SHA and RELEASE_VERSION else '')) + '">Code source</a>'
+    page = None if error else {'home': '/', 'legal': value.get('path')}.get(value.get('kind'))
+    head = ''
+    if page in PUBLIC_PAGES:
+        head = '<meta name="description" content="' + text(PUBLIC_PAGES[page]) + '">'
+        if PUBLIC_URL:
+            head += '<link rel="canonical" href="' + text(PUBLIC_URL + page) + '">'
     return (template.replace('{{title}}', text(title)).replace('{{body_class}}', body_class).replace('{{menu}}', menu)
             .replace('{{navigation}}', navigation).replace('{{layout_class}}', 'layout' if navigation else '')
-            .replace('{{identity}}', identity).replace('{{content}}', content).encode('utf-8'))
+            .replace('{{identity}}', identity).replace('{{head}}', head).replace('{{content}}', content).encode('utf-8'))
