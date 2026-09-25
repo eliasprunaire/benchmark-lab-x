@@ -16,6 +16,7 @@ import time
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlencode
+from xml.etree import ElementTree
 
 from benchmark.storage import _strict_json
 from benchmark_web import views
@@ -392,6 +393,7 @@ class WebServerCase(unittest.TestCase):
     """Serveur web réel devant un exécuteur fictif, sur socket Unix"""
     journal_expected = False
     web_options = {}
+    public_url = 'https://benchmark.example'
 
     def request(self, method, path, body=None, headers=None):
         connection = HTTPConnection('127.0.0.1', self.port, timeout=3)
@@ -410,8 +412,7 @@ class WebServerCase(unittest.TestCase):
         self.executor = FakeExecutor(root / 'executor.sock')
         self.executor.__enter__()
         self.port = _port()
-        arguments = ('127.0.0.1', self.port, public, self.executor.path, 'a' * 40,
-                     'https://benchmark.example')
+        arguments = ('127.0.0.1', self.port, public, self.executor.path, 'a' * 40, self.public_url)
         if self.journal_expected:
             self.journal = root / 'acces.log'
             target, arguments = _serve_web_logged, (str(self.journal),) + arguments
@@ -893,6 +894,79 @@ class ProbeTests(WebServerCase):
                 self.assertEqual('/confidentialite', headers['Location'])
                 self.assertIsNone(headers.get('Set-Cookie'))
         self.assertTrue(self.executor.requests.empty())
+
+
+class IndexationTests(WebServerCase):
+    """Critère BX-21 : le public est indexable avec titre, description et adresse canonique ; le privé ne l'est pas"""
+    public = ('/', '/mentions-legales', '/cgu', '/confidentialite')
+
+    def test_robots_txt_ferme_le_parcours_prive_et_designe_le_plan(self):
+        status, headers, raw = self.request('GET', '/robots.txt')
+        self.assertEqual((200, 'text/plain; charset=utf-8'), (status, headers['Content-Type']))
+        self.assertEqual('User-agent: *\nAllow: /preparation/style.css\nAllow: /preparation/fonts/\n'
+                         'Allow: /preparation/privacy.js\nDisallow: /preparation\nDisallow: /publications\n\n'
+                         'Sitemap: https://benchmark.example/sitemap.xml\n', raw.decode())
+        self.assertTrue(self.executor.requests.empty())
+
+    def test_sitemap_limite_aux_pages_publiques_reelles(self):
+        status, headers, raw = self.request('GET', '/sitemap.xml')
+        self.assertEqual((200, 'application/xml; charset=utf-8'), (status, headers['Content-Type']))
+        root = ElementTree.fromstring(raw)
+        namespace = '{http://www.sitemaps.org/schemas/sitemap/0.9}'
+        self.assertEqual(namespace + 'urlset', root.tag)
+        self.assertEqual(['https://benchmark.example' + path for path in self.public],
+                         [loc.text for loc in root.iter(namespace + 'loc')])
+
+    def test_chaque_page_publique_porte_titre_description_et_adresse_canonique(self):
+        for path in self.public:
+            with self.subTest(path=path):
+                status, headers, raw = self.request('GET', path, headers={'Accept': 'text/html'})
+                self.assertEqual(200, status)
+                self.assertIsNone(headers.get('X-Robots-Tag'))
+                # Ressources chargées sous le Disallow : chacune doit avoir sa ligne Allow dans robots.txt
+                for resource in re.findall(r'(?:src|rel="stylesheet" href)="(/preparation/[^"]*)"', raw.decode()):
+                    self.assertIn(resource, ('/preparation/style.css', '/preparation/privacy.js'))
+                tags = Markup(raw).tags
+                self.assertRegex(re.search(r'<title>(.*)</title>', raw.decode())[1], r'\S — Bench-X$')
+                descriptions = [attrs['content'] for tag, attrs in tags if tag == 'meta' and attrs.get('name') == 'description']
+                self.assertEqual(1, len(descriptions))
+                self.assertGreaterEqual(len(descriptions[0]), 50)
+                self.assertEqual(['https://benchmark.example' + path],
+                                 [attrs['href'] for tag, attrs in tags if tag == 'link' and attrs.get('rel') == 'canonical'])
+
+    def test_espace_prive_et_erreurs_portent_noindex(self):
+        for path in ('/preparation', '/preparation/data', '/preparation/access', '/preparation/dossiers/d1',
+                     '/preparation/style.css', '/publications', '/inconnue'):
+            for accept in ('text/html', 'application/json'):
+                with self.subTest(path=path, accept=accept):
+                    status, headers, raw = self.request('GET', path, headers={'Accept': accept})
+                    self.assertEqual('noindex', headers['X-Robots-Tag'])
+                    if headers['Content-Type'].startswith('text/html'):
+                        tags = Markup(raw).tags
+                        self.assertFalse([attrs for tag, attrs in tags if tag == 'link' and attrs.get('rel') == 'canonical'])
+                        self.assertFalse([attrs for tag, attrs in tags if tag == 'meta' and attrs.get('name') == 'description'])
+
+    def test_icones_publiques_sans_noindex(self):
+        for path in ('/favicon.ico', '/bench-x.svg', '/robots.txt', '/sitemap.xml'):
+            with self.subTest(path=path):
+                status, headers, _ = self.request('GET', path)
+                self.assertEqual((200, None), (status, headers.get('X-Robots-Tag')))
+
+    def test_sans_origine_publique_aucune_adresse_canonique(self):
+        # Une adresse locale donnée pour canonique désignerait une page que personne d'autre ne peut ouvrir
+        with patch.object(views, 'PUBLIC_URL', None):
+            tags = Markup(views.render({'kind': 'home'}, '')).tags
+        self.assertFalse([attrs for tag, attrs in tags if tag == 'link' and attrs.get('rel') == 'canonical'])
+        self.assertEqual(1, len([attrs for tag, attrs in tags if tag == 'meta' and attrs.get('name') == 'description']))
+
+
+class LocalIndexationTests(WebServerCase):
+    """Sans origine publique, aucune adresse absolue n'est inventée"""
+    public_url = None
+
+    def test_ni_plan_du_site_ni_ligne_sitemap(self):
+        self.assertNotIn(b'Sitemap', self.request('GET', '/robots.txt')[2])
+        self.assertEqual(404, self.request('GET', '/sitemap.xml')[0])
 
 
 class ClosedProbeTests(WebServerCase):

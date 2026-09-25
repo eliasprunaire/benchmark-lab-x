@@ -354,7 +354,7 @@ def main(argv=None):
     parser.add_argument('--destination', type=Path)
     parser.add_argument('--socket', type=Path)
     parser.add_argument('--public', type=Path)
-    parser.add_argument('--public-url', help='Origine publique HTTPS utilisée pour le retour OpenRouter')
+    parser.add_argument('--public-url', help='Origine publique HTTPS : retour OpenRouter, adresses canoniques et plan du site')
     parser.add_argument('--presentation', default='benchmark_web.projection', metavar='MODULE',
                         help='Module de présentation injecté dans l’exécuteur pour les projections ; son paquet fournit le serveur web')
     parser.add_argument('--listen', default='127.0.0.1')

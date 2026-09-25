@@ -31,7 +31,7 @@ _ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*', '<poli
 
 # Motifs servis, essayés dans l'ordre : un chemin absent de cette liste se journalise `<inconnu>`
 _ROUTE_PATTERNS = (
-    '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico',
+    '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
     '/mentions-legales', '/cgu', '/confidentialite',
     '/preparation', '/preparation/privacy.js', '/preparation/style.css',
     '/preparation/fonts/<police>.woff2',
@@ -175,6 +175,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
         raise ValueError('Un proxy de confiance ne peut pas voir /readyz : tout le trafic public porte son adresse')
     views.SOURCE_SHA = '' if source == 'inconnu' else source or ''
     views.RELEASE_VERSION = version
+    origin = public_url.rstrip('/') if public_url else None
+    views.PUBLIC_URL = origin
     source_salt = secrets.token_bytes(32)
 
     class Handler(BaseHTTPRequestHandler):
@@ -230,6 +232,9 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 policy += "; connect-src 'self'"
             self.send_header('Content-Security-Policy', policy)
             self.send_header('Referrer-Policy', 'no-referrer')
+            # Espace privé et erreurs seulement : les icônes restent lisibles pour l'affichage dans les résultats
+            if code >= 400 or (getattr(self, 'path', None) or '').startswith('/preparation'):
+                self.send_header('X-Robots-Tag', 'noindex')
             for name, value in (headers.items() if type(headers) is dict else headers or ()):
                 self.send_header(name, value)
             try:
@@ -538,6 +543,20 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 return
             if self.path == '/':
                 self.respond(200, views.render({'kind': 'home'}, ''), 'text/html; charset=utf-8')
+                return
+            if self.path == '/robots.txt':
+                # Les pages publiques chargent ces trois ressources : sans elles, un moteur les rend sans style
+                rules = ('User-agent: *\nAllow: /preparation/style.css\nAllow: /preparation/fonts/\n'
+                         'Allow: /preparation/privacy.js\nDisallow: /preparation\nDisallow: /publications\n')
+                if origin:
+                    rules += '\nSitemap: ' + origin + '/sitemap.xml\n'
+                self.respond(200, rules.encode(), 'text/plain; charset=utf-8')
+                return
+            if self.path == '/sitemap.xml' and origin:
+                self.respond(200, ('<?xml version="1.0" encoding="UTF-8"?>\n'
+                                   '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+                                   + ''.join('<url><loc>' + escape(origin + path) + '</loc></url>' for path in views.PUBLIC_PAGES)
+                                   + '</urlset>\n').encode(), 'application/xml; charset=utf-8')
                 return
             if self.path == '/healthz':
                 self.respond(200, {'web': 'ok'})
