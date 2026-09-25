@@ -10,7 +10,7 @@ Ce document fixe la vision durable, le besoin, l’audience et les résultats at
 
 L'approbation de ce document n'autorise aucune campagne ni publication. Les campagnes déjà enregistrées restent sous leurs contrats figés.
 
-L'[ARD](ARD.md) fixe le contrat d'architecture. Les [règles](RULES.md) portent les invariants. Le glossaire fixe le vocabulaire.
+L'[ARD](ARD.md) fixe le contrat d'architecture. Les [règles](RULES.md) portent les invariants. La [feuille de route](roadmap.md) rattache les exigences à des jalons nommés. Le glossaire fixe le vocabulaire.
 
 ## 2. Besoin
 
