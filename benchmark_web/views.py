@@ -159,7 +159,7 @@ def render_task_index(task):
 
 def preparation_steps(value):
     kind = value.get('kind')
-    if kind not in ('configurations', 'campaign_launch', 'comparison', 'campaign_models') and 'revision' not in value:
+    if kind not in ('configurations', 'campaign_launch', 'comparison', 'campaign_models', 'attempt_detail') and 'revision' not in value:
         return ''
     dossier = '/preparation/dossiers/' + (value.get('dossier_id') or value['task']['dossier_id'])
     campaign = value.get('campaign', {})
@@ -168,12 +168,12 @@ def preparation_steps(value):
     campaigns = [c for c in value.get('campaigns', []) if c['task']['revision'] == revision]
     if not campaign and campaigns:
         campaign = campaigns[-1]
-    base = value['href'] if kind in ('comparison', 'campaign_models') else dossier + '/campaigns/' + campaign['campaign_id'] if campaign else None
-    downstream = kind in ('configurations', 'campaign_launch', 'comparison', 'campaign_models')
+    base = value['href'] if kind in ('comparison', 'campaign_models', 'attempt_detail') else dossier + '/campaigns/' + campaign['campaign_id'] if campaign else None
+    downstream = kind in ('configurations', 'campaign_launch', 'comparison', 'campaign_models', 'attempt_detail')
     example = downstream or bool(value.get('package'))
     models = downstream or value.get('qualified') or bool(campaign)
-    results = kind in ('comparison', 'campaign_models') or bool(campaign.get('attempts'))
-    current = 5 if kind == 'comparison' or kind == 'campaign_launch' and results else 4 if downstream else 3 if value.get('validation') or value.get('qualified') else 2 if example else 1
+    results = kind in ('comparison', 'campaign_models', 'attempt_detail') or bool(campaign.get('attempts'))
+    current = 5 if kind in ('comparison', 'attempt_detail') or kind == 'campaign_launch' and results else 4 if downstream else 3 if value.get('validation') or value.get('qualified') else 2 if example else 1
     models_href = base + ('/configurations' if results else '/conditions') if base else dossier + '/configurations'
     if not downstream and not results and value.get('qualified') and revision == value.get('current_revision', revision):
         models_href = dossier + '/configurations'
@@ -183,7 +183,7 @@ def preparation_steps(value):
     targets = [reference + '#besoin', reference + '#exemple' if example else None,
                reference + '#validation' if example else None,
                models_href if models else None,
-               (value['href'] if kind == 'comparison' else results_href) if results else None]
+               (value['href'] if kind in ('comparison', 'attempt_detail') else results_href) if results else None]
     content = '<nav class="steps" aria-label="Étapes de préparation">'
     for number, (label, href) in enumerate(zip(('Besoin', 'Exemple', 'Validation', 'Modèles', 'Résultats'), targets), 1):
         inner = '<span class="n">' + str(number) + '</span>' + label
@@ -218,8 +218,6 @@ def personal_key_form(csrf, access):
 
 def render(value, csrf, path='/preparation', *, error=False):
     """Native HTML forms, inert evidence and a fixed comparison focus script"""
-    if value.get('kind') == 'attempt_detail':
-        return render_attempt_detail(value).encode('utf-8')
     def field_attributes(name):
         return f' aria-describedby="{text(name)}-error"' if value.get('error_field') == name else ''
 
@@ -298,6 +296,9 @@ def render(value, csrf, path='/preparation', *, error=False):
     elif value.get('kind') == 'campaign_models':
         title = 'Modèles de cette comparaison'
         content = render_campaign_models(value)
+    elif value.get('kind') == 'attempt_detail':
+        title = 'Détail et preuves'
+        content = render_attempt_detail(value)
     elif value.get('kind') == 'campaign_launch' and 'checks' in value:
         title = 'Suivi de la comparaison' if value['campaign']['attempts'] else 'Vérifier puis lancer la comparaison'
         content = render_campaign_launch_requester(value, csrf)
