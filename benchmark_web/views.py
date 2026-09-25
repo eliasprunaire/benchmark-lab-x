@@ -228,10 +228,10 @@ def render(value, csrf, path='/preparation', *, error=False):
     navigation = '' if error else preparation_steps(value)
     title = 'Décrire mon cas d’usage'
     # Une page d'erreur n'est aucune des entrées du menu : pas d'`aria-current` menteur
-    current = None if error else {'home': '/', 'publication_unavailable': '/index.html', 'privacy_data': '/preparation/data',
+    current = None if error else {'home': '/', 'privacy_data': '/preparation/data',
                                    'legal': None}.get(value.get('kind'), '/preparation')
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
-                   for href, label in (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données'), ('/index.html', 'Comparaisons publiées')))
+                   for href, label in (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données')))
     if error:
         title = value.get('title') or ('Préparation indisponible' if value.get('unavailable') else 'Action non aboutie')
         submitted = value.get('form')
@@ -313,15 +313,6 @@ def render(value, csrf, path='/preparation', *, error=False):
             '<ul><li>Le verdict porte sur la configuration observée sous des conditions communes, jamais sur le nom du modèle seul.</li>'
             '<li>Le coût est observé sur reçu, pas estimé. Un coût inconnu reste inconnu.</li>'
             '<li>Les pièces sont entièrement inventées : aucun dossier réel, même anonymisé.</li></ul>')
-        content += section('Comparaisons publiées', '<p>Seules les restitutions approuvées sont accessibles publiquement. '
-            'La validation d’un cas d’usage ne publie rien et ne lance aucun candidat.</p>'
-            '<p><a href="/index.html">Ouvrir la comparaison publiée, si disponible</a></p>')
-    elif value.get('kind') == 'publication_unavailable':
-        title = 'Aucune publication vérifiée disponible'
-        content = '<p class="lead">Aucun résultat public vérifié n’est disponible à cette adresse pour le moment.</p>'
-        content += '<p>Vos cas d’usage et leurs résultats restent privés. Leur consultation ne publie aucune pièce.</p>'
-        content += '<div class="actions"><a class="button" href="/">Revenir à l’accueil</a>'
-        content += '<a class="button sec" href="/preparation">Retrouver mes cas d’usage</a></div>'
     elif value.get('kind') == 'catalogue':
         title = 'Versions et comparaisons'
         content = '<p class="lead">Index privé de cette session : chaque cas d’usage validé, ses versions d’épreuve et les comparaisons lancées.</p>'
