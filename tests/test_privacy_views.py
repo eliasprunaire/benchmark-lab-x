@@ -29,23 +29,12 @@ class PrivacyViewsTests(unittest.TestCase):
         self.assertIn('<script>' + views.STEP_SCRIPT + '</script>', page)
         self.assertEqual(page.count('src="/preparation/privacy.js"'), 1)
 
-    def test_public_data_and_notice_need_no_session(self):
+    def test_public_data_needs_no_session(self):
         page = views.render({'kind': 'privacy_data'}, '').decode()
         self.assertIn('Mes données', page)
         self.assertIn('data-privacy-history', page)
         self.assertIn('src="/preparation/privacy.js"', page)
         self.assertNotIn('data-privacy-activity', page)
-        notice = views.render({'kind': 'privacy_notice'}, '').decode()
-        for term in ('Cybrel', 'RSSI', 'contact@cybrel.fr', '7 jours', '30 jours', '6 mois',
-                     'fournisseurs'):
-            self.assertIn(term, notice)
-        self.assertNotIn('11 jours', notice)
-        self.assertNotIn('data-privacy-activity', notice)
-        self.assertNotIn('copies chiffrées', notice)
-        inactive = views.render({'kind': 'privacy_notice', 'privacy_enabled': False}, '').decode()
-        self.assertIn('n’est pas encore activée', inactive)
-        self.assertIn('N’y saisissez aucune donnée personnelle', inactive)
-        self.assertNotIn('7 jours d’inactivité', inactive)
 
     def test_authenticated_controls_use_metadata_csrf_and_keep_key_form(self):
         metadata = {'csrf_token': 'privacy-token', 'session_expires_at': '2099-01-01T00:00:00Z',
@@ -95,7 +84,7 @@ class PrivacyViewsTests(unittest.TestCase):
         unsafe = views.render({'kind': 'session_bootstrap', 'return_path': '//evil.test'}, '').decode()
         self.assertNotIn('//evil.test', unsafe)
 
-    def test_delete_copy_notice_and_provider_casing_match_the_plan(self):
+    def test_delete_copy_and_retention_match_the_plan(self):
         from benchmark_web.privacy_views import render_privacy_controls
         controls = render_privacy_controls(example_view(), 'csrf')
         self.assertIn('Supprimer ce cas d’usage', controls)
@@ -103,18 +92,9 @@ class PrivacyViewsTests(unittest.TestCase):
         self.assertIn('contribution', controls)
         self.assertNotIn('conserve votre copie locale', controls)
         self.assertIn('Accès aux cas fermé après 7 jours d’inactivité', controls)
-        notice = views.render({'kind': 'privacy_notice'}, '').decode()
-        self.assertIn('l’accès est fermé après 7 jours d’inactivité', notice)
-        self.assertIn('Cette fermeture n’est pas un effacement', notice)
         self.assertIn('Accès à la clé fermé après 30 jours d’inactivité', controls)
         self.assertNotIn('Clé retirée après', controls)
-        self.assertNotIn('supprimés du serveur', notice)
-        self.assertNotIn('11 jours', notice)
         self.assertNotIn('11 jours', controls)
-        self.assertIn('ne sont pas remises en service', notice)
-        self.assertNotIn('effacement physique', notice)
-        self.assertIn('Openrouter', notice)
-        self.assertNotIn('OpenRouter', notice)
 
     def test_contributions_have_french_status_and_disable_withdrawn_or_expired(self):
         from benchmark_web.privacy_views import render_contributions
@@ -139,3 +119,75 @@ class PrivacyViewsTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+LEGAL_PAGES = {'/mentions-legales': 'Mentions légales', '/cgu': 'Conditions générales d’utilisation',
+               '/confidentialite': 'Politique de confidentialité'}
+LEGAL_FOOTER = ('<a href="/mentions-legales">Mentions légales</a>', '<a href="/cgu">Conditions d’utilisation</a>',
+                '<a href="/confidentialite">Confidentialité</a>')
+
+
+class LegalViewsTests(unittest.TestCase):
+    """BX-08 : trois pages publiques, gabarit commun, marqueurs laissés à Ayo"""
+
+    def test_each_legal_page_uses_the_site_template_without_script_or_session(self):
+        for path, title in LEGAL_PAGES.items():
+            with self.subTest(path=path):
+                page = views.render({'kind': 'legal', 'path': path}, '').decode()
+                self.assertIn('<html lang="fr">', page)
+                self.assertIn('<title>' + title + ' — Bench-X</title>', page)
+                self.assertEqual(1, page.count('<h1>'))
+                self.assertIn('<h1>' + title + '</h1>', page)
+                self.assertNotIn('<script', page)
+                self.assertNotIn('data-privacy', page)
+                self.assertNotIn('aria-current', page)
+
+    def test_every_rendered_page_links_the_three_legal_pages_from_its_footer(self):
+        values = [({'kind': 'home'}, False), ({'kind': 'privacy_data'}, False), ({'dossiers': []}, False),
+                  (example_view(), False), ({'kind': 'publication_unavailable'}, False),
+                  ({'error': 'Échec', 'title': 'Page introuvable'}, True)]
+        values += [({'kind': 'legal', 'path': path}, False) for path in LEGAL_PAGES]
+        for value, error in values:
+            with self.subTest(value=value.get('kind') or value.get('title') or 'dossier'):
+                page = views.render(value, 'csrf', error=error).decode()
+                footer = page[page.index('<footer'):]
+                for link in LEGAL_FOOTER:
+                    self.assertIn(link, footer)
+                self.assertNotIn('/preparation/privacy"', page)
+
+    def test_unfilled_markers_stay_verbatim(self):
+        cgu = views.render({'kind': 'legal', 'path': '/cgu'}, '').decode()
+        privacy = views.render({'kind': 'legal', 'path': '/confidentialite'}, '').decode()
+        self.assertIn('Dernière mise à jour : [[À COMPLÉTER : date]]', cgu)
+        self.assertIn('Dernière mise à jour : [[À COMPLÉTER : date]]', privacy)
+        self.assertIn('[[À COMPLÉTER APRÈS VÉRIFICATION DES CONDITIONS D’OPENROUTER ET DES FOURNISSEURS RETENUS]]', privacy)
+        self.assertIn('[[clauses contractuelles types de la Commission européenne / Data Privacy Framework / '
+                      'autre mécanisme à préciser]]', privacy)
+
+    def test_rights_and_complaint_are_stated(self):
+        privacy = views.render({'kind': 'legal', 'path': '/confidentialite'}, '').decode()
+        for term in ('art. 6.1.b', 'art. 6.1.f', 'portabilité', 'CNIL', '3 place de Fontenoy',
+                     '<code>benchmark_session</code>', 'OpenRouter'):
+            self.assertIn(term, privacy)
+        legal = views.render({'kind': 'legal', 'path': '/mentions-legales'}, '').decode()
+        self.assertIn('AGPL-3.0-only', legal)
+        self.assertIn('href="https://github.com/eliasprunaire/benchmark-lab-x"', legal)
+
+    def test_editorial_notes_are_not_published(self):
+        pages = ''.join(views.render({'kind': 'legal', 'path': path}, '').decode() for path in LEGAL_PAGES)
+        for note in ('aucune route ne les expose', 'Formulation à retenir', 'N’annoncez pas',
+                     'annoncez une fermeture d’accès', '<blockquote'):
+            self.assertNotIn(note, pages)
+
+    def test_future_publications_link_the_three_legal_pages(self):
+        from benchmark_web import projection
+        page = projection.public_page({
+            'need': 'Besoin fictif', 'task': {'dossier_id': 'd', 'version': 1},
+            'campaign_id': 'c', 'result_expected': 'Résultat fictif',
+            'conclusion': {'text': 'Conclusion fictive', 'limits': []},
+            'coverage': {}, 'population': {}, 'conditions': {}, 'cost_basis': {},
+            'economic_status': 'COMPLETE', 'rows': [], 'columns': [],
+        }, {}).decode()
+        footer = page[page.index('</main>'):]
+        for link in LEGAL_FOOTER:
+            self.assertIn(link, footer)

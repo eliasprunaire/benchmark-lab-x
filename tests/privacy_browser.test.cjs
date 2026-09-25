@@ -30,7 +30,8 @@ import json
 from benchmark_web import views
 from tests.test_privacy_views import example_view
 print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(),
-                  'notice': views.render({'kind': 'privacy_notice'}, '').decode(),
+                  **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
+                     for path in ('/mentions-legales', '/cgu', '/confidentialite')},
                   'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT}))
 `], {encoding: 'utf8'}));
   server = createServer(async (req, res) => {
@@ -389,5 +390,75 @@ test('case deletion still requests server purge when IndexedDB is unavailable an
       const status = await page.locator('[data-privacy-status]').textContent();
       assert.match(status, statusCode === 200 ? /nettoyage en attente/ : /serveur et de la contribution non confirmée/);
     } finally {postStatus = 200; await context.close();}
+  }
+});
+
+
+const LEGAL = ['mentions-legales', 'cgu', 'confidentialite'];
+// WCAG 2.x : 4.5:1, 3:1 pour le grand texte ; fond pris au premier ancêtre opaque
+function contrastFailures() {
+  const channels = color => color.match(/[\d.]+/g).map(Number);
+  const luminance = rgb => rgb.slice(0, 3).map(v => v / 255)
+    .map(v => v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const background = element => {
+    for (; element; element = element.parentElement) {
+      const color = channels(getComputedStyle(element).backgroundColor);
+      if (color.length < 4 || color[3] > 0) return color;
+    }
+    return [255, 255, 255];
+  };
+  const failures = [];
+  for (const element of document.body.querySelectorAll('*')) {
+    if (![...element.childNodes].some(node => node.nodeType === 3 && node.textContent.trim())) continue;
+    const style = getComputedStyle(element);
+    if (style.visibility === 'hidden' || !element.getClientRects().length) continue;
+    const [a, b] = [luminance(channels(style.color)), luminance(background(element))];
+    const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    const size = parseFloat(style.fontSize);
+    const large = size >= 24 || size >= 18.66 && Number(style.fontWeight) >= 700;
+    if (ratio < (large ? 3 : 4.5)) failures.push(element.tagName + ' ' + ratio.toFixed(2) + ' ' + element.textContent.trim().slice(0, 40));
+  }
+  return failures;
+}
+
+test('legal pages keep CSP, French headings, visible focus, AA contrast and fit 390 px in both themes', async () => {
+  for (const colorScheme of ['light', 'dark']) {
+    for (const viewport of [{width: 1200, height: 900}, {width: 390, height: 844}]) {
+      const context = await browser.newContext({viewport, colorScheme});
+      try {
+        const page = await context.newPage(); page.setDefaultTimeout(3000);
+        const failures = [];
+        page.on('pageerror', error => failures.push(error.message));
+        page.on('console', message => {if (/Content Security Policy/.test(message.text())) failures.push(message.text());});
+        for (const name of LEGAL) {
+          const where = `${name} ${colorScheme} ${viewport.width}`;
+          await page.goto(origin + '/render/' + name);
+          await page.evaluate(() => document.fonts.ready);
+          assert.equal(await page.getAttribute('html', 'lang'), 'fr', where);
+          const levels = await page.$$eval('h1, h2, h3, h4', headings => headings.map(h => Number(h.tagName[1])));
+          assert.equal(levels.filter(level => level === 1).length, 1, where);
+          assert.equal(levels[0], 1, where);
+          levels.forEach((level, index) => assert.ok(!index || level <= levels[index - 1] + 1, `${where} saut de titre`));
+          for (const href of ['/mentions-legales', '/cgu', '/confidentialite'])
+            assert.equal(await page.locator(`footer nav[aria-label="Informations légales"] a[href="${href}"]`).count(), 1, `${where} ${href}`);
+          assert.deepEqual(await page.evaluate(contrastFailures), [], where);
+          let inMain = false;
+          for (let press = 0; press < 40 && !inMain; press++) {
+            await page.keyboard.press('Tab');
+            inMain = await page.evaluate(() => !!document.activeElement.closest('main'));
+          }
+          assert.ok(inMain, `${where} aucun élément focalisable dans le contenu`);
+          const outline = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
+          assert.notEqual(outline, 'none', `${where} focus invisible`);
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} débordement`);
+          if (viewport.width === 390) {
+            mkdirSync('reports/privacy-browser', {recursive: true});
+            await page.screenshot({path: `reports/privacy-browser/legal-${name}-${colorScheme}-mobile.png`, fullPage: true});
+          }
+        }
+        assert.deepEqual(failures, []);
+      } finally {await context.close();}
+    }
   }
 });

@@ -35,6 +35,7 @@ _ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*',
 # Motifs servis, essayés dans l'ordre : un chemin absent de cette liste se journalise `<inconnu>`
 _ROUTE_PATTERNS = (
     '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico',
+    '/mentions-legales', '/cgu', '/confidentialite',
     '/preparation', '/preparation/privacy.js', '/preparation/style.css',
     '/preparation/fonts/<police>.woff2',
     '/preparation/data', '/preparation/privacy', '/preparation/activity', '/preparation/catalogue',
@@ -470,7 +471,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 else:
                     csrf = body.get('csrf_token', '') if type(body) is dict else ''
                     view_path = self.path
-                    if result['status'] < 400 and result['value'].get('kind') not in ('privacy_data', 'privacy_notice', 'session_bootstrap', 'contributions'):
+                    if result['status'] < 400 and result['value'].get('kind') not in ('privacy_data', 'session_bootstrap', 'contributions'):
                         home = preparation_request(socket_path, 'GET', '/preparation', token)
                         csrf = home['value']['csrf_token']
                         if self.path == '/preparation/access':
@@ -530,8 +531,15 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 name, media = assets[self.path]
                 self.respond(200, (Path(__file__).parent / 'static' / name).read_bytes(), media)
                 return
+            if self.path == '/preparation/privacy':
+                # Ancienne notice du parcours privé, remplacée par la politique publique (BX-08)
+                self.respond(301, b'', 'text/html; charset=utf-8', {'Location': '/confidentialite'})
+                return
             if self.path == '/preparation' or self.path.startswith('/preparation/'):
                 self.preparation()
+                return
+            if self.path in views.LEGAL_PAGES:
+                self.respond(200, views.render({'kind': 'legal', 'path': self.path}, ''), 'text/html; charset=utf-8')
                 return
             if self.path == '/':
                 self.respond(200, views.render({'kind': 'home'}, ''), 'text/html; charset=utf-8')

@@ -18,9 +18,8 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
              management_token=None):
     from . import privacy
     enabled = privacy.available(store._connection_checked())
-    if method == 'GET' and path in ('/preparation/data', '/preparation/privacy'):
-        return 200, {'kind': 'privacy_data' if path.endswith('/data') else 'privacy_notice',
-                     'privacy_enabled': enabled}, None, None
+    if method == 'GET' and path == '/preparation/data':
+        return 200, {'kind': 'privacy_data'}, None, None
     if enabled and privacy.quarantined(store):
         return 503, {'error': 'Données en attente de vérification après restauration.', 'error_code': 'RESTORE_PENDING'}, None, None
     if enabled and method == 'GET' and path == '/preparation/activity':
