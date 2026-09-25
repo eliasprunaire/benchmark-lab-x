@@ -66,6 +66,7 @@ class PrivacyViewsTests(unittest.TestCase):
         self.assertIn('name="example_revision" value="3"', rendered)
         value['privacy']['session_expires_at'] = '2000-01-01T00:00:00Z'
         self.assertIn('<fieldset disabled>', render_contribution(value, ''))
+        self.assertEqual(1, len([attrs for tag, attrs in tags if attrs.get('type') == 'checkbox']))
         value['current_revision'] = 4
         self.assertEqual(render_contribution(value, ''), '')
 
@@ -95,6 +96,21 @@ class PrivacyViewsTests(unittest.TestCase):
         self.assertIn('Accès à la clé fermé après 30 jours d’inactivité', controls)
         self.assertNotIn('Clé retirée après', controls)
         self.assertNotIn('11 jours', controls)
+
+    def test_single_box_states_both_effects_and_the_javascript_limit(self):
+        from benchmark_web.privacy_views import render_contribution
+        rendered = render_contribution(example_view(), 'csrf')
+        for term in ('conserver cet exemple pendant 6 mois', 'historique local', 'besoin, mes messages et les révisions',
+                     'que la contribution exclut', 'nécessite JavaScript', 'sans JavaScript, seule la contribution',
+                     'Mes données'):
+            self.assertIn(term, rendered)
+
+    def test_withdrawal_states_that_local_history_is_kept(self):
+        from benchmark_web.privacy_views import render_contributions
+        _, page = render_contributions({'csrf_token': 'purpose', 'contributions': []})
+        for term in ('arrête la contribution concernée seulement', 'historique local reste actif',
+                     'ne sont pas effacées', 'Mes données'):
+            self.assertIn(term, page)
 
     def test_contributions_have_french_status_and_disable_withdrawn_or_expired(self):
         from benchmark_web.privacy_views import render_contributions

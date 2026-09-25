@@ -88,6 +88,7 @@ async function pageFor(context) {
   await page.evaluate(async () => {
     window.privacy = await import('/preparation/privacy.js');
     window.historyStore = await privacy.openHistory();
+    await historyStore.enable();
   });
   return page;
 }
@@ -239,7 +240,7 @@ test('a browser quota failure cannot publish a partial new version', async () =>
     await page.goto(origin);
     const cdp = await context.newCDPSession(page);
     await cdp.send('Storage.overrideQuotaForOrigin', {origin, quotaSize: 65536});
-    await page.evaluate(async () => {window.privacy = await import('/preparation/privacy.js'); window.historyStore = await privacy.openHistory();});
+    await page.evaluate(async () => {window.privacy = await import('/preparation/privacy.js'); window.historyStore = await privacy.openHistory(); await historyStore.enable();});
     fixture(1); await page.evaluate(() => historyStore.archive('d1', 1));
     fixture(2, randomBytes(2000000).toString('hex'));
     await assert.rejects(page.evaluate(() => historyStore.archive('d1', 2)), /quota/i);
@@ -247,7 +248,7 @@ test('a browser quota failure cannot publish a partial new version', async () =>
   } finally {await context.close();}
 });
 
-test('rendered pages mount under self plus existing hash CSP, preserve unchecked consent and fit mobile', async () => {
+test('rendered pages write nothing before the single choice, then checking it stores the copy under CSP and fits mobile', async () => {
   fixture(); posts = [];
   const context = await browser.newContext({viewport: {width: 1200, height: 900}});
   try {
@@ -255,13 +256,27 @@ test('rendered pages mount under self plus existing hash CSP, preserve unchecked
     const failures = [];
     page.on('pageerror', error => failures.push(error.message));
     page.on('console', message => {if (/Content Security Policy/.test(message.text())) failures.push(message.text());});
+    const databases = () => page.evaluate(async () => (await indexedDB.databases()).map(db => db.name));
     await page.goto(origin + '/render/example');
-    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('complète enregistrée'));
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
     assert.equal(posts.length, 0);
+    assert.deepEqual(await databases(), []);
+    assert.equal(await page.locator('[data-privacy-action="archive"]').isHidden(), true);
+    assert.equal(await page.locator('[data-privacy-action="enable-case"]').isHidden(), true);
     assert.equal(await page.getByRole('checkbox').isChecked(), false);
     assert.equal(await page.getByRole('checkbox').isEnabled(), true);
     mkdirSync('reports/privacy-browser', {recursive: true});
     await page.locator('.privacy-consent').screenshot({path: 'reports/privacy-browser/consent-desktop.png'});
+    // Saving the unchecked box is a choice against both effects
+    await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
+    assert.deepEqual(await databases(), []);
+    await page.getByRole('checkbox').check();
+    await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('complète enregistrée'));
+    assert.deepEqual(posts.filter(post => post.path.endsWith('/contribution')).map(post => [post.path, post.body.enabled]), [
+      ['/preparation/dossiers/d1/contribution', false], ['/preparation/dossiers/d1/contribution', true]]);
+    assert.deepEqual(await databases(), ['bench-x-history']);
     await page.goto(origin + '/render/data');
     await page.waitForFunction(() => document.querySelector('[data-privacy-list] > details'));
     await page.locator('[data-privacy-list] > details > summary').click();
@@ -269,6 +284,48 @@ test('rendered pages mount under self plus existing hash CSP, preserve unchecked
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({path: 'reports/privacy-browser/data-mobile.png', fullPage: true});
     assert.deepEqual(failures, []);
+  } finally {await context.close();}
+});
+
+test('the box state sent to the server is the one that decides local history', async () => {
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage(); page.setDefaultTimeout(3000);
+    await page.goto(origin + '/render/example');
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
+    let held;
+    await page.route('**/preparation/dossiers/d1/contribution', route => {held = route;});
+    await page.getByRole('button', {name: 'Enregistrer mon choix'}).click();
+    await page.waitForFunction(() => document.querySelector('.privacy-consent form').dataset.busy);
+    await page.getByRole('checkbox').check();
+    assert.equal(held.request().postDataJSON().enabled, false);
+    await Promise.all([page.waitForEvent('load'), held.fulfill({status: 200, contentType: 'application/json', body: '{}'})]);
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
+    assert.deepEqual(await page.evaluate(async () => (await indexedDB.databases()).map(db => db.name)), []);
+  } finally {await context.close();}
+});
+
+test('withdrawing a contribution keeps local copies active and erasable from Mes données', async () => {
+  fixture();
+  const context = await browser.newContext();
+  try {
+    const page = await pageFor(context);
+    await page.evaluate(() => historyStore.archive('d1', 1));
+    await page.setContent('<form data-privacy-post="withdraw" action="/preparation/contributions/c1/withdraw"><input type="hidden" name="csrf_token" value="purpose"><button>Retirer</button><p data-privacy-status></p></form>');
+    await page.evaluate(() => privacy.mountPrivacy());
+    await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Retirer'}).click()]);
+    assert.deepEqual(posts.at(-1), {path: '/preparation/contributions/c1/withdraw', body: {csrf_token: 'purpose'}});
+    await page.goto(origin + '/render/data');
+    await page.waitForFunction(() => document.querySelector('[data-privacy-list] > details'));
+    assert.match(await page.locator('[data-privacy-status]').first().textContent(), /Copies locales complètes : 1/);
+    await page.locator('[data-privacy-list] > details > summary').click();
+    await page.getByRole('button', {name: 'Effacer cette copie locale'}).click();
+    await page.waitForFunction(() => !document.querySelector('[data-privacy-list]').textContent);
+    const state = await page.evaluate(async () => {
+      const store = await (await import('/preparation/privacy.js')).openHistory({create: false});
+      return {record: await store.get('d1'), global: await store.state()};
+    });
+    assert.deepEqual(state, {record: null, global: {enabled: true, chosen: true}});
   } finally {await context.close();}
 });
 
@@ -311,6 +368,7 @@ test('native consent form remains usable without JavaScript, with no preselected
     const page = await context.newPage();
     await page.goto(origin + '/render/example');
     assert.equal(await page.getByRole('checkbox').isChecked(), false);
+    assert.match(await page.locator('.privacy-consent').textContent(), /sans JavaScript, seule la contribution/i);
     await page.getByRole('checkbox').check();
     await page.getByRole('button', {name: 'Enregistrer mon choix'}).click();
     assert.deepEqual(posts, [{path: '/preparation/dossiers/d1/contribution', body: {
@@ -344,10 +402,10 @@ test('case deletion tombstones locally before POST and retains explicit failure 
   const context = await browser.newContext();
   let pending;
   try {
+    const observer = await pageFor(context);
     const page = await context.newPage(); page.setDefaultTimeout(3000);
     await page.goto(origin + '/render/example');
     await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('complète enregistrée'));
-    const observer = await pageFor(context);
     fixture(2); mode = 'delay';
     const waiting = new Promise(resolve => {arrived = resolve;});
     pending = observer.evaluate(() => historyStore.archive('d1', 2).catch(error => error.message));
@@ -361,7 +419,7 @@ test('case deletion tombstones locally before POST and retains explicit failure 
     const deletionResponse = page.waitForResponse(response => response.url().endsWith('/d1/delete'));
     await page.locator('form[data-privacy-post="delete"] button').click();
     await deletionResponse;
-    assert.deepEqual(observed, {record: null, state: {enabled: false}});
+    assert.deepEqual(observed, {record: null, state: {enabled: false, chosen: true}});
     await page.waitForFunction(() => document.querySelector('form[data-privacy-post="delete"] [data-privacy-status]')?.textContent.includes('non confirmée'));
     const status = await page.locator('form[data-privacy-post="delete"] [data-privacy-status]').textContent();
     assert.match(status, /Copie locale effacée/);

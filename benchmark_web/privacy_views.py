@@ -85,12 +85,16 @@ def render_contribution(value, csrf):
             or contribution.get('example_revision') != value.get('revision')):
         return ''
     enabled = contribution.get('enabled') is True
-    body = ('<legend>Contribuer à Bench-X (facultatif)</legend><p>J’autorise Cybrel à conserver cet exemple '
-            'pendant 6 mois pour améliorer Bench-X, sans autoriser sa publication. '
-            'Mon choix ne conditionne pas mon accès au benchmark. '
+    body = ('<legend>Contribuer à Bench-X et garder un historique local (facultatif)</legend><p>Cocher cette case a deux effets. '
+            'J’autorise Cybrel à conserver cet exemple pendant 6 mois pour améliorer Bench-X, sans autoriser sa publication. '
+            'J’active aussi l’historique local : ce navigateur enregistre une copie complète de chaque cas d’usage que j’ouvre, '
+            'plus large que la contribution, car elle contient aussi mon besoin, mes messages et les révisions, '
+            'que la contribution exclut.</p><p>L’historique local nécessite JavaScript : sans JavaScript, seule la contribution '
+            'est enregistrée. Décocher arrête la contribution ; l’historique local se suspend ou s’efface depuis '
+            '<a href="/preparation/data">Mes données</a>. Mon choix ne conditionne pas mon accès au benchmark. '
             '<a href="/confidentialite">Lire la politique de confidentialité</a>.</p>'
             '<label><input type="checkbox" name="enabled" value="true"' + (' checked' if enabled else '') + '>'
-            ' Je souhaite contribuer avec cet exemple</label><button type="submit" class="sec">Enregistrer mon choix</button>'
+            ' Je souhaite contribuer avec cet exemple et activer l’historique local</label><button type="submit" class="sec">Enregistrer mon choix</button>'
             '<p role="status" data-privacy-status>' + ('Contribution activée.' if enabled else 'Aucune contribution activée.') + '</p>')
     return '<div class="privacy-consent">' + privacy_form('contribution', privacy.get('csrf_token', csrf),
         '/preparation/dossiers/' + quote(privacy['dossier_id'], safe='') + '/contribution',
@@ -102,7 +106,10 @@ def render_contributions(value):
     from datetime import datetime, timezone
     from .fragments import date_lisible_utc
     from urllib.parse import quote
-    content = '<p>Retirez votre consentement sans avoir à réactiver votre clé API. Ce navigateur conserve un accès de gestion distinct.</p>'
+    content = ('<p>Retirez votre consentement sans avoir à réactiver votre clé API. Ce navigateur conserve un accès de gestion distinct.</p>'
+               '<p>Retirer un consentement arrête la contribution concernée seulement : l’historique local reste actif et '
+               'les copies déjà enregistrées dans ce navigateur ne sont pas effacées. Suspendez-le ou effacez-les depuis '
+               '<a href="/preparation/data">Mes données</a>.</p>')
     for item in value['contributions']:
         status = str(item.get('status', '')).lower()
         if status == 'active':
