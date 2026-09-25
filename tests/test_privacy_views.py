@@ -155,14 +155,15 @@ class LegalViewsTests(unittest.TestCase):
                     self.assertIn(link, footer)
                 self.assertNotIn('/preparation/privacy"', page)
 
-    def test_unfilled_markers_stay_verbatim(self):
-        cgu = views.render({'kind': 'legal', 'path': '/cgu'}, '').decode()
-        privacy = views.render({'kind': 'legal', 'path': '/confidentialite'}, '').decode()
-        self.assertIn('Dernière mise à jour : [[À COMPLÉTER : date]]', cgu)
-        self.assertIn('Dernière mise à jour : [[À COMPLÉTER : date]]', privacy)
-        self.assertIn('[[À COMPLÉTER APRÈS VÉRIFICATION DES CONDITIONS D’OPENROUTER ET DES FOURNISSEURS RETENUS]]', privacy)
-        self.assertIn('[[clauses contractuelles types de la Commission européenne / Data Privacy Framework / '
-                      'autre mécanisme à préciser]]', privacy)
+    def test_markers_are_filled_with_the_decided_date_and_transfer_basis(self):
+        pages = {path: views.render({'kind': 'legal', 'path': path}, '').decode() for path in LEGAL_PAGES}
+        for path, page in pages.items():
+            self.assertNotIn('[[', page, path)
+        for path in ('/cgu', '/confidentialite'):
+            self.assertIn('Dernière mise à jour : 29 septembre 2026', pages[path])
+        for term in ('OpenRouter, Inc., établi aux États-Unis', 'article 45 du RGPD', 'article 46 du RGPD',
+                     'Nous ne pouvons pas garantir'):
+            self.assertIn(term, pages['/confidentialite'])
 
     def test_rights_and_complaint_are_stated(self):
         privacy = views.render({'kind': 'legal', 'path': '/confidentialite'}, '').decode()

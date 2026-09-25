@@ -1,7 +1,4 @@
-"""Pages légales publiques : source unique, sans session, secret ni accès au stockage
-
-Les marqueurs `[[À COMPLÉTER …]]` sont remplis à la main par l'éditeur : ne jamais les remplacer ici.
-"""
+"""Pages légales publiques : source unique, sans session, secret ni accès au stockage"""
 
 from .fragments import text
 
@@ -43,7 +40,7 @@ MENTIONS_LEGALES = (
     '<section><h2>Droit applicable</h2><p>Le présent site est soumis au droit français.</p></section>')
 
 CGU = (
-    '<p>Dernière mise à jour : [[À COMPLÉTER : date]]</p>'
+    '<p>Dernière mise à jour : 29 septembre 2026</p>'
     '<section><h2>1. Objet</h2><p>Les présentes conditions régissent l’utilisation de Bench-X, service gratuit '
     'accessible à l’adresse bench.librenet.work. Utiliser le service vaut acceptation de ces conditions.</p></section>'
     '<section><h2>2. Ce que fait le service</h2><p>Bench-X vous aide à décrire une tâche de votre travail, '
@@ -117,7 +114,7 @@ CGU = (
     '<section><h2>15. Contact</h2><p>' + CONTACT + '</p></section>')
 
 CONFIDENTIALITE = (
-    '<p>Dernière mise à jour : [[À COMPLÉTER : date]]</p>'
+    '<p>Dernière mise à jour : 29 septembre 2026</p>'
     '<section><h2>1. Responsable du traitement</h2><p><strong>CYBREL</strong><br>Contact pour toute question ou '
     'demande relative à vos données : <strong>' + CONTACT + '</strong></p></section>'
     '<section><h2>2. Principe</h2><p>Bench-X est conçu pour fonctionner <strong>sans que vous ayez à fournir de '
@@ -163,11 +160,15 @@ CONFIDENTIALITE = (
     '<p>Aucun autre destinataire. Aucune donnée n’est transmise à des régies publicitaires ou à des outils de '
     'mesure d’audience : <strong>le service n’en utilise aucun</strong>.</p></section>'
     '<section><h2>5. Transferts hors Union européenne</h2>'
-    '<p>[[À COMPLÉTER APRÈS VÉRIFICATION DES CONDITIONS D’OPENROUTER ET DES FOURNISSEURS RETENUS]]</p>'
-    '<p>Les appels sont acheminés par OpenRouter, établi aux États-Unis, et peuvent être traités par '
-    'des fournisseurs situés hors de l’Union européenne. Ces transferts reposent sur [[clauses contractuelles types '
-    'de la Commission européenne / Data Privacy Framework / autre mécanisme à préciser]]. Vous pouvez en obtenir '
-    'une copie à ' + CONTACT + '.</p></section>'
+    '<p>Les appels sont acheminés par OpenRouter, Inc., établi aux États-Unis, et peuvent être traités par des '
+    'fournisseurs de modèles situés partout dans le monde, y compris dans des pays qui ne bénéficient pas d’une '
+    'décision d’adéquation de la Commission européenne.</p>'
+    '<p>Pour les données qu’il reçoit, OpenRouter déclare s’appuyer sur les décisions d’adéquation de la Commission '
+    'européenne (article 45 du RGPD) et sur les clauses contractuelles types approuvées par la Commission '
+    '(article 46 du RGPD). Vous pouvez en obtenir une copie à ' + CONTACT + '.</p>'
+    '<p>Les fournisseurs de modèles appliquent leurs propres conditions de traitement. Nous ne pouvons pas garantir '
+    'que chacun d’eux offre un niveau de protection équivalent à celui de l’Union européenne : c’est l’une des '
+    'raisons pour lesquelles vous ne devez saisir aucune donnée personnelle dans Bench-X.</p></section>'
     '<section><h2>6. Cookies et stockage dans votre navigateur</h2><p>Le site <strong>ne dépose aucun cookie de '
     'mesure d’audience, de publicité ou de réseau social</strong>. Aucun cookie n’est déposé lorsque vous consultez '
     'la page d’accueil.</p>'
