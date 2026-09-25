@@ -42,12 +42,19 @@ function completed(transaction) {
     transaction.onerror = () => {}; // Abort reports the final transaction outcome
   });
 }
-export async function openHistory() {
+// Without create, a missing database stays missing: opening it must not write before a choice
+export async function openHistory({create = true} = {}) {
   const opening = indexedDB.open('bench-x-history', 1);
-  opening.onupgradeneeded = () => {
+  opening.onupgradeneeded = event => {
+    if (!create && event.oldVersion === 0) {opening.transaction.abort(); return;}
     for (const name of ['archives', 'staging', 'control']) opening.result.createObjectStore(name, {keyPath: 'id'});
   };
-  const db = await requestValue(opening);
+  let db;
+  try {db = await requestValue(opening);}
+  catch (error) {
+    if (!create && error?.name === 'AbortError') return null;
+    throw error;
+  }
   db.onversionchange = () => db.close();
   async function read(store, key) {
     const tx = db.transaction(store, 'readonly');
@@ -72,7 +79,7 @@ export async function openHistory() {
       tx.onabort = () => reject(failure || tx.error || new Error('Écriture locale interrompue.'));
       tx.onerror = () => {};
       controls.get('').onsuccess = globalEvent => {
-        const global = globalEvent.target.result || {id: '', generation: 0, enabled: true};
+        const global = globalEvent.target.result || {id: '', generation: 0, enabled: false};
         controls.get(id).onsuccess = localEvent => {
           const local = localEvent.target.result || {id, generation: 0, enabled: true, version: -1};
           try {result = action(tx, global, local);}
@@ -111,7 +118,7 @@ export async function openHistory() {
   return {
     close: () => db.close(),
     async state(id = '') {
-      return controlled(id, (tx, global, local) => ({enabled: global.enabled && local.enabled}));
+      return controlled(id, (tx, global, local) => ({enabled: global.enabled && local.enabled, chosen: global.generation > 0}));
     },
     clear: () => change('', false),
     remove: id => change(id, false),
@@ -231,6 +238,8 @@ async function post(url, body) {
     : 'Action non confirmée. Vérifiez votre accès puis actualisez la page.');
   return response;
 }
+// One consent decision with two derived effects; separating them changes this function only
+const consentEffects = checked => ({contribution: checked, localHistory: checked});
 const mounted = new WeakSet();
 const activityMounted = new WeakSet();
 function mountForms(root) {
@@ -245,8 +254,10 @@ function mountForms(root) {
       if (url.origin !== location.origin || !/^\/preparation\/(dossiers\/[^/]+\/(delete|contribution)|contributions\/[^/]+\/withdraw)$/.test(url.pathname)) return;
       const fields = new FormData(form);
       const body = {csrf_token: fields.get('csrf_token')};
+      let effects;
       if (action === 'contribution') {
-        body.enabled = form.elements.enabled.checked;
+        effects = consentEffects(form.elements.enabled.checked);
+        body.enabled = effects.contribution;
         body.revision = Number(fields.get('revision'));
         body.example_revision = Number(fields.get('example_revision'));
         if (!integer(body.revision) || !integer(body.example_revision)) return;
@@ -259,8 +270,8 @@ function mountForms(root) {
       if (action === 'delete') {
         let history;
         try {
-          history = await openHistory();
-          await history.remove(decodeURIComponent(url.pathname.split('/')[3]));
+          history = await openHistory({create: false});
+          if (history) await history.remove(decodeURIComponent(url.pathname.split('/')[3]));
           localDeleted = true;
         } catch {} finally {history?.close();}
         if (localDeleted && typeof BroadcastChannel === 'function') {
@@ -273,6 +284,14 @@ function mountForms(root) {
       const localOutcome = localDeleted ? 'Copie locale effacée. ' : 'Suppression locale non confirmée. ';
       try {
         const response = await post(url.pathname, body);
+        if (effects?.localHistory) {
+          let history;
+          try {
+            history = await openHistory();
+            await history.enable();
+            await history.enable(decodeURIComponent(url.pathname.split('/')[3]));
+          } catch {} finally {history?.close();}
+        }
         if (action !== 'delete') location.reload();
         else {
           const result = await response.json();
@@ -390,7 +409,14 @@ export async function mountPrivacy(root = document) {
   if (channel) channel.onmessage = () => {void refresh();};
   const changed = async () => {channel?.postMessage('changed'); await refresh();};
   for (const element of historyRoots) mounted.add(element);
-  try {store = await openHistory();}
+  // A missing database means no choice yet; reconnect on refresh in case another tab made one
+  let connecting;
+  const connect = async () => {
+    if (store) return store;
+    connecting ??= openHistory({create: false}).finally(() => {connecting = undefined;});
+    return store ??= await connecting;
+  };
+  try {await connect();}
   catch {
     for (const element of historyRoots) element.querySelector('[data-privacy-status]').textContent =
       'Historique local indisponible dans ce navigateur. Aucune copie locale confirmée.';
@@ -411,14 +437,17 @@ export async function mountPrivacy(root = document) {
       let display = 0;
       const update = async () => {
         const serial = ++display;
-        const records = await store.list();
-        const state = await store.state();
+        await connect();
+        const records = store ? await store.list() : [];
+        const state = store ? await store.state() : {enabled: false, chosen: false};
         if (serial !== display) return;
         list.replaceChildren();
         status.textContent = state.enabled ? (records.length ? 'Copies locales complètes : ' + records.length + '.' : 'Aucune copie locale complète.')
+          : !state.chosen && !records.length ? 'Historique local désactivé : rien n’est enregistré dans ce navigateur tant que vous ne l’activez pas.'
+          : records.length ? 'Historique local suspendu : aucune nouvelle copie. Copies conservées : ' + records.length + '.'
           : 'Historique local effacé et suspendu. Réactivez-le explicitement pour enregistrer de nouvelles copies.';
         element.querySelector('[data-privacy-action="enable"]').hidden = state.enabled;
-        element.querySelector('[data-privacy-action="clear"]').hidden = false;
+        element.querySelector('[data-privacy-action="clear"]').hidden = !store;
         for (const record of records) {
           const entry = details(record.need || 'Cas ' + record.dossier_id, list);
           const actions = node('div'); actions.className = 'actions';
@@ -439,7 +468,8 @@ export async function mountPrivacy(root = document) {
         }
       };
       refreshers.push(update);
-      for (const [action, operation] of [['clear', () => store.clear()], ['enable', () => store.enable()]]) {
+      for (const [action, operation] of [['clear', () => store?.clear()],
+        ['enable', async () => {if (!await connect()) store = await openHistory(); await store.enable();}]]) {
         const button = element.querySelector('[data-privacy-action="' + action + '"]');
         button.addEventListener('click', () => run(button, async () => {await operation(); await changed();}));
       }
@@ -450,10 +480,12 @@ export async function mountPrivacy(root = document) {
       const enable = element.querySelector('[data-privacy-action="enable-case"]');
       const active = element.hasAttribute('data-privacy-activity');
       const update = async () => {
-        const state = await store.state(id);
+        await connect();
+        const state = store ? await store.state(id) : {enabled: false, chosen: false};
         archive.hidden = !active || !state.enabled;
-        enable.hidden = !active || state.enabled;
-        if (!state.enabled) status.textContent = 'Historique suspendu. Réactivez-le explicitement dans Mes données ou pour ce cas.';
+        enable.hidden = !active || !state.chosen || state.enabled;
+        if (!state.chosen) status.textContent = 'Historique local désactivé : aucune nouvelle copie n’est enregistrée. Il s’active avec la case de contribution ou depuis Mes données.';
+        else if (!state.enabled) status.textContent = 'Historique suspendu. Réactivez-le explicitement dans Mes données ou pour ce cas.';
       };
       refreshers.push(update);
       const save = () => run(archive, async () => {
@@ -469,7 +501,7 @@ export async function mountPrivacy(root = document) {
         if (!(await store.state()).enabled) status.textContent = 'Réactivez aussi l’historique global depuis Mes données.';
       }));
       await update();
-      if (active && element.hasAttribute('data-content-version') && (await store.state(id)).enabled) await save();
+      if (active && element.hasAttribute('data-content-version') && store && (await store.state(id)).enabled) await save();
     }
   }
   window.addEventListener('focus', () => {void refresh();});
