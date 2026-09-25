@@ -6,7 +6,7 @@ style_gate: pass
 
 ## 1. Rôle et autorité
 
-Ce document fixe la vision durable, le besoin, l’audience et les résultats attendus de Bench-X. Les parcours et principes décrivent le produit à long terme ; un périmètre associé à une version borne seulement son jalon. Le document ne porte aucun statut de livraison et les options non décidées ne deviennent pas des exigences par leur seule mention.
+Ce document fixe la vision durable, le besoin, l’audience et les résultats attendus de Bench-X. Les parcours et principes décrivent le produit à long terme ; aucune exigence n’y est rattachée à un numéro de version. Le document ne porte aucun statut de livraison et les options non décidées ne deviennent pas des exigences par leur seule mention.
 
 L'approbation de ce document n'autorise aucune campagne ni publication. Les campagnes déjà enregistrées restent sous leurs contrats figés.
 
@@ -24,9 +24,9 @@ Le nom du modèle ne suffit toutefois pas comme preuve. Le modèle est l'identif
 
 ### 3.1 Audience et accès
 
-Le produit s’adresse à la communauté du Lab-X et aux utilisateurs qui cherchent une configuration adaptée à une tâche. Les tâches représentent des besoins de métiers et de domaines variés ; le catalogue n’est pas limité aux usages informatiques ou administratifs. Dès 0.1.0, le parcours public permet de décrire un besoin et de préparer une épreuve avec une assistance IA. L’approbation du contrat, l’exécution et la publication gardent leurs autorités propres. Le site permet aussi de consulter les résultats dont la publication a été approuvée.
+Le produit s’adresse à la communauté du Lab-X et aux utilisateurs qui cherchent une configuration adaptée à une tâche. Les tâches représentent des besoins de métiers et de domaines variés ; le catalogue n’est pas limité aux usages informatiques ou administratifs. Le parcours public permet de décrire un besoin et de préparer une épreuve avec une assistance IA. L’approbation du contrat, l’exécution et la publication gardent leurs autorités propres. Le site permet aussi de consulter les résultats dont la publication a été approuvée.
 
-La description reste générale, sans donnée personnelle ni information confidentielle. Les personnes, organismes, échanges et pièces du dossier sont entièrement inventés ; un dossier réel simplement anonymisé ne convient pas. Le parcours 0.1.0 ne comprend aucun téléversement de dossier réel, accès à l’ordinateur, connecteur vers les données de l’utilisateur ou action sur son téléphone. Une consigne de saisie ne garantit pas l’absence de contenu sensible et aucune anonymisation automatique, notamment dans le navigateur, n’est promise. Les modalités de conservation et de retrait sont définies dans la section « Historique et contributions ».
+La description reste générale, sans donnée personnelle ni information confidentielle. Les personnes, organismes, échanges et pièces du dossier sont entièrement inventés ; un dossier réel simplement anonymisé ne convient pas. Sauf décision contraire, le parcours ne comprend aucun téléversement de dossier réel, accès à l’ordinateur, connecteur vers les données de l’utilisateur ou action sur son téléphone. Une consigne de saisie ne garantit pas l’absence de contenu sensible et aucune anonymisation automatique, notamment dans le navigateur, n’est promise. Les modalités de conservation et de retrait sont définies dans la section « Historique et contributions ».
 
 Le catalogue distingue le métier ou domaine, qui donne le contexte, et la famille de tâche, qui décrit le travail, par exemple : extraire, rapprocher, synthétiser, rédiger, décider, organiser, rechercher ou argumenter. Ces repères peuvent se croiser et évoluer. Ils servent à trouver un usage proche, sans promettre une compétence générale sur une profession.
 
@@ -52,9 +52,9 @@ Qualité ou stabilité ne deviennent des critères que si une tâche les défini
 
 ## 5. Périmètre produit
 
-### 5.1 Périmètre 0.1.0
+### 5.1 Capacités
 
-Ce jalon réunit les capacités ci-dessous et les [critères d’acceptation produit](#12-critères-dacceptation-produit). Son numéro suit les [règles de versionnement](RULES.md#14-versionnement-du-produit) ; il ne porte aucun état de livraison.
+Le produit réunit les capacités ci-dessous et les [critères d’acceptation produit](#12-critères-dacceptation-produit).
 
 - parcours public de description, clarification et préparation assistée d’un dossier fictif consultable et modifiable
 - catalogue de tâches versionnées, avec contrat et cas d'essai identifiés ; aucune demande n’y est publiée automatiquement
@@ -66,11 +66,11 @@ Ce jalon réunit les capacités ci-dessous et les [critères d’acceptation pro
 - classements par critère et filtres combinés, sans note pondérée ni désignation automatique du meilleur modèle
 - consultation publique des seules restitutions approuvées, sans classement universel
 
-Le parcours fondé sur les demandes des utilisateurs remplace le corpus prédéfini de deux à neuf tâches. Comparer des salles pour une association et transformer des notes de réunion en suivi des décisions et actions deviennent des exemples pédagogiques, sans périmètre obligatoire ni preuve de couverture métier. Les cas de chaque tâche restent à construire et à qualifier. Les réponses d’une campagne sont réellement acquises sous autorisation ; une simulation ne constitue pas un résultat de benchmark. Le choix et le nombre des campagnes réelles nécessaires à 0.1.0 restent à décider.
+Le parcours fondé sur les demandes des utilisateurs remplace le corpus prédéfini de deux à neuf tâches. Comparer des salles pour une association et transformer des notes de réunion en suivi des décisions et actions deviennent des exemples pédagogiques, sans périmètre obligatoire ni preuve de couverture métier. Les cas de chaque tâche restent à construire et à qualifier. Les réponses d’une campagne sont réellement acquises sous autorisation ; une simulation ne constitue pas un résultat de benchmark. Le choix et le nombre des campagnes réelles nécessaires aux critères d’acceptation restent à décider.
 
 Le produit est agnostique des modèles et de leurs versions. Les choix courants relèvent du registre de modèles, des profils d’assistance approuvés et des manifestes de campagne. Ils peuvent évoluer sans modifier les spécifications. Chaque campagne fige son panel et les identités exactes requises avant admission ; les résultats déjà enregistrés conservent leurs configurations d’origine.
 
-La sélection d’un modèle ne prouve ni sa disponibilité ni sa compatibilité avec le harnais. Les contrats, cas, configurations exactes, accès, routes, agrégations et budgets sont arrêtés avant les manifestes de campagne. Aucun alias ou modèle de substitution n’est déduit du nom retenu. La capacité logicielle sur données synthétiques prouve seulement le logiciel ; 0.1.0 exige aussi les résultats réels autorisés.
+La sélection d’un modèle ne prouve ni sa disponibilité ni sa compatibilité avec le harnais. Les contrats, cas, configurations exactes, accès, routes, agrégations et budgets sont arrêtés avant les manifestes de campagne. Aucun alias ou modèle de substitution n’est déduit du nom retenu. La capacité logicielle sur données synthétiques prouve seulement le logiciel ; le produit exige aussi les résultats réels autorisés.
 
 Les assistants d’accueil, de préparation et de jugement sont sélectionnés séparément du panel candidat. Aucun assistant n’est déclaré qualifié, disponible ou moins cher sans preuve. Le responsable peut retenir un profil OpenRouter déjà approuvé au démarrage, sans modifier le code ; un fichier de profil ne promeut aucun essai en assistant de production. Les essais de préparation examinent la fidélité au besoin vague, l’utilité des questions, l’absence de besoins inventés, la cohérence et la vérifiabilité du cas, ainsi que la conservation des accords lors des modifications. Coûts et provenance sont examinés séparément de cette qualité ; identifiants, méthode d’essai et budget doivent être décidés avant les appels.
 
@@ -78,11 +78,11 @@ Restent ouverts avant réalisation ou ouverture des fonctions concernées : prot
 
 ### 5.2 Extensions
 
-Un score pondéré personnalisé appartient à la vision durable, hors 0.1.0. Avant réalisation, ses composantes, poids, normalisation, traitement des inconnues et erreurs, règles d’agrégation et sensibilité des rangs doivent être décidés et explicables. Les mesures d’origine, les verdicts et les erreurs restent accessibles ; le coût ne rend jamais acceptable une sortie non admissible. Cette capacité ne produit aucun meilleur modèle absolu ni classement universel.
+Un score pondéré personnalisé appartient à la vision durable. Avant réalisation, ses composantes, poids, normalisation, traitement des inconnues et erreurs, règles d’agrégation et sensibilité des rangs doivent être décidés et explicables. Les mesures d’origine, les verdicts et les erreurs restent accessibles ; le coût ne rend jamais acceptable une sortie non admissible. Cette capacité ne produit aucun meilleur modèle absolu ni classement universel.
 
-La couverture de métiers variés appartient à la vision durable : droit et notariat, documentation de santé, enseignement, artisanat, maintenance, logistique, agriculture, comptabilité, journalisme ou qualité industrielle, sans liste fermée ni couverture de tous ces domaines exigée pour 0.1.0. Les cas sont choisis pour leur utilité et les difficultés concrètes du travail, sans obligation de mettre en échec un humain ou un modèle réputé performant.
+La couverture de métiers variés appartient à la vision durable : droit et notariat, documentation de santé, enseignement, artisanat, maintenance, logistique, agriculture, comptabilité, journalisme ou qualité industrielle, sans liste fermée ni couverture de tous ces domaines exigée. Les cas sont choisis pour leur utilité et les difficultés concrètes du travail, sans obligation de mettre en échec un humain ou un modèle réputé performant.
 
-Les bons modèles locaux appartiennent à la vision durable du produit, sans intégration imposée à 0.1.0. Leur entrée dans un panel exige une décision propre, avec identité des poids, quantification, serveur d’inférence, matériel et base de coût explicites. Cette perspective n’autorise aucun contournement du canal normal [OpenRouter](ARD.md#3-pi-comme-frontière-constante).
+Les bons modèles locaux appartiennent à la vision durable du produit, sans intégration imposée. Leur entrée dans un panel exige une décision propre, avec identité des poids, quantification, serveur d’inférence, matériel et base de coût explicites. Cette perspective n’autorise aucun contournement du canal normal [OpenRouter](ARD.md#3-pi-comme-frontière-constante).
 
 Les abonnements comme objets de comparaison, les produits agentiques et la comparaison de harnais exigent un besoin démontré et une décision de périmètre. Aucun scénario de maquette ne devient implicitement une tâche du catalogue.
 
@@ -185,7 +185,7 @@ Le catalogue permet de chercher un travail proche de son besoin et d’identifie
 
 La page campagne commence par un rappel bref du contexte et du travail demandé, puis expose la conclusion permise, son périmètre, les cas et tentatives couverts, les dates d’acquisition et sa limite principale. Un lien direct vers cette page conserve l’accès à la tâche et au catalogue. Le lecteur peut choisir une autre campagne de la même tâche en voyant sa version, sa date et ses conditions ; ce changement ne fusionne pas les résultats. Une différence de contrat, de cas, d’environnement ou de base de coût rend la limite de comparaison explicite.
 
-Un tableau de synthèse suit cette conclusion et présente chaque configuration, son verdict et son motif, les mesures prévues, le coût observé et les limites de comparaison. Il propose des tris par critère et des filtres combinés. Une colonne ordonnable possède une mesure, une preuve, une unité ou échelle justifiée et un sens favorable fixés au contrat ; sinon elle reste descriptive. Calculs, complétude, rapprochements et durée sont des possibilités, pas des colonnes obligatoires. Les constats par obligation restent accessibles et filtrables ; une note ou un décompte pour les classer constitue un critère supplémentaire, dans la limite du contrat 0.1.0.
+Un tableau de synthèse suit cette conclusion et présente chaque configuration, son verdict et son motif, les mesures prévues, le coût observé et les limites de comparaison. Il propose des tris par critère et des filtres combinés. Une colonne ordonnable possède une mesure, une preuve, une unité ou échelle justifiée et un sens favorable fixés au contrat ; sinon elle reste descriptive. Calculs, complétude, rapprochements et durée sont des possibilités, pas des colonnes obligatoires. Les constats par obligation restent accessibles et filtrables ; une note ou un décompte pour les classer constitue un critère supplémentaire, dans la limite du contrat de la tâche.
 
 Le tri ordonne les seules valeurs connues et comparables. Les autres forment un groupe « non classables sur ce critère », avec motif et sans rang défavorable. Les égalités restent visibles. Un tri par coût s’annonce comme coût observé, sans libellé « meilleur modèle » ou « meilleur rapport qualité-prix ». Les erreurs restent visibles sur les lignes triées et aucun ordre initial n’est présenté comme une préférence du produit. Le périmètre filtré est explicite ; les statistiques conservent leur population de calcul et leur couverture. La conclusion économique décrit la complétude de la comparaison des coûts et porte `INCOMPLETE` lorsqu’elle est incomplète, selon les [règles de coût](RULES.md#8-coût-et-bénéfices).
 
@@ -225,8 +225,8 @@ Les choix techniques relèvent de l'ARD. Le backlog et son avancement relèvent 
 | Aucune configuration n’est admissible | aucune option désignée comme utilisable ; dépenses et mesures valides restent consultables |
 | Une pièce est privée ou du contenu candidat est affiché | la limite de vérification est visible et le parcours ne donne aucun accès privé non autorisé ni exécution active |
 | Le parcours est utilisé au clavier ou sur petit écran | saisie, interview, aperçu, correction, campagne, comparaison et preuves restent compréhensibles et accessibles |
-| La liste d’essai des assistants ou le score futur est présentée | aucun panel candidat substitué, assistant sélectionné ou score 0.1.0 déduit de cette mention |
+| La liste d’essai des assistants ou le score futur est présentée | aucun panel candidat substitué, assistant sélectionné ou score déduit de cette mention |
 | Une préparation ou campagne est terminée sans autorisation de publication | aucune demande, sortie ou pièce privée n’est publiée au catalogue |
-| Une démonstration utilise des données synthétiques | cette nature est visible ; elle ne remplace pas les résultats réels autorisés exigés par 0.1.0 |
+| Une démonstration utilise des données synthétiques | cette nature est visible ; elle ne remplace pas les résultats réels autorisés exigés par le produit |
 
 La validation logicielle utilise des cas contrôlés couvrant ces situations. La validation du lot de résultats cite séparément les campagnes réelles, leurs autorités et leurs preuves. Ni l’une ni l’autre n’autorise à elle seule la publication ou le déploiement.

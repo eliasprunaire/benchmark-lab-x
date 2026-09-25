@@ -111,7 +111,7 @@ L'évaluation s'applique à un cas et une tentative identifiés. Le verdict port
 
 ### 4.6 Vue de décision
 
-Responsabilité : présenter les évaluations, les classements par critère, les filtres et la complétude de la comparaison des coûts, selon les [règles](RULES.md#7-ordre-de-décision). Chaque colonne ordonnable référence sa définition contractuelle et ses preuves ; les valeurs inconnues ou incompatibles sont sans rang, les égalités conservées. La vue expose le périmètre filtré sans modifier les sorties, reçus, verdicts ou populations des statistiques déjà calculées. Elle ne fusionne pas des couvertures incompatibles. Elle peut produire l’aide économique conditionnelle définie dans les règles, à partir des observations complètes avant filtrage, sans nouveau stockage ni appel modèle. Le score pondéré personnalisé reste différé selon le PRD ; aucun moteur ni formule n’est ajouté à 0.1.0.
+Responsabilité : présenter les évaluations, les classements par critère, les filtres et la complétude de la comparaison des coûts, selon les [règles](RULES.md#7-ordre-de-décision). Chaque colonne ordonnable référence sa définition contractuelle et ses preuves ; les valeurs inconnues ou incompatibles sont sans rang, les égalités conservées. La vue expose le périmètre filtré sans modifier les sorties, reçus, verdicts ou populations des statistiques déjà calculées. Elle ne fusionne pas des couvertures incompatibles. Elle peut produire l’aide économique conditionnelle définie dans les règles, à partir des observations complètes avant filtrage, sans nouveau stockage ni appel modèle. Le score pondéré personnalisé reste différé selon le PRD ; aucun moteur ni formule n’est ajouté avant sa décision.
 
 ### 4.7 Restitution
 
@@ -192,7 +192,7 @@ Les campagnes déjà enregistrées conservent leurs questions, panels, schémas 
 
 ## 10. Sécurité et autorité
 
-- dossiers du parcours 0.1.0 entièrement inventés ; aucun téléversement de dossier réel ni accès aux données de l’ordinateur ou du téléphone
+- dossiers du parcours entièrement inventés ; sauf décision contraire, aucun téléversement de dossier réel ni accès aux données de l’ordinateur ou du téléphone
 - description générale sans donnée personnelle ou confidentielle ; la consigne ne garantit pas leur absence, le stockage privé suit la politique de conservation et de retrait du PRD
 - secrets absents des tâches, sorties publiées et reçus publics
 - permissions minimales et outils déclarés
@@ -223,7 +223,7 @@ Le frontend et le backend appartiennent au même dépôt produit et sont servis 
 
 Les comptes du web, de l’exécuteur et de la livraison limitent chacun l’accès à leur responsabilité. Une projection contrôlée est remise au serveur public sous autorité de publication ; exposer directement un dossier privé n’est pas une interface de publication. Les secrets sont injectés séparément du code et de la projection. Les journaux d’exploitation doivent permettre le diagnostic sans exposer secrets, entrées privées ou sorties brutes.
 
-Soumission d’une demande, consultation autorisée de son dossier et publication ouverte sont des accès distincts. Le parcours public ne rend pas ses dossiers ni ses résultats publics par défaut. L’accès privé repose sur une session opaque de navigateur et des contrôles de propriétaire côté exécuteur. La clé fournisseur reste chiffrée chez l’exécuteur ; le serveur public la relaie seulement à son enregistrement. Aucune attribution de secrets au serveur public n’est déduite de l’ouverture du formulaire. Ces choix n’imposent ni nouveau service ni gestion de comptes ; ils bloquent les fonctions qui en dépendent tant qu’ils ne sont pas approuvés. Les décisions de traitement des saisies, conservation, financement, abus et publication relèvent du [PRD](PRD.md#51-périmètre-010).
+Soumission d’une demande, consultation autorisée de son dossier et publication ouverte sont des accès distincts. Le parcours public ne rend pas ses dossiers ni ses résultats publics par défaut. L’accès privé repose sur une session opaque de navigateur et des contrôles de propriétaire côté exécuteur. La clé fournisseur reste chiffrée chez l’exécuteur ; le serveur public la relaie seulement à son enregistrement. Aucune attribution de secrets au serveur public n’est déduite de l’ouverture du formulaire. Ces choix n’imposent ni nouveau service ni gestion de comptes ; ils bloquent les fonctions qui en dépendent tant qu’ils ne sont pas approuvés. Les décisions de traitement des saisies, conservation, financement, abus et publication relèvent du [PRD](PRD.md#51-capacités).
 
 ### 12.2 Persistance et intégrité
 

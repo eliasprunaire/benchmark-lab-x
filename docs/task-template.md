@@ -74,7 +74,7 @@ Usage du résultat et intervention humaine : `<ce que le destinataire peut en fa
 
 Niveau éventuel : `<définition et dimensions approuvées avant exécution, ou NON DÉFINI>`. Décrire les caractéristiques qui varient entre cas et celles qui restent communes, selon les [règles de charge et de portée](RULES.md#4-contrat-avant-exécution). Une étiquette ne remplace pas cette description.
 
-Couverture et limites : `<motif de sélection, usages couverts et exclus, nature entièrement fictive du dossier 0.1.0, biais connus et limites de généralisation>`. Un cas validé ne prouve pas la réussite sur les dossiers réels de l’utilisateur. Un exemple pédagogique public n’est pas réputé inédit.
+Couverture et limites : `<motif de sélection, usages couverts et exclus, nature entièrement fictive du dossier, biais connus et limites de généralisation>`. Un cas validé ne prouve pas la réussite sur les dossiers réels de l’utilisateur. Un exemple pédagogique public n’est pas réputé inédit.
 
 Règle d’agrégation : `<forme et portée du résultat ; cas et tentatives pris en compte, dénominateur, traitement des manquants, incidents et INDETERMINE ; ou AUCUNE : verdicts par cas et tentative seulement>`.
 
@@ -96,7 +96,7 @@ Modifications, hors empreinte : `<changements demandés, accords conservés, que
 
 Modalité documentaire, si pertinente : `<textes utiles fournis, recherche dans une bibliothèque figée ou consultation externe autorisée ; corpus, versions et droits ; preuves prévues des requêtes et pièces consultées>`.
 
-Tout élément non listé est indisponible. Le parcours 0.1.0 ne comprend aucun téléversement de dossier réel, accès à l’ordinateur, connecteur vers les données de l’utilisateur ou action sur son téléphone. Aucun secret n’est fourni au candidat. Préparer un calendrier ne prouve aucune notification réelle ; fournir du texte ne mesure pas l’OCR.
+Tout élément non listé est indisponible. Sauf décision contraire, le parcours ne comprend aucun téléversement de dossier réel, accès à l’ordinateur, connecteur vers les données de l’utilisateur ou action sur son téléphone. Aucun secret n’est fourni au candidat. Préparer un calendrier ne prouve aucune notification réelle ; fournir du texte ne mesure pas l’OCR.
 
 ### Sortie brute attendue
 
@@ -120,7 +120,7 @@ La sortie brute est conservée avant contrôle ou jugement. Aucun post-traitemen
 
 ### Critères secondaires
 
-Conserver au maximum deux lignes pour 0.1.0, complémentaires aux obligations et au coût. Un critère est défini avant les appels candidats ; une mesure valide peut porter sur une sortie non admissible sans changer son verdict. Une colonne ordonnable a une mesure, une preuve, une unité ou échelle justifiée, un sens favorable et une règle d’agrégation si nécessaire ; sinon elle reste descriptive. Calculs, complétude, rapprochements et durée sont des possibilités, pas des colonnes obligatoires. Une note ou un décompte des obligations pour les classer compte comme critère supplémentaire.
+Conserver au maximum deux lignes, complémentaires aux obligations et au coût. Un critère est défini avant les appels candidats ; une mesure valide peut porter sur une sortie non admissible sans changer son verdict. Une colonne ordonnable a une mesure, une preuve, une unité ou échelle justifiée, un sens favorable et une règle d’agrégation si nécessaire ; sinon elle reste descriptive. Calculs, complétude, rapprochements et durée sont des possibilités, pas des colonnes obligatoires. Une note ou un décompte des obligations pour les classer compte comme critère supplémentaire.
 
 | ID | Critère | Question observable | Unité ou échelle | Sens favorable | Preuve |
 |---|---|---|---|---|---|
@@ -295,7 +295,7 @@ Limite d’attribution affichée : `<formulation conforme au PRD, section 8, et 
 - [ ] toute agrégation des cas est définie avant exécution, sinon seuls les verdicts par cas sont permis
 - [ ] chaque campagne référence le contrat sans le réécrire ; ses autorités et états restent distincts
 - [ ] les verdicts conclusifs sont distincts des évaluations à reprendre ; chaque travail restant a une cause et une prochaine action
-- [ ] zéro à deux critères secondaires sont prévus pour 0.1.0 ; chaque colonne ordonnable a sa mesure, preuve, unité ou échelle justifiée, sens favorable et agrégation éventuelle
+- [ ] zéro à deux critères secondaires sont prévus ; chaque colonne ordonnable a sa mesure, preuve, unité ou échelle justifiée, sens favorable et agrégation éventuelle
 - [ ] le besoin représenté par le paquet a été validé et le responsable a approuvé le contrat qualifié, ou les appels candidats restent interdits
 - [ ] les conditions de test communes sont déclarées une fois et identiques entre les configurations comparées
 - [ ] chaque configuration expose l’effort demandé et l’effort observé, ou `INCONNU` pour une valeur non prouvée
@@ -303,10 +303,10 @@ Limite d’attribution affichée : `<formulation conforme au PRD, section 8, et 
 - [ ] la base de coût fixe le périmètre d'attribution, les tentatives comptées, l'unité commune et la conversion éventuelle avant exécution
 - [ ] chaque verdict porte un motif, ses preuves et son responsable
 - [ ] les coûts et mesures valides restent visibles avec les erreurs ; inconnues et incompatibilités sont sans rang, égalités conservées et complétude économique explicite
-- [ ] aucun score combiné n’est produit en 0.1.0 ; aucun meilleur modèle absolu, podium général, classement universel ou graphique trompeur n’est produit
+- [ ] aucun score combiné n’est produit tant que sa méthode n’est pas décidée ; aucun meilleur modèle absolu, podium général, classement universel ou graphique trompeur n’est produit
 - [ ] la limite d'attribution est visible
 - [ ] les extensions non autorisées restent absentes
 - [ ] la conclusion est bornée au contrat, aux cas et tentatives couverts, à la campagne, aux conditions communes et à la date
 - [ ] les pièces publiables sont autorisées et les restrictions sont visibles
 
-Un scénario de maquette ou un exemple pédagogique ne devient pas implicitement une tâche exécutable du catalogue. Le score pondéré personnalisé reste une capacité différée du [PRD](PRD.md#52-extensions), sans formule ni exécution dans ce gabarit 0.1.0.
+Un scénario de maquette ou un exemple pédagogique ne devient pas implicitement une tâche exécutable du catalogue. Le score pondéré personnalisé reste une capacité différée du [PRD](PRD.md#52-extensions), sans formule ni exécution dans ce gabarit.
