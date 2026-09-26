@@ -158,7 +158,8 @@ class S10ProofTests(unittest.TestCase):
         parsed = Markup(page)
         self.assertFalse(any(tag == 'script' or any(k.startswith('on') for k in attrs)
                              for tag, attrs in parsed.tags))
-        self.assertEqual([], [attrs for tag, attrs in parsed.tags if tag == 'img'])
+        # Seul le logo du gabarit : la sortie du candidat reste du texte
+        self.assertEqual([], [attrs for tag, attrs in parsed.tags if tag == 'img' and attrs['src'] != '/bench-x.svg'])
         self.assertTrue(detail['back_href'].endswith('#attempt-long'))
         self.assertEqual(query, detail['filter_scope'])
         self.assertTrue(any(tag == 'details' and attrs.get('class') == 'proof-content' for tag, attrs in parsed.tags))
@@ -207,8 +208,10 @@ class S10ProofTests(unittest.TestCase):
         parsed = Markup(page.encode())
         self.assertEqual(1, sum(tag == 'dialog' for tag, _ in parsed.tags))
         self.assertEqual(1, sum(tag == 'form' for tag, _ in parsed.tags))
+        # BX-19 : un lien natif, que le script enrichit en modale
         self.assertEqual([row['detail_href']],
-                         [attrs['data-url'] for tag, attrs in parsed.tags if tag == 'button' and 'data-result' in attrs])
+                         [attrs['href'] for tag, attrs in parsed.tags if tag == 'a' and 'data-result' in attrs])
+        self.assertFalse(any(tag == 'button' and 'data-result' in attrs for tag, attrs in parsed.tags))
         self.assertLess(page.index('economic-choice-title'), page.index('id="filters"'))
         self.assertIn('<h2 id="economic-choice-title">Notre conseil</h2>', page)
         self.assertNotIn('Si le coût est votre priorité', page)
@@ -236,6 +239,12 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn('data-result', views.COMPARISON_FOCUS_SCRIPT)
         detail = r.detail(self.store, self.sid, 'fixture', 'proof', 'long', query={'sort': 'cost'})
         raw = views.render(detail, '').decode()
+        # BX-19 : une page complète, lisible sans le script de la modale
+        self.assertTrue(raw.startswith('<!doctype html>\n<html lang="fr">'))
+        self.assertIn('<link rel="stylesheet" href="/preparation/style.css">', raw)
+        self.assertIn('<h1>Détail et preuves</h1>', raw)
+        self.assertIn(detail['back_href'], Markup(raw.encode()).links)
+        self.assertIn('href="' + detail['href'] + '" aria-current="step"><span class="n">5</span>Résultats', raw)
         self.assertEqual(1, raw.count('id="attempt-detail"'))
         fragment = raw.split('id="attempt-detail"', 1)[1]
         self.assertNotIn(detail['need'], fragment)

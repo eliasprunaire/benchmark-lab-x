@@ -18,7 +18,7 @@ from urllib.request import Request, urlopen
 
 from benchmark.acquisition import execution
 from benchmark.acquisition import campaigns as c
-from benchmark import evaluation as e, preparation as p, publications as pub, qualification as q, restitution as r, service, storage, web_api
+from benchmark import evaluation as e, preparation as p, privacy, provider_access, publications as pub, qualification as q, restitution as r, service, storage, web_api
 from benchmark_web import projection, views
 from benchmark_web.server import serve_web
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
@@ -46,13 +46,17 @@ _PRIOR_STYLESHEET = b':root { color-scheme: light; }\n'
 class Markup(HTMLParser):
     def __init__(self, raw):
         super().__init__()
-        self.links, self.tags = [], []
+        self.links, self.tags, self.nested = [], [], []
         self.feed(raw.decode())
 
     def handle_starttag(self, tag, attrs):
         self.tags.append((tag, dict(attrs)))
+        self.nested.append((tag, dict(attrs)))
         if tag == 'a':
             self.links.append(dict(attrs).get('href', ''))
+
+    def handle_endtag(self, tag):
+        self.nested.append(('/' + tag, {}))
 
 
 def build(data, criterion_ids=('duration', 'present')):
@@ -254,10 +258,10 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual([('script', {})], [(tag, attrs) for tag, attrs in markup.tags if tag == 'script'])
         self.assertFalse(any(k.startswith('on') for _, attrs in markup.tags for k in attrs))
         self.assertEqual(views.COMPARISON_FOCUS_SCRIPT.encode(), comparison_html.split(b'<script>')[1].split(b'</script>')[0])
-        self.assertEqual('4JYjiqZNZfBuB599Ij0Xkc4E3182/UxSNQd6+mpeDNM=',
+        self.assertEqual('nien9Aoz/oWmdtDJhzMnQH8Brg81Tu1m+0JvUXLAmzI=',
                          b64encode(sha256(views.COMPARISON_FOCUS_SCRIPT.encode()).digest()).decode())
-        detail = next(attrs['data-url'] for tag, attrs in markup.tags
-                      if tag == 'button' and '/attempts/attempt-error' in attrs.get('data-url', ''))
+        detail = next(attrs['href'] for tag, attrs in markup.tags
+                      if tag == 'a' and 'data-result' in attrs and '/attempts/attempt-error' in attrs['href'])
         code, value, _, _ = web_api.dispatch(self.store, 'GET', detail, self.token, None, 'a' * 40, False)
         raw = views.render(value, '')
         self.assertEqual(200, code)
@@ -265,16 +269,16 @@ class S6Regressions(unittest.TestCase):
         self.assertIn(b'  &lt;script&gt;candidate()&lt;/script&gt;\n  source error\n', raw)
         parsed = Markup(raw)
         self.assertFalse(any(tag == 'script' or any(k.startswith('on') for k in attrs) for tag, attrs in parsed.tags))
-        self.assertTrue(raw.startswith(b'<div id="attempt-detail">'))
+        self.assertTrue(raw.startswith(b'<!doctype html>\n<html lang="fr">'))
+        self.assertEqual(1, raw.count(b'<div id="attempt-detail">'))
         for link in parsed.links:
             if '/pieces/' in link:
                 code, proof, _, _ = web_api.dispatch(self.store, 'GET', link, self.token, None, 'a' * 40, False)
                 self.assertEqual(200, code)
                 self.assertEqual(self.store.read_piece(link.rsplit('/', 1)[1]), proof)
 
-    def test_http_authorizes_only_exact_focus_script_on_comparison_html(self):
-        bundle = self.preview()
-        pub.materialize(bundle, self.approval(bundle), self.public)
+    def serve_http(self):
+        """Exécuteur et serveur web réels sur ce stockage ; rend l'origine HTTP une fois prête"""
         sock = self.home / 'executor.sock'
         with socket.socket() as probe:
             probe.bind(('127.0.0.1', 0))
@@ -311,6 +315,12 @@ class S6Regressions(unittest.TestCase):
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(.02)
+        return base
+
+    def test_http_authorizes_only_exact_focus_script_on_comparison_html(self):
+        bundle = self.preview()
+        pub.materialize(bundle, self.approval(bundle), self.public)
+        base = self.serve_http()
         policy = "default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
         paths = [(self.base, 'text/html'), (self.base, 'application/json'),
                  (self.base + '/attempts/attempt-error', 'text/html'),
@@ -331,7 +341,7 @@ class S6Regressions(unittest.TestCase):
                     raw = result.read()
                     expected = policy
                     if path == self.base and accept == 'text/html':
-                        expected += "; script-src 'sha256-4JYjiqZNZfBuB599Ij0Xkc4E3182/UxSNQd6+mpeDNM='; connect-src 'self'"
+                        expected += "; script-src 'sha256-nien9Aoz/oWmdtDJhzMnQH8Brg81Tu1m+0JvUXLAmzI='; connect-src 'self'"
                         self.assertEqual(1, raw.count(b'<script>'))
                         self.assertNotIn(b'innerHTML', raw)
                         self.assertEqual(1, raw.count(b'<dialog '))
@@ -344,6 +354,34 @@ class S6Regressions(unittest.TestCase):
                     self.assertEqual(expected, result.headers['Content-Security-Policy'])
                     self.assertEqual('nosniff', result.headers['X-Content-Type-Options'])
                     self.assertEqual('no-store', result.headers['Cache-Control'])
+
+    def test_http_attempt_detail_page_under_s7_privacy(self):
+        """BX-19 : la page complète du détail reçoit l'historique local et sa CSP sans script inline"""
+        provider_access.initialize(self.home / 'private')
+        privacy.migrate(self.home / 'private', bytes(32), 'bx19')
+        self.before = list(self.store._connection.iterdump())
+        base = self.serve_http()
+        headers = {'Accept': 'text/html', 'Cookie': 'benchmark_session=' + self.token}
+        with urlopen(Request(base + self.base + '/attempts/attempt-error', headers=headers), timeout=5) as result:
+            self.assertEqual(200, result.status)
+            raw = result.read()
+            self.assertEqual("default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; "
+                             "frame-ancestors 'none'; form-action 'self'; script-src 'self'; connect-src 'self'",
+                             result.headers['Content-Security-Policy'])
+        page = Markup(raw)
+        self.assertTrue(raw.startswith(b'<!doctype html>\n<html lang="fr">'))
+        self.assertEqual([{'type': 'module', 'src': '/preparation/privacy.js'}],
+                         [attrs for tag, attrs in page.tags if tag == 'script'])
+        self.assertTrue(any('data-privacy-controls' in attrs for _, attrs in page.tags))
+        self.assertEqual(1, raw.count(b'<div id="attempt-detail">'))
+        # Le jeton CSRF reste hors du bloc que la modale recopie dans la comparaison
+        copied, depth = [], 0
+        for tag, attrs in page.nested:
+            depth += 1 if tag == 'div' and (depth or attrs.get('id') == 'attempt-detail') else -1 if tag == '/div' and depth else 0
+            if depth:
+                copied.append(attrs)
+        self.assertTrue(copied)
+        self.assertFalse(any('data-csrf-token' in attrs or attrs.get('name') == 'csrf_token' for attrs in copied))
 
     def test_invalid_filters_private_access_and_catalogue(self):
         for query in ('sort=cost&sort=duration', 'case=unknown', 'sort=O1', 'sort=unknown', 'direction=wrong',

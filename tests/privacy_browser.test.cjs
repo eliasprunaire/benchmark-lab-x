@@ -27,12 +27,23 @@ function fixture(version = 1, need, extra = {}) {
 before(async () => {
   rendered = JSON.parse(execFileSync('uv', ['run', '--with-requirements', 'benchmark/requirements.txt', '--with', 'requests', '--with', 'mpmath==1.3.0', 'python', '-c', `
 import json
+from benchmark import restitution
 from benchmark_web import views
 from tests.test_privacy_views import example_view
+from tests.test_s10_regressions import S10ProofTests as proof
+proof.setUpClass()
+try:
+    comparison = restitution.comparison(proof.store, proof.sid, 'fixture', 'proof')
+    detail = restitution.detail(proof.store, proof.sid, 'fixture', 'proof', 'long')
+    attempt = {'comparison': views.render(comparison, '').decode(), 'detail': views.render(detail, '').decode(),
+               'detail_href': comparison['rows'][0]['detail_href'], 'back_href': detail['back_href']}
+finally:
+    proof.doClassCleanups()
 print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(),
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
-                  'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT}))
+                  'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT,
+                  'comparison_script': views.COMPARISON_FOCUS_SCRIPT, **attempt}))
 `], {encoding: 'utf8'}));
   server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -42,11 +53,12 @@ print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(),
       const body = req.headers['content-type']?.includes('application/json') ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw));
       posts.push({path: url.pathname, body});
       res.writeHead(postStatus, {'Content-Type': 'application/json'}).end('{}');
-    } else if (url.pathname.startsWith('/render/')) {
-      const hash = createHash('sha256').update(rendered.script).digest('base64');
+    } else if (url.pathname.startsWith('/render/') || url.pathname === rendered.detail_href) {
+      const hashes = [rendered.script, rendered.comparison_script]
+        .map(script => `'sha256-${createHash('sha256').update(script).digest('base64')}'`).join(' ');
       res.setHeader('Content-Type', 'text/html');
-      res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'sha256-${hash}'; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
-      res.end(rendered[url.pathname.split('/').pop()]);
+      res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' ${hashes}; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
+      res.end(url.pathname === rendered.detail_href ? rendered.detail : rendered[url.pathname.split('/').pop()]);
     } else if (url.pathname === '/preparation/style.css') {
       res.setHeader('Content-Type', 'text/css'); res.end(readFileSync('benchmark_web/static/preparation.css'));
     } else if (/^\/preparation\/fonts\/[A-Za-z]+\.woff2$/.test(url.pathname)) {
@@ -519,4 +531,66 @@ test('legal pages keep CSP, French headings, visible focus, AA contrast and fit 
       } finally {await context.close();}
     }
   }
+});
+
+test('attempt proofs open a complete page without JavaScript and the modal with it, focus returned', async () => {
+  const failures = [];
+  const watch = page => {
+    page.setDefaultTimeout(3000);
+    page.on('pageerror', error => failures.push(error.message));
+    page.on('console', message => {if (/Content Security Policy/.test(message.text())) failures.push(message.text());});
+    return page;
+  };
+  const off = await browser.newContext({javaScriptEnabled: false, viewport: {width: 390, height: 844}});
+  try {
+    const page = watch(await off.newPage());
+    await page.goto(origin + '/render/comparison');
+    await page.getByRole('link', {name: 'Détail et preuves'}).click();
+    await page.waitForURL(origin + rendered.detail_href);
+    assert.equal(await page.getAttribute('html', 'lang'), 'fr');
+    assert.equal(await page.locator('h1').textContent(), 'Détail et preuves');
+    assert.equal(await page.evaluate(() => [...document.styleSheets].some(sheet =>
+      sheet.href?.endsWith('/preparation/style.css') && sheet.cssRules.length > 0)), true);
+    assert.equal(await page.locator('#attempt-detail').isVisible(), true);
+    assert.match(await page.locator('#attempt-detail').textContent(), /Pourquoi ce verdict/);
+    assert.equal(await page.getByRole('link', {name: 'Revenir aux résultats'}).getAttribute('href'), rendered.back_href);
+    assert.match(await page.locator('nav.steps [aria-current="step"]').textContent(), /Résultats/);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
+    mkdirSync('reports/privacy-browser', {recursive: true});
+    await page.screenshot({path: 'reports/privacy-browser/attempt-detail-nojs-mobile.png', fullPage: true});
+  } finally {await off.close();}
+  const on = await browser.newContext();
+  try {
+    const page = watch(await on.newPage());
+    await page.goto(origin + '/render/comparison');
+    // Seule tentative, donc la plus chère : la barre de coût est pleine
+    assert.equal(await page.$eval('.costbar', bar => bar.querySelector('rect')?.getBoundingClientRect().width === bar.getBoundingClientRect().width), true);
+    await page.getByRole('button', {name: 'Détail et preuves'}).focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('#result-dialog .result-status').textContent === 'Détail chargé.');
+    assert.equal(page.url(), origin + '/render/comparison');
+    assert.equal(await page.evaluate(() => document.getElementById('result-dialog').open), true);
+    assert.match(await page.locator('#result-dialog .result-body').textContent(), /Pourquoi ce verdict/);
+    assert.equal(await page.evaluate(() => document.activeElement.matches('#result-dialog [data-close]')), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => document.getElementById('result-dialog').open), false);
+    assert.equal(await page.evaluate(() => document.activeElement.matches('a[data-result]')), true, 'focus non rendu au lien');
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => document.querySelector('#result-dialog .result-status').textContent === 'Détail chargé.');
+    assert.equal(await page.evaluate(() => scrollY), 0, 'Espace a fait défiler la page');
+    await page.getByRole('button', {name: 'Fermer'}).click();
+    assert.equal(await page.evaluate(() => document.activeElement.matches('a[data-result]')), true, 'focus non rendu après Fermer');
+  } finally {await on.close();}
+  const legacy = await browser.newContext();
+  try {
+    const page = watch(await legacy.newPage());
+    await page.addInitScript(() => {delete HTMLDialogElement.prototype.showModal;});
+    await page.goto(origin + '/render/comparison');
+    await page.getByRole('link', {name: 'Détail et preuves'}).click();
+    await page.waitForURL(origin + rendered.detail_href);
+    assert.equal(await page.locator('h1').textContent(), 'Détail et preuves');
+    await page.goBack();
+    await page.waitForFunction(() => document.activeElement?.id === 'attempt-long');
+  } finally {await legacy.close();}
+  assert.deepEqual(failures, []);
 });

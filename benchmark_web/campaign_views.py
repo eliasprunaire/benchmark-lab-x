@@ -68,13 +68,22 @@ window.addEventListener('pageshow', () => {
         if (current === request) { request = null; dialog.removeAttribute('aria-busy'); }
       });
   }
+  // Avec la modale, le lien ouvre un dialogue : il s'annonce et s'active comme un bouton, Espace compris
+  for (const link of document.querySelectorAll('a[data-result]')) link.setAttribute('role', 'button');
+  // Comme un bouton natif : Espace ne fait pas défiler et active au relâchement, sinon le relâchement ferme la modale
+  for (const type of ['keydown', 'keyup']) document.addEventListener(type, event => {
+    const link = event.target.closest?.('a[data-result]');
+    if (!link || event.key !== ' ') return;
+    event.preventDefault();
+    if (type === 'keyup') link.click();
+  });
   document.addEventListener('click', event => {
     const link = event.target.closest('[data-result]');
     if (!link || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     opener = link;
     if (!dialog.open) dialog.showModal();
-    load(link.dataset.url);
+    load(link.getAttribute('href'));
   });
   dialog.addEventListener('click', event => {
     if (event.target.closest('[data-close]')) { dialog.close(); return; }
@@ -94,6 +103,8 @@ window.addEventListener('pageshow', () => {
     if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close();
   });
   dialog.addEventListener('close', () => {
+    // L'événement arrive après coup : rouverte entre-temps, la modale garde son chargement en cours
+    if (dialog.open) return;
     request?.abort();
     request = null;
     dialog.removeAttribute('aria-busy');
@@ -312,7 +323,9 @@ def cost_bar(value, known):
     """Barre proportionnelle au coût le plus élevé connu du même cas ; vide si inconnu"""
     if value is None or not _numeric(value) or not known or max(known) <= 0:
         return '<div class="costbar none" aria-hidden="true"></div>'
-    return '<div class="costbar" aria-hidden="true" style="--w:' + str(round(100 * float(value) / max(known))) + '%"></div>'
+    # Largeur en attribut SVG : un `style` inline serait bloqué par `style-src 'self'`
+    return ('<svg class="costbar" aria-hidden="true"><rect width="' + str(round(100 * float(value) / max(known)))
+            + '%" height="100%"/></svg>')
 
 
 def effort_label(configuration):
@@ -471,7 +484,7 @@ def render_comparison(value):
             if cost['value'] is not None and cost['rank'] is None:
                 content += '<p class="hint">Coût non comparable</p>'
             content += cost_bar(cost['value'], known) + '</td>'
-            content += '<td><button type="button" class="text-link" data-result data-url="' + text(row['detail_href']) + '">Détail et preuves</button></td></tr>'
+            content += '<td><a class="text-link" data-result href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
         content += '</tbody></table></div>'
     content += '</section><details id="method"><summary>Comment lire ces résultats</summary>'
     content += '<ul><li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
@@ -885,9 +898,10 @@ def render_result(record):
 
 
 def render_attempt_detail(value):
-    """Private fragment loaded only by the result modal"""
+    """Page privée du détail ; la modale n'en extrait que `#attempt-detail`"""
     history = value['history']
-    content = '<div id="attempt-detail">' + render_result(history[-1])
+    content = '<p><a href="' + text(value['back_href']) + '">Revenir aux résultats</a></p>'
+    content += '<div id="attempt-detail">' + render_result(history[-1])
     for record in reversed(history[:-1]):
         content += '<details><summary>Évaluation précédente, remplacée (' + text(date_lisible_utc(record['created_at'])) + ')</summary>'
         content += render_result(record) + '</details>'
