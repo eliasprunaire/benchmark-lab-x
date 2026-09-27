@@ -83,6 +83,8 @@ Commencez par le test le plus proche du changement. Avant la pull request, exéc
 uv run --with-requirements benchmark/requirements.lock python -m unittest discover -s tests
 ```
 
+Les tests du transport Pi exigent Node et Pi à la version `VERSION` de `benchmark/transports/pi.py`. Installez-le dans un préfixe temporaire comme l’étape « Installer Pi pour les réponses fictives » de [`.github/workflows/ci.yml`](.github/workflows/ci.yml), puis exportez `BENCHMARK_TEST_PI_PACKAGE=<préfixe>/node_modules/@earendil-works/pi-coding-agent`. Sans cette variable, les tests prennent le `pi` du `PATH` : absent, ils sont ignorés ; présent dans une autre version, ils échouent avec `Installation Pi … cohérente requise`.
+
 Les tests n’effectuent aucun appel modèle payant. Un résultat local vert ne remplace pas la CI Linux, une campagne réelle ou une vérification de production.
 
 ## Ouvrir la pull request
