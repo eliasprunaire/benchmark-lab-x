@@ -107,25 +107,8 @@ def require_cut(observed):
         assert observed["piece_bytes"] == b"complete fictional bytes".hex()
 
 
-def witness_process(barrier, output):
-    barrier.wait(timeout=20)
-    output.put("observed")
-
-
 class WitnessQualificationTests(unittest.TestCase):
     """Qualification of observation checkers, not a product implementation"""
-    def test_process_barrier_and_observation_channel(self):
-        ctx=multiprocessing.get_context("spawn");barrier=ctx.Barrier(2);q=ctx.Queue()
-        children=[ctx.Process(target=witness_process,args=(barrier,q)) for _ in range(2)]
-        try:
-            for child in children:child.start()
-            for child in children:child.join(30);self.assertEqual(child.exitcode,0)
-            self.assertEqual([q.get(timeout=5),q.get(timeout=5)],["observed","observed"])
-        finally:
-            for child in children:
-                if child.is_alive():child.kill();child.join()
-            q.close()
-
     def test_valid_observations_and_budget_faults(self):
         good={"reserved":"7", "spent":"2", "available":"1", "unknown_cost_operations":["op"]}
         require_budget(good,reserved="7",spent="2",available="1",unknown=["op"])

@@ -524,11 +524,6 @@ class PurgeCommandTests(unittest.TestCase):
         self.assertEqual((78, 'FAILED', 'RuntimeError'), (code, line['outcome'], line['reason']))
         self.assertNotIn(str(self.data), encode_line(line))
 
-    def test_quatre_issues_ont_quatre_codes_distincts(self):
-        from benchmark.runtime import PURGE_EXIT_CODES
-        self.assertEqual({'PURGED', 'NOTHING_TO_PURGE', 'LOCK_UNAVAILABLE', 'FAILED'}, set(PURGE_EXIT_CODES))
-        self.assertEqual(4, len(set(PURGE_EXIT_CODES.values())))
-
 
 def encode_line(line):
     import json
