@@ -34,7 +34,7 @@ def badge(verdict):
 def state_block(tone, eyebrow, heading, body, actions=''):
     """Bloc « Où j'en suis » : une icône, une ligne d'état, la prochaine action"""
     names = {'action': 'i-pen', 'wait': 'i-clock', 'warn': 'i-alert', 'err': 'i-alert', 'done': 'i-check', 'unk': 'i-help'}
-    return ('<div class="state ' + tone + '" role="status"><span class="ic">' + icon(names[tone]) + '</span>'
+    return ('<div class="state ' + tone + '"><span class="ic">' + icon(names[tone]) + '</span>'
             '<p class="eyebrow">' + escape(eyebrow, quote=True) + '</p><h2>' + escape(heading, quote=True) + '</h2>'
             + body + (('<div class="actions">' + actions + '</div>') if actions else '') + '</div>')
 

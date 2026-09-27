@@ -211,13 +211,13 @@ def render_custom_models(value, csrf, dossier_url):
     content += '<p class="hint">Un court appel payant avec votre clé vérifie que le modèle répond, sans lancer de benchmark.</p>'
     request = value.get('probe_request', {})
     if request.get('error'):
-        content += '<p role="status">' + text(request['error']) + '</p>'
+        content += '<p class="note">' + text(request['error']) + '</p>'
     elif request.get('pending') and not any(record['operation_id'] == request['request_id']
                                           for record in value.get('custom_models', [])):
         content += '<p role="status" data-probe-request="' + text(request['request_id']) + '">Vérification du slug et de son accès…</p>'
     for record in value.get('custom_models', []):
-        pending = (' data-probe-request="' + text(record['operation_id']) + '"' if record['status'] == 'EMISSION_POSSIBLE' else '')
-        content += '<p><code>' + text(record['slug']) + '</code> : <span role="status"' + pending + '>' + text(record['detail'])
+        pending = (' role="status" data-probe-request="' + text(record['operation_id']) + '"' if record['status'] == 'EMISSION_POSSIBLE' else '')
+        content += '<p><code>' + text(record['slug']) + '</code> : <span' + pending + '>' + text(record['detail'])
         cost = record['cost']
         if cost:
             content += (' Coût signalé : ' + text(montant_lisible(cost['amount'])) + ' USD.' if cost['status'] == 'KNOWN'
@@ -260,7 +260,7 @@ def render_evaluations(evaluations, dossier_url):
         label = ('Évaluation à reprendre (valeur enregistrée : INDETERMINE)' if record['verdict'] == 'INDETERMINE'
                  else record['verdict'] or 'Évaluation à reprendre')
         content += '<section id="evaluation-' + text(eid) + '"><h5>' + text(label) + '</h5>'
-        content += '<p role="status">' + text(reason) + '</p><details><summary>Identifiants de cette évaluation</summary><p>Cas ' + text(record['case_id'])
+        content += '<p class="note">' + text(reason) + '</p><details><summary>Identifiants de cette évaluation</summary><p>Cas ' + text(record['case_id'])
         content += ', configuration ' + text(record['configuration_id']) + ', évaluation ' + text(eid) + '.</p></details>'
         content += '<p>Responsable : ' + text(record['responsible']) + '. Date : ' + text(record['created_at']) + '.</p>'
         previous = record['previous_evaluation_id']
@@ -370,7 +370,7 @@ def render_comparison(value):
     if pending_reasons:
         content += listing(pending_reasons)
     coverage = value['coverage']
-    content += '<p role="status">Réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : '
+    content += '<p class="note">Réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : '
     content += text(coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '. '
     if value['economic_status'] != 'COMPLETE':
         content += 'Comparaison des coûts incomplète. '
@@ -439,13 +439,13 @@ def render_comparison(value):
             content += control
     content += '</div>' + advanced + '<div class="actions"><button type="submit">Appliquer</button>'
     content += '<a class="button sec" href="' + text(base) + '#filters">Effacer</a></div></form></details>'
-    content += '<p class="view-scope" role="status">Résultats affichés : ' + text(len(value['rows'])) + ' sur '
+    content += '<p class="view-scope note">Résultats affichés : ' + text(len(value['rows'])) + ' sur '
     content += text(len(value['population'])) + ' · ' + text(sort_label)
     if sort_column:
         content += ', décroissant' if query.get('direction') == 'desc' else ', croissant'
     content += '.</p>'
     if not value['rows']:
-        content += '<p role="status">Aucune ligne ne correspond aux filtres ; les observations de la campagne restent conservées.</p>'
+        content += '<p class="note">Aucune ligne ne correspond aux filtres ; les observations de la campagne restent conservées.</p>'
     for case_number, case in enumerate(value['cases'], 1):
         rows = [r for r in value['rows'] if r['case_id'] == case['id']]
         if not rows:
@@ -511,14 +511,14 @@ def render_configurations(value, csrf):
     """Choix des modèles et du palier, puis estimation de la sélection courante"""
     dossier_url = '/preparation/dossiers/' + value['dossier_id']
     content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
-    content += '<p role="status">Choisissez au moins deux modèles et un niveau de raisonnement. Aucun appel candidat ne part à cette étape.</p>'
+    content += '<p class="note">Choisissez au moins deux modèles et un niveau de raisonnement. Aucun appel candidat ne part à cette étape.</p>'
     if not value.get('catalogue_available', True):
         content += '<p>' + text(value['detail']) + '</p>'
         if value.get('personal_preparation'):
             content += render_custom_models(value, csrf, dossier_url)
     else:
         if value.get('catalogue_stale'):
-            content += '<p role="status">Ce relevé a expiré ; son actualisation n’a pas abouti. Le dernier relevé valide reste consultable.</p>'
+            content += '<p class="note">Ce relevé a expiré ; son actualisation n’a pas abouti. Le dernier relevé valide reste consultable.</p>'
         choices = ''
         for model in value['models']:
             checked = ' checked' if model['selected'] else ''
@@ -669,7 +669,7 @@ def render_campaign_launch_requester(value, csrf):
         content += '<p>Évaluation estimée : ' + text(montant_lisible(value['judgment_estimate_usd'])) + ' USD, financée par votre clé personnelle.</p>'
     failed = next((check for check in value['checks'] if not check['ok']), None)
     if value['launchable']:
-        content += '<p role="status">Les contrôles sont satisfaits. Vérifiez le travail, les modèles et les coûts estimés avant de confirmer le lancement.</p>'
+        content += '<p class="note">Les contrôles sont satisfaits. Vérifiez le travail, les modèles et les coûts estimés avant de confirmer le lancement.</p>'
         content += form(csrf, base + '/start', {
             'manifest_version': campaign['version'],
             'frozen_at': campaign['conditions']['frozen_at']},
@@ -684,14 +684,14 @@ def render_campaign_launch_requester(value, csrf):
             'access_connected': '/preparation/access',
             'estimate_available': dossier_url + '/configurations',
         }
-        content += '<p role="status">Lancement indisponible : ' + text(
+        content += '<p class="note">Lancement indisponible : ' + text(
             failed['detail'] if type(failed['detail']) is str else
             'connectez votre accès Openrouter') + '.'
         if failed['key'] in links:
             content += ' <a class="button" href="' + text(links[failed['key']]) + '">Compléter cette étape</a>'
         content += '</p>'
     else:
-        content += '<p role="status">Lancement indisponible. Le responsable doit vérifier la disponibilité de l’exécution.</p>'
+        content += '<p class="note">Lancement indisponible. Le responsable doit vérifier la disponibilité de l’exécution.</p>'
         content += '<p><a class="button" href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
     return content
 
@@ -746,7 +746,7 @@ def render_campaign_launch_operator(value, csrf):
             'frozen_at': campaign['conditions']['frozen_at'], 'admission_id': value['admission_id']},
             '<label><input type="checkbox" name="confirm" value="yes" required> Je confirme le lancement des essais autorisés présentés.</label><button type="submit">Lancer la comparaison autorisée</button>')
     else:
-        content += '<p role="status">' + ('Lancement enregistré. Consultez les essais et leurs résultats ci-dessous.' if campaign['attempts'] else 'Lancement indisponible. Le responsable doit vérifier les autorisations et la disponibilité de l’exécution.') + '</p>'
+        content += '<p class="note">' + ('Lancement enregistré. Consultez les essais et leurs résultats ci-dessous.' if campaign['attempts'] else 'Lancement indisponible. Le responsable doit vérifier les autorisations et la disponibilité de l’exécution.') + '</p>'
     content += section('Suivi des essais', listing([cell['cell_id'] + ' : ' + {'NOT_STARTED': 'non démarré', 'INTENT_RECORDED': 'en attente', 'EMISSION_POSSIBLE': 'en cours', 'RECEIVED': 'réponse reçue, consulter l’évaluation', 'AMBIGUOUS': 'état incertain, vérification requise'}.get(cell['state'], cell['state']) for cell in campaign['cells']]))
     content += '<p><a href="' + text(base + '/conditions') + '">Actualiser le suivi</a> · <a href="' + text(base) + '">Comparer les résultats et lire les preuves</a></p>'
     return content

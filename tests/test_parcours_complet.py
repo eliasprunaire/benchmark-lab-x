@@ -228,7 +228,9 @@ class ParcoursComplet(unittest.TestCase):
                        and (n['tag'] == 'button' or n['tag'] == 'a' and 'button' in n['attrs'].get('class', '').split())
                        and 'sec' not in n['attrs'].get('class', '').split()]
             self.assertEqual([] if primary is None else [primary], [n['text'].strip() for n in actions])
-            self.assertTrue(any(n['attrs'].get('role') in ('status', 'alert') and n['text'].strip()
+            # Une phrase d'état statique est un encadré `note` ou un bloc `state` ; `role` reste réservé aux zones mises à jour (BX-22)
+            self.assertTrue(any((n['attrs'].get('role') in ('status', 'alert')
+                                 or {'note', 'state'} & set((n['attrs'].get('class') or '').split())) and n['text'].strip()
                                 for n in page.nodes), 'Phrase d’état absente')
             self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b|\b(?:configuration|cell|attempt|case)-\d+\b|\b(?:O1|E1)\b|python -m|package_sha256')
             self.assertIn('Révision : aaaaaaa', page.visible)
