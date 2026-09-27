@@ -133,10 +133,6 @@ class PrivacyViewsTests(unittest.TestCase):
                 self.assertEqual('disabled' in fields[0], disabled)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 LEGAL_PAGES = {'/mentions-legales': 'Mentions légales', '/cgu': 'Conditions générales d’utilisation',
                '/confidentialite': 'Politique de confidentialité'}
 LEGAL_FOOTER = ('<a href="/mentions-legales">Mentions légales</a>', '<a href="/cgu">Conditions d’utilisation</a>',
@@ -221,3 +217,7 @@ class LegalViewsTests(unittest.TestCase):
         footer = page[page.index('</main>'):]
         for link in LEGAL_FOOTER:
             self.assertIn(link, footer)
+
+
+if __name__ == '__main__':
+    unittest.main()

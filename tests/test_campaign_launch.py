@@ -197,6 +197,60 @@ class CampaignLaunch(unittest.TestCase):
             repeated = web_api.dispatch(self.store, 'POST', path, 'token', dict(body, csrf_token='csrf'), 'a'*40, True, candidate_transport=response)
             self.assertIsNone(repeated[3])
 
+    def test_retained_cost_allows_next_reservation_without_releasing_money(self):
+        m = dict(self.snapshot['manifest'], campaign_id='new-policy', financial_cost_policy='retain_reserve')
+        c.create(self.store, m)
+        snap = c.inspect(self.store, 'new-policy')
+        c.admit(self.store, 'new-policy', *inputs(snap, budget='local-comparison'))
+        c.reserve(self.store, 'new-policy', 'x', 'new-x')
+        def unknown(op, request):
+            result = response(op, request)
+            result['cost'].update(status='UNKNOWN', amount=None)
+            return result
+        execution.execute(self.data, 'new-x', unknown)
+        self.assertIsNotNone(c.inspect(self.store, 'new-policy')['admission'])
+        self.assertEqual('7', self.store.inspect_budget('local-comparison')['reserved'])
+        c.reserve(self.store, 'new-policy', 'y', 'new-y')
+        execution.execute(self.data, 'new-y', response)
+        budget = self.store.inspect_budget('local-comparison')
+        self.assertEqual('7', budget['reserved'])
+        self.assertEqual(['new-x'], budget['unknown_cost_operations'])
+        self.assertEqual('RECEIVED', c.inspect(self.store, 'new-policy')['attempts'][-1]['state'])
+        with self.assertRaises(storage.BudgetError):
+            self.admit()
+
+    def test_retained_cost_does_not_allow_ambiguous_emission(self):
+        m = dict(self.snapshot['manifest'], campaign_id='new-policy', financial_cost_policy='retain_reserve')
+        c.create(self.store, m)
+        snap = c.inspect(self.store, 'new-policy')
+        c.admit(self.store, 'new-policy', *inputs(snap, budget='local-comparison'))
+        c.reserve(self.store, 'new-policy', 'x', 'new-x')
+        def broken(op, request):
+            raise OSError('PRIVATE_EXCEPTION_CANARY')
+        with self.assertLogs('benchmark.acquisition.execution', level='INFO') as journal:
+            execution.execute(self.data, 'new-x', broken)
+        self.assertIn('ACQUISITION_AMBIGUOUS operation=new-x error=OSError', journal.output[-1])
+        self.assertNotIn('PRIVATE_EXCEPTION_CANARY', '\n'.join(journal.output))
+        self.assertIsNone(c.inspect(self.store, 'new-policy')['admission'])
+        with self.assertRaises(ValueError):
+            c.reserve(self.store, 'new-policy', 'y', 'new-y')
+
+    def test_runtime_loads_private_factory_without_emission(self):
+        from unittest.mock import patch
+        from benchmark import runtime
+        with patch('benchmark.service.serve_executor') as server, \
+             patch('benchmark.service.release_identity', return_value='a'*40), \
+             patch('benchmark.transports.pi.identity'), \
+             patch('benchmark.transports.pi.PiOpenRouter') as bridge, \
+             patch.dict('os.environ', {'OPENROUTER_API_KEY':'fixture-not-a-real-key'}):
+            result = runtime.main(['executor','--data',str(self.data),'--socket',str(self.data/'sock'),
+                                   '--candidate-pi','--pi-package','/fixture/pi','--node','/fixture/node'])
+            self.assertEqual(0, result)
+            factory = server.call_args.kwargs['candidate_transport_factory']
+            factory(); factory()
+            self.assertEqual(3, bridge.call_count)
+            bridge.return_value.assert_not_called()
+
 
 class RequesterCampaignLaunch(unittest.TestCase):
     def setUp(self):
@@ -598,58 +652,3 @@ class RequesterCampaignLaunch(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-class BackendReadiness(CampaignLaunch):
-    def test_retained_cost_allows_next_reservation_without_releasing_money(self):
-        m = dict(self.snapshot['manifest'], campaign_id='new-policy', financial_cost_policy='retain_reserve')
-        c.create(self.store, m)
-        snap = c.inspect(self.store, 'new-policy')
-        c.admit(self.store, 'new-policy', *inputs(snap, budget='local-comparison'))
-        c.reserve(self.store, 'new-policy', 'x', 'new-x')
-        def unknown(op, request):
-            result = response(op, request)
-            result['cost'].update(status='UNKNOWN', amount=None)
-            return result
-        execution.execute(self.data, 'new-x', unknown)
-        self.assertIsNotNone(c.inspect(self.store, 'new-policy')['admission'])
-        self.assertEqual('7', self.store.inspect_budget('local-comparison')['reserved'])
-        c.reserve(self.store, 'new-policy', 'y', 'new-y')
-        execution.execute(self.data, 'new-y', response)
-        budget = self.store.inspect_budget('local-comparison')
-        self.assertEqual('7', budget['reserved'])
-        self.assertEqual(['new-x'], budget['unknown_cost_operations'])
-        self.assertEqual('RECEIVED', c.inspect(self.store, 'new-policy')['attempts'][-1]['state'])
-        with self.assertRaises(storage.BudgetError):
-            self.admit()
-
-    def test_retained_cost_does_not_allow_ambiguous_emission(self):
-        m = dict(self.snapshot['manifest'], campaign_id='new-policy', financial_cost_policy='retain_reserve')
-        c.create(self.store, m)
-        snap = c.inspect(self.store, 'new-policy')
-        c.admit(self.store, 'new-policy', *inputs(snap, budget='local-comparison'))
-        c.reserve(self.store, 'new-policy', 'x', 'new-x')
-        def broken(op, request):
-            raise OSError('PRIVATE_EXCEPTION_CANARY')
-        with self.assertLogs('benchmark.acquisition.execution', level='INFO') as journal:
-            execution.execute(self.data, 'new-x', broken)
-        self.assertIn('ACQUISITION_AMBIGUOUS operation=new-x error=OSError', journal.output[-1])
-        self.assertNotIn('PRIVATE_EXCEPTION_CANARY', '\n'.join(journal.output))
-        self.assertIsNone(c.inspect(self.store, 'new-policy')['admission'])
-        with self.assertRaises(ValueError):
-            c.reserve(self.store, 'new-policy', 'y', 'new-y')
-
-    def test_runtime_loads_private_factory_without_emission(self):
-        from unittest.mock import patch
-        from benchmark import runtime
-        with patch('benchmark.service.serve_executor') as server, \
-             patch('benchmark.service.release_identity', return_value='a'*40), \
-             patch('benchmark.transports.pi.identity'), \
-             patch('benchmark.transports.pi.PiOpenRouter') as bridge, \
-             patch.dict('os.environ', {'OPENROUTER_API_KEY':'fixture-not-a-real-key'}):
-            result = runtime.main(['executor','--data',str(self.data),'--socket',str(self.data/'sock'),
-                                   '--candidate-pi','--pi-package','/fixture/pi','--node','/fixture/node'])
-            self.assertEqual(0, result)
-            factory = server.call_args.kwargs['candidate_transport_factory']
-            factory(); factory()
-            self.assertEqual(3, bridge.call_count)
-            bridge.return_value.assert_not_called()
