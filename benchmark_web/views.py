@@ -21,6 +21,8 @@ from .privacy_views import (PRIVACY_SCRIPT, render_privacy_page, render_privacy_
 TEMPLATE_PATH = Path(__file__).with_name('templates') / 'preparation.html'
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'preparation.css'
 FONTS_PATH = Path(__file__).with_name('static') / 'fonts'
+# Fixé par `serve_web` sous identité de release : sans lui, chaque rendu relit le gabarit
+TEMPLATE = None
 SOURCE_SHA = ''
 # Fixé par `serve_web` depuis `release.json` : sans lui, le pied de page ne donne que la révision
 RELEASE_VERSION = None
@@ -615,7 +617,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += render_privacy_controls(value, csrf)
         if value.get('privacy') or value.get('kind') in ('home', 'privacy_data', 'contributions', 'session_bootstrap'):
             content += PRIVACY_SCRIPT
-    template = TEMPLATE_PATH.read_text()
+    template = TEMPLATE or TEMPLATE_PATH.read_text()
     body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''
     # Offre de source AGPL §13 : un numéro et un lien vers l'arbre du commit seulement sous identité de release,
     # construite depuis ce commit ; un checkout peut être modifié ou non poussé, il renvoie au dépôt
