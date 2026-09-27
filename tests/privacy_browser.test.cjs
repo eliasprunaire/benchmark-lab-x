@@ -563,8 +563,17 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
   try {
     const page = watch(await on.newPage());
     await page.goto(origin + '/render/comparison');
-    // Seule tentative, donc la plus chère : la barre de coût est pleine
-    assert.equal(await page.$eval('.costbar', bar => bar.querySelector('rect')?.getBoundingClientRect().width === bar.getBoundingClientRect().width), true);
+    // Seule tentative, donc la plus chère : la barre de coût est pleine, peinte et distincte de sa piste
+    const bar = await page.$eval('.costbar', track => {
+      const rect = track.querySelector('rect');
+      const box = rect?.getBoundingClientRect();
+      return {track: track.getBoundingClientRect().width, width: box?.width ?? 0, height: box?.height ?? 0,
+              fill: rect ? getComputedStyle(rect).fill : 'none', background: getComputedStyle(track).backgroundColor};
+    });
+    assert.ok(bar.width > 0 && bar.height > 0, 'barre de coût sans surface');
+    assert.equal(bar.width, bar.track);
+    assert.doesNotMatch(bar.fill, /^(none|transparent|rgba\(.*, 0\))$/, 'barre de coût sans remplissage');
+    assert.notEqual(bar.fill, bar.background, 'barre de coût confondue avec sa piste');
     await page.getByRole('button', {name: 'Détail et preuves'}).focus();
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.querySelector('#result-dialog .result-status').textContent === 'Détail chargé.');
