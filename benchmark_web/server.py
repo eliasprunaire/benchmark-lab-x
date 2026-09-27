@@ -34,7 +34,7 @@ _ROUTE_PATTERNS = (
     '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
     '/mentions-legales', '/cgu', '/confidentialite',
     '/preparation', '/preparation/privacy.js', '/preparation/style.css',
-    '/preparation/fonts/<police>.woff2',
+    '/preparation/fonts/<police>.woff2', '/preparation/fonts/OFL-<police>.txt',
     '/preparation/data', '/preparation/privacy', '/preparation/activity', '/preparation/catalogue',
     '/preparation/session/open',
     '/preparation/access', '/preparation/access/start', '/preparation/access/key',
@@ -58,7 +58,21 @@ _ROUTE_PATTERNS = (
 )
 _ROUTES = tuple((re.compile(re.sub('<[a-z]+>', lambda marker: _ROUTE_MARKERS[marker[0]], re.escape(pattern))), pattern)
                 for pattern in _ROUTE_PATTERNS)
+# Ressources invariantes : servies par ETag, jamais sous `no-store` ; les licences OFL accompagnent leurs polices
+_RESOURCES = {
+    '/bench-x.svg': (Path(__file__).with_name('static') / 'bench-x.svg', 'image/svg+xml'),
+    '/favicon.ico': (Path(__file__).with_name('static') / 'favicon.ico', 'image/vnd.microsoft.icon'),
+    '/preparation/privacy.js': (Path(__file__).with_name('privacy.js'), 'text/javascript; charset=utf-8'),
+    '/preparation/style.css': (views.STYLESHEET_PATH, 'text/css; charset=utf-8'),
+    **{'/preparation/fonts/' + path.name: (path, 'font/woff2') for path in views.FONTS_PATH.glob('*.woff2')},
+    **{'/preparation/fonts/' + path.name: (path, 'text/plain; charset=utf-8') for path in views.FONTS_PATH.glob('OFL-*.txt')},
+}
 _METHODS = frozenset(('GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'TRACE', 'CONNECT'))
+
+
+def _load_resource(path, media_type):
+    raw = path.read_bytes()
+    return raw, media_type, '"' + sha256(raw).hexdigest() + '"'
 
 
 def canonical_route(path):
@@ -178,6 +192,10 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
     origin = public_url.rstrip('/') if public_url else None
     views.PUBLIC_URL = origin
     source_salt = secrets.token_bytes(32)
+    # Sous identité de release, lus une fois : un changement demande un redémarrage. Un checkout relit à chaque
+    # requête, pour qu'une modification du gabarit ou d'une ressource se voie sans redémarrer
+    resources = {path: _load_resource(*entry) for path, entry in _RESOURCES.items()} if version else None
+    views.TEMPLATE = views.TEMPLATE_PATH.read_text() if version else None
 
     class Handler(BaseHTTPRequestHandler):
         server_version = 'Bench-X'
@@ -211,12 +229,14 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 int(code) if isinstance(code, int) else '<abandon>' if code == '<abandon>' else '<inconnu>',
                 0 if started is None else round((monotonic() - started) * 1000))
 
-        def respond(self, code, value, media_type='application/json', headers=None, *, script=None):
+        def respond(self, code, value, media_type='application/json', headers=None, *, script=None, cache='no-store'):
             raw = value if isinstance(value, bytes) else encode(value).encode()
             self.send_response(code)
-            self.send_header('Content-Type', media_type)
-            self.send_header('Content-Length', str(len(raw)))
-            self.send_header('Cache-Control', 'no-store')
+            # Un 304 ne décrit pas de contenu : une longueur nulle remplacerait celle de la copie en cache
+            if code != 304:
+                self.send_header('Content-Type', media_type)
+                self.send_header('Content-Length', str(len(raw)))
+            self.send_header('Cache-Control', cache)
             self.send_header('X-Content-Type-Options', 'nosniff')
             policy = "default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
             privacy_script = media_type.startswith('text/html') and b'src="/preparation/privacy.js"' in raw
@@ -280,18 +300,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             self.respond(code, {'error': 'Cette requête n’a pas pu être traitée.'}, headers=headers)
 
         def preparation(self):
-            if self.path == '/preparation/privacy.js' and self.command in ('GET', 'HEAD'):
-                self.respond(200, (Path(__file__).parent / 'privacy.js').read_bytes(), 'text/javascript; charset=utf-8')
-                return
-            if self.path == '/preparation/style.css' and self.command in ('GET', 'HEAD'):
-                self.respond(200, views.STYLESHEET_PATH.read_bytes(), 'text/css; charset=utf-8')
-                return
-            font = re.fullmatch(r'/preparation/fonts/([A-Za-z]+)\.woff2', self.path)
-            if font and self.command in ('GET', 'HEAD'):
-                try:
-                    self.respond(200, (views.FONTS_PATH / (font.group(1) + '.woff2')).read_bytes(), 'font/woff2')
-                except OSError:
-                    self.respond(404, {'error': 'NOT_FOUND'})
+            if re.fullmatch(r'/preparation/fonts/(OFL-)?[A-Za-z]+\.(woff2|txt)', self.path) and self.command in ('GET', 'HEAD'):
+                self.respond(404, {'error': 'NOT_FOUND'})
                 return
             wants_json = 'application/json' in self.headers.get('Accept', '')
             # Après le relais, une erreur ne vient plus du formulaire mais du rendu ou du protocole
@@ -525,11 +535,11 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             self.do_GET()
 
         def do_GET(self):
-            assets = {'/bench-x.svg': ('bench-x.svg', 'image/svg+xml'),
-                      '/favicon.ico': ('favicon.ico', 'image/vnd.microsoft.icon')}
-            if self.path in assets:
-                name, media = assets[self.path]
-                self.respond(200, (Path(__file__).parent / 'static' / name).read_bytes(), media)
+            if self.path in _RESOURCES:
+                raw, media, etag = resources[self.path] if resources else _load_resource(*_RESOURCES[self.path])
+                # `no-cache` garde la copie et la revalide : juste après un déploiement, sans URL à empreinte
+                matched = etag in (tag.strip().removeprefix('W/') for tag in self.headers.get('If-None-Match', '').split(','))
+                self.respond(304 if matched else 200, b'' if matched else raw, media, {'ETag': etag}, cache='no-cache')
                 return
             if self.path == '/preparation/privacy':
                 # Ancienne notice du parcours privé, remplacée par la politique publique (BX-08)

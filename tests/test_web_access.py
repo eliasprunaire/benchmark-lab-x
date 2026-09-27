@@ -1031,6 +1031,7 @@ class RouteCanonicalizationTests(unittest.TestCase):
                 ('/healthz', '/healthz'),
                 ('/preparation', '/preparation'),
                 ('/preparation/fonts/Inter.woff2', '/preparation/fonts/<police>.woff2'),
+                ('/preparation/fonts/OFL-Syne.txt', '/preparation/fonts/OFL-<police>.txt'),
                 ('/preparation/access/callback?code=jeton-secret', '/preparation/access/callback'),
                 ('/preparation/dossiers/7f3a9c2e-4b1d', '/preparation/dossiers/<id>'),
                 ('/preparation/dossiers/7f3a9c2e-4b1d/messages', '/preparation/dossiers/<id>/messages'),
@@ -1078,6 +1079,125 @@ class RouteCanonicalizationTests(unittest.TestCase):
                        logging.getLogger('benchmark_web.server').isEnabledFor(logging.INFO))):
             runtime.main(['web', '--socket', '/tmp/bench-x-test.sock', '--public', '/tmp', '--port', '8099'])
         self.assertEqual([True], enabled)
+
+
+class StaticResourceTests(unittest.TestCase):
+    """Ressources invariantes (BX-05) : lues une fois, revalidées par ETag ; le HTML garde `no-store`"""
+    ROOT = Path(__file__).resolve().parents[1] / 'benchmark_web'
+    # Ce qu'une page charge : gabarit, feuille de style et ses trois polices, script de confidentialité
+    FILES = {'/favicon.ico': 'static/favicon.ico', '/bench-x.svg': 'static/bench-x.svg',
+             '/preparation/style.css': 'static/preparation.css', '/preparation/privacy.js': 'privacy.js',
+             **{'/preparation/fonts/' + name: 'static/fonts/' + name for name in (
+                 'Syne.woff2', 'AtkinsonHyperlegibleNext.woff2', 'AtkinsonHyperlegibleMono.woff2')}}
+    NAVIGATION = tuple(FILES)
+    LICENCES = ('/preparation/fonts/OFL-Syne.txt', '/preparation/fonts/OFL-AtkinsonHyperlegibleNext.txt',
+                '/preparation/fonts/OFL-AtkinsonHyperlegibleMono.txt')
+
+    def serve(self, check, **options):
+        """Serveur réel dans ce processus : les lectures disque du service y sont observables"""
+        reads = []
+        read_bytes, read_text = Path.read_bytes, Path.read_text
+
+        def counted(original):
+            def read(path, *args, **kwargs):
+                if Path(path).resolve().is_relative_to(self.ROOT):
+                    reads.append(Path(path).name)
+                return original(path, *args, **kwargs)
+            return read
+
+        def run(server):
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            try:
+                reads.clear()
+                check(server.server_address, reads)
+            finally:
+                server.shutdown()
+                thread.join()
+
+        # `serve_web` fixe l'état de `views` pour son processus : le rendre aux tests suivants
+        with tempfile.TemporaryDirectory() as directory, patch('benchmark_web.server.run', run), \
+                patch.multiple(views, **{name: getattr(views, name) for name in (
+                    'TEMPLATE', 'SOURCE_SHA', 'RELEASE_VERSION', 'PUBLIC_URL')}), \
+                patch.object(Path, 'read_bytes', counted(read_bytes)), patch.object(Path, 'read_text', counted(read_text)):
+            serve_web('127.0.0.1', 0, directory, directory + '/absent.sock', 'a' * 40, **options)
+
+    @staticmethod
+    def fetch(address, path, headers=None, method='GET'):
+        connection = HTTPConnection(*address, timeout=3)
+        try:
+            connection.request(method, path, headers=headers or {})
+            response = connection.getresponse()
+            return response.status, response.headers, response.read()
+        finally:
+            connection.close()
+
+    def test_seconde_navigation_ne_retelecharge_ni_ne_relit_les_ressources_invariantes(self):
+        def check(address, reads):
+            etags, first = {}, 0
+            for path in ('/',) + self.NAVIGATION:
+                status, headers, raw = self.fetch(address, path)
+                self.assertEqual(200, status, path)
+                if path == '/':
+                    self.assertEqual('no-store', headers['Cache-Control'])
+                    continue
+                self.assertNotIn('no-store', headers['Cache-Control'] or '', path)
+                self.assertIsNotNone(headers['ETag'], path)
+                etags[path] = headers['ETag']
+                first += len(raw)
+            again = 0
+            for path in ('/',) + self.NAVIGATION:
+                status, headers, raw = self.fetch(address, path, {'If-None-Match': etags[path]} if path in etags else {})
+                if path == '/':
+                    self.assertEqual((200, 'no-store'), (status, headers['Cache-Control']))
+                    continue
+                self.assertEqual(304, status, path)
+                self.assertEqual(etags[path], headers['ETag'], path)
+                self.assertIsNone(headers['Content-Length'], path)
+                again += len(raw)
+            self.assertEqual(0, again, f'{again} octets retéléchargés sur {first}')
+            self.assertEqual([], reads, 'lectures disque pendant deux navigations')
+
+        self.serve(check, version='0.1.0')
+
+    def test_etag_suit_le_contenu_et_rejette_une_empreinte_perimee(self):
+        def check(address, reads):
+            for path in self.NAVIGATION:
+                for method in ('GET', 'HEAD'):
+                    status, headers, raw = self.fetch(address, path, {'If-None-Match': '"perimee", W/"autre"'}, method)
+                    expected = (self.ROOT / self.FILES[path]).read_bytes()
+                    self.assertEqual(200, status, path)
+                    self.assertEqual(len(expected), int(headers['Content-Length']), path)
+                    self.assertEqual(expected if method == 'GET' else b'', raw, path)
+                    self.assertEqual('"' + hashlib.sha256(expected).hexdigest() + '"', headers['ETag'], path)
+                    status, _, _ = self.fetch(address, path, {'If-None-Match': 'W/' + headers['ETag']}, method)
+                    self.assertEqual(304, status, path)
+            for path in ('/preparation/fonts/Absente.woff2', '/preparation/fonts/OFL-Absente.txt'):
+                status, _, raw = self.fetch(address, path, {'Accept': 'text/html'})
+                self.assertEqual((404, {'error': 'NOT_FOUND'}), (status, json.loads(raw)), path)
+
+        self.serve(check, version='0.1.0')
+
+    def test_les_licences_des_polices_sont_servies(self):
+        def check(address, reads):
+            for path in self.LICENCES:
+                status, headers, raw = self.fetch(address, path)
+                self.assertEqual(200, status, path)
+                self.assertEqual('text/plain; charset=utf-8', headers['Content-Type'], path)
+                self.assertIn(b'SIL OPEN FONT LICENSE Version 1.1', raw, path)
+                self.assertEqual((self.ROOT / 'static/fonts' / path.rsplit('/', 1)[1]).read_bytes(), raw, path)
+
+        self.serve(check, version='0.1.0')
+
+    def test_un_checkout_relit_le_gabarit_et_les_ressources_a_chaque_requete(self):
+        # Sans identité de release, un changement se voit sans redémarrage : le cache n'est pas actif
+        def check(address, reads):
+            for path in ('/', '/preparation/style.css'):
+                self.fetch(address, path)
+                self.fetch(address, path)
+            self.assertEqual(['preparation.html', 'preparation.html', 'preparation.css', 'preparation.css'], reads)
+
+        self.serve(check)
 
 
 class AccessJournalTests(WebServerCase):
