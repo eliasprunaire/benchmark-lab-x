@@ -43,6 +43,8 @@ print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(),
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
                   'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT,
+                  'home': views.render({'kind': 'home'}, '').decode(),
+                  'dossiers': views.render({'dossiers': []}, 'csrf').decode(),
                   'comparison_script': views.COMPARISON_FOCUS_SCRIPT, **attempt}))
 `], {encoding: 'utf8'}));
   server = createServer(async (req, res) => {
@@ -530,6 +532,44 @@ test('legal pages keep CSP, French headings, visible focus, AA contrast and fit 
         assert.deepEqual(failures, []);
       } finally {await context.close();}
     }
+  }
+});
+
+// Zones dont un script réécrit le texte après chargement ; tout autre `role="status"` est un abus de sémantique
+const LIVE_STATUS = '[data-privacy-status], #preparation-progress [role="status"], .result-status, [data-probe-request], .custom-model-forms [role="status"]';
+test('pages expose no decorative SVG, keep status roles for live zones and hide the honeypot without stylesheet', async () => {
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({viewport: {width: 390, height: 844}, colorScheme});
+    try {
+      const page = await context.newPage(); page.setDefaultTimeout(3000);
+      for (const name of ['home', 'dossiers', 'example', 'comparison']) {
+        const where = `${name} ${colorScheme}`;
+        await page.goto(origin + '/render/' + name);
+        await page.evaluate(() => document.fonts.ready);
+        assert.deepEqual(await page.$$eval('svg', svgs => svgs.filter(svg => !svg.closest('[aria-hidden="true"]'))
+          .map(svg => svg.outerHTML)), [], `${where} SVG exposé`);
+        assert.deepEqual(await page.$$eval('[role="status"]', (zones, live) => zones.filter(zone => !zone.matches(live))
+          .map(zone => zone.textContent.trim().slice(0, 60)), LIVE_STATUS), [], `${where} role="status" statique`);
+        assert.deepEqual(await page.evaluate(contrastFailures), [], where);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} débordement`);
+        if (name !== 'example' && name !== 'comparison')
+          assert.equal(await page.locator('.lead').evaluate(lead => getComputedStyle(lead).borderLeftStyle), 'solid',
+            `${where} l’accroche garde son encadré`);
+      }
+      await page.route('**/preparation/style.css', route => route.abort());
+      for (const name of ['dossiers', 'example']) {
+        await page.goto(origin + '/render/' + name);
+        const trap = page.locator('#website');
+        assert.equal(await trap.count(), 1, name);
+        assert.equal(await trap.isVisible(), false, `${name} honeypot visible sans feuille de style`);
+        assert.equal(await page.getByRole('textbox', {name: 'Site web'}).count(), 0, `${name} honeypot exposé`);
+        for (let press = 0; press < 60; press++) {
+          await page.keyboard.press('Tab');
+          assert.notEqual(await page.evaluate(() => document.activeElement.id), 'website', `${name} honeypot focalisable`);
+        }
+      }
+      await page.unroute('**/preparation/style.css');
+    } finally {await context.close();}
   }
 });
 

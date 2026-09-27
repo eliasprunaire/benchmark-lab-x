@@ -104,7 +104,7 @@ section h3 { margin-top: 1rem; }
 .state.done { --tone: var(--ok); --tone-soft: var(--ok-soft); }
 .notice { padding: .6rem 1rem; border-left: 4px solid var(--warn); background: var(--warn-soft); border-radius: 0 var(--radius) var(--radius) 0; }
 [role="alert"] { padding: .75rem 1rem; border-left: 4px solid var(--ko); background: var(--ko-soft); border-radius: 0 var(--radius) var(--radius) 0; }
-p[role="status"] { padding: .6rem 1rem; border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 var(--radius) var(--radius) 0; }
+p[role="status"], p.note { padding: .6rem 1rem; border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 var(--radius) var(--radius) 0; }
 .custom-model-forms [role="status"]:empty { margin: 0; padding: 0; border: 0; }
 .custom-model-forms { margin-bottom: .75rem; }
 .custom-model-forms form + form { margin-top: 1rem; }
@@ -191,7 +191,7 @@ dl.kv dd { margin: 0; }
 .campaign-summary .ic { grid-column: 1; grid-row: 1 / span 4; width: 2.4rem; height: 2.4rem; border-radius: 50%; background: var(--ok-soft); color: var(--ok); display: grid; place-items: center; }
 .campaign-summary .ic svg { width: 1.35rem; height: 1.35rem; }
 .campaign-summary p { margin: .2rem 0; max-width: none; }
-.campaign-summary [role="status"] { border: 0; padding: 0; background: transparent; }
+.campaign-summary .note { border: 0; padding: 0; background: transparent; }
 .comparison-filters summary { font-weight: 600; }
 .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: .8rem; margin: .6rem 0; }
 .comparison-filters > form { padding: .25rem 1.2rem 1.2rem; }

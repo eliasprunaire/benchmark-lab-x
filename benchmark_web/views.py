@@ -33,6 +33,9 @@ PUBLIC_PAGES = {
          'compare les modèles dans les mêmes conditions, coût observé compris.',
     **{path: description for path, (_, description, _) in LEGAL_PAGES.items()},
 }
+# Piège à robots : `hidden` le retire du rendu et de l'arbre d'accessibilité même sans feuille de style
+HONEYPOT = ('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>'
+            '<input id="website" name="website" autocomplete="off" tabindex="-1"></div>')
 PREPARATION_PROGRESS_SCRIPT = """(() => {
   const destination = document.getElementById('campaign-followup')?.dataset?.resultsHref;
   if (destination) { location.replace(destination); return; }
@@ -250,13 +253,13 @@ def render(value, csrf, path='/preparation', *, error=False):
                 '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5"' + field_attributes('request') + '>' + text(submitted['request']) + '</textarea>' + field_error('request') +
                 '<label for="useful">Résultat attendu</label><textarea id="useful" name="useful" maxlength="800" rows="3"' + field_attributes('useful') + '>' + text(submitted.get('useful', '')) + '</textarea>' + field_error('useful') +
                 '<label for="context">Contexte utile</label><textarea id="context" name="context" maxlength="200" rows="2"' + field_attributes('context') + '>' + text(submitted.get('context', '')) + '</textarea>' + field_error('context') +
-                '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>'
+                HONEYPOT +
                 '<button type="submit">Corriger et renvoyer</button>')
         elif type(submitted) is dict and 'message' in submitted:
             content += form(csrf, path, {key: submitted[key] for key in ('action_id', 'revision', 'kind')},
                 '<label for="message">Votre précision ou correction</label>'
                 '<textarea id="message" name="message" required maxlength="1000" rows="4"' + field_attributes('message') + '>' + text(submitted['message']) + '</textarea>' + field_error('message') +
-                '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>'
+                HONEYPOT +
                 '<button type="submit">Corriger et renvoyer</button>')
         back_class = 'button sec' if type(submitted) is dict and ('request' in submitted or 'message' in submitted) else 'button'
         content += '<p><a class="' + back_class + '" href="/preparation">Retrouver mes cas d’usage</a></p>'
@@ -307,7 +310,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content = render_campaign_launch_operator(value, csrf)
     elif value.get('kind') == 'home':
         title = 'Quel modèle pour votre travail ?'
-        content = '<div class="hero"><p class="lead" role="status">Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. '
+        content = '<div class="hero"><p class="lead note">Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. '
         content += 'Nous préparons avec vous un exemple entièrement inventé, puis les modèles sont comparés dans les mêmes conditions, '
         content += 'sur des critères vérifiables et leur coût observé.</p>'
         content += '<div class="actions"><a class="button" href="/preparation">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
@@ -333,7 +336,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content = render_comparison(value) + '<script>' + COMPARISON_FOCUS_SCRIPT + '</script>'
     elif value.get('kind') == 'projection_preview':
         title = 'Aperçu privé · NON APPROUVÉ'
-        content = '<p role="status">Aperçu privé · NON APPROUVÉ. Aucune activation ni publication.</p>'
+        content = '<p class="note">Aperçu privé · NON APPROUVÉ. Aucune activation ni publication.</p>'
         content += '<p><a href="' + text(value['comparison']['href']) + '">Revenir à la comparaison</a></p>'
         content += '<p>Choisissez les pièces à inclure. Aucune pièce cochée : page et styles seulement. '
         content += 'L’aperçu porte sur la campagne entière, sans les filtres de consultation.</p>'
@@ -350,7 +353,7 @@ def render(value, csrf, path='/preparation', *, error=False):
     elif 'dossiers' in value:
         title = 'Mes cas d’usage'
         content = personal_key_form(csrf, value.get('personal_access', {})) if value.get('personal_preparation') and path == '/preparation' else ''
-        content += '<p class="lead" role="status">Décrivez le travail et le résultat qui vous serait utile. Vous pourrez examiner et corriger l’exemple avant de le valider.</p>'
+        content += '<p class="lead note">Décrivez le travail et le résultat qui vous serait utile. Vous pourrez examiner et corriger l’exemple avant de le valider.</p>'
         dossiers = '<ul class="dossiers">' + ''.join(
             f'<li><a href="/preparation/dossiers/{text(d["dossier_id"])}">{text(d.get("need") or "Cas d’usage " + d["dossier_id"])}</a>'
             f'<small>Révision {d["revision"]}</small><a class="button sec" href="/preparation/dossiers/{text(d["dossier_id"])}">Reprendre</a></li>'
@@ -362,8 +365,8 @@ def render(value, csrf, path='/preparation', *, error=False):
             '<label for="request">Une tâche de votre travail</label><p id="request-help" class="hint">Décrivez le travail et le résultat utile, sans donnée personnelle ni information confidentielle. Aucun dossier réel, même anonymisé.</p>'
             '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5" aria-describedby="request-help' + ('"' if can_submit else ' availability" disabled') + '></textarea>'
             '<label for="useful">Résultat attendu</label><textarea id="useful" name="useful" maxlength="800" rows="3"' + disabled + '></textarea>'
-            '<label for="context">Contexte utile</label><textarea id="context" name="context" maxlength="200" rows="2"' + disabled + '></textarea>'
-            '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>',
+            '<label for="context">Contexte utile</label><textarea id="context" name="context" maxlength="200" rows="2"' + disabled + '></textarea>' +
+            HONEYPOT,
             form_id='prepare-case')
             + '<button type="submit" form="prepare-case"' + disabled + '>' + icon('i-pen') + 'Préparer cet exemple</button>', 'besoin')
         content += section('Mes cas d’usage dans ce navigateur', dossiers)
@@ -447,8 +450,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         if editable and value['package'] is None:
             content += section('Votre réponse', form(csrf, url + '/messages',
                 {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
-                '<label for="message">Votre précision</label><textarea id="message" name="message" rows="3" required maxlength="1000"' + disabled + '></textarea>'
-                '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>'
+                '<label for="message">Votre précision</label><textarea id="message" name="message" rows="3" required maxlength="1000"' + disabled + '></textarea>' + HONEYPOT +
                 '<button type="submit"' + disabled + '>Envoyer ma réponse</button>'))
         payload = value['payload']
         content += section('Besoin conservé', '<p>' + text(payload['request']) + '</p>', 'besoin')
@@ -526,11 +528,11 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += render_contribution(value, csrf)
         content += '<section id="validation"><h2>Validation du cas d’usage</h2>'
         if value['validation']:
-            content += '<p role="status">Votre validation est enregistrée pour ce cas d’usage, cette révision et cet exemple exact.</p>'
+            content += '<p class="note">Votre validation est enregistrée pour ce cas d’usage, cette révision et cet exemple exact.</p>'
             if not current_campaigns and not automatic:
                 content += '<p>En attente de préparation des conditions par le responsable.</p>'
         elif package:
-            content += '<p role="status">Une nouvelle validation est requise pour l’exemple présenté.</p>'
+            content += '<p class="note">Une nouvelle validation est requise pour l’exemple présenté.</p>'
         elif referral:
             content += '<p>Cette demande hors périmètre ne peut pas être validée ni comparée dans Bench-X.</p>'
         else:
@@ -555,8 +557,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                 '<option value="clarify">Répondre à la clarification ou confirmer le périmètre</option>'
                 '<option value="correct"' + (' selected' if package else '') + '>Modifier cet exemple</option></select>'
                 '<label for="message">Votre précision ou correction</label>'
-                '<textarea id="message" name="message" rows="4" required maxlength="1000"' + disabled + '></textarea>'
-                '<div class="website"><label for="website">Site web</label><input id="website" name="website" autocomplete="off" tabindex="-1"></div>'
+                '<textarea id="message" name="message" rows="4" required maxlength="1000"' + disabled + '></textarea>' + HONEYPOT +
                 '<button type="submit"' + disabled + '>Envoyer ce message</button>') + '</div></details>'
         qualification = value.get('qualification', {})
         labels = {'PENDING': 'En attente', 'QUALIFIED': 'Contrôles requis prouvés',

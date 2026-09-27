@@ -329,7 +329,7 @@ class DossierPageTests(unittest.TestCase):
         self.assertIn('<details class="corr"><summary class="button sec">', page)
         self.assertIn('Oui, c’est le travail à tester', page)
         self.assertIn('Actualiser cet état', page)
-        self.assertIn('<div class="website"><label for="website">Site web</label>', page)
+        self.assertIn('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>', page)
         self.assertNotIn(view['package_sha256'], page.replace('name="package_sha256" value="' + view['package_sha256'] + '"', ''))
 
 
