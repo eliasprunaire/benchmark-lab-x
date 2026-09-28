@@ -1084,14 +1084,13 @@ class RouteCanonicalizationTests(unittest.TestCase):
 class StaticResourceTests(unittest.TestCase):
     """Ressources invariantes (BX-05) : lues une fois, revalidées par ETag ; le HTML garde `no-store`"""
     ROOT = Path(__file__).resolve().parents[1] / 'benchmark_web'
-    # Ce qu'une page charge : gabarit, feuille de style et ses trois polices, script de confidentialité
+    # Ce qu'une page charge : gabarit, feuille de style et ses deux polices, script de confidentialité
     FILES = {'/favicon.ico': 'static/favicon.ico', '/bench-x.svg': 'static/bench-x.svg',
              '/preparation/style.css': 'static/preparation.css', '/preparation/privacy.js': 'privacy.js',
              **{'/preparation/fonts/' + name: 'static/fonts/' + name for name in (
-                 'Syne.woff2', 'AtkinsonHyperlegibleNext.woff2', 'AtkinsonHyperlegibleMono.woff2')}}
+                 'AtkinsonHyperlegibleNext.woff2', 'AtkinsonHyperlegibleMono.woff2')}}
     NAVIGATION = tuple(FILES)
-    LICENCES = ('/preparation/fonts/OFL-Syne.txt', '/preparation/fonts/OFL-AtkinsonHyperlegibleNext.txt',
-                '/preparation/fonts/OFL-AtkinsonHyperlegibleMono.txt')
+    LICENCES = ('/preparation/fonts/OFL-AtkinsonHyperlegibleNext.txt', '/preparation/fonts/OFL-AtkinsonHyperlegibleMono.txt')
 
     def serve(self, check, **options):
         """Serveur réel dans ce processus : les lectures disque du service y sont observables"""

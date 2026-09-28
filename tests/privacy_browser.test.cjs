@@ -553,8 +553,8 @@ test('pages expose no decorative SVG, keep status roles for live zones and hide 
         assert.deepEqual(await page.evaluate(contrastFailures), [], where);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} débordement`);
         if (name !== 'example' && name !== 'comparison')
-          assert.equal(await page.locator('.lead').evaluate(lead => getComputedStyle(lead).borderLeftStyle), 'solid',
-            `${where} l’accroche garde son encadré`);
+          assert.equal(await page.locator('.lead').evaluate(lead => getComputedStyle(lead).borderLeftStyle), 'none',
+            `${where} l’accroche est un paragraphe, sans filet latéral (DESIGN.md)`);
       }
       await page.route('**/preparation/style.css', route => route.abort());
       for (const name of ['dossiers', 'example']) {
@@ -624,9 +624,11 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
     await page.keyboard.press('Escape');
     assert.equal(await page.evaluate(() => document.getElementById('result-dialog').open), false);
     assert.equal(await page.evaluate(() => document.activeElement.matches('a[data-result]')), true, 'focus non rendu au lien');
+    // Le focus rendu au lien peut déjà avoir fait défiler la page : seul compte le défilement causé par Espace
+    const before = await page.evaluate(() => scrollY);
     await page.keyboard.press('Space');
     await page.waitForFunction(() => document.querySelector('#result-dialog .result-status').textContent === 'Détail chargé.');
-    assert.equal(await page.evaluate(() => scrollY), 0, 'Espace a fait défiler la page');
+    assert.equal(await page.evaluate(() => scrollY), before, 'Espace a fait défiler la page');
     await page.getByRole('button', {name: 'Fermer'}).click();
     assert.equal(await page.evaluate(() => document.activeElement.matches('a[data-result]')), true, 'focus non rendu après Fermer');
   } finally {await on.close();}

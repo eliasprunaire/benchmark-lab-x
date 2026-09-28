@@ -530,7 +530,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('text/css', headers['Content-Type'])
         css = raw.decode()
         small = css.split('@media (max-width: 40rem) {', 1)[1].split('@media', 1)[0]
-        for rule in ('.two, .tiles { grid-template-columns: 1fr; }',
+        for rule in ('.two { grid-template-columns: 1fr; }',
                      'footer.site .cols { grid-template-columns: 1fr; }',
                      'header.site { align-items: flex-start; flex-direction: column; }'):
             self.assertIn(rule, small)

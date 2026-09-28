@@ -317,11 +317,11 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += 'sur des critères vérifiables et leur coût observé.</p>'
         content += '<div class="actions"><a class="button" href="/preparation#besoin">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
         content += '<a class="button sec" href="/preparation#mes-cas">Retrouver mes cas d’usage</a></div></div>'
-        content += section('Le parcours en quatre étapes', '<div class="tiles">'
-            '<div class="tile"><h3>Besoin</h3><p>Vous décrivez la tâche et le résultat utile. L’assistant pose des questions si nécessaire.</p></div>'
-            '<div class="tile"><h3>Exemple</h3><p>Une consigne et des pièces inventées vous sont proposées. Vous corrigez jusqu’à ce que l’exemple soit fidèle.</p></div>'
-            '<div class="tile"><h3>Validation</h3><p>Vous confirmez le travail à tester. La qualification de l’exemple suit ; aucun candidat n’est lancé et rien n’est publié.</p></div>'
-            '<div class="tile"><h3>Comparaison</h3><p>Chaque modèle passe l’épreuve dans les mêmes conditions. Vous lisez les verdicts, les preuves et les coûts.</p></div></div>')
+        content += section('Le parcours en quatre étapes', '<ol class="parcours">'
+            '<li><strong>Besoin.</strong> Vous décrivez la tâche et le résultat utile. L’assistant pose des questions si nécessaire.</li>'
+            '<li><strong>Exemple.</strong> Une consigne et des pièces inventées vous sont proposées. Vous corrigez jusqu’à ce que l’exemple soit fidèle.</li>'
+            '<li><strong>Validation.</strong> Vous confirmez le travail à tester. La qualification de l’exemple suit ; aucun candidat n’est lancé et rien n’est publié.</li>'
+            '<li><strong>Comparaison.</strong> Chaque modèle passe l’épreuve dans les mêmes conditions. Vous lisez les verdicts, les preuves et les coûts.</li></ol>')
         content += section('Ce qui rend le résultat lisible', '<div class="rule">' + icon('i-scale') + '<span><strong>Chaque exigence compte.</strong> '
             'Une obligation non prouvée ou une erreur éliminatoire suffit à écarter une configuration, quel que soit le reste.</span></div>'
             '<ul><li>Le verdict porte sur la configuration observée sous des conditions communes, jamais sur le nom du modèle seul.</li>'
@@ -359,7 +359,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<p class="lead note">Décrivez le travail et le résultat qui vous serait utile. Vous pourrez examiner et corriger l’exemple avant de le valider.</p>'
         dossiers = '<ul class="dossiers">' + ''.join(
             f'<li><a href="/preparation/dossiers/{text(d["dossier_id"])}">{text(d.get("need") or "Cas d’usage " + d["dossier_id"])}</a>'
-            f'<small>Révision {d["revision"]}</small><a class="button sec" href="/preparation/dossiers/{text(d["dossier_id"])}">Reprendre</a></li>'
+            f'<small>Révision {d["revision"]}</small></li>'
             for d in value['dossiers']) + '</ul><p><a href="/preparation/catalogue">Versions d’épreuve et comparaisons de cette session</a></p>' if value['dossiers'] else (
                 '<p>Aucun cas d’usage dans ce navigateur. Commencez par décrire un besoin lorsque les appels sont ouverts.</p>'
                 '<p>Si vous en aviez déjà un, vérifiez que vous utilisez le même navigateur et son cookie de session.</p>')

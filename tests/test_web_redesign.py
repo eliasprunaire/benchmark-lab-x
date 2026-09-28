@@ -168,11 +168,12 @@ class TemplateTests(unittest.TestCase):
         self.assertIn('<p id="message-error" role="alert">Ce texte est trop long.</p>', message)
 
     def test_fonts_and_projection_stylesheet_are_local_files(self):
-        for name in ('Syne', 'AtkinsonHyperlegibleNext', 'AtkinsonHyperlegibleMono'):
+        for name in ('AtkinsonHyperlegibleNext', 'AtkinsonHyperlegibleMono'):
             self.assertTrue((views.FONTS_PATH / (name + '.woff2')).is_file(), name)
         self.assertEqual(Path('projection.css'), Path(projection.STYLESHEET_PATH.name))
         self.assertNotIn(b'@font-face', projection.STYLESHEET_PATH.read_bytes())
-        self.assertIn('/preparation/fonts/Syne.woff2', views.STYLESHEET_PATH.read_text())
+        self.assertIn('/preparation/fonts/AtkinsonHyperlegibleNext.woff2', views.STYLESHEET_PATH.read_text())
+        self.assertFalse((views.FONTS_PATH / 'Syne.woff2').exists())
 
 
 class DossierPageTests(unittest.TestCase):
