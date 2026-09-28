@@ -32,7 +32,7 @@ MENTIONS_LEGALES = (
     '<li>version exécutée : <strong>version de release indiquée au dépôt</strong></li></ul></section>'
     '<section><h2>Propriété intellectuelle</h2><p>Les textes, la charte graphique et les contenus éditoriaux du '
     'site sont protégés. Les polices de caractères utilisées sont distribuées sous licence SIL Open Font License '
-    'version 1.1 : Syne, Atkinson Hyperlegible Next et Atkinson Hyperlegible Mono.</p>'
+    'version 1.1 : Atkinson Hyperlegible Next et Atkinson Hyperlegible Mono.</p>'
     '<p>Les exemples, pièces et résultats produits dans votre parcours restent privés et vous appartiennent, sous '
     'réserve des droits que vous accordez explicitement en activant la contribution facultative.</p></section>'
     '<section><h2>Signalement</h2><p>Pour signaler un contenu illicite, une faille de sécurité ou une difficulté '
