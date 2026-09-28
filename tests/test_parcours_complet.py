@@ -436,12 +436,13 @@ class ParcoursComplet(unittest.TestCase):
         self.verifier_atteignabilite()
         _, headers, _ = self.request(configurations.removesuffix('/configurations') + '/custom-models', status=303)
         self.assertEqual(configurations + '#custom-models', headers['Location'])
+        # Une pièce d'exemple se lit en ligne seulement : sa version brute n'est plus servie
+        self.request(dossier + '/revisions/1/pieces/' + 'a' * 32, status=403)
 
     # Pages HTML qu'un lecteur doit pouvoir atteindre depuis l'accueil, en suivant seulement des liens visibles
     # Hors liste : routes POST ou JSON, callback OAuth, ancienne adresse redirigée ; le détail d'une tentative,
     # les pièces d'évaluation et l'aperçu de projection exigent une évaluation, absente de ce parcours (l'aperçu est
-    # relié depuis une comparaison évaluée dans tests/test_s10_regressions.py) ; une pièce d'exemple se lit en ligne,
-    # sans lien vers sa version brute (tests/test_s9_inline.py) ; les contributions exigent la migration
+    # relié depuis une comparaison évaluée dans tests/test_s10_regressions.py) ; les contributions exigent la migration
     # de confidentialité, absente de cette fixture (leur page est couverte par tests/test_privacy_http.py)
     ATTEIGNABLES = frozenset((
         '/', '/mentions-legales', '/cgu', '/confidentialite',

@@ -57,7 +57,6 @@ Bench-X aide à choisir un modèle pour une tâche précise à partir de preuves
 - **Accent** est la seule couleur d'interaction : liens, bouton principal, étape courante.
 - Les paires de statut (`ok`, `ko`, `warn`, `unk`, `wait`, chacune avec sa variante `-soft`) portent un verdict ou un état, jamais une décoration. Un statut s'accompagne toujours d'un libellé ou d'une icône, pas de la couleur seule.
 - **Warm** est réservé à ce qui est inventé : consigne donnée aux modèles, marque « cas d'usage inventé ».
-- `projection.css` suit les mêmes tokens que la page privée.
 
 ## Themes
 

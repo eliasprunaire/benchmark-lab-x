@@ -46,7 +46,6 @@ _ROUTE_PATTERNS = (
     '/preparation/dossiers/<id>/contribution', '/preparation/dossiers/<id>/delete',
     '/preparation/dossiers/<id>/archive', '/preparation/dossiers/<id>/archive/items/record',
     '/preparation/dossiers/<id>/revisions/<n>',
-    '/preparation/dossiers/<id>/revisions/<n>/pieces/<id>',
     '/preparation/dossiers/<id>/campaigns/<id>',
     '/preparation/dossiers/<id>/campaigns/<id>/conditions',
     '/preparation/dossiers/<id>/campaigns/<id>/start',
@@ -344,7 +343,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 if self.path == '/preparation/access/callback':
                     raise ValueError('Callback Openrouter réservé au retour GET')
                 body = None
-                return_path = None
+                return_path = disconnect_return = None
                 if self.command == 'POST':
                     length = self.headers.get('Content-Length', '')
                     if not length.isdecimal() or not 0 < int(length) <= 524288 or self.headers.get('Transfer-Encoding'):
@@ -398,6 +397,9 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                             raise ValueError('Origine de session invalide')
                         if 'return_path' in body:
                             return_path = _return_path(body.pop('return_path'))
+                    if self.path == '/preparation/access/disconnect' and 'return' in body:
+                        # Retour vers la page d'où la clé est retirée, sans passer par la connexion Openrouter
+                        disconnect_return = _return_path(body.pop('return'))
                     if self.path == '/preparation/access/start':
                         if callback_url is None:
                             value = {'kind': 'access', 'connected': False, 'status': 'unavailable',
@@ -467,7 +469,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
                 if self.command == 'POST' and self.path == '/preparation/access/disconnect' and result['status'] < 400:
-                    headers['Location'] = '/preparation/access'
+                    headers['Location'] = disconnect_return or '/preparation/access'
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
                 if (self.command == 'POST' and self.path.endswith(('/configurations', '/custom-models'))

@@ -360,15 +360,13 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
     if method == 'GET' and proof:
         from .evaluation import piece_bytes as evaluation_piece
         return 200, evaluation_piece(store, session_id, *proof.groups()), None, None
-    match = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})(?:/(messages|validation)|/revisions/([1-9][0-9]*)(?:/pieces/([A-Za-z0-9_-]{1,128}))?)?', path)
+    match = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})(?:/(messages|validation)|/revisions/([1-9][0-9]*))?', path)
     if not match:
         raise p.Denied('Ressource inaccessible')
-    dossier_id, action, revision, piece_id = match.groups()
+    dossier_id, action, revision = match.groups()
     p.owner(p.connection_for(store), session_id, dossier_id)
     revision = None if revision is None else int(revision)
     if method == 'GET' and action is None:
-        if piece_id:
-            return 200, p.piece_bytes(store, session_id, dossier_id, revision, piece_id), None, None
         result = p.view(store, session_id, dossier_id, revision, include_history=True)
         if campaign_reference:
             result['campaigns'] = [campaign for campaign in result.get('campaigns', [])
