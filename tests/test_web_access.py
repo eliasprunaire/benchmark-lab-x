@@ -524,6 +524,21 @@ class AccessServerTests(WebServerCase):
                 self.assertEqual('/preparation', headers['Location'])
                 self.assertEqual('2592000', SimpleCookie(headers['Set-Cookie'])['benchmark_session']['max-age'])
 
+    def test_retrait_de_cle_revient_a_sa_page_sans_relayer_le_retour(self):
+        self.executor.raw_response = json.dumps({'status': 200, 'value': {'connected': False},
+                                                 'piece': False, 'cookie': None}).encode() + b'\n'
+        headers = {'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': 'benchmark_session=session-token'}
+        for fields, location in (({'csrf_token': 'csrf', 'return': '/preparation'}, '/preparation'),
+                                 ({'csrf_token': 'csrf'}, '/preparation/access')):
+            status, response, _ = self.request('POST', '/preparation/access/disconnect', urlencode(fields).encode(), headers)
+            self.assertEqual((303, location), (status, response['Location']))
+            self.assertEqual({'csrf_token': 'csrf'}, self.executor.requests.get_nowait()['body'])
+        for foreign in ('https://ailleurs.example/', '//ailleurs.example', '/cgu', '/preparation?x=1'):
+            status, _, _ = self.request('POST', '/preparation/access/disconnect',
+                                        urlencode({'csrf_token': 'csrf', 'return': foreign}).encode(), headers)
+            self.assertEqual(400, status, foreign)
+        self.assertTrue(self.executor.requests.empty())
+
     def test_depart_callback_et_csp(self):
         status, headers, _ = self.request('GET', '/preparation/access')
         self.assertEqual(200, status)

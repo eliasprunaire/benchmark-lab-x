@@ -70,6 +70,12 @@ class InlineExampleTests(unittest.TestCase):
                     prep.piece_bytes(store, session, 'inline', view['revision'], judge)
                 with self.assertRaises(prep.Denied):
                     prep.piece_bytes(store, other, 'inline', view['revision'], view['package']['pieces'][0]['id'])
+                # Plus aucune pièce d'exemple n'est servie brute, ni celle du juge ni celle du candidat
+                for piece_id, reader in ((judge, token), (view['package']['pieces'][0]['id'], token),
+                                         (view['package']['pieces'][0]['id'], other_token)):
+                    with self.assertRaises(prep.Denied):
+                        web_api.dispatch(store, 'GET', f'/preparation/dossiers/inline/revisions/{view["revision"]}/pieces/{piece_id}',
+                                         reader, None, 'a' * 40, None)
 
                 operation, _ = prep.submit(store, session, 'inline', dict(action_id='correct',
                     revision=view['revision'], kind='correct', message='Changer les notes'), 'a' * 40, True)

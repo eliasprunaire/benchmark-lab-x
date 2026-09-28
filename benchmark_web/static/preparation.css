@@ -104,6 +104,8 @@ section h3 { margin-top: 1rem; }
 .notice { padding: .6rem 1rem; border: 1px solid var(--warn); background: var(--warn-soft); border-radius: var(--radius); }
 [role="alert"] { padding: .75rem 1rem; border: 1px solid var(--ko); background: var(--ko-soft); border-radius: var(--radius); }
 p[role="status"], p.note { color: var(--ink-2); }
+/* Une action jointe à une note passe sous la phrase, pas au milieu */
+p.note > .button { display: flex; width: fit-content; margin-top: .6rem; }
 .custom-model-forms [role="status"]:empty { margin: 0; padding: 0; border: 0; }
 .custom-model-forms { margin-bottom: .75rem; }
 .custom-model-forms form + form { margin-top: 1rem; }
@@ -182,7 +184,7 @@ dl.kv dd { margin: 0; }
 .comparison h1 { max-width: none; }
 .campaign-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .2rem 1rem; padding: 1rem 1.2rem; margin: .75rem 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .campaign-summary > :not(.ic) { grid-column: 2; }
-.campaign-summary .ic { grid-column: 1; grid-row: 1 / span 4; width: 2.4rem; height: 2.4rem; border-radius: 50%; background: var(--ok-soft); color: var(--ok); display: grid; place-items: center; }
+.campaign-summary .ic { grid-column: 1; grid-row: 1 / span 4; color: var(--ok); margin-top: .1rem; }
 .campaign-summary .ic svg { width: 1.35rem; height: 1.35rem; }
 .campaign-summary p { margin: .2rem 0; max-width: none; }
 .campaign-summary .note { border: 0; padding: 0; background: transparent; }
@@ -214,7 +216,7 @@ tr.out .costbar rect { fill: var(--line-2); }
 .costbar.none { background: var(--soft); border: 1px dashed var(--line-2); height: .35rem; }
 tr:target { outline: 3px solid var(--focus); outline-offset: -3px; }
 tr.out th strong { color: var(--muted); }
-.economic-choice { padding: clamp(1.2rem, 3vw, 2rem); margin: 1.5rem 0; border: 1px solid var(--accent); border-top: 5px solid var(--accent); border-radius: var(--radius); background: linear-gradient(135deg, var(--accent-soft), var(--surface)); }
+.economic-choice { padding: clamp(1.2rem, 3vw, 2rem); margin: 1.5rem 0; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--surface); }
 .economic-choice p { margin: .35rem 0; max-width: none; }
 .economic-choice h2 { margin: .35rem 0 1.2rem; }
 .choice-highlight { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem 2rem; margin: 1rem 0; }

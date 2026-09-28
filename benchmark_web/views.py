@@ -215,7 +215,7 @@ def personal_key_form(csrf, access):
         'Néanmoins, vous pouvez retirer votre clé depuis cette page si vous préférez.</p>'
         '<button type="submit">Enregistrer la clé</button>')
     if access.get('status') in ('connected', 'invalid'):
-        content += form(csrf, '/preparation/access/disconnect', {},
+        content += form(csrf, '/preparation/access/disconnect', {'return': '/preparation'},
             '<button type="submit" class="sec">Retirer la clé de ce navigateur</button>')
         content += '<p>Terminez la préparation ou qualification en cours avant de changer la clé. Le retrait bloque les nouveaux appels, sans révoquer la clé chez Openrouter ni annuler une comparaison engagée.</p>'
     return content + '</div></details>'
