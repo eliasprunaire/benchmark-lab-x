@@ -490,6 +490,7 @@ def render_comparison(value):
     content += '<ul><li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
     content += '<li>Comparez le coût des réponses satisfaisantes, puis consultez leurs qualités et limites dans « Détail et preuves ». Un coût inconnu ne change pas le verdict.</li>'
     content += '<li>Les modèles reçoivent les mêmes consignes et pièces. Ces résultats concernent uniquement cet exemple fictif, sans garantir la même qualité sur d’autres tâches.</li></ul></details>'
+    content += '<p><a href="' + text(base + '/preview') + '">Aperçu privé de la page publique</a></p>'
     content += '<dialog id="result-dialog" class="result-dialog" aria-label="Détail et preuves">'
     content += '<div class="result-head"><button type="button" class="sec" data-close autofocus>Fermer</button>'
     content += '<p class="result-status" role="status"></p></div><div class="result-body"></div>'

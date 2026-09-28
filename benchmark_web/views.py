@@ -238,9 +238,9 @@ def render(value, csrf, path='/preparation', *, error=False):
     s9 = value.get('kind') != 'projection_preview'
     navigation = '' if error else preparation_steps(value)
     title = 'Décrire mon cas d’usage'
-    # Une page d'erreur n'est aucune des entrées du menu : pas d'`aria-current` menteur
-    current = None if error else {'home': '/', 'privacy_data': '/preparation/data',
-                                   'legal': None}.get(value.get('kind'), '/preparation')
+    # `aria-current` seulement sur l'entrée qui est la page affichée, jamais sur une page descendante ni d'erreur
+    current = None if error else {'home': '/', 'privacy_data': '/preparation/data'}.get(
+        value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
                    for href, label in (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données')))
     if error:
@@ -315,8 +315,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         content = '<div class="hero"><p class="lead note">Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. '
         content += 'Nous préparons avec vous un exemple entièrement inventé, puis les modèles sont comparés dans les mêmes conditions, '
         content += 'sur des critères vérifiables et leur coût observé.</p>'
-        content += '<div class="actions"><a class="button" href="/preparation">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
-        content += '<a class="button sec" href="/preparation">Retrouver mes cas d’usage</a></div></div>'
+        content += '<div class="actions"><a class="button" href="/preparation#besoin">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
+        content += '<a class="button sec" href="/preparation#mes-cas">Retrouver mes cas d’usage</a></div></div>'
         content += section('Le parcours en quatre étapes', '<div class="tiles">'
             '<div class="tile"><h3>Besoin</h3><p>Vous décrivez la tâche et le résultat utile. L’assistant pose des questions si nécessaire.</p></div>'
             '<div class="tile"><h3>Exemple</h3><p>Une consigne et des pièces inventées vous sont proposées. Vous corrigez jusqu’à ce que l’exemple soit fidèle.</p></div>'
@@ -333,6 +333,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += ''.join('<section><h2>' + text(task['need']) + '</h2>' + render_task_index(task) + '</section>' for task in value['tasks'])
         if not value['tasks']:
             content += '<p>Aucun cas d’usage validé dans cette session.</p>'
+        content += '<p><a href="/preparation">Revenir à mes cas d’usage</a></p>'
     elif value.get('kind') == 'comparison':
         title = 'Résultats'
         content = render_comparison(value) + '<script>' + COMPARISON_FOCUS_SCRIPT + '</script>'
@@ -371,7 +372,9 @@ def render(value, csrf, path='/preparation', *, error=False):
             HONEYPOT,
             form_id='prepare-case')
             + '<button type="submit" form="prepare-case"' + disabled + '>' + icon('i-pen') + 'Préparer cet exemple</button>', 'besoin')
-        content += section('Mes cas d’usage dans ce navigateur', dossiers)
+        if not value.get('personal_preparation'):
+            dossiers += '<p><a href="/preparation/access">Accès Openrouter de ce navigateur</a></p>'
+        content += section('Mes cas d’usage dans ce navigateur', dossiers, 'mes-cas')
     elif value.get('kind') == 'honeypot_ack' or 'operation_id' in value:
         title = 'Demande enregistrée'
         url = ('/preparation' if value.get('kind') == 'honeypot_ack'
@@ -444,11 +447,13 @@ def render(value, csrf, path='/preparation', *, error=False):
                     '<li><a href="' + href + '" rel="noreferrer">' + label + '</a> : ' + description + '.</li>'
                     for label, href, description in references) + '</ul>')
             content += '<p><a class="button sec" href="/preparation">Décrire un autre cas d’usage</a></p>'
-        refresh = '' if 'Actualiser cet état' in actions else f'<a href="{text(path)}">Actualiser cet état</a> · '
-        content += f'<p class="hint">{refresh}<a href="{text(url)}">Révision courante</a>'
+        links = [] if 'Actualiser cet état' in actions else [f'<a href="{text(path)}">Actualiser cet état</a>']
+        if path != url:
+            links.append(f'<a href="{text(url)}">Révision courante</a>')
         if revision > 1:
-            content += f' · <a href="{text(url)}/revisions/{revision - 1}">Révision précédente</a>'
-        content += '</p>'
+            links.append(f'<a href="{text(url)}/revisions/{revision - 1}">Révision précédente</a>')
+        if links:
+            content += '<p class="hint">' + ' · '.join(links) + '</p>'
         if editable and value['package'] is None:
             content += section('Votre réponse', form(csrf, url + '/messages',
                 {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
@@ -613,7 +618,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         if value.get('kind') == 'home':
             content += '<span data-privacy-home hidden></span>'
         if 'dossiers' in value and value.get('privacy'):
-            content += render_privacy_page({'kind': 'privacy_data'})[1]
+            content += render_privacy_page({'kind': 'privacy_data'}, preparation=True)[1]
         content += render_privacy_controls(value, csrf)
         if value.get('privacy') or value.get('kind') in ('home', 'privacy_data', 'contributions', 'session_bootstrap'):
             content += PRIVACY_SCRIPT

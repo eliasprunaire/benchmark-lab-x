@@ -7,7 +7,7 @@ LOCAL_WARNING = ('L’historique local n’est pas garanti : le navigateur peut 
                  'Toute personne utilisant ce profil de navigateur peut les consulter.')
 
 
-def render_privacy_page(value, csrf=''):
+def render_privacy_page(value, csrf='', *, preparation=False):
     return 'Mes données', (
         '<section data-privacy-history><h2>Historique local</h2><p>' + LOCAL_WARNING + '</p>'
         '<p role="status" data-privacy-status>Chargement de l’historique local…</p>'
@@ -16,7 +16,7 @@ def render_privacy_page(value, csrf=''):
         'data-privacy-action="enable" hidden>Réactiver l’historique local</button></div>'
         '<div data-privacy-list></div><noscript><p>Activez JavaScript pour consulter et exporter '
         'l’historique enregistré dans ce navigateur.</p></noscript></section>'
-        '<p><a href="/preparation">Gérer ma clé et mes cas sur le serveur</a> · '
+        '<p>' + ('' if preparation else '<a href="/preparation">Gérer ma clé et mes cas sur le serveur</a> · ') +
         '<a href="/preparation/contributions">Mes contributions</a> · '
         '<a href="/confidentialite">Confidentialité</a></p>')
 
