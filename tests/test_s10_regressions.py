@@ -112,6 +112,8 @@ class S10ProofTests(unittest.TestCase):
                          (region['role'], region['tabindex'], region['aria-label']))
         self.assertEqual(5, sum(tag == 'th' and attrs.get('scope') == 'col' for tag, attrs in parsed.tags))
         self.assertEqual(1, page.count('<script>'))
+        # Seul lien vers l'aperçu de projection : une comparaison évaluée, absente du parcours HTTP
+        self.assertEqual(1, page.count('href="' + comparison['href'] + '/preview"'))
         self.assertIn('<script>' + views.COMPARISON_FOCUS_SCRIPT + '</script>', page)
         self.assertFalse(any(tag == 'script' for tag, attrs in proof.tags))
         for verdict, label in (('SATISFAIT', 'Satisfait'), ('NE SATISFAIT PAS', 'Ne satisfait pas'), (None, 'À reprendre')):

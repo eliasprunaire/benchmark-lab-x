@@ -304,6 +304,12 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 self.respond(404, {'error': 'NOT_FOUND'})
                 return
             wants_json = 'application/json' in self.headers.get('Accept', '')
+            if (self.command in ('GET', 'HEAD') and not wants_json
+                    and re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/custom-models', self.path)):
+                # Adresse d'envoi et de suivi JSON des slugs : en HTML, la page est celle des configurations
+                self.respond(303, b'', 'text/html; charset=utf-8',
+                             {'Location': self.path.removesuffix('/custom-models') + '/configurations#custom-models'})
+                return
             # Après le relais, une erreur ne vient plus du formulaire mais du rendu ou du protocole
             relayed = False
             try:

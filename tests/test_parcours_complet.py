@@ -5,6 +5,7 @@ from html.parser import HTMLParser
 from http.client import HTTPConnection
 from http.cookies import SimpleCookie
 import json
+import os
 from pathlib import Path
 import queue
 import re
@@ -432,6 +433,69 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Tableau des actions avec responsable', page.visible)
         self.assertEqual(5, len(self.calls))
         self.assertEqual(1, len(self.qualifier.calls))
+        self.verifier_atteignabilite()
+        _, headers, _ = self.request(configurations.removesuffix('/configurations') + '/custom-models', status=303)
+        self.assertEqual(configurations + '#custom-models', headers['Location'])
+
+    # Pages HTML qu'un lecteur doit pouvoir atteindre depuis l'accueil, en suivant seulement des liens visibles
+    # Hors liste : routes POST ou JSON, callback OAuth, ancienne adresse redirigée ; le détail d'une tentative,
+    # les pièces d'évaluation et l'aperçu de projection exigent une évaluation, absente de ce parcours (l'aperçu est
+    # relié depuis une comparaison évaluée dans tests/test_s10_regressions.py) ; une pièce d'exemple se lit en ligne,
+    # sans lien vers sa version brute (tests/test_s9_inline.py) ; les contributions exigent la migration
+    # de confidentialité, absente de cette fixture (leur page est couverte par tests/test_privacy_http.py)
+    ATTEIGNABLES = frozenset((
+        '/', '/mentions-legales', '/cgu', '/confidentialite',
+        '/preparation', '/preparation/data', '/preparation/catalogue',
+        '/preparation/access', '/preparation/dossiers/<id>', '/preparation/dossiers/<id>/revisions/<n>',
+        '/preparation/dossiers/<id>/configurations',
+        '/preparation/dossiers/<id>/campaigns/<id>', '/preparation/dossiers/<id>/campaigns/<id>/conditions',
+        '/preparation/dossiers/<id>/campaigns/<id>/configurations'))
+
+    def verifier_atteignabilite(self):
+        """Parcourir les liens et formulaires GET depuis l'accueil ; l'artefact liste chaque route et ses liens entrants"""
+        entrants, file, vus, pannes, faux_courants = {}, [('/', None)], set(), [], []
+        while file:
+            path, source = file.pop(0)
+            route = server.canonical_route(path)
+            entrants.setdefault(route, set()).add(source and server.canonical_route(source))
+            if path in vus:
+                continue
+            vus.add(path)
+            self.assertLess(len(vus), 400, 'Parcours sans fin')
+            headers = {'Cookie': self.cookies.output(header='', sep=';').strip()}
+            with closing(HTTPConnection(*self.address, timeout=3)) as connection:
+                connection.request('GET', path, headers=headers)
+                response = connection.getresponse()
+                raw = response.read()
+            if route == '/preparation/contributions':
+                continue
+            if route == '<inconnu>' or response.status >= 400:
+                pannes.append((source, path, response.status))
+                continue
+            if not response.headers.get('Content-Type', '').startswith('text/html'):
+                continue
+            page = Page(raw)
+            courants = [n['attrs']['href'] for n in page.nodes if n['attrs'].get('aria-current') == 'page']
+            if courants not in ([], [urlsplit(path).path]):
+                faux_courants.append((route, courants))
+            cibles = [n['attrs'].get('href', '') for n in page.nodes if n['tag'] == 'a']
+            cibles += [n['attrs']['action'] for n in page.nodes
+                       if n['tag'] == 'form' and n['attrs'].get('method', '').lower() == 'get']
+            for cible in cibles:
+                cible = cible.split('#', 1)[0]
+                if cible.startswith('/') and not cible.startswith('//') and cible not in server._RESOURCES:
+                    file.append((cible, path))
+        artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
+        if artefacts:
+            Path(artefacts).mkdir(parents=True, exist_ok=True)
+            Path(artefacts, 'atteignabilite.json').write_text(json.dumps(
+                {'pages_visitees': len(vus), 'pannes': pannes, 'menu_faux': sorted(set(r for r, _ in faux_courants)),
+                 'manquantes': sorted(self.ATTEIGNABLES - set(entrants)), 'routes': {
+                    route: sorted(s for s in sources if s) for route, sources in sorted(entrants.items())}},
+                ensure_ascii=False, indent=2) + '\n')
+        self.assertEqual([], pannes)
+        self.assertEqual([], faux_courants)
+        self.assertEqual(set(), self.ATTEIGNABLES - set(entrants))
 
     def test_acces_openrouter_factice_et_retours(self):
         self.request('/preparation')
