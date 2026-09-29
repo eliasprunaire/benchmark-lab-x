@@ -643,7 +643,8 @@ def render(value, csrf, path='/preparation', *, error=False):
     if SOURCE_SHA:
         identity = '<span>' + text(('Version : v' + RELEASE_VERSION + ' (' + SOURCE_SHA[:7] + ')') if RELEASE_VERSION
                                    else 'Révision : ' + SOURCE_SHA[:7]) + '</span>'
-    identity += '<a href="' + text(REPOSITORY_URL + ('/tree/' + SOURCE_SHA if SOURCE_SHA and RELEASE_VERSION else '')) + '">Code source</a>'
+    identity += ('<a class="source" href="' + text(REPOSITORY_URL + ('/tree/' + SOURCE_SHA if SOURCE_SHA and RELEASE_VERSION else ''))
+                 + '">' + icon('i-github') + 'Code source</a>')
     page = None if error else {'home': '/', 'legal': value.get('path')}.get(value.get('kind'))
     head = ''
     if page in PUBLIC_PAGES:

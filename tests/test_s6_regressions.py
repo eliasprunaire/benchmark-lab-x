@@ -36,8 +36,8 @@ _VOLATILE_PRESENTATION = re.compile(
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
-    '8': {
-        'index.html': 'ba05a6dfc5a8af8cd8cd3f13a4343942ccb156e8f37a499a678105b72f9b49ba',
+    '9': {
+        'index.html': 'a13a8dc51f6c51c6d5dad04be57b1d91cc0532dedcc8c25b1cb94211ccbd3f8b',
         'style.css': 'e6160575de2d71a327dbc3237cb2779c4ec325faf5361be0a2fbd53d617c3355',
     },
 }
@@ -200,7 +200,7 @@ class S6Regressions(unittest.TestCase):
                 labeled = dict(manifest, presentation_version=old)
                 raw = storage._strict_json(labeled).encode()
                 pub._manifest(raw, sha256(raw).hexdigest())
-        unknown = dict(manifest, presentation_version='9')
+        unknown = dict(manifest, presentation_version='10')
         raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
             pub._manifest(raw, sha256(raw).hexdigest())
@@ -576,6 +576,11 @@ class S6Regressions(unittest.TestCase):
                 web_api.dispatch(self.store, 'GET', path, None, None, 'a' * 40, False, presentation=projection)
             with self.assertRaises(p.Denied):
                 r.preview_view(self.store, 'foreign', 'fixture', 'comparison', piece_ids=pieces, presentation=projection)
+        # La référence du juge est liée à l'évaluation mais jamais publiable
+        judge = self.store._connection.execute("SELECT piece_id FROM pieces WHERE role='judge'").fetchone()[0]
+        with self.assertRaises(p.Denied):
+            self.preview([judge])
+        self.assertNotIn(judge, {piece['piece_id'] for piece in value['pieces']})
         for query in ('?piece=unlinked', '?piece=', '?extra=1', '?piece=' + pid + '&piece=' + pid):
             with self.subTest(query=query), self.assertRaises(ValueError):
                 web_api.dispatch(self.store, 'GET', self.base + '/preview' + query, self.token, None, 'a' * 40, False, presentation=projection)

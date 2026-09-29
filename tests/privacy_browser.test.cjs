@@ -699,6 +699,15 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     // Verdict et motif précis ; contexte, attribution et conditions dans « Comment lire »
     assert.match((await page.locator('table').allInnerTexts()).join(' '), /Action omise, précision conservée <img src=x/);
     assert.equal(await page.locator('table img').count(), 0, 'motif du juge interprété comme HTML');
+    // Une mesure booléenne se lit Oui ou Non, jamais True ou False
+    assert.doesNotMatch((await page.locator('table').allInnerTexts()).join(' '), /\b(True|False)\b/);
+    // Pied de page : liens légaux en colonne, Code source à droite de la version
+    const bottom = await page.$eval('footer .bottom', row => {
+      const source = row.querySelector('a.source');
+      return {right: Math.round(row.getBoundingClientRect().right - source.getBoundingClientRect().right),
+              icon: Boolean(source.querySelector('svg[aria-hidden="true"]'))};
+    });
+    assert.deepEqual(bottom, {right: 0, icon: true});
     assert.match(await page.locator('main').innerText(), /Résultat attendu :/);
     const method = await page.locator('#method').textContent();
     assert.match(method, /Le verdict porte sur la configuration observée/);
@@ -714,6 +723,8 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     await page.goto(origin + '/render/preview');
     assert.equal(await page.locator('h1').count(), 1, 'aperçu à plusieurs titres principaux');
     assert.equal(await page.locator('pre').count(), 0, 'JSON brut dans l’aperçu');
+    // La référence du juge reste réservée à l'évaluation : jamais proposée à la publication
+    assert.doesNotMatch(await page.locator('fieldset').innerText(), /reference\.txt/);
     assert.doesNotMatch(await page.locator('main').innerText(), /\b[0-9a-f]{32,64}\b|\bPASS\b|\bFAIL\b/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'aperçu déborde à 390 px');
     await page.screenshot({path: 'reports/privacy-browser/preview-mobile.png', fullPage: true});

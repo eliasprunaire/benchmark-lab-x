@@ -130,16 +130,16 @@ class TemplateTests(unittest.TestCase):
         # Sans identité de release : la révision seule, jamais le numéro cible (RULES) ; un checkout modifié
         # ou un commit non poussé ne doit pas renvoyer vers un arbre qui n'est pas le code servi (AGPL §13)
         self.assertIn('<div class="bottom"><span>Révision : abcdef0</span>'
-                      '<a href="https://github.com/eliasprunaire/benchmark-lab-x">Code source</a><nav', home)
+                      '<a class="source" href="https://github.com/eliasprunaire/benchmark-lab-x"><svg class="ico" aria-hidden="true"><use href="#i-github"/></svg>Code source</a></div>', home)
         self.assertNotIn('/tree/', home)
         self.assertNotIn('v0.1.0', home)
         with patch.object(views, 'SOURCE_SHA', 'abcdef0123456789'), patch.object(views, 'RELEASE_VERSION', '0.2.0'):
             released = views.render({'kind': 'home'}, '').decode()
         self.assertIn('<span>Version : v0.2.0 (abcdef0)</span>'
-                      '<a href="https://github.com/eliasprunaire/benchmark-lab-x/tree/abcdef0123456789">Code source</a>', released)
+                      '<a class="source" href="https://github.com/eliasprunaire/benchmark-lab-x/tree/abcdef0123456789"><svg class="ico" aria-hidden="true"><use href="#i-github"/></svg>Code source</a>', released)
         with patch.object(views, 'SOURCE_SHA', ''), patch.object(views, 'RELEASE_VERSION', '0.2.0'):
             unknown = views.render({'kind': 'home'}, '').decode()
-        self.assertIn('<div class="bottom"><a href="https://github.com/eliasprunaire/benchmark-lab-x">Code source</a><nav', unknown)
+        self.assertIn('<div class="bottom"><a class="source" href="https://github.com/eliasprunaire/benchmark-lab-x"><svg class="ico" aria-hidden="true"><use href="#i-github"/></svg>Code source</a></div>', unknown)
         self.assertNotIn('v0.2.0', unknown)
         self.assertNotIn('Version du site', home)
         self.assertNotIn('Aucune ressource externe chargée.', home)
@@ -436,7 +436,7 @@ const script = require('node:fs').readFileSync(0, 'utf8');
         self.assertIn('<span class="badge b-ok">', page)
         self.assertIn('<span class="badge b-ko">', page)
         self.assertIn('class="costbar"', page)
-        self.assertIn('Chaque exigence compte', page)
+        self.assertIn('<nav aria-label="Informations légales"><h2>Informations légales</h2>', page)
         self.assertNotIn('SHA-256', page)
 
     def test_libelles_du_filtre_correspondent_aux_titres_des_cas(self):

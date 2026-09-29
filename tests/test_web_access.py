@@ -820,7 +820,8 @@ class ProbeTests(WebServerCase):
         # BX-09 : la version reçue par `serve_web` atteint le rendu, avec le lien vers l'arbre servi
         page = self.request('GET', '/preparation', headers={'Accept': 'text/html'})[2].decode()
         self.assertIn('<span>Version : v0.1.0 (aaaaaaa)</span>'
-                      '<a href="https://github.com/eliasprunaire/benchmark-lab-x/tree/' + 'a' * 40 + '">Code source</a>', page)
+                      '<a class="source" href="https://github.com/eliasprunaire/benchmark-lab-x/tree/' + 'a' * 40
+                      + '"><svg class="ico" aria-hidden="true"><use href="#i-github"/></svg>Code source</a>', page)
 
 
     def test_pages_legales_publiques_sans_cookie_ni_executeur(self):

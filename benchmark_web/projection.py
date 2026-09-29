@@ -114,7 +114,8 @@ def projection_body(value, selected, level=1):
             body += '<li>' + t(criterion + ' : ' + STATUTS.get(finding['status'], finding['status']) + ' · ' + finding['finding']) + '</li>'
         for measure in row['measures']:
             criterion = row_labels.get(measure['criterion_id'], measure['criterion_id'])
-            shown = 'inconnue' if measure['value'] is None else str(measure['value'])
+            from .fragments import valeur_mesure
+            shown = valeur_mesure(measure['value'], measure.get('unit'))
             body += '<li>' + t(criterion + ' : ' + shown) + ('' if measure['reason'] is None else ' (' + t(measure['reason']) + ')') + '</li>'
         body += '</ul><ul>'
         for link in row['proof_links']:

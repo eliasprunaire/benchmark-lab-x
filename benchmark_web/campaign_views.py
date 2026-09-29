@@ -14,7 +14,7 @@ import secrets
 
 from benchmark.storage import _strict_json as encode
 
-from .fragments import (access_summary, badge, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
+from .fragments import (valeur_mesure, access_summary, badge, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
                         personal_key_form, readable_fields, section, state_block, text)
 
 COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
@@ -493,7 +493,7 @@ def render_comparison(value):
                 content += '<td><ul class="quality-list">'
                 for column in quality_columns:
                     measure = next(m for m in row['measures'] if m['criterion_id'] == column['criterion_id'])
-                    shown = 'Inconnue' if measure['value'] is None else str(measure['value']).capitalize()
+                    shown = valeur_mesure(measure['value'], measure.get('unit')).capitalize()
                     content += '<li><strong>' + text(column['definition']['measure']) + '</strong> : ' + text(shown) + '</li>'
                     if measure['rank'] is None:
                         content += '<li class="hint">Non comparable : ' + text(measure['reason']) + '</li>'
