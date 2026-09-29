@@ -33,12 +33,14 @@ class TemplateTests(unittest.TestCase):
             def handle_endtag(self, tag):
                 if tag == 'form':
                     self.depth -= 1
-        page = views.render({'dossiers': [], 'availability': AVAILABILITY,
+        page = views.render({'dossiers': [], 'availability': dict(AVAILABILITY, can_submit=False, reason='access'),
                              'personal_preparation': True}, 'csrf').decode()
         forms = Forms()
         forms.feed(page)
         self.assertFalse(forms.nested)
         self.assertLess(page.index('</aside>'), page.index('Ajouter ma clé Openrouter'))
+        ready = views.render({'dossiers': [], 'availability': AVAILABILITY, 'personal_preparation': True}, 'csrf').decode()
+        self.assertNotIn('id="availability"', ready)
         self.assertLess(page.index('Enregistrer la clé'), page.index('Décrivez le travail et le résultat qui vous serait utile'))
         parsed = Markup(page.encode())
         button = next(attrs for tag, attrs in parsed.tags if tag == 'button' and attrs.get('form'))
@@ -67,14 +69,14 @@ class TemplateTests(unittest.TestCase):
         self.assertNotRegex(css, r'body\s*\{[^}]*overflow-wrap:\s*anywhere;')
         self.assertIn(':focus-visible { outline: 3px solid var(--focus)', css)
 
-    def test_personal_key_is_only_on_preparation_home(self):
-        for path, value in (
-                ('/preparation/dossiers', {'operation_id': 'op', 'dossier_id': 'd1'}),
-                ('/preparation/access', {'kind': 'access', 'status': 'disconnected'})):
-            with self.subTest(path=path):
-                page = views.render(dict(value, personal_preparation=True), 'csrf', path).decode()
-                self.assertNotIn('Ajouter ma clé Openrouter', page)
-                self.assertNotIn('id="openrouter-key"', page)
+    def test_personal_key_lives_on_home_and_access_page_only(self):
+        page = views.render({'operation_id': 'op', 'dossier_id': 'd1', 'personal_preparation': True},
+                            'csrf', '/preparation/dossiers').decode()
+        self.assertNotIn('id="openrouter-key"', page)
+        access = views.render({'kind': 'access', 'status': 'disconnected', 'personal_preparation': True},
+                              'csrf', '/preparation/access').decode()
+        self.assertEqual(1, access.count('id="openrouter-key"'))
+        self.assertNotIn('/preparation/access/start', access)
 
     def test_chaque_motif_de_disponibilite_a_son_libelle(self):
         motifs = set(re.findall(r"reason = '(\w+)'", inspect.getsource(prep.availability)))
@@ -82,6 +84,10 @@ class TemplateTests(unittest.TestCase):
         for motif in motifs:
             page = views.render({'dossiers': [], 'availability': dict(
                 AVAILABILITY, can_submit=motif == 'open', reason=motif)}, 'csrf').decode()
+            if motif == 'open':
+                # Préparation ouverte : rien ne bloque, aucun encadré
+                self.assertNotIn('<aside id="availability"', page)
+                continue
             aside = re.search(r'<aside id="availability".*?</aside>', page, re.S).group()
             self.assertRegex(aside, r'<p>[^<]{20,}</p>', motif)
 
@@ -156,7 +162,8 @@ class TemplateTests(unittest.TestCase):
              'form': {'dossier_id': 'd', 'action_id': 'a', 'request': 'court',
                       'useful': '', 'context': ''}}, 'csrf', error=True).decode()
         self.assertIn('name="request" required minlength="40" maxlength="1500" rows="5" '
-                      'aria-describedby="request-error"', page)
+                      'aria-describedby="request-help request-error"', page)
+        self.assertIn('en 40 caractères au moins', page)
         self.assertIn('<p id="request-error" role="alert">Ce texte est trop court.</p>', page)
         self.assertEqual(1, page.count('Ce texte est trop court.'))
 
@@ -304,7 +311,7 @@ class DossierPageTests(unittest.TestCase):
             'availability': AVAILABILITY}, 'csrf').decode()
         self.assertIn('Qualification à reprendre', page)
         self.assertNotIn('<img src=x', page)
-        self.assertEqual(2, page.count(
+        self.assertEqual(1, page.count(
             '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;Correction requise'))
 
     def test_state_block_steps_and_hidden_correction_without_digests(self):

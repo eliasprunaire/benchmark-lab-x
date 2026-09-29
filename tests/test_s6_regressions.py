@@ -34,8 +34,8 @@ _VOLATILE_PRESENTATION = re.compile(
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
-    '7': {
-        'index.html': '07bee2e7337259ee9aab1b295ee3537e94d9dbd5bf35a7f3899172dc78ee4563',
+    '8': {
+        'index.html': 'df8555ec433dc2608a140a115f4f1ced6bbd4eaa1ddbe50ed7372b787cb3a6dc',
         'style.css': 'e6160575de2d71a327dbc3237cb2779c4ec325faf5361be0a2fbd53d617c3355',
     },
 }
@@ -198,7 +198,7 @@ class S6Regressions(unittest.TestCase):
                 labeled = dict(manifest, presentation_version=old)
                 raw = storage._strict_json(labeled).encode()
                 pub._manifest(raw, sha256(raw).hexdigest())
-        unknown = dict(manifest, presentation_version='8')
+        unknown = dict(manifest, presentation_version='9')
         raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
             pub._manifest(raw, sha256(raw).hexdigest())
@@ -558,7 +558,11 @@ class S6Regressions(unittest.TestCase):
             self.assertEqual(bundle['projection_sha256'], value['projection_sha256'])
             self.assertEqual(json.loads(bundle['manifest']), value['manifest'])
             raw = views.render(value, '')
-            self.assertIn('Aperçu privé · NON APPROUVÉ'.encode(), raw)
+            self.assertIn('Aperçu privé, non approuvé : rien n’est publié'.encode(), raw)
+            # Lisible par un lecteur extérieur : un seul titre, ni JSON brut ni identifiant de tentative
+            self.assertEqual(1, raw.count(b'<h1>'))
+            self.assertNotIn(b'<pre>', raw)
+            self.assertNotIn(self.records['error']['attempt_id'].encode(), raw)
             self.assertNotIn(b'candidate()', raw)
             parsed = Markup(raw)
             self.assertFalse(any(tag == 'script' or any(k.startswith('on') for k in attrs) for tag, attrs in parsed.tags))

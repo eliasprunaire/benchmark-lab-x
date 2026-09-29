@@ -6,8 +6,6 @@ from html import escape
 from pathlib import Path
 import re
 
-from benchmark.storage import _strict_json as encode
-
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'projection.css'
 RESTRICTION_PUBLIQUE = (
     'Vérification publique restreinte : les pièces non sélectionnées et leurs passages restent privés. '
@@ -36,21 +34,55 @@ def _remplacer_criteres(value, labels):
     return re.sub(pattern, lambda match: labels[match[0]], str(value))
 
 
-def projection_body(value, selected):
-    """Only explicit presentation fields; never serialize a private evaluation object"""
+VERDICTS = {'SATISFAIT': 'Satisfait', 'NE SATISFAIT PAS': 'Ne satisfait pas'}
+STATUTS = {'PASS': 'respectée', 'FAIL': 'non respectée', 'INDETERMINE': 'non vérifiable'}
+
+
+def _montant(cost):
+    from .fragments import montant_lisible
+    if not cost or cost.get('value', cost.get('amount')) is None:
+        return 'inconnu'
+    return montant_lisible(cost.get('value', cost.get('amount'))) + ' ' + str(cost.get('unit', cost.get('currency', '')))
+
+
+def candidate_names(value):
+    """Nom commercial et effort par configuration ; la sortie brute porte ce nom plutôt que l'identifiant de tentative"""
+    from .campaign_views import candidate_label
+    names = value.get('model_names', {})
+    return {row['configuration_id']: candidate_label(row['requested_configuration'], names) for row in value['rows']}
+
+
+def piece_name(row, link, candidates):
+    return ('Réponse de ' + candidates[row['configuration_id']] if link['piece_id'] == row.get('output_piece_id')
+            else link['name'])
+
+
+def projection_body(value, selected, level=1):
+    """Only explicit presentation fields; never serialize a private evaluation object
+
+    `level` : rang du titre principal, 2 quand la projection s'insère dans une page qui a déjà son H1
+    """
     from benchmark.restitution import ATTRIBUTION
+    from .fragments import jour_lisible
     t = _html_text
-    body = '<h1>Comparaison : ' + t(value['need']) + '</h1>'
-    body += '<p>Dossier ' + t(value['task']['dossier_id']) + ', version ' + t(value['task']['version'])
-    body += ', campagne ' + t(value['campaign_id']) + '.</p><p>' + t(value['result_expected']) + '</p>'
+    main, sub = 'h' + str(level), 'h' + str(level + 1)
+    candidates = candidate_names(value)
+    coverage = value['coverage']
+    conditions = value['conditions']
+    body = '<' + main + '>Comparaison : ' + t(value['need']) + '</' + main + '>'
+    body += '<p>Résultat attendu : ' + t(value['result_expected']) + '</p>'
     body += '<p>' + t(value['conclusion']['text']) + '</p><p>' + t(ATTRIBUTION) + '</p>'
-    body += '<p>' + t('; '.join(value['conclusion']['limits'])) + '</p>'
-    for label, data in (('Couverture de la campagne', value['coverage']), ('Population des rangs', value['population']),
-                        ('Conditions communes', value['conditions']), ('Base de coût', value['cost_basis'])):
-        body += '<details><summary>' + label + '</summary><pre>' + t(encode(data)) + '</pre></details>'
-    body += '<p>Comparaison économique : ' + t(value['economic_status']) + '. Coûts candidats et jugement séparés.</p>'
+    body += '<p>Limites : ' + t('; '.join(value['conclusion']['limits'])) + '</p>'
+    if coverage:
+        body += '<p>Réponses évaluées : ' + t(coverage['evaluated_attempts']) + ' · essais lancés : ' + t(coverage['attempted_cells'])
+        body += ' sur ' + t(coverage['planned_cells']) + '.</p>'
+    body += '<p>Comparaison des coûts ' + ('complète' if value['economic_status'] == 'COMPLETE' else 'incomplète')
+    body += ' ; coûts candidats et de jugement séparés.</p>'
+    if conditions:
+        body += '<p>Conditions communes : harnais ' + t(conditions['pi']['package'] + ' ' + conditions['pi']['version'])
+        body += ', figées le ' + t(jour_lisible(conditions['frozen_at'])) + '.</p>'
     for pending in value.get('pending_attempts', []):
-        body += '<p>Tentative ' + t(pending['attempt_id']) + ' : ' + t(pending['next_action']) + '</p>'
+        body += '<p>Une réponse reste à évaluer : ' + t(pending['next_action']) + '</p>'
     body += '<p>Les descriptions des obligations et des erreurs éliminatoires sont publiées comme libellés. '
     body += 'La référence de jugement et les preuves de qualification restent privées ; '
     body += 'ces descriptions seules ne permettent pas de vérifier publiquement la qualification des critères.</p>'
@@ -58,46 +90,42 @@ def projection_body(value, selected):
     labels = {}
     for row in value['rows']:
         labels.update(_libelles_criteres(row))
+    criteria = []
     for column in value['columns']:
+        definition = column['definition']
         label = ('Coût observé' if 'criterion_id' not in column else
-                 labels.get(column['criterion_id'], column['definition']['measure']))
-        displayed = dict(column, id=label)
-        if 'criterion_id' in displayed:
-            displayed['criterion_id'] = label
-        body += '<details><summary>Critère ' + t(label) + '</summary><pre>' + t(encode(displayed)) + '</pre></details>'
+                 labels.get(column['criterion_id'], definition.get('measure')))
+        criteria.append(t(label) + (' : ' + t(definition['unit']) if definition.get('unit') else '')
+                        + (', valeur favorable ' + t(definition['favorable']) if definition.get('favorable') else ''))
+    if criteria:
+        body += '<details><summary>Critères de comparaison</summary><ul>' + ''.join('<li>' + item + '</li>' for item in criteria) + '</ul></details>'
     for row in value['rows']:
         row_labels = _libelles_criteres(row)
-        body += '<section><h2>Cas ' + t(row['case_id']) + ' · ' + t(row['configuration_id']) + '</h2>'
-        body += '<p>Tentative ' + t(row['attempt_id']) + ', évaluation ' + t(row['evaluation_id'])
-        body += ', date ' + t(row['created_at']) + ', responsable ' + t(row['responsible']) + '.</p>'
-        decision = row.get('decision', {})
-        label = decision.get('verdict') or ('Évaluation à reprendre' if row['verdict'] in (None, 'INDETERMINE') else row['verdict'])
-        body += '<p><strong>' + t(label) + '</strong> : ' + t(_remplacer_criteres(row['reason'], row_labels)) + '</p>'
-        if decision.get('next_action'):
-            body += '<p>' + t(decision['next_action']) + '</p>'
-        for label, data in (('Configuration demandée', row['requested_configuration']),
-                            ('Configuration observée', row['observed_configuration']),
-                            ('Sources des observations', row['observation_sources']), ('Coût candidat', row['cost']),
-                            ('Coût de jugement', row['judgment']['cost']), ('Méthode', row['method'])):
-            body += '<details><summary>' + label + '</summary><pre>' + t(encode(data)) + '</pre></details>'
-        body += '<p>Qualification liée : ' + t(row['qualification_id']) + '. Preuves complètes restreintes.</p>'
-        body += '<p>Revue professionnelle : ' + ('ABSENTE' if row['judgment']['professional_review'] == 'ABSENTE'
-                 else 'Déclarée ; preuve restreinte dans cette projection') + '.</p>'
+        body += '<section><' + sub + '>' + t(candidates[row['configuration_id']]) + '</' + sub + '>'
+        verdict = row.get('decision', {}).get('verdict') or row['verdict']
+        body += '<p><strong>' + t(VERDICTS.get(verdict, 'À reprendre')) + '</strong> : '
+        body += t(_remplacer_criteres(row['reason'], row_labels)) + '</p>'
+        if row.get('decision', {}).get('next_action'):
+            body += '<p>' + t(row['decision']['next_action']) + '</p>'
+        body += '<p>Coût observé : ' + t(_montant(row['cost'])) + ' · coût du jugement : ' + t(_montant(row['judgment']['cost'])) + '.</p>'
         body += '<ul>'
         for finding in row['findings']:
             criterion = row_labels.get(finding['criterion_id'], finding['criterion_id'])
-            body += '<li>' + t(criterion + ' : ' + finding['status'] + ' · ' + finding['finding']) + '</li>'
+            body += '<li>' + t(criterion + ' : ' + STATUTS.get(finding['status'], finding['status']) + ' · ' + finding['finding']) + '</li>'
         for measure in row['measures']:
-            data = {k: measure[k] for k in ('criterion_id', 'value', 'unit', 'rank', 'reason')}
-            data['criterion_id'] = row_labels.get(data['criterion_id'], data['criterion_id'])
-            body += '<li>' + t(encode(data)) + '</li>'
+            criterion = row_labels.get(measure['criterion_id'], measure['criterion_id'])
+            shown = 'inconnue' if measure['value'] is None else str(measure['value'])
+            body += '<li>' + t(criterion + ' : ' + shown) + ('' if measure['reason'] is None else ' (' + t(measure['reason']) + ')') + '</li>'
         body += '</ul><ul>'
         for link in row['proof_links']:
+            name = piece_name(row, link, candidates)
             if link['piece_id'] in selected:
-                body += '<li><a href="' + t(selected[link['piece_id']]) + '">' + t(link['name']) + ' · octets exacts</a></li>'
+                body += '<li><a href="' + t(selected[link['piece_id']]) + '">' + t(name) + '</a></li>'
             else:
-                body += '<li>' + t(link['name']) + ' : pièce restreinte, non sélectionnée.</li>'
-        body += '</ul><p>' + t('; '.join(row['limits'])) + '</p>'
+                body += '<li>' + t(name) + ' : pièce restreinte, non sélectionnée.</li>'
+        body += '</ul><p>Évaluée le ' + t(jour_lisible(row['created_at'])) + ' par ' + t(row['responsible']) + '. Revue professionnelle : '
+        body += ('absente' if row['judgment']['professional_review'] == 'ABSENTE' else 'déclarée ; preuve restreinte dans cette projection') + '.</p>'
+        body += '<p>' + t('; '.join(row['limits'])) + '</p>'
         body += '<p>' + t(RESTRICTION_PUBLIQUE) + '</p></section>'
     return body
 

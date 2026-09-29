@@ -38,8 +38,6 @@ _CHECK_CODES = frozenset({
 
 
 class Denied(ValueError):
-    provider_status: int | None
-
     def __init__(self, message, field=None, findings=None, step=None):
         super().__init__(message)
         self.code = message if re.fullmatch(r'[A-Z_]+', message) or message in _CHECK_CODES else None

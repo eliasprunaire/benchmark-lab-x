@@ -20,7 +20,7 @@ from xml.etree import ElementTree
 
 from benchmark.storage import _strict_json
 from benchmark_web import views
-from benchmark_web.server import _public_callback_url, canonical_route, serve_web
+from benchmark_web.server import canonical_route, serve_web
 from tests.test_s6_regressions import Markup
 
 
@@ -40,8 +40,8 @@ class FakeExecutor:
         self.requests = queue.Queue()
         self.stop = threading.Event()
         self.worker = threading.Thread(target=self._serve)
-        self.callback_result = {'status': 200, 'value': {'connected': True, 'status': 'connected'},
-                                'piece': False, 'cookie': None}
+        self.key_result = {'status': 200, 'value': {'connected': True, 'status': 'connected'},
+                           'piece': False, 'cookie': None}
         self.home_value = {'csrf_token': 'csrf', 'availability': {}}
         self.raw_response = None
         self.start_cookie = None
@@ -101,11 +101,8 @@ class FakeExecutor:
                     elif request['path'] == '/preparation' and request['method'] == 'GET':
                         result = {'status': 200, 'value': self.home_value,
                                   'piece': False, 'cookie': None}
-                    elif request['path'] == '/preparation/access/start':
-                        result = {'status': 200, 'value': {'authorize_url': 'https://openrouter.ai/auth?fixture=1'},
-                                  'piece': False, 'cookie': self.start_cookie}
-                    elif request['path'] == '/preparation/access/callback':
-                        result = self.callback_result
+                    elif request['path'] == '/preparation/access/key':
+                        result = dict(self.key_result, cookie=self.start_cookie)
                     elif (request['method'] == 'POST'
                           and request['path'].endswith('/configurations')):
                         result = {'status': 201, 'value': {'kind': 'configurations'},
@@ -136,20 +133,21 @@ class AccessViewTests(unittest.TestCase):
     def test_trois_etats(self):
         disconnected = views.render(
             {'kind': 'access', 'connected': False, 'status': 'disconnected'}, 'csrf').decode()
-        self.assertIn('Compte non connecté', disconnected)
-        self.assertIn('Connecter mon compte Openrouter', disconnected)
+        self.assertIn('Aucune clé enregistrée', disconnected)
+        self.assertIn('action="/preparation/access/key"', disconnected)
+        self.assertIn('name="return" value="/preparation/access"', disconnected)
 
         connected = views.render({'kind': 'access', 'connected': True, 'status': 'connected',
                                   'limit_usd': '25', 'limit_remaining_usd': '12.50'}, 'csrf').decode()
-        self.assertIn('Compte connecté', connected)
-        self.assertIn('Crédit restant : 12.50 USD', connected)
-        self.assertIn('Limite du compte : 25 USD', connected)
-        self.assertIn('Déconnecter', connected)
+        self.assertIn('Clé enregistrée', connected)
+        self.assertIn('Solde annoncé : 12,50 USD', connected)
+        self.assertIn('Plafond de la clé : 25 USD', connected)
+        self.assertIn('Retirer la clé de ce navigateur', connected)
 
         invalid = views.render({'kind': 'access', 'connected': False, 'status': 'invalid',
                                 'reason': 'KEY_REJECTED'}, 'csrf').decode()
-        self.assertIn('Accès invalide', invalid)
-        self.assertIn('Motif : KEY_REJECTED', invalid)
+        self.assertIn('Clé à remplacer', invalid)
+        self.assertIn('Motif : Openrouter refuse cette clé', invalid)
 
     def test_recapitulatif_connecte_ne_propose_pas_une_nouvelle_connexion(self):
         page = views.render(self.campaign(
@@ -160,9 +158,10 @@ class AccessViewTests(unittest.TestCase):
     def test_indisponible_ne_propose_aucun_formulaire(self):
         access = views.render({'kind': 'access', 'status': 'unavailable'}, 'csrf').decode()
         summary = views.render(self.campaign({'status': 'unavailable'}), 'csrf').decode()
+        self.assertIn('Enregistrement indisponible', access)
+        self.assertIn('Enregistrement de clé indisponible.', summary)
         for page in (access, summary):
-            self.assertIn('Connexion Openrouter indisponible.', page)
-            self.assertNotIn('action="/preparation/access/start"', page)
+            self.assertNotIn('action="/preparation/access/key"', page)
             self.assertNotIn('action="/preparation/access/disconnect"', page)
 
     def test_page_configurations_et_selection_courante(self):
@@ -263,7 +262,7 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('✓ Exemple validé', page)
         self.assertIn('Constats de qualification', page)
         self.assertIn('Quantité à confirmer', page)
-        self.assertIn('Crédit restant : 12.50 USD ; plafond de la clé : 20 USD', page)
+        self.assertIn('Crédit restant : 12,50 USD ; plafond de la clé : 20 USD', page)
         self.assertNotIn('action="/preparation/dossiers/d1/campaigns/c1/cap"', page)
         self.assertNotIn('L’arrêt intervient après le paiement de l’appel en cours.', page)
         self.assertNotIn('La dépense peut donc dépasser le plafond du montant du dernier appel.', page)
@@ -287,7 +286,7 @@ class AccessViewTests(unittest.TestCase):
         for state, admission, incident, active, terminal, message in (
             ('EMISSION_POSSIBLE', True, None, True, False, 'Comparaison en cours'),
             ('INTENT_RECORDED', True, None, True, False, 'En attente de démarrage'),
-            ('EMISSION_POSSIBLE', False, None, False, False, 'Admission fermée'),
+            ('EMISSION_POSSIBLE', False, None, False, False, 'Essais arrêtés avant la fin'),
             ('AMBIGUOUS', True, None, False, False, 'Vérification requise'),
             ('RECEIVED', True, 'LENGTH', False, False, 'Incident'),
             ('RECEIVED', True, None, False, True, 'Réponses reçues'),
@@ -332,8 +331,8 @@ class AccessViewTests(unittest.TestCase):
                 page = views.render(value, 'csrf').decode()
                 self.assertEqual(active, 'id="preparation-progress"' in page)
                 self.assertEqual(ready, 'data-results-href=' in page)
-                self.assertIn('1 réponse(s) reçue(s) sur 1', page)
-                self.assertIn(str(int(ready)) + ' évaluation(s) terminée(s) sur 1', page)
+                self.assertIn('Réponses reçues : 1 sur 1', page)
+                self.assertIn('Évaluations terminées : ' + str(int(ready)) + ' sur 1', page)
                 self.assertEqual(status == 'NOT_STARTED',
                                  'action="/preparation/dossiers/d1/campaigns/c1/evaluate"' in page)
                 if status == 'NOT_STARTED':
@@ -368,7 +367,7 @@ class AccessViewTests(unittest.TestCase):
         page = views.render(value, 'csrf').decode()
         self.assertNotIn('La dépense peut donc dépasser le plafond du montant du dernier appel.', page)
         self.assertNotIn('id="cap_usd"', page)
-        self.assertIn('Lancement enregistré', page)
+        self.assertIn('Comparaison en cours', page)
 
     def test_dates_lisibles_distinctes_dans_la_meme_minute(self):
         first = views.date_lisible_utc('2026-09-16T12:00:01+00:00')
@@ -521,7 +520,8 @@ class AccessServerTests(WebServerCase):
             self.assertNotIn(key.encode(), raw)
             self.assertNotIn(key, str(headers))
             if code == 200:
-                self.assertEqual('/preparation', headers['Location'])
+                # Sans retour demandé, la clé ramène à la page d'accès
+                self.assertEqual('/preparation/access', headers['Location'])
                 self.assertEqual('2592000', SimpleCookie(headers['Set-Cookie'])['benchmark_session']['max-age'])
 
     def test_retrait_de_cle_revient_a_sa_page_sans_relayer_le_retour(self):
@@ -539,71 +539,39 @@ class AccessServerTests(WebServerCase):
             self.assertEqual(400, status, foreign)
         self.assertTrue(self.executor.requests.empty())
 
-    def test_depart_callback_et_csp(self):
+    def test_cle_enregistree_revient_a_la_page_d_origine_sans_se_montrer(self):
         status, headers, _ = self.request('GET', '/preparation/access')
         self.assertEqual(200, status)
         self.assertEqual(CSP, headers['Content-Security-Policy'])
         session_cookie = headers['Set-Cookie'].split(';', 1)[0]
-
-        body = urlencode({'csrf_token': 'csrf', 'return': '/preparation/dossiers/d1'}).encode()
-        status, headers, raw = self.request('POST', '/preparation/access/start', body, {
+        origin = '/preparation/dossiers/d1/campaigns/c1/conditions'
+        body = urlencode({'csrf_token': 'csrf', 'key': 'sk-or-v1-cle-a-ne-pas-rendre', 'return': origin}).encode()
+        status, headers, raw = self.request('POST', '/preparation/access/key', body, {
             'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': session_cookie})
-        self.assertEqual(303, status)
-        self.assertEqual('https://openrouter.ai/auth?fixture=1', headers['Location'])
-        callback_cookie = next(value.split(';', 1)[0] for value in headers.get_all('Set-Cookie')
-                               if value.startswith('benchmark_access_callback='))
-        self.assertNotIn(b'code=', raw)
-        start = self.executor.requests.get_nowait()
-        home = self.executor.requests.get_nowait()
+        self.assertEqual((303, origin), (status, headers['Location']))
+        self.assertNotIn(b'cle-a-ne-pas-rendre', raw)
+        self.assertNotIn('cle-a-ne-pas-rendre', str(headers))
         request = self.executor.requests.get_nowait()
-        self.assertEqual(('/preparation/access', '/preparation', '/preparation/access/start'),
-                         (start['path'], home['path'], request['path']))
-        self.assertEqual({'csrf_token': 'csrf',
-                          'callback_url': 'https://benchmark.example/preparation/access/callback'},
-                         request['body'])
+        while request['path'] != '/preparation/access/key':
+            request = self.executor.requests.get_nowait()
+        self.assertEqual({'csrf_token': 'csrf', 'key': 'sk-or-v1-cle-a-ne-pas-rendre'}, request['body'])
 
-        status, headers, raw = self.request(
-            'GET', '/preparation/access/callback?code=secret-authorization-code',
-            headers={'Cookie': callback_cookie})
-        self.assertEqual(303, status)
-        self.assertEqual('/preparation/dossiers/d1', headers['Location'])
-        persistent = next(value for value in headers.get_all('Set-Cookie')
-                          if value.startswith('benchmark_session='))
-        self.assertEqual('2592000', SimpleCookie(persistent)['benchmark_session']['max-age'])
-        rendered_headers = str(headers)
-        self.assertNotIn('secret-authorization-code', rendered_headers)
-        self.assertNotIn(b'secret-authorization-code', raw)
-        callback = self.executor.requests.get_nowait()
-        self.assertEqual({'code': 'secret-authorization-code'}, callback['body'])
-        self.assertEqual('/preparation/access/callback', callback['path'])
-
-    def test_callback_refuse_rend_erreur_et_efface_son_cookie(self):
-        status, headers, _ = self.request('GET', '/preparation/access')
-        session_cookie = headers['Set-Cookie'].split(';', 1)[0]
-        body = urlencode({'csrf_token': 'csrf', 'return': '/preparation/dossiers/d1'}).encode()
-        status, headers, _ = self.request('POST', '/preparation/access/start', body, {
+        # Sans retour, la clé ramène à la page d'accès ; refusée, elle n'est jamais réaffichée
+        body = urlencode({'csrf_token': 'csrf', 'key': 'sk-or-v1-cle-a-ne-pas-rendre'}).encode()
+        status, headers, _ = self.request('POST', '/preparation/access/key', body, {
             'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': session_cookie})
-        callback_cookie = next(value.split(';', 1)[0] for value in headers.get_all('Set-Cookie')
-                               if value.startswith('benchmark_access_callback='))
-        self.executor.callback_result = {
-            'status': 403,
-            'value': {'error': 'Échange Openrouter refusé', 'error_code': 'ACCESS_EXCHANGE_FAILED'},
-            'piece': False, 'cookie': None}
-
-        status, headers, raw = self.request(
-            'GET', '/preparation/access/callback?code=code-a-ne-pas-rendre',
-            headers={'Cookie': callback_cookie})
-
+        self.assertEqual((303, '/preparation/access'), (status, headers['Location']))
+        self.executor.key_result = {'status': 403, 'value': {'error': 'Cette clé Openrouter n’a pas pu être vérifiée.',
+                                                             'error_code': 'ACCESS_KEY_REJECTED'}, 'piece': False, 'cookie': None}
+        status, headers, raw = self.request('POST', '/preparation/access/key', body, {
+            'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': session_cookie})
         self.assertEqual(403, status)
-        self.assertIn(b'change Openrouter refus', raw)
-        self.assertNotIn(b'code-a-ne-pas-rendre', raw)
-        self.assertNotIn('code-a-ne-pas-rendre', str(headers))
-        self.assertNotIn('Location', headers)
-        self.assertIn('Max-Age=0', headers['Set-Cookie'])
+        self.assertIn('pas pu être vérifiée', raw.decode())
+        self.assertNotIn(b'cle-a-ne-pas-rendre', raw)
 
     def test_refuse_un_retour_exterieur(self):
         body = urlencode({'csrf_token': 'csrf', 'return': 'https://evil.example/preparation'}).encode()
-        status, _, _ = self.request('POST', '/preparation/access/start', body, {
+        status, _, _ = self.request('POST', '/preparation/access/key', body, {
             'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': 'benchmark_session=session-token'})
         self.assertEqual(400, status)
         self.assertTrue(self.executor.requests.empty())
@@ -615,29 +583,20 @@ class AccessServerTests(WebServerCase):
             body = (urlencode({'csrf_token': 'csrf', 'return': value}).encode()
                     if media.endswith('form-urlencoded') else
                     json.dumps({'csrf_token': 'csrf', 'return': value}).encode())
-            status, _, _ = self.request('POST', '/preparation/access/start', body, {
+            status, _, _ = self.request('POST', '/preparation/access/key', body, {
                 'Content-Type': media, 'Cookie': 'benchmark_session=session-token'})
             self.assertEqual(400, status, value)
 
-    def test_depart_conserve_le_cookie_de_session_renouvele(self):
+    def test_cle_conserve_le_cookie_de_session_renouvele(self):
         self.executor.start_cookie = 'session-renouvelee'
-        body = urlencode({'csrf_token': 'csrf', 'return': '/preparation'}).encode()
-        status, headers, _ = self.request('POST', '/preparation/access/start', body, {
+        body = urlencode({'csrf_token': 'csrf', 'key': 'sk-or-v1-x', 'return': '/preparation'}).encode()
+        status, headers, _ = self.request('POST', '/preparation/access/key', body, {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Cookie': 'benchmark_session=session-token'})
         self.assertEqual(303, status)
         cookies = headers.get_all('Set-Cookie')
-        self.assertEqual(2, len(cookies))
-        self.assertTrue(any(value.startswith('benchmark_session=session-renouvelee;') for value in cookies))
-        self.assertTrue(any(value.startswith('benchmark_access_callback=') for value in cookies))
-
-    def test_callback_navigateur_post_ne_contourne_pas_csrf(self):
-        body = urlencode({'code': 'code-direct'}).encode()
-        status, _, raw = self.request('POST', '/preparation/access/callback', body, {
-            'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': 'benchmark_session=session-token'})
-        self.assertEqual(400, status)
-        self.assertNotIn(b'code-direct', raw)
-        self.assertTrue(self.executor.requests.empty())
+        self.assertEqual(1, len(cookies))
+        self.assertTrue(cookies[0].startswith('benchmark_session=session-renouvelee;'))
 
     def test_trame_d_executeur_illisible_annonce_une_panne_et_non_un_formulaire(self):
         # La réponse est déjà partie quand la trame se révèle illisible : rien n'est non admis
@@ -720,12 +679,6 @@ class AccessServerTests(WebServerCase):
         self.assertEqual(202, status)
         self.assertNotIn('Location', headers)
 
-    def test_url_publique_requise_pour_activer(self):
-        self.assertEqual('https://benchmark.example/preparation/access/callback',
-                         _public_callback_url('https://benchmark.example/'))
-        with self.assertRaises(ValueError):
-            _public_callback_url('http://benchmark.example')
-
     def test_post_configurations_et_lancement_redirigent(self):
         path = '/preparation/dossiers/d1/configurations'
         body = urlencode([('csrf_token', 'csrf'), ('models', 'modele-a'),
@@ -783,23 +736,6 @@ class AccessServerTests(WebServerCase):
         self.assertEqual(CSP, headers['Content-Security-Policy'])
         self.assertEqual('nosniff', headers['X-Content-Type-Options'])
         self.assertEqual('no-referrer', headers['Referrer-Policy'])
-
-    def test_retour_openrouter_indisponible_garde_le_message_d_incertitude(self):
-        # Ce GET relaie un envoi : son échec ne peut pas promettre qu'aucune donnée n'a bougé
-        _, headers, _ = self.request('GET', '/preparation/access')
-        session_cookie = headers['Set-Cookie'].split(';', 1)[0]
-        body = urlencode({'csrf_token': 'csrf', 'return': '/preparation/dossiers/d1'}).encode()
-        _, headers, _ = self.request('POST', '/preparation/access/start', body, {
-            'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': session_cookie})
-        callback_cookie = next(value.split(';', 1)[0] for value in headers.get_all('Set-Cookie')
-                               if value.startswith('benchmark_access_callback='))
-
-        self.executor.raw_response = b'not-json\n'
-        status, _, raw = self.request('GET', '/preparation/access/callback?code=retour',
-                                      headers={'Cookie': callback_cookie, 'Accept': 'application/json'})
-        self.assertEqual(503, status)
-        self.assertIn('un envoi précédent peut avoir été enregistré', json.loads(raw)['error'])
-        self.assertNotIn('Aucune donnée', json.loads(raw)['error'])
 
     def test_verbe_non_servi_rend_405_en_francais_avec_les_entetes(self):
         for method in ('PUT', 'DELETE', 'OPTIONS'):
@@ -1047,7 +983,7 @@ class RouteCanonicalizationTests(unittest.TestCase):
                 ('/preparation', '/preparation'),
                 ('/preparation/fonts/Inter.woff2', '/preparation/fonts/<police>.woff2'),
                 ('/preparation/fonts/OFL-Syne.txt', '/preparation/fonts/OFL-<police>.txt'),
-                ('/preparation/access/callback?code=jeton-secret', '/preparation/access/callback'),
+                ('/preparation/access/callback?code=jeton-secret', '<inconnu>'),
                 ('/preparation/dossiers/7f3a9c2e-4b1d', '/preparation/dossiers/<id>'),
                 ('/preparation/dossiers/7f3a9c2e-4b1d/messages', '/preparation/dossiers/<id>/messages'),
                 ('/preparation/dossiers/d1/revisions/12?campaign=d1-c1',

@@ -23,8 +23,8 @@ class AutomaticJudgment(unittest.TestCase):
         self.fixture.connect()
         f = self.fixture
         self.store, self.data, self.sid, self.cid = f.store, f.data, f.sid, f.campaign_id
+        # La clé enregistrée ouvre elle-même l'enveloppe personnelle, à son plafond de 20 USD
         self.budget = provider_access.preparation_budget_id(self.sid)
-        self.store.create_budget(self.budget, '20', 'USD')
         profile = openrouter.load_profile(str(SYNTHETIC_PROFILE))
         self.transport = openrouter.OpenRouterJudgment(None, profile).for_session(
             provider_access.key_for_session(self.store, self.sid, SECRET, f.access), self.sid, SECRET)

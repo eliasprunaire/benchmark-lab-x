@@ -9,11 +9,12 @@ import secrets
 from benchmark.preparation import binding
 from benchmark.storage import _strict_json as encode
 
-from .campaign_views import (COMPARISON_FOCUS_SCRIPT, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
+from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
-from .fragments import date_lisible_utc, form, icon, listing, section, state_block, text
-from .projection import projection_body
+from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, listing, montant_lisible,
+                        personal_key_form, section, state_block, text)
+from .projection import candidate_names, piece_name, projection_body
 from .legal_views import LEGAL_PAGES
 from .privacy_views import (PRIVACY_SCRIPT, render_privacy_page, render_privacy_controls,
                             render_contribution, render_contributions, render_bootstrap)
@@ -38,6 +39,14 @@ PUBLIC_PAGES = {
 # Piège à robots : `hidden` le retire du rendu et de l'arbre d'accessibilité même sans feuille de style
 HONEYPOT = ('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>'
             '<input id="website" name="website" autocomplete="off" tabindex="-1"></div>')
+REQUEST_FIELDS = (
+    '<label for="request">Une tâche de votre travail</label><p id="request-help" class="hint">Décrivez le travail et le résultat '
+    'utile, en 40 caractères au moins, sans donnée personnelle ni information confidentielle. Aucun dossier réel, même anonymisé.</p>'
+    '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5"{request_attrs}>{request}</textarea>{request_error}'
+    '<label for="useful">Résultat attendu <span class="hint">(facultatif)</span></label>'
+    '<textarea id="useful" name="useful" maxlength="800" rows="3"{useful_attrs}>{useful}</textarea>{useful_error}'
+    '<label for="context">Contexte utile <span class="hint">(facultatif)</span></label>'
+    '<textarea id="context" name="context" maxlength="200" rows="2"{context_attrs}>{context}</textarea>{context_error}')
 PREPARATION_PROGRESS_SCRIPT = """(() => {
   const destination = document.getElementById('campaign-followup')?.dataset?.resultsHref;
   if (destination) { location.replace(destination); return; }
@@ -145,7 +154,7 @@ BENCHMARK_REFERENCES = {
 
 def render_task_index(task):
     content = '<p><a href="' + text(task['href']) + '">' + text(task['need']) + '</a></p>'
-    content += '<p>Cas d’usage ' + text(task['dossier_id']) + '. Consultation privée, sans admission au catalogue public.</p>'
+    content += '<p>Consultation privée, sans admission au catalogue public.</p>'
     content += '<p>Révisions : ' + ' · '.join(
         '<a href="' + text(task['href']) + '/revisions/' + str(revision) + '">' + str(revision) + '</a>'
         for revision in task['revisions']) + '.</p>'
@@ -153,8 +162,10 @@ def render_task_index(task):
         content += '<section id="version-' + text(version['version']) + '"><h3>Version d’épreuve '
         content += text(version['version']) + '</h3>'
         content += '<p><a href="' + text(task['href']) + '/revisions/' + str(version['revision']) + '">Ouvrir la révision associée</a></p><ul>'
-        for campaign in version['campaigns']:
-            content += '<li><a href="' + text(campaign['href']) + '">Comparer la campagne ' + text(campaign['campaign_id']) + '</a></li>'
+        # Le numéro distingue deux comparaisons figées dans la même seconde
+        for number, campaign in enumerate(version['campaigns'], 1):
+            content += ('<li><a href="' + text(campaign['href']) + '">Comparaison ' + str(number) + ' du '
+                        + text(date_lisible_utc(campaign['frozen_at'])) + '</a></li>')
         content += '</ul>' if version['campaigns'] else '</ul><p>Aucune campagne pour cette version.</p>'
         content += '</section>'
     if not task['versions']:
@@ -200,27 +211,6 @@ def preparation_steps(value):
     return content + '<small>Cas d’usage privé · pièces entièrement inventées</small></nav>'
 
 
-def personal_key_form(csrf, access):
-    connected = access.get('connected', False)
-    content = '<details class="corr personal-key"><summary class="button sec">Ajouter ma clé Openrouter</summary><div>'
-    if connected:
-        content += '<p>Plafond Openrouter : ' + text(access.get('limit_usd') or 'inconnu') + ' USD. Solde annoncé : ' + text(access.get('limit_remaining_usd') or 'inconnu') + ' USD.</p>'
-    content += form(csrf, '/preparation/access/key', {},
-        '<label for="openrouter-key">Clé API Openrouter</label>'
-        '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help key-storage">'
-        '<p id="key-help">Utilisez une clé dédiée avec un plafond non renouvelable de 50 USD maximum.</p>'
-        '<p id="key-storage" class="hint">Votre clé est conservée chiffrée sur notre serveur. '
-        'Un cookie de session mémorise votre accès dans ce navigateur pour vos prochaines visites. '
-        'Ce cookie sera automatiquement supprimé au bout de 30 jours maximum d’inactivité. '
-        'Néanmoins, vous pouvez retirer votre clé depuis cette page si vous préférez.</p>'
-        '<button type="submit">Enregistrer la clé</button>')
-    if access.get('status') in ('connected', 'invalid'):
-        content += form(csrf, '/preparation/access/disconnect', {'return': '/preparation'},
-            '<button type="submit" class="sec">Retirer la clé de ce navigateur</button>')
-        content += '<p>Terminez la préparation ou qualification en cours avant de changer la clé. Le retrait bloque les nouveaux appels, sans révoquer la clé chez Openrouter ni annuler une comparaison engagée.</p>'
-    return content + '</div></details>'
-
-
 def render(value, csrf, path='/preparation', *, error=False):
     """Native HTML forms, inert evidence and a fixed comparison focus script"""
     def field_attributes(name):
@@ -232,6 +222,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         return f'<p id="{text(name)}-error" role="alert">{text(value["error"])}</p>'
 
     state = value.get('availability', {})
+    needs_availability = 'dossiers' in value
+    folded_contribution = ''
     pending = not error and preparation_pending(value)
     can_submit = state.get('can_submit', False)
     disabled = '' if can_submit else ' disabled aria-describedby="availability"'
@@ -251,10 +243,11 @@ def render(value, csrf, path='/preparation', *, error=False):
         content = '' if attached else '<p role="alert">' + text(value['error']) + '</p>'
         if type(submitted) is dict and 'request' in submitted:
             content += form(csrf, path, {key: submitted[key] for key in ('dossier_id', 'action_id')},
-                '<label for="request">Une tâche de votre travail</label>'
-                '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5"' + field_attributes('request') + '>' + text(submitted['request']) + '</textarea>' + field_error('request') +
-                '<label for="useful">Résultat attendu</label><textarea id="useful" name="useful" maxlength="800" rows="3"' + field_attributes('useful') + '>' + text(submitted.get('useful', '')) + '</textarea>' + field_error('useful') +
-                '<label for="context">Contexte utile</label><textarea id="context" name="context" maxlength="200" rows="2"' + field_attributes('context') + '>' + text(submitted.get('context', '')) + '</textarea>' + field_error('context') +
+                REQUEST_FIELDS.format(
+                    request=text(submitted['request']), useful=text(submitted.get('useful', '')), context=text(submitted.get('context', '')),
+                    request_attrs=' aria-describedby="request-help' + (' request-error' if value.get('error_field') == 'request' else '') + '"',
+                    useful_attrs=field_attributes('useful'), context_attrs=field_attributes('context'),
+                    request_error=field_error('request'), useful_error=field_error('useful'), context_error=field_error('context')) +
                 HONEYPOT +
                 '<button type="submit">Corriger et renvoyer</button>')
         elif type(submitted) is dict and 'message' in submitted:
@@ -274,27 +267,22 @@ def render(value, csrf, path='/preparation', *, error=False):
     elif value.get('kind') == 'privacy_data':
         title, content = render_privacy_page(value, csrf)
     elif value.get('kind') == 'access':
-        title = 'Accès Openrouter'
+        title = 'Ma clé Openrouter'
         status = value['status']
         if status == 'connected':
-            content = state_block('done', 'Accès Openrouter', 'Compte connecté',
-                '<p>Crédit restant : ' + text(value['limit_remaining_usd'] if value['limit_remaining_usd'] is not None else 'INCONNU')
-                + ' USD. Limite du compte : ' + text(value['limit_usd'] if value['limit_usd'] is not None else 'INCONNU') + ' USD.</p>')
-            content += form(csrf, '/preparation/access/disconnect', {}, '<button class="sec" type="submit">Déconnecter</button>')
+            content = state_block('done', 'Accès Openrouter', 'Clé enregistrée', '<p>' + access_summary(value) + '</p>')
         elif status == 'invalid':
-            content = state_block('err', 'Accès Openrouter', 'Accès invalide',
-                                  '<p>Motif : ' + text(value.get('reason') or 'INCONNU') + '.</p>')
-            content += form(csrf, '/preparation/access/start', {'return': path},
-                            '<button type="submit">Reconnecter mon compte Openrouter</button>')
+            content = state_block('err', 'Accès Openrouter', 'Clé à remplacer', '<p>Motif : ' + text(
+                ACCESS_REASONS.get(value.get('reason'), value.get('reason') or 'INCONNU')) + '.</p>')
         elif status == 'disconnected':
-            content = state_block('action', 'Accès Openrouter', 'Compte non connecté',
-                                  '<p>Connectez votre compte pour financer les appels candidats de votre comparaison.</p>')
-            content += form(csrf, '/preparation/access/start', {'return': path},
-                            '<button type="submit">Connecter mon compte Openrouter</button>')
+            content = state_block('action', 'Accès Openrouter', 'Aucune clé enregistrée',
+                                  '<p>Ajoutez une clé dédiée : elle finance la préparation, la qualification et la comparaison de vos cas d’usage.</p>')
         else:
-            content = state_block('err', 'Accès Openrouter', 'Connexion indisponible',
-                                  '<p>Connexion Openrouter indisponible.</p>')
-        content += '<p><a class="button' + ('' if status in ('connected', 'unavailable') else ' sec') + '" href="/preparation">Revenir à mes cas d’usage</a></p>'
+            content = state_block('err', 'Accès Openrouter', 'Enregistrement indisponible',
+                                  '<p>L’enregistrement de clé est momentanément indisponible. Aucun appel n’est lancé.</p>')
+        if status != 'unavailable':
+            content += personal_key_form(csrf, value, '/preparation/access', opened=status != 'connected')
+        content += '<p><a href="/preparation">Revenir à mes cas d’usage</a></p>'
     elif value.get('kind') == 'configurations':
         title = 'Choisir les configurations'
         content = render_configurations(value, csrf)
@@ -317,15 +305,16 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += 'sur des critères vérifiables et leur coût observé.</p>'
         content += '<div class="actions"><a class="button" href="/preparation#besoin">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
         content += '<a class="button sec" href="/preparation#mes-cas">Retrouver mes cas d’usage</a></div></div>'
-        content += section('Le parcours en quatre étapes', '<ol class="parcours">'
+        content += section('Le parcours en cinq étapes', '<ol class="parcours">'
             '<li><strong>Besoin.</strong> Vous décrivez la tâche et le résultat utile. L’assistant pose des questions si nécessaire.</li>'
             '<li><strong>Exemple.</strong> Une consigne et des pièces inventées vous sont proposées. Vous corrigez jusqu’à ce que l’exemple soit fidèle.</li>'
             '<li><strong>Validation.</strong> Vous confirmez le travail à tester. La qualification de l’exemple suit ; aucun candidat n’est lancé et rien n’est publié.</li>'
-            '<li><strong>Comparaison.</strong> Chaque modèle passe l’épreuve dans les mêmes conditions. Vous lisez les verdicts, les preuves et les coûts.</li></ol>')
+            '<li><strong>Modèles.</strong> Vous choisissez les modèles et leur niveau de raisonnement, puis lancez la comparaison après avoir vu les coûts estimés.</li>'
+            '<li><strong>Résultats.</strong> Chaque modèle a passé l’épreuve dans les mêmes conditions. Vous lisez les verdicts, les preuves et les coûts observés.</li></ol>')
         content += section('Ce qui rend le résultat lisible', '<div class="rule">' + icon('i-scale') + '<span><strong>Chaque exigence compte.</strong> '
             'Une obligation non prouvée ou une erreur éliminatoire suffit à écarter une configuration, quel que soit le reste.</span></div>'
             '<ul><li>Le verdict porte sur la configuration observée sous des conditions communes, jamais sur le nom du modèle seul.</li>'
-            '<li>Le coût est observé sur reçu, pas estimé. Un coût inconnu reste inconnu.</li>'
+            '<li>Le coût comparé est observé sur reçu ; les estimations affichées avant lancement sont signalées comme telles. Un coût inconnu reste inconnu.</li>'
             '<li>Les pièces sont entièrement inventées : aucun dossier réel, même anonymisé.</li></ul>')
     elif value.get('kind') == 'catalogue':
         title = 'Versions et comparaisons'
@@ -338,43 +327,54 @@ def render(value, csrf, path='/preparation', *, error=False):
         title = 'Résultats'
         content = render_comparison(value) + '<script>' + COMPARISON_FOCUS_SCRIPT + '</script>'
     elif value.get('kind') == 'projection_preview':
-        title = 'Aperçu privé · NON APPROUVÉ'
-        content = '<p class="note">Aperçu privé · NON APPROUVÉ. Aucune activation ni publication.</p>'
-        content += '<p><a href="' + text(value['comparison']['href']) + '">Revenir à la comparaison</a></p>'
-        content += '<p>Choisissez les pièces à inclure. Aucune pièce cochée : page et styles seulement. '
-        content += 'L’aperçu porte sur la campagne entière, sans les filtres de consultation.</p>'
-        content += '<form method="get" action="' + text(value['comparison']['href'] + '/preview') + '">'
-        content += '<fieldset><legend>Pièces proposées pour la projection</legend>'
+        title = 'Aperçu d’une publication'
+        comparison = value['comparison']
+        candidates = candidate_names(comparison)
+        rows = {link['piece_id']: row for row in comparison['rows'] for link in row['proof_links']}
+        content = ('<p class="note">Aperçu privé, non approuvé : rien n’est publié. Cette page montre ce qu’un lecteur '
+                   'verrait si cette comparaison était publiée.</p>')
+        content += '<p><a href="' + text(comparison['href']) + '">Revenir aux résultats</a></p>'
+        content += '<form method="get" action="' + text(comparison['href'] + '/preview') + '">'
+        content += '<fieldset><legend>Pièces que la publication montrerait</legend>'
+        content += '<p class="hint">Aucune pièce cochée : seuls les verdicts et leurs motifs apparaissent.</p>'
         for piece in value['pieces']:
             pid = piece['piece_id']
             content += '<label><input type="checkbox" name="piece" value="' + text(pid) + '"'
-            content += (' checked' if pid in value['selected_links'] else '') + '> ' + text(piece['name']) + ' · ' + text(pid) + '</label>'
+            content += (' checked' if pid in value['selected_links'] else '') + '> ' + text(piece_name(rows[pid], piece, candidates)) + '</label>'
         content += '</fieldset><button type="submit">Actualiser l’aperçu</button></form>'
-        content += '<p>Cette vue privée reprend le contenu de la projection avec des liens privés vers les seules pièces '
-        content += 'sélectionnées. Son habillage n’est pas un fichier approuvé. Le reçu fictif devra porter sur les octets du paquet.</p>'
-        content += '<hr>' + projection_body(value['comparison'], value['selected_links'])
+        content += '<p class="hint">L’aperçu porte sur toute la comparaison, sans les filtres de consultation.</p>'
+        content += '<hr>' + projection_body(comparison, value['selected_links'], level=2)
     elif 'dossiers' in value:
         title = 'Mes cas d’usage'
-        content = personal_key_form(csrf, value.get('personal_access', {})) if value.get('personal_preparation') and path == '/preparation' else ''
-        content += '<p class="lead note">Décrivez le travail et le résultat qui vous serait utile. Vous pourrez examiner et corriger l’exemple avant de le valider.</p>'
+        access = value.get('personal_access', {})
+        if value.get('personal_preparation') and access.get('status') == 'connected':
+            content = ('<p class="hint">Clé Openrouter enregistrée. ' + access_summary(access)
+                       + ' <a href="/preparation/access">Gérer ma clé</a></p>')
+        elif value.get('personal_preparation'):
+            content = personal_key_form(csrf, access, '/preparation')
+        else:
+            content = ''
+        content += ('<p class="lead note">Vos cas d’usage restent privés dans ce navigateur. '
+                    'Reprenez un cas existant ou décrivez-en un nouveau.</p>' if value['dossiers'] else
+                    '<p class="lead note">Décrivez le travail et le résultat qui vous serait utile. '
+                    'Vous pourrez examiner et corriger l’exemple avant de le valider.</p>')
         dossiers = '<ul class="dossiers">' + ''.join(
-            f'<li><a href="/preparation/dossiers/{text(d["dossier_id"])}">{text(d.get("need") or "Cas d’usage " + d["dossier_id"])}</a>'
+            f'<li><a href="/preparation/dossiers/{text(d["dossier_id"])}">{text(d.get("need") or "Cas d’usage sans description")}</a>'
             f'<small>Révision {d["revision"]}</small></li>'
             for d in value['dossiers']) + '</ul><p><a href="/preparation/catalogue">Versions d’épreuve et comparaisons de cette session</a></p>' if value['dossiers'] else (
                 '<p>Aucun cas d’usage dans ce navigateur. Commencez par décrire un besoin lorsque les appels sont ouverts.</p>'
                 '<p>Si vous en aviez déjà un, vérifiez que vous utilisez le même navigateur et son cookie de session.</p>')
-        content += section('Décrire un nouveau cas d’usage', form(csrf, '/preparation/dossiers',
+        if not value.get('personal_preparation'):
+            dossiers += '<p><a href="/preparation/access">Ma clé Openrouter</a></p>'
+        creation = section('Décrire un nouveau cas d’usage', form(csrf, '/preparation/dossiers',
             {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16)},
-            '<label for="request">Une tâche de votre travail</label><p id="request-help" class="hint">Décrivez le travail et le résultat utile, sans donnée personnelle ni information confidentielle. Aucun dossier réel, même anonymisé.</p>'
-            '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5" aria-describedby="request-help' + ('"' if can_submit else ' availability" disabled') + '></textarea>'
-            '<label for="useful">Résultat attendu</label><textarea id="useful" name="useful" maxlength="800" rows="3"' + disabled + '></textarea>'
-            '<label for="context">Contexte utile</label><textarea id="context" name="context" maxlength="200" rows="2"' + disabled + '></textarea>' +
-            HONEYPOT,
+            REQUEST_FIELDS.format(request='', useful='', context='', request_error='', useful_error='', context_error='', request_attrs=' aria-describedby="request-help' + ('"' if can_submit else ' availability" disabled'),
+                                  useful_attrs=disabled, context_attrs=disabled) + HONEYPOT,
             form_id='prepare-case')
             + '<button type="submit" form="prepare-case"' + disabled + '>' + icon('i-pen') + 'Préparer cet exemple</button>', 'besoin')
-        if not value.get('personal_preparation'):
-            dossiers += '<p><a href="/preparation/access">Accès Openrouter de ce navigateur</a></p>'
-        content += section('Mes cas d’usage dans ce navigateur', dossiers, 'mes-cas')
+        listing_section = section('Mes cas d’usage dans ce navigateur', dossiers, 'mes-cas')
+        # Un visiteur qui revient cherche d'abord ses cas ; un premier visiteur, le formulaire
+        content += listing_section + creation if value['dossiers'] else creation + listing_section
     elif value.get('kind') == 'honeypot_ack' or 'operation_id' in value:
         title = 'Demande enregistrée'
         url = ('/preparation' if value.get('kind') == 'honeypot_ack'
@@ -384,12 +384,14 @@ def render(value, csrf, path='/preparation', *, error=False):
     else:
         dossier_id, revision = value['dossier_id'], value['revision']
         url = '/preparation/dossiers/' + dossier_id
-        title = 'Est-ce le travail que vous voulez tester ?' if value['package'] else 'Précisons le résultat utile'
+        title = ('Votre cas d’usage' if value['validation'] else 'Est-ce le travail que vous voulez tester ?'
+                 if value['package'] else 'Précisons le résultat utile')
         prior_revision = revision != value.get('current_revision', revision)
         snapshot = '/revisions/' in path and any(c['task']['revision'] == revision and c['attempts']
                                                 for c in value.get('campaigns', []))
         referral = value.get('checks', {}).get('out_of_scope')
         editable = not prior_revision and not snapshot and value['stage'] != 'waiting' and not referral
+        needs_availability = editable
         disabled = '' if can_submit and editable else ' disabled aria-describedby="availability"'
         current_campaigns = [c for c in value.get('campaigns', []) if c['task']['revision'] == revision]
         stages = {'draft': ('unk', 'Brouillon', 'Rien n’a encore été envoyé à l’assistant.'),
@@ -418,6 +420,13 @@ def render(value, csrf, path='/preparation', *, error=False):
                 tone, heading, next_step = 'err', 'Qualification à reprendre', qualification['summary']
             else:
                 tone, heading, next_step = 'wait', 'Qualification en cours', 'Votre validation est enregistrée. L’assistant vérifie la cohérence et les critères de l’exemple.'
+        actions = ''
+        # Une comparaison existe : l'encadré dit son état et mène à elle, jamais à un nouveau choix de modèles
+        if value['validation'] and current_campaigns and not snapshot and not prior_revision:
+            tone, heading, next_step, target, label = campaign_status(current_campaigns[-1], url)
+            actions = f'<a class="button" href="{text(target)}">{text(label)}</a>'
+        elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
+            actions = f'<a class="button" href="{text(url)}/configurations">Choisir les modèles</a>'
         content = '<p class="tag">Cas d’usage inventé · révision ' + text(revision) + '</p>'
         if snapshot:
             title = 'Exemple utilisé pour la comparaison'
@@ -425,13 +434,11 @@ def render(value, csrf, path='/preparation', *, error=False):
             content += '<p class="notice">Consultation seule. Une modification de l’exemple crée une nouvelle version à valider.</p>'
         if prior_revision:
             content += '<p class="notice">Révision précédente en lecture seule. Pour modifier ou valider, ouvrez la révision courante.</p>'
-        actions = ''
         if prior_revision:
             actions = f'<a class="button" href="{text(url)}">Revenir à la révision courante</a>'
         elif snapshot:
             actions = f'<a class="button sec" href="{text(url)}">Préparer une nouvelle comparaison</a>'
         if pending:
-            title = heading
             actions = ('<div id="preparation-progress"><progress aria-label="' + text(heading) + '"></progress>'
                        '<p class="hint" role="status">Suivi automatique disponible avec JavaScript. Sinon, actualisez cet état.</p>'
                        '<div class="actions"><a href="' + text(url) + '">Actualiser cet état</a>'
@@ -482,10 +489,9 @@ def render(value, csrf, path='/preparation', *, error=False):
         if package:
             content += section('Consigne donnée aux modèles', '<p class="consigne">' + text(package['instruction']) + '</p>', 'exemple')
             content += section('Les pièces de l’exemple', '<p class="hint">Ouvrez chaque pièce pour la lire ici, puis refermez-la pour poursuivre.</p>' + ''.join(
-                '<details class="example-content"><summary>Voir le contenu'
-                + (f' {index}' if len(package['pieces']) > 1 else '') + '</summary>'
+                '<details class="example-content"><summary>Lire « ' + text(piece['name']) + ' »</summary>'
                 + '<div class="example-text">' + text(value['example_contents'][piece['id']]) + '</div></details>'
-                for index, piece in enumerate(package['pieces'], start=1)))
+                for piece in package['pieces']))
             content += '<div class="two">' + section('Livrables attendus', listing(package['deliverables']))
             criteria = value['criteria']
             groups = ''
@@ -519,76 +525,83 @@ def render(value, csrf, path='/preparation', *, error=False):
             estimate = value['indicative_cost']
             amount = estimate.get('token_subtotal_usd') if estimate else None
             content += '<p>Estimation indicative de cette préparation : ' + text(
-                'non estimable' if amount is None else amount + ' USD') + \
+                'non estimable' if amount is None else montant_lisible(amount) + ' USD') + \
                 '. Tokens utilisés × tarifs du modèle relevés avant appel ; ce montant n’est pas une facture.</p>'
         if value.get('observed_cost'):
             cost = value['observed_cost']
             content += '<p>Coût observé de cette préparation : ' + text(
-                'INCONNU' if cost['status'] == 'UNKNOWN' else cost['amount'] + ' ' + cost['currency']) + '. Source : ' + text(cost['source']) + '.</p>'
+                'INCONNU' if cost['status'] == 'UNKNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']) + '. Source : ' + text(cost['source']) + '.</p>'
         else:
             content += '<p>Coût observé : INCONNU en l’absence de reçu de coût.</p>'
         if value.get('cost_reconciliation'):
             proof, cost = value['cost_reconciliation'], value['effective_cost']
-            content += '<p>Coût rapproché : ' + text(cost['amount'] + ' ' + cost['currency']) + '. Source : ' + text(
+            content += '<p>Coût rapproché : ' + text(montant_lisible(cost['amount']) + ' ' + cost['currency']) + '. Source : ' + text(
                 proof['source']) + ', attestée par ' + text(proof['actor']) + ' le ' + text(proof['observed_at']) + \
                 '. Le reçu original reste inchangé.</p>'
-        content += render_contribution(value, csrf)
-        content += '<section id="validation"><h2>Validation du cas d’usage</h2>'
-        if value['validation']:
-            content += '<p class="note">Votre validation est enregistrée pour ce cas d’usage, cette révision et cet exemple exact.</p>'
-            if not current_campaigns and not automatic:
-                content += '<p>En attente de préparation des conditions par le responsable.</p>'
-        elif package:
-            content += '<p class="note">Une nouvelle validation est requise pour l’exemple présenté.</p>'
-        elif referral:
-            content += '<p>Cette demande hors périmètre ne peut pas être validée ni comparée dans Bench-X.</p>'
-        else:
-            content += '<p>La validation sera possible lorsqu’un exemple à examiner sera disponible.</p>'
-        if editable and package and value['stage'] == 'preview' and value['validation'] is None:
-            content += '<p>Cette validation confirme la fidélité de cet exemple à votre besoin. Si la qualification est disponible, ' + ('elle utilise votre clé sur votre enveloppe de préparation' if value.get('personal_preparation') else 'elle est financée par l’opérateur sur l’enveloppe de préparation') + '. Aucun appel candidat ni publication n’est autorisé ici.</p>'
-            content += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
-                            '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
-        content += '</section>'
-        if current_campaigns:
-            content += '<section id="comparaison"><h2>Comparaison</h2>'
-            current_campaign = current_campaigns[-1]
-            content += '<p><a class="button" href="' + text(url + '/campaigns/' + current_campaign['campaign_id'] + '/conditions') + '">Examiner les conditions et suivre la comparaison courante</a></p>'
-            for campaign in reversed(current_campaigns[:-1]):
-                content += '<p><a class="button sec" href="' + text(url + '/campaigns/' + campaign['campaign_id'] + '/conditions') + '">Consulter la comparaison du ' + text(date_lisible_utc(campaign['conditions']['frozen_at'])) + '</a></p>'
-            content += '</section>'
-        if editable and value['package'] is not None:
+        if editable and package is not None:
             content += '<details class="corr"><summary class="button sec">' + icon('i-pen') + 'Préciser ou corriger cet exemple</summary><div>' + form(csrf, url + '/messages',
                 {'action_id': secrets.token_hex(16), 'revision': revision},
                 '<p>Indiquez ce qui doit changer. Les accords non touchés et les révisions précédentes sont conservés. Une modification de l’exemple demande une nouvelle validation.</p>'
                 '<label for="kind">Objet du message</label><select id="kind" name="kind"' + disabled + '>'
                 '<option value="clarify">Répondre à la clarification ou confirmer le périmètre</option>'
-                '<option value="correct"' + (' selected' if package else '') + '>Modifier cet exemple</option></select>'
+                '<option value="correct" selected>Modifier cet exemple</option></select>'
                 '<label for="message">Votre précision ou correction</label>'
                 '<textarea id="message" name="message" rows="4" required maxlength="1000"' + disabled + '></textarea>' + HONEYPOT +
                 '<button type="submit"' + disabled + '>Envoyer ce message</button>') + '</div></details>'
-        qualification = value.get('qualification', {})
+        launched = any(c['attempts'] for c in current_campaigns)
+        if package:
+            content += '<section id="validation"><h2>Validation du cas d’usage</h2>'
+            if value['validation']:
+                content += '<p class="note">Votre validation est enregistrée pour ce cas d’usage, cette révision et cet exemple exact.</p>'
+                if not current_campaigns and not automatic:
+                    content += '<p>En attente de préparation des conditions par le responsable.</p>'
+            else:
+                content += '<p class="note">Une nouvelle validation est requise pour l’exemple présenté.</p>'
+            if editable and value['stage'] == 'preview' and value['validation'] is None:
+                content += '<p>Cette validation confirme la fidélité de cet exemple à votre besoin. Si la qualification est disponible, ' + ('elle utilise votre clé sur votre enveloppe de préparation' if value.get('personal_preparation') else 'elle est financée par l’opérateur sur l’enveloppe de préparation') + '. Aucun appel candidat ni publication n’est autorisé ici.</p>'
+                content += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
+                                '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
+            content += '</section>'
+            # Le consentement suit la décision principale ; une fois la comparaison lancée, il se replie dans Mes données
+            if launched:
+                folded_contribution = render_contribution(value, csrf)
+            else:
+                content += render_contribution(value, csrf)
+        if current_campaigns:
+            content += '<section id="comparaison"><h2>Comparaisons de cet exemple</h2><ul>'
+            for number, campaign in reversed(list(enumerate(current_campaigns, 1))):
+                _, heading_, _, target, _ = campaign_status(campaign, url)
+                content += ('<li><a href="' + text(target) + '">Comparaison ' + str(number) + ' du '
+                            + text(date_lisible_utc(campaign['conditions']['frozen_at']))
+                            + '</a> : ' + text(heading_[0].lower() + heading_[1:]) + '.</li>')
+            content += '</ul>'
+            if value.get('qualified') and not snapshot and not prior_revision:
+                content += ('<p><a href="' + text(url) + '/configurations">Choisir d’autres modèles</a> : '
+                            'prépare une nouvelle comparaison ; les résultats actuels restent conservés.</p>')
+            content += '</section>'
         labels = {'PENDING': 'En attente', 'QUALIFIED': 'Contrôles requis prouvés',
                   'BLOCKED': 'Bloquée : référence ou contrôles insuffisamment prouvés',
                   'APPROVED': 'Approuvée par action opérateur locale'}
-        if not referral:
-            content += '<details><summary>Qualification et approbation de l’épreuve</summary>'
-            content += section('Qualification', '<p>' + text(labels.get(
-                qualification.get('qualification_status'), 'En attente')) + '</p>')
+        if package and not referral:
             if automatic:
-                content += '<p>' + text(qualification['summary']) + '</p>'
-                content += listing(finding['text'] for finding in qualification.get('findings', []))
-            content += section('Approbation', '<p>' + text(labels.get(
-                qualification.get('approval_status'), 'En attente')) + '</p>'
-                '<p>La validation du besoin, la qualification et l’approbation restent distinctes. '
-                'Aucun appel ni publication n’est autorisé par cet état. Les preuves, la référence '
-                'et les limites de jugement sont réservées à l’inspection locale du responsable.</p>')
+                # Parcours public : la qualification automatique suffit, aucune approbation opérateur n'est attendue
+                content += '<details><summary>Qualification de l’épreuve</summary>'
+                content += section('Qualification', '<p>' + text(labels.get(qualification.get('qualification_status'), 'En attente')) + '</p>'
+                                   + '<p>' + text(qualification['summary']) + '</p>'
+                                   + listing(finding['text'] for finding in qualification.get('findings', [])))
+            else:
+                content += '<details><summary>Qualification et approbation de l’épreuve</summary>'
+                content += section('Qualification', '<p>' + text(labels.get(
+                    qualification.get('qualification_status'), 'En attente')) + '</p>')
+                content += section('Approbation', '<p>' + text(labels.get(
+                    qualification.get('approval_status'), 'En attente')) + '</p>'
+                    '<p>La validation du besoin, la qualification et l’approbation restent distinctes. '
+                    'Aucun appel ni publication n’est autorisé par cet état. Les preuves, la référence '
+                    'et les limites de jugement sont réservées à l’inspection locale du responsable.</p>')
             content += '</details>'
-        if value.get('qualified') and not snapshot:
-            content += '<p><a class="button' + (' sec' if current_campaigns or prior_revision else '') + '" href="' + text(
-                url + '/configurations') + '">Choisir les modèles</a></p>'
-        if 'campaigns' in value:
+        if value.get('campaigns'):
             content += render_campaign_records(value['campaigns'], url)
-    if state and s9 and not pending and not value.get('checks', {}).get('out_of_scope'):
+    if state and s9 and not pending and not can_submit and needs_availability and not value.get('checks', {}).get('out_of_scope'):
         reasons = {
             'access': 'Ajoutez votre clé Openrouter pour préparer un exemple avec votre propre accès.',
             'open': 'Échanges disponibles. Chaque envoi reste vérifié par le serveur avant admission.',
@@ -619,7 +632,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             content += '<span data-privacy-home hidden></span>'
         if 'dossiers' in value and value.get('privacy'):
             content += render_privacy_page({'kind': 'privacy_data'}, preparation=True)[1]
-        content += render_privacy_controls(value, csrf)
+        content += render_privacy_controls(value, csrf, folded_contribution)
         if value.get('privacy') or value.get('kind') in ('home', 'privacy_data', 'contributions', 'session_bootstrap'):
             content += PRIVACY_SCRIPT
     template = TEMPLATE or TEMPLATE_PATH.read_text()

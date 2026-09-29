@@ -173,8 +173,7 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                                   if privacy.visible(store._connection, session_id, d)]}, (None if token == current_token else current_token), None
     session_id, csrf, _ = p.session(store, token)
     campaign_reference = None
-    access_paths = ('/preparation/access', '/preparation/access/start',
-                    '/preparation/access/callback', '/preparation/access/disconnect', '/preparation/access/key')
+    access_paths = ('/preparation/access', '/preparation/access/disconnect', '/preparation/access/key')
     if method == 'GET' and path == '/preparation/access':
         from . import provider_access
         if not provider_access.available(store):
@@ -223,11 +222,10 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
     if method == 'POST':
         if type(body) is not dict:
             raise ValueError('Formulaire requis')
-        if path != '/preparation/access/callback':
-            supplied = body.get('csrf_token')
-            if type(supplied) is not str or not hmac.compare_digest(supplied.encode(), csrf.encode()):
-                raise p.Denied('Protection CSRF requise')
-            body = {key: value for key, value in body.items() if key != 'csrf_token'}
+        supplied = body.get('csrf_token')
+        if type(supplied) is not str or not hmac.compare_digest(supplied.encode(), csrf.encode()):
+            raise p.Denied('Protection CSRF requise')
+        body = {key: value for key, value in body.items() if key != 'csrf_token'}
         if path == '/preparation/activity':
             from . import privacy
             if set(body) - {'dossier_id'} or body.get('dossier_id') is not None and not isinstance(body['dossier_id'], str):
@@ -273,19 +271,9 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
             return 503, {'connected': False, 'status': 'unavailable',
                          'error_code': 'ACCESS_UNAVAILABLE'}, None, None
         if method == 'POST' and path == '/preparation/access/key':
-            if not personal_preparation:
-                raise p.Denied('ACCESS_UNAVAILABLE')
             _fields(body, ('key',), 'personal access')
             return 200, provider_access.import_key(store, session_id, access_secret, body['key'],
                                                    access_transport), None, None
-        if method == 'POST' and path == '/preparation/access/start':
-            _fields(body, ('callback_url',), 'access start')
-            return 200, provider_access.start(store, session_id, access_secret,
-                                               body['callback_url']), None, None
-        if method == 'POST' and path == '/preparation/access/callback':
-            _fields(body, ('code',), 'access callback')
-            return 200, provider_access.callback(store, session_id, access_secret, body['code'],
-                                                  access_transport), None, None
         if method == 'POST' and path == '/preparation/access/disconnect':
             _fields(body, (), 'access disconnect')
             return 200, provider_access.disconnect(store, session_id, access_secret), None, None
@@ -345,8 +333,11 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                                           access_secret=access_secret,
                                           access_transport=access_transport, judgment_transport=judgment_transport)
             if requester:
-                value['launchable'] = value['launchable'] and callable(candidate_transport) and (
-                    not personal_preparation or judgment_transport is not None)
+                # Une exécution indisponible est un contrôle comme les autres : jamais un refus sans cause affichée
+                if not callable(candidate_transport) or personal_preparation and judgment_transport is None:
+                    value['checks'].append(dict(key='execution_available', ok=False,
+                        detail='Exécution des essais momentanément indisponible. Rien n’a été lancé ni débité ; réessayez plus tard'))
+                    value['launchable'] = False
             else:
                 value['can_launch'] = value['can_launch'] and callable(candidate_transport)
             return 200, value, None, None

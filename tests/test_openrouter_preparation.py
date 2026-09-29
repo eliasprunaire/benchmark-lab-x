@@ -273,9 +273,6 @@ class OpenRouterPreparationTests(unittest.TestCase):
         access = AccessTransport()
         with self.assertRaisesRegex(prep.Denied, '^PREPARATION_IN_PROGRESS$'):
             provider_access.import_key(self.store, self.session, secret, key + '-replacement', access)
-        with self.assertRaisesRegex(prep.Denied, '^PREPARATION_IN_PROGRESS$'):
-            provider_access.start(self.store, self.session, secret,
-                                  'https://example.test/preparation/access/callback')
         self.assertEqual([], access.verifications)
         self.assertTrue(bound.authorized(self.store))
 
@@ -891,8 +888,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
         page = views.render(view, self.csrf).decode()
         self.assertIn('Estimation indicative', page)
         self.assertIn('ce montant n’est pas une facture', page)
-        self.assertIn('0.02000 USD', page)
-        self.assertIn('0.009 USD', page)
+        self.assertIn('0,02000 USD', page)
+        self.assertIn('0,009 USD', page)
         for invalid in (None, {}, {'prompt_tokens': 0},
                         {'prompt_tokens': False, 'completion_tokens': 1},
                         {'prompt_tokens': -1, 'completion_tokens': 1},

@@ -28,7 +28,7 @@ before(async () => {
   rendered = JSON.parse(execFileSync('uv', ['run', '--with-requirements', 'benchmark/requirements.txt', '--with', 'requests', '--with', 'mpmath==1.3.0', 'python', '-c', `
 import json
 from benchmark import restitution
-from benchmark_web import views
+from benchmark_web import projection, views
 from tests.test_privacy_views import example_view
 from tests.test_s10_regressions import S10ProofTests as proof
 proof.setUpClass()
@@ -37,6 +37,16 @@ try:
     detail = restitution.detail(proof.store, proof.sid, 'fixture', 'proof', 'long')
     attempt = {'comparison': views.render(comparison, '').decode(), 'detail': views.render(detail, '').decode(),
                'detail_href': comparison['rows'][0]['detail_href'], 'back_href': detail['back_href']}
+    # Cinq réponses dont une non conforme ; la recommandation est ajoutée à la vue seule, pour observer l'infobulle
+    results = restitution.comparison(proof.store, proof.sid, 'fixture', 'comparison')
+    results['recommendation'] = {'configuration': results['panel'][1], 'amount': '0.10001', 'unit': 'TEST',
+                                 'basis': 'quality_then_cost', 'quality': [{'measure': 'Durée fictive'}], 'count': 3}
+    # Le motif vient d'un modèle juge : il reste du texte, jamais du balisage
+    failed = next(row for row in results['rows'] if row['verdict'] == 'NE SATISFAIT PAS')
+    failed['reason'] += ' <img src=x onerror=alert(1)>'
+    attempt['results'] = views.render(results, '').decode()
+    attempt['preview'] = views.render(restitution.preview_view(proof.store, proof.sid, 'fixture', 'comparison',
+                                                               piece_ids=[], presentation=projection), '').decode()
 finally:
     proof.doClassCleanups()
 print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(),
@@ -643,5 +653,84 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
     await page.goBack();
     await page.waitForFunction(() => document.activeElement?.id === 'attempt-long');
   } finally {await legacy.close();}
+  assert.deepEqual(failures, []);
+});
+
+test('results and publication preview stay readable at 390 px: whole words, pinned model, neutral bars, touch help', async () => {
+  const failures = [];
+  const context = await browser.newContext({viewport: {width: 390, height: 844}, hasTouch: true, isMobile: true});
+  try {
+    const page = await context.newPage(); page.setDefaultTimeout(3000);
+    page.on('pageerror', error => failures.push(error.message));
+    page.on('console', message => {if (/Content Security Policy/.test(message.text())) failures.push(message.text());});
+    await page.goto(origin + '/render/results');
+    await page.evaluate(() => document.fonts.ready);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
+    // Aucun mot coupé : chaque cellule offre au moins la largeur de son mot visible le plus long
+    const cut = await page.$$eval('.table-scroll td, .table-scroll th', cells => cells.flatMap(cell => {
+      const probe = document.createElement('span');
+      Object.assign(probe.style, {whiteSpace: 'nowrap', position: 'absolute', visibility: 'hidden'});
+      cell.append(probe);
+      const style = getComputedStyle(cell);
+      const room = cell.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const words = cell.innerText.split(/\s+/).filter(Boolean).filter(word => {
+        probe.textContent = word;
+        return probe.getBoundingClientRect().width > room + 1;
+      });
+      probe.remove();
+      return words;
+    }));
+    assert.deepEqual(cut, [], 'mots coupés dans le tableau');
+    // Tableau défilé jusqu'au coût : le nom du candidat reste à gauche
+    await page.$eval('.table-scroll', scroller => {scroller.scrollLeft = scroller.scrollWidth;});
+    assert.equal(await page.$eval('.table-scroll tbody th', th =>
+      Math.abs(th.getBoundingClientRect().left - th.closest('.table-scroll').getBoundingClientRect().left) < 1), true,
+      'colonne Modèle non épinglée');
+    await page.$eval('.table-scroll', scroller => {scroller.scrollLeft = 0;});
+    // Une barre de coût est une donnée : jamais la couleur d'accent réservée à l'interaction
+    const accent = await page.evaluate(() => {
+      const probe = document.createElement('i');
+      probe.style.color = 'var(--accent)'; document.body.append(probe);
+      const color = getComputedStyle(probe).color; probe.remove(); return color;
+    });
+    const fills = await page.$$eval('.costbar rect', rects => rects.map(rect => getComputedStyle(rect).fill));
+    assert.ok(fills.length > 1, 'barres de coût absentes');
+    assert.ok(fills.every(fill => fill !== accent), 'barre de coût en couleur d’accent');
+    // Verdict et motif précis ; contexte, attribution et conditions dans « Comment lire »
+    assert.match((await page.locator('table').allInnerTexts()).join(' '), /Action omise, précision conservée <img src=x/);
+    assert.equal(await page.locator('table img').count(), 0, 'motif du juge interprété comme HTML');
+    assert.match(await page.locator('main').innerText(), /Résultat attendu :/);
+    const method = await page.locator('#method').textContent();
+    assert.match(method, /Le verdict porte sur la configuration observée/);
+    assert.match(method, /mêmes consignes et pièces, sous le harnais/);
+    // Au toucher, la définition de la qualité s'affiche et tient dans l'écran
+    await page.locator('.quality-help').tap();
+    const tooltip = await page.$eval('.quality-tooltip', tip => ({visible: getComputedStyle(tip).visibility === 'visible',
+      left: tip.getBoundingClientRect().left, right: tip.getBoundingClientRect().right}));
+    assert.equal(tooltip.visible, true, 'infobulle absente au toucher');
+    assert.ok(tooltip.left >= 0 && tooltip.right <= 390, 'infobulle hors écran ' + JSON.stringify(tooltip));
+    mkdirSync('reports/privacy-browser', {recursive: true});
+    await page.screenshot({path: 'reports/privacy-browser/results-mobile.png', fullPage: true});
+    await page.goto(origin + '/render/preview');
+    assert.equal(await page.locator('h1').count(), 1, 'aperçu à plusieurs titres principaux');
+    assert.equal(await page.locator('pre').count(), 0, 'JSON brut dans l’aperçu');
+    assert.doesNotMatch(await page.locator('main').innerText(), /\b[0-9a-f]{32,64}\b|\bPASS\b|\bFAIL\b/);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'aperçu déborde à 390 px');
+    await page.screenshot({path: 'reports/privacy-browser/preview-mobile.png', fullPage: true});
+    // Le consentement suit la décision principale
+    await page.goto(origin + '/render/example');
+    assert.equal(await page.evaluate(() => {
+      const validate = [...document.querySelectorAll('#validation button')].find(button => /Oui, c’est le travail à tester/.test(button.textContent));
+      const consent = document.querySelector('[data-privacy-post="contribution"]');
+      return Boolean(validate && consent && validate.compareDocumentPosition(consent) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }), true, 'consentement avant la validation');
+  } finally {await context.close();}
+  const off = await browser.newContext({javaScriptEnabled: false});
+  try {
+    // Sans JavaScript, Mes données ne promet pas un chargement qui n'arrivera jamais
+    const page = await off.newPage(); page.setDefaultTimeout(3000);
+    await page.goto(origin + '/render/data');
+    assert.doesNotMatch(await page.locator('main').innerText(), /Chargement/);
+  } finally {await off.close();}
   assert.deepEqual(failures, []);
 });

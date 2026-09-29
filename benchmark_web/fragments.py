@@ -39,6 +39,15 @@ def state_block(tone, eyebrow, heading, body, actions=''):
             + body + (('<div class="actions">' + actions + '</div>') if actions else '') + '</div>')
 
 
+def jour_lisible(value):
+    """« 28 septembre 2026 » depuis une date ISO ; valeur brute si illisible"""
+    try:
+        moment = datetime.fromisoformat(str(value)[:10])
+    except ValueError:
+        return str(value)
+    return f'{moment.day} {MOIS[moment.month - 1]} {moment.year}'
+
+
 def date_lisible_utc(value):
     try:
         moment = datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc)
@@ -100,3 +109,41 @@ def readable_fields(value):
     elif type(value) is bool:
         value = 'Oui' if value else 'Non'
     return '<span class="verbatim">' + escape(str(value), quote=True) + '</span>'
+
+
+ACCESS_REASONS = {
+    'ACCESS_CAP_REQUIRED': 'la clé doit porter un plafond non renouvelable de 50 USD maximum et un solde disponible',
+    'KEY_REJECTED': 'Openrouter refuse cette clé',
+    'SESSION_EXPIRED': 'votre accès à ce navigateur a expiré',
+}
+
+
+def access_summary(access):
+    """Solde et plafond annoncés par Openrouter, jamais la clé"""
+    def amount(key):
+        return 'INCONNU' if access.get(key) is None else montant_lisible(access[key])
+    return 'Solde annoncé : ' + text(amount('limit_remaining_usd')) + ' USD. Plafond de la clé : ' + text(amount('limit_usd')) + ' USD.'
+
+
+def personal_key_form(csrf, access, back, *, opened=False):
+    """Seul moyen de fournir un accès Openrouter : la clé saisie, puis retour à `back`"""
+    status = access.get('status')
+    summary = 'Remplacer ma clé Openrouter' if status == 'connected' else 'Ajouter ma clé Openrouter'
+    content = ('<details class="corr personal-key"' + (' open' if opened else '') + '><summary class="button sec">'
+               + summary + '</summary><div>')
+    content += form(csrf, '/preparation/access/key', {'return': back},
+        '<label for="openrouter-key">Clé API Openrouter</label>'
+        '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help key-storage">'
+        '<p id="key-help">Utilisez une clé dédiée avec un plafond non renouvelable de 50 USD maximum.</p>'
+        '<p id="key-storage" class="hint">Votre clé est conservée chiffrée sur notre serveur. '
+        'Un cookie de session mémorise votre accès dans ce navigateur pour vos prochaines visites. '
+        'Ce cookie sera automatiquement supprimé au bout de 30 jours maximum d’inactivité. '
+        'Néanmoins, vous pouvez retirer votre clé depuis cette page si vous préférez.</p>'
+        '<button type="submit">Enregistrer la clé</button>')
+    content += '</div></details>'
+    if status in ('connected', 'invalid'):
+        content += form(csrf, '/preparation/access/disconnect', {'return': back},
+            '<button type="submit" class="sec">Retirer la clé de ce navigateur</button>')
+        content += ('<p class="hint">Terminez la préparation ou qualification en cours avant de changer la clé. '
+                    'Le retrait bloque les nouveaux appels, sans révoquer la clé chez Openrouter ni annuler une comparaison engagée.</p>')
+    return content

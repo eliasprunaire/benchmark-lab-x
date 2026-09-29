@@ -200,6 +200,9 @@ dl.kv dd { margin: 0; }
 .view-scope { color: var(--muted); font-size: .9rem; }
 .table-hint { display: none; }
 .table-scroll { overflow-x: auto; }
+/* Dans un tableau défilant, un mot ne se coupe pas et la colonne du candidat reste visible */
+.table-scroll :is(td, li, p) { overflow-wrap: break-word; }
+.table-scroll tbody th, .table-scroll thead th:first-child { position: sticky; left: 0; z-index: 1; background: var(--paper); }
 table { border-collapse: collapse; width: 100%; font-size: .92rem; }
 caption { text-align: left; padding: .4rem 0; color: var(--muted); font-size: .88rem; }
 th, td { padding: .75rem .6rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
@@ -211,7 +214,8 @@ td p, th p { margin: .3rem 0; }
 table details { font-size: .88rem; margin: .4rem 0; }
 .source-value { font-variant-numeric: tabular-nums; font-weight: 600; }
 .costbar { display: block; width: 100%; height: .45rem; border-radius: 3px; background: var(--soft); margin-top: .35rem; min-width: 6rem; }
-.costbar rect { fill: var(--accent); }
+/* Donnée, pas interaction : aucune barre en couleur d'accent */
+.costbar rect { fill: var(--ink-2); }
 tr.out .costbar rect { fill: var(--line-2); }
 .costbar.none { background: var(--soft); border: 1px dashed var(--line-2); height: .35rem; }
 tr:target { outline: 3px solid var(--focus); outline-offset: -3px; }
@@ -224,10 +228,11 @@ tr.out th strong { color: var(--muted); }
 .choice-model { font-size: clamp(1.2rem, 2.5vw, 1.75rem); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
 .choice-cost { padding: .6rem 1rem; background: var(--surface); border: 1px solid var(--accent-soft-2); border-radius: var(--radius); color: var(--ink-2); font-size: .85rem; }
 .choice-cost strong { display: block; color: var(--accent-ink); font-size: 1.2rem; font-variant-numeric: tabular-nums; }
-.quality-term { position: relative; display: inline-block; }
+/* L'infobulle s'ancre au paragraphe, pas au mot : un mot en fin de ligne ne la pousse pas hors de l'écran */
+.economic-choice p:has(.quality-term) { position: relative; }
 .quality-help { cursor: help; text-decoration: underline dotted; text-underline-offset: .18em; }
 .quality-help:focus { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
-.quality-tooltip { position: absolute; z-index: 3; left: 0; bottom: calc(100% + .5rem); width: min(24rem, 75vw); padding: .65rem .8rem; border: 1px solid var(--line-2); border-radius: .4rem; background: var(--ink); color: var(--paper); font-size: .82rem; line-height: 1.4; opacity: 0; visibility: hidden; pointer-events: none; }
+.quality-tooltip { position: absolute; z-index: 3; left: 0; bottom: calc(100% + .5rem); width: min(24rem, 100%); padding: .65rem .8rem; border: 1px solid var(--line-2); border-radius: .4rem; background: var(--ink); color: var(--paper); font-size: .82rem; line-height: 1.4; opacity: 0; visibility: hidden; pointer-events: none; }
 .quality-term:hover .quality-tooltip, .quality-term:focus-within .quality-tooltip { opacity: 1; visibility: visible; }
 
 /* Détail et preuves */

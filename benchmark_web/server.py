@@ -3,7 +3,7 @@
 Il consomme les vues structurées de l'exécuteur par socket Unix et n'accède ni au
 stockage, ni aux secrets, ni aux fournisseurs.
 """
-from base64 import b64encode, urlsafe_b64decode, urlsafe_b64encode
+from base64 import b64encode
 from hashlib import sha256
 from datetime import datetime, timezone
 from email.utils import format_datetime
@@ -37,8 +37,7 @@ _ROUTE_PATTERNS = (
     '/preparation/fonts/<police>.woff2', '/preparation/fonts/OFL-<police>.txt',
     '/preparation/data', '/preparation/privacy', '/preparation/activity', '/preparation/catalogue',
     '/preparation/session/open',
-    '/preparation/access', '/preparation/access/start', '/preparation/access/key',
-    '/preparation/access/callback', '/preparation/access/disconnect',
+    '/preparation/access', '/preparation/access/key', '/preparation/access/disconnect',
     '/preparation/contributions', '/preparation/contributions/<id>/withdraw',
     '/preparation/dossiers', '/preparation/dossiers/<id>',
     '/preparation/dossiers/<id>/messages', '/preparation/dossiers/<id>/validation',
@@ -123,16 +122,6 @@ def _source_fingerprint(headers, client_address, salt, trusted_proxies):
     return sha256(salt + b'\n' + normalized.encode()).hexdigest()
 
 
-def _public_callback_url(public_url):
-    if public_url is None:
-        return None
-    parsed = urlsplit(public_url)
-    if (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password
-            or parsed.query or parsed.fragment or parsed.path not in ('', '/')):
-        raise ValueError('Origine publique HTTPS invalide')
-    return public_url.rstrip('/') + '/preparation/access/callback'
-
-
 def _return_path(value):
     if type(value) is not str or not value.isascii() or '\\' in value:
         raise ValueError('Chemin de retour invalide')
@@ -149,18 +138,6 @@ def _failure_document(message):
     return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Erreur</title>'
             '</head><body><main><h1>Erreur</h1><p>' + escape(message)
             + '</p></main></body></html>').encode()
-
-
-def _callback_cookie(token, return_path):
-    return urlsafe_b64encode(encode([token, return_path]).encode()).decode().rstrip('=')
-
-
-def _callback_state(value):
-    raw = urlsafe_b64decode(value + '=' * (-len(value) % 4))
-    token, return_path = json.loads(raw, object_pairs_hook=_unique_object)
-    if type(token) is not str or not token:
-        raise ValueError('Session de retour invalide')
-    return token, _return_path(return_path)
 
 
 def _address(value):
@@ -181,7 +158,6 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
     `public` reste accepté pour le contrat CLI : aucune projection n'est servie tant
     qu'aucune restitution réelle n'est approuvée (BX-12).
     """
-    callback_url = _public_callback_url(public_url)
     # Deux questions distinctes : qui relaie le public (BX-15) et qui supervise ; vides, rien n'est ouvert
     trusted_proxies, readiness_clients = _addresses(trusted_proxies), _addresses(readiness_clients)
     if trusted_proxies & readiness_clients:
@@ -281,7 +257,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             accept = self.headers.get('Accept', '')
             if 'text/html' in accept and 'application/json' not in accept:
                 self.error_page(404, 'Page introuvable',
-                                'Cette adresse n’existe pas sur ce service. Vérifiez le lien ou revenez à l’accueil.')
+                                'Cette adresse n’existe pas sur ce service. Vérifiez le lien ou retrouvez vos cas d’usage.')
             else:
                 self.respond(404, {'error': 'NOT_FOUND'})
 
@@ -317,33 +293,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 token = cookie.value if cookie else None
                 manager = cookies.get('benchmark_contributions')
                 management_token = manager.value if manager else None
-                if self.command == 'GET' and self.path.startswith('/preparation/access/callback'):
-                    parsed = urlsplit(self.path)
-                    values = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
-                    if parsed.path != '/preparation/access/callback' or set(values) != {'code'} or len(values['code']) != 1 or not values['code'][0]:
-                        raise ValueError('Retour Openrouter invalide')
-                    state = cookies.get('benchmark_access_callback')
-                    if state is None:
-                        raise ValueError('Session de retour absente')
-                    callback_token, return_path = _callback_state(state.value)
-                    result = preparation_request(socket_path, 'POST', parsed.path, callback_token,
-                                                 {'code': values['code'][0]})
-                    relayed = True
-                    expired = ('Set-Cookie',
-                               'benchmark_access_callback=; HttpOnly; Secure; SameSite=Lax; '
-                               'Path=/preparation/access/callback; Max-Age=0')
-                    if result['status'] >= 400:
-                        self.respond(result['status'], views.render(result['value'], '', error=True),
-                                     'text/html; charset=utf-8', [expired])
-                        return
-                    self.respond(303, b'', 'text/html; charset=utf-8',
-                                 [('Location', return_path), expired,
-                                  ('Set-Cookie', _session_cookie(callback_token))])
-                    return
-                if self.path == '/preparation/access/callback':
-                    raise ValueError('Callback Openrouter réservé au retour GET')
                 body = None
-                return_path = disconnect_return = None
+                return_path = access_return = None
                 if self.command == 'POST':
                     length = self.headers.get('Content-Length', '')
                     if not length.isdecimal() or not 0 < int(length) <= 524288 or self.headers.get('Transfer-Encoding'):
@@ -397,18 +348,9 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                             raise ValueError('Origine de session invalide')
                         if 'return_path' in body:
                             return_path = _return_path(body.pop('return_path'))
-                    if self.path == '/preparation/access/disconnect' and 'return' in body:
-                        # Retour vers la page d'où la clé est retirée, sans passer par la connexion Openrouter
-                        disconnect_return = _return_path(body.pop('return'))
-                    if self.path == '/preparation/access/start':
-                        if callback_url is None:
-                            value = {'kind': 'access', 'connected': False, 'status': 'unavailable',
-                                     'error': 'Connexion Openrouter indisponible : URL publique non configurée.'}
-                            self.respond(503, value if wants_json else views.render(value, body.get('csrf_token', ''), error=True),
-                                         'application/json' if wants_json else 'text/html; charset=utf-8')
-                            return
-                        return_path = _return_path(body.pop('return'))
-                        body['callback_url'] = callback_url
+                    if self.path in ('/preparation/access/key', '/preparation/access/disconnect') and 'return' in body:
+                        # Retour vers la page d'où la clé est ajoutée ou retirée, par exemple le lancement
+                        access_return = _return_path(body.pop('return'))
                     submission = (self.path == '/preparation/dossiers' or
                                   re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/messages', self.path))
                     if submission and body.get('website'):
@@ -456,20 +398,12 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     headers['Location'] = '/preparation/dossiers/' + dossier_id
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
-                if return_path is not None and result['status'] < 400:
-                    response_headers = list(headers.items())
-                    response_headers += [
-                        ('Location', result['value']['authorize_url']),
-                        ('Set-Cookie', 'benchmark_access_callback=' + _callback_cookie(token, return_path)
-                         + '; HttpOnly; Secure; SameSite=Lax; Path=/preparation/access/callback')]
-                    self.respond(303, b'', 'text/html; charset=utf-8', response_headers)
-                    return
                 if self.command == 'POST' and self.path == '/preparation/access/key' and result['status'] < 400 and not wants_json:
-                    headers['Location'] = '/preparation'
+                    headers['Location'] = access_return or '/preparation/access'
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
                 if self.command == 'POST' and self.path == '/preparation/access/disconnect' and result['status'] < 400:
-                    headers['Location'] = disconnect_return or '/preparation/access'
+                    headers['Location'] = access_return or '/preparation/access'
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
                 if (self.command == 'POST' and self.path.endswith(('/configurations', '/custom-models'))
@@ -522,8 +456,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 self.respond(400, value if wants_json else views.render(value, '', error=True),
                              'application/json' if wants_json else 'text/html; charset=utf-8')
             except OSError:
-                # Le retour Openrouter est le seul GET qui relaie un envoi : il garde le message d'incertitude
-                read_only = self.command in ('GET', 'HEAD') and not self.path.startswith('/preparation/access/callback')
+                read_only = self.command in ('GET', 'HEAD')
                 value = {'error': 'Service temporairement indisponible : cette page ne peut pas être affichée '
                          'pour le moment. Aucune donnée n’a été modifiée ; réessayez dans un instant.'
                          if read_only else

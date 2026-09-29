@@ -43,12 +43,13 @@ class InlineExampleTests(unittest.TestCase):
                 self.assertIsNone(start)
                 self.assertEqual([content], list(view['example_contents'].values()))
                 page = views.render(view, csrf).decode()
-                self.assertIn('<details class="example-content"><summary>Voir le contenu</summary>', page)
+                self.assertIn('<details class="example-content"><summary>Lire « notes.txt »</summary>', page)
                 self.assertIn('<div class="example-text">' + escape(content, quote=True) + '</div>', page)
                 self.assertEqual(1, page.count('<script>'))
                 self.assertIn('<script>' + views.STEP_SCRIPT + '</script>', page)
                 self.assertNotIn('/pieces/', page)
-                self.assertNotIn('notes.txt', page)
+                # Le nom sert d'intitulé de lecture, jamais de lien de téléchargement
+                self.assertEqual(1, page.count('notes.txt'))
                 self.assertNotIn('Attendu fictif réservé', page)
                 parsed = Markup(page.encode())
                 for kind in ('corr', 'example-content'):
@@ -58,7 +59,8 @@ class InlineExampleTests(unittest.TestCase):
                     self.assertTrue(all('open' not in attrs for attrs in details))
                 self.assertIn('tabindex="-1"', page)
                 self.assertLess(page.index('id="exemple"'), page.index('id="validation"'))
-                self.assertLess(page.index('id="validation"'), page.index('class="corr"'))
+                # La consigne dit « corrigez si besoin, puis validez » : la correction précède la validation
+                self.assertLess(page.index('class="corr"'), page.index('id="validation"'))
                 self.assertTrue(any(tag == 'label' and attrs.get('for') == 'message'
                                     for tag, attrs in parsed.tags))
                 self.assertEqual(before, store.inspect_operations())

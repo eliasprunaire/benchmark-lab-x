@@ -1,8 +1,8 @@
 """Exécuteur Linux du produit et protocole socket, sans admission ni appel implicite au démarrage.
 
 Contrat de délais du relais. Le budget d'une requête relayée dérive du budget fournisseur :
-`RELAY_BUDGET_SECONDS` couvre le pire enchaînement admis par l'exécuteur, l'échange puis la
-vérification d'un rappel OpenRouter, augmenté du travail local. Sur la socket Unix il
+`RELAY_BUDGET_SECONDS` couvre le pire enchaînement admis par l'exécuteur, deux vérifications
+de clé OpenRouter, augmenté du travail local. Sur la socket Unix il
 s'applique en délai total : le budget monotone restant est réparti sur la connexion, l'envoi
 et chaque réception de la réponse, qu'un délai d'inactivité ne bornerait pas. `executor_health`
 garde le seul budget local : la santé ne doit pas attendre derrière un échange fournisseur.
@@ -61,7 +61,7 @@ import time
 
 from .storage import ConflictError, BudgetError, IntegrityError, SchemaError, _unique_object
 
-from .provider_access import CALLBACK_BUDGET_SECONDS, READ_CHUNK_BYTES, remaining_budget
+from .provider_access import ACCESS_BUDGET_SECONDS, READ_CHUNK_BYTES, remaining_budget
 from .privacy import Gone
 from .storage import Store
 from .runtime import encode, status, stop, verify
@@ -69,7 +69,7 @@ from .runtime import encode, status, stop, verify
 
 # Travail local d'une requête relayée : connexion, envoi et lecture d'une ligne bornée
 LOCAL_BUDGET_SECONDS = 5
-RELAY_BUDGET_SECONDS = CALLBACK_BUDGET_SECONDS + LOCAL_BUDGET_SECONDS
+RELAY_BUDGET_SECONDS = ACCESS_BUDGET_SECONDS + LOCAL_BUDGET_SECONDS
 
 # Concurrence de production : un Store par fil, ouvert une fois et gardé jusqu'à l'arrêt. Cible de
 # BX-27, 50 visiteurs simultanés et le plus lent sous 5 s. Relevé Linux : 56 fils suffisent, 64
@@ -300,8 +300,6 @@ def denied_response(error):
         'SOURCE_MISSING': 'La source de cet envoi est absente ou invalide.',
         'ACCESS_KEY_REJECTED': 'Cette clé Openrouter n’a pas pu être vérifiée. La clé précédente est conservée.',
         'ACCESS_CAP_REQUIRED': 'Utilisez une clé Openrouter avec un plafond non renouvelable de 50 USD maximum et un solde disponible.',
-        'ACCESS_NO_PENDING': 'Aucune autorisation Openrouter n’est en attente.',
-        'ACCESS_EXCHANGE_FAILED': 'Openrouter a refusé ou interrompu l’autorisation.',
         'ACCESS_REQUIRED': 'Un accès Openrouter connecté est requis avant le lancement.',
         'NOT_QUALIFIED': 'Ce dossier doit être qualifié avant le lancement.',
         'CONTRACT_MISSING': "Le contrat de comparaison n'est pas encore établi. Terminez la qualification de l'exemple.",
@@ -310,7 +308,7 @@ def denied_response(error):
         'example_validated': 'Validez l’exemple présenté avant le lancement.',
         'example_qualified': 'La qualification de l’exemple est requise avant le lancement.',
         'configurations_available': 'Choisissez de nouveau les modèles indisponibles avant le lancement.',
-        'access_connected': 'Connectez votre accès Openrouter avant le lancement.',
+        'access_connected': 'Ajoutez votre clé Openrouter avant le lancement.',
         'estimate_available': 'Les coûts doivent pouvoir être estimés avant le lancement.',
         'QUALIFICATION_UNAVAILABLE': 'Qualification indisponible',
         'ADMISSION_CLOSED': 'Admission fermée',
@@ -319,6 +317,9 @@ def denied_response(error):
         'PROBE_CLOSED': 'Les nouveaux appels sont fermés. Aucun test de modèle n’a été lancé.',
         'PROBE_MODEL_UNAVAILABLE': 'Slug introuvable, modèle substitué ou endpoint texte incompatible. Aucun appel payant n’a été lancé. Vérifiez la fiche Openrouter.',
     }
+    if error.code == 'TEXT_TOO_SHORT' and error.field == 'request':
+        from .preparation import REQUEST_MIN
+        messages['TEXT_TOO_SHORT'] = f'Ce texte est trop court : décrivez la tâche en {REQUEST_MIN} caractères au moins.'
     status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG', 'SOURCE_MISSING') else 403
     result = {'status': status, 'value': {'error': messages.get(error.code, generic),
               'error_code': error.code, 'error_field': error.field}}
@@ -326,8 +327,6 @@ def denied_response(error):
         result['value']['findings'] = error.findings
     if error.step is not None:
         result['value']['step'] = error.step
-    if hasattr(error, 'provider_status'):
-        result['value']['provider_status'] = error.provider_status
     return result
 
 

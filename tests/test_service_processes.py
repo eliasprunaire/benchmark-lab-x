@@ -452,10 +452,10 @@ class ServiceProcessesTests(unittest.TestCase):
                 self.assertFalse(worker.is_alive())
 
     def test_budget_de_relais_derive_du_budget_fournisseur(self):
-        # Un rappel enchaîne échange puis vérification : le relais doit couvrir les deux
-        self.assertEqual(provider_access.CALLBACK_BUDGET_SECONDS + service.LOCAL_BUDGET_SECONDS,
+        # Une requête enchaîne au plus deux vérifications de clé : le relais doit couvrir les deux
+        self.assertEqual(provider_access.ACCESS_BUDGET_SECONDS + service.LOCAL_BUDGET_SECONDS,
                          service.RELAY_BUDGET_SECONDS)
-        self.assertGreater(service.RELAY_BUDGET_SECONDS, provider_access.CALLBACK_BUDGET_SECONDS)
+        self.assertGreater(service.RELAY_BUDGET_SECONDS, provider_access.ACCESS_BUDGET_SECONDS)
 
     def test_relais_tolere_un_echange_lent_puis_expire_hors_budget(self):
         def slow(connection):
