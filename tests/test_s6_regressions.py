@@ -29,13 +29,15 @@ from tests.test_s5_regressions import RESPONSIBLE, EVALUATION_AUTHORITY, finding
 # Un changement d'octets de présentation sans incrément de PRESENTATION_VERSION échoue
 _VOLATILE_PRESENTATION = re.compile(
     rb'\d{4}-\d{2}-\d{2}T[0-9:.+-]+|'
+    # Date lisible « 28 septembre 2026 » : jour de l'évaluation de la fixture
+    rb'\b\d{1,2} \S+ \d{4}\b|'
     rb'\b[0-9a-f]{64}\b|'
     rb'\b[0-9a-f]{32}\b|'
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
     '8': {
-        'index.html': 'df8555ec433dc2608a140a115f4f1ced6bbd4eaa1ddbe50ed7372b787cb3a6dc',
+        'index.html': 'ba05a6dfc5a8af8cd8cd3f13a4343942ccb156e8f37a499a678105b72f9b49ba',
         'style.css': 'e6160575de2d71a327dbc3237cb2779c4ec325faf5361be0a2fbd53d617c3355',
     },
 }
