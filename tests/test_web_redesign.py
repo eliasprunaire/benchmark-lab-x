@@ -204,7 +204,8 @@ class DossierPageTests(unittest.TestCase):
         for number, label in enumerate(('Besoin', 'Exemple', 'Validation', 'Modèles', 'Résultats'), 1):
             self.assertIn(f'<span class="n">{number}</span>{label}', nav)
         self.assertEqual(4, nav.count('aria-disabled="true"'))
-        self.assertIn('/preparation/dossiers/d1/revisions/2#besoin', nav)
+        # Sur la page du cas, les étapes sont un sommaire interne
+        self.assertIn('href="#besoin"', nav)
 
     def test_scope_confirmation_explains_why_benchmark_is_unavailable(self):
         page = views.render({

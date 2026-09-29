@@ -429,7 +429,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertFalse(any(n['tag'] == 'a' and n['attrs'].get('href') == dossier for n in empty.nodes))
         page, _, _ = self.request('/preparation')
         self.assertIn(dossier, [n['attrs'].get('href') for n in page.nodes])
-        self.assertIn('effacer ses cookies vous en fait perdre l’accès',
+        self.assertIn('Sans compte, lié à ce navigateur',
                       next(n['text'] for n in page.nodes if n['tag'] == 'footer'))
         page, _, _ = self.request(configurations)
         self.submit(page, '/configurations', {
@@ -485,7 +485,7 @@ class ParcoursComplet(unittest.TestCase):
 
     def verifier_atteignabilite(self):
         """Parcourir les liens et formulaires GET depuis l'accueil ; l'artefact liste chaque route et ses liens entrants"""
-        entrants, file, vus, pannes, faux_courants = {}, [('/', None)], set(), [], []
+        entrants, file, vus, pannes, faux_courants, sauts = {}, [('/', None)], set(), [], [], []
         while file:
             path, source = file.pop(0)
             route = server.canonical_route(path)
@@ -514,7 +514,11 @@ class ParcoursComplet(unittest.TestCase):
             cibles += [n['attrs']['action'] for n in page.nodes
                        if n['tag'] == 'form' and n['attrs'].get('method', '').lower() == 'get']
             for cible in cibles:
-                cible = cible.split('#', 1)[0]
+                # Un lien vers une autre page arrive en haut ; seul le retour à une ligne de résultats vise une ancre
+                chemin, _, ancre = cible.partition('#')
+                if ancre and chemin and chemin != path and not ancre.startswith('attempt-'):
+                    sauts.append((path, cible))
+                cible = chemin
                 if cible.startswith('/') and not cible.startswith('//') and cible not in server._RESOURCES:
                     file.append((cible, path))
         artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
@@ -527,6 +531,7 @@ class ParcoursComplet(unittest.TestCase):
                 ensure_ascii=False, indent=2) + '\n')
         self.assertEqual([], pannes)
         self.assertEqual([], faux_courants)
+        self.assertEqual([], sauts)
         self.assertEqual(set(), self.ATTEIGNABLES - set(entrants))
 
     def test_acces_openrouter_factice_et_retours(self):

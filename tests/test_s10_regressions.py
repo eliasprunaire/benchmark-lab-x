@@ -330,7 +330,8 @@ class S10ProofTests(unittest.TestCase):
         main = page.split('<main', 1)[1].split('</main>', 1)[0]
         self.assertNotIn('>Mes cas d’usage</a>', main)
         nav = page.split('<nav class="steps"', 1)[1].split('</nav>', 1)[0]
-        self.assertIn(value['dossier_href'] + '#validation', nav)
+        self.assertIn('href="' + value['dossier_href'] + '"', nav)
+        self.assertNotIn('#validation', nav)
         self.assertIn(value['href'] + '/configurations', nav)
         self.assertIn('aria-current="step"><span class="n">5</span>Résultats', nav)
 
