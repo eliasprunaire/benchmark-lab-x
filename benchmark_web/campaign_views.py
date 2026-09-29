@@ -341,7 +341,7 @@ def effort_label(configuration):
         return 'Niveau de raisonnement non renseigné'
     if effort == 'on':
         return 'Raisonnement activé · niveau non renseigné'
-    return 'Raisonnement demandé : ' + EFFORT_LABELS.get(effort, effort)
+    return 'Raisonnement demandé : ' + str(EFFORT_LABELS.get(effort, effort))
 
 
 def model_name(configuration, names):
