@@ -65,6 +65,18 @@ def montant_lisible(value):
         return str(value)
 
 
+def valeur_mesure(value, unit):
+    """Valeur de mesure lisible : Oui/Non pour un booléen, nombre suivi de son unité, texte tel quel"""
+    if value is None:
+        return 'Inconnue'
+    if type(value) is bool:
+        return 'Oui' if value else 'Non'
+    if type(value) in (int, float):
+        descriptive = str(unit or '').strip().lower() in ('', 'descriptif', 'descriptive', 'texte', 'text', 'description')
+        return montant_lisible(value) + ('' if descriptive else ' ' + str(unit))
+    return str(value)
+
+
 def hidden(name, value):
     return f'<input type="hidden" name="{text(name)}" value="{text(value)}">'
 

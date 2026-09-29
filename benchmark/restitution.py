@@ -341,12 +341,20 @@ def catalogue(store, session_id):
         return p.page_view(dict(kind='catalogue', visibility='private', catalogue_admission=False, tasks=tasks))
 
 
+def _publishable(store, value):
+    """Pièces liées qu'une publication peut montrer : jamais la référence réservée au juge (RULES §4)"""
+    linked = {link['piece_id'] for row in value['rows'] for link in row['proof_links']}
+    # Les sorties candidates sont stockées pour le juge : seules les autres pièces du juge forment la référence
+    outputs = {row.get('output_piece_id') for row in value['rows']}
+    return {pid for pid in linked if pid in outputs or store.get_piece(pid)['role'] != 'judge'}
+
+
 def _preview(store, value, piece_ids, presentation):
     if type(piece_ids) is not list or any(type(pid) is not str for pid in piece_ids) or len(set(piece_ids)) != len(piece_ids):
         raise ValueError('Liste explicite de pièces uniques requise')
-    linked = {link['piece_id'] for row in value['rows'] for link in row['proof_links']}
+    linked = _publishable(store, value)
     if not set(piece_ids) <= linked:
-        raise p.Denied('Pièce non liée à la restitution')
+        raise p.Denied('Pièce non liée à la restitution ou réservée à l’évaluation')
     selected = {pid: 'piece-' + identifier(pid) + '.txt' for pid in sorted(piece_ids)}
     files = {name: store.read_piece(pid) for pid, name in selected.items()}
     if presentation is None:
@@ -375,7 +383,9 @@ def preview_view(store, session_id, dossier_id, campaign_id, *, piece_ids, prese
     with _transaction(connection):
         value = _comparison(store, connection, session_id, dossier_id, campaign_id, {})
         bundle = _preview(store, value, piece_ids, presentation)
-        links = {link['piece_id']: link for row in value['rows'] for link in row['proof_links']}
+        publishable = _publishable(store, value)
+        links = {link['piece_id']: link for row in value['rows'] for link in row['proof_links']
+                 if link['piece_id'] in publishable}
         return dict(kind='projection_preview', comparison=p.page_view(value), pieces=list(links.values()),
                     selected_links={pid: links[pid]['href'] for pid in piece_ids},
                     manifest=_decode(bundle['manifest']), projection_sha256=bundle['projection_sha256'])

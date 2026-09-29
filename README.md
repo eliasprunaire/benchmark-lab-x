@@ -59,7 +59,7 @@ Le fichier `.env` reste local et ne doit jamais être versionné. Renseigner une
 
 `python -m benchmark`, `python -m benchmark.runtime` et `benchmark/benchmark-runtime` appellent le même moteur.
 
-Dans le parcours web, **Ajouter ma clé OpenRouter** permet de fournir votre clé depuis le navigateur, sans modifier le `.env` du serveur. C’est le seul moyen de fournir un accès OpenRouter ; la page **Ma clé OpenRouter** permet de la remplacer ou de la retirer. Elle finance vos préparations, qualifications et comparaisons sous leurs plafonds respectifs. Enregistrer la clé ne lance aucun modèle.
+Dans le parcours web, **Ajouter ma clé OpenRouter** permet de fournir votre clé depuis le navigateur, sans modifier le `.env` du serveur. C’est le seul moyen de fournir un accès OpenRouter ; la page **Ma clé OpenRouter** permet de la remplacer ou de la retirer. Elle finance vos préparations, qualifications et comparaisons ; son plafond non renouvelable, fixé chez OpenRouter, est la seule limite de dépense. Enregistrer la clé ne lance aucun modèle.
 
 Pour les commandes opérateur, utilisez `python -m benchmark --help`. Le PRD, l’ARD et les règles en définissent la portée et les conditions.
 

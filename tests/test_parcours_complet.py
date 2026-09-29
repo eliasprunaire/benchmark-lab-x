@@ -429,7 +429,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertFalse(any(n['tag'] == 'a' and n['attrs'].get('href') == dossier for n in empty.nodes))
         page, _, _ = self.request('/preparation')
         self.assertIn(dossier, [n['attrs'].get('href') for n in page.nodes])
-        self.assertIn('Perdre ou effacer le cookie fait perdre l’accès',
+        self.assertIn('effacer ses cookies vous en fait perdre l’accès',
                       next(n['text'] for n in page.nodes if n['tag'] == 'footer'))
         page, _, _ = self.request(configurations)
         self.submit(page, '/configurations', {
