@@ -13,7 +13,7 @@ from pathlib import Path
 import secrets
 import sqlite3
 
-from .. import privacy, qualification as q, storage
+from .. import model_catalogue, privacy, qualification as q, storage
 from ..model_catalogue import REASONING_EFFORTS as _EFFORT_ORDER
 from ..validation import digest as value_digest, identifier, _hash, _texts
 from ..storage import BudgetError, ConflictError, IntegrityError, SchemaError, _fields, _money, _sum_money, _text, _transaction, _strict_json as encode
@@ -1154,7 +1154,8 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
                 launchable=all(check['ok'] for check in checks)
                 and not snapshot['admissions'] and not snapshot['attempts'],
                 judgment_estimate_usd=judgment_estimate,
-                estimate_total_usd=None if total is None else str(total), access=access))
+                estimate_total_usd=None if total is None else str(total), access=access,
+                model_names=model_catalogue.display_names(store)))
         admission = snapshot['admission']
         grant = admission['authority'].get('browser_launch') if admission else None
         eligible = False
@@ -1170,7 +1171,8 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
         return page_view(dict(kind='campaign_launch', dossier_id=dossier_id, campaign=projected,
                          criteria=criteria, can_launch=eligible,
                          admission_id=admission['admission_id'] if grant else None,
-                         estimate=grant['estimate'] if grant else None))
+                         estimate=grant['estimate'] if grant else None,
+                         model_names=model_catalogue.display_names(store)))
 
 
 def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=None, access_transport=None,

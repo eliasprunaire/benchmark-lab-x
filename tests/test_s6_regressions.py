@@ -29,13 +29,15 @@ from tests.test_s5_regressions import RESPONSIBLE, EVALUATION_AUTHORITY, finding
 # Un changement d'octets de présentation sans incrément de PRESENTATION_VERSION échoue
 _VOLATILE_PRESENTATION = re.compile(
     rb'\d{4}-\d{2}-\d{2}T[0-9:.+-]+|'
+    # Date lisible « 28 septembre 2026 » : jour de l'évaluation de la fixture
+    rb'\b\d{1,2} \S+ \d{4}\b|'
     rb'\b[0-9a-f]{64}\b|'
     rb'\b[0-9a-f]{32}\b|'
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
-    '7': {
-        'index.html': '07bee2e7337259ee9aab1b295ee3537e94d9dbd5bf35a7f3899172dc78ee4563',
+    '8': {
+        'index.html': 'ba05a6dfc5a8af8cd8cd3f13a4343942ccb156e8f37a499a678105b72f9b49ba',
         'style.css': 'e6160575de2d71a327dbc3237cb2779c4ec325faf5361be0a2fbd53d617c3355',
     },
 }
@@ -198,7 +200,7 @@ class S6Regressions(unittest.TestCase):
                 labeled = dict(manifest, presentation_version=old)
                 raw = storage._strict_json(labeled).encode()
                 pub._manifest(raw, sha256(raw).hexdigest())
-        unknown = dict(manifest, presentation_version='8')
+        unknown = dict(manifest, presentation_version='9')
         raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
             pub._manifest(raw, sha256(raw).hexdigest())
@@ -558,7 +560,11 @@ class S6Regressions(unittest.TestCase):
             self.assertEqual(bundle['projection_sha256'], value['projection_sha256'])
             self.assertEqual(json.loads(bundle['manifest']), value['manifest'])
             raw = views.render(value, '')
-            self.assertIn('Aperçu privé · NON APPROUVÉ'.encode(), raw)
+            self.assertIn('Aperçu privé, non approuvé : rien n’est publié'.encode(), raw)
+            # Lisible par un lecteur extérieur : un seul titre, ni JSON brut ni identifiant de tentative
+            self.assertEqual(1, raw.count(b'<h1>'))
+            self.assertNotIn(b'<pre>', raw)
+            self.assertNotIn(self.records['error']['attempt_id'].encode(), raw)
             self.assertNotIn(b'candidate()', raw)
             parsed = Markup(raw)
             self.assertFalse(any(tag == 'script' or any(k.startswith('on') for k in attrs) for tag, attrs in parsed.tags))

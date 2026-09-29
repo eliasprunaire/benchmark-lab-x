@@ -10,7 +10,7 @@ def example_view():
             'payload': {'request': 'Comparer des comptes rendus fictifs', 'clarifications': [],
                         'validated_assumptions': [], 'reformulation': '', 'fictional_parameters': {}},
             'package': {'instruction': 'Rédiger le compte rendu', 'deliverables': ['Compte rendu'],
-                        'pieces': [{'id': 'p1'}], 'human_work': 'Relire', 'acceptable_ambiguities': [], 'limits': []},
+                        'pieces': [{'id': 'p1', 'name': 'reunion.txt'}], 'human_work': 'Relire', 'acceptable_ambiguities': [], 'limits': []},
             'example_contents': {'p1': 'Une réunion entièrement inventée'}, 'changes': [],
             'criteria': {'eliminatory': [], 'obligations': ['Conserver les décisions'], 'quality': []},
             'criteria_rule': 'Chaque obligation compte', 'package_sha256': 'a' * 64,
@@ -20,11 +20,11 @@ def example_view():
 
 
 class PrivacyViewsTests(unittest.TestCase):
-    def test_consent_follows_example_and_existing_inline_script_is_unchanged(self):
+    def test_consent_follows_validation_and_existing_inline_script_is_unchanged(self):
         value = example_view()
         page = views.render(value, 'csrf').decode()
-        self.assertLess(page.index('Les pièces de l’exemple'), page.index('data-privacy-post="contribution"'))
-        self.assertLess(page.index('data-privacy-post="contribution"'), page.index('id="validation"'))
+        self.assertLess(page.index('Les pièces de l’exemple'), page.index('id="validation"'))
+        self.assertLess(page.index('Oui, c’est le travail à tester'), page.index('data-privacy-post="contribution"'))
         self.assertEqual(views.page_script(value), views.STEP_SCRIPT)
         self.assertIn('<script>' + views.STEP_SCRIPT + '</script>', page)
         self.assertEqual(page.count('src="/preparation/privacy.js"'), 1)

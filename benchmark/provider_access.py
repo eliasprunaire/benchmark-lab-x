@@ -1,4 +1,4 @@
-"""Accès OpenRouter délégué, chiffré et lié à une session S2
+"""Clé OpenRouter personnelle, vérifiée, chiffrée et liée à une session S2
 
 Budget d'un échange fournisseur. Le chronomètre monotone part avant la résolution DNS et
 vise `REQUEST_BUDGET_SECONDS`. La résolution DNS et l'établissement de la connexion ne sont
@@ -8,9 +8,9 @@ l'échéance, donc l'envoi, les en-têtes et le corps sont bornés même si le f
 goutte à goutte ; un simple délai d'inactivité par réception ne les bornerait pas. Seule cette
 phase postérieure à la connexion est bornée : la résolution DNS n'a pas de délai propre et un
 hôte à plusieurs adresses enchaîne autant de tentatives de connexion, donc aucune durée totale
-d'échange n'est garantie ici. Un rappel enchaîne l'échange puis la vérification, d'où
-`CALLBACK_BUDGET_SECONDS` dont le relais de `service` dérive son propre délai. Aucun réessai
-n'est ajouté : un budget épuisé est un échec observé, enregistré comme tel.
+d'échange n'est garantie ici. Une requête relayée peut enchaîner deux vérifications de clé
+(lancement puis vue de lancement), d'où `ACCESS_BUDGET_SECONDS` dont le relais de `service`
+dérive son propre délai. Aucun réessai n'est ajouté : un budget épuisé est un échec observé, enregistré comme tel.
 """
 from base64 import b64decode, urlsafe_b64encode
 from contextlib import closing, contextmanager
@@ -25,7 +25,6 @@ import secrets
 import socket
 import threading
 import time
-from urllib.parse import urlencode, urlsplit
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -35,9 +34,7 @@ from .storage import IntegrityError, SchemaError, _strict_json as encode, _trans
 
 
 FORMAT_IDENTITY = 'benchmark-lab-x/provider-access/v1'
-AUTHORIZE_URL = 'https://openrouter.ai/auth'
 HOST = 'openrouter.ai'
-EXCHANGE_PATH = '/api/v1/auth/keys'
 VERIFY_PATH = '/api/v1/key'
 REFRESH_INTERVAL = timedelta(minutes=10)
 EXPIRATION = timedelta(days=30)
@@ -46,9 +43,9 @@ READ_CHUNK_BYTES = 65536
 # Budget visé d'un échange fournisseur : la résolution DNS et la connexion le consomment sans
 # être interruptibles, la garde de socket borne tout ce qui suit
 REQUEST_BUDGET_SECONDS = 30
-# Un rappel enchaîne l'échange puis la vérification sur la même requête entrante
-CALLBACK_REQUESTS = 2
-CALLBACK_BUDGET_SECONDS = REQUEST_BUDGET_SECONDS * CALLBACK_REQUESTS
+# Une requête relayée enchaîne au plus deux vérifications de clé : lancement, puis vue de lancement
+ACCESS_REQUESTS = 2
+ACCESS_BUDGET_SECONDS = REQUEST_BUDGET_SECONDS * ACCESS_REQUESTS
 
 _TABLES = {
     's2_provider_access': """CREATE TABLE s2_provider_access (
@@ -228,10 +225,6 @@ def reencrypt_legacy(secret, cipher, session_id, purpose):
     return encrypt(secret, plaintext, session_id, purpose)
 
 
-def challenge(verifier):
-    return urlsafe_b64encode(sha256(verifier.encode('ascii')).digest()).rstrip(b'=').decode('ascii')
-
-
 def _now():
     return datetime.now(timezone.utc)
 
@@ -261,37 +254,6 @@ def expire(store, now=None):
             ((now - EXPIRATION).isoformat(),)).fetchall()]
         for session_id in sessions:
             _delete(connection, session_id)
-
-
-def _callback_url(value):
-    if type(value) is not str:
-        raise ValueError('URL de rappel requise')
-    parsed = urlsplit(value)
-    local = parsed.scheme == 'http' and parsed.hostname == '127.0.0.1'
-    if ((parsed.scheme != 'https' and not local) or not parsed.netloc or parsed.username or parsed.password
-            or parsed.query or parsed.fragment or parsed.path != '/preparation/access/callback'):
-        raise ValueError('URL de rappel HTTPS requise')
-    return value
-
-
-def start(store, session_id, secret, callback_url, now=None):
-    if secret is None or not available(store):
-        return None
-    callback_url = _callback_url(callback_url)
-    verifier = secrets.token_urlsafe(32)
-    connection = store._connection_checked()
-    authorize_session(connection, session_id, current=now)
-    now = now or _now()
-    with _transaction(connection, write=True):
-        _no_preparation_in_progress(connection, session_id)
-        _delete(connection, session_id)
-        connection.execute('INSERT INTO s2_provider_access '
-                           '(session_id,verifier_cipher,key_cipher,created_at,verified_at,checked_at,limit_usd,limit_remaining_usd,is_free_tier,status,status_reason) '
-                           "VALUES (?,?,NULL,?,NULL,NULL,NULL,NULL,0,'pending',NULL)",
-                           (session_id, encrypt(secret, verifier, session_id, 'oauth'), now.isoformat()))
-    query = urlencode({'callback_url': callback_url, 'code_challenge': challenge(verifier),
-                       'code_challenge_method': 'S256'})
-    return {'authorize_url': AUTHORIZE_URL + '?' + query}
 
 
 def _event_intent(connection, session_id, kind, now):
@@ -435,10 +397,6 @@ class OpenRouterAccess:
         finally:
             connection.close()
 
-    def exchange(self, code, verifier):
-        body = encode({'code': code, 'code_verifier': verifier, 'code_challenge_method': 'S256'})
-        return self._request('POST', EXCHANGE_PATH, body=body)
-
     def verify(self, key):
         return self._request('GET', VERIFY_PATH, key=_credential(key))
 
@@ -564,58 +522,6 @@ def _verify(store, session_id, transport, key, now):
                                (observed.isoformat(), session_id))
 
 
-def callback(store, session_id, secret, code, transport=None, now=None):
-    if secret is None or not available(store):
-        return None
-    if type(code) is not str or not code:
-        raise ValueError('Code d’autorisation requis')
-    transport = transport or OpenRouterAccess()
-    connection = store._connection_checked()
-    authorize_session(connection, session_id, current=now)
-    now = now or _now()
-    row = connection.execute("SELECT verifier_cipher FROM s2_provider_access WHERE session_id=? AND status='pending'",
-                             (session_id,)).fetchone()
-    from .preparation import Denied
-    if row is None:
-        raise Denied('ACCESS_NO_PENDING')
-    try:
-        verifier = decrypt(secret, row[0], session_id, 'oauth')
-    except IntegrityError:
-        raise Denied('ACCESS_UNAVAILABLE') from None
-    expire(store, now)
-    if not connection.execute("SELECT 1 FROM s2_provider_access WHERE session_id=? AND status='pending'",
-                              (session_id,)).fetchone():
-        raise Denied('ACCESS_NO_PENDING')
-    with _transaction(connection, write=True):
-        event_id = _event_intent(connection, session_id, 'exchange', now)
-    try:
-        status, raw = transport.exchange(code, verifier)
-    except Exception:
-        status, raw = None, None
-    document = None
-    if status == 200 and raw is not None:
-        try:
-            document = _decode(raw)
-            _credential(document['key'])
-        except (ValueError, KeyError, TypeError):
-            document = None
-    with _transaction(connection, write=True):
-        _event_result(connection, event_id, 'RECEIVED' if raw is not None else 'FAILED', _now(), status, raw,
-                      (code, verifier, document.get('key') if document else None))
-        if document is None:
-            _delete(connection, session_id)
-        else:
-            connection.execute("UPDATE s2_provider_access SET verifier_cipher=NULL,key_cipher=?,status='connected',status_reason=NULL WHERE session_id=?",
-                               (encrypt(secret, document['key'], session_id, 'key'), session_id))
-    if document is None:
-        from .preparation import Denied
-        error = Denied('ACCESS_EXCHANGE_FAILED')
-        error.provider_status = status
-        raise error
-    _verify(store, session_id, transport, document['key'], now)
-    return view(store, session_id, secret, transport, now=now, refresh=False)
-
-
 def _row_view(row, reason=None):
     if row is None:
         value = {'connected': False, 'verified_at': None, 'limit_usd': None,
@@ -665,6 +571,7 @@ def view(store, session_id, secret, transport=None, now=None, *, refresh=True):
     key = None
     if row:
         try:
+            # `pending` : ligne héritée de l'autorisation déléguée retirée, plus jamais créée
             if row[0] == 'pending':
                 decrypt(secret, row[8], session_id, 'oauth')
             else:

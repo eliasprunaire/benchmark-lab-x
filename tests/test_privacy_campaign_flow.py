@@ -11,7 +11,8 @@ from unittest.mock import Mock, patch
 
 from benchmark import (automatic_judgment as auto, judgment, model_catalogue,
                        preparation as prep, privacy, privacy_archive as archive,
-                       provider_access, restitution, service, storage)
+                       provider_access, restitution, service, storage, web_api)
+from benchmark_web import views
 from benchmark.acquisition import campaigns, execution
 from benchmark.transports import openrouter
 from tests.test_configurations import model
@@ -195,6 +196,13 @@ class PrivacyCampaignFlow(unittest.TestCase):
             self.data, start, self.candidate, None, SECRET, self.access, self.judge)
         compared = restitution.comparison(self.store, self.sid, 'erase', cid)
         self.assertEqual(2, len(compared['rows']))
+        # Comparaison lancée : le choix de contribution quitte le fil du cas et se replie dans Mes données
+        _, dossier_view, _, _ = web_api.dispatch(self.store, 'GET', '/preparation/dossiers/erase', self.token,
+                                                 None, 'a' * 40, None)
+        page = views.render(dossier_view, 'csrf', '/preparation/dossiers/erase').decode()
+        controls = page.split('<details class="privacy-controls"', 1)[1]
+        self.assertEqual(1, page.count('data-privacy-post="contribution"'))
+        self.assertIn('data-privacy-post="contribution"', controls)
         self.assertEqual({'NE SATISFAIT PAS'}, {row['verdict'] for row in compared['rows']})
         self.assertEqual('COMPLETE', auto.status(self.store, self.store._connection, cid)['status'])
         final = archive.archive_manifest(self.store, self.sid, 'erase')

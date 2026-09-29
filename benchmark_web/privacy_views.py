@@ -10,7 +10,7 @@ LOCAL_WARNING = ('L’historique local n’est pas garanti : le navigateur peut 
 def render_privacy_page(value, csrf='', *, preparation=False):
     return 'Mes données', (
         '<section data-privacy-history><h2>Historique local</h2><p>' + LOCAL_WARNING + '</p>'
-        '<p role="status" data-privacy-status>Chargement de l’historique local…</p>'
+        '<p role="status" data-privacy-status>Historique local disponible avec JavaScript.</p>'
         '<div class="actions"><button type="button" class="sec" data-privacy-action="clear" hidden>'
         'Effacer tout l’historique local</button><button type="button" class="sec" '
         'data-privacy-action="enable" hidden>Réactiver l’historique local</button></div>'
@@ -36,7 +36,8 @@ def privacy_form(action, csrf, url, fields, body, *, disabled=False):
     return form(csrf, url, fields, content).replace('<form ', '<form data-privacy-post="' + action + '" ', 1)
 
 
-def render_privacy_controls(value, csrf):
+def render_privacy_controls(value, csrf, contribution=''):
+    """`contribution` : choix de contribution replié ici une fois la comparaison lancée"""
     from .fragments import date_lisible_utc
     from urllib.parse import quote
     privacy = value.get('privacy')
@@ -52,7 +53,7 @@ def render_privacy_controls(value, csrf):
         attrs += ' data-dossier-id="' + text(dossier) + '"'
         if type(privacy.get('content_version')) is int:
             attrs += ' data-content-version="' + str(privacy['content_version']) + '"'
-    content = '<details class="privacy-controls"' + attrs + '><summary>Mes données et ma confidentialité</summary>'
+    content = '<details class="privacy-controls"' + attrs + '><summary>Mes données et ma confidentialité</summary>' + contribution
     content += '<p>Accès aux cas fermé après 7 jours d’inactivité. Accès à la clé fermé après 30 jours d’inactivité.</p>'
     expiry = privacy.get('session_expires_at')
     if expiry:

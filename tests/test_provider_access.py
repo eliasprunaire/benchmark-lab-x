@@ -11,7 +11,6 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
-from urllib.parse import parse_qs, urlsplit
 
 from benchmark.acquisition import execution
 from benchmark.acquisition import campaigns
@@ -31,15 +30,8 @@ class AccessTransport:
             'limit': 20, 'limit_remaining': 18.5, 'usage': 1.5,
             'is_free_tier': False,
         }).encode())
-        self.exchanges = []
         self.verifications = []
         self.observe = None
-
-    def exchange(self, code, verifier):
-        if self.observe:
-            self.observe('exchange')
-        self.exchanges.append((code, verifier))
-        return 200, json.dumps({'key': KEY}).encode()
 
     def verify(self, key):
         if self.observe:
@@ -91,10 +83,10 @@ class ProviderBudgetTests(unittest.TestCase):
                     patch.object(provider_access, 'REQUEST_BUDGET_SECONDS', budget):
                 yield
 
-    def test_budget_du_rappel_enchaine_echange_puis_verification(self):
-        self.assertEqual(2, provider_access.CALLBACK_REQUESTS)
+    def test_budget_du_relais_couvre_deux_verifications_de_cle(self):
+        self.assertEqual(2, provider_access.ACCESS_REQUESTS)
         self.assertEqual(provider_access.REQUEST_BUDGET_SECONDS * 2,
-                         provider_access.CALLBACK_BUDGET_SECONDS)
+                         provider_access.ACCESS_BUDGET_SECONDS)
 
     def test_reponse_fermante_est_lue_jusqu_a_la_fin(self):
         # Une réponse fermante relâche la socket de la connexion : la lecture doit rester valide
@@ -248,24 +240,24 @@ class ProviderAccessTests(unittest.TestCase):
             provider_access.import_key(self.store, session_id, SECRET, 'sk-ant-wrong-provider', self.transport)
         self.assertEqual([], self.transport.verifications)
 
-    def test_oauth_replacement_cannot_remove_personal_spending_cap(self):
+    def test_key_replacement_cannot_remove_personal_spending_cap(self):
         provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
         self.transport.verify_result = (200, json.dumps({'data': {
             'limit': None, 'limit_remaining': None, 'is_free_tier': False}}).encode())
-        self.connect()
-        with self.assertRaises(preparation.Denied):
-            provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
+        with self.assertRaisesRegex(preparation.Denied, '^ACCESS_CAP_REQUIRED$'):
+            provider_access.import_key(self.store, self.session, SECRET, 'sk-or-v1-sans-plafond', self.transport)
+        self.assertEqual(KEY, provider_access.key_for_session(self.store, self.session, SECRET, self.transport))
 
-    def test_oauth_without_personal_ledger_also_requires_provider_cap(self):
-        self.assertIsNone(self.store._connection.execute('SELECT 1 FROM budgets WHERE budget_id=?',
-            (provider_access.preparation_budget_id(self.session),)).fetchone())
+    def test_uncapped_key_is_refused_before_budget_creation(self):
         for changes in ({'limit': None}, {'limit_reset': 'daily'}, {'limit_remaining': 0}):
             with self.subTest(changes=changes):
                 self.transport.verify_result = (200, json.dumps({'data': {
                     'limit': 50, 'limit_remaining': 20, 'is_free_tier': False, **changes}}).encode())
-                self.connect()
-                with self.assertRaises(preparation.Denied):
-                    provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
+                with self.assertRaisesRegex(preparation.Denied, '^ACCESS_CAP_REQUIRED$'):
+                    self.connect()
+                self.assertIsNone(self.store._connection.execute('SELECT 1 FROM budgets WHERE budget_id=?',
+                    (provider_access.preparation_budget_id(self.session),)).fetchone())
+                self.assertEqual('disconnected', provider_access.status_only(self.store, self.session)['status'])
 
     def test_manual_form_and_route_return_only_safe_state(self):
         from benchmark_web.views import render
@@ -276,14 +268,17 @@ class ProviderAccessTests(unittest.TestCase):
         self.assertEqual(200, code)
         self.assertIsNone(start)
         self.assertNotIn(KEY, json.dumps(value))
-        html = render({'dossiers': [], 'personal_preparation': True, 'personal_access': value}, csrf).decode()
-        self.assertIn('type="password"', html)
-        self.assertIn('autocomplete="new-password"', html)
-        self.assertIn('Ajouter ma clé Openrouter', html)
-        self.assertIn('Retirer la clé', html)
-        self.assertNotIn(KEY, html)
-        self.assertNotIn('localStorage', html)
-        self.assertEqual([], self.transport.exchanges)
+        home = render({'dossiers': [], 'personal_preparation': True, 'personal_access': value}, csrf).decode()
+        self.assertIn('Clé Openrouter enregistrée', home)
+        self.assertIn('href="/preparation/access"', home)
+        page = render(dict(value, kind='access'), csrf, '/preparation/access').decode()
+        self.assertIn('type="password"', page)
+        self.assertIn('autocomplete="new-password"', page)
+        self.assertIn('Remplacer ma clé Openrouter', page)
+        self.assertIn('Retirer la clé', page)
+        for html in (home, page):
+            self.assertNotIn(KEY, html)
+            self.assertNotIn('localStorage', html)
 
     def test_invalid_manual_key_preserves_existing_access(self):
         self.connect()
@@ -293,10 +288,7 @@ class ProviderAccessTests(unittest.TestCase):
         self.assertEqual(KEY, provider_access.key_for_session(self.store, self.session, SECRET, self.transport))
 
     def connect(self):
-        provider_access.start(self.store, self.session, SECRET,
-                              'https://example.test/preparation/access/callback')
-        return provider_access.callback(self.store, self.session, SECRET, 'authorization-code',
-                                        self.transport)
+        return provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
 
     def test_base_anterieure_a_la_vague_2_refusee_explicitement(self):
         self.store.close()
@@ -308,26 +300,16 @@ class ProviderAccessTests(unittest.TestCase):
                 storage.SchemaError, '^Base antérieure à la vague 2 : à recréer$'):
             storage.Store(self.data)
 
-    def test_pkce_chiffrement_et_vue_expurgee(self):
-        self.assertEqual('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', provider_access.challenge(
-            'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'))
-        result = provider_access.start(self.store, self.session, SECRET,
-                                       'http://127.0.0.1:8080/preparation/access/callback')
-        query = parse_qs(urlsplit(result['authorize_url']).query)
+    def test_cle_chiffree_liee_a_la_session_et_alteration_refusee(self):
+        self.connect()
         cipher = self.store._connection.execute(
-            'SELECT verifier_cipher FROM s2_provider_access WHERE session_id=?',
-            (self.session,)).fetchone()[0]
-        verifier = provider_access.decrypt(SECRET, cipher, self.session, 'oauth')
-        self.assertEqual(43, len(verifier))
-        self.assertEqual([provider_access.challenge(verifier)], query['code_challenge'])
-        self.assertEqual(['S256'], query['code_challenge_method'])
-        self.assertNotIn(verifier, result['authorize_url'])
-        self.assertEqual(verifier, provider_access.decrypt(SECRET, provider_access.encrypt(SECRET, verifier, self.session, 'oauth'), self.session, 'oauth'))
-        damaged = provider_access.encrypt(SECRET, verifier, self.session, 'oauth')[:-2] + 'AA'
+            'SELECT key_cipher FROM s2_provider_access WHERE session_id=?', (self.session,)).fetchone()[0]
+        self.assertNotIn(KEY, cipher)
+        self.assertEqual(KEY, provider_access.decrypt(SECRET, cipher, self.session, 'key'))
         with self.assertRaises(storage.IntegrityError):
-            provider_access.decrypt(SECRET, damaged, self.session, 'oauth')
+            provider_access.decrypt(SECRET, cipher[:-2] + 'AA', self.session, 'key')
 
-    def test_callback_verification_invalidation_et_panne_transitoire(self):
+    def test_verification_invalidation_et_panne_transitoire(self):
         accepted = self.transport.verify_result
         connected = self.connect()
         self.assertEqual({'connected': True, 'limit_usd': '20', 'limit_remaining_usd': '18.5',
@@ -390,18 +372,14 @@ class ProviderAccessTests(unittest.TestCase):
         self.assertEqual(KEY, provider_access.key_for_session(self.store, self.session, SECRET, self.transport))
 
     def test_invalid_or_substituted_cipher_is_unavailable_without_cleanup(self):
-        for pending in (False, True):
+        for pending in (False,):
             for mutation in ('damaged', 'session', 'purpose', 'legacy'):
-                with self.subTest(pending=pending, mutation=mutation):
-                    if pending:
-                        provider_access.start(self.store, self.session, SECRET,
-                                              'https://example.test/preparation/access/callback')
-                    else:
-                        self.connect()
-                    column, purpose = ('verifier_cipher', 'oauth') if pending else ('key_cipher', 'key')
+                with self.subTest(mutation=mutation):
+                    self.connect()
+                    column, purpose = ('key_cipher', 'key')
                     cipher = provider_access.encrypt(SECRET, KEY,
                         'another-session' if mutation == 'session' else self.session,
-                        ('key' if pending else 'oauth') if mutation == 'purpose' else purpose)
+                        'oauth' if mutation == 'purpose' else purpose)
                     if mutation == 'damaged':
                         cipher = cipher[:-5] + 'AAAA='
                     if mutation == 'legacy':
@@ -413,16 +391,13 @@ class ProviderAccessTests(unittest.TestCase):
                         (cipher, old, None if pending else old, self.session))
                     self.store._connection.commit()
                     before = list(self.store._connection.iterdump())
-                    calls = (len(self.transport.exchanges), len(self.transport.verifications))
+                    calls = len(self.transport.verifications)
                     state = provider_access.view(self.store, self.session, SECRET, self.transport)
                     self.assertEqual('unavailable', state['status'])
                     with self.assertRaisesRegex(preparation.Denied, '^ACCESS_UNAVAILABLE$'):
-                        if pending:
-                            provider_access.callback(self.store, self.session, SECRET, 'code', self.transport)
-                        else:
-                            provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
+                        provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
                     self.assertEqual(before, list(self.store._connection.iterdump()))
-                    self.assertEqual(calls, (len(self.transport.exchanges), len(self.transport.verifications)))
+                    self.assertEqual(calls, len(self.transport.verifications))
 
     def test_status_only_is_pure_metadata_even_when_cipher_is_unreadable(self):
         self.connect()
@@ -488,51 +463,17 @@ class ProviderAccessTests(unittest.TestCase):
             self.assertEqual(before, list(connection.iterdump()))
             self.assertEqual(calls_before, len(self.transport.verifications))
 
-    def test_callback_expire_avant_echange(self):
-        old = datetime.now(timezone.utc) - timedelta(days=31)
-        provider_access.start(self.store, self.session, SECRET,
-                              'https://example.test/preparation/access/callback', now=old)
-        with self.assertRaisesRegex(preparation.Denied, 'ACCESS_NO_PENDING'):
-            provider_access.callback(self.store, self.session, SECRET, 'code', self.transport)
-        self.assertEqual([], self.transport.exchanges)
-
-    def test_callback_secret_change_preserve_pending(self):
-        provider_access.start(self.store, self.session, SECRET,
-                              'https://example.test/preparation/access/callback')
-        before = list(self.store._connection.iterdump())
-        wrong_secret = bytes.fromhex('22' * 32)
-        value = provider_access.view(self.store, self.session, wrong_secret, self.transport)
-        self.assertEqual('unavailable', value['status'])
-        with self.assertRaisesRegex(preparation.Denied, '^ACCESS_UNAVAILABLE$'):
-            provider_access.callback(self.store, self.session, wrong_secret, 'code', self.transport)
-        self.assertEqual([], self.transport.exchanges)
-        self.assertEqual(before, list(self.store._connection.iterdump()))
-        self.assertTrue(provider_access.callback(
-            self.store, self.session, SECRET, 'code', self.transport)['connected'])
-
-    def test_removal_during_oauth_exchange_blocks_following_verification(self):
-        provider_access.start(self.store, self.session, SECRET,
-                              'https://example.test/preparation/access/callback')
-        self.transport.observe = lambda kind: provider_access.disconnect(self.store, self.session, SECRET)
-        state = provider_access.callback(self.store, self.session, SECRET, 'code', self.transport)
-        self.assertEqual('disconnected', state['status'])
-        self.assertEqual([], self.transport.verifications)
-        self.assertTrue(self.store.verify_storage()['integrity_ok'])
-
     def test_evenements_expurges_et_effaces_avec_acces(self):
         observed = []
         self.transport.observe = lambda kind: observed.append(self.store._connection.execute(
             'SELECT kind,state FROM s6_access_events ORDER BY rowid DESC LIMIT 1').fetchone())
         self.connect()
-        self.assertEqual([('exchange', 'INTENT_RECORDED'), ('verify', 'INTENT_RECORDED')], observed)
+        self.assertEqual([('verify', 'INTENT_RECORDED')], observed)
         rows = self.store._connection.execute(
             'SELECT state,document_sha256,excerpt FROM s6_access_events ORDER BY rowid').fetchall()
-        self.assertEqual(['RECEIVED', 'RECEIVED'], [row[0] for row in rows])
+        self.assertEqual(['RECEIVED'], [row[0] for row in rows])
         text = json.dumps(rows, ensure_ascii=False)
-        verifier = self.transport.exchanges[0][1]
         self.assertNotIn('sk-or-', text)
-        self.assertNotIn(verifier, text)
-        self.assertNotIn('authorization-code', text)
         self.assertTrue(all(row[1] and len(row[1]) == 64 and len(row[2]) <= 512 for row in rows))
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', None)):
             code, value, _, _ = web_api.dispatch(
@@ -541,36 +482,20 @@ class ProviderAccessTests(unittest.TestCase):
         socket_view = storage._strict_json(value)
         self.assertEqual(200, code)
         self.assertNotIn('sk-or-', socket_view)
-        self.assertNotIn(verifier, socket_view)
         provider_access.disconnect(self.store, self.session, SECRET)
         self.assertEqual(0, self.store._connection.execute('SELECT count(*) FROM s6_access_events').fetchone()[0])
         self.assertEqual(0, self.store._connection.execute('SELECT count(*) FROM s2_provider_access').fetchone()[0])
 
-    def test_reconnexion_et_expiration_remplacent_toute_la_ligne(self):
+    def test_remplacement_et_expiration_gardent_une_seule_ligne(self):
         self.connect()
-        provider_access.start(self.store, self.session, SECRET,
-                              'https://example.test/preparation/access/callback')
-        status, key = self.store._connection.execute(
-            'SELECT status,key_cipher FROM s2_provider_access WHERE session_id=?',
-            (self.session,)).fetchone()
-        self.assertEqual(('pending', None), (status, key))
-        self.assertEqual(0, self.store._connection.execute('SELECT count(*) FROM s6_access_events').fetchone()[0])
+        self.connect()
+        rows = self.store._connection.execute(
+            'SELECT status FROM s2_provider_access WHERE session_id=?', (self.session,)).fetchall()
+        self.assertEqual([('connected',)], rows)
         future = datetime.now(timezone.utc) + timedelta(days=31)
         provider_access.expire(self.store, future)
         self.assertEqual('disconnected', provider_access.view(
             self.store, self.session, SECRET, self.transport, now=future)['status'])
-
-    def test_callback_absent_ou_refuse(self):
-        with self.assertRaisesRegex(preparation.Denied, 'ACCESS_NO_PENDING'):
-            provider_access.callback(self.store, self.session, SECRET, 'code', self.transport)
-        provider_access.start(self.store, self.session, SECRET,
-                              'https://example.test/preparation/access/callback')
-        self.transport.exchange = lambda code, verifier: (400, b'{"key":"sk-or-reflected"}')
-        with self.assertRaisesRegex(preparation.Denied, 'ACCESS_EXCHANGE_FAILED') as caught:
-            provider_access.callback(self.store, self.session, SECRET, 'refused-code', self.transport)
-        self.assertEqual(400, caught.exception.provider_status)
-        self.assertEqual(0, self.store._connection.execute('SELECT count(*) FROM s2_provider_access').fetchone()[0])
-        self.assertEqual(0, self.store._connection.execute('SELECT count(*) FROM s6_access_events').fetchone()[0])
 
     def test_routes_indisponibles_sans_extension_ou_secret(self):
         temporary = tempfile.TemporaryDirectory(prefix='provider-access-s5-')
@@ -593,13 +518,9 @@ class ProviderAccessTests(unittest.TestCase):
         self.assertFalse(value['connected'])
         self.assertEqual('disconnected', value['status'])
         with patch.object(preparation, 'session', return_value=(self.session, 'csrf', None)):
-            for path, body in (
-                    ('/preparation/access/start', {'callback_url': 'https://example.test/preparation/access/callback'}),
-                    ('/preparation/access/callback', {'code': 'code'})):
-                code, value, _, _ = web_api.dispatch(
-                    self.store, 'POST', path, 'token', (body if path.endswith('/callback') else
-                                                       dict(body, csrf_token='csrf')), 'a' * 40, None)
-                self.assertEqual((503, 'ACCESS_UNAVAILABLE'), (code, value['error_code']))
+            code, value, _, _ = web_api.dispatch(
+                self.store, 'POST', '/preparation/access/key', 'token', {'key': KEY, 'csrf_token': 'csrf'}, 'a' * 40, None)
+            self.assertEqual((503, 'ACCESS_UNAVAILABLE'), (code, value['error_code']))
             code, value, _, _ = web_api.dispatch(self.store, 'POST', '/preparation/access/disconnect',
                 'token', {'csrf_token': 'csrf'}, 'a' * 40, None)
             self.assertEqual((200, 'disconnected'), (code, value['status']))

@@ -263,6 +263,9 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'clarification', 'Envoyer ma réponse')
         self.assertIn('Quel format', page.visible)
+        # Sans exemple, rien à valider ni qualifier : ces blocs n'apparaissent pas encore
+        self.assertFalse(any(n['attrs'].get('id') in ('validation', 'comparaison') for n in page.nodes))
+        self.assertNotIn('Qualification et approbation', ' '.join(n['text'] for n in page.nodes if n['tag'] == 'summary'))
         self.preparation_stage = 'exemple'
         self.submit(page, '/messages', {'message': 'Une liste des actions, sans date inventée'})
         prep.execute(self.data, self.starts.get_nowait(), self.prepare)
@@ -270,6 +273,15 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, dossier, 'exemple', 'Oui, c’est le travail à tester')
         self.assertIn('Relever toutes les actions', page.visible)
         self.assertIn('financée par l’opérateur', page.visible)
+        position = {key: next(i for i, n in enumerate(page.nodes) if test(n)) for key, test in (
+            ('correction', lambda n: n['tag'] == 'details' and n['attrs'].get('class') == 'corr'),
+            ('validation', lambda n: n['attrs'].get('id') == 'validation'))}
+        # « Corrigez si besoin, puis validez » ; l'ordre du consentement est vérifié dans tests/privacy_browser.test.cjs
+        self.assertLess(position['correction'], position['validation'])
+        self.assertTrue(any(n['tag'] == 'summary' and n['text'].startswith('Lire « ') for n in page.nodes))
+        self.assertFalse(any(n['tag'] == 'summary' and 'Voir le contenu' in n['text'] for n in page.nodes))
+        # Admission ouverte : aucun encadré de disponibilité
+        self.assertFalse(any(n['attrs'].get('id') == 'availability' for n in page.nodes))
         correction = page.form('/messages')
         self.assertEqual(['kind', 'message'], [n['attrs'].get('name') for n in correction['nodes']
                                              if n['tag'] in ('select', 'textarea')])
@@ -295,6 +307,11 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'exemple qualifié', 'Choisir les modèles')
         self.assertIn('Exemple qualifié', page.visible)
+        self.assertEqual('Votre cas d’usage', next(n['text'] for n in page.nodes if n['tag'] == 'h1'))
+        state = next(n for n in page.nodes if 'state' in n['attrs'].get('class', '').split())
+        self.assertIn('Choisir les modèles', state['text'])
+        # Qualification automatique : aucune approbation opérateur n'est attendue
+        self.assertNotIn('Approbation', ' '.join(n['text'] for n in page.nodes))
         self.assertNotIn('en attente de préparation par le responsable', page.visible)
         self.assertTrue(any('Les actions et leur format sont vérifiables' in n['text']
                             for n in page.nodes if n['tag'] == 'details'))
@@ -322,21 +339,22 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn(b'<summary>Identifiant technique</summary><code>openai/gpt-5.6-sol</code>', raw)
         recap = page.link('Voir le récapitulatif')
         page, _, _ = self.request(recap)
-        self.examine(page, recap, 'accès requis', 'Compléter cette étape')
-        page, _, _ = self.request(page.link('Compléter cette étape'))
-        self.examine(page, '/preparation/access', 'accès déconnecté', 'Connecter mon compte Openrouter')
-        form = page.form('/access/start')
-        _, headers, _ = self.request(form['action'], form['fields'], status=303)
-        self.assertEqual('openrouter.ai', urlsplit(headers['Location']).hostname)
-        _, headers, _ = self.request('/preparation/access/callback?code=code-s12', status=303)
-        page, _, raw = self.request(headers['Location'])
-        self.examine(page, '/preparation/access', 'accès connecté', 'Revenir à mes cas d’usage')
-        self.assertNotIn(KEY.encode(), raw)
-        page, _, _ = self.request(page.link('Revenir à mes cas'))
-        page, _, _ = self.request(page.link('Transformer des notes'))
-        self.examine(page, dossier, 'comparaison préparée', 'Examiner les conditions et suivre la comparaison courante')
-        page, _, _ = self.request(page.link('Examiner les conditions'))
+        self.examine(page, recap, 'accès requis', None)
+        self.assertIn('Lancement indisponible : ajoutez votre clé Openrouter', page.visible)
+        # Les candidats gardent le nom vu au choix, avec leur effort traduit
+        self.assertIn('Modèle A · Raisonnement demandé : high (élevé)', page.visible)
+        self.assertNotIn('openai/gpt-5.6-sol', page.visible)
+        key_form = page.form('/access/key')
+        self.assertEqual(recap, key_form['fields']['return'])
+        _, headers, raw = self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
+        self.assertEqual(recap, headers['Location'])
+        page, _, raw = self.request(recap)
         self.examine(page, recap, 'prêt à lancer', 'Lancer la comparaison')
+        self.assertNotIn(KEY.encode(), raw)
+        page, _, _ = self.request(dossier)
+        self.examine(page, dossier, 'comparaison préparée', 'Vérifier puis lancer la comparaison')
+        self.assertIn('Comparaison prête à lancer', page.visible)
+        page, _, _ = self.request(page.link('Vérifier puis lancer'))
         self.assertIn('Relever toutes les actions dans les notes', page.visible)
         self.assertIn('Estimation', page.visible)
         criteria = next(n for n in page.nodes if n['tag'] == 'details' and
@@ -349,8 +367,9 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotRegex(criteria['text'], rf'\b{re.escape(key)}\b')
         with patch.object(self, 'candidate', None):
             closed, _, _ = self.request(recap)
-            self.examine(closed, recap, 'appels candidats fermés', 'Revenir au cas d’usage')
-            self.assertIn('Lancement indisponible', closed.visible)
+            self.examine(closed, recap, 'appels candidats fermés', None)
+            self.assertIn('Lancement indisponible : Exécution des essais momentanément indisponible', closed.visible)
+            self.assertIn('✕ Exécution des essais', closed.visible)
             self.assertNotIn('Lancement enregistré', closed.visible)
             self.assertFalse(any(f['action'].endswith('/start') for f in closed.forms))
         start_form = page.form('/start')
@@ -362,6 +381,8 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'essais en attente', 'Actualiser le suivi')
         self.assertIn('en attente', page.visible)
+        self.assertNotIn('Comparaison terminée', page.visible)
+        self.assertIn('Modèle B · Raisonnement non réglable : en attente de démarrage', page.visible)
         self.assertFalse(any(f['action'].endswith('/cap') for f in page.forms))
         self.assertEqual(3, len(self.calls))
         execution.execute_launch(self.data, attempts[:1], self.candidate,
@@ -374,10 +395,20 @@ class ParcoursComplet(unittest.TestCase):
                                  access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'réponses reçues', 'Comparer les résultats et lire les preuves')
+        self.assertIn('Comparaison terminée', page.visible)
         comparison = page.link('Comparer les résultats')
-        empty, _, _ = self.request(comparison)
-        self.examine(empty, comparison, 'jugements absents', 'Revenir au cas d’usage')
+        empty, _, raw = self.request(comparison)
+        self.examine(empty, comparison, 'jugements absents', None)
         self.assertIn('En attente d’évaluation', empty.visible)
+        # Lien direct : le lecteur sait ce qui est comparé et sous quelles conditions
+        self.assertIn('Transformer des notes de réunion', empty.visible)
+        self.assertIn('Revenir au cas d’usage', empty.visible)
+        # Le cas d'usage dit que la comparaison existe et mène à ses résultats
+        page, _, _ = self.request(dossier)
+        self.examine(page, dossier, 'comparaison terminée', 'Voir les résultats')
+        self.assertIn('Comparaison terminée', page.visible)
+        self.assertEqual(comparison, page.link('Voir les résultats'))
+        self.assertNotIn('choisissez les modèles', page.visible)
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s5_evaluations').fetchone()[0])
         _, headers, _ = self.request('/preparation', cookies=SimpleCookie())
@@ -405,21 +436,21 @@ class ParcoursComplet(unittest.TestCase):
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
             'tier': 'high'}, status=303)
         page, _, _ = self.request(dossier)
-        campaign_links = [n for n in page.nodes if n['tag'] == 'a'
-                          and '/campaigns/' in n['attrs'].get('href', '')
-                          and n['attrs']['href'].endswith('/conditions')]
+        self.examine(page, dossier, 'nouvelle comparaison préparée', 'Vérifier puis lancer la comparaison')
+        listed = next(n for n in page.nodes if n['attrs'].get('id') == 'comparaison')
+        campaign_links = [n for n in page.nodes if n['tag'] == 'a' and not n['details']
+                          and n['text'].startswith('Comparaison ')]
         self.assertEqual(2, len(campaign_links))
-        self.assertEqual(1, sum(n['attrs'].get('class') == 'button' for n in campaign_links))
-        self.assertEqual(1, sum(n['attrs'].get('class') == 'button sec' for n in campaign_links))
         with closing(storage.Store(self.data)) as store:
             previous = campaigns.inspect(store, recap.split('/')[-2])['manifest']
         texts = [n['text'] for n in campaign_links]
         hrefs = [n['attrs']['href'] for n in campaign_links]
         self.assertEqual(len(texts), len(set(texts)))
         self.assertEqual(len(hrefs), len(set(hrefs)))
-        self.assertEqual({'Examiner les conditions et suivre la comparaison courante',
-                          'Consulter la comparaison du ' + views.date_lisible_utc(previous['conditions']['frozen_at'])},
-                         set(texts))
+        self.assertIn(comparison, hrefs)
+        self.assertIn('Comparaison 1 du ' + views.date_lisible_utc(previous['conditions']['frozen_at']), texts)
+        self.assertIn('comparaison terminée', listed['text'])
+        self.assertIn('comparaison prête à lancer', listed['text'])
         with closing(storage.Store(self.data)) as store:
             prep.close_admission(store)
         page, _, _ = self.request('/preparation')
@@ -440,7 +471,7 @@ class ParcoursComplet(unittest.TestCase):
         self.request(dossier + '/revisions/1/pieces/' + 'a' * 32, status=403)
 
     # Pages HTML qu'un lecteur doit pouvoir atteindre depuis l'accueil, en suivant seulement des liens visibles
-    # Hors liste : routes POST ou JSON, callback OAuth, ancienne adresse redirigée ; le détail d'une tentative,
+    # Hors liste : routes POST ou JSON, ancienne adresse redirigée ; le détail d'une tentative,
     # les pièces d'évaluation et l'aperçu de projection exigent une évaluation, absente de ce parcours (l'aperçu est
     # relié depuis une comparaison évaluée dans tests/test_s10_regressions.py) ; les contributions exigent la migration
     # de confidentialité, absente de cette fixture (leur page est couverte par tests/test_privacy_http.py)
@@ -501,28 +532,30 @@ class ParcoursComplet(unittest.TestCase):
     def test_acces_openrouter_factice_et_retours(self):
         self.request('/preparation')
         page, _, _ = self.request('/preparation/access')
-        self.examine(page, '/preparation/access', 'déconnecté', 'Connecter mon compte Openrouter')
-        form = page.form('/access/start')
-        _, headers, _ = self.request(form['action'], form['fields'], status=303)
-        self.assertEqual('openrouter.ai', urlsplit(headers['Location']).hostname)
-        with patch.object(self.access, 'exchange', return_value=(403, b'{}')):
-            refused, _, raw = self.request('/preparation/access/callback?code=code-factice-refuse', status=403)
-        self.examine(refused, '/preparation/access/callback', 'autorisation refusée', 'Retrouver mes cas d’usage')
-        self.assertNotIn(b'code-factice-refuse', raw)
-        page, _, _ = self.request('/preparation/access')
-        form = page.form('/access/start')
-        self.request(form['action'], form['fields'], status=303)
-        _, headers, raw = self.request('/preparation/access/callback?code=code-factice-accepte', status=303)
-        self.assertNotIn(b'code-factice-accepte', raw)
+        self.examine(page, '/preparation/access', 'aucune clé', None)
+        self.assertIn('Aucune clé enregistrée', page.visible)
+        # Un seul mécanisme : la clé saisie ; plus aucune autorisation déléguée
+        self.assertFalse(any(f['action'].endswith(('/access/start', '/access/callback')) for f in page.forms))
+        self.request('/preparation/access/callback?code=code-factice', status=403)
+        form = page.form('/access/key')
+        self.assertEqual('/preparation/access', form['fields']['return'])
+        with patch.object(self.access, 'verify_result', (401, b'{}')):
+            refused, _, raw = self.request(form['action'], form['fields'] | {'key': KEY}, status=403)
+        self.examine(refused, '/preparation/access/key', 'clé refusée', 'Retrouver mes cas d’usage')
+        self.assertIn('Cette clé Openrouter n’a pas pu être vérifiée', refused.visible)
+        self.assertNotIn(KEY.encode(), raw)
+        _, headers, raw = self.request(form['action'], form['fields'] | {'key': KEY}, status=303)
         self.assertEqual('/preparation/access', headers['Location'])
         page, _, raw = self.request(headers['Location'])
-        self.examine(page, '/preparation/access', 'connecté', 'Revenir à mes cas d’usage')
-        self.assertIn('Crédit restant : 18.5 USD', page.visible)
+        self.examine(page, '/preparation/access', 'clé enregistrée', None)
+        self.assertIn('Solde annoncé : 18,5 USD. Plafond de la clé : 20 USD.', page.visible)
         self.assertNotIn(KEY.encode(), raw)
         form = page.form('/disconnect')
-        self.request(form['action'], form['fields'], status=303)
+        _, headers, _ = self.request(form['action'], form['fields'], status=303)
+        self.assertEqual('/preparation/access', headers['Location'])
         page, _, _ = self.request('/preparation/access')
-        self.examine(page, '/preparation/access', 'déconnexion', 'Connecter mon compte Openrouter')
+        self.examine(page, '/preparation/access', 'clé retirée', None)
+        self.assertIn('Aucune clé enregistrée', page.visible)
         self.assertEqual([], self.calls)
         self.assertEqual([], self.qualifier.calls)
 

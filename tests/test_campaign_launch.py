@@ -18,7 +18,7 @@ from tests.test_openrouter_qualification import qualify_fixture
 from tests.test_s2_review_regressions import response_for
 from tests.test_s5_regressions import RESPONSIBLE, EVALUATION_AUTHORITY, findings
 from tests.test_configurations import NOW, model
-from tests.test_provider_access import AccessTransport, SECRET
+from tests.test_provider_access import AccessTransport, KEY, SECRET
 from tests.test_s3_regressions import fixture, specification, check, ACTOR, AUTHORITY
 from tests.test_s4_regressions import inputs, manifest, response
 
@@ -302,9 +302,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.access = AccessTransport()
 
     def connect(self):
-        provider_access.start(self.store, self.sid, SECRET,
-                              'https://example.test/preparation/access/callback')
-        provider_access.callback(self.store, self.sid, SECRET, 'code', self.access)
+        provider_access.import_key(self.store, self.sid, SECRET, KEY, self.access)
 
     def test_restitution_expose_le_critere_qualitatif_et_refuse_le_jugement_expert(self):
         self.connect()

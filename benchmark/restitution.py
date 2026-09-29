@@ -7,7 +7,7 @@ from urllib.parse import parse_qsl, urlencode
 
 from .validation import identifier
 from .acquisition import campaigns as c
-from . import evaluation as e, preparation as p, qualification as q
+from . import evaluation as e, model_catalogue, preparation as p, qualification as q
 from .publications import SCHEMA, PRESENTATION_VERSION, _decode
 from .storage import _transaction, _strict_json as encode
 
@@ -273,7 +273,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 obligations=spec['obligations'], cost_basis=basis, cells=campaign['cells'],
                 campaign_state=campaign['state'], history=records, href=base, pending_attempts=pending,
                 acquisition_dates=[a['received_at'] for a in campaign['attempts'] if a['received_at']],
-                stop_reason=campaign['stop_reason'],
+                stop_reason=campaign['stop_reason'], model_names=model_catalogue.display_names(store),
                 dossier_href=f'/preparation/dossiers/{dossier_id}/revisions/{contract["revision"]}?campaign={campaign_id}')
 
 
@@ -296,7 +296,7 @@ def detail(store, session_id, dossier_id, campaign_id, attempt_id, *, query=None
                                      record['evaluation_id'], [link['piece_id'] for link in record['proof_links']])
             record['proof_contents'] = {pid: raw.decode('utf-8') for pid, raw in pieces.items()}
     return p.page_view(dict(kind='attempt_detail', campaign_id=campaign_id, task=value['task'],
-                       need=value['need'], conclusion=value['conclusion'], history=history,
+                       need=value['need'], model_names=value['model_names'], conclusion=value['conclusion'], history=history,
                        filter_scope=value['filter_scope'], dossier_href=value['dossier_href'], href=value['href'],
                        back_href=value['href'] + ('?' + urlencode(value['filter_scope']) if value['filter_scope'] else '') +
                                  '#attempt-' + attempt_id))
@@ -312,14 +312,16 @@ def _task_index(store, connection, dossier_id, current, campaigns):
     for fingerprint, in fingerprints:
         contract = q._contract(store, connection, fingerprint)
         versions.append(dict(version=contract['version'], revision=contract['revision'],
-            campaigns=[dict(campaign_id=v['campaign_id'], href=campaign_url(dossier_id, v['campaign_id']))
+            campaigns=[dict(campaign_id=v['campaign_id'], href=campaign_url(dossier_id, v['campaign_id']),
+                                frozen_at=v['conditions']['frozen_at'])
                        for v in campaigns if v['contract_sha256'] == fingerprint]))
     for fingerprint, version, revision in connection.execute(
             'SELECT contract_sha256,version,revision FROM s2_comparison_contracts '
             'WHERE dossier_id=? ORDER BY version', (dossier_id,)):
         c._comparison_contract(store, connection, fingerprint)
         versions.append(dict(version=version, revision=revision,
-            campaigns=[dict(campaign_id=v['campaign_id'], href=campaign_url(dossier_id, v['campaign_id']))
+            campaigns=[dict(campaign_id=v['campaign_id'], href=campaign_url(dossier_id, v['campaign_id']),
+                                frozen_at=v['conditions']['frozen_at'])
                        for v in campaigns if v['contract_sha256'] == fingerprint]))
     return dict(dossier_id=dossier_id, need=store.get_dossier(dossier_id, current)['request'],
                 revision=current, revisions=revisions, versions=versions,

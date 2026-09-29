@@ -233,6 +233,19 @@ def _variant(model_id):
     return ':'.join(variants) or None
 
 
+def display_names(store):
+    """Noms commerciaux du dernier relevé par identifiant ; l'affichage ne touche jamais au manifeste scellé"""
+    try:
+        latest = _latest(store)
+    except storage.IntegrityError:
+        return {}
+    models = latest[1].get('models') if latest else None
+    if type(models) is not list:
+        return {}
+    return {model['id']: model['name'] for model in models
+            if type(model) is dict and type(model.get('id')) is str and type(model.get('name')) is str and model['name']}
+
+
 def selection(store):
     """Renvoie la dernière sélection connue et signale explicitement son âge"""
     latest = _latest(store)

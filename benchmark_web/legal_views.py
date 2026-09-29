@@ -175,15 +175,13 @@ CONFIDENTIALITE = (
     + table('Cookies déposés', ('Nom', 'Déposé quand', 'Rôle', 'Durée'), (
         ('<code>benchmark_session</code>', 'À l’ouverture de votre espace', 'Accès à vos cas d’usage sans compte',
          '30 jours sans interaction réelle'),
-        ('<code>benchmark_access_callback</code>', 'Quand vous connectez votre accès OpenRouter',
-         'Sécuriser le retour depuis OpenRouter', 'Le temps de l’opération, supprimé au retour'),
         ('<code>benchmark_contributions</code>', 'Seulement si vous activez une contribution',
          'Vous permettre de la retirer même après expiration de l’accès principal',
          'Jusqu’à la dernière échéance de vos contributions')))
     + '<p>Ces cookies sont protégés (<code>HttpOnly</code>, <code>Secure</code>) et limités au parcours privé. Ils '
     'ne servent à aucun suivi.</p>'
-    '<p>Les deux premiers sont exemptés de consentement car strictement nécessaires au service que vous demandez. '
-    'Le troisième n’est déposé que si vous activez la contribution facultative : il accompagne votre consentement '
+    '<p>Le premier est exempté de consentement car strictement nécessaire au service que vous demandez. '
+    'Le second n’est déposé que si vous activez la contribution facultative : il accompagne votre consentement '
     'et disparaît avec lui.</p><p>Stockage local complémentaire :</p>'
     + table('Stockage local complémentaire', ('Élément', 'Rôle'), (
         ('<code>bench-x-history</code> (IndexedDB)',
