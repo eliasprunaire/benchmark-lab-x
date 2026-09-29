@@ -256,16 +256,12 @@ body:has(dialog[open]) { overflow: hidden; }
 
 /* Pied de page */
 footer.site { margin-top: 3.5rem; border-top: 1px solid var(--line-2); padding: 1.8rem 0 1.4rem; color: var(--muted); font-size: .88rem; }
-footer.site .cols { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1.3fr; gap: 1.4rem 2rem; }
+footer.site .cols { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr; gap: 1.4rem 2rem; }
 footer.site h2 { font-size: .74rem; color: var(--ink-2); font-weight: 700; margin: 0 0 .5rem; }
 footer.site ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; }
 footer.site a { color: var(--ink-2); text-decoration: none; }
 footer.site a:hover { color: var(--accent-ink); text-decoration: underline; }
 footer.site p { margin: 0; }
-/* Engagements de confidentialité alignés sur le texte qui suit le cadenas */
-footer.site ul.privacy { gap: .5rem; }
-footer.site ul.privacy li { display: flex; gap: .4rem; }
-footer.site ul.privacy li:not(:has(svg)) { padding-left: calc(1.15em + .4rem); }
 footer.site .source { display: inline-flex; gap: .4rem; align-items: center; margin-left: auto; }
 footer.site .brandline { display: flex; gap: .6rem; align-items: center; color: var(--ink); font-weight: 700; font-size: 1rem; margin-bottom: .5rem; }
 footer.site .brandline img { width: 1.4rem; height: 1.4rem; color: var(--accent); }

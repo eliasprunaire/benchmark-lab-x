@@ -196,8 +196,11 @@ def preparation_steps(value):
     results_href = base
     if base is not None and campaign.get('judgment') and campaign['judgment']['status'] != 'COMPLETE':
         results_href = base + '/conditions'
-    targets = [reference + '#besoin', reference + '#exemple' if example else None,
-               reference + '#validation' if example else None,
+    # Sur la page du cas, les trois premières étapes sont un sommaire ; depuis une autre page, elles mènent
+    # au haut du cas, où l'encadré d'état dit où l'on en est, jamais au milieu d'une section
+    sections = [('' if downstream else '#') + anchor for anchor in ('besoin', 'exemple', 'validation')]
+    targets = [reference if downstream else sections[0], (reference if downstream else sections[1]) if example else None,
+               (reference if downstream else sections[2]) if example else None,
                models_href if models else None,
                (value['href'] if kind in ('comparison', 'attempt_detail') else results_href) if results else None]
     content = '<nav class="steps" aria-label="Étapes de préparation">'
@@ -303,8 +306,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         content = '<div class="hero"><p class="lead note">Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. '
         content += 'Nous préparons avec vous un exemple entièrement inventé, puis les modèles sont comparés dans les mêmes conditions, '
         content += 'sur des critères vérifiables et leur coût observé.</p>'
-        content += '<div class="actions"><a class="button" href="/preparation#besoin">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
-        content += '<a class="button sec" href="/preparation#mes-cas">Retrouver mes cas d’usage</a></div></div>'
+        content += '<div class="actions"><a class="button" href="/preparation">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
+        content += '<a class="button sec" href="/preparation">Retrouver mes cas d’usage</a></div></div>'
         content += section('Le parcours en cinq étapes', '<ol class="parcours">'
             '<li><strong>Besoin.</strong> Vous décrivez la tâche et le résultat utile. L’assistant pose des questions si nécessaire.</li>'
             '<li><strong>Exemple.</strong> Une consigne et des pièces inventées vous sont proposées. Vous corrigez jusqu’à ce que l’exemple soit fidèle.</li>'

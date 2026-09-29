@@ -311,7 +311,8 @@ class AccessViewTests(unittest.TestCase):
                 if active:
                     self.assertNotIn('Comparer les résultats et lire les preuves</a>', page)
                 nav = page.split('<nav class="steps"', 1)[1].split('</nav>', 1)[0]
-                self.assertIn('/preparation/dossiers/d1/revisions/2#exemple', nav)
+                self.assertIn('href="/preparation/dossiers/d1/revisions/2"', nav)
+                self.assertNotIn('#exemple', nav)
                 self.assertIn('/preparation/dossiers/d1/campaigns/c1', nav)
 
     def test_automatic_judgment_keeps_followup_until_verdicts_are_complete(self):
