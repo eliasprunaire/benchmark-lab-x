@@ -9,10 +9,15 @@ import tempfile
 import unittest
 
 from benchmark import preparation as prep, qualification as q, runtime, storage
-from tests.test_s2_review_regressions import response_for
+from tests.test_s2_review_regressions import Authorized, response_for
 
 ACTOR = 'responsable-fictif-S3'
 AUTHORITY = {'actor': ACTOR, 'authority_id': 'TEST_ONLY_APPROVAL_S3'}
+
+
+def granted(transport=True):
+    return Authorized(transport, authority_id='TEST_ONLY_PREPARATION_S3', budget_id='fictional',
+                      reserve_amount='7', requested_configuration={'model': 'fictional'})
 
 
 def fixture(data):
@@ -20,11 +25,9 @@ def fixture(data):
     storage.initialize_preparation(data)
     with closing(storage.Store(data)) as store:
         store.create_budget('fictional', '100', 'TEST')
-        prep.admit(store, dict(authority_id='TEST_ONLY_PREPARATION_S3', budget_id='fictional',
-                               reserve_amount='7', requested_configuration={'model': 'fictional'}))
         session, _, _ = prep.session(store, None, create=True)
-        op, _ = prep.submit(store, session, 'fixture', {'action_id': 'create', 'request': 'Organiser des notes fictives'}, 'a' * 40, True)
-    prep.execute(data, op, lambda op, request: response_for(op))
+        op, _ = prep.submit(store, session, 'fixture', {'action_id': 'create', 'request': 'Organiser des notes fictives'}, 'a' * 40, granted())
+    prep.execute(data, op, granted(lambda op, request: response_for(op)))
     with closing(storage.Store(data)) as store:
         view = prep.view(store, session, 'fixture')
         prep.validate(store, session, 'fixture', prep.binding('fixture', view['revision'], view['package_sha256']))
@@ -143,7 +146,7 @@ class S3Regressions(unittest.TestCase):
         self.approve(receipt)
         frozen = q.inspect_contract(self.store, self.fingerprint)
         prep.submit(self.store, self.session, 'fixture', dict(action_id='edit', revision=self.view['revision'],
-                    kind='correct', message='Modifier les notes fictives'), 'a' * 40, True)
+                    kind='correct', message='Modifier les notes fictives'), 'a' * 40, granted())
         with self.assertRaises(ValueError):
             self.approve(receipt)
         view = prep.view(self.store, self.session, 'fixture')
@@ -205,7 +208,7 @@ class S3Regressions(unittest.TestCase):
                 other._connection.execute('PRAGMA busy_timeout=0')
                 with self.assertRaises(sqlite3.OperationalError):
                     prep.submit(other, self.session, 'fixture', dict(action_id='race', revision=self.view['revision'],
-                                kind='correct', message='Correction fictive concurrente'), 'a' * 40, True)
+                                kind='correct', message='Correction fictive concurrente'), 'a' * 40, granted())
             return check(contract, resources)
         self.approve(self.qualify(competing))
         self.assertTrue(self.store.verify_storage()['integrity_ok'])

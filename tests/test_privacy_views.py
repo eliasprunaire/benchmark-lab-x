@@ -40,7 +40,7 @@ class PrivacyViewsTests(unittest.TestCase):
         metadata = {'csrf_token': 'privacy-token', 'session_expires_at': '2099-01-01T00:00:00Z',
                     'dossier_id': 'd1', 'content_version': 4,
                     'contribution': {'enabled': False, 'revision': 2, 'example_revision': 1}}
-        value = {'dossiers': [], 'personal_preparation': True, 'privacy': metadata}
+        value = {'dossiers': [], 'privacy': metadata}
         page = views.render(value, 'key-token').decode()
         self.assertIn('data-privacy-activity', page)
         self.assertIn('data-dossier-id="d1"', page)

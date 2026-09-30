@@ -22,7 +22,7 @@ STATUS_TEXT = {
     'RESPONDED': 'Le modèle a répondu. Vous pouvez le sélectionner pour la comparaison.',
     'UNCONFIRMED': 'Aucune réponse complète vérifiable : erreur, refus, réponse vide ou interrompue. Le modèle n’a pas été ajouté.',
     'EXPIRED': 'Vérification à renouveler : le relevé a expiré ou votre clé a changé.',
-    'NOT_SENT': 'Vérification annulée avant envoi : les nouveaux appels ont été fermés.',
+    'NOT_SENT': 'Vérification annulée avant envoi : aucun appel ni coût.',
 }
 
 
@@ -168,9 +168,9 @@ def submit(store, session_id, dossier_id, body, fetch, secret, access_transport=
             return record['operation_id'], None
     if not callable(fetch) or secret is None:
         raise p.Denied('PROBE_UNAVAILABLE')
-    if not p.admission(store, connection) or os.path.lexists(store._root / 'restore.json'):
+    if os.path.lexists(store._root / 'restore.json'):
         raise p.Denied('PROBE_CLOSED')
-    key = provider_access.key_for_session(store, session_id, secret, access_transport)
+    key =provider_access.key_for_session(store, session_id, secret, access_transport)
     binding = _key_binding(connection, session_id)
     try:
         config = _metadata(slug, fetch)
@@ -183,11 +183,10 @@ def submit(store, session_id, dossier_id, body, fetch, secret, access_transport=
     wire = storage._strict_json({'model': slug, 'messages': MESSAGES, **parameters})
     with storage._transaction(connection, write=True):
         if (p.owner(connection, session_id, dossier_id) != revision or
-                _key_binding(connection, session_id) != binding or not p.admission(store, connection)
+                _key_binding(connection, session_id) != binding
                 or os.path.lexists(store._root / 'restore.json')):
             raise p.Denied('PROBE_CLOSED')
-        if connection.execute("SELECT 1 FROM operations WHERE phase IN ('preparation','correction','qualification') "
-                              "AND state!='RECEIVED'").fetchone():
+        if p._pending_preparations(connection, session_id):
             raise p.Denied('PREPARATION_IN_PROGRESS')
         operation = dict(operation_id=operation_id, phase='preparation', dossier_id=dossier_id,
             revision=revision, authority='requester-model-probe:' + body['action_id'], engine_version=ENGINE,
@@ -220,7 +219,7 @@ def execute(data, operation_id, key, transport=None):
         connection = p.connection_for(store)
         session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
                                         (operation['dossier_id'],)).fetchone()[0]
-        if (not p.admission(store, connection) or os.path.lexists(store._root / 'restore.json')
+        if (os.path.lexists(store._root / 'restore.json')
                 or _key_binding(connection, session_id) != config['key_binding']):
             store.record_receipt(operation_id, dict(receipt_id='probe-' + operation_id,
                 observed_configuration=None, resources_seen=[], result={'status': 'NOT_SENT'}),

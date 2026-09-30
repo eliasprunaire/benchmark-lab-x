@@ -138,7 +138,7 @@ def page_script(value):
         return PREPARATION_PROGRESS_SCRIPT if active or ready else None
     if preparation_pending(value):
         return PREPARATION_PROGRESS_SCRIPT
-    if value.get('kind') == 'configurations' and value.get('personal_preparation'):
+    if value.get('kind') == 'configurations':
         return CUSTOM_MODELS_SCRIPT
     if 'revision' in value:
         return STEP_SCRIPT
@@ -350,13 +350,11 @@ def render(value, csrf, path='/preparation', *, error=False):
     elif 'dossiers' in value:
         title = 'Mes cas d’usage'
         access = value.get('personal_access', {})
-        if value.get('personal_preparation') and access.get('status') == 'connected':
+        if access.get('status') == 'connected':
             content = ('<p class="hint">Votre clé OpenRouter est enregistrée. ' + access_summary(access)
                        + ' <a href="/preparation/access">Gérer ma clé</a></p>')
-        elif value.get('personal_preparation'):
-            content = personal_key_form(csrf, access, '/preparation')
         else:
-            content = ''
+            content = personal_key_form(csrf, access, '/preparation')
         content += ('<p class="lead note">Vos cas d’usage restent privés dans ce navigateur. '
                     'Reprenez un cas existant ou décrivez-en un nouveau.</p>' if value['dossiers'] else
                     '<p class="lead note">Décrivez une tâche de votre travail et le résultat qui vous aiderait. '
@@ -367,8 +365,6 @@ def render(value, csrf, path='/preparation', *, error=False):
             for d in value['dossiers']) + '</ul><p><a href="/preparation/catalogue">Exemples validés et comparaisons</a></p>' if value['dossiers'] else (
                 '<p>Vous n’avez encore aucun cas d’usage dans ce navigateur. Décrivez une tâche ci-dessus pour commencer, dès que la préparation est disponible.</p>'
                 '<p>Vous en aviez déjà un ? Vos cas d’usage sont liés au navigateur où vous les avez créés. Ouvrez Bench-X dans ce navigateur-là ; si ses cookies ont été effacés, les cas ne peuvent plus être retrouvés.</p>')
-        if not value.get('personal_preparation'):
-            dossiers += '<p><a href="/preparation/access">Ma clé OpenRouter</a></p>'
         creation = section('Décrire un nouveau cas d’usage', form(csrf, '/preparation/dossiers',
             {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16)},
             REQUEST_FIELDS.format(request='', useful='', context='', request_error='', useful_error='', context_error='', request_attrs=' aria-describedby="request-help' + ('"' if can_submit else ' availability" disabled'),
@@ -561,7 +557,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             else:
                 content += '<p class="note">Cet exemple n’est pas encore validé. Relisez-le, puis validez-le pour passer à la suite.</p>'
             if editable and value['stage'] == 'preview' and value['validation'] is None:
-                content += '<p>En validant, vous confirmez que cet exemple correspond à votre besoin. L’exemple est ensuite vérifié automatiquement, si ce service est disponible : ' + ('cette vérification est payée avec votre clé OpenRouter' if value.get('personal_preparation') else 'cette vérification est prise en charge par le service') + '. Valider ne lance aucun des modèles à comparer et ne publie rien.</p>'
+                content += '<p>En validant, vous confirmez que cet exemple correspond à votre besoin. L’exemple est ensuite vérifié automatiquement, si ce service est disponible : cette vérification est payée avec votre clé OpenRouter. Valider ne lance aucun des modèles à comparer et ne publie rien.</p>'
                 content += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
                                 '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
             content += '</section>'
@@ -608,23 +604,14 @@ def render(value, csrf, path='/preparation', *, error=False):
         reasons = {
             'access': 'Ajoutez votre clé OpenRouter pour préparer un exemple.',
             'open': 'Vous pouvez envoyer votre demande. Chaque envoi est contrôlé avant d’être traité.',
-            'closed': 'Les nouvelles préparations sont fermées pour le moment. Revenez plus tard.',
             'unconfigured': 'Préparation indisponible : aucun assistant n’est en service pour le moment.',
-            'waiting': 'Une préparation est déjà en cours. Attendez qu’elle se termine ; actualisez la page pour voir où elle en est.',
-            'interrupted': 'Une préparation s’est arrêtée et ne reprendra pas d’elle-même. L’équipe Bench-X doit intervenir avant tout nouvel envoi.',
+            'waiting': 'Votre préparation précédente est en cours. Actualisez la page pour voir où elle en est.',
+            'interrupted': 'Votre préparation précédente s’est arrêtée sans résultat vérifié. L’équipe Bench-X doit intervenir avant un nouvel envoi depuis ce navigateur.',
             'restore': 'Envois fermés : le service vient d’être restauré et l’équipe Bench-X doit le vérifier.',
-            'unresolved': 'Envois fermés : le résultat ou le coût d’un appel précédent n’est pas encore connu.',
-            'budget': 'Envois fermés : le budget de préparation restant ne suffit pas pour un nouvel échange.'}
-        status = '<aside id="availability" class="availability" aria-label="État de la préparation"><p><strong>'
-        if value.get('personal_preparation'):
-            status += ('Préparation disponible' if can_submit else 'Préparation impossible pour le moment') + '.</strong></p><p>'
-        else:
-            status += 'Assistant ' + ('en service' if state['assistant_configured'] else 'hors service')
-            status += '.</strong> Envois ' + ('ouverts' if state['admission_open'] else 'fermés') + '.</p><p>'
-        funding = ('La préparation et la vérification de l’exemple sont payées avec votre clé' if value.get('personal_preparation')
-                   else 'La préparation et la vérification de l’exemple sont prises en charge par le service')
-        status += text(reasons[state['reason']]) + '</p><p class="hint">Consulter cette page ne lance aucun appel. ' + funding + '. Les modèles à comparer ne sont appelés qu’après un lancement que vous confirmez.</p></aside>'
-        content = status + content
+            'unresolved': 'Envois fermés : le résultat ou le coût d’un appel précédent n’est pas encore connu.'}
+        # L'encadré porte l'état seul (DESIGN.md) : le motif suffit, sans titre ni note de financement
+        content = ('<aside id="availability" class="availability" aria-label="État de la préparation"><p>'
+                   + text(reasons[state['reason']]) + '</p></aside>' + content)
     script = page_script(value) if not error else None
     if script is not None and value.get('kind') == 'campaign_launch' and value['campaign']['attempts']:
         content += '<script>' + script + '</script>'

@@ -544,8 +544,7 @@ def render_configurations(value, csrf):
     content += '<p class="note">Choisissez au moins deux modèles et un niveau de raisonnement. Enregistrer ce choix n’appelle aucun modèle.</p>'
     if not value.get('catalogue_available', True):
         content += '<p>' + text(value['detail']) + '</p>'
-        if value.get('personal_preparation'):
-            content += render_custom_models(value, csrf, dossier_url)
+        content += render_custom_models(value, csrf, dossier_url)
     else:
         if value.get('catalogue_stale'):
             content += '<p class="note">La liste des modèles n’a pas pu être mise à jour. Vous voyez la dernière liste disponible, qui peut ne plus être à jour.</p>'
@@ -568,8 +567,7 @@ def render_configurations(value, csrf):
         content += ('<form id="configurations-form" method="post" action="' + text(dossier_url + '/configurations') + '">' +
                     hidden('csrf_token', csrf) + '<fieldset id="model-choices"><legend>Modèles à comparer</legend>' +
                     choices + '</fieldset></form>')
-        if value.get('personal_preparation'):
-            content += render_custom_models(value, csrf, dossier_url)
+        content += render_custom_models(value, csrf, dossier_url)
         content += ('<fieldset><legend>Raisonnement</legend>' + tiers +
                     '</fieldset><button form="configurations-form"' + (' class="sec"' if value['configurations'] else '') +
                     ' type="submit">Enregistrer ma sélection</button>')

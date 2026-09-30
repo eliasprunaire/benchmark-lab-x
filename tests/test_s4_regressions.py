@@ -18,7 +18,7 @@ from benchmark.acquisition import execution
 from benchmark.acquisition import campaigns as c
 from benchmark import preparation as prep, qualification as q, runtime, storage
 from benchmark_web import views
-from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
+from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, granted, specification
 
 
 def independent_acquisition(data, entered, release):
@@ -83,7 +83,6 @@ class S4Regressions(unittest.TestCase):
         self.candidate=q.draft(self.store,'fixture',self.view['revision'],specification(self.reference))
         receipt=q.qualify(self.store,self.candidate['contract_sha256'],reviewer=ACTOR,check=check)
         q.approve(self.store,self.candidate['contract_sha256'],receipt['qualification_id'],actor=ACTOR,authority=AUTHORITY)
-        prep.close_admission(self.store)
         self.before=self.store.inspect_operations()
         c.initialize(self.data)
         self.store.create_budget('local-comparison','40','TEST')
@@ -275,8 +274,7 @@ class S4Regressions(unittest.TestCase):
 
     def test_pending_s2_change_blocks_acquisition_without_rewriting_manifest(self):
         self.admit(); self.reserve()
-        prep.admit(self.store,dict(authority_id='TEST_ONLY_EDIT',budget_id='fictional',reserve_amount='7',requested_configuration={'model':'fictional'}))
-        prep.submit(self.store,self.session,'fixture',dict(action_id='edit',revision=self.view['revision'],kind='correct',message='Modifier les notes fictives'),'a'*40,True)
+        prep.submit(self.store,self.session,'fixture',dict(action_id='edit',revision=self.view['revision'],kind='correct',message='Modifier les notes fictives'),'a'*40,granted())
         with self.assertRaises(ValueError): execution.execute(self.data,'intent-x',response)
         self.assertEqual(self.snapshot['manifest'],c.inspect(self.store,'local-comparison')['manifest'])
 

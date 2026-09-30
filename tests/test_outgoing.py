@@ -85,7 +85,7 @@ class PreparationHTTP(unittest.TestCase):
         changed=assistant.OpenRouterPreparation(KEY, other)
         prep.execute(f.data,oid,changed)
         op=next(x for x in f.store.inspect_operations() if x['operation_id']==oid)
-        self.assertEqual('INTENT_RECORDED',op['state'])
+        self.assertEqual(('RECEIVED',{'status':'NOT_SENT'}),(op['state'],op['receipt']['result']))
         f.http.request.assert_not_called()
 
 
@@ -202,7 +202,6 @@ class GenerationStructure(unittest.TestCase):
         f=prep_fixture.OpenRouterPreparationTests();f.setUp();self.addCleanup(f.doCleanups)
         for defect in ('role','extra'):
             with self.subTest(defect=defect):
-                prep.admit(f.store,f.authority)
                 broken=result()
                 if defect=='role':
                     broken['package']['candidate']['pieces'][0]['role']='judge'

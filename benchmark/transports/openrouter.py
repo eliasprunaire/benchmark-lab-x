@@ -380,6 +380,26 @@ class OpenRouterPreparation:
         bound.preparation_budget_id = preparation_budget_id(session_id)
         return bound
 
+    def quote(self):
+        if not hasattr(self, '_quote'):
+            from .prices import forecast, read_public
+            profile = self._profile
+            summary, _ = read_public('/api/v1/model/' + profile['model'])
+            estimate = forecast(profile['model'], profile.get('reserve_input_tokens', summary['context_length']),
+                                profile['parameters']['max_tokens'])
+            self._quote = configuration(estimate, profile)
+        return deepcopy(self._quote)
+
+    def authority(self):
+        """Autorité d'une session à clé personnelle, sans ouverture ni fermeture par l'opérateur"""
+        if self._session_id is None:
+            return None
+        requested = self.quote()
+        if requested.get('reserve_usd') is None:
+            return None
+        return {'authority_id': 'requester:' + self._session_id, 'budget_id': self.preparation_budget_id,
+                'reserve_amount': requested['reserve_usd'], 'requested_configuration': requested}
+
     def authorized(self, store):
         if self._session_id is None:
             return True
@@ -551,16 +571,6 @@ class OpenRouterQualification(OpenRouterPreparation):
     def configuration(self):
         return configuration(profile=self._profile)
 
-    def quote(self):
-        if not hasattr(self, '_quote'):
-            from .prices import forecast, read_public
-            profile = self._profile
-            summary, _ = read_public('/api/v1/model/' + profile['model'])
-            estimate = forecast(profile['model'], profile.get('reserve_input_tokens', summary['context_length']),
-                                profile['parameters']['max_tokens'])
-            self._quote = configuration(estimate, profile)
-        return deepcopy(self._quote)
-
     def content(self, request):
         return request['outgoing']
 
@@ -570,7 +580,6 @@ AUTOMATIC_JUDGMENT_PROFILE = Path(__file__).parent / 'profiles' / 'judgment.prof
 
 class OpenRouterJudgment(OpenRouterPreparation):
     phases = ('judgment',)
-    quote = OpenRouterQualification.quote
 
     def __init__(self, api_key, profile):
         super().__init__(api_key, profile)

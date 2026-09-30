@@ -213,7 +213,8 @@ class AccessViewTests(unittest.TestCase):
             'detail': 'Relevé de modèles indisponible', 'configurations': [],
         }, 'csrf').decode()
         self.assertIn('Relevé de modèles indisponible', page)
-        self.assertNotIn('<form', page)
+        # Sans relevé, aucune sélection ; seul l'ajout d'un modèle par son identifiant reste possible
+        self.assertNotIn('id="configurations-form"', page)
 
     def test_judgment_estimate_is_displayed_before_launch_without_inventing_a_price(self):
         value = self.campaign({'status': 'connected'})

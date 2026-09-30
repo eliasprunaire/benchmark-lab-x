@@ -152,7 +152,8 @@ class PrivateEvaluationTests(unittest.TestCase):
 class CustomNeedEngineTests(unittest.TestCase):
     def test_custom_need_crosses_current_engine_without_network(self):
         from benchmark import preparation as prep, qualification as q, web_api
-        from tests.test_s2_review_regressions import response_for
+        from tests.test_openrouter_qualification import QualificationTransport
+        from tests.test_s2_review_regressions import Authorized, response_for
         from tests.test_s3_regressions import ACTOR, AUTHORITY, check, specification
 
         with tempfile.TemporaryDirectory(prefix='custom-need-') as temporary:
@@ -162,17 +163,18 @@ class CustomNeedEngineTests(unittest.TestCase):
             with closing(storage.Store(data)) as store, patch.dict(os.environ, {}, clear=True), \
                     patch.object(pi.http, 'post') as network:
                 store.create_budget('custom-preparation-budget', '20', 'TEST')
-                prep.admit(store, dict(authority_id='TEST_ONLY_CUSTOM_PREPARATION',
+                store.create_budget('custom-qualification-budget', '20', 'USD')
+                granted = lambda transport=True: Authorized(transport, authority_id='TEST_ONLY_CUSTOM_PREPARATION',
                     budget_id='custom-preparation-budget', reserve_amount='7',
-                    requested_configuration={'model': 'fictional-local-preview'}))
-                _, home, token, _ = web_api.dispatch(store, 'GET', '/preparation', None, None, 'a' * 40, True)
+                    requested_configuration={'model': 'fictional-local-preview'})
+                _, home, token, _ = web_api.dispatch(store, 'GET', '/preparation', None, None, 'a' * 40, granted())
                 task = Path(__file__).with_name('fixtures').joinpath('custom-need-task.md').read_text()
                 mail = Path(__file__).with_name('fixtures').joinpath('custom-need-input.md').read_text()
                 body = dict(dossier_id='custom-need', action_id='custom-need-create',
                             request='Synthétiser le fil fictif Test Alpha sans inventer de décisions.', csrf_token=home['csrf_token'],
                             source_sha256='a' * 64)
                 code, _, _, operation = web_api.dispatch(
-                    store, 'POST', '/preparation/dossiers', token, body, 'a' * 40, True)
+                    store, 'POST', '/preparation/dossiers', token, body, 'a' * 40, granted())
                 self.assertEqual(202, code)
 
                 def preview_transport(op, request):
@@ -183,15 +185,18 @@ class CustomNeedEngineTests(unittest.TestCase):
                     result['receipt']['result']['reformulation'] = 'Synthétiser le fil fictif Test Alpha sans inventer de décisions.'
                     return result
 
-                prep.execute(data, operation, preview_transport)
+                prep.execute(data, operation, granted(preview_transport))
                 session = prep.session(store, token)[0]
                 preview = prep.view(store, session, 'custom-need')
                 self.assertEqual('preview', preview['stage'])
                 validation_body = prep.binding('custom-need', preview['revision'], preview['package_sha256'])
                 validation_body['csrf_token'] = home['csrf_token']
-                self.assertEqual(200, web_api.dispatch(store, 'POST',
+                self.assertEqual(202, web_api.dispatch(store, 'POST',
                     '/preparation/dossiers/custom-need/validation', token,
-                    validation_body, 'a' * 40, True)[0])
+                    validation_body, 'a' * 40, granted(), qualification_transport=Authorized(
+                        QualificationTransport({'qualified': True, 'findings': [], 'summary': 'OK'}),
+                        authority_id='TEST_ONLY_CUSTOM_QUALIFICATION', budget_id='custom-qualification-budget',
+                        reserve_amount='1', requested_configuration={'model': 'qualification/fictive'}))[0])
 
                 q.initialize(data)
                 reference = store._connection.execute(
@@ -205,7 +210,6 @@ class CustomNeedEngineTests(unittest.TestCase):
                 self.assertEqual(candidate['contract']['package_sha256'], preview['package_sha256'])
                 self.assertEqual(candidate['contract_sha256'], approval['contract_sha256'])
 
-                prep.close_admission(store)
                 c.initialize(data)
                 store.create_budget('custom-campaign-budget', '20', 'TEST')
                 campaign = c.create(store, manifest(candidate, 'custom-need-local'))
@@ -246,7 +250,7 @@ class PiTransportTests(unittest.TestCase):
         # The simulated fixture remains; add a separate campaign with actual Pi identity
         # This fixture declares TEST in its frozen cost basis: use a fresh qualified USD fixture
         from tests.test_s3_regressions import fixture, specification, check, ACTOR, AUTHORITY
-        from benchmark import preparation as prep, qualification as q, web_api
+        from benchmark import qualification as q, web_api
         self.realdata = self.fixture.home / 'pi-private'
         session, view, reference = fixture(self.realdata)
         self.session = session
@@ -258,7 +262,6 @@ class PiTransportTests(unittest.TestCase):
         draft = q.draft(realstore, 'fixture', view['revision'], spec)
         qualified = q.qualify(realstore, draft['contract_sha256'], reviewer=ACTOR, check=check)
         q.approve(realstore, draft['contract_sha256'], qualified['qualification_id'], actor=ACTOR, authority=AUTHORITY)
-        prep.close_admission(realstore)
         c.initialize(self.realdata)
         e.initialize(self.realdata)
         realstore.create_budget('pi-offline', '1', 'USD')

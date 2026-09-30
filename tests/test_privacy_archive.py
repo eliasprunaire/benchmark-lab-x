@@ -12,7 +12,8 @@ from unittest.mock import patch
 from benchmark import preparation as p, privacy, provider_access, storage
 from benchmark.acquisition import campaigns as c, execution
 from tests.test_s4_regressions import inputs, response
-from tests.test_s2_review_regressions import response_for
+from tests.test_s2_review_regressions import Authorized, response_for
+from tests.test_s3_regressions import granted
 from benchmark import privacy_archive as archive
 from tests.test_s6_regressions import build
 
@@ -125,11 +126,11 @@ class PrivacyArchiveTests(unittest.TestCase):
         dossier = 'copy-source'
         budget = provider_access.preparation_budget_id(self.sid)
         self.store.create_budget(budget, '100', 'TEST')
-        p.admit(self.store, dict(authority_id='TEST_ONLY_COPY', budget_id=budget,
-            reserve_amount='7', requested_configuration={'model': 'fictional'}))
+        copy = lambda transport=True: Authorized(transport, authority_id='TEST_ONLY_COPY', budget_id=budget,
+            reserve_amount='7', requested_configuration={'model': 'fictional'})
         operation, _ = p.submit(self.store, self.sid, dossier,
-            dict(action_id='copy-create', request='Organiser des notes fictives'), 'a' * 40, True)
-        p.execute(self.data, operation, lambda op, request: response_for(op))
+            dict(action_id='copy-create', request='Organiser des notes fictives'), 'a' * 40, copy())
+        p.execute(self.data, operation, copy(lambda op, request: response_for(op)))
         body = dict(example_revision=p.view(self.store, self.sid, dossier)['revision'], revision=0, enabled=True)
         value, token = archive.change_contribution(self.store, self.session_token, dossier, body, now=self.now)
         contribution = value['contribution']
@@ -239,11 +240,9 @@ class PrivacyArchiveTests(unittest.TestCase):
         archive.refresh_contributions(self.store, 'fixture')
         self.assertEqual(row, self.connection.execute('SELECT revision,content_version,expires_at,payload_json FROM s7_contributions').fetchone())
         view = p.view(self.store, self.sid, 'fixture')
-        p.admit(self.store, dict(authority_id='TEST_ONLY_REVISION', budget_id='fictional',
-            reserve_amount='7', requested_configuration={'model': 'fictional'}))
         operation, _ = p.submit(self.store, self.sid, 'fixture', dict(action_id='new-example',
-            revision=view['revision'], kind='correct', message='Préciser la consigne'), 'a' * 40, True)
-        p.execute(self.data, operation, lambda op, request: response_for(op))
+            revision=view['revision'], kind='correct', message='Préciser la consigne'), 'a' * 40, granted())
+        p.execute(self.data, operation, granted(lambda op, request: response_for(op)))
         self.assertEqual(view['revision'] + 1, p.view(self.store, self.sid, 'fixture')['revision'])
         archive.refresh_contributions(self.store, 'fixture')
         self.assertEqual(row, self.connection.execute('SELECT revision,content_version,expires_at,payload_json FROM s7_contributions').fetchone())

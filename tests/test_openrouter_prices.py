@@ -69,29 +69,6 @@ class OpenRouterPricesTests(unittest.TestCase):
         self.connection.assert_called_with('openrouter.ai', timeout=20)
         self.assertEqual(2, self.http.close.call_count)
 
-    def test_runtime_prepares_s2_configuration_from_the_public_forecast(self):
-        profile = assistant.load_profile(assistant.ASSISTANT)
-        self.responses([{**ENDPOINT, 'tag': tag, 'provider_name': provider,
-                         'model_id': profile['model'],
-                         'supported_parameters': ['temperature', 'top_p', 'reasoning', 'max_tokens', 'response_format']}
-                        for tag, provider in assistant.providers(profile).items()],
-                       summary={'id': profile['model'], 'canonical_slug': profile['revision'],
-                                'context_length': profile['reserve_input_tokens'],
-                                'pricing': {'prompt': '0.000001', 'completion': '0.000002'}})
-        with redirect_stdout(io.StringIO()) as output, patch.object(runtime, 'Store') as store:
-            self.assertEqual(0, runtime.main(['forecast-prices', '--model', profile['model'], '--input-tokens',
-                                              str(profile['reserve_input_tokens']), '--output-tokens', '16384',
-                                              '--preparation-assistant', assistant.ASSISTANT]))
-        value = json.loads(output.getvalue())['preparation']
-        self.assertEqual('0.096768', value['reserve_amount'])
-        self.assertEqual(profile['model'], value['requested_configuration']['model'])
-        self.assertEqual('OpenRouter', value['requested_configuration']['provider'])
-        self.assertEqual(assistant.ASSISTANT, value['requested_configuration']['profile_id'])
-        self.assertEqual(assistant.profile_digest(profile),
-                         value['requested_configuration']['profile_sha256'])
-        self.assertIn('reservation_estimate', value['requested_configuration'])
-        store.assert_not_called()
-
     def test_forecast_refuses_model_distinct_from_profile_before_http(self):
         self.responses()
         with redirect_stdout(io.StringIO()) as output, patch.object(assistant, 'HTTPSConnection') as inference:

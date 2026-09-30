@@ -67,10 +67,10 @@ def authority(connection, ctx):
 
 
 def admission(store, connection):
-    current = p.admission(store, connection)
-    if current is None or os.path.lexists(store._root / 'restore.json'):
-        raise ConflictError('Évaluation fermée pendant la maintenance ou la restauration')
-    return current['authority_id']
+    # Le jugement relève de la clé du demandeur : seule une restauration à rapprocher le suspend
+    if os.path.lexists(store._root / 'restore.json'):
+        raise ConflictError('Évaluation fermée pendant la restauration')
+    return 'requester'
 
 
 def operations(store, connection, campaign_id):
@@ -184,7 +184,7 @@ def status(store, connection, campaign_id):
         result.update(status='BLOCKED', reason='L’évaluation n’a pas fourni de preuves exploitables. Les réponses et reçus sont conservés.')
     elif ops:
         saved = json.loads(ops[0]['resources'][0])['context']['campaign']
-        if p.admission(store, connection) is None or any(snapshot[key] != saved[key]
+        if any(snapshot[key] != saved[key]
                 for key in ('admission', 'stop_reason', 'restore_pending')):
             result.update(status='BLOCKED', reason='Évaluation interrompue. Aucun appel ne sera relancé automatiquement.')
         else:

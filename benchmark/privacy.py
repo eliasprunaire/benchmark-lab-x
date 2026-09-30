@@ -92,16 +92,9 @@ def boot_identity():
         return None
 
 
-def boot_pending(connection):
-    if not available(connection):
-        return False
-    identity = boot_identity()
-    row = connection.execute('SELECT verified_boot FROM s7_control').fetchone()
-    return identity is None or row != (identity,)
-
-
 def quarantined(store):
-    return os.path.lexists(store._root / 'restore.json') or boot_pending(store._connection_checked())
+    # Un redémarrage de la machine ne met plus en quarantaine : seule une restauration de sauvegarde le fait
+    return os.path.lexists(store._root / 'restore.json')
 
 
 def schema_objects():
@@ -259,8 +252,6 @@ def authorize_session(connection, session_id, current=None):
     from .preparation import Denied
     if not available(connection):
         return
-    if boot_pending(connection):
-        raise Denied('RESTORE_PENDING')
     if connection.execute('SELECT phase FROM s7_control').fetchone() != ('READY',):
         raise Denied('PRIVACY_MIGRATION_PENDING')
     row = connection.execute('SELECT expires_at FROM s7_sessions WHERE session_id=?', (session_id,)).fetchone()
@@ -343,9 +334,7 @@ def verify(store, connection):
 def operation_allowed(connection, dossier_id):
     if not available(connection):
         return
-    if boot_pending(connection):
-        raise ConflictError('Rapprochement requis après redémarrage de la machine')
-    row = connection.execute('SELECT session_id FROM s7_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()
+    row =connection.execute('SELECT session_id FROM s7_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()
     # Les objets opérateur hors parcours privé gardent leur contrat d'origine
     if row:
         authorize_dossier(connection, row[0], dossier_id)

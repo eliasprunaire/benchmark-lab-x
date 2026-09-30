@@ -21,7 +21,7 @@ from benchmark.acquisition import campaigns as c
 from benchmark import evaluation as e, preparation as p, privacy, provider_access, publications as pub, qualification as q, restitution as r, service, storage, web_api
 from benchmark_web import projection, views
 from benchmark_web.server import serve_web
-from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
+from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, granted, specification
 from tests.test_s4_regressions import inputs, manifest, response
 from tests.test_s5_regressions import RESPONSIBLE, EVALUATION_AUTHORITY, findings
 
@@ -72,7 +72,6 @@ def build(data, criterion_ids=('duration', 'present')):
         candidate = q.draft(store, 'fixture', view['revision'], spec)
         qualified = q.qualify(store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
         q.approve(store, candidate['contract_sha256'], qualified['qualification_id'], actor=ACTOR, authority=AUTHORITY)
-        p.close_admission(store)
         c.initialize(data)
         e.initialize(data)
         store.create_budget('comparison', '100', 'TEST')
@@ -438,15 +437,13 @@ class S6Regressions(unittest.TestCase):
         connection = self.store._connection
         previous = p.owner(connection, self.sid, 'fixture')
         foreign, _, foreign_token = p.session(self.store, None, create=True)
-        p.admit(self.store, dict(authority_id='TEST_ONLY_PREPARATION_S3', budget_id='fictional',
-                                reserve_amount='7', requested_configuration={'model': 'fictional'}))
         for sid, did, body in (
                 (self.sid, 'second', dict(action_id='create', request='Autre dossier fictif')),
                 (foreign, 'foreign', dict(action_id='create', request='Dossier privé étranger')),
                 (self.sid, 'fixture', dict(action_id='correct', revision=previous,
                                            kind='correct', message='Modifier les notes fictives'))):
-            operation, _ = p.submit(self.store, sid, did, body, 'a' * 40, True)
-            p.execute(self.home / 'private', operation, lambda op, _: response_for(op))
+            operation, _ = p.submit(self.store, sid, did, body, 'a' * 40, granted())
+            p.execute(self.home / 'private', operation, granted(lambda op, _: response_for(op)))
         self.before = list(connection.iterdump())
         current = p.owner(connection, self.sid, 'fixture')
         catalogue = r.catalogue(self.store, self.sid)

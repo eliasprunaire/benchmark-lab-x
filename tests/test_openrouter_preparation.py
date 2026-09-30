@@ -1,6 +1,6 @@
 """HTTP simulations only; usage fixtures are not evidence of provider access."""
 from base64 import b64decode
-from contextlib import closing, nullcontext, redirect_stdout
+from contextlib import closing, nullcontext, redirect_stderr, redirect_stdout
 from copy import deepcopy
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -21,6 +21,7 @@ from benchmark import outgoing, preparation as prep, qualification, runtime, ser
 from benchmark_web import views
 from benchmark_web.server import serve_web
 from benchmark.transports import openrouter as assistant
+from tests.test_s2_review_regressions import Authorized
 
 
 PROFILE = assistant.load_profile(assistant.ASSISTANT)
@@ -121,35 +122,24 @@ def executor_process(data, sock, entered=None, clock=None):
         connection.getresponse.side_effect = interrupted_response
     time_patch = (patch.object(prep, '_now', side_effect=lambda: datetime.fromtimestamp(clock.value, timezone.utc))
                   if clock is not None else nullcontext())
-    with time_patch, patch.dict(os.environ, {'OPENROUTER_API_KEY': KEY}), patch.object(assistant, 'HTTPSConnection', return_value=connection), \
+    from tests.test_provider_access import AccessTransport, SECRET
+    # Relevé de prix lu au démarrage en production ; ici figé, sans réseau
+    with time_patch, patch.dict(os.environ, {'BENCHMARK_ACCESS_SECRET': SECRET.hex()}), \
+            patch.object(assistant, 'HTTPSConnection', return_value=connection), \
+            patch.object(assistant.OpenRouterPreparation, 'quote', return_value=assistant.configuration(ESTIMATE)), \
+            patch('benchmark.provider_access.OpenRouterAccess', AccessTransport), \
             patch('benchmark.transports.prices.fetch_public', side_effect=OSError('Catalogue factice indisponible')), \
             patch.object(service, 'release_identity', return_value='a' * 40):
         runtime.main(['executor', '--data', str(data), '--socket', str(sock),
-                      '--preparation-assistant', assistant.ASSISTANT])
+                      '--preparation-assistant', assistant.ASSISTANT,
+                      '--qualification-assistant', assistant.QUALIFICATION_ASSISTANT])
 
 
 class OpenRouterPreparationTests(unittest.TestCase):
-    def test_operator_cli_reopens_with_explicit_profile_and_stdin_authority(self):
-        prep.close_admission(self.store)
-        output = io.StringIO()
-        with redirect_stdout(output), patch('sys.stdin', io.StringIO(json.dumps(self.authority))):
-            code = runtime.main(['admit-preparation', '--data', str(self.data),
-                                 '--authority', '-', '--preparation-assistant', 'preparation'])
-        self.assertEqual(0, code, output.getvalue())
-        self.assertEqual(self.authority, prep.admission(self.store))
-        with redirect_stdout(io.StringIO()):
-            self.assertEqual(0, runtime.main(['close-preparation', '--data', str(self.data)]))
-        self.assertIsNone(prep.admission(self.store))
-
-    def test_checked_admission_refuses_exhausted_budget_without_reopening(self):
-        prep.close_admission(self.store)
-        self.store.create_budget('too-small', '0.01', 'USD')
-        authority = {**self.authority, 'budget_id': 'too-small'}
-        with self.assertRaises(storage.BudgetError):
-            prep.admit(self.store, authority, profile=PROFILE)
-        self.assertIsNone(prep.admission(self.store))
-        prep.admit(self.store, self.authority, profile=PROFILE)
-        self.assertEqual(self.authority, prep.admission(self.store))
+    def test_operator_commands_no_longer_exist(self):
+        for action in ('admit-preparation', 'close-preparation', 'inspect-preparation'):
+            with self.subTest(action=action), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                runtime.main([action, '--data', str(self.data)])
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='openrouter-fixture-')
@@ -163,9 +153,11 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.store.create_budget('fixture', '100', 'USD')
         self.authority = dict(authority_id='FICTIONAL_HTTP_ONLY', budget_id='fixture',
                               reserve_amount=RESERVE, requested_configuration=assistant.configuration(ESTIMATE))
-        prep.admit(self.store, self.authority)
+        # Le vrai transport OpenRouter, muni de l'autorité de sa session ; seul HTTP est simulé
+        self.authorized = lambda authority=None, inner=None: Authorized(
+            inner or assistant.OpenRouterPreparation(KEY), **(authority or self.authority))
         self.session, self.csrf, self.token = prep.session(self.store, None, create=True)
-        self.transport = assistant.OpenRouterPreparation(KEY)
+        self.transport = self.authorized()
         self.http = Mock()
         self.http.getresponse.return_value.status = 200
         self.http.getresponse.return_value.length = 0
@@ -194,8 +186,24 @@ class OpenRouterPreparationTests(unittest.TestCase):
         provider_access.initialize(self.data)
         access = AccessTransport()
         provider_access.import_key(self.store, self.session, SECRET, PERSONAL_KEY, access)
-        bound, _ = service.personal_transports(self.store, self.token, self.transport, None, SECRET, access)
+        # Assistant de l'exécuteur, sans clé ; relevé chargé au démarrage en production, aucune lecture réseau ici
+        unbound = assistant.OpenRouterPreparation(None)
+        unbound._quote = deepcopy(self.authority['requested_configuration'])
+        bound, _ = service.personal_transports(self.store, self.token, unbound, None, SECRET, access)
         return bound, SECRET, PERSONAL_KEY
+
+    def test_personal_session_prepares_without_any_operator_authority(self):
+        # Aucune autorité hors de la session : sa clé suffit
+        bound, _, _ = self.personal_transport()
+        self.assertEqual('open', prep.availability(self.store, bound, self.session)['reason'])
+        operation, started = prep.submit(self.store, self.session, 'personal',
+            dict(action_id='create', request=NEED), 'a' * 40, bound)
+        self.assertTrue(started)
+        prep.execute(self.data, operation, bound)
+        self.assertEqual(1, self.http.request.call_count)
+        received = self.store.inspect_operations()[0]
+        self.assertEqual(('RECEIVED', 'requester:' + self.session, 'personal-preparation-' + self.session),
+                         (received['state'], received['authority'], received['budget_id']))
 
     def test_out_of_scope_stops_dossier_without_closing_other_preparations(self):
         answer = result('suspended')
@@ -206,7 +214,6 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('RECEIVED', operation['state'])
         self.assertEqual('math', view['checks'].get('out_of_scope'))
         self.assertIsNone(view['package'])
-        self.assertIsNotNone(prep.admission(self.store))
         before = len(self.store.inspect_operations())
         with self.assertRaisesRegex(prep.Denied, 'OUT_OF_SCOPE'):
             self.submit(action_id='continue', revision=view['revision'], kind='clarify', message='Oui')
@@ -260,7 +267,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
         prep.execute(self.data, operation, bound)
         self.http.request.assert_not_called()
         self.assertFalse(bound.authorized(self.store))
-        self.assertEqual('INTENT_RECORDED', self.store.inspect_operations()[0]['state'])
+        operation = self.store.inspect_operations()[0]
+        self.assertEqual(('RECEIVED', {'status': 'NOT_SENT'}), (operation['state'], operation['receipt']['result']))
         self.assertEqual((None, None), service.personal_transports(
             self.store, self.token, self.transport, None, secret, None))
 
@@ -296,8 +304,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.http.request.reset_mock()
         prep.execute(self.data, next_op, bound)
         self.http.request.assert_not_called()
-        self.assertEqual('INTENT_RECORDED', next(op for op in self.store.inspect_operations()
-                                              if op['operation_id'] == next_op)['state'])
+        blocked = next(op for op in self.store.inspect_operations() if op['operation_id'] == next_op)
+        self.assertEqual(('RECEIVED', {'status': 'NOT_SENT'}), (blocked['state'], blocked['receipt']['result']))
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
     def test_personal_authorization_reports_unavailable_without_destroying_access(self):
@@ -388,9 +396,10 @@ class OpenRouterPreparationTests(unittest.TestCase):
                 else:
                     sent['provider'] = provider
                 conserved = storage._strict_json(sent)
-                self.transport._wire_sha256 = sha256(conserved.encode()).hexdigest()
-                self.transport._key_sha256 = sha256(KEY.encode()).hexdigest()
-                reply = self.transport(dict(operation, state='EMISSION_POSSIBLE',
+                inner = self.transport._transport
+                inner._wire_sha256 = sha256(conserved.encode()).hexdigest()
+                inner._key_sha256 = sha256(KEY.encode()).hexdigest()
+                reply = inner(dict(operation, state='EMISSION_POSSIBLE',
                                             conserved_wire=conserved), {})
                 observed = reply['receipt']['observed_configuration']
                 self.assertIsNone(observed['data_collection'])
@@ -463,7 +472,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
             for criterion_id in ('duration', 'present', 'clarity')]
         with self.assertRaisesRegex(ValueError, '^QUALITY_LIMIT$'):
             qualification._specification(contract)
-        prep.admit(self.store, self.authority)
+        self.transport = self.authorized()
         self.http.getresponse.return_value.read.return_value = http_body(value)
         operation_id, _ = prep.submit(self.store, self.session, 'quality-limit',
             dict(action_id='create', request=NEED), 'a' * 40, self.transport)
@@ -479,7 +488,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         operation, view = self.execute()
         self.assertEqual('RECEIVED', operation['state'])
         self.assertEqual('suspended', view['stage'])
-        self.assertIsNone(prep.admission(self.store))
+        # Un résultat inutilisable suspend ce cas d'usage seul, pas la préparation des autres
         self.assertEqual(http_body(broken), b64decode(operation['receipt']['observed_configuration']['http']['body_base64']))
         self.assertEqual([], self.store.verify_storage()['orphan_files'])
 
@@ -509,7 +518,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         variants.extend([(dict(valid, stage='invalid', package_note=None), False), ([], False)])
         for index, (value, accepted) in enumerate(variants):
             with self.subTest(index=index):
-                prep.admit(self.store, self.authority)
+                self.transport = self.authorized()
                 dossier = 'null-field-' + str(index)
                 raw = http_body(value)
                 self.http.getresponse.return_value.read.return_value = raw
@@ -534,8 +543,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
                         piece = view['package']['pieces'][0]
                         self.assertEqual(NOTES.encode(), prep.piece_bytes(self.store, self.session, dossier, view['revision'], piece['id']))
                 else:
-                    self.assertIsNone(prep.admission(self.store))
-                    self.assertIsNone(view['package'])
+                                self.assertIsNone(view['package'])
         self.assertEqual(len(variants), self.http.request.call_count)
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
@@ -547,7 +555,6 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.http.getresponse.return_value.read.return_value = raw
         operation, view = self.execute()
         self.assertEqual('suspended', view['stage'])
-        self.assertIsNone(prep.admission(self.store))
         self.assertEqual('RECEIVED', operation['state'])
         self.assertEqual('0.004', operation['observed_cost']['amount'])
         observed = operation['receipt']['observed_configuration']
@@ -647,24 +654,20 @@ class OpenRouterPreparationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.transport.prepare(operation, request)
         self.authority['requested_configuration']['model'] = 'glm-5.3'
-        prep.admit(self.store, self.authority)
+        self.transport = self.authorized()
         with self.assertRaises(ValueError):
             self.execute()
         self.assertEqual([], self.store.inspect_operations())
         self.assertEqual('0', self.store.inspect_budget('fixture')['reserved'])
-        self.assertEqual(self.authority, prep.admission(self.store))
         self.http.request.assert_not_called()
 
     def test_usd_envelope_refuses_before_http(self):
         self.store.create_budget('other', '100', 'TEST')
-        self.store.create_budget('wide', '101', 'USD')
         cases = [('reserve', dict(reserve_amount='0')),
-                 ('currency', dict(budget_id='other')),
-                 ('limit', dict(budget_id='wide'))]
+                 ('currency', dict(budget_id='other'))]
         for name, change in cases:
             with self.subTest(change=name):
-                prep.close_admission(self.store)
-                prep.admit(self.store, dict(self.authority, **change))
+                self.transport = self.authorized(dict(self.authority, **change))
                 self.http.request.reset_mock()
                 with self.assertRaises(ValueError):
                     self.submit(action_id='case-' + name, request=NEED)
@@ -701,7 +704,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         estimate['model_summary']['pricing_raw'] = None
         self.assertIsNone(assistant.reservation(estimate))
         self.authority['requested_configuration'] = assistant.configuration(estimate)
-        prep.admit(self.store, self.authority)
+        self.transport = self.authorized()
         operation, view = self.execute()
         self.assertEqual('preview', view['stage'])
         self.assertIsNone(view['indicative_cost'])
@@ -732,7 +735,6 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('preview', view['stage'])
         self.assertEqual(2, operation['receipt']['observed_configuration']['route']['attempt'])
         self.assertEqual('KNOWN', operation['observed_cost']['status'])
-        self.assertIsNotNone(prep.admission(self.store))
         self.assertEqual(1, self.http.request.call_count)
 
     def test_canonical_model_is_attributed_but_another_revision_or_endpoint_is_rejected(self):
@@ -748,7 +750,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         for index, updates in enumerate([{'model': PROFILE['model'] + '-20260827'},
                 {'openrouter_metadata': {**ROUTE, 'attempts': [{'provider': 'Modal', 'model': PROFILE['model'] + '-20260827'}]}},
                 {'openrouter_metadata': {**ROUTE, 'attempts': [{'provider': 'Modal', 'tag': 'outside/fp8', 'model': PROFILE['model']}]}}]):
-            prep.admit(self.store, self.authority)
+            self.transport = self.authorized()
             self.http.getresponse.return_value.read.return_value = http_body(**updates)
             operation, view = self.execute(action_id='different-' + str(index), revision=view['revision'], kind='correct', message=CORRECTION)
             self.assertEqual('suspended', view['stage'])
@@ -817,6 +819,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
                     process.kill()
                     process.join()
         self.addCleanup(stop_children)
+        bound, _, _ = self.personal_transport()
         clock = context.Value('d', time.time())
         for target, args in [(executor_process, (self.data, sock, None, clock)),
                              (serve_web, ('127.0.0.1', port, public, sock, 'a' * 40))]:
@@ -841,17 +844,15 @@ class OpenRouterPreparationTests(unittest.TestCase):
             except OSError: pass
             if time.monotonic() > deadline: self.fail('local processes not ready')
             time.sleep(.02)
-        self.assertIsNone(prep.admission(self.store))
-        prep.admit(self.store, self.authority)
-        body = dict(csrf_token=self.csrf, dossier_id='d', action_id='http', request=NEED)
+        # Le démarrage de l'exécuteur ne ferme plus la préparation
+        body =dict(csrf_token=self.csrf, dossier_id='d', action_id='http', request=NEED)
         missing_source = service.preparation_request(sock, 'POST', '/preparation/dossiers', self.token, body)
         self.assertEqual((400, 'SOURCE_MISSING'),
                          (missing_source['status'], missing_source['value']['error_code']))
         self.assertEqual(400, call('/preparation/dossiers', {
             **body, 'dossier_id': 'too-large', 'action_id': 'large', 'request': 'x' * 65536})[0])
         self.assertEqual([], self.store.inspect_operations())
-        self.assertEqual('0', self.store.inspect_budget('fixture')['reserved'])
-        self.assertEqual(self.authority, prep.admission(self.store))
+        self.assertEqual('0', self.store.inspect_budget(bound.preparation_budget_id)['reserved'])
         self.assertEqual([], self.store._connection.execute('SELECT * FROM s2_actions').fetchall())
         self.assertEqual([], self.store._connection.execute('SELECT * FROM s2_dossiers').fetchall())
         self.assertEqual(400, call('/preparation/dossiers', {**body, 'model': 'other'})[0])
@@ -912,10 +913,6 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('suspended', view['stage'])
         self.assertNotIn('indicative_cost', view)
         self.assertEqual('UNKNOWN', original['observed_cost']['status'])
-        self.assertIsNone(prep.admission(self.store))
-        with self.assertRaises(prep.Denied):
-            self.submit(action_id='closed', revision=2, kind='clarify', message=CLARIFICATION)
-        prep.admit(self.store, self.authority)
         response.status = 200
         response.read.return_value = http_body(result('clarification'), usage={'prompt_tokens': 1000, 'completion_tokens': 200})
         second, view = self.execute(action_id='new', revision=2, kind='clarify', message=CLARIFICATION)
@@ -968,7 +965,9 @@ class OpenRouterPreparationTests(unittest.TestCase):
             prep.execute(self.data, pending, self.transport)
             self.assertEqual(1, self.http.request.call_count)
             operation = next(row for row in self.store.inspect_operations() if row['operation_id'] == pending)
-            self.assertEqual('INTENT_RECORDED', operation['state'])
+            # Bloquée avant émission : close sans coût, jamais émise
+            self.assertEqual(('RECEIVED', {'status': 'NOT_SENT'}, '0'),
+                             (operation['state'], operation['receipt']['result'], operation['observed_cost']['amount']))
         self.assertEqual('UNKNOWN', next(row for row in self.store.inspect_operations() if row['operation_id'] == original['operation_id'])['observed_cost']['status'])
 
     def test_null_recorded_observation_remains_readable_and_has_no_estimate(self):
@@ -976,7 +975,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         receipt = {'receipt_id': 'fictional-null-observation', 'observed_configuration': None,
                    'resources_seen': [], 'result': result('clarification')}
         cost = {'status': 'UNKNOWN', 'amount': None, 'currency': 'USD', 'source': 'Fictional recorded receipt'}
-        prep.execute(self.data, operation, lambda op, request: {'receipt': receipt, 'cost': cost})
+        prep.execute(self.data, operation, self.authorized(inner=lambda op, request: {'receipt': receipt, 'cost': cost}))
         view = prep.view(self.store, self.session, 'd')
         self.assertEqual('clarification', view['stage'])
         self.assertNotIn('indicative_cost', view)
@@ -1006,8 +1005,9 @@ class OpenRouterPreparationTests(unittest.TestCase):
                 except OSError:
                     if time.monotonic() > deadline: self.fail('executor not ready')
                     time.sleep(.02)
+        bound, _, _ = self.personal_transport()
+        budget = bound.preparation_budget_id
         first = start(entered)
-        prep.admit(self.store, self.authority)
         accepted = service.preparation_request(sock, 'POST', '/preparation/dossiers', self.token,
             dict(csrf_token=self.csrf, dossier_id='d', action_id='interrupted', request=NEED,
                  source_sha256='a' * 64))
@@ -1023,8 +1023,10 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual(pending['resources'], after['resources'])
         self.assertEqual(2, len(after['resources']))
         self.assertIsNone(after['receipt'])
-        self.assertIsNone(prep.admission(self.store))
-        self.assertEqual(RESERVE, self.store.inspect_budget('fixture')['reserved'])
+        # L'appel ambigu bloque sa session, pas l'autorité de préparation
+        with self.assertRaises(prep.Denied):
+            self.submit(action_id='after-kill', revision=1, kind='clarify', message=CLARIFICATION)
+        self.assertEqual(RESERVE, self.store.inspect_budget(budget)['reserved'])
         self.assertEqual('suspended', prep.view(self.store, self.session, 'd')['stage'])
 
     def test_two_profiles_drive_exact_simulated_http_bytes(self):
@@ -1035,10 +1037,9 @@ class OpenRouterPreparationTests(unittest.TestCase):
         sent_models = []
         for profile, dossier in ((production, 'profil-production'), (synthetic, 'profil-test')):
             estimate = estimate_for(profile)
-            prep.admit(self.store, dict(authority_id='FICTIONAL_HTTP_ONLY', budget_id='fixture',
-                                        reserve_amount=assistant.reservation(estimate, profile),
-                                        requested_configuration=assistant.configuration(estimate, profile)))
-            transport = assistant.OpenRouterPreparation(KEY, deepcopy(profile))
+            transport = self.authorized(dict(self.authority, reserve_amount=assistant.reservation(estimate, profile),
+                                             requested_configuration=assistant.configuration(estimate, profile)),
+                                        assistant.OpenRouterPreparation(KEY, deepcopy(profile)))
             route = {'requested': profile['model'], 'strategy': 'direct', 'attempt': 1,
                      'endpoints': {'available': [{'provider': profile['routes'][0]['provider_name'],
                                                   'model': profile['model'], 'selected': True}]}}
@@ -1116,7 +1117,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
                     value['package']['candidate']['pieces'][0]['content'] = marker
                 else:
                     value['package']['candidate'] = marker
-                prep.admit(self.store, self.authority)
+                self.transport = self.authorized()
                 self.http.getresponse.return_value.read.return_value = http_body(value)
                 operation_id, _ = prep.submit(self.store, self.session, dossier,
                     dict(action_id='create', request=NEED), 'a' * 40, self.transport)
@@ -1149,7 +1150,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('FORMAT_ERROR', operation['receipt']['observed_configuration']['incident'])
         self.assertEqual(1, view['checks']['scope_confirmation_count'])
 
-        prep.admit(self.store, self.authority)
+        self.transport = self.authorized()
         self.http.getresponse.return_value.read.return_value = http_body(result('scope_confirmation'))
         _, view = self.execute(action_id='scope-2-after-error', revision=view['revision'], kind='clarify',
                                message='Poursuis avec ce périmètre.')
@@ -1229,10 +1230,9 @@ class OpenRouterPreparationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             assistant.frozen_profile(extra_capability)
         estimate = estimate_for(profile)
-        prep.admit(self.store, dict(authority_id='FICTIONAL_HTTP_ONLY', budget_id='fixture',
-                                    reserve_amount=assistant.reservation(estimate, profile),
-                                    requested_configuration=assistant.configuration(estimate, profile)))
-        transport = assistant.OpenRouterPreparation(KEY, deepcopy(profile))
+        transport = self.authorized(dict(self.authority, reserve_amount=assistant.reservation(estimate, profile),
+                                         requested_configuration=assistant.configuration(estimate, profile)),
+                                    assistant.OpenRouterPreparation(KEY, deepcopy(profile)))
         route = {'requested': profile['model'], 'strategy': 'direct', 'attempt': 1,
                  'endpoints': {'available': [{'provider': profile['routes'][0]['provider_name'],
                                               'model': profile['model'], 'selected': True}]}}

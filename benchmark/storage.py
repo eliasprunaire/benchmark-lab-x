@@ -880,7 +880,6 @@ class Store:
     def _reconciliation_maintenance(self, connection):
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
         if (connection.execute("SELECT 1 FROM operations WHERE state='EMISSION_POSSIBLE' LIMIT 1").fetchone()
-                or ('s2_control' in tables and connection.execute('SELECT 1 FROM s2_control WHERE admission_json IS NOT NULL').fetchone())
                 or ('s4_status' in tables and connection.execute('SELECT 1 FROM s4_status WHERE admission_id IS NOT NULL LIMIT 1').fetchone())):
             raise ConflictError('maintenance and quiescence required for reconciliation')
 

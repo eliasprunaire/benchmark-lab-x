@@ -57,7 +57,6 @@ class PrivacyMigrationTests(unittest.TestCase):
         access.initialize(self.data)
         self.store = storage.Store(self.data)
         self.addCleanup(self.store.close)
-        p.close_admission(self.store)
         self.oauth_sid, _, self.oauth_token = p.session(self.store, None, create=True)
         self.seed_access(self.sid, KEY, 'key')
         self.seed_access(self.oauth_sid, OAUTH, 'oauth')

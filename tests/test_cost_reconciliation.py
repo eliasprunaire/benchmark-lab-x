@@ -16,6 +16,7 @@ from benchmark.acquisition import campaigns
 from benchmark_web import views
 from benchmark.transports import openrouter as assistant
 from tests.test_openrouter_preparation import ESTIMATE, RESERVE, KEY, NEED, PROFILE, http_body, result
+from tests.test_s2_review_regressions import Authorized
 
 
 class CostReconciliationTests(unittest.TestCase):
@@ -34,9 +35,8 @@ class CostReconciliationTests(unittest.TestCase):
         self.store.create_budget('fixture', '100', 'USD')
         self.authority = dict(authority_id='FIXTURE_ONLY', budget_id='fixture', reserve_amount=RESERVE,
                               requested_configuration=assistant.configuration(ESTIMATE))
-        prep.admit(self.store, self.authority)
         self.session, self.csrf, self.token = prep.session(self.store, None, create=True)
-        self.transport = assistant.OpenRouterPreparation(KEY)
+        self.transport = Authorized(assistant.OpenRouterPreparation(KEY), **self.authority)
         self.http = Mock()
         self.response = self.http.getresponse.return_value
         self.response.status, self.response.length = 429, 0
@@ -55,7 +55,7 @@ class CostReconciliationTests(unittest.TestCase):
         self.original = self.store.inspect_operations()[0]
         self.assertEqual('UNKNOWN', self.original['observed_cost']['status'])
         self.assertEqual('suspended', prep.view(self.store, self.session, 'd')['stage'])
-        self.assertIsNone(prep.admission(self.store))
+        self.assertEqual(self.authority, prep.admission(self.store, transport=self.transport))
 
     def proof(self, amount='0.012345678901234567890123456789', native=False):
         document = ('Fictional OpenRouter billing export. PRIVATE DOCUMENT SENTINEL. '
@@ -95,13 +95,11 @@ class CostReconciliationTests(unittest.TestCase):
         rendered = views.render(view, self.csrf).decode()
         self.assertIn('Coût corrigé après vérification', rendered)
         self.assertIn('Coût observé de cette préparation : inconnu', rendered)
-        self.assertIsNone(prep.admission(self.store))
+        self.assertEqual(self.authority, prep.admission(self.store, transport=self.transport))
         self.assertEqual((self.operation_id, False), prep.submit(self.store, self.session, 'd', self.body, 'fixture-source', self.transport))
         message = dict(action_id='separate-action', revision=view['revision'], kind='clarify', message='Continuer le dossier fictif')
-        with self.assertRaises(prep.Denied):
-            prep.submit(self.store, self.session, 'd', message, 'fixture-source', self.transport)
         self.assertEqual(1, self.http.request.call_count)
-        prep.admit(self.store, self.authority)
+        # Un coût inconnu ne ferme rien : l'utilisateur continue son cas d'usage par une action explicite
         self.response.status = 200
         self.response.getheader.side_effect = lambda name: None
         self.response.read.return_value = http_body(result('clarification'))
@@ -160,7 +158,6 @@ class CostReconciliationTests(unittest.TestCase):
     def test_explicit_s5_extension_and_backup_restore_preserve_proofs_and_restore_gate(self):
         self.assertEqual('s5', storage._check_schema(self.store._connection))
         self.assertIsNone(self.store.verify_storage()['cost_reconciliation_format'])
-        with self.assertRaises(storage.ConflictError): self.store.initialize_reconciliation()
         self.receive()
         before = runtime.backup(self.data, self.home / 'before')
         self.assertIsNone(before['cost_reconciliation_format'])
@@ -178,7 +175,7 @@ class CostReconciliationTests(unittest.TestCase):
             self.assertEqual(self.original, other.inspect_operations()[0])
             self.assertEqual(proof['cost'], other.inspect_cost(self.operation_id)['effective_cost'])
             self.assertTrue(runtime.status(restored, other)['restore_pending'])
-            with self.assertRaises(ValueError): prep.admit(other, self.authority)
+            self.assertIsNone(prep.admission(other, transport=self.transport))
         restored_before = self.home / 'restored-before'
         runtime.restore(self.home / 'before', restored_before)
         with closing(storage.Store(restored_before)) as other:
@@ -204,7 +201,6 @@ class CostReconciliationTests(unittest.TestCase):
             self.assertEqual(0, runtime.main(['inspect-cost', '--data', str(self.data), '--authority', str(path)]))
         self.assertEqual('UNKNOWN', json.loads(output.getvalue())['observed_cost']['status'])
         self.assertEqual('101', json.loads(output.getvalue())['effective_cost']['amount'])
-        prep.admit(self.store, self.authority)
         with self.assertRaises(storage.BudgetError):
             prep.submit(self.store, self.session, 'd', dict(action_id='over', revision=2, kind='clarify', message='Fictif'), 'source', self.transport)
         self.assertEqual(1, self.http.request.call_count)

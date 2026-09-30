@@ -80,7 +80,7 @@ class AutomaticJudgment(unittest.TestCase):
         with patch.object(preparation, 'session', return_value=(self.sid, 'csrf', 'token')):
             return web_api.dispatch(self.store, method,
                 '/preparation/dossiers/fixture/campaigns/' + self.cid + suffix, 'token', body, 'a' * 40, True,
-                candidate_transport=response, judgment_transport=self.transport, personal_preparation=True,
+                candidate_transport=response, judgment_transport=self.transport,
                 access_secret=SECRET, access_transport=self.fixture.access)
 
     def test_economic_help_uses_complete_results_despite_display_filters(self):

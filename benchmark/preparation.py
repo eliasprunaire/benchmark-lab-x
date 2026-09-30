@@ -2,7 +2,6 @@
 from contextlib import closing
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 from hashlib import sha256
 import json
 import logging
@@ -132,41 +131,49 @@ def connection_for(store):
 
 
 def admission(store, connection=None, *, transport=None):
-    connection = connection if connection is not None else connection_for(store)
-    from .privacy import boot_pending
-    if boot_pending(connection):
+    """Autorité d'appel, portée par le transport lié à la session et à sa clé
+
+    Aucune ouverture ni fermeture par l'opérateur ; seule une restauration à rapprocher suspend les appels
+    """
+    if os.path.lexists(store._root / 'restore.json'):
         return None
-    raw = connection.execute('SELECT admission_json FROM s2_control WHERE singleton=1').fetchone()[0]
-    if raw is None:
-        return None
-    result = json.loads(raw, object_pairs_hook=_unique_object)
-    check_authority(result)
-    preparation_budget_id = getattr(transport, 'preparation_budget_id', None)
-    if preparation_budget_id is not None:
-        result = {**result, 'budget_id': preparation_budget_id}
+    derived = getattr(transport, 'authority', None)
+    result = cast(dict[str, Any] | None, derived()) if callable(derived) else None
+    if result is not None:
+        check_authority(result)
     return result
 
 
-def availability(store, transport):
+def _pending_preparations(connection, session_id):
+    """Préparations non terminées de la session, ou de tout le service sans session"""
+    if session_id is None:
+        return connection.execute(
+            "SELECT state FROM operations WHERE phase IN ('preparation','correction','qualification') "
+            "AND state != 'RECEIVED'").fetchall()
+    return connection.execute(
+        "SELECT o.state FROM operations o JOIN s2_dossiers d USING(dossier_id) "
+        "WHERE d.session_id=? AND o.phase IN ('preparation','correction','qualification') "
+        "AND o.state != 'RECEIVED'", (session_id,)).fetchall()
+
+
+def availability(store, transport, session_id=None):
     """Read-only projection of preparation gates, without configuration or secrets"""
     connection = connection_for(store)
     with _transaction(connection):
         authority = admission(store, connection, transport=transport)
         configured = bool(transport)
         reason = 'open'
-        pending = connection.execute(
-            "SELECT state FROM operations WHERE phase IN ('preparation','correction','qualification') "
-            "AND state != 'RECEIVED'").fetchall()
+        pending = _pending_preparations(connection, session_id)
         if os.path.lexists(store._root / 'restore.json'):
             reason = 'restore'
         elif any(row[0] == 'AMBIGUOUS' for row in pending):
             reason = 'interrupted'
         elif pending:
-            reason = 'waiting' if authority and configured else 'interrupted'
-        elif authority is None:
-            reason = 'closed'
+            reason = 'waiting'
         elif not configured:
             reason = 'unconfigured'
+        elif authority is None:
+            reason = 'access'
         else:
             operations = store._operations(connection)
             budget = store._budget(connection, authority['budget_id'], operations)
@@ -174,8 +181,6 @@ def availability(store, transport):
                     row['budget_id'] == authority['budget_id'] and row['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS')
                     for row in operations)):
                 reason = 'unresolved'
-            elif not budget['provider_managed'] and _money(authority['reserve_amount']) > Decimal(budget['available']):
-                reason = 'budget'
         return {'assistant_configured': configured, 'admission_open': authority is not None,
                 'can_submit': reason == 'open', 'reason': reason}
 
@@ -190,36 +195,19 @@ def check_authority(value):
     encode(value)
 
 
-def close_admission(store):
-    connection = store._s1_connection()
-    if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s2_control'").fetchone():
-        with _transaction(connection, write=True):
-            connection.execute('UPDATE s2_control SET admission_json=NULL WHERE singleton=1 AND admission_json IS NOT NULL')
-
-
-def admit(store, authority, *, profile=None):
-    from .privacy import quarantined
-    check_authority(authority)
-    connection = connection_for(store)
+def _not_sent(store, connection, operation_id):
+    """Clore une intention jamais émise : coût nul, et sa session peut renvoyer sans intervention"""
     with _transaction(connection, write=True):
-        if quarantined(store):
-            raise Denied('Restauration à rapprocher')
-        operations = store._operations(connection)
-        budget = store._budget(connection, authority['budget_id'], operations)
-        if profile is not None:
-            from .transports.openrouter import configuration
-            requested = authority['requested_configuration']
-            expected = configuration(requested.get('reservation_estimate'), profile)
-            if requested != expected or 'reserve_usd' not in expected:
-                raise Denied('CONFIGURATION_CHANGED')
-            _usd_budget(authority['reserve_amount'], requested, budget)
-            if (not budget['provider_managed'] and _money(authority['reserve_amount']) > _money(budget['available'])
-                    or store._blocking_costs(operations, budget, 'preparation')):
-                raise BudgetError('Enveloppe de préparation indisponible')
-            if connection.execute(
-                    "SELECT 1 FROM operations WHERE state!='RECEIVED' LIMIT 1").fetchone():
-                raise Denied('PREPARATION_IN_PROGRESS')
-        connection.execute('UPDATE s2_control SET admission_json=? WHERE singleton=1', (encode(authority),))
+        if not connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' "
+                                  "WHERE operation_id=? AND state='INTENT_RECORDED'", (operation_id,)).rowcount:
+            return
+        currency = connection.execute('SELECT b.currency FROM reservations r JOIN budgets b USING(budget_id) '
+                                      'WHERE r.operation_id=?', (operation_id,)).fetchone()[0]
+        store._record_receipt(connection, operation_id,
+            dict(receipt_id='not-sent-' + operation_id, observed_configuration=None, resources_seen=[],
+                 result={'status': 'NOT_SENT'}),
+            dict(status='KNOWN', amount='0', currency=currency, source='Contrôle local : transport non engagé'))
+
 
 
 def session(store, token, *, create=False):
@@ -360,22 +348,24 @@ def _automatic_qualification(store, connection, dossier_id, revision):
                              'FROM s2_qualifications WHERE dossier_id=? AND revision=?',
                              (dossier_id, revision)).fetchone()
     if row is None:
-        operation = next((item for item in store._operations(connection)
-                          if (item['dossier_id'], item['revision'], item['phase']) ==
-                             (dossier_id, revision, 'qualification')), None)
+        # La plus récente : une qualification close sans envoi peut avoir été relancée
+        operation = max((item for item in store._operations(connection)
+                         if (item['dossier_id'], item['revision'], item['phase']) ==
+                            (dossier_id, revision, 'qualification')), key=lambda item: item['created_at'], default=None)
         if operation is None:
             return None
         if validated is None:
             raise IntegrityError('Qualification sans validation du besoin')
         blocked_intent = (operation['state'] == 'INTENT_RECORDED'
-                          and (admission(store, connection) is None
-                               or os.path.lexists(store._root / 'restore.json')))
+                          and os.path.lexists(store._root / 'restore.json'))
         failed = operation['state'] in ('AMBIGUOUS', 'RECEIVED') or blocked_intent
         cost = (operation['observed_cost']['amount'] if operation['state'] == 'RECEIVED'
                 and operation['observed_cost']['status'] == 'KNOWN' else None)
         status = 'BLOCKED' if failed else 'PENDING'
         return dict(operation_id=operation['operation_id'], qualified=False, findings=[],
-                    summary=('Résultat de qualification reçu non utilisable' if operation['state'] == 'RECEIVED'
+                    summary=('Qualification arrêtée sans émission ni coût'
+                             if operation['state'] == 'RECEIVED' and operation['receipt']['result'] == {'status': 'NOT_SENT'}
+                             else 'Résultat de qualification reçu non utilisable' if operation['state'] == 'RECEIVED'
                              else 'Effets de qualification inconnus' if operation['state'] == 'AMBIGUOUS'
                              else 'Qualification suspendue : intention conservée sans émission ni reprise automatique' if blocked_intent
                              else 'Qualification en attente'),
@@ -486,11 +476,11 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
             if pending:
                 ambiguous = any(r[0] == 'AMBIGUOUS' for r in pending)
                 blocked_intent = (any(r[0] == 'INTENT_RECORDED' for r in pending)
-                                  and (admission(store, connection) is None or os.path.lexists(store._root / 'restore.json')))
+                                  and os.path.lexists(store._root / 'restore.json'))
                 result['stage'] = 'suspended' if ambiguous or blocked_intent else 'waiting'
                 result['explanation'] = (
                     'Effets inconnus : préparation suspendue, aucun rejeu autorisé.' if ambiguous else
-                    'Admission fermée : intention conservée sans émission ni reprise automatique.' if blocked_intent else
+                    'Service restauré : intention conservée sans émission ni reprise automatique.' if blocked_intent else
                     'Préparation en attente. Actualisez pour consulter son avancement ; aucun appel ne sera relancé.')
                 result['validation'] = None
         contract = (connection.execute('SELECT 1 FROM s3_contracts WHERE dossier_id=? AND revision=?',
@@ -541,7 +531,7 @@ def piece_bytes(store, session_id, dossier_id, revision, piece_id):
 def _usd_budget(reserved_amount, requested, budget):
     if 'reserve_usd' not in requested:
         return
-    if (budget['currency'] != 'USD' or not budget['provider_managed'] and _money(budget['limit']) > Decimal('100')
+    if (budget['currency'] != 'USD'
             or (requested['reserve_usd'] is not None
                 and _money(reserved_amount) < _money(requested['reserve_usd']))):
         raise ValueError('Configuration ou réservation OpenRouter divergente')
@@ -614,10 +604,8 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
             raise Denied('Admission fermée ou transport absent')
         if enforce_limits:
             _submission_limits(connection, session_id, now, authority)
-        # S2 admits one effect at a time; no restart drains a durable queue
-        if connection.execute(
-                "SELECT 1 FROM operations WHERE phase IN ('preparation','correction','qualification') "
-                "AND state != 'RECEIVED' LIMIT 1").fetchone():
+        # Un effet à la fois par session : la préparation d'un visiteur n'en bloque aucun autre
+        if _pending_preparations(connection, session_id):
             raise Denied('PREPARATION_IN_PROGRESS')
         if enforce_limits:
             _source_limit(source_sha256, now)
@@ -728,16 +716,16 @@ def validate_and_qualify(store, session_id, dossier_id, body, source, transport)
         result = _validate(store, connection, session_id, dossier_id, body)
         revision = result['revision']
         existing = connection.execute(
-            "SELECT operation_id,state FROM operations WHERE dossier_id=? AND revision=? AND phase='qualification'",
+            "SELECT operation_id,state,receipt_json FROM operations WHERE dossier_id=? AND revision=? "
+            "AND phase='qualification' ORDER BY created_at DESC, rowid DESC LIMIT 1",
             (dossier_id, revision)).fetchone()
-        if existing:
+        # Une qualification close sans envoi se relance ; toute autre reste unique pour sa version
+        if existing and not (existing[1] == 'RECEIVED' and json.loads(existing[2])['result'] == {'status': 'NOT_SENT'}):
             return result, existing[0], False
         authority = admission(store, connection, transport=transport)
         if authority is None or os.path.lexists(store._root / 'restore.json'):
             raise Denied('ADMISSION_CLOSED')
-        if connection.execute(
-                "SELECT 1 FROM operations WHERE phase IN ('preparation','correction','qualification') "
-                "AND state!='RECEIVED' LIMIT 1").fetchone():
+        if _pending_preparations(connection, session_id):
             raise Denied('PREPARATION_IN_PROGRESS')
         reserve = str(max(_money(authority['reserve_amount']),
                           _money(configuration.get('reserve_usd', authority['reserve_amount']))))
@@ -786,7 +774,7 @@ def execute_qualification(data, operation_id, transport):
         try:
             proof = store.verify_storage()
             if not proof['integrity_ok'] or proof['orphan_files']:
-                close_admission(store)
+                logging.getLogger(__name__).error('QUALIFICATION_STORAGE_UNVERIFIED operation=%s', operation_id)
                 return
             with _transaction(connection, write=True):
                 try:
@@ -847,14 +835,12 @@ def execute_qualification(data, operation_id, transport):
         except Exception as error:
             if emitted:
                 store.mark_ambiguous(operation_id, 'QUALIFICATION_RESULT_NOT_VERIFIED')
-            else:
-                close_admission(store)
             logging.getLogger(__name__).error('QUALIFICATION_STOPPED operation=%s emitted=%s error=%s',
                                               operation_id, emitted, type(error).__name__)
         finally:
             if operation is not None and not emitted and connection.execute('SELECT state FROM operations WHERE operation_id=?',
                     (operation_id,)).fetchone() == ('INTENT_RECORDED',):
-                close_admission(store)
+                _not_sent(store, connection, operation_id)
                 logging.getLogger(__name__).warning('QUALIFICATION_BLOCKED operation=%s', operation_id)
 
 
@@ -868,7 +854,7 @@ def execute(data, operation_id, transport):
         try:
             proof = store.verify_storage()
             if not proof['integrity_ok'] or proof['orphan_files']:
-                close_admission(store)
+                logging.getLogger(__name__).error('PREPARATION_STORAGE_UNVERIFIED operation=%s', operation_id)
                 return
             with _transaction(connection, write=True):
                 operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
@@ -910,7 +896,7 @@ def execute(data, operation_id, transport):
                                                 operation_id, response['cost']['status'])
             except Exception as error:
                 # Publication rolled back; keep the original receipt with an unusable revision
-                # RECEIVED and closed admission become visible in the same commit
+                # Suspension limitée au cas d'usage : les autres restent ouverts
                 with _transaction(connection, write=True):
                     dossier_id, before = operation['dossier_id'], operation['revision']
                     current = connection.execute('SELECT current_revision FROM s2_dossiers WHERE dossier_id=?',
@@ -934,21 +920,18 @@ def execute(data, operation_id, transport):
                                                             'scope_confirmation_count': scope_count})))
                     connection.execute('UPDATE s2_dossiers SET current_revision=? WHERE dossier_id=?',
                                        (revision, dossier_id))
-                    connection.execute('UPDATE s2_control SET admission_json=NULL WHERE singleton=1')
                 logging.getLogger(__name__).warning('PREPARATION_RECEIVED operation=%s usable=False error=%s cost=%s',
                     operation_id, type(error).__name__, response['cost']['status'])
         except Exception as error:
             # Never log request/response/exception text, which may contain private data
             if emitted:
                 store.mark_ambiguous(operation_id, 'PREPARATION_RESULT_NOT_VERIFIED')
-            else:
-                close_admission(store)
             logging.getLogger(__name__).error('PREPARATION_STOPPED operation=%s emitted=%s error=%s',
                                               operation_id, emitted, type(error).__name__)
         finally:
             if operation is not None and not emitted and connection.execute('SELECT state FROM operations WHERE operation_id=?',
                     (operation_id,)).fetchone() == ('INTENT_RECORDED',):
-                close_admission(store)
+                _not_sent(store, connection, operation_id)
                 logging.getLogger(__name__).warning('PREPARATION_BLOCKED operation=%s', operation_id)
 
 
@@ -1072,7 +1055,6 @@ def publish(store, operation, request, response):
 
 def verify_preparation(store, connection):
     """Check the S2 joins and actual package bytes in the caller's snapshot."""
-    admission(store, connection)
     for dossier_id, session_id, current in connection.execute('SELECT * FROM s2_dossiers').fetchall():
         identifier(dossier_id)
         if not connection.execute('SELECT 1 FROM s2_revisions WHERE dossier_id=? AND revision=?', (dossier_id, current)).fetchone():

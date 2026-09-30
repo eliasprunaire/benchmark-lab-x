@@ -11,7 +11,7 @@ from unittest.mock import patch
 from benchmark.transports import openrouter as assistant
 from benchmark.acquisition import campaigns
 from benchmark import preparation as prep, qualification, service, storage, web_api
-from tests.test_s2_review_regressions import response_for
+from tests.test_s2_review_regressions import Authorized, response_for
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, specification
 
 
@@ -20,9 +20,9 @@ KEY = 'fixture-s17-key-not-a-credential'
 
 def qualify_fixture(data, store, session, dossier_id, preview):
     store.create_budget('qualification', '100', 'USD')
-    prep.admit(store, dict(authority_id='TEST_ONLY_QUALIFICATION', budget_id='qualification',
-                          reserve_amount='1', requested_configuration={'model': 'préparation/factice'}))
     transport = QualificationTransport({'qualified': True, 'findings': [], 'summary': 'Exemple qualifié'})
+    transport.granted = dict(authority_id='TEST_ONLY_QUALIFICATION', budget_id='qualification',
+                             reserve_amount='1', requested_configuration={'model': 'préparation/factice'})
     _, operation_id, _ = prep.validate_and_qualify(
         store, session, dossier_id, prep.binding(dossier_id, preview['revision'], preview['package_sha256']),
         'a' * 40, transport)
@@ -31,9 +31,16 @@ def qualify_fixture(data, store, session, dossier_id, preview):
 
 
 class QualificationTransport:
+    # Autorité de la session à laquelle l'exécuteur lie l'assistant ; None : session sans clé
+    granted = dict(authority_id='TEST_ONLY_S17', budget_id='preparation',
+                   reserve_amount='1', requested_configuration={'model': 'preparation/fictive'})
+
     def __init__(self, result):
         self.result = result
         self.calls = []
+
+    def authority(self):
+        return deepcopy(self.granted)
 
     def configuration(self):
         return {'model': 'qualification/fictive', 'revision': 'qualification/fictive-v1'}
@@ -75,12 +82,10 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.store = storage.Store(self.data)
         self.addCleanup(self.store.close)
         self.store.create_budget('preparation', '100', 'USD')
-        prep.admit(self.store, dict(authority_id='TEST_ONLY_S17', budget_id='preparation',
-                                   reserve_amount='1', requested_configuration={'model': 'preparation/fictive'}))
         self.session, self.csrf, self.token = prep.session(self.store, None, create=True)
         operation_id, _ = prep.submit(self.store, self.session, 'dossier',
             {'action_id': 'create', 'request': 'Organiser les actions de cet atelier entièrement inventé'},
-            'a' * 40, True)
+            'a' * 40, Authorized(True, **QualificationTransport.granted))
         response = response_for({'operation_id': operation_id})
         response['receipt']['result']['package']['candidate']['criteria'] = {
             'eliminatory': ['Ne pas inventer une action'],
@@ -89,7 +94,7 @@ class OpenRouterQualificationTests(unittest.TestCase):
                          'favorable': 'excellent'}]}
         response['cost'].update(amount='0.10', currency='USD')
         with self.assertLogs('benchmark.preparation', level='INFO') as journal:
-            prep.execute(self.data, operation_id, lambda *_: response)
+            prep.execute(self.data, operation_id, Authorized(lambda *_: response, **QualificationTransport.granted))
         self.assertIn('PREPARATION_EMITTING', journal.output[0])
         self.assertIn('PREPARATION_RECEIVED', journal.output[-1])
         self.assertNotIn(response['receipt']['result']['reformulation'], '\n'.join(journal.output))
@@ -120,7 +125,7 @@ class OpenRouterQualificationTests(unittest.TestCase):
         transport, operation_id = self.validate(
             {'qualified': True, 'findings': [], 'summary': 'Contrôles prouvés'})
         self.assertEqual('PENDING', prep.view(self.store, self.session, 'dossier')['qualification']['status'])
-        prep.close_admission(self.store)
+        transport.granted = None
         with self.assertLogs('benchmark.preparation', level='WARNING') as journal:
             prep.execute_qualification(self.data, operation_id, transport)
         self.assertIn('QUALIFICATION_BLOCKED', journal.output[-1])
@@ -143,6 +148,7 @@ class OpenRouterQualificationTests(unittest.TestCase):
         from tests.test_openrouter_preparation import estimate_for
         quoted = assistant.configuration(estimate_for(transport._profile), transport._profile)
         self.enterContext(patch.object(transport, 'quote', return_value=quoted))
+        self.enterContext(patch.object(transport, 'authority', return_value=deepcopy(QualificationTransport.granted)))
         configuration = transport.configuration()
         self.assertEqual('anthropic/claude-fable-5.1', configuration['model'])
         self.assertEqual({'effort': 'medium'}, configuration['parameters']['reasoning'])
@@ -378,7 +384,7 @@ class OpenRouterQualificationTests(unittest.TestCase):
         for worker in workers[1:]:
             worker.start()
             worker.join(2)
-        observed = prep.availability(self.store, True)
+        observed = prep.availability(self.store, transport)
         transport.release.set()
         for worker in workers:
             worker.join(2)
@@ -393,7 +399,7 @@ class OpenRouterQualificationTests(unittest.TestCase):
                           side_effect=storage.ConflictError('État déjà avancé')):
             prep.execute_qualification(self.data, operation_id,
                                        QualificationTransport({'qualified': True, 'findings': [], 'summary': 'OK'}))
-        self.assertIsNotNone(prep.admission(self.store))
+        self.assertTrue(prep.availability(self.store, QualificationTransport({}))['admission_open'])
 
     def test_erreurs_de_qualification_exposent_un_code_et_un_texte_francais(self):
         errors = []
@@ -403,19 +409,19 @@ class OpenRouterQualificationTests(unittest.TestCase):
                                       'b' * 40, None)
         except prep.Denied as error:
             errors.append(error)
-        prep.close_admission(self.store)
+        unbound = QualificationTransport({'qualified': True, 'findings': [], 'summary': 'OK'})
+        unbound.granted = None
         try:
             prep.validate_and_qualify(self.store, self.session, 'dossier',
                                       prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']),
-                                      'b' * 40, QualificationTransport(
-                                          {'qualified': True, 'findings': [], 'summary': 'OK'}))
+                                      'b' * 40, unbound)
         except prep.Denied as error:
             errors.append(error)
         responses = [service.denied_response(error) for error in errors]
         self.assertEqual(['QUALIFICATION_UNAVAILABLE', 'ADMISSION_CLOSED'],
                          [response['value']['error_code'] for response in responses])
         self.assertEqual(['La vérification de l’exemple est indisponible pour le moment. Réessayez plus tard.',
-                          'Les nouveaux envois sont fermés pour le moment. Réessayez plus tard.'],
+                          'Ajoutez ou vérifiez votre clé OpenRouter pour continuer. Aucun appel n’a été lancé.'],
                          [response['value']['error'] for response in responses])
 
 
