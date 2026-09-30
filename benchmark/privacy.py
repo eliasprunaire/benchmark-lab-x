@@ -9,7 +9,6 @@ from pathlib import Path
 import re
 import secrets
 import stat
-import sys
 
 from . import storage
 from .storage import ConflictError, IntegrityError, SchemaError, _transaction
@@ -80,16 +79,6 @@ def date(value):
 
 def available(connection):
     return connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s7_control'").fetchone() is not None
-
-
-def boot_identity():
-    if sys.platform != 'linux':
-        return 'non-linux'
-    try:
-        identity = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
-        return identity if re.fullmatch('[0-9a-f-]{36}', identity) else None
-    except OSError:
-        return None
 
 
 def quarantined(store):
@@ -207,11 +196,9 @@ def migrate(data, secret, migration_id, *, now=None):
                 if not table.endswith('_control'):
                     connection.execute(f'DROP TRIGGER {name}')
                     connection.execute(deletion_trigger(table))
-            identity = boot_identity()
-            if identity is None:
-                raise IntegrityError('Identité du démarrage indisponible')
-            connection.execute("INSERT INTO s7_control VALUES (1,?,?,?,'MIGRATED',?)",
-                               (FORMAT, migration_id, current.isoformat(), identity))
+            # verified_boot reste dans le schéma des sauvegardes existantes, sans usage
+            connection.execute("INSERT INTO s7_control VALUES (1,?,?,?,'MIGRATED','')",
+                               (FORMAT, migration_id, current.isoformat()))
             for (session_id,) in connection.execute('SELECT session_id FROM s2_sessions').fetchall():
                 register_session(connection, session_id, current, legacy=True)
             for dossier_id, session_id in connection.execute('SELECT dossier_id,session_id FROM s2_dossiers').fetchall():
@@ -659,18 +646,10 @@ def reconcile(data, journal_sha256):
                 hashed.update(block)
             if hashed.hexdigest() != journal_sha256:
                 raise IntegrityError('Journal différent de la preuve externe')
-            identity = boot_identity()
-            if identity is None:
-                raise IntegrityError('Identité du démarrage indisponible')
             stop(data, store, 'PRIVACY_RECONCILED_ADMISSION_CLOSED')
             result = purge(data, _reconciled_store=store)
             if result['pending']:
                 raise ConflictError('Purge non terminée ; rapprochement non validé')
-            connection = store._connection
-            if connection is None:
-                raise IntegrityError('Stockage fermé')
-            with _transaction(connection, write=True):
-                connection.execute('UPDATE s7_control SET verified_boot=?', (identity,))
             # La quarantaine financière restore.json appartient au rapprochement existant
             return migration_status(store)
         finally:
