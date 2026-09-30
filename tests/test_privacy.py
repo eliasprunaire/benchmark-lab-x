@@ -321,21 +321,19 @@ class PrivacyTests(unittest.TestCase):
         with patch.object(privacy, 'now', return_value=NOW):
             privacy.journal_intent(self.store, 'dossier', 'private-case')
             proof = sha256(privacy.journal_path(self.store).read_bytes()).hexdigest()
-            with patch.object(privacy, 'boot_identity', return_value='new-boot'):
-                # Un redémarrage de la machine ne met plus le service en quarantaine
-                self.assertFalse(runtime.status(self.data, self.store)['restore_pending'])
-                for path in ('/preparation', '/preparation/contributions'):
-                    self.assertNotEqual(503, web_api.dispatch(self.store, 'GET', path, None, None, 'a'*40, None)[0])
-                with self.assertRaises(storage.IntegrityError):
-                    privacy.reconcile(self.data, '0'*64)
-                self.assertFalse(privacy.reconcile(self.data, proof)['restore_pending'])
-                self.assertEqual(('PURGED',), self.store._connection.execute('SELECT state FROM s7_dossiers').fetchone())
+            # Un redémarrage de la machine ne met plus le service en quarantaine
+            self.assertFalse(runtime.status(self.data, self.store)['restore_pending'])
+            for path in ('/preparation', '/preparation/contributions'):
+                self.assertNotEqual(503, web_api.dispatch(self.store, 'GET', path, None, None, 'a'*40, None)[0])
+            with self.assertRaises(storage.IntegrityError):
+                privacy.reconcile(self.data, '0'*64)
+            self.assertFalse(privacy.reconcile(self.data, proof)['restore_pending'])
+            self.assertEqual(('PURGED',), self.store._connection.execute('SELECT state FROM s7_dossiers').fetchone())
 
     def test_first_boot_reconciliation_works_before_any_revocation(self):
         from hashlib import sha256
         self.assertEqual(b'', privacy.journal_path(self.store).read_bytes())
-        with patch.object(privacy, 'boot_identity', return_value='new-boot'):
-            self.assertFalse(privacy.reconcile(self.data, sha256(b'').hexdigest())['restore_pending'])
+        self.assertFalse(privacy.reconcile(self.data, sha256(b'').hexdigest())['restore_pending'])
 
     def test_expired_access_releases_only_retired_technical_markers(self):
         session, _ = self.dossier()
@@ -532,6 +530,5 @@ class ReconcileGateTests(unittest.TestCase):
     def test_rapprochement_ne_bute_pas_sur_une_requete_refusee_a_la_porte(self):
         from hashlib import sha256
         from benchmark.runtime import maintenance_gate
-        with patch.object(privacy, 'boot_identity', return_value='new-boot'), \
-                closing(storage.Store(self.data)) as other, maintenance_gate(other):
+        with closing(storage.Store(self.data)) as other, maintenance_gate(other):
             self.assertFalse(privacy.reconcile(self.data, sha256(b'').hexdigest())['restore_pending'])
