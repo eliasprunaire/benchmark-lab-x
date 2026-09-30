@@ -89,10 +89,10 @@ class ModelProbeTests(unittest.TestCase):
         value = campaigns.configurations_view(self.store, self.session, 'fixture')
         value['personal_preparation'] = True
         page = render(value, 'csrf-test').decode()
-        self.assertIn('Slug Openrouter', page)
+        self.assertIn('Identifiant du modèle sur OpenRouter', page)
         self.assertIn('Tester et ajouter', page)
-        self.assertIn('Ajouter une ligne', page)
-        self.assertIn('appel payant', page)
+        self.assertIn('Ajouter un autre modèle', page)
+        self.assertIn('Cet appel est payant', page)
         self.assertIn('/custom-models', page)
         self.assertIn(page_script(value), page)
         from tests.test_parcours_complet import Page
@@ -100,7 +100,7 @@ class ModelProbeTests(unittest.TestCase):
         disclosure = next(n for n in document.nodes if n['attrs'].get('id') == 'custom-models')
         self.assertEqual('details', disclosure['tag'])
         self.assertNotIn('open', disclosure['attrs'])
-        self.assertIn('Ajouter un slug Openrouter', disclosure['text'])
+        self.assertIn('Ajouter un modèle absent de la liste', disclosure['text'])
         self.assertLess(page.index('Modèles à comparer'), page.index('id="custom-models"'))
         self.assertLess(page.index('id="custom-models"'), page.index('Niveau de raisonnement demandé'))
         selection = document.form('/configurations')
@@ -110,7 +110,7 @@ class ModelProbeTests(unittest.TestCase):
         tiers = [n for n in document.nodes if n['attrs'].get('name') == 'tier']
         self.assertTrue(tiers)
         self.assertTrue(all(n['attrs'].get('form') == 'configurations-form' for n in tiers))
-        save = next(n for n in document.nodes if n['tag'] == 'button' and 'Enregistrer les configurations' in n['text'])
+        save = next(n for n in document.nodes if n['tag'] == 'button' and 'Enregistrer ma sélection' in n['text'])
         self.assertEqual('configurations-form', save['attrs'].get('form'))
 
     def test_refus_avant_depense_et_isolation(self):

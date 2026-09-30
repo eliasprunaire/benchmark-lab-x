@@ -38,10 +38,10 @@ class TemplateTests(unittest.TestCase):
         forms = Forms()
         forms.feed(page)
         self.assertFalse(forms.nested)
-        self.assertLess(page.index('</aside>'), page.index('Ajouter ma clé Openrouter'))
+        self.assertLess(page.index('</aside>'), page.index('Ajouter ma clé OpenRouter'))
         ready = views.render({'dossiers': [], 'availability': AVAILABILITY, 'personal_preparation': True}, 'csrf').decode()
         self.assertNotIn('id="availability"', ready)
-        self.assertLess(page.index('Enregistrer la clé'), page.index('Décrivez le travail et le résultat qui vous serait utile'))
+        self.assertLess(page.index('Enregistrer la clé'), page.index('Décrivez une tâche de votre travail et le résultat qui vous aiderait'))
         parsed = Markup(page.encode())
         button = next(attrs for tag, attrs in parsed.tags if tag == 'button' and attrs.get('form'))
         self.assertEqual('prepare-case', button['form'])
@@ -125,7 +125,7 @@ class TemplateTests(unittest.TestCase):
         self.assertIn('href="/preparation"', home)
         self.assertNotIn('href="/index.html"', home)
         self.assertNotIn('Comparaisons publiées', home)
-        self.assertIn('Chaque exigence compte', home)
+        self.assertIn('Un seul manquement suffit', home)
         self.assertIn('<footer class="site">', home)
         # Sans identité de release : la révision seule, jamais le numéro cible (RULES) ; un checkout modifié
         # ou un commit non poussé ne doit pas renvoyer vers un arbre qui n'est pas le code servi (AGPL §13)
@@ -152,7 +152,7 @@ class TemplateTests(unittest.TestCase):
         self.assertIn('class="state wait"', waiting)
         honeypot = views.render({'kind': 'honeypot_ack'}, 'csrf').decode()
         for expected in ('<title>Demande enregistrée', 'class="state wait"',
-                         'L’envoi a été enregistré', 'Consulter le cas d’usage et son avancement'):
+                         'Votre envoi est bien enregistré', 'Suivre mon cas d’usage'):
             self.assertIn(expected, waiting)
             self.assertIn(expected, honeypot)
 
@@ -217,13 +217,13 @@ class DossierPageTests(unittest.TestCase):
                         'reformulation': '', 'fictional_parameters': {}},
             'availability': AVAILABILITY, 'personal_preparation': True},
             'csrf', '/preparation/dossiers/d1').decode()
-        self.assertIn('Le périmètre est à confirmer', page)
-        self.assertIn('Aucun benchmark ne peut être lancé à cette étape.', page)
+        self.assertIn('Précisez le travail à comparer', page)
+        self.assertIn('Aucune comparaison ne peut être lancée à cette étape.', page)
         self.assertNotIn('href="#exemple"', page)
         self.assertNotIn('href="#validation"', page)
         self.assertNotIn('action="/preparation/dossiers/d1/validation"', page)
         self.assertNotIn('Choisir les modèles', page)
-        self.assertNotIn('Ajouter ma clé Openrouter', page)
+        self.assertNotIn('Ajouter ma clé OpenRouter', page)
 
     def test_out_of_scope_has_fixed_referrals_and_no_continuation(self):
         links = {'math': 'https://matharena.ai/',
@@ -239,12 +239,12 @@ class DossierPageTests(unittest.TestCase):
                                 'validated_assumptions': [], 'reformulation': '',
                                 'fictional_parameters': {}}, 'availability': AVAILABILITY},
                     'csrf', '/preparation/dossiers/d1').decode()
-                self.assertIn('Cette demande est hors du périmètre de Bench-X', page)
+                self.assertIn('Bench-X ne peut pas comparer cette tâche', page)
                 self.assertNotIn('n’est pas encore', page)
                 self.assertNotIn('Envoyer ma réponse', page)
                 self.assertNotIn('action="/preparation/dossiers/d1/validation"', page)
                 self.assertNotIn('Choisir les modèles', page)
-                self.assertNotIn('intervention du responsable', page)
+                self.assertNotIn('L’équipe Bench-X doit intervenir', page)
                 self.assertNotIn('id="availability"', page)
                 self.assertIn('Décrire un autre cas d’usage', page)
                 if link:
@@ -310,7 +310,7 @@ class DossierPageTests(unittest.TestCase):
                         'validated_assumptions': [], 'reformulation': '',
                         'fictional_parameters': {}},
             'availability': AVAILABILITY}, 'csrf').decode()
-        self.assertIn('Qualification à reprendre', page)
+        self.assertIn('Exemple à revoir avant comparaison', page)
         self.assertNotIn('<img src=x', page)
         self.assertEqual(1, page.count(
             '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;Correction requise'))
@@ -337,7 +337,7 @@ class DossierPageTests(unittest.TestCase):
         self.assertIn('<span class="n">3</span>Validation', page)
         self.assertIn('<details class="corr"><summary class="button sec">', page)
         self.assertIn('Oui, c’est le travail à tester', page)
-        self.assertIn('Actualiser cet état', page)
+        self.assertIn('>Actualiser</a>', page)
         self.assertIn('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>', page)
         self.assertNotIn(view['package_sha256'], page.replace('name="package_sha256" value="' + view['package_sha256'] + '"', ''))
 
@@ -392,7 +392,7 @@ const script = require('node:fs').readFileSync(0, 'utf8');
     assert.equal(timers.size, waiting ? 1 : 0);
     if (['error', 'input', 'pause'].includes(outcome)) {
       assert.equal(progress.hidden, true); assert.equal(pause.hidden, true);
-      assert.match(status.textContent, /interrompu|suspendu/);
+      assert.match(status.textContent, /interrompue|arrêtée/);
     }
   }
 })().catch(error => {console.error(error); process.exitCode = 1;});
@@ -423,9 +423,9 @@ const script = require('node:fs').readFileSync(0, 'utf8');
                 if pending:
                     self.assertEqual(1, page.count('id="availability"'))
                     self.assertNotIn('<aside id="availability"', page)
-                    self.assertIn('Actualiser cet état', page)
+                    self.assertIn('>Actualiser</a>', page)
                     self.assertNotIn('<progress value=', page)
-                    self.assertIn('Suivi automatique', page)
+                    self.assertIn('Cette page se met à jour d’elle-même si JavaScript est activé', page)
 
     def test_badges_and_cost_bars(self):
         with tempfile.TemporaryDirectory() as temporary:

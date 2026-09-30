@@ -125,7 +125,7 @@ test('only complete verified archives are readable; JSON export retains the whol
     await page.evaluate(() => historyStore.archive('d1', 1));
     assert.deepEqual(await page.evaluate(() => historyStore.get('d1')), record);
     fixture(2); mode = 'corrupt';
-    await assert.rejects(page.evaluate(() => historyStore.archive('d1', 2)), /intégrité/i);
+    await assert.rejects(page.evaluate(() => historyStore.archive('d1', 2)), /incomplète ou illisible/i);
     assert.equal((await page.evaluate(() => historyStore.get('d1'))).content_version, 1);
   } finally {mode = 'normal'; await context.close();}
 });
@@ -178,7 +178,7 @@ test('public local history renders inert text and exports a complete case after 
     assert.match(await page.locator('[data-privacy-list]').textContent(), /Passage vérifié/);
     await page.locator('[data-privacy-list] > details > summary').click();
     const download = page.waitForEvent('download');
-    await page.getByRole('button', {name: 'Exporter ce cas en JSON'}).click();
+    await page.getByRole('button', {name: 'Télécharger ce cas (JSON)'}).click();
     const file = await (await download).path();
     assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), record);
     await page.getByRole('button', {name: 'Effacer', exact: true}).click();
@@ -215,7 +215,7 @@ test('consent POST sends booleans and CAS revisions; conflict never claims succe
     await page.evaluate(() => privacy.mountPrivacy());
     await page.getByRole('checkbox').check();
     await page.getByRole('button', {name: 'Enregistrer'}).click();
-    await page.waitForFunction(() => document.querySelector('[data-privacy-status]').textContent.includes('actualisez'));
+    await page.waitForFunction(() => document.querySelector('[data-privacy-status]').textContent.includes('Actualisez la page'));
     assert.deepEqual(posts, [{path: '/preparation/dossiers/d1/contribution', body: {
       csrf_token: 'purpose', enabled: true, revision: 5, example_revision: 3}}]);
   } finally {postStatus = 200; await context.close();}
@@ -252,7 +252,7 @@ test('chunk boundaries, snapshot identity, schema and HTTP expiry preserve the p
       assert.equal((await page.evaluate(() => historyStore.get('d1'))).content_version, 1);
     }
     mode = 'normal'; fixture(2, undefined, {key: 'NEVER_STORE_THIS'});
-    await assert.rejects(page.evaluate(() => historyStore.archive('d1', 2)), /format/);
+    await assert.rejects(page.evaluate(() => historyStore.archive('d1', 2)), /incomplète ou illisible/);
     assert.equal(await page.evaluate(async () => JSON.stringify(await historyStore.list()).includes('NEVER_STORE_THIS')), false);
   } finally {mode = 'normal'; await context.close();}
 });
@@ -297,7 +297,7 @@ test('rendered pages write nothing before the single choice, then checking it st
     assert.deepEqual(await databases(), []);
     await page.getByRole('checkbox').check();
     await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
-    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('complète enregistrée'));
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('Copie gardée dans ce navigateur.'));
     assert.deepEqual(posts.filter(post => post.path.endsWith('/contribution')).map(post => [post.path, post.body.enabled]), [
       ['/preparation/dossiers/d1/contribution', false], ['/preparation/dossiers/d1/contribution', true]]);
     assert.deepEqual(await databases(), ['bench-x-history']);
@@ -341,9 +341,9 @@ test('withdrawing a contribution keeps local copies active and erasable from Mes
     assert.deepEqual(posts.at(-1), {path: '/preparation/contributions/c1/withdraw', body: {csrf_token: 'purpose'}});
     await page.goto(origin + '/render/data');
     await page.waitForFunction(() => document.querySelector('[data-privacy-list] > details'));
-    assert.match(await page.locator('[data-privacy-status]').first().textContent(), /Copies locales complètes : 1/);
+    assert.match(await page.locator('[data-privacy-status]').first().textContent(), /Cas gardés dans ce navigateur : 1/);
     await page.locator('[data-privacy-list] > details > summary').click();
-    await page.getByRole('button', {name: 'Effacer cette copie locale'}).click();
+    await page.getByRole('button', {name: 'Effacer et ne plus garder ce cas'}).click();
     await page.waitForFunction(() => !document.querySelector('[data-privacy-list]').textContent);
     const state = await page.evaluate(async () => {
       const store = await (await import('/preparation/privacy.js')).openHistory({create: false});
@@ -364,7 +364,7 @@ test('server deletion and withdrawal send only their purpose CSRF and never arch
       await page.evaluate(() => privacy.mountPrivacy());
       await page.getByRole('button', {name: 'Confirmer'}).click();
       if (action === 'delete') {
-        await page.waitForFunction(() => document.querySelector('[data-privacy-status]').textContent.includes('nettoyage en attente'));
+        await page.waitForFunction(() => document.querySelector('[data-privacy-status]').textContent.includes('lors du prochain nettoyage planifié'));
         assert.equal(page.url(), origin + '/');
       } else await page.waitForURL(origin + '/');
       assert.deepEqual(posts, [{path, body: {csrf_token: 'purpose-' + action}}]);
@@ -392,7 +392,7 @@ test('native consent form remains usable without JavaScript, with no preselected
     const page = await context.newPage();
     await page.goto(origin + '/render/example');
     assert.equal(await page.getByRole('checkbox').isChecked(), false);
-    assert.match(await page.locator('.privacy-consent').textContent(), /sans JavaScript, seule la contribution/i);
+    assert.match(await page.locator('.privacy-consent').textContent(), /besoin de JavaScript ; sans lui, seule la contribution/i);
     await page.getByRole('checkbox').check();
     await page.getByRole('button', {name: 'Enregistrer mon choix'}).click();
     assert.deepEqual(posts, [{path: '/preparation/dossiers/d1/contribution', body: {
@@ -429,7 +429,7 @@ test('case deletion tombstones locally before POST and retains explicit failure 
     const observer = await pageFor(context);
     const page = await context.newPage(); page.setDefaultTimeout(3000);
     await page.goto(origin + '/render/example');
-    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('complète enregistrée'));
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('Copie gardée dans ce navigateur.'));
     fixture(2); mode = 'delay';
     const waiting = new Promise(resolve => {arrived = resolve;});
     pending = observer.evaluate(() => historyStore.archive('d1', 2).catch(error => error.message));
@@ -444,10 +444,10 @@ test('case deletion tombstones locally before POST and retains explicit failure 
     await page.locator('form[data-privacy-post="delete"] button').click();
     await deletionResponse;
     assert.deepEqual(observed, {record: null, state: {enabled: false, chosen: true}});
-    await page.waitForFunction(() => document.querySelector('form[data-privacy-post="delete"] [data-privacy-status]')?.textContent.includes('non confirmée'));
+    await page.waitForFunction(() => document.querySelector('form[data-privacy-post="delete"] [data-privacy-status]')?.textContent.includes('n’est pas confirmée'));
     const status = await page.locator('form[data-privacy-post="delete"] [data-privacy-status]').textContent();
-    assert.match(status, /Copie locale effacée/);
-    assert.match(status, /serveur et de la contribution non confirmée/);
+    assert.match(status, /Copie de ce navigateur effacée/);
+    assert.match(status, /La suppression sur le serveur, contribution comprise, n’est pas confirmée/);
     assert.equal(page.url(), origin + '/render/example');
     release();
     assert.match(await pending, /effac|suspend|annul/i);
@@ -466,11 +466,11 @@ test('case deletion still requests server purge when IndexedDB is unavailable an
       await page.evaluate(() => Object.defineProperty(window, 'indexedDB', {value: undefined}));
       await page.evaluate(() => privacy.mountPrivacy());
       await page.getByRole('button', {name: 'Supprimer'}).click();
-      await page.waitForFunction(() => document.querySelector('[data-privacy-status]')?.textContent.includes('Suppression locale non confirmée'));
+      await page.waitForFunction(() => document.querySelector('[data-privacy-status]')?.textContent.includes('Effacement de la copie de ce navigateur non confirmé'));
       assert.deepEqual(posts, [{path: '/preparation/dossiers/d1/delete', body: {csrf_token: 'purpose'}}]);
       assert.equal(page.url(), origin + '/');
       const status = await page.locator('[data-privacy-status]').textContent();
-      assert.match(status, statusCode === 200 ? /nettoyage en attente/ : /serveur et de la contribution non confirmée/);
+      assert.match(status, statusCode === 200 ? /lors du prochain nettoyage planifié/ : /La suppression sur le serveur, contribution comprise, n’est pas confirmée/);
     } finally {postStatus = 200; await context.close();}
   }
 });
@@ -710,8 +710,8 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     assert.deepEqual(bottom, {right: 0, icon: true});
     assert.match(await page.locator('main').innerText(), /Résultat attendu :/);
     const method = await page.locator('#method').textContent();
-    assert.match(method, /Le verdict porte sur la configuration observée/);
-    assert.match(method, /mêmes consignes et pièces, sous le harnais/);
+    assert.match(method, /Le verdict vaut pour chaque modèle tel qu’il a été réglé et appelé ici/);
+    assert.match(method, /la même consigne et les mêmes pièces, et travaillent avec le même outil/);
     // Au toucher, la définition de la qualité s'affiche et tient dans l'écran
     await page.locator('.quality-help').tap();
     const tooltip = await page.$eval('.quality-tooltip', tip => ({visible: getComputedStyle(tip).visibility === 'visible',

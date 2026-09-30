@@ -36,8 +36,8 @@ _VOLATILE_PRESENTATION = re.compile(
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
-    '9': {
-        'index.html': 'a13a8dc51f6c51c6d5dad04be57b1d91cc0532dedcc8c25b1cb94211ccbd3f8b',
+    '10': {
+        'index.html': 'f9bea260ac3d38f26ddab4713fe44de6a3a6ddb09e6b0102377abd8f605c1f8a',
         'style.css': 'e6160575de2d71a327dbc3237cb2779c4ec325faf5361be0a2fbd53d617c3355',
     },
 }
@@ -200,7 +200,7 @@ class S6Regressions(unittest.TestCase):
                 labeled = dict(manifest, presentation_version=old)
                 raw = storage._strict_json(labeled).encode()
                 pub._manifest(raw, sha256(raw).hexdigest())
-        unknown = dict(manifest, presentation_version='10')
+        unknown = dict(manifest, presentation_version='11')
         raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
             pub._manifest(raw, sha256(raw).hexdigest())
@@ -242,7 +242,7 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual(view['population'], filtered['population'])
         self.assertEqual(view['coverage'], filtered['coverage'])
         self.assertEqual('INCOMPLETE', filtered['economic_status'])
-        self.assertIn('Aucune ligne ne correspond', views.render(filtered, '').decode())
+        self.assertIn('Aucune réponse ne correspond à ces filtres', views.render(filtered, '').decode())
         empty = r.comparison(self.store, self.sid, 'fixture', 'empty')
         self.assertEqual([], empty['rows'])
         self.assertEqual([], empty['population'])
@@ -520,7 +520,7 @@ class S6Regressions(unittest.TestCase):
                 value['rows'] = rows
                 page = views.render(value, '').decode()
                 for state, label in (('PASS', 'Respectée'), ('FAIL', 'Non respectée'),
-                                     ('INDETERMINE', 'Indéterminée')):
+                                     ('INDETERMINE', 'Non vérifiable')):
                     self.assertIn('value="O1:' + state + '">Traiter toutes les demandes présentes dans les pièces et… : ' +
                                   label + '</option>', page)
                 self.assertNotIn('>O1 : PASS</option>', page)
@@ -531,10 +531,10 @@ class S6Regressions(unittest.TestCase):
         self.assertNotIn(b'PRIVATE_UNSELECTED', raw)
         self.assertNotIn(b'candidate()', raw)
         self.assertNotIn(b'/preparation/', raw)
-        self.assertIn('restreinte'.encode(), raw)
-        self.assertIn(('Les descriptions des obligations et des erreurs éliminatoires sont publiées comme libellés. '
-                       'La référence de jugement et les preuves de qualification restent privées ; '
-                       'ces descriptions seules ne permettent pas de vérifier publiquement la qualification des critères.').encode(), raw)
+        self.assertIn('Vérification limitée pour le lecteur'.encode(), raw)
+        self.assertIn(('Les exigences et les erreurs éliminatoires sont publiées sous forme de libellés. '
+                       'La référence utilisée pour évaluer et les preuves de la vérification de l’exemple restent privées. '
+                       'Un lecteur ne peut donc pas vérifier lui-même comment ces critères ont été validés.').encode(), raw)
         self.assertIn('Durée fictive'.encode(), raw)
         self.assertIn('Présence fictive'.encode(), raw)
         self.assertNotIn(b'duration :', raw)

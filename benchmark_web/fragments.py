@@ -124,38 +124,38 @@ def readable_fields(value):
 
 
 ACCESS_REASONS = {
-    'ACCESS_CAP_REQUIRED': 'la clé doit porter un plafond non renouvelable de 50 USD maximum et un solde disponible',
-    'KEY_REJECTED': 'Openrouter refuse cette clé',
-    'SESSION_EXPIRED': 'votre accès à ce navigateur a expiré',
+    'ACCESS_CAP_REQUIRED': 'elle doit avoir un plafond non renouvelable de 50 USD maximum et un solde disponible',
+    'KEY_REJECTED': 'OpenRouter refuse cette clé',
+    'SESSION_EXPIRED': 'votre session dans ce navigateur a expiré',
 }
 
 
 def access_summary(access):
     """Solde et plafond annoncés par Openrouter, jamais la clé"""
     def amount(key):
-        return 'INCONNU' if access.get(key) is None else montant_lisible(access[key])
-    return 'Solde annoncé : ' + text(amount('limit_remaining_usd')) + ' USD. Plafond de la clé : ' + text(amount('limit_usd')) + ' USD.'
+        return 'inconnu' if access.get(key) is None else montant_lisible(access[key])
+    return 'Solde restant selon OpenRouter : ' + text(amount('limit_remaining_usd')) + ' USD. Plafond de la clé : ' + text(amount('limit_usd')) + ' USD.'
 
 
 def personal_key_form(csrf, access, back, *, opened=False):
     """Seul moyen de fournir un accès Openrouter : la clé saisie, puis retour à `back`"""
     status = access.get('status')
-    summary = 'Remplacer ma clé Openrouter' if status == 'connected' else 'Ajouter ma clé Openrouter'
+    summary = 'Remplacer ma clé OpenRouter' if status == 'connected' else 'Ajouter ma clé OpenRouter'
     content = ('<details class="corr personal-key"' + (' open' if opened else '') + '><summary class="button sec">'
                + summary + '</summary><div>')
     content += form(csrf, '/preparation/access/key', {'return': back},
-        '<label for="openrouter-key">Clé API Openrouter</label>'
+        '<label for="openrouter-key">Clé API OpenRouter</label>'
         '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help key-storage">'
-        '<p id="key-help">Utilisez une clé dédiée avec un plafond non renouvelable de 50 USD maximum.</p>'
-        '<p id="key-storage" class="hint">Votre clé est conservée chiffrée sur notre serveur. '
-        'Un cookie de session mémorise votre accès dans ce navigateur pour vos prochaines visites. '
-        'Ce cookie sera automatiquement supprimé au bout de 30 jours maximum d’inactivité. '
-        'Néanmoins, vous pouvez retirer votre clé depuis cette page si vous préférez.</p>'
+        '<p id="key-help">Créez sur OpenRouter une clé réservée à Bench-X, avec un plafond non renouvelable de 50 USD maximum. Ce plafond est la seule limite de dépense.</p>'
+        '<p id="key-storage" class="hint">Votre clé est chiffrée et conservée sur notre serveur. '
+        'Un cookie garde votre accès dans ce navigateur d’une visite à l’autre ; il est supprimé au plus tard après 30 jours sans activité. '
+        'Vous pouvez aussi retirer la clé ici à tout moment. '
+        'Enregistrer ou retirer la clé ne lance aucun modèle.</p>'
         '<button type="submit">Enregistrer la clé</button>')
     content += '</div></details>'
     if status in ('connected', 'invalid'):
         content += form(csrf, '/preparation/access/disconnect', {'return': back},
             '<button type="submit" class="sec">Retirer la clé de ce navigateur</button>')
-        content += ('<p class="hint">Terminez la préparation ou qualification en cours avant de changer la clé. '
-                    'Le retrait bloque les nouveaux appels, sans révoquer la clé chez Openrouter ni annuler une comparaison engagée.</p>')
+        content += ('<p class="hint">Attendez la fin d’une préparation ou d’une vérification en cours avant de changer de clé. '
+                    'Une fois la clé retirée, Bench-X ne lance plus aucun nouvel appel. La clé reste active chez OpenRouter, et une comparaison déjà lancée n’est pas annulée.</p>')
     return content

@@ -319,7 +319,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.assertEqual(2, len(result['pending_attempts']))
         self.assertEqual({'EVALUATION_NOT_STARTED'}, {row['state'] for row in result['pending_attempts']})
         self.assertTrue(all('Réponse reçue' in row['next_action'] for row in result['pending_attempts']))
-        self.assertIn('En attente d’évaluation', views.render(result, 'csrf').decode())
+        self.assertIn('Des réponses sont arrivées. Leur verdict n’est pas encore disponible.', views.render(result, 'csrf').decode())
         contract = c._current_contract(self.store, self.store._connection, 'fixture')
         self.assertEqual('Clarté', projection._libelles_criteres({'qualification': {'contract': contract}})['Q1'])
         message = 'Contrat de comparaison non évaluable par le jugement expert'
@@ -438,13 +438,13 @@ class RequesterCampaignLaunch(unittest.TestCase):
         with patch.object(c, '_requester_campaigns', return_value=[snapshot]):
             selection = c.configurations_view(self.store, self.sid, 'fixture')
         page = views.render(selection, 'csrf').decode()
-        self.assertIn('estimation non estimable', page)
-        self.assertIn('Estimation totale : non estimable', page)
+        self.assertIn('coût impossible à estimer', page)
+        self.assertIn('Coût total estimé : impossible à estimer pour l’instant', page)
         checks = c._requester_checks(self.store, self.store._connection, snapshot, self.sid, {})
         self.assertEqual('Estimation totale : non estimable', checks[-1]['detail'])
         preview = p.view(self.store, self.sid, 'fixture')
         preview['indicative_cost'] = None
-        self.assertIn('Estimation indicative de cette préparation : non estimable',
+        self.assertIn('Coût estimé de cette préparation : non estimable',
                       views.render(preview, 'csrf').decode())
 
     def test_chaque_controle_bloque_avec_sa_cle(self):

@@ -44,7 +44,7 @@ class RefreshLink(HTMLParser):
             self.href = dict(attrs).get('href')
 
     def handle_data(self, data):
-        if data == 'Actualiser cet état':
+        if data == 'Actualiser':
             self.refresh = self.href
 
 
@@ -192,7 +192,7 @@ class S2ReviewRegressions(unittest.TestCase):
                              data=urlencode(body).encode(), headers=headers), timeout=5) as result:
             self.assertEqual(200, result.status)
             html = result.read().decode()
-        self.assertIn('Votre validation est enregistrée', html)
+        self.assertIn('Vous avez validé cet exemple, dans cette version précise.', html)
         parser = RefreshLink()
         parser.feed(html)
         self.assertIsNotNone(parser.refresh)
@@ -204,7 +204,7 @@ class S2ReviewRegressions(unittest.TestCase):
             result = error
         with result:
             self.assertEqual(200, result.status)
-            self.assertIn('Votre validation est enregistrée', result.read().decode())
+            self.assertIn('Vous avez validé cet exemple, dans cette version précise.', result.read().decode())
         self.assertEqual('/preparation/dossiers/review-dossier', parser.refresh)
         self.assertEqual(before, self.store._connection.execute('SELECT * FROM s2_validations').fetchall())
         self.assertEqual(1, len(self.store.inspect_operations()))

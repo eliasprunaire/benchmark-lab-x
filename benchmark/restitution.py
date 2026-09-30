@@ -12,10 +12,10 @@ from .publications import SCHEMA, PRESENTATION_VERSION, _decode
 from .storage import _transaction, _strict_json as encode
 
 ATTRIBUTION = (
-    'Le verdict porte sur la configuration observée sous les conditions communes déclarées. '
-    'Il n’attribue pas au seul modèle les effets du fournisseur, de l’effort, de Pi ou de ses réglages. '
-    'Il ne démontre pas le même résultat sous un autre harnais, contexte ou environnement.')
-LIMIT = 'Observations fictives locales, sans généralisation aux dossiers réels ni agrégation entre cas ou campagnes.'
+    'Le verdict vaut pour chaque modèle tel qu’il a été réglé et appelé ici, dans les conditions communes décrites. '
+    'Le fournisseur, le niveau de raisonnement, Pi (l’outil qui fait travailler les modèles) et ses réglages influent aussi sur la réponse : le verdict ne les sépare pas du modèle. '
+    'Avec un autre outil, un autre contexte ou un autre environnement, le résultat peut être différent.')
+LIMIT = 'Ces résultats portent sur un exemple inventé. Ils ne se transposent pas tels quels à vos dossiers réels et ne s’additionnent pas avec ceux d’autres cas ou d’autres comparaisons.'
 VERDICTS = ('SATISFAIT', 'NE SATISFAIT PAS', 'A_REPRENDRE', 'INDETERMINE')
 FILTERS = ('case', 'sort', 'direction', 'verdict', 'obligation', 'configuration')
 
@@ -172,7 +172,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     latest = {record['attempt_id']: record for record in records}
     pending = [dict(attempt_id=a['operation_id'], verdict=None,
                     state='REVIEW_REQUIRED' if a['state'] == 'RECEIVED' and a['incident'] is None else 'EXECUTION_REQUIRED',
-                    next_action='Inspecter cette tentative et compléter son évaluation avant finalisation')
+                    next_action='Cette réponse doit être relue et son évaluation terminée avant de conclure.')
                for a in campaign['attempts'] if a['operation_id'] not in latest]
     if pending and connection.execute('SELECT 1 FROM s2_comparison_contracts WHERE contract_sha256=?',
                           (campaign['contract_sha256'],)).fetchone():
@@ -185,7 +185,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         for attempt in pending:
             if attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='EVALUATION_' + progress_status,
-                    next_action=progress_reason or 'Réponse reçue et conservée. Son évaluation automatique reste à terminer.')
+                    next_action=progress_reason or 'Réponse reçue. Son évaluation automatique n’est pas terminée.')
     pending += [dict(attempt_id=record['attempt_id'], **record['decision'])
                 for record in latest.values() if record['decision']['verdict'] is None]
     pending += e.pending_judgments(store, connection, campaign_id, latest)
@@ -196,9 +196,9 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         row = deepcopy(record)
         row['verdict'] = row['decision']['verdict']
         attempt = next(a for a in campaign['attempts'] if a['operation_id'] == record['attempt_id'])
-        incompatible = ('Attribution requise absente ou incompatible' if record['attribution_incident'] else
-                        'Incident du harnais empêchant l’attribution' if record['incident'] == 'HARNESS_ERROR' else
-                        'Sortie ou émission non établie' if record['output_piece_id'] is None or attempt['emission'] != 'ESTABLISHED' else None)
+        incompatible = ('Impossible de confirmer que la réponse vient du modèle demandé' if record['attribution_incident'] else
+                        'Un problème technique empêche de rattacher la réponse au modèle' if record['incident'] == 'HARNESS_ERROR' else
+                        'Réponse absente ou envoi de l’appel non confirmé' if record['output_piece_id'] is None or attempt['emission'] != 'ESTABLISHED' else None)
         cost = record['candidate_cost']
         metric = dict(value=None if cost is None else cost['amount'], unit=basis['unit'] if cost is None else cost['currency'], rank=None,
                       source='INCONNU' if cost is None else cost['source'], reason=incompatible)
@@ -214,14 +214,14 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
             measure.update(rank=None, reason=incompatible)
             if measure['reason'] is None:
                 if not _orderable(measure['definition']):
-                    measure['reason'] = 'Observation descriptive : aucune échelle ordonnable déclarée'
+                    measure['reason'] = 'Cette observation est décrite en mots et ne se classe pas'
                 elif measure['status'] != 'KNOWN' or not measure['evidence']:
-                    measure['reason'] = 'Mesure ou preuve absente'
+                    measure['reason'] = 'Mesure non relevée ou sans preuve'
                 else:
                     try:
                         _metric_number(measure)
                     except ValueError:
-                        measure['reason'] = 'Valeur non interprétable sur l’échelle déclarée'
+                        measure['reason'] = 'Valeur impossible à placer sur l’échelle prévue'
         row['detail_href'] = base + '/attempts/' + identifier(row['attempt_id']) + suffix
         rows.append(row)
     _rank(rows, columns)
@@ -235,7 +235,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                  cases=campaign['cases'], attempts=population, configurations=campaign['panel'],
                  conditions=campaign['conditions'], evaluation_ids=[r['evaluation_id'] for r in rows],
                  dates=[r['created_at'] for r in rows])
-    conclusion = dict(text='Comparaison des observations conservées, par cas et tentative, sur les critères du contrat.',
+    conclusion = dict(text='Comparaison des réponses enregistrées, cas par cas, sur les critères fixés pour cet exemple.',
                       scope=scope, attribution=ATTRIBUTION, limits=list(dict.fromkeys([LIMIT] + spec['limits'] +
                           [limit for row in rows for limit in row['limits']])))
     selected = []

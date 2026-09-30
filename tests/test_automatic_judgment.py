@@ -301,7 +301,7 @@ class AutomaticJudgment(unittest.TestCase):
         self.assertEqual(('BLOCKED', 1, 2), (progress['status'], progress['completed'], progress['total']))
         view = campaigns.launch_view(self.store, self.sid, 'fixture', self.cid)
         page = views.render(view, 'csrf').decode()
-        self.assertIn('Comparer les résultats et lire les preuves', page)
+        self.assertIn('Voir les résultats</a>', page)
         self.assertNotIn('id="preparation-progress"', page)
 
     def test_revoked_key_after_reservation_blocks_and_cannot_retry(self):

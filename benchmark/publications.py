@@ -17,8 +17,8 @@ from .storage import _strict_json as encode, _unique_object
 from .validation import identifier, _hash, _texts
 
 SCHEMA = 'benchmark-lab-x/restitution-fictional/v1'
-PRESENTATION_VERSION = '9'
-PRESENTATION_VERSIONS = ('1', '2', '3', '4', '5', '6', '7', '8', '9')
+PRESENTATION_VERSION = '10'
+PRESENTATION_VERSIONS = ('1', '2', '3', '4', '5', '6', '7', '8', '9', '10')
 _FILES = re.compile(r'[A-Za-z0-9_-]+\.(?:html|css|txt)\Z')
 
 

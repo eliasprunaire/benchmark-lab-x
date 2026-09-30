@@ -292,8 +292,8 @@ class ServiceProcessesTests(unittest.TestCase):
                 child.join(5)
 
     def test_refus_inconnu_reste_generique(self):
-        generic = ('Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier '
-                   'ou demandez au responsable de vérifier son autorisation.')
+        generic = ('Vous ne pouvez pas faire cette action depuis ce navigateur. Rouvrez votre cas d’usage '
+                   'depuis Mes cas d’usage. Si le problème continue, contactez l’équipe Bench-X.')
         with patch('socket.socket.connect', side_effect=AssertionError('No network')):
             responses = [denied_response(preparation.Denied(reason))
                          for reason in ('Motif', 'FUTUR')]
@@ -417,7 +417,7 @@ class ServiceProcessesTests(unittest.TestCase):
                         self.assertEqual(200, response.status)
                         page = response.read().decode()
                         self.assertIn('<title>Demande enregistrée', page)
-                        self.assertIn('L’envoi a été enregistré', page)
+                        self.assertIn('Votre envoi est bien enregistré', page)
                     break
                 except OSError:
                     if time.monotonic() >= deadline:
@@ -610,8 +610,8 @@ class ServiceProcessesTests(unittest.TestCase):
     def test_message_interne_n_affirme_aucun_resultat(self):
         # L'effet peut être enregistré avant la défaillance : n'annoncer qu'un état non confirmé
         self.assertNotIn('abouti', service.INTERNAL_MESSAGE)
-        self.assertIn('n’est pas confirmé', service.INTERNAL_MESSAGE)
-        self.assertIn('Consultez le dossier', service.INTERNAL_MESSAGE)
+        self.assertIn('Votre action a peut-être été enregistrée', service.INTERNAL_MESSAGE)
+        self.assertIn('ouvrez votre cas d’usage avant de renvoyer', service.INTERNAL_MESSAGE)
 
     def test_enveloppe_malformee_recoit_un_refus_explicite(self):
         with tempfile.TemporaryDirectory() as directory:

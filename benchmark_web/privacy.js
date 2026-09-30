@@ -21,12 +21,12 @@ function validRecord(value) {
   });
 }
 function integrity(condition) {
-  if (!condition) throw new Error('Archive refusée : intégrité ou format invalide.');
+  if (!condition) throw new Error('La copie reçue du serveur est incomplète ou illisible. Aucune nouvelle copie n’a été gardée ; vous pouvez réessayer.');
 }
 async function jsonGet(url) {
   const response = await fetch(url, {credentials: 'same-origin', cache: 'no-store', redirect: 'error',
     headers: {Accept: 'application/json'}});
-  if (!response.ok) throw new Error('Archive indisponible sur le serveur. La copie locale reste inchangée.');
+  if (!response.ok) throw new Error('Le serveur n’a pas pu envoyer ce cas. La copie gardée dans ce navigateur n’a pas changé.');
   return response.json();
 }
 function requestValue(request) {
@@ -38,7 +38,7 @@ function requestValue(request) {
 function completed(transaction) {
   return new Promise((resolve, reject) => {
     transaction.oncomplete = () => resolve();
-    transaction.onabort = () => reject(transaction.error || new Error('Écriture locale interrompue.'));
+    transaction.onabort = () => reject(transaction.error || new Error('L’enregistrement dans ce navigateur a été interrompu. Vous pouvez réessayer.'));
     transaction.onerror = () => {}; // Abort reports the final transaction outcome
   });
 }
@@ -76,7 +76,7 @@ export async function openHistory({create = true} = {}) {
       const controls = tx.objectStore('control');
       let result, failure;
       tx.oncomplete = () => resolve(result);
-      tx.onabort = () => reject(failure || tx.error || new Error('Écriture locale interrompue.'));
+      tx.onabort = () => reject(failure || tx.error || new Error('L’enregistrement dans ce navigateur a été interrompu. Vous pouvez réessayer.'));
       tx.onerror = () => {};
       controls.get('').onsuccess = globalEvent => {
         const global = globalEvent.target.result || {id: '', generation: 0, enabled: false};
@@ -91,7 +91,7 @@ export async function openHistory({create = true} = {}) {
   function check(global, local, ticket) {
     if (!global.enabled || !local.enabled || ticket && (
       ticket.global !== global.generation || ticket.local !== local.generation)) {
-      throw new Error('Historique effacé ou suspendu. Enregistrement annulé ; réactivation explicite requise.');
+      throw new Error('L’historique local a été effacé ou mis en pause entre-temps, donc cette copie n’a pas été gardée. Réactivez l’historique pour enregistrer de nouveau.');
     }
   }
   async function change(id, enabled) {
@@ -203,11 +203,11 @@ function pieces(label, items, parent) {
   for (const item of items) details(item.name, group).append(node('pre', item.text));
 }
 function renderRecord(record, parent) {
-  parent.append(node('p', 'Version locale ' + record.content_version), node('h3', 'Besoin'), node('p', record.need));
+  parent.append(node('p', 'Enregistrement n° ' + record.content_version), node('h3', 'Besoin'), node('p', record.need));
   const messages = details('Messages', parent);
   record.messages.forEach(message => messages.append(node('p', message)));
   for (const revision of record.revisions) {
-    const group = details('Révision ' + revision.number, parent);
+    const group = details('Version ' + revision.number + ' de l’exemple', parent);
     group.append(node('h3', 'Consigne'), node('pre', revision.instruction));
     for (const [label, items] of [['Livrables', revision.deliverables], ['Critères', revision.criteria]]) {
       group.append(node('h3', label));
@@ -216,7 +216,7 @@ function renderRecord(record, parent) {
       group.append(list);
     }
     pieces('Pièces', revision.pieces, group);
-    group.append(node('p', 'Qualification : ' + revision.qualification));
+    group.append(node('p', 'Vérification de l’exemple : ' + revision.qualification));
   }
   for (const campaign of record.campaigns) {
     const group = details('Comparaison ' + campaign.id, parent);
@@ -234,8 +234,8 @@ async function post(url, body) {
     redirect: 'error', keepalive: true, headers: {'Content-Type': 'application/json', Accept: 'application/json'},
     body: JSON.stringify(body)});
   if (!response.ok) throw new Error(response.status === 409
-    ? 'Ce choix ou cet exemple a changé ; actualisez la page avant de recommencer.'
-    : 'Action non confirmée. Vérifiez votre accès puis actualisez la page.');
+    ? 'Cet exemple ou ce choix a changé entre-temps. Actualisez la page, puis recommencez.'
+    : 'Votre demande n’a pas été confirmée. Actualisez la page pour vérifier que votre espace est toujours ouvert.');
   return response;
 }
 // One consent decision with two derived effects; separating them changes this function only
@@ -281,7 +281,7 @@ function mountForms(root) {
           } catch {}
         }
       }
-      const localOutcome = localDeleted ? 'Copie locale effacée. ' : 'Suppression locale non confirmée. ';
+      const localOutcome = localDeleted ? 'Copie de ce navigateur effacée. ' : 'Effacement de la copie de ce navigateur non confirmé. ';
       try {
         const response = await post(url.pathname, body);
         if (effects?.localHistory) {
@@ -296,15 +296,15 @@ function mountForms(root) {
         else {
           const result = await response.json();
           if (status) status.textContent = localOutcome + (result.status === 'purged'
-            ? 'Suppression des données actives du serveur terminée.'
-            : 'Suppression demandée au serveur ; nettoyage en attente. La contribution associée est retirée.');
+            ? 'Ce cas est supprimé du serveur. Des copies peuvent rester dans ses sauvegardes.'
+            : 'Suppression demandée au serveur : l’effacement sera fait lors du prochain nettoyage planifié. La contribution liée à ce cas est retirée.');
           const fields = form.querySelector('fieldset');
           if (localDeleted && fields) fields.disabled = true;
         }
       } catch (error) {
         if (status) status.textContent = action === 'delete'
-          ? localOutcome + 'Suppression sur le serveur et de la contribution non confirmée. Vous pouvez réessayer.'
-          : error.message || 'Action non confirmée. Actualisez avant de recommencer.';
+          ? localOutcome + 'La suppression sur le serveur, contribution comprise, n’est pas confirmée. Vous pouvez réessayer.'
+          : error.message || 'Votre demande n’a pas été confirmée. Actualisez la page, puis recommencez.';
       } finally {
         delete form.dataset.busy;
         if (button) button.disabled = false;
@@ -327,7 +327,7 @@ function mountActivity(root) {
     try {await post('/preparation/activity', body);}
     catch {
       const status = marker.querySelector('[data-privacy-status]');
-      if (status) status.textContent = 'Prolongation de l’accès non confirmée. Actualisez pour vérifier votre session.';
+      if (status) status.textContent = 'Votre accès n’a pas pu être prolongé. Actualisez la page pour vérifier que votre espace est toujours ouvert.';
     } finally {pending = false;}
   };
   root.addEventListener('input', activity);
@@ -347,35 +347,35 @@ function mountBootstrap(root) {
     target = new URL(path, location.origin);
     if (target.origin !== location.origin || target.pathname === '/preparation/session/open') throw new Error();
   } catch {
-    status.textContent = 'Destination invalide. Revenez à Mes cas d’usage.';
+    status.textContent = 'Ce lien de retour n’est pas valide. Revenez à Mes cas d’usage.';
     button.disabled = true;
     return;
   }
   const key = 'bench-x-session-opening';
-  const blocked = 'Les cookies de ce site semblent bloqués. Autorisez-les puis choisissez Continuer. Aucun nouvel essai automatique.';
+  const blocked = 'Les cookies de ce site semblent bloqués. Autorisez-les, puis choisissez Continuer. La page ne réessaiera pas d’elle-même.';
   const open = async manual => {
     if (pending) return;
     try {
       if (!manual && sessionStorage.getItem(key)) {status.textContent = blocked; return;}
       sessionStorage.setItem(key, '1');
     } catch {
-      if (!manual) {status.textContent = 'Le stockage du navigateur est indisponible. Choisissez Continuer pour essayer explicitement.'; return;}
+      if (!manual) {status.textContent = 'Votre navigateur bloque le stockage temporaire de ce site. Choisissez Continuer pour ouvrir votre espace vous-même.'; return;}
     }
     pending = true; button.disabled = true;
-    status.textContent = 'Ouverture de votre accès…';
+    status.textContent = 'Ouverture de votre espace…';
     try {
       await post('/preparation/session/open', {});
       // The session cookie is HttpOnly; verify it via the destination, never document.cookie
       const response = await fetch(target.pathname + target.search, {credentials: 'same-origin',
         cache: 'no-store', redirect: 'error', headers: {Accept: 'text/html'}});
       if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) {
-        throw new Error('Accès non confirmé. Choisissez Continuer pour réessayer.');
+        throw new Error('Votre espace n’a pas pu être ouvert. Choisissez Continuer pour réessayer.');
       }
       const next = new DOMParser().parseFromString(await response.text(), 'text/html');
       if (next.querySelector('[data-privacy-bootstrap]')) {status.textContent = blocked; return;}
       location.replace(target.href);
     } catch (error) {
-      status.textContent = error.message || 'Ouverture impossible. Vérifiez les cookies puis choisissez Continuer.';
+      status.textContent = error.message || 'Impossible d’ouvrir votre espace. Vérifiez que les cookies de ce site sont autorisés, puis choisissez Continuer.';
     } finally {pending = false; button.disabled = false;}
   };
   form.addEventListener('submit', event => {event.preventDefault(); void open(true);});
@@ -419,7 +419,7 @@ export async function mountPrivacy(root = document) {
   try {await connect();}
   catch {
     for (const element of historyRoots) element.querySelector('[data-privacy-status]').textContent =
-      'Historique local indisponible dans ce navigateur. Aucune copie locale confirmée.';
+      'Ce navigateur ne permet pas d’ouvrir l’historique local. Impossible de vérifier quelles copies y sont gardées.';
     return;
   }
   for (const element of historyRoots) {
@@ -428,8 +428,8 @@ export async function mountPrivacy(root = document) {
       button.disabled = true;
       try {await operation();}
       catch (error) {status.textContent = error.name === 'QuotaExceededError'
-        ? 'Espace local insuffisant. La copie précédente reste intacte ; exportez vos cas avant de libérer de la place.'
-        : error.message || 'Action locale impossible. Aucune copie confirmée.';}
+        ? 'Ce navigateur manque de place. Votre copie précédente est intacte. Exportez vos cas avant de libérer de la place.'
+        : error.message || 'L’action n’a pas abouti dans ce navigateur. Aucune copie n’est confirmée ; vous pouvez réessayer.';}
       finally {button.disabled = false;}
     };
     if (element.hasAttribute('data-privacy-history')) {
@@ -442,16 +442,16 @@ export async function mountPrivacy(root = document) {
         const state = store ? await store.state() : {enabled: false, chosen: false};
         if (serial !== display) return;
         list.replaceChildren();
-        status.textContent = state.enabled ? (records.length ? 'Copies locales complètes : ' + records.length + '.' : 'Aucune copie locale complète.')
+        status.textContent = state.enabled ? (records.length ? 'Cas gardés dans ce navigateur : ' + records.length + '.' : 'Aucun cas gardé dans ce navigateur pour l’instant.')
           : !state.chosen && !records.length ? 'Historique local désactivé : rien n’est enregistré dans ce navigateur tant que vous ne l’activez pas.'
-          : records.length ? 'Historique local suspendu : aucune nouvelle copie. Copies conservées : ' + records.length + '.'
-          : 'Historique local effacé et suspendu. Réactivez-le explicitement pour enregistrer de nouvelles copies.';
+          : records.length ? 'Historique local en pause : aucune nouvelle copie n’est enregistrée. Cas encore gardés : ' + records.length + '.'
+          : 'Historique local effacé et en pause. Activez-le de nouveau pour garder de nouvelles copies.';
         element.querySelector('[data-privacy-action="enable"]').hidden = state.enabled;
         element.querySelector('[data-privacy-action="clear"]').hidden = !store;
         for (const record of records) {
           const entry = details(record.need || 'Cas ' + record.dossier_id, list);
           const actions = node('div'); actions.className = 'actions';
-          const download = node('button', 'Exporter ce cas en JSON'); download.type = 'button';
+          const download = node('button', 'Télécharger ce cas (JSON)'); download.type = 'button';
           download.addEventListener('click', () => run(download, async () => {
             const current = await store.get(record.dossier_id);
             if (!current) throw new Error('Cette copie a été effacée dans un autre onglet.');
@@ -462,7 +462,7 @@ export async function mountPrivacy(root = document) {
             link.click();
             setTimeout(() => URL.revokeObjectURL(url), 0);
           }));
-          const remove = node('button', 'Effacer cette copie locale'); remove.type = 'button'; remove.className = 'sec';
+          const remove = node('button', 'Effacer et ne plus garder ce cas'); remove.type = 'button'; remove.className = 'sec';
           remove.addEventListener('click', () => run(remove, async () => {await store.remove(record.dossier_id); await changed();}));
           actions.append(download, remove); entry.append(actions); renderRecord(record, entry);
         }
@@ -484,21 +484,21 @@ export async function mountPrivacy(root = document) {
         const state = store ? await store.state(id) : {enabled: false, chosen: false};
         archive.hidden = !active || !state.enabled;
         enable.hidden = !active || !state.chosen || state.enabled;
-        if (!state.chosen) status.textContent = 'Historique local désactivé : aucune nouvelle copie n’est enregistrée. Il s’active avec la case de contribution ou depuis Mes données.';
-        else if (!state.enabled) status.textContent = 'Historique suspendu. Réactivez-le explicitement dans Mes données ou pour ce cas.';
+        if (!state.chosen) status.textContent = 'Historique local désactivé : ce cas n’est pas gardé dans ce navigateur. Pour l’activer, cochez la case de contribution ou passez par Mes données.';
+        else if (!state.enabled) status.textContent = 'Historique local en pause : ce cas n’est plus gardé dans ce navigateur. Réactivez-le dans Mes données, ou pour ce cas seulement avec le bouton ci-dessous.';
       };
       refreshers.push(update);
       const save = () => run(archive, async () => {
-        status.textContent = 'Enregistrement de la copie locale…';
+        status.textContent = 'Copie en cours dans ce navigateur…';
         const saved = await store.archive(id, Number(element.dataset.contentVersion));
-        status.textContent = saved ? 'Copie locale complète enregistrée.' : 'La copie locale est déjà aussi récente ou plus récente.';
+        status.textContent = saved ? 'Copie gardée dans ce navigateur.' : 'Ce navigateur a déjà la version la plus récente de ce cas.';
         await changed();
       });
       archive.addEventListener('click', save);
       enable.addEventListener('click', () => run(enable, async () => {
         // A per-case action never silently lifts the global pause
         await store.enable(id); await changed();
-        if (!(await store.state()).enabled) status.textContent = 'Réactivez aussi l’historique global depuis Mes données.';
+        if (!(await store.state()).enabled) status.textContent = 'L’historique est réactivé pour ce cas, mais il reste en pause pour tout ce navigateur. Réactivez-le aussi dans Mes données.';
       }));
       await update();
       if (active && element.hasAttribute('data-content-version') && store && (await store.state(id)).enabled) await save();

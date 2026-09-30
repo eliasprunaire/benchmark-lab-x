@@ -8,8 +8,8 @@ import re
 
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'projection.css'
 RESTRICTION_PUBLIQUE = (
-    'Vérification publique restreinte : les pièces non sélectionnées et leurs passages restent privés. '
-    'Leur empreinte ne remplace pas une preuve consultable. Les constats qui en dépendent restent invérifiables ici.')
+    'Vérification limitée pour le lecteur : les pièces non retenues pour la publication restent privées, extraits compris. '
+    'Leur empreinte numérique ne permet pas de les lire. Les constats qui s’appuient sur elles ne peuvent pas être vérifiés sur cette page.')
 
 
 def stylesheet():
@@ -36,6 +36,7 @@ def _remplacer_criteres(value, labels):
 
 VERDICTS = {'SATISFAIT': 'Satisfait', 'NE SATISFAIT PAS': 'Ne satisfait pas'}
 STATUTS = {'PASS': 'respectée', 'FAIL': 'non respectée', 'INDETERMINE': 'non vérifiable'}
+FAVORABLES = {'lower': 'la valeur la plus basse est la meilleure', 'higher': 'la valeur la plus haute est la meilleure', 'yes': '« oui » est favorable'}
 
 
 def _montant(cost):
@@ -77,15 +78,15 @@ def projection_body(value, selected, level=1):
         body += '<p>Réponses évaluées : ' + t(coverage['evaluated_attempts']) + ' · essais lancés : ' + t(coverage['attempted_cells'])
         body += ' sur ' + t(coverage['planned_cells']) + '.</p>'
     body += '<p>Comparaison des coûts ' + ('complète' if value['economic_status'] == 'COMPLETE' else 'incomplète')
-    body += ' ; coûts candidats et de jugement séparés.</p>'
+    body += '. Le coût des réponses des modèles et celui de leur évaluation sont comptés séparément.</p>'
     if conditions:
-        body += '<p>Conditions communes : harnais ' + t(conditions['pi']['package'] + ' ' + conditions['pi']['version'])
-        body += ', figées le ' + t(jour_lisible(conditions['frozen_at'])) + '.</p>'
+        body += '<p>Conditions communes : même outil pour tous les modèles, ' + t(conditions['pi']['package'] + ' ' + conditions['pi']['version'])
+        body += ', fixé le ' + t(jour_lisible(conditions['frozen_at'])) + '.</p>'
     for pending in value.get('pending_attempts', []):
         body += '<p>Une réponse reste à évaluer : ' + t(pending['next_action']) + '</p>'
-    body += '<p>Les descriptions des obligations et des erreurs éliminatoires sont publiées comme libellés. '
-    body += 'La référence de jugement et les preuves de qualification restent privées ; '
-    body += 'ces descriptions seules ne permettent pas de vérifier publiquement la qualification des critères.</p>'
+    body += '<p>Les exigences et les erreurs éliminatoires sont publiées sous forme de libellés. '
+    body += 'La référence utilisée pour évaluer et les preuves de la vérification de l’exemple restent privées. '
+    body += 'Un lecteur ne peut donc pas vérifier lui-même comment ces critères ont été validés.</p>'
     body += '<p>' + t(RESTRICTION_PUBLIQUE) + '</p>'
     labels = {}
     for row in value['rows']:
@@ -96,7 +97,7 @@ def projection_body(value, selected, level=1):
         label = ('Coût observé' if 'criterion_id' not in column else
                  labels.get(column['criterion_id'], definition.get('measure')))
         criteria.append(t(label) + (' : ' + t(definition['unit']) if definition.get('unit') else '')
-                        + (', valeur favorable ' + t(definition['favorable']) if definition.get('favorable') else ''))
+                        + (', ' + t(FAVORABLES.get(definition['favorable'], definition['favorable'])) if definition.get('favorable') else ''))
     if criteria:
         body += '<details><summary>Critères de comparaison</summary><ul>' + ''.join('<li>' + item + '</li>' for item in criteria) + '</ul></details>'
     for row in value['rows']:
@@ -107,7 +108,7 @@ def projection_body(value, selected, level=1):
         body += t(_remplacer_criteres(row['reason'], row_labels)) + '</p>'
         if row.get('decision', {}).get('next_action'):
             body += '<p>' + t(row['decision']['next_action']) + '</p>'
-        body += '<p>Coût observé : ' + t(_montant(row['cost'])) + ' · coût du jugement : ' + t(_montant(row['judgment']['cost'])) + '.</p>'
+        body += '<p>Coût observé : ' + t(_montant(row['cost'])) + ' · coût de l’évaluation : ' + t(_montant(row['judgment']['cost'])) + '.</p>'
         body += '<ul>'
         for finding in row['findings']:
             criterion = row_labels.get(finding['criterion_id'], finding['criterion_id'])
@@ -123,21 +124,21 @@ def projection_body(value, selected, level=1):
             if link['piece_id'] in selected:
                 body += '<li><a href="' + t(selected[link['piece_id']]) + '">' + t(name) + '</a></li>'
             else:
-                body += '<li>' + t(name) + ' : pièce restreinte, non sélectionnée.</li>'
-        body += '</ul><p>Évaluée le ' + t(jour_lisible(row['created_at'])) + ' par ' + t(row['responsible']) + '. Revue professionnelle : '
-        body += ('absente' if row['judgment']['professional_review'] == 'ABSENTE' else 'déclarée ; preuve restreinte dans cette projection') + '.</p>'
+                body += '<li>' + t(name) + ' : pièce non publiée.</li>'
+        body += '</ul><p>Évaluée le ' + t(jour_lisible(row['created_at'])) + ' par ' + t(row['responsible']) + '. Relecture par un professionnel du métier : '
+        body += ('aucune' if row['judgment']['professional_review'] == 'ABSENTE' else 'annoncée, sans preuve publiée ici') + '.</p>'
         body += '<p>' + t('; '.join(row['limits'])) + '</p>'
         body += '<p>' + t(RESTRICTION_PUBLIQUE) + '</p></section>'
     return body
 
 
 def public_page(value, selected):
-    body = '<p>Projection fictive locale S6. Aucun droit de publication réelle ni admission au catalogue.</p>'
-    body += '<p>L’aperçu en mémoire reste sans approbation. Le service local ne rend cette projection qu’après '
-    body += 'vérification de son reçu fictif et de ses octets exacts.</p>'
+    body = '<p>Page d’exemple produite localement à partir de données inventées. Elle n’est pas publiée et n’entre pas dans le catalogue public.</p>'
+    body += '<p>Cet aperçu n’a pas été approuvé ; il n’est affiché '
+    body += 'qu’après contrôle de son intégrité.</p>'
     body += projection_body(value, selected)
     return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" '
-            'content="width=device-width, initial-scale=1"><title>Projection fictive · Bench-X</title>'
+            'content="width=device-width, initial-scale=1"><title>Aperçu de publication · Bench-X</title>'
             '<link rel="stylesheet" href="style.css"></head><body><a class="skip" href="#main">Aller au contenu</a>'
             '<main id="main">' + body + '</main><footer><nav aria-label="Informations légales">'
             '<a href="/mentions-legales">Mentions légales</a> · <a href="/cgu">Conditions d’utilisation</a> · '

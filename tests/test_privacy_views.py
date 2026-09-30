@@ -89,27 +89,27 @@ class PrivacyViewsTests(unittest.TestCase):
         from benchmark_web.privacy_views import render_privacy_controls
         controls = render_privacy_controls(example_view(), 'csrf')
         self.assertIn('Supprimer ce cas d’usage', controls)
-        self.assertIn('efface la copie locale', controls)
+        self.assertIn('efface la copie de ce cas gardée dans ce navigateur', controls)
         self.assertIn('contribution', controls)
         self.assertNotIn('conserve votre copie locale', controls)
-        self.assertIn('Accès aux cas fermé après 7 jours d’inactivité', controls)
-        self.assertIn('Accès à la clé fermé après 30 jours d’inactivité', controls)
+        self.assertIn('vos cas ne sont plus accessibles après 7 jours', controls)
+        self.assertIn('Votre clé ne l’est plus après 30 jours', controls)
         self.assertNotIn('Clé retirée après', controls)
         self.assertNotIn('11 jours', controls)
 
     def test_single_box_states_both_effects_and_the_javascript_limit(self):
         from benchmark_web.privacy_views import render_contribution
         rendered = render_contribution(example_view(), 'csrf')
-        for term in ('conserver cet exemple pendant 6 mois', 'historique local', 'besoin, mes messages et les révisions',
-                     'que la contribution exclut', 'nécessite JavaScript', 'sans JavaScript, seule la contribution',
+        for term in ('conserver cet exemple pendant 6 mois', 'historique local', 'votre besoin, vos messages et les versions successives',
+                     'Cette copie contient plus que la contribution', 'a besoin de JavaScript', 'sans lui, seule la contribution',
                      'Mes données'):
             self.assertIn(term, rendered)
 
     def test_withdrawal_states_that_local_history_is_kept(self):
         from benchmark_web.privacy_views import render_contributions
         _, page = render_contributions({'csrf_token': 'purpose', 'contributions': []})
-        for term in ('arrête la contribution concernée seulement', 'historique local reste actif',
-                     'ne sont pas effacées', 'Mes données'):
+        for term in ('arrête seulement la contribution concernée', 'L’historique local continue',
+                     'les copies déjà gardées dans ce navigateur restent', 'Mes données'):
             self.assertIn(term, page)
 
     def test_contributions_have_french_status_and_disable_withdrawn_or_expired(self):
@@ -119,7 +119,7 @@ class PrivacyViewsTests(unittest.TestCase):
                 ('withdrawn', '2099-03-18T00:00:00Z', 'Retirée', True),
                 ('expired', '2000-03-18T00:00:00Z', 'Expirée', True),
                 ('active', '2000-03-18T00:00:00Z', 'Expirée', True),
-                ('UNKNOWN_STATE', '2099-03-18T00:00:00Z', 'État indisponible', True)):
+                ('UNKNOWN_STATE', '2099-03-18T00:00:00Z', 'État inconnu', True)):
             with self.subTest(status=status, expiry=expiry):
                 _, page = render_contributions({'csrf_token': 'purpose', 'contributions': [{
                     'id': 'opaque-identifier', 'created_at': '2026-09-18T12:00:00Z',
@@ -147,7 +147,7 @@ class LegalViewsTests(unittest.TestCase):
             with self.subTest(path=path):
                 page = views.render({'kind': 'legal', 'path': path}, '').decode()
                 self.assertIn('<html lang="fr">', page)
-                self.assertIn('<title>' + title + ' — Bench-X</title>', page)
+                self.assertIn('<title>' + title + ' · Bench-X</title>', page)
                 self.assertEqual(1, page.count('<h1>'))
                 self.assertIn('<h1>' + title + '</h1>', page)
                 self.assertNotIn('<script', page)
