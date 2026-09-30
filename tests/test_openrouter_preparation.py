@@ -886,8 +886,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('0.009', operation['observed_cost']['amount'])
         self.assertEqual('0.009', self.store.inspect_budget('fixture')['spent'])
         page = views.render(view, self.csrf).decode()
-        self.assertIn('Estimation indicative', page)
-        self.assertIn('ce montant n’est pas une facture', page)
+        self.assertIn('Coût estimé de cette préparation', page)
+        self.assertIn('C’est une estimation, pas une facture.', page)
         self.assertIn('0,02000 USD', page)
         self.assertIn('0,009 USD', page)
         for invalid in (None, {}, {'prompt_tokens': 0},

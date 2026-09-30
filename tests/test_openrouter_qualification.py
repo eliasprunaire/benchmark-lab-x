@@ -234,7 +234,7 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
         with self.assertRaisesRegex(prep.Denied, 'CONTRACT_MISSING') as refused:
             campaigns._current_contract(self.store, self.store._connection, 'absent')
-        self.assertEqual("Le contrat de comparaison n'est pas encore établi. Terminez la qualification de l'exemple.",
+        self.assertEqual("Les conditions de la comparaison ne sont pas encore fixées. Attendez la fin de la vérification de l’exemple.",
                          service.denied_response(refused.exception)['value']['error'])
 
     def test_contrat_operateur_prioritaire_et_inchange(self):
@@ -414,7 +414,8 @@ class OpenRouterQualificationTests(unittest.TestCase):
         responses = [service.denied_response(error) for error in errors]
         self.assertEqual(['QUALIFICATION_UNAVAILABLE', 'ADMISSION_CLOSED'],
                          [response['value']['error_code'] for response in responses])
-        self.assertEqual(['Qualification indisponible', 'Admission fermée'],
+        self.assertEqual(['La vérification de l’exemple est indisponible pour le moment. Réessayez plus tard.',
+                          'Les nouveaux envois sont fermés pour le moment. Réessayez plus tard.'],
                          [response['value']['error'] for response in responses])
 
 

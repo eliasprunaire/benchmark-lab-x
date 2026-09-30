@@ -182,7 +182,7 @@ CONFIDENTIALITE = (
     'ne servent à aucun suivi.</p>'
     '<p>Le premier est exempté de consentement car strictement nécessaire au service que vous demandez. '
     'Le second n’est déposé que si vous activez la contribution facultative : il accompagne votre consentement '
-    'et disparaît avec lui.</p><p>Stockage local complémentaire :</p>'
+    'et disparaît avec lui.</p><p>Autres éléments enregistrés dans votre navigateur :</p>'
     + table('Stockage local complémentaire', ('Élément', 'Rôle'), (
         ('<code>bench-x-history</code> (IndexedDB)',
          'Copies complètes de vos cas d’usage, pour relecture et export depuis ce navigateur'),
@@ -211,9 +211,9 @@ CONFIDENTIALITE = (
     'd’<strong>opposition</strong> et de <strong>portabilité</strong> sur les données vous concernant, ainsi que du '
     'droit de <strong>retirer votre consentement</strong> à tout moment pour la contribution facultative et pour '
     'l’historique local.</p>'
-    '<p>Vous pouvez exercer directement, sans nous écrire :</p><ul>'
+    '<p>Vous pouvez agir vous-même, sans nous écrire :</p><ul>'
     '<li><strong>supprimer un cas d’usage</strong> : bouton « Supprimer ce cas d’usage » sur la page du cas ;</li>'
-    '<li><strong>retirer votre clé d’accès</strong> : page <a href="/preparation">Mes cas d’usage</a> ;</li>'
+    '<li><strong>retirer votre clé d’accès</strong> : page <a href="/preparation/access">Ma clé OpenRouter</a> ;</li>'
     '<li><strong>retirer une contribution</strong> : page <a href="/preparation/contributions">Mes '
     'contributions</a> ;</li>'
     '<li><strong>exporter ou effacer votre historique local</strong> : page <a href="/preparation/data">Mes '
@@ -229,7 +229,10 @@ CONFIDENTIALITE = (
     '<section><h2>9. Suppression et sauvegardes</h2><p>Supprimer un cas d’usage ferme immédiatement les accès '
     'ordinaires et demande la suppression sur le serveur, ainsi que celle de sa contribution éventuelle.</p>'
     '<p>L’échéance de 7 jours ferme l’accès à vos données. '
-    'L’effacement des octets sur le serveur est réalisé par une tâche de suppression planifiée.</p></section>'
+    'L’effacement des octets sur le serveur est réalisé par une tâche de suppression planifiée.</p>'
+    '<p>Des copies de sauvegarde restaurables peuvent subsister après la fermeture de l’accès. Aucune durée de '
+    'conservation en sauvegarde n’est annoncée tant que leur inventaire n’est pas vérifié. Toute restauration '
+    'applique les suppressions et expirations avant de rouvrir l’accès.</p></section>'
     '<section><h2>10. Modification de cette politique</h2><p>Cette politique peut évoluer. La date de dernière mise '
     'à jour figure en tête. En cas de changement substantiel affectant une finalité fondée sur votre consentement, '
     'un nouveau choix vous sera demandé.</p></section>')

@@ -140,14 +140,14 @@ class AccessViewTests(unittest.TestCase):
         connected = views.render({'kind': 'access', 'connected': True, 'status': 'connected',
                                   'limit_usd': '25', 'limit_remaining_usd': '12.50'}, 'csrf').decode()
         self.assertIn('Clé enregistrée', connected)
-        self.assertIn('Solde annoncé : 12,50 USD', connected)
+        self.assertIn('Solde restant selon OpenRouter : 12,50 USD', connected)
         self.assertIn('Plafond de la clé : 25 USD', connected)
         self.assertIn('Retirer la clé de ce navigateur', connected)
 
         invalid = views.render({'kind': 'access', 'connected': False, 'status': 'invalid',
                                 'reason': 'KEY_REJECTED'}, 'csrf').decode()
         self.assertIn('Clé à remplacer', invalid)
-        self.assertIn('Motif : Openrouter refuse cette clé', invalid)
+        self.assertIn('Cette clé ne peut pas être utilisée : OpenRouter refuse cette clé', invalid)
 
     def test_recapitulatif_connecte_ne_propose_pas_une_nouvelle_connexion(self):
         page = views.render(self.campaign(
@@ -158,8 +158,8 @@ class AccessViewTests(unittest.TestCase):
     def test_indisponible_ne_propose_aucun_formulaire(self):
         access = views.render({'kind': 'access', 'status': 'unavailable'}, 'csrf').decode()
         summary = views.render(self.campaign({'status': 'unavailable'}), 'csrf').decode()
-        self.assertIn('Enregistrement indisponible', access)
-        self.assertIn('Enregistrement de clé indisponible.', summary)
+        self.assertIn('Enregistrement de clé indisponible', access)
+        self.assertIn('Impossible d’enregistrer une clé pour le moment.', summary)
         for page in (access, summary):
             self.assertNotIn('action="/preparation/access/key"', page)
             self.assertNotIn('action="/preparation/access/disconnect"', page)
@@ -194,16 +194,16 @@ class AccessViewTests(unittest.TestCase):
         self.assertTrue(any(tag == 'select' and attrs.get('name') == 'tier'
                             and attrs.get('aria-describedby') == 'reasoning-help'
                             for tag, attrs in markup.tags))
-        self.assertIn('Un niveau incompatible est refusé', page)
-        self.assertIn('sans garantir une meilleure réponse', page)
-        self.assertIn('palier de raisonnement non réglable', page)
+        self.assertIn('Si un modèle ne l’accepte pas, il est refusé', page)
+        self.assertIn('sans garantir qu’elle soit meilleure', page)
+        self.assertIn('niveau de raisonnement fixe', page)
         for technical in ('modele-a', 'modele-b'):
-            self.assertIn('<details><summary>Identifiant technique</summary><code>' +
+            self.assertIn('<details><summary>Identifiant OpenRouter</summary><code>' +
                           technical + '</code></details>', page)
-        self.assertIn('Estimation totale : 3,50 USD', page)
+        self.assertIn('Coût total estimé : 3,50 USD', page)
         self.assertNotIn('Plafond :', page)
-        self.assertIn('estimation 1,20 USD', page)
-        self.assertIn('estimation 2,30 USD', page)
+        self.assertIn('coût estimé : 1,20 USD', page)
+        self.assertIn('coût estimé : 2,30 USD', page)
         self.assertIn('/campaigns/d1-c1/conditions', page)
 
     def test_page_configurations_sans_releve(self):
@@ -219,10 +219,10 @@ class AccessViewTests(unittest.TestCase):
         value = self.campaign({'status': 'connected'})
         value.update(checks=[], launchable=False, cap_usd='30.00', judgment_estimate_usd='0.125')
         page = views.render(value, 'csrf').decode()
-        self.assertIn('Évaluation estimée : 0,125 USD', page)
-        self.assertIn('financée par votre clé personnelle', page)
+        self.assertIn('Coût estimé de l’évaluation des réponses : 0,125 USD', page)
+        self.assertIn('payé avec votre clé OpenRouter', page)
         value.pop('judgment_estimate_usd')
-        self.assertNotIn('Évaluation estimée', views.render(value, 'csrf').decode())
+        self.assertNotIn('Coût estimé de l’évaluation des réponses', views.render(value, 'csrf').decode())
 
     def test_judgment_preflight_failure_remains_readable(self):
         value = self.campaign({'status': 'connected'})
@@ -260,9 +260,9 @@ class AccessViewTests(unittest.TestCase):
             estimate_total_usd='3.50')
         page = views.render(base, 'csrf').decode()
         self.assertIn('✓ Exemple validé', page)
-        self.assertIn('Constats de qualification', page)
+        self.assertIn('Ce que la vérification de l’exemple a relevé', page)
         self.assertIn('Quantité à confirmer', page)
-        self.assertIn('Crédit restant : 12,50 USD ; plafond de la clé : 20 USD', page)
+        self.assertIn('Crédit restant sur votre clé : 12,50 USD, pour un plafond de 20 USD', page)
         self.assertNotIn('action="/preparation/dossiers/d1/campaigns/c1/cap"', page)
         self.assertNotIn('L’arrêt intervient après le paiement de l’appel en cours.', page)
         self.assertNotIn('La dépense peut donc dépasser le plafond du montant du dernier appel.', page)
@@ -285,10 +285,10 @@ class AccessViewTests(unittest.TestCase):
     def test_campaign_followup_only_polls_active_work_and_keeps_received_distinct(self):
         for state, admission, incident, active, terminal, message in (
             ('EMISSION_POSSIBLE', True, None, True, False, 'Comparaison en cours'),
-            ('INTENT_RECORDED', True, None, True, False, 'En attente de démarrage'),
-            ('EMISSION_POSSIBLE', False, None, False, False, 'Essais arrêtés avant la fin'),
-            ('AMBIGUOUS', True, None, False, False, 'Vérification requise'),
-            ('RECEIVED', True, 'LENGTH', False, False, 'Incident'),
+            ('INTENT_RECORDED', True, None, True, False, 'Votre lancement est enregistré. Les essais n’ont pas encore démarré.'),
+            ('EMISSION_POSSIBLE', False, None, False, False, 'La comparaison s’est arrêtée avant la fin'),
+            ('AMBIGUOUS', True, None, False, False, 'Un essai n’a pas pu être confirmé'),
+            ('RECEIVED', True, 'LENGTH', False, False, 'Un problème technique est survenu'),
             ('RECEIVED', True, None, False, True, 'Réponses reçues'),
         ):
             with self.subTest(state=state, admission=admission, incident=incident):
@@ -305,11 +305,11 @@ class AccessViewTests(unittest.TestCase):
                 self.assertIn(message, page)
                 self.assertNotIn('action=', page)
                 if terminal:
-                    self.assertIn('En attente d’évaluation', page)
+                    self.assertIn('Celles qui n’ont pas encore de verdict attendent leur évaluation.', page)
                 if active or terminal:
                     self.assertIn('<script>' + views.page_script(value) + '</script>', page)
                 if active:
-                    self.assertNotIn('Comparer les résultats et lire les preuves</a>', page)
+                    self.assertNotIn('Voir les résultats</a>', page)
                 nav = page.split('<nav class="steps"', 1)[1].split('</nav>', 1)[0]
                 self.assertIn('href="/preparation/dossiers/d1/revisions/2"', nav)
                 self.assertNotIn('#exemple', nav)
@@ -333,18 +333,18 @@ class AccessViewTests(unittest.TestCase):
                 self.assertEqual(active, 'id="preparation-progress"' in page)
                 self.assertEqual(ready, 'data-results-href=' in page)
                 self.assertIn('Réponses reçues : 1 sur 1', page)
-                self.assertIn('Évaluations terminées : ' + str(int(ready)) + ' sur 1', page)
+                self.assertIn('Réponses évaluées : ' + str(int(ready)) + ' sur 1', page)
                 self.assertEqual(status == 'NOT_STARTED',
                                  'action="/preparation/dossiers/d1/campaigns/c1/evaluate"' in page)
                 if status == 'NOT_STARTED':
-                    self.assertIn('Évaluer les réponses conservées', page)
+                    self.assertIn('Évaluer les réponses reçues', page)
                     self.assertIn('name="confirm" value="yes"', page)
                     self.assertIn('name="csrf_token" value="csrf"', page)
                 if status == 'BLOCKED':
                     self.assertIn('Budget insuffisant', page)
                     self.assertNotIn('id="preparation-progress"', page)
                 if not ready:
-                    self.assertNotIn('Comparer les résultats et lire les preuves</a>', page)
+                    self.assertNotIn('Voir les résultats</a>', page)
                 self.assertEqual(active or ready, views.page_script(value) is not None)
 
     def test_ancien_plafond_absent_apres_lancement(self):
@@ -607,12 +607,12 @@ class AccessServerTests(WebServerCase):
                 'Accept': 'application/json'})
             self.assertEqual(503, status, wire)
             self.assertTrue(json.loads(raw)['unavailable'])
-            self.assertNotIn('Formulaire invalide', raw.decode())
-            self.assertNotIn('Aucun nouvel appel admis', raw.decode())
+            self.assertNotIn('Ce formulaire n’a pas pu être traité', raw.decode())
+            self.assertNotIn('Aucun appel n’a été lancé', raw.decode())
 
             status, _, raw = self.request('GET', '/preparation/access')
             self.assertEqual(503, status, wire)
-            self.assertNotIn('Formulaire invalide', raw.decode())
+            self.assertNotIn('Ce formulaire n’a pas pu être traité', raw.decode())
 
     def test_valeur_d_executeur_hors_contrat_annonce_une_panne_et_non_un_succes(self):
         # Sans contrôle central, la vue JSON rendait 200 avec un corps nul et la page HTML rompait
@@ -634,7 +634,7 @@ class AccessServerTests(WebServerCase):
             # Sans panne annoncée, la page HTML tomberait sur une connexion coupée sans réponse
             status, _, raw = self.request('GET', '/preparation/access')
             self.assertEqual(503, status, wire)
-            self.assertNotIn('Formulaire invalide', raw.decode())
+            self.assertNotIn('Ce formulaire n’a pas pu être traité', raw.decode())
 
     def test_piece_valide_et_enveloppe_d_erreur_restent_servies(self):
         self.executor.raw_response = (b'{"status":200,"value":"48656c6c6f","piece":true,'
@@ -655,8 +655,8 @@ class AccessServerTests(WebServerCase):
         status, _, raw = self.request('GET', '/preparation/access',
                                       headers={'Cookie': 'benchmark_session=session-token'})
         self.assertEqual(500, status)
-        self.assertIn('Défaillance interne du service', raw.decode())
-        self.assertNotIn('Formulaire invalide', raw.decode())
+        self.assertIn('Une erreur interne a empêché d’afficher cette page', raw.decode())
+        self.assertNotIn('Ce formulaire n’a pas pu être traité', raw.decode())
 
         status, _, raw = self.request('GET', '/preparation/access', headers={
             'Cookie': 'benchmark_session=session-token', 'Accept': 'application/json'})
@@ -715,25 +715,25 @@ class AccessServerTests(WebServerCase):
         status, _, raw = self.request('GET', '/preparation/access',
                                       headers={'Accept': 'application/json'})
         self.assertEqual(503, status)
-        self.assertIn('Aucune donnée n’a été modifiée', json.loads(raw)['error'])
-        self.assertNotIn('un envoi précédent', json.loads(raw)['error'])
+        self.assertIn('rien n’a été modifié', json.loads(raw)['error'])
+        self.assertNotIn('confirmer votre envoi', json.loads(raw)['error'])
 
         body = urlencode({'csrf_token': 'csrf'}).encode()
         status, _, raw = self.request('POST', '/preparation/dossiers', body, {
             'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json'})
         self.assertEqual(503, status)
-        self.assertIn('un envoi précédent peut avoir été enregistré', json.loads(raw)['error'])
+        self.assertIn('ne peut pas confirmer votre envoi. Il a peut-être été enregistré', json.loads(raw)['error'])
 
         status, _, raw = self.request('GET', '/preparation', headers={'Accept': 'application/json'})
         self.assertEqual(503, status)
-        self.assertIn('Aucune donnée n’a été modifiée', json.loads(raw)['error'])
+        self.assertIn('rien n’a été modifié', json.loads(raw)['error'])
 
         # La ligne HTML du tableau : gabarit français et en-têtes de sécurité sur le même 503
         status, headers, raw = self.request('GET', '/preparation/access',
                                             headers={'Accept': 'text/html'})
         self.assertEqual(503, status)
         self.assertIn(b'<html lang="fr">', raw)
-        self.assertIn('Aucune donnée n’a été modifiée', raw.decode())
+        self.assertIn('rien n’a été modifié', raw.decode())
         self.assertEqual(CSP, headers['Content-Security-Policy'])
         self.assertEqual('nosniff', headers['X-Content-Type-Options'])
         self.assertEqual('no-referrer', headers['Referrer-Policy'])
@@ -759,7 +759,7 @@ class AccessServerTests(WebServerCase):
                                                 headers={'Accept': 'application/json'})
             self.assertEqual((405, 'GET, HEAD, POST'), (status, headers['Allow']), method)
             self.assertEqual('no-referrer', headers['Referrer-Policy'], method)
-            self.assertIn('méthode', json.loads(raw)['error'])
+            self.assertIn('Ce type de requête n’est pas accepté', json.loads(raw)['error'])
 
     def test_url_inconnue_rend_une_page_au_navigateur_et_le_contrat_json_au_client(self):
         for method, path in (('GET', '/inconnu'), ('GET', '/publications/pas-une-identite/page.html'),
@@ -877,7 +877,7 @@ class IndexationTests(WebServerCase):
                 self.assertEqual(200, status)
                 self.assertIsNone(headers.get('X-Robots-Tag'))
                 tags = Markup(raw).tags
-                self.assertRegex(re.search(r'<title>(.*)</title>', raw.decode())[1], r'\S — Bench-X$')
+                self.assertRegex(re.search(r'<title>(.*)</title>', raw.decode())[1], r'\S · Bench-X$')
                 descriptions = [attrs['content'] for tag, attrs in tags if tag == 'meta' and attrs.get('name') == 'description']
                 self.assertEqual(1, len(descriptions))
                 self.assertGreaterEqual(len(descriptions[0]), 50)

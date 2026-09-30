@@ -240,7 +240,7 @@ class ConfigurationsTests(unittest.TestCase):
             view = campaigns.configurations_view(self.store, self.session, 'fixture')
             self.assertTrue(view['catalogue_stale'])
             page = render(view, 'csrf').decode()
-            self.assertIn('Ce relevé a expiré', page)
+            self.assertIn('La liste des modèles n’a pas pu être mise à jour', page)
             self.assertTrue(view['models'])
         renewed_at = (NOW + timedelta(hours=26)).isoformat()
         self.store._connection.execute('UPDATE s2_model_catalogue SET fetched_at=?', (renewed_at,))

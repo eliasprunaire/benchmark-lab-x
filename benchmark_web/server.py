@@ -135,8 +135,8 @@ def _return_path(value):
 
 def _failure_document(message):
     """Page de repli sans rendu : ne pas redemander la page au composant qui vient d'échouer"""
-    return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Erreur</title>'
-            '</head><body><main><h1>Erreur</h1><p>' + escape(message)
+    return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Une erreur est survenue</title>'
+            '</head><body><main><h1>Une erreur est survenue</h1><p>' + escape(message)
             + '</p></main></body></html>').encode()
 
 
@@ -267,9 +267,9 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             headers = {'Connection': 'close'}
             if code in (405, 501):
                 headers['Allow'] = 'GET, HEAD, POST'
-                self.error_page(405, 'Méthode non autorisée',
-                                'Cette méthode n’est pas admise sur ce service. '
-                                'Seules la consultation et l’envoi de formulaire le sont.', headers)
+                self.error_page(405, 'Requête non acceptée',
+                                'Ce type de requête n’est pas accepté. '
+                                'Bench-X permet seulement de consulter des pages et d’envoyer des formulaires.', headers)
                 return
             # Ligne de requête refusée avant les en-têtes : aucun navigateur à servir, et `self.headers` peut manquer
             self.respond(code, {'error': 'Cette requête n’a pas pu être traitée.'}, headers=headers)
@@ -440,9 +440,9 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             except (ValueError, TypeError, KeyError, CookieError) as error:
                 if relayed:
                     logging.getLogger(__name__).error('WEB_INTERNAL RENDER %s', type(error).__name__)
-                    value = {'error': 'Défaillance interne du service : cette page n’a pas pu être '
-                             'construite. L’état de votre demande n’est pas confirmé ; consultez le '
-                             'dossier avant tout nouvel envoi.'}
+                    value = {'error': 'Une erreur interne a empêché d’afficher cette page. Votre demande a peut-être '
+                             'été enregistrée : ouvrez votre cas d’usage avant de renvoyer '
+                             'quoi que ce soit.'}
                     if wants_json:
                         self.respond(500, value)
                         return
@@ -452,17 +452,16 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                         page = _failure_document(value['error'])
                     self.respond(500, page, 'text/html; charset=utf-8')
                     return
-                value = {'error': 'Formulaire invalide. Aucun nouvel appel admis.'}
+                value = {'error': 'Ce formulaire n’a pas pu être traité. Rechargez la page, puis réessayez. Aucun appel n’a été lancé.'}
                 self.respond(400, value if wants_json else views.render(value, '', error=True),
                              'application/json' if wants_json else 'text/html; charset=utf-8')
             except OSError:
                 read_only = self.command in ('GET', 'HEAD')
-                value = {'error': 'Service temporairement indisponible : cette page ne peut pas être affichée '
-                         'pour le moment. Aucune donnée n’a été modifiée ; réessayez dans un instant.'
+                value = {'error': 'Bench-X est momentanément indisponible. Cette page ne peut pas s’afficher, '
+                         'mais rien n’a été modifié. Réessayez dans un instant.'
                          if read_only else
-                         'Service temporairement indisponible : l’état de votre demande ne peut pas être vérifié. '
-                         'Aucune nouvelle soumission disponible. Consultez le dossier avant tout nouvel envoi ; '
-                         'un envoi précédent peut avoir été enregistré.', 'unavailable': True}
+                         'Bench-X est momentanément indisponible et ne peut pas confirmer votre envoi. '
+                         'Il a peut-être été enregistré : ouvrez votre cas d’usage avant de renvoyer quoi que ce soit.', 'unavailable': True}
                 self.respond(503, value if wants_json else views.render(value, '', error=True),
                              'application/json' if wants_json else 'text/html; charset=utf-8')
 

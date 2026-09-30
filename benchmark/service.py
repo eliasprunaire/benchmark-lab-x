@@ -82,15 +82,15 @@ EXECUTOR_START_SECONDS = 30
 # Un fil de travail par Store ; chaque connexion SQLite appartient au fil qui l'a créée
 _worker_store = threading.local()
 
-BAD_REQUEST_MESSAGE = 'Action non vérifiée. Vérifiez les champs ou consultez le dossier courant.'
-CONFLICT_MESSAGE = ('Action refusée : révision périmée, opération en attente ou budget indisponible. '
-                    'Consultez le dossier courant.')
+BAD_REQUEST_MESSAGE = 'Cette action n’a pas pu être vérifiée. Relisez les champs, ou rouvrez votre cas d’usage pour voir son état.'
+CONFLICT_MESSAGE = ('Cette action n’a pas été faite : la page n’était plus à jour, une opération est en cours, '
+                    'ou le budget ne suffit pas. Rouvrez votre cas d’usage pour voir son état actuel.')
 # L'effet peut déjà être enregistré quand la défaillance survient : n'annoncer aucun résultat
-INTERNAL_MESSAGE = ('Défaillance interne du service : l’état de cette action n’est pas confirmé. '
-                    'Consultez le dossier avant tout nouvel envoi.')
+INTERNAL_MESSAGE = ('Une erreur interne s’est produite. Votre action a peut-être été enregistrée : '
+                    'ouvrez votre cas d’usage avant de renvoyer quoi que ce soit.')
 PROTOCOL_MESSAGE = 'Réponse d’exécuteur illisible'
 MAINTENANCE_RESULT = {'status': 503, 'value': {
-    'error': 'Service en maintenance : cette action n’a pas été traitée et aucune donnée n’a été modifiée. '
+    'error': 'Bench-X est en maintenance. Votre action n’a pas été traitée et rien n’a été modifié. '
              'Réessayez dans quelques minutes.', 'error_code': 'MAINTENANCE', 'unavailable': True}}
 
 
@@ -282,40 +282,40 @@ def executor_health(path):
 
 
 def denied_response(error):
-    generic = ('Cette action n’est pas autorisée pour votre session. Retrouvez votre dossier '
-               'ou demandez au responsable de vérifier son autorisation.')
+    generic = ('Vous ne pouvez pas faire cette action depuis ce navigateur. Rouvrez votre cas d’usage '
+               'depuis Mes cas d’usage. Si le problème continue, contactez l’équipe Bench-X.')
     if error.code == 'NOT_FOUND':
-        return {'status': 404, 'value': {'error': 'Ressource inaccessible', 'error_code': 'NOT_FOUND'}}
+        return {'status': 404, 'value': {'error': 'Cette page n’existe pas ou ne vous est pas accessible.', 'error_code': 'NOT_FOUND'}}
     if not error.code:
         return {'status': 403, 'value': {'error': generic}}
     messages = {
-        'SESSION_EXPIRED': 'Votre accès au serveur a expiré. Vos copies locales restent consultables dans Mes données.',
-        'RESTORE_PENDING': 'Accès temporairement fermé : une restauration doit être vérifiée.',
-        'CONTRIBUTION_SENSITIVE_DATA': 'Un contenu potentiellement sensible empêche cette contribution. Votre benchmark reste accessible.',
+        'SESSION_EXPIRED': 'Votre session a expiré. Les copies gardées dans ce navigateur restent consultables dans Mes données.',
+        'RESTORE_PENDING': 'Service fermé pour le moment : l’équipe Bench-X doit vérifier une restauration. Réessayez plus tard.',
+        'CONTRIBUTION_SENSITIVE_DATA': 'Cette contribution n’a pas été envoyée : elle contient peut-être une donnée sensible. Votre cas d’usage et ses résultats restent accessibles.',
         'TEXT_TOO_SHORT': 'Ce texte est trop court.',
-        'TEXT_TOO_LONG': 'Ce texte est trop long.',
-        'PREPARATION_IN_PROGRESS': 'Une préparation est déjà en cours.',
-        'TOO_SOON': 'Attendez avant un nouvel envoi.',
-        'SOURCE_RATE_LIMIT': 'La limite horaire de cette source est atteinte.',
-        'SOURCE_MISSING': 'La source de cet envoi est absente ou invalide.',
-        'ACCESS_KEY_REJECTED': 'Cette clé Openrouter n’a pas pu être vérifiée. La clé précédente est conservée.',
-        'ACCESS_CAP_REQUIRED': 'Utilisez une clé Openrouter avec un plafond non renouvelable de 50 USD maximum et un solde disponible.',
-        'ACCESS_REQUIRED': 'Un accès Openrouter connecté est requis avant le lancement.',
-        'NOT_QUALIFIED': 'Ce dossier doit être qualifié avant le lancement.',
-        'CONTRACT_MISSING': "Le contrat de comparaison n'est pas encore établi. Terminez la qualification de l'exemple.",
+        'TEXT_TOO_LONG': 'Ce texte est trop long. Raccourcissez-le, puis renvoyez-le.',
+        'PREPARATION_IN_PROGRESS': 'Une préparation est déjà en cours. Attendez qu’elle se termine avant un nouvel envoi.',
+        'TOO_SOON': 'Vous venez d’envoyer un message. Patientez un peu avant le suivant.',
+        'SOURCE_RATE_LIMIT': 'La limite d’envois par heure est atteinte. Réessayez plus tard.',
+        'SOURCE_MISSING': 'Cet envoi n’a pas pu être vérifié. Rechargez la page, puis renvoyez-le.',
+        'ACCESS_KEY_REJECTED': 'OpenRouter n’a pas pu vérifier cette clé. Votre clé précédente reste en place.',
+        'ACCESS_CAP_REQUIRED': 'Utilisez une clé OpenRouter avec un plafond non renouvelable de 50 USD maximum et un solde disponible.',
+        'ACCESS_REQUIRED': 'Ajoutez votre clé OpenRouter avant de lancer la comparaison.',
+        'NOT_QUALIFIED': 'L’exemple doit d’abord être vérifié. Attendez la fin de la vérification avant de lancer la comparaison.',
+        'CONTRACT_MISSING': "Les conditions de la comparaison ne sont pas encore fixées. Attendez la fin de la vérification de l’exemple.",
         'STEP_INCOMPLETE': 'Terminez l’étape précédente avant de poursuivre.',
-        'OUT_OF_SCOPE': 'Cette demande est hors du périmètre de Bench-X. Décrivez un autre cas d’usage pour continuer.',
-        'example_validated': 'Validez l’exemple présenté avant le lancement.',
-        'example_qualified': 'La qualification de l’exemple est requise avant le lancement.',
-        'configurations_available': 'Choisissez de nouveau les modèles indisponibles avant le lancement.',
-        'access_connected': 'Ajoutez votre clé Openrouter avant le lancement.',
-        'estimate_available': 'Les coûts doivent pouvoir être estimés avant le lancement.',
-        'QUALIFICATION_UNAVAILABLE': 'Qualification indisponible',
-        'ADMISSION_CLOSED': 'Admission fermée',
-        'PROBE_SLUG_INVALID': 'Copiez le slug exact de la fiche Openrouter, au format constructeur/modèle. Les URL et routeurs automatiques ne sont pas acceptés.',
-        'PROBE_UNAVAILABLE': 'La vérification de modèles est indisponible.',
-        'PROBE_CLOSED': 'Les nouveaux appels sont fermés. Aucun test de modèle n’a été lancé.',
-        'PROBE_MODEL_UNAVAILABLE': 'Slug introuvable, modèle substitué ou endpoint texte incompatible. Aucun appel payant n’a été lancé. Vérifiez la fiche Openrouter.',
+        'OUT_OF_SCOPE': 'Bench-X ne peut pas comparer cette tâche. Décrivez un autre cas d’usage pour continuer.',
+        'example_validated': 'Validez l’exemple avant de lancer la comparaison.',
+        'example_qualified': 'L’exemple doit être vérifié avant de lancer la comparaison.',
+        'configurations_available': 'Certains modèles choisis ne sont plus disponibles. Remplacez-les avant de lancer la comparaison.',
+        'access_connected': 'Ajoutez votre clé OpenRouter avant de lancer la comparaison.',
+        'estimate_available': 'Le coût de cette comparaison n’a pas pu être estimé. Il doit l’être avant le lancement.',
+        'QUALIFICATION_UNAVAILABLE': 'La vérification de l’exemple est indisponible pour le moment. Réessayez plus tard.',
+        'ADMISSION_CLOSED': 'Les nouveaux envois sont fermés pour le moment. Réessayez plus tard.',
+        'PROBE_SLUG_INVALID': 'Copiez l’identifiant exact du modèle sur sa fiche OpenRouter, au format constructeur/modèle. Les adresses web et les routeurs automatiques ne sont pas acceptés.',
+        'PROBE_UNAVAILABLE': 'La vérification des modèles est indisponible pour le moment. Réessayez plus tard.',
+        'PROBE_CLOSED': 'Les nouveaux appels sont fermés pour le moment. Aucun modèle n’a été testé.',
+        'PROBE_MODEL_UNAVAILABLE': 'Ce modèle ne peut pas être utilisé : identifiant introuvable, modèle remplacé par un autre, ou modèle qui ne traite pas le texte. Aucun appel payant n’a été lancé. Vérifiez sa fiche OpenRouter.',
     }
     if error.code == 'TEXT_TOO_SHORT' and error.field == 'request':
         from .preparation import REQUEST_MIN
@@ -381,7 +381,7 @@ def executor_result(raw, health, handle):
     except preparation.Denied as error:
         return denied_response(error)
     except Gone:
-        return {'status': 410, 'value': {'error': 'Ce cas d’usage n’est plus accessible sur le serveur.', 'error_code': 'DOSSIER_EXPIRED'}}
+        return {'status': 410, 'value': {'error': 'Ce cas d’usage n’est plus disponible sur le serveur. Vos copies gardées dans ce navigateur restent dans Mes données.', 'error_code': 'DOSSIER_EXPIRED'}}
     except (ConflictError, BudgetError):
         return {'status': 409, 'value': {'error': CONFLICT_MESSAGE}}
     except (IntegrityError, SchemaError, sqlite3.Error) as error:
@@ -478,7 +478,7 @@ def _probe_worker(future, data, request, fetch, secret, access_transport, transp
     except preparation.Denied as error:
         result = {'error': denied_response(error)['value']['error']}
     except (BudgetError, ConflictError):
-        result = {'error': 'Vérification refusée : budget disponible insuffisant ou opération déjà en cours.'}
+        result = {'error': 'Vérification impossible : le budget restant ne suffit pas, ou une autre opération est déjà en cours.'}
     except Exception as error:
         result = {'error': _internal_result(error, 'MODEL_PROBE')['value']['error']}
     future.set_result(result)
