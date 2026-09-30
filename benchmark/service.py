@@ -311,10 +311,10 @@ def denied_response(error):
         'access_connected': 'Ajoutez votre clé OpenRouter avant de lancer la comparaison.',
         'estimate_available': 'Le coût de cette comparaison n’a pas pu être estimé. Il doit l’être avant le lancement.',
         'QUALIFICATION_UNAVAILABLE': 'La vérification de l’exemple est indisponible pour le moment. Réessayez plus tard.',
-        'ADMISSION_CLOSED': 'Les nouveaux envois sont fermés pour le moment. Réessayez plus tard.',
+        'ADMISSION_CLOSED': 'Ajoutez ou vérifiez votre clé OpenRouter pour continuer. Aucun appel n’a été lancé.',
         'PROBE_SLUG_INVALID': 'Copiez l’identifiant exact du modèle sur sa fiche OpenRouter, au format constructeur/modèle. Les adresses web et les routeurs automatiques ne sont pas acceptés.',
         'PROBE_UNAVAILABLE': 'La vérification des modèles est indisponible pour le moment. Réessayez plus tard.',
-        'PROBE_CLOSED': 'Les nouveaux appels sont fermés pour le moment. Aucun modèle n’a été testé.',
+        'PROBE_CLOSED': 'Votre clé OpenRouter a changé pendant la vérification. Relancez-la ; aucun modèle n’a été testé.',
         'PROBE_MODEL_UNAVAILABLE': 'Ce modèle ne peut pas être utilisé : identifiant introuvable, modèle remplacé par un autre, ou modèle qui ne traite pas le texte. Aucun appel payant n’a été lancé. Vérifiez sa fiche OpenRouter.',
     }
     if error.code == 'TEXT_TOO_SHORT' and error.field == 'request':
@@ -435,6 +435,45 @@ def personal_read_profiles(store, token, *profiles):
     return tuple(result)
 
 
+def personal_dispatch(store, message, source, *, transport=None, qualification_transport=None, judgment_transport=None,
+                      candidate_transport=None, candidate_identity=None, access_secret=None, access_transport=None,
+                      presentation=None):
+    """Acheminer une requête avec les assistants liés à la clé de sa session, jamais avec une clé opérateur
+
+    Rend aussi les assistants liés, que l'exécuteur confie aux travaux lancés par la requête
+    """
+    from . import preparation, provider_access, web_api
+    active_judgment = None
+    if needs_personal_transport(message['method'], message['path']):
+        active_transport, active_qualification = personal_transports(
+            store, message['token'], transport, qualification_transport, access_secret, access_transport)
+        if active_transport is not None and judgment_transport is not None:
+            active_judgment = judgment_transport.for_session(active_transport._api_key,
+                active_transport._session_id, access_secret)
+    else:
+        active_transport, active_qualification, active_judgment = personal_read_profiles(
+            store, message['token'], transport, qualification_transport, judgment_transport)
+    code, value, cookie, start = web_api.dispatch(
+        store, message['method'], message['path'], message['token'], message['body'],
+        source, active_transport, candidate_transport=candidate_transport, candidate_identity=candidate_identity,
+        qualification_transport=active_qualification, judgment_transport=active_judgment,
+        access_secret=access_secret, access_transport=access_transport, presentation=presentation,
+        management_token=message.get('management_token'))
+    if isinstance(value, dict):
+        if 'availability' in value and active_transport is None:
+            value['availability'].update(can_submit=False, reason='access',
+                                         assistant_configured=transport is not None)
+        if code < 400 and value.get('kind') not in ('session_bootstrap', 'privacy_data', 'contributions'):
+            try:
+                session_id, _, _ = preparation.session(store, cookie or message['token'])
+                value['personal_access'] = provider_access.status_only(store, session_id)
+            except preparation.Denied:
+                pass
+            except (sqlite3.Error, SchemaError) as error:
+                _decoration_skipped(message, error)
+    return code, value, cookie, start, active_transport, active_qualification, active_judgment
+
+
 def _refresh_catalogue(data, stopping, fetch):
     from . import model_catalogue
 
@@ -527,7 +566,7 @@ def _retention_worker(data, dossier_id, function, *args):
 def serve_executor(data, socket_path, source, *, version=None, transport=None, qualification_transport=None,
                    candidate_transport=None, candidate_transport_factory=None,
                    candidate_identity=None, judgment_transport=None,
-                   access_secret=None, access_transport=None, presentation=None, personal_preparation=False,
+                   access_secret=None, access_transport=None, presentation=None,
                    catalogue_fetch=None, model_probe_transport=None):
     data, socket_path = Path(data), Path(socket_path)
     with closing(Store(data)) as store:
@@ -572,41 +611,13 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     return handle_locked(worker, message)
 
             def handle_locked(store, message):
-                from . import preparation, provider_access, web_api
-                active_transport, active_qualification = transport, qualification_transport
-                active_judgment = None
-                if personal_preparation:
-                    if needs_personal_transport(message['method'], message['path']):
-                        active_transport, active_qualification = personal_transports(
-                            store, message['token'], transport, qualification_transport, access_secret, access_transport)
-                        if active_transport is not None and judgment_transport is not None:
-                            active_judgment = judgment_transport.for_session(active_transport._api_key,
-                                active_transport._session_id, access_secret)
-                    else:
-                        active_transport, active_qualification, active_judgment = personal_read_profiles(
-                            store, message['token'], transport, qualification_transport, judgment_transport)
-                code, value, cookie, start = web_api.dispatch(
-                    store, message['method'], message['path'], message['token'], message['body'],
-                    source, active_transport, candidate_transport=candidate_transport or candidate_transport_factory,
-                    candidate_identity=candidate_identity,
-                    qualification_transport=active_qualification,
-                    judgment_transport=active_judgment,
-                    access_secret=access_secret, access_transport=access_transport,
-                    presentation=presentation, personal_preparation=personal_preparation,
-                    management_token=message.get('management_token'))
-                if personal_preparation and isinstance(value, dict):
-                    value['personal_preparation'] = True
-                    if 'availability' in value and active_transport is None:
-                        value['availability'].update(can_submit=False, reason='access',
-                                                     assistant_configured=transport is not None)
-                    if code < 400 and value.get('kind') not in ('session_bootstrap', 'privacy_data', 'contributions'):
-                        try:
-                            session_id, _, _ = preparation.session(store, cookie or message['token'])
-                            value['personal_access'] = provider_access.status_only(store, session_id)
-                        except preparation.Denied:
-                            pass
-                        except (sqlite3.Error, SchemaError) as error:
-                            _decoration_skipped(message, error)
+                from . import preparation
+                code, value, cookie, start, active_transport, active_qualification, active_judgment = personal_dispatch(
+                    store, message, source, transport=transport, qualification_transport=qualification_transport,
+                    judgment_transport=judgment_transport,
+                    candidate_transport=candidate_transport or candidate_transport_factory,
+                    candidate_identity=candidate_identity, access_secret=access_secret,
+                    access_transport=access_transport, presentation=presentation)
                 if isinstance(start, dict):
                     if 'model_probe' in start:
                         with probe_guard:
@@ -689,8 +700,6 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                 finally:
                     stopping.set()
                     server.stop_workers()
-                    from .preparation import close_admission
-                    close_admission(store)
                     if catalogue_worker is not None:
                         # `fetch_unless_stopping` empêche d'écrire un relevé récupéré après `stopping` ; le budget
                         # local couvre une écriture déjà lancée, qui tient dans une transaction : interrompue, SQLite

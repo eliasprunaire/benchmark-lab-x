@@ -19,7 +19,7 @@ from tests.test_s2_review_regressions import response_for
 from tests.test_s5_regressions import RESPONSIBLE, EVALUATION_AUTHORITY, findings
 from tests.test_configurations import NOW, model
 from tests.test_provider_access import AccessTransport, KEY, SECRET
-from tests.test_s3_regressions import fixture, specification, check, ACTOR, AUTHORITY
+from tests.test_s3_regressions import fixture, granted, specification, check, ACTOR, AUTHORITY
 from tests.test_s4_regressions import inputs, manifest, response
 
 
@@ -172,12 +172,12 @@ class CampaignLaunch(unittest.TestCase):
         from tests.test_s2_review_regressions import response_for
         body = self.admit()
         view = p.view(self.store, self.sid, 'fixture')
-        op, _ = p.submit(self.store, self.sid, 'fixture', dict(action_id='change', revision=view['revision'], kind='correct', message='Nouvelle consigne'), 'a'*40, True)
+        op, _ = p.submit(self.store, self.sid, 'fixture', dict(action_id='change', revision=view['revision'], kind='correct', message='Nouvelle consigne'), 'a'*40, granted())
         def changed(operation, request):
             value = response_for(operation)
             value['receipt']['result']['package']['candidate']['instruction'] = 'Consigne révisée'
             return value
-        p.execute(self.data, op, changed)
+        p.execute(self.data, op, granted(changed))
         with self.assertRaises((ValueError, storage.ConflictError)):
             self.launch(body)
         self.assertEqual([], c.inspect(self.store, 'local-comparison')['attempts'])

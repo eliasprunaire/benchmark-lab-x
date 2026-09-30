@@ -25,7 +25,7 @@ from urllib.parse import urlencode
 from benchmark import preparation, privacy, provider_access, service, storage
 from benchmark_web.server import serve_web
 from tests.test_privacy import initialize, NOW, SECRET
-from tests.test_s2_review_regressions import response_for
+from tests.test_s2_review_regressions import Authorized, response_for
 
 SOURCE = 'a' * 40
 PUBLIC_ORIGIN = 'https://bench-x.example'
@@ -75,7 +75,7 @@ def _executor(data, sock, clock, provider_calls, blocked, journal):
             patch.object(provider_access, '_now', lambda: _now(clock)), \
             patch.dict(os.environ, {'BENCHMARK_PRIVACY_JOURNAL': journal}):
         service.serve_executor(data, sock, SOURCE, access_secret=SECRET,
-            personal_preparation=True, transport=forbidden_provider,
+            transport=forbidden_provider,
             qualification_transport=forbidden_provider, candidate_transport=forbidden_provider,
             judgment_transport=forbidden_provider, access_transport=forbidden_provider,
             model_probe_transport=forbidden_provider)
@@ -192,11 +192,12 @@ class PrivacyHTTPTests(unittest.TestCase):
         budget = 'personal-preparation-' + owner['id']
         if not self.store._connection.execute('SELECT 1 FROM budgets WHERE budget_id=?', (budget,)).fetchone():
             self.store.create_budget(budget, '100', 'TEST')
-        preparation.admit(self.store, dict(authority_id='TEST_ONLY', budget_id=budget,
-            reserve_amount='7', requested_configuration={'model': 'fictional'}))
+        granted = lambda transport=True: Authorized(transport, authority_id='TEST_ONLY', budget_id=budget,
+            reserve_amount='7', requested_configuration={'model': 'fictional'})
         operation, _ = preparation.submit(self.store, owner['id'], dossier,
-            {'action_id': 'create', 'request': 'Organiser des notes entièrement fictives'}, SOURCE, True)
-        preparation.execute(self.data, operation, lambda op, request: response_for(op))
+            {'action_id': 'create', 'request': 'Organiser des notes entièrement fictives'}, SOURCE, granted())
+        preparation.execute(self.data, operation, granted(lambda op, request: response_for(op)))
+        self.granted = granted
         view = preparation.view(self.store, owner['id'], dossier)
         self.assertIsNotNone(view['package'])
         return view
@@ -449,7 +450,7 @@ class PrivacyHTTPTests(unittest.TestCase):
         _, cookies, _ = self.consent(owner)
         operation, _ = preparation.submit(self.store, owner['id'], 'case-a', {
             'action_id': 'correction', 'revision': view['revision'], 'kind': 'correct',
-            'message': 'Ajouter une action entièrement fictive'}, SOURCE, True)
+            'message': 'Ajouter une action entièrement fictive'}, SOURCE, self.granted())
         entered, released = threading.Event(), threading.Event()
         calls = []
 
@@ -460,7 +461,7 @@ class PrivacyHTTPTests(unittest.TestCase):
                 raise TimeoutError('Reçu synthétique non libéré')
             return response_for(op)
 
-        worker = threading.Thread(target=preparation.execute, args=(self.data, operation, delayed_response))
+        worker = threading.Thread(target=preparation.execute, args=(self.data, operation, self.granted(delayed_response)))
         worker.start()
         try:
             self.assertTrue(entered.wait(5))

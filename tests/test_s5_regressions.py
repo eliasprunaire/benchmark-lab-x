@@ -43,7 +43,6 @@ class S5Regressions(unittest.TestCase):
         candidate = q.draft(self.store, 'fixture', self.view['revision'], specification(self.reference))
         qualified = q.qualify(self.store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
         q.approve(self.store, candidate['contract_sha256'], qualified['qualification_id'], actor=ACTOR, authority=AUTHORITY)
-        prep.close_admission(self.store)
         c.initialize(self.data)
         self.store.create_budget('local-comparison', '40', 'TEST')
         self.campaign = c.create(self.store, manifest(candidate))
@@ -198,13 +197,12 @@ class S5Regressions(unittest.TestCase):
 
     def test_new_dossier_revision_keeps_old_verdict_and_qualification_readable(self):
         from tests.test_s2_review_regressions import response_for
+        from tests.test_s3_regressions import granted
         self.acquire()
         first = self.evaluate()
-        prep.admit(self.store, dict(authority_id='TEST_ONLY_PREPARATION_S3', budget_id='fictional',
-                                   reserve_amount='7', requested_configuration={'model': 'fictional'}))
         oid, _ = prep.submit(self.store, self.session, 'fixture', dict(action_id='new-revision',
-            revision=self.view['revision'], kind='correct', message='Modifier les notes fictives'), 'a' * 40, True)
-        prep.execute(self.data, oid, lambda op, request: response_for(op))
+            revision=self.view['revision'], kind='correct', message='Modifier les notes fictives'), 'a' * 40, granted())
+        prep.execute(self.data, oid, granted(lambda op, request: response_for(op)))
         self.assertEqual(first, e.inspect(self.store, first['evaluation_id']))
         view = prep.view(self.store, self.session, 'fixture')
         self.assertGreater(view['revision'], self.view['revision'])

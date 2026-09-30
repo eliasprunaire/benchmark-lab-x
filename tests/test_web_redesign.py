@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from benchmark import preparation as prep, restitution as r, storage, web_api
 from benchmark_web import projection, views
-from tests.test_s2_review_regressions import response_for
+from tests.test_s2_review_regressions import Authorized, response_for
 from tests.test_s6_regressions import Markup, build
 
 AVAILABILITY = {'assistant_configured': True, 'admission_open': True, 'can_submit': True, 'reason': 'open'}
@@ -33,13 +33,13 @@ class TemplateTests(unittest.TestCase):
             def handle_endtag(self, tag):
                 if tag == 'form':
                     self.depth -= 1
-        page = views.render({'dossiers': [], 'availability': dict(AVAILABILITY, can_submit=False, reason='access'),
-                             'personal_preparation': True}, 'csrf').decode()
+        page = views.render({'dossiers': [], 'availability': dict(AVAILABILITY, can_submit=False, reason='access')},
+                            'csrf').decode()
         forms = Forms()
         forms.feed(page)
         self.assertFalse(forms.nested)
         self.assertLess(page.index('</aside>'), page.index('Ajouter ma clé OpenRouter'))
-        ready = views.render({'dossiers': [], 'availability': AVAILABILITY, 'personal_preparation': True}, 'csrf').decode()
+        ready = views.render({'dossiers': [], 'availability': AVAILABILITY}, 'csrf').decode()
         self.assertNotIn('id="availability"', ready)
         self.assertLess(page.index('Enregistrer la clé'), page.index('Décrivez une tâche de votre travail et le résultat qui vous aiderait'))
         parsed = Markup(page.encode())
@@ -50,7 +50,7 @@ class TemplateTests(unittest.TestCase):
 
     def test_evitement_et_aide_du_formulaire_indisponible(self):
         page = views.render({'dossiers': [], 'availability': dict(
-            AVAILABILITY, can_submit=False, reason='closed')}, 'csrf')
+            AVAILABILITY, can_submit=False, reason='access')}, 'csrf')
         parsed = Markup(page)
         self.assertEqual('#main', parsed.links[0])
         main = next(attrs for tag, attrs in parsed.tags if tag == 'main')
@@ -70,10 +70,10 @@ class TemplateTests(unittest.TestCase):
         self.assertIn(':focus-visible { outline: 3px solid var(--focus)', css)
 
     def test_personal_key_lives_on_home_and_access_page_only(self):
-        page = views.render({'operation_id': 'op', 'dossier_id': 'd1', 'personal_preparation': True},
+        page = views.render({'operation_id': 'op', 'dossier_id': 'd1'},
                             'csrf', '/preparation/dossiers').decode()
         self.assertNotIn('id="openrouter-key"', page)
-        access = views.render({'kind': 'access', 'status': 'disconnected', 'personal_preparation': True},
+        access = views.render({'kind': 'access', 'status': 'disconnected'},
                               'csrf', '/preparation/access').decode()
         self.assertEqual(1, access.count('id="openrouter-key"'))
         self.assertNotIn('/preparation/access/start', access)
@@ -215,7 +215,7 @@ class DossierPageTests(unittest.TestCase):
             'payload': {'request': 'Je voudrais organiser mes factures pour mon comptable.',
                         'clarifications': [], 'validated_assumptions': [],
                         'reformulation': '', 'fictional_parameters': {}},
-            'availability': AVAILABILITY, 'personal_preparation': True},
+            'availability': AVAILABILITY},
             'csrf', '/preparation/dossiers/d1').decode()
         self.assertIn('Précisez le travail à comparer', page)
         self.assertIn('Aucune comparaison ne peut être lancée à cette étape.', page)
@@ -260,18 +260,18 @@ class DossierPageTests(unittest.TestCase):
                 storage.initialize_preparation(data)
                 with closing(storage.Store(data)) as store:
                     store.create_budget('criteria', '10', 'TEST')
-                    prep.admit(store, dict(authority_id='TEST_ONLY_CRITERIA', budget_id='criteria',
-                        reserve_amount='7', requested_configuration={'model': 'fictional'}))
+                    granted = lambda transport=True: Authorized(transport, authority_id='TEST_ONLY_CRITERIA',
+                        budget_id='criteria', reserve_amount='7', requested_configuration={'model': 'fictional'})
                     session, csrf, _ = prep.session(store, None, create=True)
                     operation, _ = prep.submit(store, session, 'criteria',
-                        dict(action_id='create', request='Examiner les critères de cet exemple'), 'test', True)
+                        dict(action_id='create', request='Examiner les critères de cet exemple'), 'test', granted())
 
                     def response(operation, request):
                         result = response_for(operation)
                         result['receipt']['result']['package']['candidate']['criteria'] = criteria
                         return result
 
-                    prep.execute(data, operation, response)
+                    prep.execute(data, operation, granted(response))
                     return views.render(prep.view(store, session, 'criteria'), csrf).decode()
 
         rule = ('satisfait = aucune faute éliminatoire et toutes les obligations prouvées ; '
@@ -322,12 +322,12 @@ class DossierPageTests(unittest.TestCase):
             storage.initialize_preparation(data)
             with closing(storage.Store(data)) as store:
                 store.create_budget('inline', '100', 'TEST')
-                prep.admit(store, dict(authority_id='FICTIONAL_INLINE', budget_id='inline',
-                    reserve_amount='7', requested_configuration={'model': 'fictional'}))
+                granted = lambda transport=True: Authorized(transport, authority_id='FICTIONAL_INLINE',
+                    budget_id='inline', reserve_amount='7', requested_configuration={'model': 'fictional'})
                 session, csrf, token = prep.session(store, None, create=True)
                 operation, _ = prep.submit(store, session, 'inline',
-                    dict(action_id='create', request='Examiner des notes inventées'), 'a' * 40, True)
-                prep.execute(data, operation, lambda op, request: response_for(op))
+                    dict(action_id='create', request='Examiner des notes inventées'), 'a' * 40, granted())
+                prep.execute(data, operation, granted(lambda op, request: response_for(op)))
                 code, view, _, _ = web_api.dispatch(store, 'GET', '/preparation/dossiers/inline', token, None, 'a' * 40, None)
                 self.assertEqual(200, code)
                 page = views.render(view, csrf).decode()

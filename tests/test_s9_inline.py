@@ -8,8 +8,13 @@ from unittest.mock import patch
 
 from benchmark import preparation as prep, storage, web_api
 from benchmark_web import views
-from tests.test_s2_review_regressions import response_for
+from tests.test_s2_review_regressions import Authorized, response_for
 from tests.test_s6_regressions import Markup
+
+
+def granted(transport=True):
+    return Authorized(transport, authority_id='FICTIONAL_INLINE', budget_id='inline',
+                      reserve_amount='7', requested_configuration={'model': 'fictional'})
 
 
 class InlineExampleTests(unittest.TestCase):
@@ -24,18 +29,16 @@ class InlineExampleTests(unittest.TestCase):
             storage.initialize_preparation(data)
             with closing(storage.Store(data)) as store:
                 store.create_budget('inline', '100', 'TEST')
-                prep.admit(store, dict(authority_id='FICTIONAL_INLINE', budget_id='inline',
-                    reserve_amount='7', requested_configuration={'model': 'fictional'}))
                 session, csrf, token = prep.session(store, None, create=True)
                 operation, _ = prep.submit(store, session, 'inline',
-                    dict(action_id='create', request='Examiner des notes inventées'), 'a' * 40, True)
+                    dict(action_id='create', request='Examiner des notes inventées'), 'a' * 40, granted())
 
                 def transport(op, request):
                     result = response_for(op)
                     result['receipt']['result']['package']['candidate']['pieces'][0]['content'] = content
                     return result
 
-                prep.execute(data, operation, transport)
+                prep.execute(data, operation, granted(transport))
                 before = store.inspect_operations()
                 code, view, _, start = web_api.dispatch(store, 'GET', '/preparation/dossiers/inline',
                                                     token, None, 'a' * 40, None)
@@ -80,8 +83,8 @@ class InlineExampleTests(unittest.TestCase):
                                          reader, None, 'a' * 40, None)
 
                 operation, _ = prep.submit(store, session, 'inline', dict(action_id='correct',
-                    revision=view['revision'], kind='correct', message='Changer les notes'), 'a' * 40, True)
-                prep.execute(data, operation, lambda op, request: response_for(op))
+                    revision=view['revision'], kind='correct', message='Changer les notes'), 'a' * 40, granted())
+                prep.execute(data, operation, granted(lambda op, request: response_for(op)))
                 current = prep.view(store, session, 'inline')
                 prior_revision = prep.view(store, session, 'inline', view['revision'])
                 self.assertEqual([content], list(prior_revision['example_contents'].values()))

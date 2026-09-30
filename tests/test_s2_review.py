@@ -8,6 +8,7 @@ import unittest
 
 from benchmark import preparation, storage
 from benchmark_web import views
+from tests.test_s2_review_regressions import Authorized
 
 
 def response(operation, instruction, pieces):
@@ -52,11 +53,11 @@ class S2ReviewTest(unittest.TestCase):
             storage.initialize_preparation(data)
             with closing(storage.Store(data)) as store:
                 store.create_budget('closed', '10', 'TEST')
-                preparation.admit(store, {'authority_id': 'TEST_ONLY_CLOSED', 'budget_id': 'closed',
+                granted = lambda transport=True: Authorized(transport, **{'authority_id': 'TEST_ONLY_CLOSED', 'budget_id': 'closed',
                     'reserve_amount': '1', 'requested_configuration': {'model': 'fictional'}})
                 session, _, _ = preparation.session(store, None, create=True)
                 operation, _ = preparation.submit(store, session, 'closed',
-                    {'action_id': 'create', 'request': 'Vérifier la vue fermée des critères'}, 'test', True)
+                    {'action_id': 'create', 'request': 'Vérifier la vue fermée des critères'}, 'test', granted())
                 received = {}
                 expected = {'eliminatory': [], 'obligations': ['Action présente'], 'quality': []}
                 def transport(operation, request):
@@ -65,7 +66,7 @@ class S2ReviewTest(unittest.TestCase):
                     received['receipt']['result']['package']['candidate']['criteria'] = ['Action présente']
                     return received
 
-                preparation.execute(data, operation, transport)
+                preparation.execute(data, operation, granted(transport))
                 stored = json.loads(store._connection.execute(
                     'SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=2',
                     ('closed',)).fetchone()[0])
@@ -80,14 +81,14 @@ class S2ReviewTest(unittest.TestCase):
             storage.initialize_preparation(data)
             with closing(storage.Store(data)) as store:
                 store.create_budget('review', '10', 'TEST')
-                preparation.admit(store, {'authority_id': 'LOCAL_FICTIONAL_REVIEW', 'budget_id': 'review',
+                granted = lambda transport=True: Authorized(transport, **{'authority_id': 'LOCAL_FICTIONAL_REVIEW', 'budget_id': 'review',
                     'reserve_amount': '1', 'requested_configuration': {'model': 'fictional'}})
                 session, csrf, _ = preparation.session(store, None, create=True)
                 operation, _ = preparation.submit(store, session, 'dossier',
-                    {'action_id': 'create', 'request': 'Organiser les actions de cet atelier inventé'}, 'test', True)
-                preparation.execute(data, operation, lambda op, request: response(op, 'Organiser les notes',
+                    {'action_id': 'create', 'request': 'Organiser les actions de cet atelier inventé'}, 'test', granted())
+                preparation.execute(data, operation, granted(lambda op, request: response(op, 'Organiser les notes',
                     [{'name': 'notes.txt', 'content': 'Action : relire'},
-                     {'name': 'a-retirer.txt', 'content': 'Action : retirer'}]))
+                     {'name': 'a-retirer.txt', 'content': 'Action : retirer'}])))
                 first = preparation.view(store, session, 'dossier')
                 self.assertEqual([], first['changes'])
                 self.assertEqual({'eliminatory': [], 'obligations': ['Toutes les actions présentes'],
@@ -111,10 +112,10 @@ class S2ReviewTest(unittest.TestCase):
 
                 operation, _ = preparation.submit(store, session, 'dossier', {'action_id': 'correct',
                     'revision': first['revision'], 'kind': 'correct', 'message': 'Ajouter le compte rendu'},
-                    'test', True)
-                preparation.execute(data, operation, lambda op, request: response(op, 'Organiser les notes et le compte rendu',
+                    'test', granted())
+                preparation.execute(data, operation, granted(lambda op, request: response(op, 'Organiser les notes et le compte rendu',
                     [{'name': 'notes.txt', 'content': 'Action : relire et valider'},
-                     {'name': 'compte-rendu.txt', 'content': 'Décision : valider'}]))
+                     {'name': 'compte-rendu.txt', 'content': 'Décision : valider'}])))
                 removed_path.unlink()
 
                 before = store._connection.total_changes

@@ -10,7 +10,7 @@ from unittest.mock import patch
 from benchmark.acquisition import campaigns
 from benchmark import model_catalogue, outgoing, preparation, qualification, storage, web_api
 from benchmark.transports import pi as pi_openrouter
-from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, specification
+from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, granted, specification
 from tests.test_s4_regressions import manifest
 from tests.test_openrouter_qualification import qualify_fixture
 from tests.test_s2_review_regressions import response_for
@@ -78,8 +78,8 @@ class ConfigurationsTests(unittest.TestCase):
 
     def test_configurations_sur_la_seule_qualification_automatique(self):
         operation_id, _ = preparation.submit(self.store, self.session, 'public',
-            {'action_id': 'create', 'request': 'Organiser les actions de cette réunion'}, 'a' * 40, True)
-        preparation.execute(self.data, operation_id, lambda operation, _: response_for(operation))
+            {'action_id': 'create', 'request': 'Organiser les actions de cette réunion'}, 'a' * 40, granted())
+        preparation.execute(self.data, operation_id, granted(lambda operation, _: response_for(operation)))
         preview = preparation.view(self.store, self.session, 'public')
         qualify_fixture(self.data, self.store, self.session, 'public', preview)
         body = {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],

@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
-import sys
 import time
 
 from .storage import ConflictError, IntegrityError, Store, initialize, initialize_preparation, _unique_object, _private, _strict_json as encode
@@ -122,13 +121,8 @@ def status(root, store):
         if json.loads(marker.read_text()) != {'state': 'RESTORED_RECONCILIATION_REQUIRED'}:
             raise IntegrityError('État de restauration inconnu')
     connection = store._s1_connection()
-    from .privacy import boot_pending
-    restored = restored or boot_pending(connection)
-    extended = connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s2_control'").fetchone()
+    # La préparation n'a plus d'admission : seules les campagnes en ouvrent une
     opened = False
-    if extended:
-        from .preparation import admission
-        opened = bool(admission(store))
     campaigns_open = 0
     if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_control'").fetchone():
         campaigns_open = connection.execute('SELECT count(*) FROM s4_status WHERE admission_id IS NOT NULL').fetchone()[0]
@@ -141,9 +135,6 @@ def status(root, store):
 
 def stop(root, store, reason, after_process_exit=False):
     connection = store._s1_connection()
-    if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s2_control'").fetchone():
-        from .preparation import close_admission
-        close_admission(store)
     if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_control'").fetchone():
         from .acquisition.campaigns import close_admission
         close_admission(store, reason)
@@ -345,7 +336,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     campaign_actions = ('create-campaign', 'inspect-campaign', 'admit-campaign', 'stop-campaign', 'resume-campaign')
     campaign_actions += ('inspect-attempt-status',)
-    parser.add_argument('action', choices=campaign_actions + ('migrate-privacy', 'privacy-status', 'purge-privacy', 'reconcile-privacy', 'reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'initialize-qualification', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'inspect-preparation', 'close-preparation', 'admit-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
+    parser.add_argument('action', choices=campaign_actions + ('migrate-privacy', 'privacy-status', 'purge-privacy', 'reconcile-privacy', 'reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'initialize-qualification', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
     parser.add_argument('--data', type=Path)
     parser.add_argument('--migration-id')
     parser.add_argument('--journal-sha256')
@@ -367,8 +358,8 @@ def main(argv=None):
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--preparation-assistant', metavar='ALIAS_OR_PROFILE',
                         help='Alias preparation, alias de secours preparation-fallback ou chemin d’un profil JSON local')
-    parser.add_argument('--personal-preparation', action='store_true',
-                        help='Exiger la clé personnelle de la session pour préparer et qualifier')
+    # Accepté sans effet tant que la commande de l'exécuteur le transmet : la clé personnelle est toujours exigée
+    parser.add_argument('--personal-preparation', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--qualification-assistant', metavar='ALIAS_OR_PROFILE',
                         help='Alias qualification ou chemin du profil JSON local approuvé')
     parser.add_argument('--judgment-profile', metavar='ALIAS_OR_PROFILE')
@@ -390,13 +381,13 @@ def main(argv=None):
             raise ValueError('Canal officiel réservé à une acquisition opérateur explicitement admise')
         if args.judgment_profile is not None and args.action not in ('reserve-judgment', 'execute-judgment'):
             raise ValueError('Profil réservé au jugement privé')
-        if args.personal_preparation and not (args.preparation_assistant and args.qualification_assistant):
-            raise ValueError('Préparateur et qualificateur requis pour le financement personnel')
+        if bool(args.preparation_assistant) != bool(args.qualification_assistant):
+            raise ValueError('Préparateur et qualificateur requis ensemble')
         if args.personal_preparation and args.action != 'executor':
-            raise ValueError('Financement personnel réservé à l’exécuteur')
+            raise ValueError('Option réservée à l’exécuteur')
         if args.candidate_pi and args.action != 'executor':
             raise ValueError('Transport candidat réservé à l’exécuteur')
-        if args.preparation_assistant is not None and args.action not in ('executor', 'forecast-prices', 'admit-preparation'):
+        if args.preparation_assistant is not None and args.action != 'executor':
             raise ValueError('Assistant réservé à l’exécuteur')
         if args.qualification_assistant is not None and args.action != 'executor':
             raise ValueError('Qualificateur réservé à l’exécuteur')
@@ -427,19 +418,7 @@ def main(argv=None):
             return 0
         if args.action == 'forecast-prices':
             from .transports.prices import forecast
-            from .transports.openrouter import configuration, load_profile
-            profile = None
-            if args.preparation_assistant is not None:
-                profile = load_profile(args.preparation_assistant)
-                if args.model != profile['model']:
-                    raise ValueError('Modèle distinct du profil de préparation')
-                if args.output_tokens != profile['parameters']['max_tokens']:
-                    raise ValueError('Limite de sortie distincte du profil de préparation')
-            result = forecast(args.model, args.input_tokens, args.output_tokens, args.cached_input_tokens)
-            if profile is not None:
-                configured = configuration(result, profile)
-                result['preparation'] = {'requested_configuration': configured, 'reserve_amount': configured['reserve_usd']}
-            print(encode(result))
+            print(encode(forecast(args.model, args.input_tokens, args.output_tokens, args.cached_input_tokens)))
             return 0
         if args.action in ('web', 'executor'):
             from importlib import import_module
@@ -470,9 +449,8 @@ def main(argv=None):
                 profile = None
                 if args.preparation_assistant is not None:
                     profile = load_profile(args.preparation_assistant)
-                key = os.environ.pop('OPENROUTER_API_KEY', '') if (
-                    args.preparation_assistant is not None or args.qualification_assistant is not None
-                    or args.candidate_pi) else ''
+                # La clé opérateur ne sert plus qu'aux comparaisons candidates de l'opérateur
+                key = os.environ.pop('OPENROUTER_API_KEY', '') if args.candidate_pi else ''
                 if args.candidate_pi:
                     from .transports.pi import identity
                     if args.pi_package is None or args.node is None:
@@ -482,21 +460,19 @@ def main(argv=None):
                         args.pi_package, args.node, key)
                     candidate_factory()
                 if args.preparation_assistant is not None:
-                    transport = OpenRouterPreparation(None if args.personal_preparation else key, profile)
-                if args.qualification_assistant is not None:
-                    from .transports.openrouter import OpenRouterQualification
-                    qualification_transport = OpenRouterQualification(None if args.personal_preparation else key, args.qualification_assistant)
-                    qualification_transport.quote()
-                if args.personal_preparation:
-                    from .transports.openrouter import OpenRouterJudgment, AUTOMATIC_JUDGMENT_PROFILE
+                    from .transports.openrouter import AUTOMATIC_JUDGMENT_PROFILE, OpenRouterJudgment, OpenRouterQualification
+                    # Clé de la session seule ; relevés publics lus au démarrage, sans réseau par page
+                    transport = OpenRouterPreparation(None, profile)
+                    qualification_transport = OpenRouterQualification(None, args.qualification_assistant)
                     judgment_transport = OpenRouterJudgment(None, load_profile(str(AUTOMATIC_JUDGMENT_PROFILE)))
-                    judgment_transport.quote()
+                    for assistant in (transport, qualification_transport, judgment_transport):
+                        assistant.quote()
                 from functools import partial
                 from .model_catalogue import MAX_RESPONSE_BYTES
                 from .transports.prices import fetch_public
                 serve_executor(args.data, args.socket, source, version=version, transport=transport,
                                catalogue_fetch=partial(fetch_public, max_response_bytes=MAX_RESPONSE_BYTES),
-                               qualification_transport=qualification_transport, personal_preparation=args.personal_preparation,
+                               qualification_transport=qualification_transport,
                                judgment_transport=judgment_transport,
                                candidate_transport_factory=candidate_factory,
                                candidate_identity=candidate_identity,
@@ -692,29 +668,6 @@ def main(argv=None):
                             raise ValueError('Requête opérateur invalide')
                         result = approve(store, request['contract_sha256'], request['qualification_id'],
                                          actor=request['actor'], authority=request['authority'])
-                elif args.action == 'close-preparation':
-                    from .preparation import close_admission
-                    close_admission(store)
-                    result = {'state': 'PREPARATION_CLOSED'}
-                elif args.action == 'inspect-preparation':
-                    from .preparation import admission
-                    result = {'authority': admission(store)}
-                elif args.action == 'admit-preparation':
-                    from .preparation import admit
-                    if args.authority is None:
-                        raise ValueError('Autorité requise')
-                    if str(args.authority) == '-':
-                        raw = sys.stdin.read()
-                    else:
-                        private_path(args.authority)
-                        raw = args.authority.read_text()
-                    authority = json.loads(raw, object_pairs_hook=_unique_object)
-                    from .transports.openrouter import load_profile
-                    if args.preparation_assistant is None:
-                        raise ValueError('Profil de préparation requis pour ouvrir')
-                    verify(store)
-                    admit(store, authority, profile=load_profile(args.preparation_assistant))
-                    result = status(args.data, store)
                 elif args.action == 'verify':
                     result = verify(store)
                 elif args.action == 'maintenance':

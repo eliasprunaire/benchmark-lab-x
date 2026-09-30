@@ -87,7 +87,6 @@ class ModelProbeTests(unittest.TestCase):
     def test_formulaire_slug_et_resultat_prives_sans_appel_candidat(self):
         from benchmark_web.views import render, page_script
         value = campaigns.configurations_view(self.store, self.session, 'fixture')
-        value['personal_preparation'] = True
         page = render(value, 'csrf-test').decode()
         self.assertIn('Identifiant du modèle sur OpenRouter', page)
         self.assertIn('Tester et ajouter', page)
@@ -141,15 +140,12 @@ class ModelProbeTests(unittest.TestCase):
                 self.store, self.session, 'fixture')['models']})
         self.assertEqual(5, len(self.calls))
 
-    def test_ancien_budget_ignore_mais_admission_requise(self):
+    def test_ancien_budget_ignore(self):
         budget_id = provider_access.preparation_budget_id(self.session)
         self.store._connection.execute('UPDATE budgets SET limit_amount=? WHERE budget_id=?', ('0', budget_id))
         operation_id, key = self.submit()
         self.respond(operation_id, key)
         self.assertTrue(any(o['engine_version'] == model_probes.ENGINE for o in self.store.inspect_operations()))
-        preparation.close_admission(self.store)
-        with self.assertRaises(preparation.Denied):
-            self.submit(slug='outside/another', action='closed')
 
     def test_interruption_sans_retry_et_cout_inconnu_conserve_sa_reserve(self):
         operation_id, key = self.submit()
@@ -160,9 +156,9 @@ class ModelProbeTests(unittest.TestCase):
         with self.assertRaises(preparation.Denied):
             self.submit(action='retry')
 
-    def test_fermeture_avant_le_worker_ne_part_pas_chez_le_fournisseur(self):
+    def test_restauration_avant_le_worker_ne_part_pas_chez_le_fournisseur(self):
         operation_id, key = self.submit()
-        preparation.close_admission(self.store)
+        (self.data / 'restore.json').write_text('{"state": "RESTORED_RECONCILIATION_REQUIRED"}')
         with patch.object(model_probes, 'post') as network:
             model_probes.execute(self.data, operation_id, key)
         network.assert_not_called()
@@ -183,7 +179,6 @@ class ModelProbeTests(unittest.TestCase):
         self.store._connection.execute('UPDATE s2_sessions SET token_sha256=? WHERE session_id=?',
             (sha256(bytes.fromhex(token)).hexdigest(), self.session))
         _, csrf, _ = preparation.session(self.store, token)
-        authority = preparation.admission(self.store)
         ready, fetching, release = threading.Event(), threading.Event(), threading.Event()
         servers = []
         sock = self.data.parent / 'probe.sock'
@@ -205,13 +200,12 @@ class ModelProbeTests(unittest.TestCase):
         with patch('socket.socket.connect', SOCKET_CONNECT), patch.object(service, 'run', run), \
                 patch.object(service, '_refresh_catalogue'):
             worker = threading.Thread(target=service.serve_executor, args=(self.data, sock, 'a' * 40),
-                kwargs=dict(candidate_identity=self.identity, personal_preparation=True,
+                kwargs=dict(candidate_identity=self.identity,
                     access_secret=SECRET, access_transport=self.access,
                     catalogue_fetch=fetch, model_probe_transport=self.post))
             worker.start()
             try:
                 self.assertTrue(ready.wait(5))
-                preparation.admit(self.store, authority)
                 path = '/preparation/dossiers/fixture/custom-models'
                 body = {'slug': SLUG, 'action_id': 'browser-action', 'csrf_token': csrf}
                 first = service.preparation_request(sock, 'POST', path, token, body)
@@ -265,7 +259,6 @@ class ModelProbeTests(unittest.TestCase):
         self.store._connection.execute('UPDATE s2_sessions SET token_sha256=? WHERE session_id=?',
             (sha256(bytes.fromhex(token)).hexdigest(), self.session))
         _, csrf, _ = preparation.session(self.store, token)
-        authority = preparation.admission(self.store)
         ready, fetching, release = threading.Event(), threading.Event(), threading.Event()
         servers = []
         sock = self.data.parent / 'probe-concurrent.sock'
@@ -302,13 +295,12 @@ class ModelProbeTests(unittest.TestCase):
                 patch.object(service, 'Future', SlowFuture), \
                 patch.object(service, '_refresh_catalogue'):
             worker = threading.Thread(target=service.serve_executor, args=(self.data, sock, 'a' * 40),
-                kwargs=dict(candidate_identity=self.identity, personal_preparation=True,
+                kwargs=dict(candidate_identity=self.identity,
                     access_secret=SECRET, access_transport=self.access,
                     catalogue_fetch=fetch, model_probe_transport=self.post))
             worker.start()
             try:
                 self.assertTrue(ready.wait(5))
-                preparation.admit(self.store, authority)
                 askers = [threading.Thread(target=ask, args=(index,)) for index in range(count)]
                 for asker in askers:
                     asker.start()

@@ -109,7 +109,7 @@ class ServiceStorageTests(unittest.TestCase):
                     verify(store)
 
     def test_quiescence_refuses_active_qualification_and_preserves_data(self):
-        from benchmark import preparation, qualification as q
+        from benchmark import qualification as q
         from tests.test_s3_regressions import ACTOR, check, fixture, specification
 
         with tempfile.TemporaryDirectory() as directory:
@@ -126,7 +126,6 @@ class ServiceStorageTests(unittest.TestCase):
                 self.assertEqual(expected_result, json.loads(result.stdout))
 
             with closing(Store(root)) as store:
-                preparation.close_admission(store)
                 candidate = q.draft(store, 'fixture', view['revision'], specification(reference))
                 idle = status(root, store)
                 self.assertEqual({'admission', 'restore_pending', 'operations'}, set(idle))

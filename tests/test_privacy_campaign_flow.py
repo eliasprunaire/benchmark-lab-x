@@ -40,8 +40,6 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.profile = openrouter.load_profile(str(SYNTHETIC_PROFILE))
         self.config = openrouter.configuration(estimate_for(self.profile), self.profile)
         self.budget = provider_access.preparation_budget_id(self.sid)
-        prep.admit(self.store, dict(authority_id='SYNTHETIC_PERSONAL', budget_id=self.budget,
-            reserve_amount=self.config['reserve_usd'], requested_configuration=self.config))
         self.preparer = self.bound(openrouter.OpenRouterPreparation)
         self.qualifier = self.bound(openrouter.OpenRouterQualification)
         self.judge = self.bound(openrouter.OpenRouterJudgment)

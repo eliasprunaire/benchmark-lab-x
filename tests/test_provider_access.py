@@ -234,7 +234,7 @@ class ProviderAccessTests(unittest.TestCase):
         with self.assertRaises(preparation.Denied):
             web_api.dispatch(self.store, 'POST', '/preparation/access/key', token,
                 {'csrf_token': 'wrong', 'key': KEY}, 'a' * 40, None,
-                access_secret=SECRET, access_transport=self.transport, personal_preparation=True)
+                access_secret=SECRET, access_transport=self.transport)
         self.assertEqual([], self.transport.verifications)
         with self.assertRaises(preparation.Denied):
             provider_access.import_key(self.store, session_id, SECRET, 'sk-ant-wrong-provider', self.transport)
@@ -264,11 +264,11 @@ class ProviderAccessTests(unittest.TestCase):
         _, csrf, token = preparation.session(self.store, None, create=True)
         code, value, _, start = web_api.dispatch(self.store, 'POST', '/preparation/access/key', token,
             {'csrf_token': csrf, 'key': KEY}, 'a' * 40, None,
-            access_secret=SECRET, access_transport=self.transport, personal_preparation=True)
+            access_secret=SECRET, access_transport=self.transport)
         self.assertEqual(200, code)
         self.assertIsNone(start)
         self.assertNotIn(KEY, json.dumps(value))
-        home = render({'dossiers': [], 'personal_preparation': True, 'personal_access': value}, csrf).decode()
+        home = render({'dossiers': [], 'personal_access': value}, csrf).decode()
         self.assertIn('Votre clé OpenRouter est enregistrée', home)
         self.assertIn('href="/preparation/access"', home)
         page = render(dict(value, kind='access'), csrf, '/preparation/access').decode()

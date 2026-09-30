@@ -20,12 +20,12 @@ from urllib.parse import urlencode, urlsplit
 from benchmark.acquisition import execution
 from benchmark.acquisition import campaigns
 from benchmark import evaluation, model_catalogue, preparation as prep
-from benchmark import provider_access, qualification, service, storage, web_api
+from benchmark import provider_access, qualification, service, storage
 from benchmark_web import server, views
 from tests.test_configurations import NOW, model
 from tests.test_openrouter_qualification import QualificationTransport
 from tests.test_provider_access import AccessTransport, KEY, SECRET
-from tests.test_s2_review_regressions import response_for
+from tests.test_s2_review_regressions import SessionAssistant, response_for
 from tests.test_s4_regressions import response
 
 
@@ -103,11 +103,15 @@ class ParcoursComplet(unittest.TestCase):
         self.identity = {'package': 'pi', 'version': '0.85.1', 'sha256': '1' * 64,
                          'bridge_sha256': '2' * 64, 'node_sha256': '3' * 64,
                          'node_version': 'v24.0.0', 'scope': 'Identité factice de fixture'}
+        # Assistants liés par l'exécuteur à la clé de chaque session, comme en production
+        self.assistants = dict(
+            transport=SessionAssistant(lambda operation, request: self.prepare(operation, request), {'model': 'factice'}),
+            qualification_transport=SessionAssistant(self.qualifier, self.qualifier.configuration()),
+            judgment_transport=SessionAssistant(lambda operation, request: self.fail('Jugement non prévu'),
+                                                {'model': 'juge/factice', 'reserve_usd': '0.1'}))
+        self.bound = None
         with closing(storage.Store(self.data)) as store:
-            store.create_budget('fixture', '100', 'USD')
-            prep.admit(store, {'authority_id': 'TEST_ONLY_S12', 'budget_id': 'fixture',
-                              'reserve_amount': '1', 'requested_configuration': {'model': 'factice'}})
-            rows = [model('openai/gpt-5.6-sol', 'openai', ['high']),
+            rows =[model('openai/gpt-5.6-sol', 'openai', ['high']),
                     model('deepseek/deepseek-v4.1-flash', 'deepseek', [])]
             rows[0][0]['name'], rows[1][0]['name'] = 'Modèle A', 'Modèle B'
             document = {'models': [row[0] for row in rows],
@@ -122,12 +126,13 @@ class ParcoursComplet(unittest.TestCase):
                 message = json.loads(self.rfile.readline(), object_pairs_hook=storage._unique_object)
                 with closing(storage.Store(test.data)) as store:
                     try:
-                        code, value, cookie, start = web_api.dispatch(
-                            store, message['method'], message['path'], message['token'], message['body'],
-                            'a' * 40, test.prepare, qualification_transport=test.qualifier,
-                            candidate_identity=test.identity, candidate_transport=test.candidate,
-                            access_secret=SECRET, access_transport=test.access)
+                        code, value, cookie, start, *bound = service.personal_dispatch(
+                            store, message, 'a' * 40, candidate_identity=test.identity,
+                            candidate_transport=test.candidate, access_secret=SECRET,
+                            access_transport=test.access, **test.assistants)
                         if start:
+                            # Les travaux lancés partent avec les assistants liés à la session, comme dans l'exécuteur
+                            test.bound = bound
                             test.starts.put(start)
                         result = {'status': code, 'value': value.hex() if isinstance(value, bytes) else value,
                                   'piece': isinstance(value, bytes), 'cookie': cookie}
@@ -248,8 +253,16 @@ class ParcoursComplet(unittest.TestCase):
     def test_parcours_complet(self):
         page, _, _ = self.request('/')
         self.examine(page, '/', 'accueil', 'Décrire mon cas d’usage')
-        page, _, _ = self.request(page.link('Décrire mon cas'))
+        target = page.link('Décrire mon cas')
+        page, _, _ = self.request(target)
+        # Sans clé, la page propose d'abord de l'enregistrer : rien d'autre ne ferme la préparation
+        self.assertIn('Ajoutez votre clé OpenRouter pour préparer un exemple.', page.visible)
+        key_form = page.form('/access/key')
+        self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
+        page, _, _ = self.request(target)
         self.examine(page, '/preparation', 'besoin', 'Préparer mon exemple')
+        self.assertIn('Votre clé OpenRouter est enregistrée.', page.visible)
+        self.assertFalse(any(n['attrs'].get('id') == 'availability' for n in page.nodes))
         fields = [n['attrs'].get('name') for n in page.form('/dossiers')['nodes'] if n['tag'] == 'textarea']
         self.assertEqual(['request', 'useful', 'context'], fields)
         page = self.submit(page, '/dossiers', {'request': 'Trop court'}, status=400)
@@ -259,7 +272,7 @@ class ParcoursComplet(unittest.TestCase):
         dossier = page.link('Actualiser')
         self.examine(page, dossier, 'attente', None)
         self.assertEqual(1, page.visible.count('Actualiser'))
-        prep.execute(self.data, self.starts.get_nowait(), self.prepare)
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'clarification', 'Envoyer ma réponse')
         self.assertIn('Quel format', page.visible)
@@ -268,11 +281,11 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Vérification et approbation de l’exemple', ' '.join(n['text'] for n in page.nodes if n['tag'] == 'summary'))
         self.preparation_stage = 'exemple'
         self.submit(page, '/messages', {'message': 'Une liste des actions, sans date inventée'})
-        prep.execute(self.data, self.starts.get_nowait(), self.prepare)
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'exemple', 'Oui, c’est le travail à tester')
         self.assertIn('Relever toutes les actions', page.visible)
-        self.assertIn('cette vérification est prise en charge par le service', page.visible)
+        self.assertIn('cette vérification est payée avec votre clé OpenRouter', page.visible)
         position = {key: next(i for i, n in enumerate(page.nodes) if test(n)) for key, test in (
             ('correction', lambda n: n['tag'] == 'details' and n['attrs'].get('class') == 'corr'),
             ('validation', lambda n: n['attrs'].get('id') == 'validation'))}
@@ -290,7 +303,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertFalse(any('Attendu fictif réservé' in n['text'] for n in page.nodes))
         self.preparation_stage = 'correction'
         self.submit(page, '/messages', {'kind': 'correct', 'message': 'Présenter un tableau avec le responsable de chaque action'})
-        prep.execute(self.data, self.starts.get_nowait(), self.prepare)
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'exemple corrigé', 'Oui, c’est le travail à tester')
         self.assertIn('Tableau des actions avec responsable', page.visible)
@@ -303,7 +316,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Vérification de l’exemple en cours', page.visible)
         self.assertEqual(1, page.visible.count('Actualiser'))
         start = self.starts.get_nowait()
-        prep.execute_qualification(self.data, start['qualification_operation'], self.qualifier)
+        prep.execute_qualification(self.data, start['qualification_operation'], self.bound[1])
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'exemple qualifié', 'Choisir les modèles')
         self.assertIn('Exemple vérifié, prêt à comparer', page.visible)
@@ -338,18 +351,11 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('openai/gpt-5.6-sol', selection['text'])
         self.assertIn(b'<summary>Identifiant OpenRouter</summary><code>openai/gpt-5.6-sol</code>', raw)
         recap = page.link('Vérifier avant de lancer')
-        page, _, _ = self.request(recap)
-        self.examine(page, recap, 'accès requis', None)
-        self.assertIn('Impossible de lancer pour l’instant : ajoutez d’abord votre clé OpenRouter', page.visible)
+        page, _, raw = self.request(recap)
+        self.examine(page, recap, 'prêt à lancer', 'Lancer la comparaison')
         # Les candidats gardent le nom vu au choix, avec leur effort traduit
         self.assertIn('Modèle A · Niveau de raisonnement : Élevé (high)', page.visible)
         self.assertNotIn('openai/gpt-5.6-sol', page.visible)
-        key_form = page.form('/access/key')
-        self.assertEqual(recap, key_form['fields']['return'])
-        _, headers, raw = self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
-        self.assertEqual(recap, headers['Location'])
-        page, _, raw = self.request(recap)
-        self.examine(page, recap, 'prêt à lancer', 'Lancer la comparaison')
         self.assertNotIn(KEY.encode(), raw)
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'comparaison préparée', 'Vérifier puis lancer la comparaison')
@@ -394,9 +400,10 @@ class ParcoursComplet(unittest.TestCase):
         execution.execute_launch(self.data, attempts[1:], self.candidate,
                                  access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(recap)
-        self.examine(page, recap, 'réponses reçues', 'Voir les résultats')
-        self.assertIn('Comparaison terminée', page.visible)
-        comparison = page.link('Voir les résultats')
+        # Parcours à clé personnelle : l'évaluation, payée par la clé, reste à lancer tant qu'aucun jugement n'a tourné
+        self.examine(page, recap, 'réponses reçues', 'Évaluer les réponses reçues')
+        self.assertIn('Toutes les réponses sont arrivées. Leur évaluation n’est pas encore lancée.', page.visible)
+        comparison = recap.removesuffix('/conditions')
         empty, _, raw = self.request(comparison)
         self.examine(empty, comparison, 'jugements absents', None)
         self.assertIn('Des réponses sont arrivées. Leur verdict n’est pas encore disponible.', empty.visible)
@@ -451,15 +458,18 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Comparaison 1 du ' + views.date_lisible_utc(previous['conditions']['frozen_at']), texts)
         self.assertIn('comparaison terminée', listed['text'])
         self.assertIn('comparaison prête à lancer', listed['text'])
-        with closing(storage.Store(self.data)) as store:
-            prep.close_admission(store)
+        # Seul le retrait de sa clé ferme la préparation d'un visiteur ; aucune fermeture globale n'existe
+        access, _, _ = self.request('/preparation/access')
+        disconnect = access.form('/disconnect')
+        self.request(disconnect['action'], disconnect['fields'], status=303)
         page, _, _ = self.request('/preparation')
-        self.examine(page, '/preparation', 'appels fermés', 'Préparer mon exemple')
-        self.assertIn('Les nouvelles préparations sont fermées pour le moment.', page.visible)
+        self.assertIn('Ajoutez votre clé OpenRouter pour préparer un exemple.', page.visible)
+        self.assertNotIn('Consulter cette page ne lance aucun appel', page.visible)
+        self.assertNotIn('fermées pour le moment', page.visible)
         self.assertTrue(all('disabled' in n['attrs'] for n in page.form('/dossiers')['nodes']
                             if n['tag'] in ('textarea', 'button')))
         denied = self.submit(page, '/dossiers', {'request': 'Une autre demande assez longue pour passer le contrôle de saisie'}, status=403)
-        self.assertIn('Vous ne pouvez pas faire cette action depuis ce navigateur', denied.visible)
+        self.assertIn('Ajoutez votre clé OpenRouter', denied.visible)
         page, _, _ = self.request(dossier)
         self.assertIn('Tableau des actions avec responsable', page.visible)
         self.assertEqual(5, len(self.calls))

@@ -14,7 +14,7 @@ from .storage import _fields
 
 def dispatch(store, method, path, token, body, source, transport, *, qualification_transport=None, candidate_transport=None,
              candidate_identity=None, judgment_transport=None,
-             access_secret=None, access_transport=None, presentation=None, personal_preparation=False,
+             access_secret=None, access_transport=None, presentation=None,
              management_token=None):
     from . import privacy
     enabled = privacy.available(store._connection_checked())
@@ -99,8 +99,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         result = _dispatch(store, method, path, token, body, source, transport,
             qualification_transport=qualification_transport, candidate_transport=candidate_transport,
             candidate_identity=candidate_identity, judgment_transport=judgment_transport,
-            access_secret=access_secret, access_transport=access_transport, presentation=presentation,
-            personal_preparation=personal_preparation)
+            access_secret=access_secret, access_transport=access_transport, presentation=presentation)
     code, value, cookie, work = result
     if enabled and code < 400 and isinstance(value, dict):
         dossier = re.match(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})(?:/|$)', path)
@@ -160,14 +159,14 @@ def _activity_with_effect(store, session_id, dossier_id):
 
 def _dispatch(store, method, path, token, body, source, transport, *, qualification_transport=None, candidate_transport=None,
              candidate_identity=None, judgment_transport=None,
-             access_secret=None, access_transport=None, presentation=None, personal_preparation=False):
+             access_secret=None, access_transport=None, presentation=None):
     """Executor-side authorization: HTTP fields can never claim an operator role."""
     if method == 'GET' and path == '/preparation':
         from . import privacy
         session_id, csrf, current_token = p.session(store, token, create=True)
         rows = p.connection_for(store).execute('SELECT dossier_id,current_revision FROM s2_dossiers WHERE session_id=? ORDER BY dossier_id',
                                                (session_id,)).fetchall()
-        return 200, {'csrf_token': csrf, 'availability': p.availability(store, transport),
+        return 200, {'csrf_token': csrf, 'availability': p.availability(store, transport, session_id),
                      'dossiers': [{'dossier_id': d, 'revision': r,
                                    'need': store.get_dossier(d, r)['request']} for d, r in rows
                                   if privacy.visible(store._connection, session_id, d)]}, (None if token == current_token else current_token), None
@@ -231,7 +230,7 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
             if set(body) - {'dossier_id'} or body.get('dossier_id') is not None and not isinstance(body['dossier_id'], str):
                 raise ValueError('Activité invalide')
             return 200, privacy.activity(store, session_id, body.get('dossier_id')), token, None
-    if personal_preparation and method == 'POST' and (path == '/preparation/dossiers' or
+    if method == 'POST' and (path == '/preparation/dossiers' or
             re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/(messages|validation)', path)):
         if transport is None or (path.endswith('/validation') and qualification_transport is None):
             raise p.Denied('ACCESS_REQUIRED')
@@ -249,8 +248,6 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                          'error_code': 'CANDIDATE_PI_UNAVAILABLE'}, None, None
         if configuration_route.group(2) == 'custom-models':
             from . import model_probes
-            if not personal_preparation:
-                raise p.Denied('PROBE_UNAVAILABLE')
             operation_id, start = None, None
             if method == 'POST':
                 operation_id = model_probes.request_id(store, session_id, dossier_id, body)
@@ -302,12 +299,12 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
         if method == 'POST' and action == 'start':
             if not callable(candidate_transport):
                 raise p.Denied('Acquisition indisponible')
-            if personal_preparation and requester:
+            if requester:
                 from . import automatic_judgment as auto
                 auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport)
             attempts = campaigns.launch(store, session_id, dossier_id, campaign_id, body,
                                         access_secret=access_secret, access_transport=access_transport,
-                                        judgment_transport=judgment_transport if personal_preparation and requester else None)
+                                        judgment_transport=judgment_transport if requester else None)
             value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
                                           access_secret=access_secret,
                                           access_transport=access_transport, judgment_transport=judgment_transport)
@@ -316,13 +313,13 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
             else:
                 value['can_launch'] = False
             launch_work: dict[str, object] | None = {'candidate_attempts': attempts} if attempts else None
-            if launch_work and personal_preparation and requester:
+            if launch_work and requester:
                 launch_work.update(judgment_campaign=campaign_id, session_id=session_id, dossier_id=dossier_id)
             return 202, value, None, launch_work
         if method == 'POST' and action == 'evaluate':
             from . import automatic_judgment as auto
             _fields(body, ('confirm',), 'évaluation')
-            if body['confirm'] != 'yes' or not personal_preparation:
+            if body['confirm'] != 'yes':
                 raise p.Denied('Action inaccessible')
             ids = auto.reserve_campaign(store, session_id, dossier_id, campaign_id, judgment_transport)
             value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
@@ -334,7 +331,7 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                                           access_transport=access_transport, judgment_transport=judgment_transport)
             if requester:
                 # Une exécution indisponible est un contrôle comme les autres : jamais un refus sans cause affichée
-                if not callable(candidate_transport) or personal_preparation and judgment_transport is None:
+                if not callable(candidate_transport) or judgment_transport is None:
                     value['checks'].append(dict(key='execution_available', ok=False,
                         detail='Exécution des essais momentanément indisponible. Rien n’a été lancé ni débité ; réessayez plus tard'))
                     value['launchable'] = False
@@ -365,7 +362,7 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
             if not result['campaigns']:
                 raise p.Denied('Campagne inaccessible pour cette révision')
             result['dossier_href'] = path + '?campaign=' + campaign_reference
-        result['availability'] = p.availability(store, transport)
+        result['availability'] = p.availability(store, transport, session_id)
         # The CSRF token travels independently in HTML rendering through the web's session query
         return 200, result, None, None
     if method == 'POST' and action == 'messages':

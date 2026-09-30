@@ -1,6 +1,6 @@
 """S2 review regressions with fictional receipts and real local HTTP processes"""
 from contextlib import closing
-from copy import deepcopy
+from copy import copy, deepcopy
 from html.parser import HTMLParser
 import json
 import multiprocessing
@@ -33,6 +33,62 @@ def response_for(operation, *, unknown=False):
                  'currency': 'TEST', 'source': 'Fictional review receipt'}}
 
 
+class Authorized:
+    """Transport factice muni de l'autorité de sa session, comme la clé personnelle en production"""
+    def __init__(self, transport, **authority):
+        self._transport, self._authority = transport, authority
+        self._session_id = authority['authority_id']
+
+    def __call__(self, *args, **kwargs):
+        return self._transport(*args, **kwargs)
+
+    def __getattr__(self, name):
+        # Copie et pickle interrogent l'objet avant `__init__` : aucun attribut privé n'est délégué
+        if name.startswith('_'):
+            raise AttributeError(name)
+        return getattr(self._transport, name)
+
+    def authority(self):
+        return deepcopy(self._authority)
+
+
+class SessionAssistant:
+    """Assistant factice que l'exécuteur lie à une session par sa clé, comme `OpenRouterPreparation.for_session`"""
+    def __init__(self, call, configuration, reserve='1'):
+        self._call, self._configuration, self._reserve = call, configuration, reserve
+        self._session_id = self._api_key = None
+        self.preparation_budget_id = None
+
+    def for_session(self, key, session_id, secret):
+        from benchmark.provider_access import preparation_budget_id
+        bound = copy(self)
+        bound._api_key, bound._session_id = key, session_id
+        bound.preparation_budget_id = preparation_budget_id(session_id)
+        return bound
+
+    def authority(self):
+        if self._session_id is None:
+            return None
+        return {'authority_id': 'requester:' + self._session_id, 'budget_id': self.preparation_budget_id,
+                'reserve_amount': self._reserve, 'requested_configuration': self.quote()}
+
+    def authorized(self, store):
+        return self._session_id is not None
+
+    def quote(self):
+        return deepcopy(self._configuration)
+
+    configuration = quote
+
+    def __call__(self, operation, request):
+        return self._call(operation, request)
+
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        return getattr(self._call, name)
+
+
 class RefreshLink(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -59,11 +115,13 @@ class S2ReviewRegressions(unittest.TestCase):
         self.store = storage.Store(self.data)
         self.addCleanup(self.store.close)
         self.store.create_budget('review', '100', 'TEST')
-        prep.admit(self.store, dict(authority_id='LOCAL_FICTIONAL_REVIEW', budget_id='review',
-                                   reserve_amount='7', requested_configuration={'model': 'fictional'}))
+        self.authorized = lambda transport=True: Authorized(
+            transport, authority_id='LOCAL_FICTIONAL_REVIEW', budget_id='review',
+            reserve_amount='7', requested_configuration={'model': 'fictional'})
         self.session, self.csrf, self.token = prep.session(self.store, None, create=True)
         self.body = {'action_id': 'create', 'request': 'Organiser un atelier fictif'}
-        self.operation, start = prep.submit(self.store, self.session, 'review-dossier', self.body, 'a' * 40, True)
+        self.operation, start = prep.submit(self.store, self.session, 'review-dossier', self.body, 'a' * 40,
+                                            self.authorized())
         self.assertTrue(start)
 
     def test_invalid_application_retains_receipt_cost_and_suspends_atomically(self):
@@ -76,9 +134,8 @@ class S2ReviewRegressions(unittest.TestCase):
                     storage.initialize_preparation(data)
                     with closing(storage.Store(data)) as store:
                         store.create_budget('review', '100', 'TEST')
-                        prep.admit(store, prep.admission(self.store))
                         session, _, _ = prep.session(store, None, create=True)
-                        operation, _ = prep.submit(store, session, 'd', self.body, 'a' * 40, True)
+                        operation, _ = prep.submit(store, session, 'd', self.body, 'a' * 40, self.authorized())
                         original_payload = store.get_dossier('d', 1)
                         acquired = []
                         def transport(op, request):
@@ -101,10 +158,10 @@ class S2ReviewRegressions(unittest.TestCase):
                                 self.assertEqual(1, prep.view(reader, session, 'd')['revision'])
                                 reader._connection.execute('PRAGMA busy_timeout=0')
                                 with self.assertRaises(sqlite3.OperationalError):
-                                    prep.submit(reader, session, 'other', self.body, 'a' * 40, True)
+                                    prep.submit(reader, session, 'other', self.body, 'a' * 40, self.authorized())
                             atomic_checks.append(True)
                         with patch.object(storage.Store, '_record_receipt', observed_record):
-                            prep.execute(data, operation, transport)
+                            prep.execute(data, operation, self.authorized(transport))
                         observed = store.inspect_operations()[0]
                         self.assertEqual(acquired[0]['receipt'], observed['receipt'])
                         self.assertEqual(acquired[0]['cost'], observed['observed_cost'])
@@ -120,14 +177,14 @@ class S2ReviewRegressions(unittest.TestCase):
                         budget = store.inspect_budget('review')
                         self.assertEqual('0' if unknown else '3', budget['spent'])
                         self.assertEqual('7' if unknown else '0', budget['reserved'])
-                        self.assertIsNone(prep.admission(store))
                         with self.assertRaises(storage.ConflictError):
                             prep.validate(store, session, 'd', prep.binding('d', current['revision'], '0' * 64))
-                        with self.assertRaises(prep.Denied):
-                            prep.submit(store, session, 'd', dict(action_id='next', revision=current['revision'],
-                                        kind='correct', message='Corriger'), 'a' * 40, True)
-                        self.assertEqual((operation, False), prep.submit(store, session, 'd', self.body, 'a' * 40, True))
-                        prep.execute(data, operation, transport)
+                        # La suspension vise ce résultat : une correction explicite reste possible
+                        self.assertTrue(prep.submit(store, session, 'd', dict(action_id='next', revision=current['revision'],
+                                        kind='correct', message='Corriger'), 'a' * 40, self.authorized())[1])
+                        self.assertEqual((operation, False), prep.submit(store, session, 'd', self.body, 'a' * 40,
+                                                                         self.authorized()))
+                        prep.execute(data, operation, self.authorized(transport))
                         self.assertEqual(1, len(acquired))
                         self.assertTrue(store.verify_storage()['integrity_ok'])
                         self.assertEqual([], store._connection.execute('SELECT * FROM pieces').fetchall())
@@ -137,7 +194,7 @@ class S2ReviewRegressions(unittest.TestCase):
             result = response_for(operation)
             del result['receipt']['receipt_id']
             return result
-        prep.execute(self.data, self.operation, transport)
+        prep.execute(self.data, self.operation, self.authorized(transport))
         operation = self.store.inspect_operations()[0]
         self.assertEqual('AMBIGUOUS', operation['state'])
         self.assertIsNone(operation['receipt'])
@@ -146,9 +203,23 @@ class S2ReviewRegressions(unittest.TestCase):
         self.assertEqual('7', self.store.inspect_budget('review')['reserved'])
 
     def test_real_post_validation_then_refresh_get_does_not_revalidate(self):
-        prep.execute(self.data, self.operation, lambda operation, request: response_for(operation))
+        prep.execute(self.data, self.operation, self.authorized(lambda operation, request: response_for(operation)))
         view = prep.view(self.store, self.session, 'review-dossier')
         self.assertEqual('preview', view['stage'])
+        # La validation passe par les assistants liés à la clé de la session, comme en production
+        from benchmark import evaluation, provider_access, qualification
+        from benchmark.acquisition import campaigns
+        from tests.test_openrouter_qualification import QualificationTransport
+        from tests.test_provider_access import AccessTransport, KEY, SECRET
+        for module in (qualification, campaigns, evaluation, provider_access):
+            module.initialize(self.data)
+        provider_access.import_key(self.store, self.session, SECRET, KEY, AccessTransport())
+        assistants = dict(
+            transport=SessionAssistant(QualificationTransport({}), {'model': 'fictional'}),
+            qualification_transport=SessionAssistant(
+                QualificationTransport({'qualified': True, 'findings': [], 'summary': 'Exemple qualifié'}),
+                {'model': 'qualification/fictive'}),
+            access_secret=SECRET, access_transport=AccessTransport())
         public = self.home / 'public'
         public.mkdir()
         sock = self.home / 'executor.sock'
@@ -169,7 +240,7 @@ class S2ReviewRegressions(unittest.TestCase):
         for target, args in ((service.serve_executor, (self.data, sock, 'a' * 40)),
                              (serve_web, ('127.0.0.1', port, public, sock, 'a' * 40))):
             process = context.Process(target=target, args=args,
-                                      kwargs={'readiness_clients': ('127.0.0.1',)} if target is serve_web else {})
+                                      kwargs={'readiness_clients': ('127.0.0.1',)} if target is serve_web else assistants)
             process.start()
             children.append(process)
         base = f'http://127.0.0.1:{port}'
@@ -198,6 +269,7 @@ class S2ReviewRegressions(unittest.TestCase):
         self.assertIsNotNone(parser.refresh)
         before = self.store._connection.execute('SELECT * FROM s2_validations').fetchall()
         self.assertEqual(1, len(before))
+        operations = len(self.store.inspect_operations())
         try:
             result = urlopen(Request(base + parser.refresh, headers=headers), timeout=5)
         except HTTPError as error:
@@ -207,7 +279,7 @@ class S2ReviewRegressions(unittest.TestCase):
             self.assertIn('Vous avez validé cet exemple, dans cette version précise.', result.read().decode())
         self.assertEqual('/preparation/dossiers/review-dossier', parser.refresh)
         self.assertEqual(before, self.store._connection.execute('SELECT * FROM s2_validations').fetchall())
-        self.assertEqual(1, len(self.store.inspect_operations()))
+        self.assertEqual(operations, len(self.store.inspect_operations()))
 
 
 if __name__ == '__main__':

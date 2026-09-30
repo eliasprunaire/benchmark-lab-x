@@ -11,7 +11,7 @@ from unittest.mock import patch
 from benchmark import evaluation, preparation, privacy, provider_access, qualification, storage
 from benchmark.acquisition import campaigns
 from benchmark import web_api
-from tests.test_s2_review_regressions import response_for
+from tests.test_s2_review_regressions import Authorized, response_for
 
 
 NOW = datetime(2026, 9, 18, 12, tzinfo=timezone.utc)
@@ -72,11 +72,12 @@ class PrivacyTests(unittest.TestCase):
             session, _, self.token = preparation.session(self.store, None, create=True)
             budget = 'personal-preparation-' + session
             self.store.create_budget(budget, '100', 'TEST')
-            preparation.admit(self.store, dict(authority_id='TEST_ONLY', budget_id=budget,
-                reserve_amount='7', requested_configuration={'model': 'fictional'}))
+            self.granted = lambda transport=True: Authorized(transport, authority_id='TEST_ONLY', budget_id=budget,
+                reserve_amount='7', requested_configuration={'model': 'fictional'})
             operation, _ = preparation.submit(self.store, session, name,
-                {'action_id': 'create', 'request': 'Organiser des notes entièrement fictives'}, 'a' * 40, True)
-            preparation.execute(self.data, operation, lambda op, request: response_for(op))
+                {'action_id': 'create', 'request': 'Organiser des notes entièrement fictives'}, 'a' * 40,
+                self.granted())
+            preparation.execute(self.data, operation, self.granted(lambda op, request: response_for(op)))
         return session, operation
 
     def test_suppression_retire_textes_et_pieces_sans_recreer_credit(self):
@@ -119,7 +120,7 @@ class PrivacyTests(unittest.TestCase):
 
         def handle(message):
             code, value, _, _ = web_api.dispatch(self.store, message['method'], message['path'], message['token'],
-                                                 message['body'], 'a' * 40, True)
+                                                 message['body'], 'a' * 40, self.granted())
             return {'status': code, 'value': value}
         with patch.object(privacy, 'now', return_value=later):
             _, csrf, _ = preparation.session(self.store, self.token)
@@ -163,7 +164,8 @@ class PrivacyTests(unittest.TestCase):
                 try:
                     code, value, _, work = web_api.dispatch(self.store, 'POST', '/preparation/dossiers/private-case/messages',
                         self.token, {'csrf_token': csrf, 'action_id': 'clarify', 'revision': 2, 'kind': 'clarify',
-                                     'message': 'Préciser le contexte fictif', 'source_sha256': 'd' * 64}, 'a' * 40, True)
+                                     'message': 'Préciser le contexte fictif', 'source_sha256': 'd' * 64}, 'a' * 40,
+                        self.granted())
                 finally:
                     if blocker.in_transaction:
                         blocker.execute('ROLLBACK')
@@ -201,15 +203,15 @@ class PrivacyTests(unittest.TestCase):
         sock = self.data.parent / 'executor.sock'
         with patch.object(privacy, 'now', return_value=later), patch.object(service, 'run', run), \
                 patch.object(preparation, 'submit', submit_then_lock), patch.object(web_api, 'dispatch', dispatch_then_release), \
-                patch.object(preparation, '_now', return_value=datetime.now(timezone.utc) + timedelta(hours=1)):
+                patch.object(preparation, '_now', return_value=datetime.now(timezone.utc) + timedelta(hours=1)), \
+                patch.object(service, 'personal_transports',
+                             return_value=(self.granted(lambda op, request: response_for(op)), None)):
             _, csrf, _ = preparation.session(self.store, self.token)
-            authority = preparation.admission(self.store)
             worker = threading.Thread(target=service.serve_executor, args=(self.data, sock, 'a' * 40),
                                       kwargs=dict(transport=lambda op, request: response_for(op)))
             worker.start()
             try:
                 self.assertTrue(ready.wait(5))
-                preparation.admit(self.store, authority)
                 response = service.preparation_request(sock, 'POST', '/preparation/dossiers/private-case/messages',
                     self.token, {'csrf_token': csrf, 'action_id': 'clarify', 'revision': 2, 'kind': 'clarify',
                                  'message': 'Préciser le contexte fictif', 'source_sha256': 'e' * 64})
@@ -268,16 +270,16 @@ class PrivacyTests(unittest.TestCase):
             session, _, _ = preparation.session(self.store, None, create=True)
             budget = 'personal-preparation-' + session
             self.store.create_budget(budget, '100', 'TEST')
-            preparation.admit(self.store, dict(authority_id='TEST_ONLY', budget_id=budget,
-                reserve_amount='7', requested_configuration={'model': 'fictional'}))
+            granted = lambda transport=True: Authorized(transport, authority_id='TEST_ONLY', budget_id=budget,
+                reserve_amount='7', requested_configuration={'model': 'fictional'})
             operation, _ = preparation.submit(self.store, session, 'in-flight',
-                {'action_id': 'create', 'request': 'Organiser des notes entièrement fictives'}, 'a' * 40, True)
+                {'action_id': 'create', 'request': 'Organiser des notes entièrement fictives'}, 'a' * 40, granted())
             def response(op, request):
                 entered.set()
                 if not released.wait(5):
                     raise TimeoutError('Test interrompu')
                 return response_for(op)
-            worker = threading.Thread(target=preparation.execute, args=(self.data, operation, response))
+            worker = threading.Thread(target=preparation.execute, args=(self.data, operation, granted(response)))
             worker.start()
             try:
                 self.assertTrue(entered.wait(5))
@@ -312,33 +314,27 @@ class PrivacyTests(unittest.TestCase):
                 privacy.request_delete(self.store, session, 'private-case')
             self.assertEqual('private-case', preparation.view(self.store, session, 'private-case')['dossier_id'])
 
-    def test_boot_change_requires_external_journal_and_does_not_reopen_admission(self):
+    def test_boot_change_keeps_the_service_open(self):
         from hashlib import sha256
         from benchmark import runtime
-        session, _ = self.dossier()
+        self.dossier()
         with patch.object(privacy, 'now', return_value=NOW):
-            event = privacy.journal_intent(self.store, 'dossier', 'private-case')
+            privacy.journal_intent(self.store, 'dossier', 'private-case')
             proof = sha256(privacy.journal_path(self.store).read_bytes()).hexdigest()
             with patch.object(privacy, 'boot_identity', return_value='new-boot'):
-                self.assertTrue(runtime.status(self.data, self.store)['restore_pending'])
-                self.assertEqual('RESTORE_PENDING', privacy.purge(self.data)['reason'])
-                self.assertEqual(('ACTIVE',), self.store._connection.execute('SELECT state FROM s7_dossiers').fetchone())
+                # Un redémarrage de la machine ne met plus le service en quarantaine
+                self.assertFalse(runtime.status(self.data, self.store)['restore_pending'])
                 for path in ('/preparation', '/preparation/contributions'):
-                    self.assertEqual(503, web_api.dispatch(self.store, 'GET', path, None, None, 'a'*40, None)[0])
-                self.assertTrue(privacy.migrate(self.data, SECRET, 'test-migration')['restore_pending'])
+                    self.assertNotEqual(503, web_api.dispatch(self.store, 'GET', path, None, None, 'a'*40, None)[0])
                 with self.assertRaises(storage.IntegrityError):
                     privacy.reconcile(self.data, '0'*64)
-                self.assertTrue(privacy.boot_pending(self.store._connection))
-                result = privacy.reconcile(self.data, proof)
-                self.assertFalse(result['restore_pending'])
-                self.assertFalse(runtime.status(self.data, self.store)['admission'])
+                self.assertFalse(privacy.reconcile(self.data, proof)['restore_pending'])
                 self.assertEqual(('PURGED',), self.store._connection.execute('SELECT state FROM s7_dossiers').fetchone())
 
     def test_first_boot_reconciliation_works_before_any_revocation(self):
         from hashlib import sha256
         self.assertEqual(b'', privacy.journal_path(self.store).read_bytes())
         with patch.object(privacy, 'boot_identity', return_value='new-boot'):
-            self.assertTrue(privacy.boot_pending(self.store._connection))
             self.assertFalse(privacy.reconcile(self.data, sha256(b'').hexdigest())['restore_pending'])
 
     def test_expired_access_releases_only_retired_technical_markers(self):
