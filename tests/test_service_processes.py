@@ -70,6 +70,50 @@ def stuck_catalogue_executor(data, sock, fetching, completed):
     completed.put(records)
 
 
+def slow_read_executor(data, sock, budget):
+    """Exécuteur réel dont la vue d'accueil garde son instantané bien au-delà du budget de lecture"""
+    original = preparation.availability
+
+    def slow(store, transport, session_id=None):
+        with store.read_snapshot() as connection:
+            end = time.monotonic() + 8
+            while time.monotonic() < end:
+                connection.execute('SELECT count(*) FROM budgets').fetchone()
+                time.sleep(0.01)
+        return original(store, transport, session_id)
+
+    with patch.object(preparation, 'availability', slow), \
+            patch.object(service, 'READ_BUDGET_SECONDS', budget, create=True):
+        serve_executor(data, sock, 'a' * 40)
+
+
+@contextmanager
+def spawned_executor(target, *args, workers=None):
+    """Un exécuteur réel dans un processus séparé, prêt quand sa santé répond"""
+    context = multiprocessing.get_context('spawn')
+    environment = {} if workers is None else {'BENCHMARK_EXECUTOR_WORKERS': str(workers)}
+    with patch.dict(os.environ, environment):
+        child = context.Process(target=target, args=args)
+        child.start()
+    try:
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                executor_health(args[1])
+                break
+            except OSError:
+                if time.monotonic() >= deadline or not child.is_alive():
+                    raise
+                time.sleep(0.05)
+        yield
+    finally:
+        child.terminate()
+        child.join(10)
+        if child.is_alive():
+            child.kill()
+            child.join()
+
+
 @contextmanager
 def fake_executor(path, respond):
     """Exécuteur fictif d'une seule requête : le test décide du rythme de la réponse"""
@@ -1035,6 +1079,120 @@ class ExecutorConcurrencyTests(unittest.TestCase):
             self.assertGreaterEqual(codes[200], 1, codes)
             self.assertLessEqual(codes[200], 2, codes)
             self.assertLess(slowest, 1)
+
+
+class ExecutorReadTests(unittest.TestCase):
+    """Lectures bornées, santé réservée et arrêt : exécuteur réel, compte d'événements, jamais de durée plafonnée"""
+
+    def private_storage(self):
+        from tests.test_privacy import initialize as initialize_private
+        directory = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        data = directory / 'private'
+        initialize_private(data)
+        return data, directory / 'x.sock'
+
+    def test_lecture_trop_longue_interrompue_sans_bloquer_l_ecriture_d_un_recu(self):
+        data, sock = self.private_storage()
+        with closing(Store(data)) as store:
+            _, _, token = preparation.session(store, None, create=True)
+            store.save_dossier('d', 1, PAYLOAD)
+            store.create_budget('b', '10', 'TEST')
+            store.reserve_intent(operation('op'), 'b', '7')
+            store.mark_emission_possible('op')
+        with spawned_executor(slow_read_executor, data, sock, 0.3):
+            results = []
+            reader = threading.Thread(target=lambda: results.append(
+                preparation_request(sock, 'GET', '/preparation', token)))
+            reader.start()
+            time.sleep(0.15)
+            # Une seule tentative : le reçu payé d'un appel déjà parti ne doit pas attendre la fin de la vue
+            with closing(Store(data)) as writer:
+                writer.record_receipt('op', dict(receipt_id='r', observed_configuration=None, resources_seen=[],
+                                                 result={'output': 'fictif'}),
+                                      dict(status='KNOWN', amount='1', currency='TEST', source='Reçu fictif'))
+                self.assertEqual(['RECEIVED'], [row['state'] for row in writer.inspect_operations()])
+            reader.join(20)
+            self.assertEqual(503, results[0]['status'])
+            self.assertEqual('READ_TIMEOUT', results[0]['value']['error_code'])
+            self.assertIn('Réessayez', results[0]['value']['error'])
+            # Transaction annulée et verrou rendu : le même fil sert la requête suivante
+            self.assertEqual('ok', executor_health(sock)['storage'])
+
+    def test_sante_repond_quand_tous_les_fils_sont_occupes(self):
+        data, sock = self.private_storage()
+        with closing(Store(data)) as store:
+            _, _, token = preparation.session(store, None, create=True)
+        with spawned_executor(serve_executor, data, sock, 'a' * 40, workers=1):
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as held:
+                # Requête incomplète : le seul fil de travail attend sa fin
+                held.connect(str(sock))
+                held.sendall(b'{"method":')
+                time.sleep(0.2)
+                self.assertEqual('ok', executor_health(sock)['storage'])
+                # Une requête ordinaire reste refusée tout de suite, avec un motif lisible
+                result = preparation_request(sock, 'GET', '/preparation', token)
+                self.assertEqual((503, 'SATURATED'), (result['status'], result['value']['error_code']))
+
+    def test_arret_ferme_l_ecoute_avant_d_attendre_les_fils(self):
+        entered, release = threading.Event(), threading.Event()
+
+        class Blocking(socketserver.BaseRequestHandler):
+            def handle(self):
+                entered.set()
+                release.wait(10)
+
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory).resolve() / 'private'
+            initialize(data)
+            path = Path(tempfile.mkdtemp()) / 'x.sock'
+            self.addCleanup(shutil.rmtree, path.parent, ignore_errors=True)
+            server = service.BoundedUnixServer(str(path), Blocking, data=data, workers=1)
+            closer = threading.Thread(target=server.server_close)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                try:
+                    client.connect(str(path))
+                    server.handle_request()
+                    self.assertTrue(entered.wait(5))
+                    closer.start()
+                    time.sleep(0.2)
+                    # Le fil occupé retient l'arrêt, mais plus aucune connexion n'entre dans la file
+                    self.assertTrue(closer.is_alive())
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as late, self.assertRaises(OSError):
+                        late.connect(str(path))
+                finally:
+                    release.set()
+                    if closer.ident is not None:
+                        closer.join(10)
+                    else:
+                        server.server_close()
+
+    def test_duree_journalisee_pour_chaque_vue_de_preparation(self):
+        for path, route in (('/preparation/dossiers/dossier-secret', 'GET /preparation/dossiers/<id>'),
+                            ('/preparation/dossiers/dossier-secret/archive', 'GET /preparation/dossiers/<id>/archive')):
+            raw = (_strict_json({'method': 'GET', 'path': path, 'token': 'jeton-secret', 'body': None}) + '\n').encode()
+            with self.assertLogs('benchmark.service', level='INFO') as logs:
+                service.executor_result(raw, None, lambda message: {'status': 200, 'value': {}})
+            self.assertRegex(logs.output[-1], '^INFO:benchmark\\.service:EXECUTOR_TIMING ' + route + r' 200 \d+ ms$')
+            self.assertNotIn('secret', '\n'.join(logs.output))
+
+    def test_indisponibilites_en_503_et_refus_en_phrase_codifie(self):
+        generic = 'Vous ne pouvez pas faire cette action depuis ce navigateur'
+        for code in ('ACCESS_UNAVAILABLE', 'PRIVACY_MIGRATION_PENDING'):
+            result = denied_response(preparation.Denied(code))
+            self.assertEqual((503, code, True), (result['status'], result['value']['error_code'],
+                                                 result['value'].get('unavailable')))
+            self.assertNotIn(generic, result['value']['error'])
+        result = denied_response(preparation.Denied('Tentative évaluée inaccessible'))
+        self.assertEqual((403, 'DENIED'), (result['status'], result['value']['error_code']))
+
+    def test_vue_porte_le_jeton_csrf_de_sa_session(self):
+        data, _ = self.private_storage()
+        with closing(Store(data)) as store:
+            _, csrf, token = preparation.session(store, None, create=True)
+            code, value, *_ = service.personal_dispatch(
+                store, {'method': 'GET', 'path': '/preparation/catalogue', 'token': token, 'body': None}, 'a' * 40)
+        self.assertEqual((200, csrf), (code, value.get('csrf_token')))
 
 
 class ExecutorBindTests(unittest.TestCase):

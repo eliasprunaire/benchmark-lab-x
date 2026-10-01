@@ -93,9 +93,9 @@ class ServiceStorageTests(unittest.TestCase):
                 statements = []
                 store._connection.set_trace_callback(statements.append)
                 self.assertTrue(verify(store)['integrity_ok'])
-                # Entry validation and the locked snapshot each check the database
-                self.assertEqual(statements.count('PRAGMA quick_check'), 2)
-                self.assertEqual(statements.count('PRAGMA foreign_key_check'), 2)
+                # Only the locked snapshot checks the database; its entry checks paths and identities
+                self.assertEqual(statements.count('PRAGMA quick_check'), 1)
+                self.assertEqual(statements.count('PRAGMA foreign_key_check'), 1)
                 store._connection.set_trace_callback(None)
                 piece = store.get_piece('piece-0')
                 (root / piece['relative_path']).write_bytes(b'altere')

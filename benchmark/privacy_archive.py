@@ -137,21 +137,20 @@ def _revision(view):
 
 
 
-def _pending_model(store, session_id, dossier_id, campaign, comparison, attempt_id):
+def _pending_model(store, connection, session_id, dossier_id, campaign, comparison, attempt_id):
     attempt = next(item for item in campaign['attempts'] if item['operation_id'] == attempt_id)
     cell = next(item for item in comparison['cells'] if item['cell_id'] == attempt['cell_id'])
     configuration = next(item for item in comparison['panel'] if item['id'] == cell['configuration_id'])
-    with store.read_snapshot() as connection:
-        _authorize(connection, session_id, dossier_id)
-        row = connection.execute(
-            'SELECT r.output_piece_id FROM s4_attempts a JOIN operations o USING(operation_id) '
-            'LEFT JOIN s4_results r USING(operation_id) '
-            'WHERE a.operation_id=? AND a.campaign_id=? AND o.dossier_id=?',
-            (attempt_id, campaign['campaign_id'], dossier_id)).fetchone()
-        if row is None:
-            raise p.Denied('Tentative inaccessible')
-        # Only the output explicitly linked by S4 is read, never a judge-role inventory
-        answer = None if row[0] is None else _text(store.read_piece(row[0]).decode('utf-8'))
+    _authorize(connection, session_id, dossier_id)
+    row = connection.execute(
+        'SELECT r.output_piece_id FROM s4_attempts a JOIN operations o USING(operation_id) '
+        'LEFT JOIN s4_results r USING(operation_id) '
+        'WHERE a.operation_id=? AND a.campaign_id=? AND o.dossier_id=?',
+        (attempt_id, campaign['campaign_id'], dossier_id)).fetchone()
+    if row is None:
+        raise p.Denied('Tentative inaccessible')
+    # Only the output explicitly linked by S4 is read, never a judge-role inventory
+    answer = None if row[0] is None else _text(store.read_piece(row[0]).decode('utf-8'))
     cost = attempt['observed_cost']
     return dict(name=_text(configuration['model']), verdict=None,
         cost=dict(amount=None if cost is None or cost['status'] != 'KNOWN' else cost['amount'],
@@ -179,34 +178,43 @@ def _campaigns(store, session_id, dossier_id, campaigns):
     result: list[dict] = []
     for campaign in campaigns:
         cid = campaign['campaign_id']
-        comparison = restitution.comparison(store, session_id, dossier_id, cid)
-        models: list[dict] = []
-        for row in comparison['rows']:
-            detail = restitution.detail(store, session_id, dossier_id, cid, row['attempt_id'])
-            history = cast(list[dict], detail['history'])
-            record = next(x for x in history if x['evaluation_id'] == row['evaluation_id'])
-            candidate_ids = {piece['id'] for piece in record['qualification']['contract']['package']['pieces']}
-            output_id = record['output_piece_id']
-            # Judge references can appear in proof_links but never in this allowlist
-            evidence: list[dict] = [
-                dict(name=_text(link['name']), text=_text(record['proof_contents'][link['piece_id']]))
-                for link in record['proof_links'] if link['piece_id'] in candidate_ids]
-            evidence += [_configuration('Configuration demandée', row['requested_configuration']),
-                         _configuration('Configuration observée', row.get('observed_configuration') or {}),
-                         dict(name='Motif du résultat', text=_text(row['reason']))]
-            for measure in row['measures']:
-                evidence.append(dict(name=_text(measure['definition']['measure']),
-                    text=_text(str(measure['value'])) + ' ' + _text(measure['unit'])))
-            models.append(dict(name=_text(row['requested_configuration']['model']), verdict=row['verdict'],
-                cost=dict(amount=row['cost']['value'], currency=_text(row['cost']['unit'])),
-                answer=None if output_id is None else _text(record['proof_contents'][output_id]), evidence=evidence))
-        seen = {row['attempt_id'] for row in comparison['rows']}
-        for pending in comparison['pending_attempts']:
-            if pending['attempt_id'] not in seen:
-                models.append(_pending_model(store, session_id, dossier_id, campaign, comparison, pending['attempt_id']))
-                seen.add(pending['attempt_id'])
+        # Une comparaison par campagne, réutilisée par chacune de ses lignes dans le même instantané
+        with store.read_snapshot() as connection:
+            models = _models(store, connection, session_id, dossier_id, campaign)
         result.append(dict(id=cid, models=models))
     return result
+
+
+def _models(store, connection, session_id, dossier_id, campaign):
+    value = restitution._comparison(store, connection, session_id, dossier_id, campaign['campaign_id'], {})
+    comparison = p.page_view(value)
+    models: list[dict] = []
+    for row in comparison['rows']:
+        detail = restitution._detail(store, connection, session_id, dossier_id, value, row['attempt_id'])
+        history = cast(list[dict], detail['history'])
+        record = next(x for x in history if x['evaluation_id'] == row['evaluation_id'])
+        candidate_ids = {piece['id'] for piece in record['qualification']['contract']['package']['pieces']}
+        output_id = record['output_piece_id']
+        # Judge references can appear in proof_links but never in this allowlist
+        evidence: list[dict] = [
+            dict(name=_text(link['name']), text=_text(record['proof_contents'][link['piece_id']]))
+            for link in record['proof_links'] if link['piece_id'] in candidate_ids]
+        evidence += [_configuration('Configuration demandée', row['requested_configuration']),
+                     _configuration('Configuration observée', row.get('observed_configuration') or {}),
+                     dict(name='Motif du résultat', text=_text(row['reason']))]
+        for measure in row['measures']:
+            evidence.append(dict(name=_text(measure['definition']['measure']),
+                text=_text(str(measure['value'])) + ' ' + _text(measure['unit'])))
+        models.append(dict(name=_text(row['requested_configuration']['model']), verdict=row['verdict'],
+            cost=dict(amount=row['cost']['value'], currency=_text(row['cost']['unit'])),
+            answer=None if output_id is None else _text(record['proof_contents'][output_id]), evidence=evidence))
+    seen = {row['attempt_id'] for row in comparison['rows']}
+    for pending in comparison['pending_attempts']:
+        if pending['attempt_id'] not in seen:
+            models.append(_pending_model(store, connection, session_id, dossier_id, campaign, comparison,
+                                         pending['attempt_id']))
+            seen.add(pending['attempt_id'])
+    return models
 
 
 def _owner_record(store, session_id, dossier_id, version):
@@ -245,6 +253,10 @@ def archive_manifest(store, session_id, dossier_id):
         if existing:
             return _manifest(dossier_id, version, existing)
         snapshot = secrets.token_hex(32)
+        # ponytail: garde la seule version précédente, peut-être en cours de téléchargement dans un autre
+        # onglet ; un téléchargement plus ancien encore échoue en « Archive inaccessible » et se relance
+        connection.execute('DELETE FROM s7_archives WHERE dossier_id=? AND content_version<'
+                           '(SELECT max(content_version) FROM s7_archives WHERE dossier_id=?)', (dossier_id, dossier_id))
         connection.execute('INSERT INTO s7_archives VALUES (?, ?, ?, ?, ?)',
                            (snapshot, dossier_id, version, record, digest))
         return _manifest(dossier_id, version, (snapshot, len(record), digest))

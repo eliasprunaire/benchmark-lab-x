@@ -140,8 +140,9 @@ def schema_objects():
 
 def initialize(data):
     """Add S4 explicitly to an intact S3 database, without altering prior records."""
+    from ..runtime import verify
     with closing(storage.Store(data)) as store:
-        _intact(store)
+        verify(store)
         connection = store._connection_checked()
         with _transaction(connection, write=True):
             layout = storage._check_schema(connection)
@@ -163,8 +164,8 @@ def connection_for(store):
 
 
 def _intact(store):
-    proof = store.verify_storage()
-    if not proof['integrity_ok'] or proof['orphan_files']:
+    # Contrôle par tâche : l'audit complet reste au démarrage, dans `runtime verify` et aux extensions de schéma
+    if store.verify_task():
         raise IntegrityError('Stockage incomplet ou altéré')
 
 
@@ -578,8 +579,8 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
 def configurations_view(store, session_id, dossier_id):
     from .. import model_probes
     from ..preparation import owner, page_view
-    connection = connection_for(store)
-    with _transaction(connection):
+    with store.read_snapshot() as connection:
+        connection_for(store)
         owner(connection, session_id, dossier_id)
         try:
             catalogue = model_probes.selection(store, session_id, dossier_id)
@@ -935,8 +936,8 @@ def _inspect(store, connection, campaign_id):
 
 
 def inspect(store, campaign_id):
-    connection_for(store)
     with store.read_snapshot() as connection:
+        connection_for(store)
         return _inspect(store, connection, campaign_id)
 
 
@@ -1144,9 +1145,9 @@ def _requester_checks(store, connection, snapshot, session_id, access):
 def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=None,
                 access_transport=None, judgment_transport=None):
     from ..preparation import owner, page_view
-    connection_for(store)
     # Chaque lecture vérifie l'intégrité de la base une fois, pas à chaque pièce ni à chaque jugement
     with store.read_snapshot() as connection:
+        connection_for(store)
         owner(connection, session_id, dossier_id)
         snapshot = _inspect(store, connection, campaign_id)
         if snapshot['task']['dossier_id'] != dossier_id:

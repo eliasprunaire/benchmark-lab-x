@@ -9,7 +9,7 @@ from .validation import identifier
 from .acquisition import campaigns as c
 from . import evaluation as e, model_catalogue, preparation as p, qualification as q
 from .publications import SCHEMA, PRESENTATION_VERSION, _decode
-from .storage import _transaction, _strict_json as encode
+from .storage import _strict_json as encode
 
 ATTRIBUTION = (
     'Le verdict vaut pour chaque modèle tel qu’il a été réglé et appelé ici, dans les conditions communes décrites. '
@@ -293,13 +293,19 @@ def detail(store, session_id, dossier_id, campaign_id, attempt_id, *, query=None
     with store.read_snapshot() as connection:
         value = _comparison(store, connection, session_id, dossier_id, campaign_id,
                             {} if query is None else query)
-        history = [r for r in value['history'] if r['attempt_id'] == attempt_id]
-        if not history:
-            raise p.Denied('Tentative évaluée inaccessible')
-        for record in history:
-            pieces = e._pieces_bytes(store, connection, session_id, dossier_id,
-                                     record['evaluation_id'], [link['piece_id'] for link in record['proof_links']])
-            record['proof_contents'] = {pid: raw.decode('utf-8') for pid, raw in pieces.items()}
+        return _detail(store, connection, session_id, dossier_id, value, attempt_id)
+
+
+def _detail(store, connection, session_id, dossier_id, value, attempt_id):
+    """Une tentative d'une comparaison déjà calculée dans ce même instantané"""
+    campaign_id = value['campaign_id']
+    history = [r for r in value['history'] if r['attempt_id'] == attempt_id]
+    if not history:
+        raise p.Denied('Tentative évaluée inaccessible')
+    for record in history:
+        pieces = e._pieces_bytes(store, connection, session_id, dossier_id,
+                                 record['evaluation_id'], [link['piece_id'] for link in record['proof_links']])
+        record['proof_contents'] = {pid: raw.decode('utf-8') for pid, raw in pieces.items()}
     return p.page_view(dict(kind='attempt_detail', campaign_id=campaign_id, task=value['task'],
                        need=value['need'], model_names=value['model_names'], conclusion=value['conclusion'], history=history,
                        filter_scope=value['filter_scope'], dossier_href=value['dossier_href'], href=value['href'],
@@ -377,15 +383,15 @@ def _preview(store, value, piece_ids, presentation):
 
 
 def preview(store, session_id, dossier_id, campaign_id, *, piece_ids, presentation=None):
-    connection = e.connection_for(store)
-    with _transaction(connection):
+    with store.read_snapshot() as connection:
+        e.connection_for(store)
         value = _comparison(store, connection, session_id, dossier_id, campaign_id, {})
         return _preview(store, value, piece_ids, presentation)
 
 
 def preview_view(store, session_id, dossier_id, campaign_id, *, piece_ids, presentation=None):
-    connection = e.connection_for(store)
-    with _transaction(connection):
+    with store.read_snapshot() as connection:
+        e.connection_for(store)
         value = _comparison(store, connection, session_id, dossier_id, campaign_id, {})
         bundle = _preview(store, value, piece_ids, presentation)
         publishable = _publishable(store, value)

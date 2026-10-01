@@ -43,6 +43,8 @@ class FakeExecutor:
         self.key_result = {'status': 200, 'value': {'connected': True, 'status': 'connected'},
                            'piece': False, 'cookie': None}
         self.home_value = {'csrf_token': 'csrf', 'availability': {}}
+        self.access_value = {'connected': False, 'status': 'disconnected'}
+        self.configurations_campaign = 'd1-c2'
         self.raw_response = None
         self.start_cookie = None
         self.forced_status = None
@@ -96,7 +98,7 @@ class FakeExecutor:
                              'piece': False, 'cookie': None}) + '\n').encode())
                         continue
                     if request['path'] == '/preparation/access' and request['method'] == 'GET':
-                        result = {'status': 200, 'value': {'connected': False, 'status': 'disconnected'},
+                        result = {'status': 200, 'value': self.access_value,
                                   'piece': False, 'cookie': 'session-token'}
                     elif request['path'] == '/preparation' and request['method'] == 'GET':
                         result = {'status': 200, 'value': self.home_value,
@@ -105,7 +107,8 @@ class FakeExecutor:
                         result = dict(self.key_result, cookie=self.start_cookie)
                     elif (request['method'] == 'POST'
                           and request['path'].endswith('/configurations')):
-                        result = {'status': 201, 'value': {'kind': 'configurations', 'current_campaign_id': 'd1-c2'},
+                        result = {'status': 201, 'value': {'kind': 'configurations',
+                                                           'current_campaign_id': self.configurations_campaign},
                                   'piece': False, 'cookie': None}
                     elif request['method'] == 'POST' and request['path'].endswith(('/start', '/evaluate')):
                         result = {'status': 202, 'value': {'kind': 'campaign_launch'},
@@ -780,6 +783,33 @@ class AccessServerTests(WebServerCase):
         self.assertEqual(CSP, headers['Content-Security-Policy'])
         self.assertEqual('nosniff', headers['X-Content-Type-Options'])
         self.assertEqual('no-referrer', headers['Referrer-Policy'])
+
+    def test_archive_indisponible_ne_promet_pas_qu_aucune_donnee_n_a_change(self):
+        # L'archive s'écrit à sa première demande : après un délai, rien ne prouve qu'elle n'a pas été enregistrée
+        self.executor.raw_response = b'not-json\n'
+        status, _, raw = self.request('GET', '/preparation/dossiers/d1/archive',
+                                      headers={'Accept': 'application/json'})
+        self.assertEqual(503, status)
+        self.assertNotIn('rien n’a été modifié', json.loads(raw)['error'])
+        self.assertIn('Réessayez', json.loads(raw)['error'])
+
+    def test_page_qui_porte_son_jeton_ne_relaie_pas_une_seconde_lecture(self):
+        self.executor.access_value = {'connected': False, 'status': 'disconnected', 'csrf_token': 'csrf-de-la-vue'}
+        status, _, raw = self.request('GET', '/preparation/access',
+                                      headers={'Cookie': 'benchmark_session=session-token'})
+        self.assertEqual(200, status)
+        self.assertIn('name="csrf_token" value="csrf-de-la-vue"', raw.decode())
+        paths = []
+        while not self.executor.requests.empty():
+            paths.append(self.executor.requests.get_nowait()['path'])
+        self.assertEqual(['/preparation/access'], paths)
+
+    def test_selection_absente_apres_post_configurations_ramene_au_choix(self):
+        self.executor.configurations_campaign = None
+        path = '/preparation/dossiers/d1/configurations'
+        status, headers, _ = self.request('POST', path, urlencode({'csrf_token': 'csrf', 'models': 'modele-a'}).encode(), {
+            'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': 'benchmark_session=session-token'})
+        self.assertEqual((303, path), (status, headers.get('Location')))
 
     def test_verbe_non_servi_rend_405_en_francais_avec_les_entetes(self):
         for method in ('PUT', 'DELETE', 'OPTIONS'):

@@ -438,7 +438,8 @@ class OpenRouterQualificationTests(unittest.TestCase):
 
     def test_stockage_non_verifie_clot_la_verification_et_la_session_peut_relancer(self):
         transport, operation_id = self.validate({'qualified': True, 'findings': [], 'summary': 'OK'})
-        with patch.object(storage.Store, 'verify_storage', return_value={'integrity_ok': False, 'orphan_files': []}):
+        # Contrôle par tâche : un fichier orphelin suffit à refuser l'émission
+        with patch.object(storage.Store, 'verify_task', return_value=['pieces/orphelin.bin']):
             prep.execute_qualification(self.data, operation_id, transport)
         self.assert_not_sent(operation_id)
         self.assertEqual([], transport.calls)

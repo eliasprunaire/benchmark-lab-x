@@ -12,7 +12,8 @@ import re
 from .validation import digest as value_digest, identifier
 from . import evaluation as e, outgoing, storage
 from .storage import ConflictError, IntegrityError, BudgetError, _fields, _money, _strict_json as encode, _transaction
-from .runtime import worker_lock, verify
+from .runtime import worker_lock
+from .acquisition.campaigns import _intact
 
 FORMAT = 'benchmark-lab-x/judgment/v1'
 EVIDENCE_BINDING = 'server-evidence/v1'
@@ -82,16 +83,17 @@ def _envelope(store, connection, request, operation_id=None):
 def reserve(store, request, transport):
     request = deepcopy(request)
     with worker_lock(store, shared=True):
-        verify(store)
+        _intact(store)
         connection = e.connection_for(store)
         with _transaction(connection, write=True):
             _reserve(store, connection, request, transport)
     return inspect(store, request['operation_id'])
 
 
-def _reserve(store, connection, request, transport, *, automatic=False):
+def _reserve(store, connection, request, transport, *, automatic=False, prepared=None):
+    """`prepared` : contexte et contenu déjà vérifiés par `_inputs` sur les mêmes données"""
     from . import automatic_judgment as auto
-    ctx, content = _inputs(store, connection, request, automatic=automatic)
+    ctx, content = prepared or _inputs(store, connection, request, automatic=automatic)
     aid = auto.admission(store, connection) if automatic else _admission(store, ctx)
     _envelope(store, connection, request)
     contract = ctx['qualification']['contract']
@@ -210,11 +212,17 @@ def _proposal(store, connection, operation, ctx, answer, *, bind_evidence=False)
 
 def execute(data, operation_id, transport):
     with closing(storage.Store(data)) as store, worker_lock(store, shared=True):
-        verify(store)
+        _intact(store)
         connection = e.connection_for(store)
-        with _transaction(connection, write=True):
+        # Liaison vérifiée hors de l'écriture ; revérifiée dessous seulement si une donnée a changé entre-temps
+        with store.read_snapshot():
+            version = storage.data_version(connection)
             operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
             saved, ctx = _bound(store, connection, operation, latest=True)
+        with _transaction(connection, write=True):
+            if storage.data_version(connection) != version:
+                operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
+                saved, ctx = _bound(store, connection, operation, latest=True)
             from . import automatic_judgment as auto
             automatic = operation['engine_version'] == auto.FORMAT
             admission_id = auto.admission(store, connection) if automatic else _admission(store, ctx)
@@ -262,7 +270,7 @@ def execute(data, operation_id, transport):
 
 
 def inspect(store, operation_id):
-    verify(store)
+    _intact(store)
     connection = e.connection_for(store)
     with _transaction(connection):
         operation = store._operation_for_update(connection, operation_id,

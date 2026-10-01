@@ -45,6 +45,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -416,6 +417,26 @@ class StorageTests(unittest.TestCase):
         self.assertEqual([],report["orphan_files"]);self.assertTrue(report["integrity_ok"])
         self.assertEqual(b"original",self.store.read_piece("p"))
         with self.assertRaises(KeyError):self.store.get_piece("lost")
+
+    def test_read_snapshot_checks_data_once_and_reuses_paths_while_unchanged(self):
+        self.piece()
+        checks=[];self.store._connection.set_trace_callback(lambda sql:checks.append(sql) if "quick_check" in sql else None)
+        with unittest.mock.patch.object(product,"_root_path",wraps=product._root_path) as paths:
+            with self.store.read_snapshot():
+                for _ in range(5):self.assertEqual(b"original",self.store.read_piece("p"))
+            # One quick_check for the snapshot, one path walk at its entry, none per piece access
+            self.assertEqual((1,1),(len(checks),paths.call_count))
+            # Outside a snapshot each access checks again
+            self.store.read_piece("p")
+            self.assertEqual((2,2),(len(checks),paths.call_count))
+
+    def test_task_check_lists_orphans_without_the_full_audit(self):
+        self.piece()
+        fd=os.open(self.root/"pieces"/"orphan.bin",os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600);os.close(fd)
+        with unittest.mock.patch.object(product.Store,"verify_storage",side_effect=AssertionError("audit complet")):
+            self.assertEqual(["pieces/orphan.bin"],self.store.verify_task())
+        os.unlink(self.root/"pieces"/"orphan.bin")
+        self.assertEqual([],self.store.verify_task())
 
     def test_lock_during_schema_check_is_not_reported_as_schema_error(self):
         with closing(sqlite3.connect(self.root/"metadata.sqlite3",isolation_level=None)) as other:

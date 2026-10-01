@@ -8,7 +8,7 @@ import os
 
 from . import evaluation as e, judgment, preparation as p, provider_access, storage
 from .acquisition import campaigns as c
-from .runtime import worker_lock, verify
+from .runtime import worker_lock
 from .storage import BudgetError, ConflictError, IntegrityError, _money, _transaction
 from .validation import digest
 
@@ -16,6 +16,23 @@ FORMAT = 'benchmark-lab-x/automatic-judgment/v1'
 
 
 def context(store, connection, campaign_id, attempt_id):
+    # Campagne, contrat et référence relus une fois par version des données, pas une fois par réponse
+    # Les octets des pièces restent relus et vérifiés à l'usage (`e._resources`, `e._review_content`)
+    version = storage.data_version(connection) if connection is store._connection and connection.in_transaction else None
+    if version is None or store._judgment_contexts[0] != version:
+        store._judgment_contexts = (version, {})
+    cache = store._judgment_contexts[1]
+    if campaign_id not in cache:
+        cache[campaign_id] = _campaign_context(store, connection, campaign_id)
+    campaign, contract, operation_id = deepcopy(cache[campaign_id])
+    attempt = next((a for a in campaign['attempts'] if a['operation_id'] == attempt_id), None)
+    if attempt is None:
+        raise KeyError(attempt_id)
+    return dict(campaign=campaign, attempt=attempt, qualification=dict(contract=contract,
+        contract_sha256=campaign['manifest']['contract_sha256'], operation_id=operation_id))
+
+
+def _campaign_context(store, connection, campaign_id):
     campaign = c._inspect(store, connection, campaign_id)
     if campaign['manifest'].get('funding') != 'requester':
         raise ValueError('Campagne personnelle requise')
@@ -53,11 +70,7 @@ def context(store, connection, campaign_id, attempt_id):
         responsible_role='Évaluation automatique Bench-X')
     spec['aggregation'] = 'Aucune moyenne ; obligations et erreurs éliminatoires par tentative'
     spec['local_criterion_ids'] = []
-    attempt = next((a for a in campaign['attempts'] if a['operation_id'] == attempt_id), None)
-    if attempt is None:
-        raise KeyError(attempt_id)
-    return dict(campaign=campaign, attempt=attempt, qualification=dict(contract=contract,
-        contract_sha256=fingerprint, operation_id=operation['operation_id']))
+    return campaign, contract, operation['operation_id']
 
 
 def authority(connection, ctx):
@@ -128,33 +141,46 @@ def preflight(store, session_id, dossier_id, campaign_id, transport, *, check_ac
 
 def reserve_campaign(store, session_id, dossier_id, campaign_id, transport):
     with worker_lock(store, shared=True):
-        verify(store)
+        c._intact(store)
         connection = e.connection_for(store)
+        # Contextes et contenus calculés hors de l'écriture ; sous l'écriture, une version de données
+        # inchangée prouve qu'ils sont encore exacts, sinon tout est recalculé
+        with store.read_snapshot():
+            version = storage.data_version(connection)
+            plan = _plan(store, connection, session_id, dossier_id, campaign_id, transport)
         with _transaction(connection, write=True):
-            existing = operations(store, connection, campaign_id)
-            p.owner(connection, session_id, dossier_id)
-            if existing:
-                # One automatic evaluation per retained response; POST and process restarts never retry
-                return []
-            config, _ = preflight(store, session_id, dossier_id, campaign_id, transport)
-            snapshot = c._inspect(store, connection, campaign_id)
-            if not snapshot['attempts'] or any(a['state'] != 'RECEIVED' for a in snapshot['attempts']):
-                raise ConflictError('Réponses candidates à rapprocher avant l’évaluation')
-            ids = []
-            for attempt in snapshot['attempts']:
-                # Sortie absente, vide ou blanche : rien à juger, aucun appel payant
-                if not c.answered(attempt):
-                    continue
-                ctx = context(store, connection, campaign_id, attempt['operation_id'])
-                content = e._review_content(store, ctx)
-                oid = 'judge-' + sha256((campaign_id + ':' + attempt['operation_id']).encode()).hexdigest()[:40]
-                request = dict(operation_id=oid, campaign_id=campaign_id, attempt_id=attempt['operation_id'],
-                    review_sha256=digest(content), previous_evaluation_id=None,
-                    authority=authority(connection, ctx), budget_id=provider_access.preparation_budget_id(session_id),
-                    reserve_amount=config['reserve_usd'], requested_configuration=config)
-                judgment._reserve(store, connection, request, transport, automatic=True)
-                ids.append(oid)
-            return ids
+            if storage.data_version(connection) != version:
+                plan = _plan(store, connection, session_id, dossier_id, campaign_id, transport)
+            for request, ctx, content in plan:
+                judgment._reserve(store, connection, request, transport, automatic=True, prepared=(ctx, content))
+            return [request['operation_id'] for request, _, _ in plan]
+
+
+def _plan(store, connection, session_id, dossier_id, campaign_id, transport):
+    existing = operations(store, connection, campaign_id)
+    p.owner(connection, session_id, dossier_id)
+    if existing:
+        # One automatic evaluation per retained response; POST and process restarts never retry
+        return []
+    config, _ = preflight(store, session_id, dossier_id, campaign_id, transport)
+    snapshot = c._inspect(store, connection, campaign_id)
+    if not snapshot['attempts'] or any(a['state'] != 'RECEIVED' for a in snapshot['attempts']):
+        raise ConflictError('Réponses candidates à rapprocher avant l’évaluation')
+    plan = []
+    for attempt in snapshot['attempts']:
+        # Sortie absente, vide ou blanche : rien à juger, aucun appel payant
+        if not c.answered(attempt):
+            continue
+        ctx = context(store, connection, campaign_id, attempt['operation_id'])
+        content = e._review_content(store, ctx)
+        oid = 'judge-' + sha256((campaign_id + ':' + attempt['operation_id']).encode()).hexdigest()[:40]
+        request = dict(operation_id=oid, campaign_id=campaign_id, attempt_id=attempt['operation_id'],
+            review_sha256=digest(content), previous_evaluation_id=None,
+            authority=authority(connection, ctx), budget_id=provider_access.preparation_budget_id(session_id),
+            reserve_amount=config['reserve_usd'], requested_configuration=config)
+        # Mêmes contrôles qu'à la réservation, avant toute écriture
+        plan.append((request, *judgment._inputs(store, connection, request, automatic=True)))
+    return plan
 
 
 def execute_campaign(data, operation_ids, transport):

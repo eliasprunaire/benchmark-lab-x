@@ -771,8 +771,7 @@ def execute_qualification(data, operation_id, transport):
         emitted = False
         operation = None
         try:
-            proof = store.verify_storage()
-            if not proof['integrity_ok'] or proof['orphan_files']:
+            if store.verify_task():
                 logging.getLogger(__name__).error('QUALIFICATION_STORAGE_UNVERIFIED operation=%s', operation_id)
                 return
             with _transaction(connection, write=True):
@@ -854,8 +853,7 @@ def execute(data, operation_id, transport):
         emitted = False
         operation = None
         try:
-            proof = store.verify_storage()
-            if not proof['integrity_ok'] or proof['orphan_files']:
+            if store.verify_task():
                 logging.getLogger(__name__).error('PREPARATION_STORAGE_UNVERIFIED operation=%s', operation_id)
                 return
             with _transaction(connection, write=True):

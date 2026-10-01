@@ -320,6 +320,16 @@ before_commit: ContextVar[Callable[[sqlite3.Connection], object] | None] = Conte
 _created_pieces: ContextVar[list | None] = ContextVar('_created_pieces', default=None)
 
 
+def data_version(connection):
+    """Version of the data this open transaction sees: changes on any write, by this or another connection
+
+    Only meaningful inside a transaction, where no other connection can commit
+    """
+    # Reading the header takes the shared lock before the version is read
+    connection.execute('PRAGMA schema_version').fetchone()
+    return connection.execute('PRAGMA data_version').fetchone()[0], connection.total_changes
+
+
 @contextmanager
 def _transaction(connection, *, write=False):
     connection.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
@@ -719,6 +729,9 @@ class Store:
         self._verified_read_changes = None
         self._verified_operations = None
         self._verified_contexts = None
+        self._verified_schema = None
+        # Automatic judgment contexts, valid for one data version only (see `data_version`)
+        self._judgment_contexts = (None, {})
         self._root_fd = self._pieces_fd = None
         self._root = _root_path(root)
         try:
@@ -737,10 +750,16 @@ class Store:
             self.close()
             raise
 
-    def _connection_checked(self):
+    def _connection_checked(self, *, schema=True):
         if self._connection is None:
             raise ValueError("store is closed")
-        _root_path(self._root)
+        # The enclosing read already checked this unchanged SQLite snapshot: schema, data and root path
+        # Directory and database identities, the schema cookie and piece bytes remain checked on every access
+        unchanged = (self._verified_read_changes is not None and self._connection.in_transaction
+                     and self._connection.total_changes == self._verified_read_changes
+                     and self._connection.execute('PRAGMA schema_version').fetchone()[0] == self._verified_schema)
+        if not unchanged:
+            _root_path(self._root)
         for path, fd in ((self._root, self._root_fd),
                          (self._root / "pieces", self._pieces_fd)):
             if fd is None:
@@ -757,12 +776,8 @@ class Store:
         if ((current.st_dev, current.st_ino)
                 != (self._database_identity.st_dev, self._database_identity.st_ino)):
             raise IntegrityError("database identity changed")
-        # The enclosing read already checked this unchanged SQLite snapshot
-        # Paths, schema identities and piece bytes remain checked on every read
-        check_data = (self._verified_read_changes is None
-                      or not self._connection.in_transaction
-                      or self._connection.total_changes != self._verified_read_changes)
-        _check_schema(self._connection, check_data=check_data)
+        if schema and not unchanged:
+            _check_schema(self._connection)
         return self._connection
 
     def _s1_connection(self):
@@ -1153,17 +1168,40 @@ class Store:
     @contextmanager
     def read_snapshot(self):
         """Check one database snapshot without retaining reads across transactions"""
-        connection = self._connection_checked()
+        # Paths and identities here; schema and data once, inside the snapshot itself
+        connection = self._connection_checked(schema=False)
         with _transaction(connection):
             _check_schema(connection)
-            previous = (self._verified_read_changes, self._verified_operations, self._verified_contexts)
+            previous = (self._verified_read_changes, self._verified_operations, self._verified_contexts,
+                        self._verified_schema)
             self._verified_read_changes = connection.total_changes
+            self._verified_schema = connection.execute('PRAGMA schema_version').fetchone()[0]
             self._verified_operations = None
             self._verified_contexts = {}
             try:
                 yield connection
             finally:
-                self._verified_read_changes, self._verified_operations, self._verified_contexts = previous
+                (self._verified_read_changes, self._verified_operations, self._verified_contexts,
+                 self._verified_schema) = previous
+
+    def _orphan_files(self, connection):
+        # Inventory names only: do not follow links or remove partial/orphan bytes
+        references = {row[0] for row in connection.execute('SELECT relative_path FROM pieces')}
+        from . import privacy
+        if privacy.available(connection):
+            references.update(privacy.pending_files(self, connection))
+        return sorted('pieces/' + name for name in os.listdir(self._pieces_fd)
+                      if 'pieces/' + name not in references)
+
+    def verify_task(self) -> list:
+        """Per-task check; the full audit `verify_storage` stays at startup and in `runtime verify`
+
+        One checked snapshot (schema, quick_check, foreign keys) and the orphan file inventory. The
+        objects a task uses stay checked where it uses them: piece size and SHA-256 on each
+        `read_piece`, its budget by `_budget` inside the reserving transaction. Returns orphan files
+        """
+        with self.read_snapshot() as connection:
+            return self._orphan_files(connection)
 
     def verify_storage(self) -> dict:
         """Inspect a coherent metadata snapshot and private files without repair."""
@@ -1176,20 +1214,13 @@ class Store:
                     self.get_dossier(dossier_id, revision)
                 except IntegrityError:
                     intact = False
-            broken, references = [], set()
-            for piece_id, relative_path in connection.execute(
-                    'SELECT piece_id, relative_path FROM pieces ORDER BY piece_id').fetchall():
-                references.add(relative_path)
+            broken = []
+            for (piece_id,) in connection.execute('SELECT piece_id FROM pieces ORDER BY piece_id').fetchall():
                 try:
                     self.verify_piece(piece_id)
                 except IntegrityError:
                     broken.append(piece_id)
-            # Inventory names only: do not follow links or remove partial/orphan bytes
-            from . import privacy
-            expected_purge = set(privacy.pending_files(self, connection)) if layout == 's7' else set()
-            references.update(expected_purge)
-            orphans = sorted('pieces/' + name for name in os.listdir(self._pieces_fd)
-                             if 'pieces/' + name not in references)
+            orphans = self._orphan_files(connection)
             operations = self._operations(connection) if layout in ('s1', 's2', 's3', 's4', 's5', 's6', 's7') else []
             if layout in ('s1', 's2', 's3', 's4', 's5', 's6', 's7'):
                 for (budget_id,) in connection.execute('SELECT budget_id FROM budgets').fetchall():
