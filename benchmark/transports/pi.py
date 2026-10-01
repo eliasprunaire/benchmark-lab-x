@@ -256,7 +256,8 @@ class PiOpenRouter:
                 if type(message.get('content')) is str:
                     output = message['content']
                 if (status == 200 and complete and not redacted and message.get('role') == 'assistant'
-                        and not message.get('tool_calls') and choices[0]['finish_reason'] == 'stop' and output is not None):
+                        and not message.get('tool_calls') and choices[0]['finish_reason'] == 'stop' and output is not None
+                        and output.strip()):
                     incident = None
                 if (message.get('refusal') or choices[0].get('native_finish_reason') == 'refusal'
                         or choices[0].get('finish_reason') == 'content_filter'):

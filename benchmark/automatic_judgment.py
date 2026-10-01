@@ -142,7 +142,8 @@ def reserve_campaign(store, session_id, dossier_id, campaign_id, transport):
                 raise ConflictError('Réponses candidates à rapprocher avant l’évaluation')
             ids = []
             for attempt in snapshot['attempts']:
-                if attempt['output_piece_id'] is None:
+                # Sortie absente, vide ou blanche : rien à juger, aucun appel payant
+                if not c.answered(attempt):
                     continue
                 ctx = context(store, connection, campaign_id, attempt['operation_id'])
                 content = e._review_content(store, ctx)
@@ -182,9 +183,10 @@ def _completed(store, connection, ops):
     """Autant que `records`, sans relier chaque jugement à son contexte : le suivi n'affiche qu'un compte
 
     Une proposition présente compte, comme dans `records` ; seule une proposition absente, à récupérer
-    depuis son reçu, repasse par la vérification complète. Les résultats, eux, relisent `records`
+    depuis son reçu, repasse par la vérification complète. Les résultats, eux, relisent `records`.
+    Rend aussi le nombre de reçus sans proposition retenue, même après récupération
     """
-    count = 0
+    count = unusable = 0
     for op in ops:
         if op['receipt'] is None or storage.not_sent(op):
             continue
@@ -192,34 +194,45 @@ def _completed(store, connection, ops):
             count += 1
             continue
         saved, ctx = judgment._bound(store, connection, op)
-        count += judgment._retained_proposal(store, connection, op, ctx, recover_metadata=True) is not None
-    return count
+        if judgment._retained_proposal(store, connection, op, ctx, recover_metadata=True) is None:
+            unusable += 1
+        else:
+            count += 1
+    return count, unusable
 
 
 def status(store, connection, campaign_id, snapshot=None):
+    """`total` compte les réponses à évaluer ; `cells`, les modèles prévus, pour montrer la couverture"""
     snapshot = snapshot or c._inspect(store, connection, campaign_id)
     ops = operations(store, connection, campaign_id)
-    total = len(snapshot['manifest']['plan'])
-    completed = _completed(store, connection, ops)
-    result = dict(status='NOT_STARTED', total=total, completed=completed, reason=None, can_start=False)
-    if completed == total:
+    # Un jugement est réservé par réponse à évaluer, une fois toutes les réponses reçues
+    total = len(ops) if ops else sum(c.answered(a) for a in snapshot['attempts'])
+    cells = len(snapshot['manifest']['plan'])
+    completed, unusable = _completed(store, connection, ops)
+    result = dict(status='NOT_STARTED', total=total, cells=cells, completed=completed, reason=None, can_start=False)
+    if ops and completed == total:
+        # Terminée avant toute autre lecture : une admission fermée après la fin n'est pas une interruption
         result['status'] = 'COMPLETE'
+        if cells > total:
+            missing = cells - total
+            result['reason'] = (f'{missing} modèle{"s" if missing > 1 else ""} sur {cells} '
+                                f'{"n’ont" if missing > 1 else "n’a"} pas donné de réponse exploitable : '
+                                f'{"ils ne sont pas évalués" if missing > 1 else "il n’est pas évalué"}.')
     elif snapshot['stop_reason'] == 'JUDGMENT_STOPPED':
         result.update(status='BLOCKED', reason='Évaluation interrompue. Les réponses sont conservées ; aucun appel ne sera relancé automatiquement.')
-    elif any(o['state'] == 'AMBIGUOUS' or o['receipt'] is not None and o['receipt']['result'] is None for o in ops):
+    elif unusable or any(o['state'] == 'AMBIGUOUS' for o in ops):
         result.update(status='BLOCKED', reason='L’évaluation n’a pas fourni de preuves exploitables. Les réponses et reçus sont conservés.')
     elif ops:
         saved = json.loads(ops[0]['resources'][0])['context']['campaign']
-        if any(snapshot[key] != saved[key]
-                for key in ('admission', 'stop_reason', 'restore_pending')):
+        # Jugements restants clos sans envoi, ou campagne arrêtée depuis leur réservation (`judgment.execute`
+        # les refuse alors avant émission) : seule une vraie interruption arrive ici
+        if all(o['state'] == 'RECEIVED' for o in ops) or any(
+                snapshot[key] != saved[key] for key in ('admission', 'stop_reason', 'restore_pending')):
             result.update(status='BLOCKED', reason='Évaluation interrompue. Aucun appel ne sera relancé automatiquement.')
         else:
-            if all(o['state'] == 'RECEIVED' for o in ops):
-                result.update(status='BLOCKED', reason='Évaluation partielle terminée : une réponse candidate manque. Les résultats disponibles restent consultables.')
-            else:
-                result['status'] = 'RUNNING'
+            result['status'] = 'RUNNING'
     elif snapshot['attempts'] and all(a['state'] == 'RECEIVED' for a in snapshot['attempts']):
-        result['can_start'] = any(a['output_piece_id'] for a in snapshot['attempts'])
+        result['can_start'] = total > 0
         if not result['can_start']:
             result.update(status='BLOCKED', reason='Aucune réponse exploitable à évaluer.')
     elif snapshot['attempts']:

@@ -184,6 +184,8 @@ class ParcoursComplet(unittest.TestCase):
         if self.preparation_stage == 'clarification':
             result.update(stage='clarification', explanation='Quel format doit prendre la liste des actions ?', package=None)
         else:
+            # La question posée avec l'exemple ne doit plus apparaître une fois l'exemple validé
+            result['explanation'] = 'Cet exemple correspond-il bien à votre travail ?'
             result['package']['candidate']['instruction'] = 'Relever toutes les actions dans les notes'
             if self.preparation_stage == 'correction':
                 result['package']['candidate']['deliverables'] = ['Tableau des actions avec responsable']
@@ -428,6 +430,8 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'comparaison préparée', 'Vérifier puis lancer la comparaison')
         self.assertIn('Comparaison prête à lancer', page.visible)
+        # Une sélection sans essai : étape Modèles, aucun résultat à ouvrir
+        self.assertEqual(('4Modèles', None), self.etape(page))
         self.assertEqual(recap, page.link('Vérifier puis lancer'))
         page, _, _ = self.request(recap)
         self.assertIn('Relever toutes les actions dans les notes', page.visible)
@@ -484,11 +488,13 @@ class ParcoursComplet(unittest.TestCase):
         # Lien direct : le lecteur sait ce qui est comparé et sous quelles conditions
         self.assertIn('Transformer des notes de réunion', empty.visible)
         self.assertIn('Revenir au cas d’usage', empty.visible)
-        # Le cas d'usage dit que la comparaison existe et mène à ses résultats
+        # Réponses reçues, évaluation jamais lancée : le cas mène au suivi, seul endroit où elle se lance
         page, _, _ = self.request(dossier)
-        self.examine(page, dossier, 'comparaison terminée', 'Voir les résultats')
-        self.assertIn('Comparaison terminée', page.visible)
-        self.assertEqual(comparison, page.link('Voir les résultats'))
+        self.examine(page, dossier, 'évaluation à lancer', 'Lancer l’évaluation')
+        self.assertIn('Évaluation à lancer', page.visible)
+        self.assertNotIn('Comparaison terminée', page.visible)
+        self.assertEqual(recap, page.link('Lancer l’évaluation'))
+        self.assertEqual(('5Résultats', recap), self.etape(page))
         self.assertNotIn('choisissez les modèles', page.visible)
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s5_evaluations').fetchone()[0])
@@ -518,6 +524,8 @@ class ParcoursComplet(unittest.TestCase):
             'tier': 'high'}, status=303)
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'nouvelle comparaison préparée', 'Vérifier puis lancer la comparaison')
+        # Étape Modèles en cours ; l'onglet Résultats garde la comparaison lancée, pas la sélection en attente
+        self.assertEqual(('4Modèles', recap), self.etape(page))
         listed = next(n for n in page.nodes if n['attrs'].get('id') == 'comparaison')
         campaign_links = [n for n in page.nodes if n['tag'] == 'a' and not n['details']
                           and n['text'].startswith('Comparaison ')]
@@ -529,11 +537,12 @@ class ParcoursComplet(unittest.TestCase):
         hrefs = [n['attrs']['href'] for n in campaign_links]
         self.assertEqual(len(texts), len(set(texts)))
         self.assertEqual(len(hrefs), len(set(hrefs)))
-        self.assertIn(comparison, hrefs)
+        # Évaluation encore à lancer : la comparaison mène à son suivi, où se trouve le bouton
+        self.assertIn(recap, hrefs)
         # Le rang suit l'identifiant de campagne : les sélections adaptées enregistrées plus haut le précèdent
         rank = previous['campaign_id'].rsplit('-c', 1)[1]
         self.assertIn(f'Comparaison {rank} du ' + views.date_lisible_utc(previous['conditions']['frozen_at']), texts)
-        self.assertIn('comparaison terminée', listed['text'])
+        self.assertIn('évaluation à lancer', listed['text'])
         self.assertIn('comparaison prête à lancer', listed['text'])
         # Seul le retrait de sa clé ferme la préparation d'un visiteur ; aucune fermeture globale n'existe
         access, _, _ = self.request('/preparation/access')
@@ -649,6 +658,166 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, second, 'clarification après redémarrage', 'Envoyer ma réponse')
         self.assertEqual(1, len(self.calls))
         self.assertNotEqual(operation['operation_id'], self.calls[0][1])
+
+    @staticmethod
+    def etape(page):
+        """Étape courante de la barre et cible de l'onglet Résultats (None s'il est désactivé)"""
+        current = next(n['text'] for n in page.nodes if n['attrs'].get('aria-current') == 'step')
+        results = next(n for n in page.nodes if n['tag'] in ('a', 'span') and n['text'] == '5Résultats')
+        return current, results['attrs'].get('href')
+
+    def exemple_qualifie(self):
+        """Clé, exemple sans question, validation et vérification : le cas est prêt à comparer"""
+        page, _, _ = self.request('/')
+        target = page.link('Décrire mon cas')
+        page, _, _ = self.request(target)
+        key_form = page.form('/access/key')
+        self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
+        page, _, _ = self.request(target)
+        self.preparation_stage = 'exemple'
+        page = self.submit(page, '/dossiers', {'request': 'Transformer des notes de réunion en une liste complète des actions à relire'})
+        dossier = page.link('Actualiser')
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        page, _, _ = self.request(dossier)
+        self.assertIn('Cet exemple correspond-il bien à votre travail ?', page.visible)
+        self.submit(page, '/validation', {})
+        prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+        return dossier
+
+    def juge_factice(self):
+        """Juge OpenRouter réel sur une connexion HTTP simulée : chaque réponse évaluée ne satisfait pas une obligation"""
+        from unittest.mock import Mock
+        from benchmark.transports import openrouter
+        from tests.test_openrouter_preparation import SYNTHETIC_PROFILE, estimate_for
+        profile = openrouter.load_profile(str(SYNTHETIC_PROFILE))
+        judge = openrouter.OpenRouterJudgment(None, profile)
+        judge._quote = openrouter.configuration(estimate_for(profile), profile)
+        http = Mock()
+        http.getresponse.return_value.status = 200
+        http.getresponse.return_value.length = 0
+        http.getresponse.return_value.getheader.return_value = None
+
+        def answer(method, path, *, body, headers):
+            content = json.loads(json.loads(body)['messages'][1]['content'])
+            output = content['output']
+            proof = {'piece_id': output['piece_id'], 'sha256': output['sha256'], 'passage': output['content']}
+            findings = [dict(criterion_id=x['id'], control_id=k, status='FAIL', attribution='candidate',
+                             finding='Obligation non satisfaite', evidence=[proof])
+                        for x in content['obligations'] + content['eliminatory_errors'] for k in x['control_ids']]
+            result = dict(findings=findings, measures=[], limits=[], proposed_verdict='SATISFAIT')
+            document = dict(id='fixture-judge', model=profile['revision'],
+                choices=[dict(finish_reason='stop', message=dict(role='assistant', content=storage._strict_json(result)))],
+                usage=dict(cost='0.001'), openrouter_metadata=dict(requested=profile['model'],
+                endpoints=dict(available=[dict(provider=profile['routes'][0]['provider_name'], selected=True)])))
+            http.getresponse.return_value.read.return_value = storage._strict_json(document).encode()
+        http.request.side_effect = answer
+        self.enterContext(patch.object(openrouter, 'HTTPSConnection', return_value=http))
+        self.assistants['judgment_transport'] = judge
+        return http
+
+    def test_comparaison_partielle_terminee_apres_redemarrage(self):
+        """Production : 1 réponse inutilisable, les autres évaluées, puis redémarrage de l'exécuteur"""
+        from benchmark import automatic_judgment as auto, runtime
+        judge = self.juge_factice()
+        dossier = self.exemple_qualifie()
+        page, _, _ = self.request(dossier + '/configurations')
+        recap = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions'
+        page = self.submit(page, '/configurations', {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
+            'tier': 'low'})
+        self.submit(page, '/start', {})
+        attempts = self.starts.get_nowait()['candidate_attempts']
+
+        def candidat(operation, request):
+            value = self.candidate(operation, request)
+            if request['requested_configuration']['model'] == 'deepseek/deepseek-v4.1-flash':
+                value['receipt']['result'].update(output=None, incident='PROVIDER_RESPONSE_INCOMPLETE')
+                value['cost'].update(status='KNOWN', amount='0.05')
+            return value
+        execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
+        page, _, _ = self.request(dossier)
+        self.examine(page, dossier, 'évaluation à lancer', 'Lancer l’évaluation')
+        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        self.assertEqual(recap, urlsplit(page.link('Actualiser le suivi')).path)
+        self.submit(page, '/evaluate', {})
+        ids = self.starts.get_nowait()['judgment_operations']
+        # La réponse absente n'est jamais envoyée au juge
+        self.assertEqual(2, len(ids))
+        auto.execute_campaign(self.data, ids, self.bound[2])
+        self.assertEqual(2, judge.request.call_count)
+        with closing(storage.Store(self.data)) as store:
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        comparison = recap.removesuffix('/conditions')
+        page, _, _ = self.request(dossier)
+        self.examine(page, dossier, 'comparaison partielle terminée', 'Voir les résultats')
+        state = next(n for n in page.nodes if 'state' in n['attrs'].get('class', '').split())
+        self.assertIn('Comparaison terminée', state['text'])
+        self.assertIn('1 modèle sur 3 n’a pas donné de réponse exploitable', state['text'])
+        self.assertNotIn('Cet exemple correspond-il', state['text'])
+        self.assertIn('done', state['attrs']['class'])
+        for absent in ('demande votre attention', 'interrompue', 'Voir ce qui s’est passé'):
+            self.assertNotIn(absent, page.visible)
+        self.assertEqual(comparison, page.link('Voir les résultats'))
+        self.assertEqual(('5Résultats', comparison), self.etape(page))
+        results, _, _ = self.request(comparison)
+        self.examine(results, comparison, 'résultats partiels', None)
+        self.assertIn('Aucune réponse exploitable de ce modèle', results.visible)
+        self.assertNotIn('doit être relue', results.visible)
+        self.assertNotIn('les essais se sont arrêtés avant la fin', results.visible)
+        followup, _, _ = self.request(recap)
+        self.assertIn('Réponses évaluées : 2 sur 2', followup.visible)
+        # Une nouvelle sélection ne retire pas l'accès aux résultats de la comparaison évaluée
+        page, _, _ = self.request(dossier + '/configurations')
+        self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'tier': 'high'})
+        page, _, _ = self.request(dossier)
+        self.assertEqual(('4Modèles', comparison), self.etape(page))
+        self.assertEqual(2, judge.request.call_count)
+
+    def niveaux_envoyes(self, campaign_id):
+        with closing(storage.Store(self.data)) as store:
+            return [(c['model'], c['effort'], c.get('effort_requested'), c.get('effort_choice'))
+                    for c in campaigns.inspect(store, campaign_id)['manifest']['panel']]
+
+    def test_relecture_du_niveau_choisi_par_modele(self):
+        dossier = self.exemple_qualifie()
+        configurations = dossier + '/configurations'
+        prefix = dossier.rsplit('/', 1)[1]
+        page, _, _ = self.request(configurations)
+        form = page.form('/configurations')
+        # Un niveau hors de l'échelle connue est refusé, pas remplacé
+        self.request(form['action'], form['fields'] | {
+            'models': ['mistralai/mistral-small-2603', 'openai/gpt-5.6-sol'],
+            'tier': 'low', 'effort:mistralai/mistral-small-2603': 'turbo'}, status=400)
+        # Choix explicite en tête de sélection ; le second modèle suit le palier commun
+        self.request(form['action'], form['fields'] | {
+            'models': ['mistralai/mistral-small-2603', 'openai/gpt-5.6-sol'],
+            'tier': 'low', 'effort:mistralai/mistral-small-2603': 'high'}, status=303)
+        sent = self.niveaux_envoyes(prefix + '-c1')
+        self.assertEqual([('mistralai/mistral-small-2603', 'high', None, 'explicit'),
+                          ('openai/gpt-5.6-sol', 'high', 'low', None)], sent)
+        page, _, _ = self.request(configurations)
+        # Relecture exacte : palier commun et choix par modèle, puis renvoi du formulaire tel quel
+        fields, select = {'models': []}, None
+        for node in page.nodes:
+            if node['tag'] == 'select':
+                select = node['attrs']['name']
+            elif (node['tag'] == 'option' and 'selected' in node['attrs'] and node['attrs']['value']
+                  and (select == 'tier' or select.startswith('effort:'))):
+                fields[select] = node['attrs']['value']
+            elif node['tag'] == 'input' and node['attrs'].get('name') == 'models' and 'checked' in node['attrs']:
+                fields['models'].append(node['attrs']['value'])
+        self.assertEqual('low', fields['tier'])
+        self.assertEqual('high', fields['effort:mistralai/mistral-small-2603'])
+        fields['models'].sort(key=['mistralai/mistral-small-2603', 'openai/gpt-5.6-sol'].index)
+        self.request(form['action'], page.form('/configurations')['fields'] | fields, status=303)
+        self.assertEqual(sent, self.niveaux_envoyes(prefix + '-c2'))
+        # Un choix que le modèle n'accepte pas reste visible comme demande, à côté du niveau adapté
+        self.request(form['action'], form['fields'] | {
+            'models': ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'],
+            'tier': 'low', 'effort:openai/gpt-5.6-sol': 'max'}, status=303)
+        self.assertEqual(('openai/gpt-5.6-sol', 'high', 'max', 'explicit'), self.niveaux_envoyes(prefix + '-c3')[0])
+        # Seul l'appel de préparation de l'exemple a eu lieu
+        self.assertEqual(1, len(self.calls))
 
     def test_acces_openrouter_factice_et_retours(self):
         self.request('/preparation')

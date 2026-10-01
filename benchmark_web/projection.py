@@ -83,7 +83,8 @@ def projection_body(value, selected, level=1):
         body += '<p>Conditions communes : même outil pour tous les modèles, ' + t(conditions['pi']['package'] + ' ' + conditions['pi']['version'])
         body += ', fixé le ' + t(jour_lisible(conditions['frozen_at'])) + '.</p>'
     for pending in value.get('pending_attempts', []):
-        body += '<p>Une réponse reste à évaluer : ' + t(pending['next_action']) + '</p>'
+        prefix = '' if pending['state'] == 'NO_USABLE_RESPONSE' else 'Une réponse reste à évaluer : '
+        body += '<p>' + prefix + t(pending['next_action']) + '</p>'
     body += '<p>Les exigences et les erreurs éliminatoires sont publiées sous forme de libellés. '
     body += 'La référence utilisée pour évaluer et les preuves de la vérification de l’exemple restent privées. '
     body += 'Un lecteur ne peut donc pas vérifier lui-même comment ces critères ont été validés.</p>'

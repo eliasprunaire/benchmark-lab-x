@@ -392,13 +392,15 @@ def render_comparison(value):
     pending_reasons = list(dict.fromkeys(item['next_action'] for item in value.get('pending_attempts', [])))
     if pending_reasons:
         content += listing(pending_reasons)
+    # Un modèle sans réponse exploitable est terminé : il ne fait pas dire que les essais se sont arrêtés
+    open_pending = [item for item in value.get('pending_attempts', []) if item['state'] != 'NO_USABLE_RESPONSE']
     coverage = value['coverage']
     content += '<p class="note">Réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : '
     content += text(coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '. '
     if value['economic_status'] != 'COMPLETE':
         content += 'Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables. '
     content += '</p>'
-    if value.get('stop_reason') and (coverage['not_started'] or pending_reasons):
+    if value.get('stop_reason') and (coverage['not_started'] or open_pending):
         content += '<p>Comparaison incomplète : les essais se sont arrêtés avant la fin. Vous pouvez lire les réponses déjà reçues.</p>'
     dates = sorted(set(date[:10] for date in value.get('acquisition_dates', [])))
     if dates:
@@ -597,7 +599,8 @@ def campaign_followup(campaign):
     if judgment:
         status = judgment['status']
         if status == 'COMPLETE':
-            return False, True, 'Évaluation terminée. Vos résultats sont prêts.'
+            # Couverture partielle : le nombre de modèles sans réponse exploitable reste dit
+            return False, True, ' '.join(filter(None, ('Évaluation terminée.', judgment.get('reason'), 'Vos résultats sont prêts.')))
         if status == 'BLOCKED':
             return False, False, judgment.get('reason') or 'L’évaluation s’est arrêtée. Elle ne reprendra pas d’elle-même.'
         if status in ('WAITING', 'RUNNING') and cells and all(c['state'] == 'RECEIVED' for c in cells):
@@ -629,6 +632,10 @@ def campaign_status(campaign, dossier_url):
     if not campaign['attempts']:
         return ('action', 'Comparaison prête à lancer', 'Vérifiez les modèles et les coûts estimés, puis lancez la comparaison.',
                 base + '/conditions', 'Vérifier puis lancer la comparaison')
+    if (campaign.get('judgment') or {}).get('can_start'):
+        # Le bouton qui lance l'évaluation payante est sur le suivi : le cas y mène, jamais vers des résultats vides
+        return ('action', 'Évaluation à lancer', 'Les réponses sont arrivées. Leur évaluation, payée avec votre clé '
+                'OpenRouter, se lance depuis le suivi de la comparaison.', base + '/conditions', 'Lancer l’évaluation')
     active, ready, message = campaign_followup(campaign)
     if ready:
         return 'done', 'Comparaison terminée', message, base, 'Voir les résultats'
