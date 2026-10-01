@@ -55,6 +55,15 @@ print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(),
                   'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT,
                   'home': views.render({'kind': 'home'}, '').decode(),
                   'dossiers': views.render({'dossiers': []}, 'csrf').decode(),
+                  'configurations': views.render({
+                      'kind': 'configurations', 'dossier_id': 'd1', 'fetched_at': '2026-09-15T12:00:00+00:00',
+                      'models': [{'id': 'mistralai/mistral-medium-3-5', 'name': 'Mistral Medium 3.5', 'selected': True,
+                                  'not_adjustable': False, 'levels': ['none', 'high'], 'chosen': ''},
+                                 {'id': 'deepseek/deepseek-v4.1-flash', 'name': 'DeepSeek V4.1 Flash', 'selected': True,
+                                  'not_adjustable': True, 'levels': [], 'chosen': ''}],
+                      'current_tier': 'low', 'available_tiers': ['low', 'high'], 'configurations': [],
+                      'current_campaign_id': None, 'estimate_total_usd': None, 'superseded': [],
+                      'estimate_available': False, 'assumptions': None, 'custom_models': []}, 'csrf').decode(),
                   'comparison_script': views.COMPARISON_FOCUS_SCRIPT, **attempt}))
 `], {encoding: 'utf8'}));
   server = createServer(async (req, res) => {
@@ -542,6 +551,32 @@ test('legal pages keep CSP, French headings, visible focus, AA contrast and fit 
         assert.deepEqual(failures, []);
       } finally {await context.close();}
     }
+  }
+});
+
+test('per-model reasoning tuning opens without JavaScript, stays in the form and fits 390 px', async () => {
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({viewport: {width: 390, height: 844}, colorScheme, javaScriptEnabled: false});
+    try {
+      const page = await context.newPage(); page.setDefaultTimeout(3000);
+      await page.goto(origin + '/render/configurations');
+      const tuning = page.locator('details', {hasText: 'Ajuster le niveau par modèle'});
+      assert.equal(await tuning.count(), 1, colorScheme);
+      const select = page.locator('select[name="effort:mistralai/mistral-medium-3-5"]');
+      assert.equal(await select.isVisible(), false, `${colorScheme} dépliant fermé par défaut`);
+      await tuning.locator('summary').click();
+      assert.equal(await select.isVisible(), true, colorScheme);
+      assert.equal(await select.getAttribute('form'), 'configurations-form', colorScheme);
+      assert.deepEqual(await select.locator('option').evaluateAll(options => options.map(option => option.value)), ['', 'none', 'high']);
+      assert.equal(await page.locator('label[for="' + await select.getAttribute('id') + '"]').textContent(), 'Mistral Medium 3.5');
+      assert.equal(await page.locator('select[name="effort:deepseek/deepseek-v4.1-flash"]').count(), 0, `${colorScheme} niveau fixe sans réglage`);
+      await select.focus();
+      assert.notEqual(await select.evaluate(element => getComputedStyle(element).outlineStyle), 'none', `${colorScheme} focus invisible`);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${colorScheme} débordement`);
+      assert.deepEqual(await page.evaluate(contrastFailures), [], colorScheme);
+      mkdirSync('reports/privacy-browser', {recursive: true});
+      await page.screenshot({path: `reports/privacy-browser/configurations-tuning-${colorScheme}-mobile.png`, fullPage: true});
+    } finally {await context.close();}
   }
 });
 

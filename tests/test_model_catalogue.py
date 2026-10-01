@@ -126,7 +126,6 @@ class ModelCatalogueTests(unittest.TestCase):
                                         settings['max_age_days'], settings['cache_hours']))
         self.assertEqual(83, len(settings['baseline_families']))
         self.assertEqual(138, len(settings['baseline_models']))
-        self.assertEqual({'deepseek': {'enhanced': {'enabled': True}}}, catalogue.tiers())
         # Aucun registre d'alias concurrent ne subsiste à la racine
         self.assertFalse((Path(__file__).resolve().parents[1] / 'models.toml').exists())
 

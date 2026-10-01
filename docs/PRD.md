@@ -104,7 +104,7 @@ La comparaison peut fournir une aide au choix économique conditionnelle selon l
 
 ## 8. Preuve et transparence
 
-Les conditions de test communes sont exposées une fois par comparaison : état de Pi, environnement et date de gel. Chaque configuration observée expose ensuite ses valeurs propres : fournisseur, modèle, accès API via OpenRouter, route, paramètres et effort de raisonnement, demandés puis observés. Les reçus déjà scellés conservent leur accès d’origine. Les champs exacts sont ceux de l'[ARD](ARD.md#4-objets-et-responsabilités).
+Les conditions de test communes sont exposées une fois par comparaison : état de Pi, environnement et date de gel. Chaque configuration observée expose ensuite ses valeurs propres : fournisseur, modèle, accès API via OpenRouter, route, paramètres et effort de raisonnement, demandés puis observés. Le niveau de raisonnement choisi pour la comparaison est transmis à chaque modèle qui l’accepte ; un modèle qui ne l’accepte pas reçoit le niveau le plus proche qu’il propose, et l’utilisateur peut fixer un niveau par modèle. Un modèle sans niveau réglable est comparé tel quel. Aucun modèle n’est écarté pour son niveau. Les reçus déjà scellés conservent leur accès d’origine. Les champs exacts sont ceux de l'[ARD](ARD.md#4-objets-et-responsabilités).
 
 Une valeur non observée reste `INCONNU`. La restitution porte l'avertissement suivant ou une formulation équivalente :
 

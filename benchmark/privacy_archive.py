@@ -160,7 +160,7 @@ def _pending_model(store, session_id, dossier_id, campaign, comparison, attempt_
 
 
 def _configuration(name, value):
-    allowed = ('provider', 'model', 'revision', 'access', 'route', 'channel_id', 'reasoning_effort', 'effort')
+    allowed = ('provider', 'model', 'revision', 'access', 'route', 'channel_id', 'reasoning_effort', 'effort', 'effort_requested')
     result = {key: value[key] for key in allowed if key in value}
     parameters = value.get('parameters', {})
     if isinstance(parameters, dict):

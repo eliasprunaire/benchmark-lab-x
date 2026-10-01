@@ -113,7 +113,7 @@ _MANIFEST = ('campaign_id', 'version', 'contract_sha256', 'cases', 'panel',
 _MANIFEST_OPTIONAL = ('financial_cost_policy', 'recovery_of', 'official_fallback', 'funding')
 _CONFIGURATION = ('id', 'provider', 'model', 'revision', 'access', 'channel_id',
                   'route', 'parameters', 'effort', 'required_observations')
-_CONFIGURATION_OPTIONAL = ('effort_limit', 'estimate')
+_CONFIGURATION_OPTIONAL = ('effort_limit', 'estimate', 'effort_requested')
 _AUTHORITY = ('actor', 'authority_id', 'purpose', 'manifest_sha256', 'execution_authority',
               'candidate_authority', 'budget_authority', 'budget_id', 'allowed_cells', 'reserve_amounts')
 _OBSERVED = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters', 'effort',
@@ -241,6 +241,8 @@ def _manifest(value, contract, *, require_data_collection=False):
                 raise ValueError('DATA_COLLECTION_REQUIRED')
         if config.get('effort_limit') not in (None, 'not_adjustable'):
             raise ValueError('Limite d’effort inconnue')
+        if config.get('effort_requested', _EFFORT_ORDER[0]) not in _EFFORT_ORDER:
+            raise ValueError('Niveau demandé inconnu')
         if 'estimate' in config:
             encode(config['estimate'])
         _texts(config['required_observations'], 'required_observations', required=True, unique=True)
@@ -438,7 +440,23 @@ def _requester_campaigns(store, connection, dossier_id):
             and snapshot['manifest']['campaign_id'].startswith(prefix)]
 
 
-def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
+def adapted_effort(levels, wanted):
+    """Niveau envoyé à un modèle : celui demandé s'il l'accepte, sinon le plus proche
+
+    Égalité tranchée vers le plus élevé ; `none` désactive le raisonnement et ne sert qu'en dernier recours.
+    Sans niveau réglable, le modèle garde son comportement fixe (None)
+    """
+    levels = [level for level in levels if level in _EFFORT_ORDER]
+    if not levels:
+        return None
+    if wanted in levels:
+        return wanted
+    usable = [level for level in levels if level != 'none'] or levels
+    target = _EFFORT_ORDER.index(wanted)
+    return min(usable, key=lambda level: (abs(_EFFORT_ORDER.index(level) - target), -_EFFORT_ORDER.index(level)))
+
+
+def _configuration(model, tier, index, assumptions, fetched_at, chosen=None):
     from ..transports import prices as openrouter_prices
     parameters = {
         'max_tokens': DEFAULT_MAX_OUTPUT_TOKENS,
@@ -448,28 +466,14 @@ def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
     }
     effort = 'off'
     effort_limit = None
-    if tier in _EFFORT_ORDER:
-        if model['reasoning_levels']:
-            if tier not in model['reasoning_levels']:
-                raise ValueError(f"{model['id']} n’accepte pas le niveau {tier}. Niveaux disponibles : {', '.join(model['reasoning_levels'])}")
-            effort = tier
-            parameters['reasoning'] = {'effort': tier}
-        else:
-            effort_limit = 'not_adjustable'
-    elif tier == 'enhanced':
-        levels = [level for level in model['reasoning_levels']
-                  if level in _EFFORT_ORDER and level not in ('none', 'low')]
-        if 'high' in levels:
-            effort = 'high'
-            parameters['reasoning'] = {'effort': effort}
-        elif levels:
-            effort = max(levels, key=_EFFORT_ORDER.index)
-            parameters['reasoning'] = {'effort': effort}
-        elif model['maker'] in tier_table:
-            effort = 'on'
-            parameters['reasoning'] = deepcopy(tier_table[model['maker']]['enhanced'])
-        else:
-            effort_limit = 'not_adjustable'
+    # Un niveau choisi pour ce modèle remplace la demande commune, s'il l'accepte
+    requested = chosen if chosen in model['reasoning_levels'] else tier
+    sent = adapted_effort(model['reasoning_levels'], requested)
+    if sent is None:
+        effort_limit = 'not_adjustable'
+    else:
+        effort = sent
+        parameters['reasoning'] = {'effort': sent}
     pricing = {
         'prompt': (None if model['input_price_per_million'] is None else
                    str(_money(model['input_price_per_million']) / Decimal(1_000_000))),
@@ -489,12 +493,17 @@ def _configuration(model, tier, index, tier_table, assumptions, fetched_at):
         required_observations=['revision', 'channel_id'], estimate=estimate)
     if effort_limit is not None:
         configuration['effort_limit'] = effort_limit
+    if effort not in ('off', requested):
+        # Adaptation visible : le niveau demandé reste dans la configuration, à côté de celui envoyé
+        configuration['effort_requested'] = requested
     return configuration
 
 
 def prepare_configurations(store, session_id, dossier_id, body, candidate_identity):
-    from .. import model_catalogue, model_probes, outgoing
+    from .. import model_probes, outgoing
     from ..transports.pi import system_context
+    body = dict(body)
+    efforts = body.pop('efforts', {})
     _fields(body, ('models', 'tier'), 'configurations')
     if (type(body['models']) is not list or len(body['models']) < 2
             or len(set(body['models'])) != len(body['models'])
@@ -502,6 +511,9 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
         raise ValueError('Au moins deux modèles distincts sont requis')
     if body['tier'] not in ('low', 'high'):
         raise ValueError('Palier inconnu')
+    if (type(efforts) is not dict or not set(efforts) <= set(body['models'])
+            or any(type(level) is not str for level in efforts.values())):
+        raise ValueError('Niveaux par modèle invalides')
     if type(candidate_identity) is not dict:
         raise LookupError('CANDIDATE_PI_UNAVAILABLE')
     _intact(store)
@@ -530,9 +542,8 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
                        'input_tokens': (len(candidate_bytes) + BYTES_PER_TOKEN - 1) // BYTES_PER_TOKEN,
                        'output_tokens': DEFAULT_MAX_OUTPUT_TOKENS, 'cached_input_tokens': 0,
                        'requests_per_cell': 1}
-        tier_table = model_catalogue.tiers()
-        panel = [_configuration(model, body['tier'], index, tier_table, assumptions,
-                                catalogue['fetched_at'])
+        panel = [_configuration(model, body['tier'], index, assumptions,
+                                catalogue['fetched_at'], efforts.get(model['id']))
                  for index, model in enumerate(selected, 1)]
         count = len(_requester_campaigns(store, connection, dossier_id))
         campaign_id = f'{dossier_id}-c{count + 1}'
@@ -576,8 +587,14 @@ def configurations_view(store, session_id, dossier_id):
                             'detail': 'Relevé de modèles indisponible' if catalogue is None else None}
         prepared = [snapshot for snapshot in _requester_campaigns(store, connection, dossier_id)
                     if not snapshot['admissions'] and not snapshot['attempts']]
-        selected = set() if not prepared else {
-            item['model'] for item in prepared[-1]['manifest']['panel']}
+        panel = [] if not prepared else prepared[-1]['manifest']['panel']
+        selected = {item['model'] for item in panel}
+        available_tiers = ['low', 'high']
+        # ponytail: palier commun relu sur la première configuration qui le porte, champ de manifeste si ambigu un jour
+        current_tier = next((item.get('effort_requested', item['effort']) for item in panel
+                             if item.get('effort_requested', item['effort']) in available_tiers), 'low')
+        chosen = {item['model']: item['effort'] for item in panel
+                  if 'effort_requested' not in item and item['effort'] not in ('off', current_tier)}
         models = []
         for model in [] if catalogue is None else catalogue['models']:
             if model['excluded'] is not None or model['route'] is None:
@@ -586,13 +603,12 @@ def configurations_view(store, session_id, dossier_id):
                       if level in _EFFORT_ORDER]
             models.append({'id': model['id'], 'name': model['name'] or model['id'],
                            'selected': model['id'] in selected,
-                           'not_adjustable': not levels})
-        available_tiers = ['low', 'high']
-        default_tier = 'low'
+                           'not_adjustable': not levels, 'levels': levels,
+                           'chosen': chosen.get(model['id'], '')})
         if not prepared:
             return page_view({'kind': 'configurations', 'dossier_id': dossier_id,
                               'current_campaign_id': None, 'configurations': [], 'models': models,
-                              'current_tier': default_tier, 'superseded': [],
+                              'current_tier': current_tier, 'superseded': [],
                               'available_tiers': available_tiers, 'estimate_total_usd': None,
                               'estimate_available': False, 'assumptions': None,
                               'fetched_at': None if catalogue is None else catalogue['fetched_at'],
@@ -606,8 +622,7 @@ def configurations_view(store, session_id, dossier_id):
             'kind': 'configurations', 'dossier_id': dossier_id, 'models': models,
             'current_campaign_id': current['manifest']['campaign_id'],
             'configurations': current['manifest']['panel'],
-            'current_tier': next((item['effort'] for item in current['manifest']['panel']
-                                  if item['effort'] in available_tiers), default_tier),
+            'current_tier': current_tier,
             'superseded': [snapshot['manifest']['campaign_id'] for snapshot in prepared[:-1]],
             'available_tiers': available_tiers, 'estimate_total_usd': total,
             'estimate_available': total is not None,
