@@ -4,6 +4,7 @@ Ce module ne touche ni au stockage, ni aux secrets, ni aux fournisseurs : il met
 forme les vues structurées renvoyées par l'exécuteur.
 """
 from pathlib import Path
+import re
 import secrets
 
 from benchmark.preparation import binding
@@ -54,7 +55,8 @@ PREPARATION_PROGRESS_SCRIPT = """(() => {
   const link = panel.querySelector('a');
   const status = panel.querySelector('[role="status"]');
   const pause = panel.querySelector('button');
-  let stopped = false, timer, request;
+  // Un échec isolé ne coupe pas le suivi : réessai à 8 s puis 16 s (plafond 30 s), arrêt au troisième échec consécutif
+  let stopped = false, timer, request, failures = 0;
   function stop(message) {
     stopped = true;
     clearTimeout(timer);
@@ -66,6 +68,7 @@ PREPARATION_PROGRESS_SCRIPT = """(() => {
   }
   async function refresh() {
     if (stopped) return;
+    let delay = 4000;
     if (!document.hidden) {
       request = new AbortController();
       const timeout = setTimeout(() => request.abort(), 10000);
@@ -87,16 +90,19 @@ PREPARATION_PROGRESS_SCRIPT = """(() => {
           const current = document.getElementById('campaign-status');
           const updated = next.getElementById('campaign-status');
           if (current && updated) current.replaceChildren(...updated.childNodes);
+          failures = 0;
           console.info('FOLLOWUP_ACTIVE', response.status);
         }
       } catch {
-        console.error('FOLLOWUP_UNAVAILABLE');
-        if (!stopped) stop('La mise à jour automatique s’est interrompue. Actualisez la page pour voir où en est votre cas d’usage.');
+        failures += 1;
+        console.error('FOLLOWUP_UNAVAILABLE', failures);
+        if (failures >= 3 && !stopped) stop('La mise à jour automatique s’est interrompue. Actualisez la page pour voir où en est votre cas d’usage.');
+        delay = Math.min(4000 * 2 ** failures, 30000);
       } finally {
         clearTimeout(timeout);
       }
     }
-    if (!stopped) timer = setTimeout(refresh, 4000);
+    if (!stopped) timer = setTimeout(refresh, delay);
   }
   pause.hidden = false;
   link.hidden = true;
@@ -259,6 +265,10 @@ def render(value, csrf, path='/preparation', *, error=False):
                 '<textarea id="message" name="message" required maxlength="1000" rows="4"' + field_attributes('message') + '>' + text(submitted['message']) + '</textarea>' + field_error('message') +
                 HONEYPOT +
                 '<button type="submit">Corriger et renvoyer</button>')
+        latest = value.get('step') if value.get('error_code') == 'SELECTION_SUPERSEDED' else None
+        if latest and '/campaigns/' in path and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', str(latest)):
+            content += ('<p><a href="' + text(path.split('/campaigns/', 1)[0] + '/campaigns/' + latest + '/conditions')
+                        + '">Voir la dernière sélection</a></p>')
         back_class = 'button sec' if type(submitted) is dict and ('request' in submitted or 'message' in submitted) else 'button'
         content += '<p><a class="' + back_class + '" href="/preparation">Retrouver mes cas d’usage</a></p>'
     elif value.get('kind') == 'contributions':
@@ -296,7 +306,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         title = 'Détail et preuves'
         content = render_attempt_detail(value)
     elif value.get('kind') == 'campaign_launch' and 'checks' in value:
-        title = 'Suivi de la comparaison' if value['campaign']['attempts'] else 'Vérifier puis lancer la comparaison'
+        title = ('Vérifier puis lancer la comparaison' if not value['campaign']['attempts'] else
+                 'Benchmark en cours' if campaign_followup(value['campaign'])[0] else 'Suivi de la comparaison')
         content = render_campaign_launch_requester(value, csrf)
     elif value.get('kind') == 'campaign_launch':
         title = 'Vérifier puis lancer la comparaison'

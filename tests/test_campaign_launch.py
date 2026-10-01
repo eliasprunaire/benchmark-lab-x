@@ -365,15 +365,15 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.connect()
         summary = c.launch_view(self.store, self.sid, 'fixture', self.campaign_id,
                                 access_secret=SECRET, access_transport=self.access)
-        self.assertEqual(['example_validated', 'example_qualified',
+        self.assertEqual(['selection_current', 'example_validated', 'example_qualified',
                           'configurations_available', 'access_connected',
                           'estimate_available'], [check['key'] for check in summary['checks']])
         self.assertTrue(summary['launchable'])
         self.assertEqual({'limit_remaining_usd': '18.5', 'limit_usd': '20'},
-                         summary['checks'][3]['detail'])
+                         summary['checks'][4]['detail'])
         total = c._estimate_total(c.inspect(self.store, self.campaign_id))
         self.assertEqual('Estimation totale : ' + format(total, 'f').replace('.', ',') +
-                         ' USD', summary['checks'][4]['detail'])
+                         ' USD', summary['checks'][5]['detail'])
         attempts = c.launch(self.store, self.sid, 'fixture', self.campaign_id,
                             self.body(), access_secret=SECRET,
                             access_transport=self.access)
@@ -383,6 +383,13 @@ class RequesterCampaignLaunch(unittest.TestCase):
                          snapshot['admission']['authority']['authority_id'])
         self.assertEqual(('20', 'USD'),
                          (snapshot['budget']['limit'], snapshot['budget']['currency']))
+
+    def summary(self, snapshot, selection):
+        """Récapitulatif rendu avec les montants de la sélection modifiée : ils ne sont plus sur la page des configurations"""
+        value = c.launch_view(self.store, self.sid, 'fixture', self.campaign_id)
+        value['campaign']['panel'] = snapshot['manifest']['panel']
+        value['estimate_total_usd'] = selection['estimate_total_usd']
+        return value
 
     def test_estimation_affichee_exacte_pres_de_la_limite(self):
         snapshot = c.inspect(self.store, self.campaign_id)
@@ -399,8 +406,8 @@ class RequesterCampaignLaunch(unittest.TestCase):
                 self.assertEqual(allowed, selection['estimate_available'])
                 self.assertEqual(allowed, budget['ok'])
                 self.assertEqual(total, selection['estimate_total_usd'])
-                self.assertIn(total.replace('.', ',') + ' USD',
-                              views.render(selection, 'csrf').decode())
+                self.assertIn('réponses estimées : ' + total.replace('.', ',') + ' USD',
+                              views.render(self.summary(snapshot, selection), 'csrf').decode())
                 self.assertEqual('Estimation totale : ' + total.replace('.', ',') +
                                  ' USD', budget['detail'])
 
@@ -412,9 +419,11 @@ class RequesterCampaignLaunch(unittest.TestCase):
             selection = c.configurations_view(self.store, self.sid, 'fixture')
         self.assertEqual('0.00000002', selection['estimate_total_usd'])
         self.assertNotIn('E', selection['estimate_total_usd'])
-        page = views.render(selection, 'csrf').decode()
-        self.assertIn('0,00000002 USD', page)
-        self.assertNotIn('E-', page)
+        page = views.render(self.summary(snapshot, selection), 'csrf').decode()
+        self.assertIn('réponses estimées : 0,00000002 USD', page)
+        self.assertIn('0,00000001 USD', page)
+        # Synthèse et tableau ; le dépliant des réglages garde le manifeste tel quel
+        self.assertNotIn('E-', page.split('Détail des critères')[0])
 
     def test_cles_controles_alignees_entre_moteur_erreurs_et_liens(self):
         summary = c.launch_view(self.store, self.sid, 'fixture', self.campaign_id)
@@ -437,9 +446,9 @@ class RequesterCampaignLaunch(unittest.TestCase):
         snapshot['manifest']['panel'][0]['estimate']['amount_usd'] = None
         with patch.object(c, '_requester_campaigns', return_value=[snapshot]):
             selection = c.configurations_view(self.store, self.sid, 'fixture')
-        page = views.render(selection, 'csrf').decode()
-        self.assertIn('coût impossible à estimer', page)
-        self.assertIn('Coût total estimé : impossible à estimer pour l’instant', page)
+        page = views.render(self.summary(snapshot, selection), 'csrf').decode()
+        self.assertIn('<td>non estimable</td>', page)
+        self.assertIn('réponses estimées : non estimable', page)
         checks = c._requester_checks(self.store, self.store._connection, snapshot, self.sid, {})
         self.assertEqual('Estimation totale : non estimable', checks[-1]['detail'])
         preview = p.view(self.store, self.sid, 'fixture')

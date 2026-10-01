@@ -109,7 +109,7 @@ class ModelProbeTests(unittest.TestCase):
         tiers = [n for n in document.nodes if n['attrs'].get('name') == 'tier']
         self.assertTrue(tiers)
         self.assertTrue(all(n['attrs'].get('form') == 'configurations-form' for n in tiers))
-        save = next(n for n in document.nodes if n['tag'] == 'button' and 'Enregistrer ma sélection' in n['text'])
+        save = next(n for n in document.nodes if n['tag'] == 'button' and 'Continuer' in n['text'])
         self.assertEqual('configurations-form', save['attrs'].get('form'))
 
     def test_refus_avant_depense_et_isolation(self):

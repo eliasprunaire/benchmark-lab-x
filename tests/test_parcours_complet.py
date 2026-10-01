@@ -331,7 +331,7 @@ class ParcoursComplet(unittest.TestCase):
                             for n in page.nodes if n['tag'] == 'details'))
         configurations = page.link('Choisir les modèles')
         page, _, _ = self.request(configurations)
-        self.examine(page, configurations, 'choix des configurations', 'Enregistrer ma sélection')
+        self.examine(page, configurations, 'choix des configurations', 'Continuer')
         self.assertNotIn('Gammes généralistes retenues', page.visible)
         self.assertNotIn('date d’ajout au catalogue', page.visible)
         self.assertNotIn('Relevé des modèles du', page.visible)
@@ -341,57 +341,97 @@ class ParcoursComplet(unittest.TestCase):
         tuning = next(n for n in page.nodes if n['tag'] == 'details' and 'Ajuster le niveau par modèle' in n['text'])
         self.assertIn('Modèle C', tuning['text'])
         self.assertNotIn('Modèle B', tuning['text'])
-        self.request(form['action'], form['fields'] | {
+        # « Continuer » mène droit au récapitulatif de la sélection qui vient d'être enregistrée
+        _, headers, _ = self.request(form['action'], form['fields'] | {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
             'tier': 'low', 'effort:mistralai/mistral-small-2603': 'none'}, status=303)
+        self.assertEqual(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions', headers['Location'])
         # Un niveau visant un modèle non coché est refusé ; un niveau hors de ceux du modèle retombe sur l'adaptation
         self.request(form['action'], form['fields'] | {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
             'tier': 'low', 'effort:mistralai/mistral-small-2603': 'high'}, status=400)
-        self.request(form['action'], form['fields'] | {
+        _, headers, _ = self.request(form['action'], form['fields'] | {
             'models': ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'],
             'tier': 'low', 'effort:openai/gpt-5.6-sol': 'max'}, status=303)
-        page, _, _ = self.request(configurations)
-        selection = next(n for n in page.nodes if n['tag'] == 'section' and 'Votre sélection' in n['text'])
-        self.assertEqual(2, selection['text'].count('adapté'))
-        self.request(form['action'], form['fields'] | {
+        self.assertTrue(headers['Location'].endswith('-c2/conditions'))
+        page, _, _ = self.request(headers['Location'])
+        models = next(n for n in page.nodes if n['tag'] == 'table')
+        self.assertEqual(2, models['text'].count('adapté'))
+        older = self.submit(self.request(configurations)[0], '/configurations', {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
-            'tier': 'low', 'effort:mistralai/mistral-small-2603': 'none'}, status=303)
-        page, _, _ = self.request(configurations)
-        selection = next(n for n in page.nodes if n['tag'] == 'section' and 'Votre sélection' in n['text'])
-        self.assertIn('Modèle A · coût', selection['text'])
-        self.assertIn('Niveau de raisonnement : Élevé (high) · adapté : ce modèle n’accepte pas Faible (low)',
-                      selection['text'])
-        self.assertIn('Niveau de raisonnement fixe', selection['text'])
-        self.assertIn('Niveau de raisonnement : Désactivé (none)', selection['text'])
-        self.assertEqual(1, selection['text'].count('adapté'))
+            'tier': 'low', 'effort:mistralai/mistral-small-2603': 'none'})
+        older_recap = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c3/conditions'
+        models = next(n for n in older.nodes if n['tag'] == 'table')
+        self.assertEqual(['Modèle', 'Niveau de raisonnement', 'Coût estimé'],
+                         [n['text'] for n in older.nodes if n['tag'] == 'th' and n['attrs'].get('scope') == 'col'])
+        self.assertIn('Modèle A', models['text'])
+        self.assertIn('Élevé (high) · adapté : ce modèle n’accepte pas Faible (low)', models['text'])
+        self.assertIn('Niveau de raisonnement fixe', models['text'])
+        self.assertIn('Désactivé (none)', models['text'])
+        self.assertEqual(1, models['text'].count('adapté'))
         _, _, raw = self.request(form['action'], form['fields'] | {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
             'tier': 'high'}, status=201, json_response=True)
         self.assertEqual('configurations', json.loads(raw)['kind'])
+        recap = dossier + '/campaigns/' + json.loads(raw)['current_campaign_id'] + '/conditions'
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s3_contracts').fetchone()[0])
             self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_comparison_contracts').fetchone()[0])
         page, _, raw = self.request(configurations)
-        self.examine(page, configurations, 'sélection enregistrée', 'Vérifier avant de lancer')
-        selection = next(n for n in page.nodes if n['tag'] == 'section' and 'Votre sélection' in n['text'])
-        self.assertIn('Modèle A', selection['text'])
-        self.assertIn('Modèle B', selection['text'])
-        self.assertIn('openai/gpt-5.6-sol', selection['text'])
-        self.assertIn(b'<summary>Identifiant OpenRouter</summary><code>openai/gpt-5.6-sol</code>', raw)
-        recap = page.link('Vérifier avant de lancer')
+        self.examine(page, configurations, 'sélection enregistrée', 'Continuer')
+        # La sélection n'est plus résumée ici : le récapitulatif suit « Continuer »
+        self.assertFalse(any(n['tag'] == 'h2' and 'Votre sélection' in n['text'] for n in page.nodes))
+        self.assertNotIn('Vérifier avant de lancer', page.visible)
+        self.assertEqual({'openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'},
+                         {n['attrs']['value'] for n in page.nodes if n['tag'] == 'input'
+                          and n['attrs'].get('name') == 'models' and 'checked' in n['attrs']})
         page, _, raw = self.request(recap)
-        self.examine(page, recap, 'prêt à lancer', 'Lancer la comparaison')
+        self.examine(page, recap, 'prêt à lancer', 'Lancer le benchmark')
+        # Synthèse d'abord : prévision des réponses et réservation de l'évaluation restent deux montants
+        synthesis = next(n['text'] for n in page.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
+        self.assertRegex(synthesis, r'^2 modèles · réponses estimées : [0-9,]+ USD · réservé pour l’évaluation : '
+                                    r'[0-9,]+ USD · crédit restant : 18,5 USD$')
+        self.assertIn('Tout est prêt.', page.visible)
+        self.assertNotIn('✓', page.visible)
+        order = [next(i for i, n in enumerate(page.nodes) if test(n)) for test in (
+            lambda n: n['tag'] == 'p' and 'réponses estimées' in n['text'],
+            lambda n: n['tag'] == 'button' and n['text'] == 'Lancer le benchmark',
+            lambda n: n['tag'] == 'a' and n['text'] == 'Modifier la sélection',
+            lambda n: n['tag'] == 'table')]
+        self.assertEqual(sorted(order), order)
+        self.assertEqual(configurations, page.link('Modifier la sélection'))
+        self.assertNotIn('button', page.nodes[order[2]]['attrs'].get('class', ''))
+        models = next(n for n in page.nodes if n['tag'] == 'table')
+        self.assertIn('table-scroll', next(n for n in reversed(page.nodes[:order[3]])
+                                           if n['tag'] == 'div')['attrs'].get('class', ''))
         # Les candidats gardent le nom vu au choix, avec leur effort traduit
-        self.assertIn('Modèle A · Niveau de raisonnement : Élevé (high)', page.visible)
+        self.assertIn('Modèle A', models['text'])
+        self.assertIn('Élevé (high)', models['text'])
         self.assertNotIn('openai/gpt-5.6-sol', page.visible)
         self.assertNotIn(KEY.encode(), raw)
+        # Le bouton est la confirmation : aucune case à cocher, `confirm` part en champ caché
+        start_form = page.form('/start')
+        self.assertEqual([], [n['attrs'].get('name') for n in start_form['nodes']
+                              if n['tag'] == 'input' and n['attrs'].get('type') != 'hidden'])
+        self.assertEqual('yes', start_form['fields']['confirm'])
+        # Une sélection remplacée ne se lance plus : sa page ne propose aucun lancement et mène à la dernière
+        stale, _, _ = self.request(older_recap)
+        self.assertFalse(any(n['tag'] == 'form' and n['attrs'].get('action', '').endswith('/start') for n in stale.nodes))
+        self.assertIn('Cette sélection a été remplacée par une plus récente', stale.visible)
+        self.assertEqual(recap, stale.link('Voir la dernière sélection'))
+        # Le serveur refuse aussi un envoi direct vers l'ancienne sélection
+        refused, _, _ = self.request(older_recap.removesuffix('/conditions') + '/start', start_form['fields'], status=403)
+        self.examine(refused, older_recap, 'sélection remplacée', 'Retrouver mes cas d’usage')
+        self.assertIn('Cette sélection a été remplacée par une plus récente', refused.visible)
+        self.assertEqual(recap, refused.link('Voir la dernière sélection'))
+        self.assertTrue(self.starts.empty())
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'comparaison préparée', 'Vérifier puis lancer la comparaison')
         self.assertIn('Comparaison prête à lancer', page.visible)
-        page, _, _ = self.request(page.link('Vérifier puis lancer'))
+        self.assertEqual(recap, page.link('Vérifier puis lancer'))
+        page, _, _ = self.request(recap)
         self.assertIn('Relever toutes les actions dans les notes', page.visible)
-        self.assertIn('Estimation', page.visible)
+        self.assertIn('réponses estimées', page.visible)
         criteria = next(n for n in page.nodes if n['tag'] == 'details' and
                         'Détail des critères et des réglages' in n['text'])
         for label in ('Critères', 'Obligations', 'Erreurs éliminatoires', 'Résultat attendu',
@@ -407,14 +447,19 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIn('✕ Exécution des essais', closed.visible)
             self.assertNotIn('Lancement enregistré', closed.visible)
             self.assertFalse(any(f['action'].endswith('/start') for f in closed.forms))
-        start_form = page.form('/start')
-        self.assertEqual(['confirm'], [n['attrs'].get('name') for n in start_form['nodes']
-                                      if n['tag'] == 'input' and n['attrs'].get('type') != 'hidden'])
-        self.submit(page, '/start', {'confirm': 'yes'}, status=303)
+        self.submit(page, '/start', {}, status=303)
         attempts = self.starts.get_nowait()['candidate_attempts']
         self.assertEqual(2, len(attempts))
+        # Après un lancement, le choix des modèles repart de la sélection lancée, pas d'une plus ancienne
+        chosen, _, _ = self.request(configurations)
+        self.assertEqual({'openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'},
+                         {n['attrs']['value'] for n in chosen.nodes if n['tag'] == 'input'
+                          and n['attrs'].get('name') == 'models' and 'checked' in n['attrs']})
+        self.assertIn('selected', next(n for n in chosen.nodes if n['tag'] == 'option'
+                                       and n['attrs'].get('value') == 'high')['attrs'])
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'essais en attente', 'Actualiser le suivi')
+        self.assertEqual('Benchmark en cours', next(n['text'] for n in page.nodes if n['tag'] == 'h1'))
         self.assertIn('en attente', page.visible)
         self.assertNotIn('Comparaison terminée', page.visible)
         self.assertIn('Modèle B · Niveau de raisonnement fixe : en attente de démarrage', page.visible)

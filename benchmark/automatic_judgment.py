@@ -170,11 +170,29 @@ def execute_campaign(data, operation_ids, transport):
             return
 
 
-def status(store, connection, campaign_id):
-    snapshot = c._inspect(store, connection, campaign_id)
+def _completed(store, connection, ops):
+    """Autant que `records`, sans relier chaque jugement à son contexte : le suivi n'affiche qu'un compte
+
+    Une proposition présente compte, comme dans `records` ; seule une proposition absente, à récupérer
+    depuis son reçu, repasse par la vérification complète. Les résultats, eux, relisent `records`
+    """
+    count = 0
+    for op in ops:
+        if op['receipt'] is None:
+            continue
+        if op['receipt']['result'] is not None:
+            count += 1
+            continue
+        saved, ctx = judgment._bound(store, connection, op)
+        count += judgment._retained_proposal(store, connection, op, ctx, recover_metadata=True) is not None
+    return count
+
+
+def status(store, connection, campaign_id, snapshot=None):
+    snapshot = snapshot or c._inspect(store, connection, campaign_id)
     ops = operations(store, connection, campaign_id)
     total = len(snapshot['manifest']['plan'])
-    completed = len(records(store, connection, campaign_id))
+    completed = _completed(store, connection, ops)
     result = dict(status='NOT_STARTED', total=total, completed=completed, reason=None, can_start=False)
     if completed == total:
         result['status'] = 'COMPLETE'

@@ -349,8 +349,10 @@ class ComparisonPageTests(unittest.TestCase):
 const vm = require('node:vm'), assert = require('node:assert/strict');
 const script = require('node:fs').readFileSync(0, 'utf8');
 (async () => {
-  for (const outcome of ['waiting', 'finished', 'error', 'input', 'pause', 'campaign-waiting', 'campaign-finished', 'campaign-stopped']) {
-    const timers = new Map(), events = {}, requests = [], navigations = [], logs = [];
+  for (const outcome of ['waiting', 'finished', 'error-once', 'error', 'input', 'pause', 'campaign-waiting', 'campaign-finished', 'campaign-stopped']) {
+    const timers = new Map(), events = {}, requests = [], navigations = [], logs = [], delays = [];
+    // Un échec isolé réessaie plus tard ; trois échecs consécutifs arrêtent le suivi
+    const attempts = outcome === 'error' ? 3 : 1;
     const updates = [], campaignStatus = {replaceChildren: (...nodes) => updates.push(nodes)};
     const campaign = outcome.startsWith('campaign-');
     const waiting = outcome === 'waiting' || outcome === 'campaign-waiting';
@@ -365,7 +367,7 @@ const script = require('node:fs').readFileSync(0, 'utf8');
                  addEventListener: (event, fn) => events[event] = fn},
       window: {addEventListener: (event, fn) => events[event] = fn},
       location: {replace: url => navigations.push(url)}, AbortController,
-      setTimeout: fn => {timers.set(++serial, fn); return serial;},
+      setTimeout: (fn, delay) => {timers.set(++serial, fn); delays.push(delay); return serial;},
       clearTimeout: id => timers.delete(id),
       DOMParser: class {parseFromString() {return {getElementById: id => {
         if (id === 'preparation-progress') return waiting ? panel : null;
@@ -374,11 +376,17 @@ const script = require('node:fs').readFileSync(0, 'utf8');
         return null;
       }};}},
       fetch: async (url, options) => {requests.push({url, options});
-        return {status: outcome === 'error' ? 503 : 200, ok: outcome !== 'error', text: async () => '<html></html>'};}
+        const failed = outcome.startsWith('error');
+        return {status: failed ? 503 : 200, ok: !failed, text: async () => '<html></html>'};}
     });
     if (outcome === 'input' || outcome === 'pause') events[outcome]();
-    else {const [id, task] = timers.entries().next().value; timers.delete(id); await task();}
-    assert.equal(requests.length, ['input', 'pause'].includes(outcome) ? 0 : 1);
+    else for (let run = 0; run < attempts; run++) {
+      const [id, task] = [...timers.entries()].find(([key]) => key !== 0) ?? [];
+      if (!task) break;
+      timers.delete(id); await task();
+    }
+    assert.equal(requests.length, ['input', 'pause'].includes(outcome) ? 0 : attempts);
+    if (outcome.startsWith('error')) assert.deepEqual(delays.filter(delay => delay !== 10000), [4000, 8000, 16000].slice(0, Math.min(attempts + 1, 3)));
     for (const {url, options} of requests) {
       assert.equal(url, link.href); assert.equal(options.method, undefined);
       assert.equal(options.body, undefined); assert.equal(options.redirect, 'error');
@@ -387,9 +395,10 @@ const script = require('node:fs').readFileSync(0, 'utf8');
     assert.equal(updates.length, outcome === 'campaign-waiting' ? 1 : 0);
     for (const entry of logs) {
       assert.match(entry[0], /^FOLLOWUP_(ACTIVE|COMPLETE|HTTP_ERROR|UNAVAILABLE)$/);
-      assert(entry.length === 1 || entry.length === 2 && [200, 503].includes(entry[1]));
+      assert(entry.length === 1 || entry.length === 2 && [200, 503, 1, 2, 3].includes(entry[1]));
     }
-    assert.equal(timers.size, waiting ? 1 : 0);
+    assert.equal(timers.size, waiting || outcome === 'error-once' ? 1 : 0);
+    if (outcome === 'error-once') assert.notEqual(progress.hidden, true);
     if (['error', 'input', 'pause'].includes(outcome)) {
       assert.equal(progress.hidden, true); assert.equal(pause.hidden, true);
       assert.match(status.textContent, /interrompue|arrêtée/);

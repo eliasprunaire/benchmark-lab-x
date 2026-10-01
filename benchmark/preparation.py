@@ -31,7 +31,7 @@ _SOURCE_ACCEPTED = {}
 # Registre de module partagé par tous les fils de travail de l'exécuteur
 _SOURCE_GUARD = threading.Lock()
 _CHECK_CODES = frozenset({
-    'example_validated', 'example_qualified', 'configurations_available',
+    'selection_current', 'example_validated', 'example_qualified', 'configurations_available',
     'access_connected', 'estimate_available',
 })
 

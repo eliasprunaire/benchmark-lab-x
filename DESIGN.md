@@ -116,6 +116,7 @@ Un seul rayon, `rounded.base`, pour les champs, boutons, blocs et dépliants. Pa
 - **Boutons** : un seul bouton principal par écran, pour l'action qui fait avancer le parcours. Revenir en arrière ou changer de page est un lien, pas un bouton principal.
 - **Navigation** : le menu d'en-tête marque la page courante avec `aria-current="page"` seulement quand la page est réellement l'entrée du menu. Toute page atteignable a au moins un lien entrant visible et un lien de retour vers son parent.
 - **Résultats** : chaque ligne nomme le candidat entier (nom commercial et effort déclaré). Les caractéristiques de test (route servie, paramètres omis, budget) vont dans une infobulle par ligne.
+- **Récapitulatif avant dépense** : une ligne de synthèse, puis le bouton qui lance, puis le détail (tableau des modèles, critères, contrôles). La prévision des réponses et la réservation de l'évaluation s'affichent séparément, jamais additionnées. Pas de case à cocher : le bouton est la confirmation. Les contrôles ne montrent que ce qui bloque ; sinon une seule ligne dit que tout est prêt.
 - **Dépliants** (`details`) : pour le détail rigoureux, les preuves et les options secondaires ; ils restent utilisables sans JavaScript.
 
 ## Do's and Don'ts
