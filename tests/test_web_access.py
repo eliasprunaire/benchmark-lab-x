@@ -105,7 +105,7 @@ class FakeExecutor:
                         result = dict(self.key_result, cookie=self.start_cookie)
                     elif (request['method'] == 'POST'
                           and request['path'].endswith('/configurations')):
-                        result = {'status': 201, 'value': {'kind': 'configurations'},
+                        result = {'status': 201, 'value': {'kind': 'configurations', 'current_campaign_id': 'd1-c2'},
                                   'piece': False, 'cookie': None}
                     elif request['method'] == 'POST' and request['path'].endswith(('/start', '/evaluate')):
                         result = {'status': 202, 'value': {'kind': 'campaign_launch'},
@@ -203,14 +203,12 @@ class AccessViewTests(unittest.TestCase):
         self.assertIn('Ajuster le niveau par modèle', page)
         self.assertIn('sans garantir qu’elle soit meilleure', page)
         self.assertIn('niveau de raisonnement fixe', page)
-        for technical in ('modele-a', 'modele-b'):
-            self.assertIn('<details><summary>Identifiant OpenRouter</summary><code>' +
-                          technical + '</code></details>', page)
-        self.assertIn('Coût total estimé : 3,50 USD', page)
+        # La sélection se relit au récapitulatif, où « Continuer » mène : plus de résumé ici
+        self.assertNotIn('Votre sélection', page)
+        self.assertNotIn('Coût total estimé', page)
+        self.assertNotIn('/campaigns/d1-c1/conditions', page)
+        self.assertIn('type="submit">Continuer</button>', page)
         self.assertNotIn('Plafond :', page)
-        self.assertIn('coût estimé : 1,20 USD', page)
-        self.assertIn('coût estimé : 2,30 USD', page)
-        self.assertIn('/campaigns/d1-c1/conditions', page)
 
     def test_page_configurations_sans_releve(self):
         page = views.render({
@@ -226,10 +224,13 @@ class AccessViewTests(unittest.TestCase):
         value = self.campaign({'status': 'connected'})
         value.update(checks=[], launchable=False, cap_usd='30.00', judgment_estimate_usd='0.125')
         page = views.render(value, 'csrf').decode()
-        self.assertIn('Coût estimé de l’évaluation des réponses : 0,125 USD', page)
-        self.assertIn('payé avec votre clé OpenRouter', page)
+        # Une réservation, distincte de la prévision des réponses : jamais additionnée à elle
+        self.assertIn('réservé pour l’évaluation : 0,125 USD', page)
+        self.assertNotIn('Coût estimé de l’évaluation', page)
         value.pop('judgment_estimate_usd')
-        self.assertNotIn('Coût estimé de l’évaluation des réponses', views.render(value, 'csrf').decode())
+        page = views.render(value, 'csrf').decode()
+        self.assertNotIn('0,125', page)
+        self.assertIn('réservé pour l’évaluation : inconnu', page)
 
     def test_judgment_preflight_failure_remains_readable(self):
         value = self.campaign({'status': 'connected'})
@@ -266,14 +267,18 @@ class AccessViewTests(unittest.TestCase):
             launchable=True, cap_usd='50.00', cap_source='default',
             estimate_total_usd='3.50')
         page = views.render(base, 'csrf').decode()
-        self.assertIn('✓ Exemple validé', page)
-        self.assertIn('Ce que la vérification de l’exemple a relevé', page)
-        self.assertIn('Quantité à confirmer', page)
-        self.assertIn('Crédit restant sur votre clé : 12,50 USD, pour un plafond de 20 USD', page)
+        # Tous les contrôles passent : une seule ligne, aucun contrôle réussi énuméré
+        self.assertIn('Tout est prêt.', page)
+        self.assertNotIn('✓', page)
+        self.assertIn('crédit restant : 12,50 USD', page)
+        self.assertIn('réponses estimées : 3,50 USD', page)
+        self.assertNotIn('name="confirm" value="yes" required', page)
+        self.assertIn('<input type="hidden" name="confirm" value="yes">', page)
         self.assertNotIn('action="/preparation/dossiers/d1/campaigns/c1/cap"', page)
         self.assertNotIn('L’arrêt intervient après le paiement de l’appel en cours.', page)
         self.assertNotIn('La dépense peut donc dépasser le plafond du montant du dernier appel.', page)
-        self.assertIn('>Lancer la comparaison</button>', page)
+        self.assertIn('>Lancer le benchmark</button>', page)
+        self.assertIn('<a href="/preparation/dossiers/d1/configurations">Modifier la sélection</a>', page)
         parsed = Markup(page.encode())
         for tag, attrs in parsed.tags:
             if tag == 'form':
@@ -284,14 +289,20 @@ class AccessViewTests(unittest.TestCase):
                        checks=[dict(check) for check in base['checks']])
         blocked['checks'][2] = {'key': 'configurations_available', 'ok': False,
                                 'detail': 'Modèle à choisir de nouveau'}
+        blocked['checks'][1] = dict(blocked['checks'][1], ok=False, detail='La qualification de l’exemple est requise')
         page = views.render(blocked, 'csrf').decode()
+        # Seuls les contrôles en échec, avec les constats de la vérification de l'exemple
         self.assertIn('✕ Modèle à choisir de nouveau', page)
+        self.assertIn('Ce que la vérification de l’exemple a relevé', page)
+        self.assertIn('Quantité à confirmer', page)
+        self.assertNotIn('✓', page)
+        self.assertNotIn('Tout est prêt.', page)
         self.assertIn('/preparation/dossiers/d1/configurations', page)
-        self.assertNotIn('>Lancer la comparaison</button>', page)
+        self.assertNotIn('>Lancer le benchmark</button>', page)
 
     def test_campaign_followup_only_polls_active_work_and_keeps_received_distinct(self):
         for state, admission, incident, active, terminal, message in (
-            ('EMISSION_POSSIBLE', True, None, True, False, 'Comparaison en cours'),
+            ('EMISSION_POSSIBLE', True, None, True, False, 'Benchmark en cours'),
             ('INTENT_RECORDED', True, None, True, False, 'Votre lancement est enregistré. Les essais n’ont pas encore démarré.'),
             ('EMISSION_POSSIBLE', False, None, False, False, 'La comparaison s’est arrêtée avant la fin'),
             ('AMBIGUOUS', True, None, False, False, 'Un essai n’a pas pu être confirmé'),
@@ -321,6 +332,30 @@ class AccessViewTests(unittest.TestCase):
                 self.assertIn('href="/preparation/dossiers/d1/revisions/2"', nav)
                 self.assertNotIn('#exemple', nav)
                 self.assertIn('/preparation/dossiers/d1/campaigns/c1', nav)
+
+    def test_followup_stays_active_through_an_incident_while_a_cell_is_running(self):
+        # Production : un incident sur un modèle ne coupe plus le suivi des autres modèles encore interrogés
+        for running, judgment, active in (('EMISSION_POSSIBLE', None, True), ('INTENT_RECORDED', None, True),
+                                          ('EMISSION_POSSIBLE', 'WAITING', True), ('RECEIVED', None, False),
+                                          ('RECEIVED', 'BLOCKED', False)):
+            with self.subTest(running=running, judgment=judgment):
+                value = self.campaign({'status': 'connected'})
+                value.update(checks=[], launchable=False)
+                value['campaign'].update(
+                    admission_open=True,
+                    attempts=[{'state': 'RECEIVED', 'incident': 'EMPTY_OUTPUT'}, {'state': running, 'incident': None}],
+                    cells=[{'configuration_id': 'x', 'state': 'RECEIVED'}, {'configuration_id': 'y', 'state': running}],
+                    panel=[{'id': 'x', 'model': 'Modèle A'}, {'id': 'y', 'model': 'Modèle B'}])
+                if judgment:
+                    value['campaign']['judgment'] = {'status': judgment, 'total': 2, 'completed': 0,
+                                                     'reason': 'Évaluation interrompue' if judgment == 'BLOCKED' else None,
+                                                     'can_start': False}
+                page = views.render(value, 'csrf').decode()
+                self.assertEqual(active, 'id="preparation-progress"' in page)
+                self.assertEqual(active, views.page_script(value) is not None)
+                self.assertEqual(active, '<title>Benchmark en cours' in page)
+                if not active:
+                    self.assertNotIn('Benchmark en cours', page)
 
     def test_automatic_judgment_keeps_followup_until_verdicts_are_complete(self):
         for status, active, ready in (('NOT_STARTED', False, False),
@@ -375,7 +410,7 @@ class AccessViewTests(unittest.TestCase):
         page = views.render(value, 'csrf').decode()
         self.assertNotIn('La dépense peut donc dépasser le plafond du montant du dernier appel.', page)
         self.assertNotIn('id="cap_usd"', page)
-        self.assertIn('Comparaison en cours', page)
+        self.assertIn('Benchmark en cours', page)
 
     def test_dates_lisibles_distinctes_dans_la_meme_minute(self):
         first = views.date_lisible_utc('2026-09-16T12:00:01+00:00')
@@ -694,7 +729,8 @@ class AccessServerTests(WebServerCase):
         status, headers, _ = self.request('POST', path, body, {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Cookie': 'benchmark_session=session-token'})
-        self.assertEqual((303, path), (status, headers['Location']))
+        # « Continuer » mène au récapitulatif de la sélection que l'exécuteur vient de créer
+        self.assertEqual((303, '/preparation/dossiers/d1/campaigns/d1-c2/conditions'), (status, headers['Location']))
         request = self.executor.requests.get_nowait()
         self.assertEqual(['modele-a', 'modele-b'], request['body']['models'])
 

@@ -593,6 +593,18 @@ class ServiceProcessesTests(unittest.TestCase):
             self.assertNotIn(canary, _strict_json(result))
             self.assertNotIn(canary, '\n'.join(logs.output))
             self.assertIn('EXECUTOR_INTERNAL ' + code + ' ' + type(error).__name__, logs.output[0])
+        # Base verrouillée sur une vue de campagne : la route est consignée, ses identifiants et sa requête non
+        dossier = 'dossier-' + canary
+        campaign = ('{"method":"GET","path":"/preparation/dossiers/' + dossier + '/campaigns/' + dossier
+                    + '-c1/conditions?q=' + canary + '","token":"' + canary + '","body":null}\n').encode()
+        with self.assertLogs('benchmark.service', level='INFO') as logs:
+            result = refused(campaign, sqlite3.OperationalError('database is locked'))
+        self.assertEqual(500, result['status'])
+        self.assertNotIn(canary, '\n'.join(logs.output))
+        self.assertIn('EXECUTOR_INTERNAL STORAGE OperationalError GET /preparation/dossiers/<id>/campaigns/<id>/conditions',
+                      logs.output[0])
+        self.assertRegex(logs.output[1], r'^INFO:benchmark\.service:EXECUTOR_TIMING GET '
+                                         r'/preparation/dossiers/<id>/campaigns/<id>/conditions 500 \d+ ms$')
         # Le contrôle de santé n'a pas d'entrée à mettre en cause : toute rupture y est interne
         for error in (ValueError(canary), KeyError(canary), sqlite3.OperationalError(canary)):
             def failing():

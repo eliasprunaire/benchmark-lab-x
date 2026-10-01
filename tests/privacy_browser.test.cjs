@@ -8,7 +8,7 @@ const {createHash, randomBytes} = require('node:crypto');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 let server, browser, origin, rendered;
 let record, manifest, chunks, mode = 'normal', release, arrived;
-let posts = [], postStatus = 200;
+let posts = [], postStatus = 200, followupReplies = [];
 const fresh = (version = 1) => ({format: 'bench-x/history/v1', dossier_id: 'd1', content_version: version,
   need: 'Comparer <img src=x onerror=alert(1)>', messages: ['Précision'], revisions: [{number: 1,
   instruction: 'Consigne', deliverables: ['Document'], criteria: ['Exactitude'],
@@ -49,6 +49,23 @@ try:
                                                                piece_ids=[], presentation=projection), '').decode()
 finally:
     proof.doClassCleanups()
+# Récapitulatif avant dépense et suivi d'un benchmark, rendus comme les autres pages
+panel = [{'id': 'configuration-1', 'model': 'mistralai/mistral-medium-3-5', 'effort': 'high', 'effort_requested': 'low',
+          'parameters': {'reasoning': {'effort': 'high'}}, 'estimate': {'amount_usd': '0.0123'}},
+         {'id': 'configuration-2', 'model': 'deepseek/deepseek-v4.1-flash', 'effort': 'off', 'effort_limit': 'not_adjustable',
+          'parameters': {}, 'estimate': {'amount_usd': None}}]
+names = {'mistralai/mistral-medium-3-5': 'Mistral Medium 3.5', 'deepseek/deepseek-v4.1-flash': 'DeepSeek V4.1 Flash'}
+def campaign(state=None):
+    cells = [] if state is None else [{'configuration_id': c['id'], 'state': state} for c in panel]
+    return {'campaign_id': 'c1', 'version': 1, 'panel': panel, 'budget': None, 'reserve_amounts': {},
+            'cells': cells, 'attempts': [{'state': state, 'incident': None} for _ in cells], 'admission_open': True,
+            'task': {'revision': 2}, 'conditions': {'frozen_at': '2026-09-15T00:00:00Z', 'pi': {'package': 'pi', 'version': '0.85.1'}}}
+def launch(state=None):
+    return {'kind': 'campaign_launch', 'dossier_id': 'd1', 'campaign': campaign(state), 'model_names': names,
+            'criteria': {'result_expected': 'Une liste complète des actions', 'obligations': [], 'eliminatory_errors': [], 'limits': []},
+            'checks': [{'key': 'example_validated', 'ok': True, 'detail': 'Exemple validé'}],
+            'launchable': state is None, 'judgment_estimate_usd': '0.30', 'estimate_total_usd': None,
+            'access': {'status': 'connected', 'limit_remaining_usd': '18.5', 'limit_usd': '20'}}
 print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(),
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
@@ -64,7 +81,11 @@ print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(),
                       'current_tier': 'low', 'available_tiers': ['low', 'high'], 'configurations': [],
                       'current_campaign_id': None, 'estimate_total_usd': None, 'superseded': [],
                       'estimate_available': False, 'assumptions': None, 'custom_models': []}, 'csrf').decode(),
-                  'comparison_script': views.COMPARISON_FOCUS_SCRIPT, **attempt}))
+                  'comparison_script': views.COMPARISON_FOCUS_SCRIPT, **attempt,
+                  'launch': views.render(launch(), 'csrf').decode(),
+                  'followup': views.render(launch('EMISSION_POSSIBLE'), 'csrf').decode(),
+                  'followup_done': views.render(launch('RECEIVED'), 'csrf').decode(),
+                  'progress_script': views.PREPARATION_PROGRESS_SCRIPT}))
 `], {encoding: 'utf8'}));
   server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -74,8 +95,13 @@ print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(),
       const body = req.headers['content-type']?.includes('application/json') ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw));
       posts.push({path: url.pathname, body});
       res.writeHead(postStatus, {'Content-Type': 'application/json'}).end('{}');
+    } else if (url.pathname === '/preparation/dossiers/d1/campaigns/c1/conditions') {
+      // Réponses du suivi imposées par le test : un statut d'erreur ou le nom d'une page rendue
+      const reply = followupReplies.shift() ?? 'followup';
+      if (typeof reply === 'number') {res.writeHead(reply).end(); return;}
+      res.setHeader('Content-Type', 'text/html'); res.end(rendered[reply]);
     } else if (url.pathname.startsWith('/render/') || url.pathname === rendered.detail_href) {
-      const hashes = [rendered.script, rendered.comparison_script]
+      const hashes = [rendered.script, rendered.comparison_script, rendered.progress_script]
         .map(script => `'sha256-${createHash('sha256').update(script).digest('base64')}'`).join(' ');
       res.setHeader('Content-Type', 'text/html');
       res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' ${hashes}; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
@@ -779,4 +805,87 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     assert.doesNotMatch(await page.locator('main').innerText(), /Chargement/);
   } finally {await off.close();}
   assert.deepEqual(failures, []);
+});
+
+test('pre-launch summary: synthesis, single launch button as confirmation, models table, 390 px in both themes', async () => {
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({viewport: {width: 390, height: 844}, colorScheme});
+    try {
+      const page = await context.newPage(); page.setDefaultTimeout(3000);
+      const failures = [];
+      page.on('pageerror', error => failures.push(error.message));
+      page.on('console', message => {if (/Content Security Policy/.test(message.text())) failures.push(message.text());});
+      await page.goto(origin + '/render/launch');
+      await page.evaluate(() => document.fonts.ready);
+      const main = await page.locator('main').innerText();
+      // Prévision et réservation affichées séparément, jamais additionnées
+      assert.match(main, /2 modèles · réponses estimées : non estimable · réservé pour l’évaluation : 0,30 USD · crédit restant : 18,5 USD/, colorScheme);
+      assert.equal(await page.locator('main input[type="checkbox"]').count(), 0, `${colorScheme} case à cocher`);
+      assert.equal(await page.locator('main button:not(.sec)').count(), 1, `${colorScheme} un seul bouton principal`);
+      assert.equal(await page.locator('form[action$="/start"] input[name="confirm"]').getAttribute('value'), 'yes');
+      assert.equal(await page.evaluate(() => {
+        const synthesis = [...document.querySelectorAll('main p')].find(p => p.textContent.includes('réponses estimées'));
+        const nodes = [synthesis, document.querySelector('form[action$="/start"] button'),
+                       [...document.querySelectorAll('main a')].find(a => a.textContent === 'Modifier la sélection'),
+                       document.querySelector('.table-scroll table')];
+        return nodes.every(Boolean) && nodes.every((node, i) => !i || nodes[i - 1].compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
+      }), true, `${colorScheme} ordre synthèse, bouton, lien, tableau`);
+      assert.match(await page.locator('.table-scroll table').innerText(), /adapté/);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${colorScheme} débordement`);
+      assert.deepEqual(await page.evaluate(contrastFailures), [], colorScheme);
+      let focused = false;
+      for (let press = 0; press < 60 && !focused; press++) {
+        await page.keyboard.press('Tab');
+        focused = await page.evaluate(() => document.activeElement.textContent === 'Lancer le benchmark');
+      }
+      assert.ok(focused, `${colorScheme} bouton inatteignable au clavier`);
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none', `${colorScheme} focus invisible`);
+      mkdirSync('reports/privacy-browser', {recursive: true});
+      await page.screenshot({path: `reports/privacy-browser/launch-summary-${colorScheme}-mobile.png`, fullPage: true});
+      assert.deepEqual(failures, []);
+    } finally {await context.close();}
+  }
+});
+
+test('benchmark followup survives an isolated failure, stops after three in a row, then opens the results', async () => {
+  const context = await browser.newContext();
+  try {
+    const failures = [];
+    let page;
+    const start = async () => {
+      followupReplies = [];
+      page = await context.newPage(); page.setDefaultTimeout(5000);
+      page.on('pageerror', error => failures.push(error.message));
+      page.on('console', message => {if (/Content Security Policy/.test(message.text())) failures.push(message.text());});
+      await page.clock.install();
+      await page.goto(origin + '/render/followup');
+      // Horloge arrêtée juste après le chargement : seuls les délais avancés ici déclenchent un rafraîchissement
+      await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1000);
+    };
+    const tick = async (delay, reply, marker) => {
+      followupReplies.push(reply);
+      const seen = page.waitForEvent('console', message => message.text().startsWith(marker));
+      await page.clock.runFor(delay);
+      await seen;
+    };
+    const running = () => page.locator('#preparation-progress progress').isVisible();
+    await start();
+    assert.equal(await page.locator('h1').textContent(), 'Benchmark en cours');
+    await tick(3000, 503, 'FOLLOWUP_UNAVAILABLE');
+    assert.equal(await running(), true, 'suivi arrêté par un échec isolé');
+    // Réessai après 8 s ; un succès remet le compte d'échecs à zéro
+    await tick(8000, 'followup', 'FOLLOWUP_ACTIVE');
+    await tick(4000, 503, 'FOLLOWUP_UNAVAILABLE');
+    await tick(8000, 503, 'FOLLOWUP_UNAVAILABLE');
+    assert.equal(await running(), true, 'suivi arrêté après deux échecs');
+    await tick(16000, 503, 'FOLLOWUP_UNAVAILABLE');
+    assert.equal(await running(), false, 'suivi actif après trois échecs consécutifs');
+    assert.match(await page.locator('#preparation-progress [role="status"]').textContent(), /La mise à jour automatique s’est interrompue/);
+    assert.equal(await page.getByRole('link', {name: 'Actualiser le suivi'}).isVisible(), true);
+    // Plus aucun travail en cours : la page bascule vers les résultats
+    await start();
+    await tick(3000, 'followup_done', 'FOLLOWUP_COMPLETE');
+    await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1');
+    assert.deepEqual(failures, []);
+  } finally {followupReplies = []; await context.close();}
 });

@@ -213,6 +213,9 @@ td p, th p { margin: .3rem 0; }
 .quality-list { margin: 0; padding-left: 1.1rem; }
 table details { font-size: .88rem; margin: .4rem 0; }
 .source-value { font-variant-numeric: tabular-nums; font-weight: 600; }
+/* Récapitulatif avant dépense : montants comparables, tableau de trois colonnes lisible sans défilement à 390 px */
+.synthesis { font-variant-numeric: tabular-nums; font-weight: 600; }
+table.compact { min-width: 0; }
 .costbar { display: block; width: 100%; height: .45rem; border-radius: 3px; background: var(--soft); margin-top: .35rem; min-width: 6rem; }
 /* Donnée, pas interaction : aucune barre en couleur d'accent */
 .costbar rect { fill: var(--ink-2); }

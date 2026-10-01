@@ -304,6 +304,7 @@ def denied_response(error):
         'NOT_QUALIFIED': 'L’exemple doit d’abord être vérifié. Attendez la fin de la vérification avant de lancer la comparaison.',
         'CONTRACT_MISSING': "Les conditions de la comparaison ne sont pas encore fixées. Attendez la fin de la vérification de l’exemple.",
         'STEP_INCOMPLETE': 'Terminez l’étape précédente avant de poursuivre.',
+        'SELECTION_SUPERSEDED': 'Cette sélection a été remplacée par une plus récente. Elle ne peut plus être lancée ; rien n’a été lancé ni débité.',
         'OUT_OF_SCOPE': 'Bench-X ne peut pas comparer cette tâche. Décrivez un autre cas d’usage pour continuer.',
         'example_validated': 'Validez l’exemple avant de lancer la comparaison.',
         'example_qualified': 'L’exemple doit être vérifié avant de lancer la comparaison.',
@@ -357,15 +358,26 @@ def _decoration_skipped(message, error):
     logging.getLogger(__name__).warning('EXECUTOR_DECORATION_SKIPPED %s', type(error).__name__)
 
 
-def _internal_result(error, code):
-    """Journalise un code de diagnostic sûr : ni message d'exception, ni trace, ni requête"""
-    logging.getLogger(__name__).error('EXECUTOR_INTERNAL %s %s', code, type(error).__name__)
+def _internal_result(error, code, route=None):
+    """Journalise un code de diagnostic sûr : ni message d'exception, ni trace, ni contenu de requête"""
+    if route is None:
+        logging.getLogger(__name__).error('EXECUTOR_INTERNAL %s %s', code, type(error).__name__)
+    else:
+        logging.getLogger(__name__).error('EXECUTOR_INTERNAL %s %s %s', code, type(error).__name__, route)
     return {'status': 500, 'value': {'error': INTERNAL_MESSAGE}}
+
+
+def _logged_route(message):
+    """Méthode et motif de route : identifiants remplacés, ni requête, ni corps, ni jeton"""
+    pattern = re.sub(r'/(dossiers|campaigns|revisions|evaluations|pieces|attempts)/[A-Za-z0-9_-]{1,128}(?=/|$)',
+                     r'/\1/<id>', message['path'].split('?', 1)[0])
+    if not re.fullmatch(r'/preparation[a-z/<>-]{0,120}', pattern):
+        pattern = '<autre>'
+    return message['method'] + ' ' + pattern
 
 
 def executor_result(raw, health, handle):
     """Frontière d'erreurs de l'exécuteur : refus, enveloppe validée, puis défaillance interne"""
-    from . import preparation
     if raw == b'health\n':
         try:
             return health()
@@ -376,6 +388,18 @@ def executor_result(raw, health, handle):
         message = _envelope(raw)
     except (ValueError, TypeError):
         return {'status': 400, 'value': {'error': BAD_REQUEST_MESSAGE}}
+    started = time.monotonic()
+    result = _handled(message, handle)
+    route = _logged_route(message)
+    if '/campaigns/' in route or route.endswith('/configurations'):
+        # Durée de chaque vue de campagne : un affichage lent se voit avant qu'il bloque la base
+        logging.getLogger(__name__).info('EXECUTOR_TIMING %s %s %d ms', route, result['status'],
+                                         round(1000 * (time.monotonic() - started)))
+    return result
+
+
+def _handled(message, handle):
+    from . import preparation
     try:
         return handle(message)
     except preparation.Denied as error:
@@ -385,7 +409,7 @@ def executor_result(raw, health, handle):
     except (ConflictError, BudgetError):
         return {'status': 409, 'value': {'error': CONFLICT_MESSAGE}}
     except (IntegrityError, SchemaError, sqlite3.Error) as error:
-        return _internal_result(error, 'STORAGE')
+        return _internal_result(error, 'STORAGE', _logged_route(message))
     except ValueError:
         # Validation de domaine de `preparation` : la requête est recevable mais fautive
         return {'status': 400, 'value': {'error': BAD_REQUEST_MESSAGE}}

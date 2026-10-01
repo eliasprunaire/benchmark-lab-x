@@ -417,8 +417,14 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     return
                 if (self.command == 'POST' and self.path.endswith(('/configurations', '/custom-models'))
                         and result['status'] < 400 and not wants_json):
-                    headers['Location'] = (self.path.removesuffix('/custom-models') + '/configurations#custom-models'
-                                           if self.path.endswith('/custom-models') else self.path)
+                    if self.path.endswith('/custom-models'):
+                        headers['Location'] = self.path.removesuffix('/custom-models') + '/configurations#custom-models'
+                    else:
+                        # « Continuer » mène au récapitulatif de la sélection que l'exécuteur vient de créer
+                        campaign_id = result['value']['current_campaign_id']
+                        if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', str(campaign_id)):
+                            raise ValueError('Sélection de retour invalide')
+                        headers['Location'] = self.path.removesuffix('/configurations') + '/campaigns/' + campaign_id + '/conditions'
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
                 if self.command == 'POST' and self.path.endswith(('/start', '/evaluate')) and result['status'] < 400 and not wants_json:

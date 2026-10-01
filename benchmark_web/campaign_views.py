@@ -567,7 +567,7 @@ def render_configurations(value, csrf):
                          (' selected' if value['current_tier'] == tier else '') + '>' +
                          text(labels.get(tier, tier)) + '</option>' for tier in value['available_tiers'])
         tiers += '</select><p class="hint" id="reasoning-help">Ce niveau est transmis aux modèles qui le proposent. '
-        tiers += 'Un modèle qui ne l’accepte pas reçoit le niveau le plus proche qu’il propose, affiché dans votre sélection. Les modèles à niveau fixe sont comparés tels quels. Un niveau plus élevé peut rendre la réponse plus lente et plus chère, sans garantir qu’elle soit meilleure.</p>'
+        tiers += 'Un modèle qui ne l’accepte pas reçoit le niveau le plus proche qu’il propose, affiché dans le récapitulatif. Les modèles à niveau fixe sont comparés tels quels. Un niveau plus élevé peut rendre la réponse plus lente et plus chère, sans garantir qu’elle soit meilleure.</p>'
         tunable = [model for model in value['models'] if len(model.get('levels', ())) > 1]
         if tunable:
             tiers += '<details><summary>Ajuster le niveau par modèle</summary><p class="hint">« Automatique » suit le niveau demandé ci-dessus. Seuls les niveaux acceptés par chaque modèle sont proposés.</p>'
@@ -584,29 +584,9 @@ def render_configurations(value, csrf):
                     hidden('csrf_token', csrf) + '<fieldset id="model-choices"><legend>Modèles à comparer</legend>' +
                     choices + '</fieldset></form>')
         content += render_custom_models(value, csrf, dossier_url)
+        # Le récapitulatif de la sélection suit l'enregistrement : le serveur y redirige
         content += ('<fieldset><legend>Raisonnement</legend>' + tiers +
-                    '</fieldset><button form="configurations-form"' + (' class="sec"' if value['configurations'] else '') +
-                    ' type="submit">Enregistrer ma sélection</button>')
-    if value['configurations']:
-        model_names = {model['id']: model['name'] for model in value['models']}
-        summary = '<ul>'
-        for configuration in value['configurations']:
-            amount = configuration['estimate']['amount_usd']
-            technical = configuration['model']
-            detail = ' · ' + (
-                'coût impossible à estimer' if amount is None else 'coût estimé : ' + montant_lisible(amount) + ' USD')
-            detail += ' · ' + effort_label(configuration)
-            summary += '<li>' + text(model_names.get(technical, technical)) + text(detail) + (
-                '<details><summary>Identifiant OpenRouter</summary><code>' +
-                text(technical) + '</code></details></li>')
-        summary += '</ul>'
-        summary += '<p>Coût total estimé : ' + text(
-            'impossible à estimer pour l’instant' if value['estimate_total_usd'] is None else
-            montant_lisible(value['estimate_total_usd']) + ' USD') + '. Ce n’est pas une dépense facturée.</p>'
-        summary += '<p><a class="button" href="' + text(
-            dossier_url + '/campaigns/' + value['current_campaign_id'] +
-            '/conditions') + '">Vérifier avant de lancer</a></p>'
-        content += section('Votre sélection', summary)
+                    '</fieldset><button form="configurations-form" type="submit">Continuer</button>')
     return content
 
 
@@ -625,6 +605,12 @@ def campaign_followup(campaign):
                                  else 'Évaluation en cours : chaque réponse est vérifiée selon les critères de votre exemple.')
         if status == 'NOT_STARTED' and cells and all(c['state'] == 'RECEIVED' for c in cells):
             return False, False, 'Toutes les réponses sont arrivées. Leur évaluation n’est pas encore lancée.'
+    stopped = campaign.get('stop_reason') or campaign.get('restore_pending') or not campaign.get('admission_open')
+    # Un modèle encore interrogé garde le suivi actif, même si un autre a déjà rencontré un incident
+    if not stopped and any(c['state'] == 'EMISSION_POSSIBLE' for c in cells):
+        return True, False, 'Les modèles sont interrogés. Les réponses arrivent au fur et à mesure.'
+    if not stopped and any(c['state'] == 'INTENT_RECORDED' for c in cells):
+        return True, False, 'Votre lancement est enregistré. Les essais n’ont pas encore démarré.'
     if any(a.get('incident') or a.get('attribution_incident') for a in campaign['attempts']):
         return False, False, 'Un problème technique est survenu. Le suivi s’est arrêté et rien n’est relancé automatiquement.'
     if any(c['state'] == 'AMBIGUOUS' for c in cells) or campaign.get('state') == 'BLOCKED':
@@ -632,12 +618,8 @@ def campaign_followup(campaign):
     # Toutes les réponses reçues est l'issue normale : la fermeture d'admission qui suit ne la masque pas
     if cells and all(c['state'] == 'RECEIVED' for c in cells):
         return False, True, 'Toutes les réponses sont arrivées. Celles qui n’ont pas encore de verdict attendent leur évaluation.'
-    if campaign.get('stop_reason') or campaign.get('restore_pending') or not campaign.get('admission_open'):
+    if stopped:
         return False, False, 'La comparaison s’est arrêtée avant la fin. Vous pouvez lire les réponses déjà reçues.'
-    if any(c['state'] == 'EMISSION_POSSIBLE' for c in cells):
-        return True, False, 'Les modèles sont interrogés. Les réponses arrivent au fur et à mesure.'
-    if any(c['state'] == 'INTENT_RECORDED' for c in cells):
-        return True, False, 'Votre lancement est enregistré. Les essais n’ont pas encore démarré.'
     return False, False, 'Les essais n’ont pas encore démarré. Actualisez la page dans un moment pour voir s’ils ont commencé.'
 
 
@@ -651,7 +633,7 @@ def campaign_status(campaign, dossier_url):
     if ready:
         return 'done', 'Comparaison terminée', message, base, 'Voir les résultats'
     if active:
-        return 'wait', 'Comparaison en cours', message, base + '/conditions', 'Suivre la comparaison'
+        return 'wait', 'Benchmark en cours', message, base + '/conditions', 'Suivre la comparaison'
     return 'warn', 'La comparaison demande votre attention', message, base + '/conditions', 'Voir ce qui s’est passé'
 
 
@@ -678,7 +660,7 @@ def render_campaign_followup(value, csrf):
         content += '<p>Réponses évaluées : ' + text(judgment['completed']) + ' sur ' + text(judgment['total']) + '.</p>'
     content += '</div>'
     if active:
-        content += '<div id="preparation-progress"><progress aria-label="Comparaison en cours"></progress>'
+        content += '<div id="preparation-progress"><progress aria-label="Benchmark en cours"></progress>'
         content += '<p class="hint" role="status">Cette page se met à jour seule si JavaScript est activé. Sinon, actualisez-la.</p><div class="actions">'
         content += '<a class="button" href="' + text(base + '/conditions') + '">Actualiser le suivi</a>'
         content += '<button type="button" class="sec" hidden>Arrêter la mise à jour automatique</button></div></div>'
@@ -694,49 +676,62 @@ def render_campaign_followup(value, csrf):
 
 
 def render_campaign_launch_requester(value, csrf):
-    """Contrôles et suivi présentés au demandeur qui lance lui-même"""
+    """Récapitulatif avant dépense : synthèse, bouton, détail ; puis suivi une fois lancé"""
     campaign = value['campaign']
     if campaign['attempts']:
         return render_campaign_followup(value, csrf)
     dossier_url = '/preparation/dossiers/' + value['dossier_id']
     base = dossier_url + '/campaigns/' + campaign['campaign_id']
     names = value.get('model_names', {})
+    panel = campaign['panel']
+    # Prévision des réponses et réservation de l'évaluation restent deux montants distincts (RULES.md, contrôle de dépense)
+    def usd(amount, unknown):
+        return unknown if amount is None else montant_lisible(amount) + ' USD'
     content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
-    content += section('Ce qui sera testé', '<p>' + text(value['criteria']['result_expected']) + '</p>' +
-        listing(candidate_label(item, names) for item in campaign['panel']) +
-        '<p>Chaque modèle reçoit la même consigne et les mêmes pièces. Le verdict vaudra pour cet exemple et pour chaque modèle tel qu’il est réglé ici, sans conclure sur le modèle en général.</p>' +
-        '<details><summary>Détail des critères et des réglages</summary>' + readable_fields(
-            {'criteria': value['criteria'], 'conditions': campaign['conditions'], 'panel': campaign['panel']}) + '</details>')
-    content += '<p>Tous les appels passent par votre clé OpenRouter. Son plafond est la seule limite de dépense. Les montants affichés ici sont des estimations, pas des dépenses facturées.</p>'
-    check_content = '<ul>'
-    for check in value['checks']:
-        detail = check['detail']
-        if type(detail) is dict:
-            detail = ('Crédit restant sur votre clé : ' + (montant_lisible(detail['limit_remaining_usd'])
-                      if detail.get('limit_remaining_usd') is not None else 'inconnu') +
-                      ' USD, pour un plafond de ' + (montant_lisible(detail['limit_usd'])
-                      if detail.get('limit_usd') is not None else 'inconnu') + ' USD')
-        check_content += '<li>' + text(('✓ ' if check['ok'] else '✕ ') + str(detail))
-        if check['key'] == 'example_qualified' and check.get('findings'):
-            check_content += '<p>Ce que la vérification de l’exemple a relevé</p>' + listing(
-                finding['text'] for finding in check['findings'])
-        check_content += '</li>'
-    check_content += '</ul>'
-    content += section('Avant de lancer', check_content)
-    if value.get('judgment_estimate_usd') is not None:
-        content += '<p>Coût estimé de l’évaluation des réponses : ' + text(montant_lisible(value['judgment_estimate_usd'])) + ' USD, payé avec votre clé OpenRouter.</p>'
-    failed = next((check for check in value['checks'] if not check['ok']), None)
+    content += '<p class="synthesis">' + text(
+        str(len(panel)) + (' modèles' if len(panel) > 1 else ' modèle')
+        + ' · réponses estimées : ' + usd(value.get('estimate_total_usd'), 'non estimable')
+        + ' · réservé pour l’évaluation : ' + usd(value.get('judgment_estimate_usd'), 'inconnu')
+        + ' · crédit restant : ' + usd(value.get('access', {}).get('limit_remaining_usd'), 'inconnu')) + '</p>'
     if value['launchable']:
-        content += '<p class="note">Tout est prêt. Relisez la tâche, les modèles et les coûts estimés, puis confirmez.</p>'
+        # Le bouton est la confirmation : le serveur exige toujours `confirm=yes`
         content += form(csrf, base + '/start', {
             'manifest_version': campaign['version'],
-            'frozen_at': campaign['conditions']['frozen_at']},
-            '<label><input type="checkbox" name="confirm" value="yes" required> '
-            'Je lance cette comparaison. Les appels aux modèles seront payés avec ma clé OpenRouter.</label>'
-            '<button type="submit">Lancer la comparaison</button>')
-    elif failed:
+            'frozen_at': campaign['conditions']['frozen_at'], 'confirm': 'yes'},
+            '<button type="submit">Lancer le benchmark</button>')
+    content += '<p><a href="' + text(dossier_url + '/configurations') + '">Modifier la sélection</a></p>'
+    rows = ''.join('<tr><th scope="row">' + text(model_name(item, names)) + '</th><td>'
+                   + text(effort_label(item).removeprefix('Niveau de raisonnement : ')) + '</td><td>'
+                   + text(usd(item['estimate']['amount_usd'], 'non estimable')) + '</td></tr>' for item in panel)
+    content += ('<div class="table-scroll" role="region" tabindex="0" aria-label="Modèles sélectionnés">'
+                '<table class="compact"><thead><tr><th scope="col">Modèle</th><th scope="col">Niveau de raisonnement</th>'
+                '<th scope="col">Coût estimé</th></tr></thead><tbody>' + rows + '</tbody></table></div>')
+    content += '<p>Tous les appels passent par votre clé OpenRouter. Son plafond est la seule limite de dépense. Les montants affichés ici sont une prévision et une réservation, pas des dépenses facturées.</p>'
+    content += section('Ce qui sera testé', '<p>' + text(value['criteria']['result_expected']) + '</p>' +
+        '<p>Chaque modèle reçoit la même consigne et les mêmes pièces. Le verdict vaudra pour cet exemple et pour chaque modèle tel qu’il est réglé ici, sans conclure sur le modèle en général.</p>' +
+        '<details><summary>Détail des critères et des réglages</summary>' + readable_fields(
+            {'criteria': value['criteria'], 'conditions': campaign['conditions'], 'panel': panel}) + '</details>')
+    failures = [check for check in value['checks'] if not check['ok']]
+    check_content = '' if failures else '<p class="note">Tout est prêt.</p>'
+    if failures:
+        check_content += '<ul>'
+        for check in failures:
+            detail = check['detail']
+            if type(detail) is dict:
+                detail = ('Crédit restant sur votre clé : ' + usd(detail.get('limit_remaining_usd'), 'inconnu') +
+                          ', pour un plafond de ' + usd(detail.get('limit_usd'), 'inconnu'))
+            check_content += '<li>' + text('✕ ' + str(detail))
+            if check['key'] == 'example_qualified' and check.get('findings'):
+                check_content += '<p>Ce que la vérification de l’exemple a relevé</p>' + listing(
+                    finding['text'] for finding in check['findings'])
+            check_content += '</li>'
+        check_content += '</ul>'
+    failed = failures[0] if failures else None
+    if failed and not value['launchable']:
         # Chaque contrôle mène à son étape ; la clé, elle, s'ajoute ici même puis revient à ce récapitulatif
         links = {
+            'selection_current': (dossier_url + '/campaigns/' + str(failed.get('latest')) + '/conditions',
+                                  'Voir la dernière sélection'),
             'example_validated': (dossier_url + '#validation', 'Valider l’exemple'),
             'example_qualified': (dossier_url, 'Voir la vérification de l’exemple'),
             'configurations_available': (dossier_url + '/configurations', 'Changer de modèles'),
@@ -744,15 +739,16 @@ def render_campaign_launch_requester(value, csrf):
             'estimate_available': (dossier_url + '/configurations', 'Revoir les modèles choisis'),
         }
         detail = failed['detail'] if type(failed['detail']) is str else 'ajoutez d’abord votre clé OpenRouter'
-        content += '<p class="note">Impossible de lancer pour l’instant : ' + text(detail) + '.'
+        check_content += '<p class="note">Impossible de lancer pour l’instant : ' + text(detail) + '.'
         if links.get(failed['key']):
             href, label = links[failed['key']]
-            content += ' <a class="button" href="' + text(href) + '">' + text(label) + '</a>'
-        content += '</p>'
+            check_content += ' <a class="button" href="' + text(href) + '">' + text(label) + '</a>'
+        check_content += '</p>'
         if failed['key'] == 'access_connected':
-            content += personal_key_form(csrf, value.get('access', {}), base + '/conditions', opened=True)
-    else:
-        content += '<p class="note">Impossible de lancer pour l’instant : le service d’exécution est indisponible. L’équipe Bench-X doit d’abord régler ce point.</p>'
+            check_content += personal_key_form(csrf, value.get('access', {}), base + '/conditions', opened=True)
+    elif not value['launchable']:
+        check_content = '<p class="note">Impossible de lancer pour l’instant : le service d’exécution est indisponible. L’équipe Bench-X doit d’abord régler ce point.</p>'
+    content += section('Avant de lancer', check_content)
     return content
 
 

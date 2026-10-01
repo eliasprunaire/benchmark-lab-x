@@ -585,9 +585,11 @@ def configurations_view(store, session_id, dossier_id):
                             'catalogue_stale': catalogue is not None and catalogue['stale'],
                             'catalogue_fetched_at': None if catalogue is None else catalogue['fetched_at'],
                             'detail': 'Relevé de modèles indisponible' if catalogue is None else None}
-        prepared = [snapshot for snapshot in _requester_campaigns(store, connection, dossier_id)
+        requested = _requester_campaigns(store, connection, dossier_id)
+        prepared = [snapshot for snapshot in requested
                     if not snapshot['admissions'] and not snapshot['attempts']]
-        panel = [] if not prepared else prepared[-1]['manifest']['panel']
+        # Pré-cochée : la dernière sélection du dossier, même lancée, jamais une plus ancienne restée prête
+        panel = [] if not requested else requested[-1]['manifest']['panel']
         selected = {item['model'] for item in panel}
         available_tiers = ['low', 'high']
         # ponytail: palier commun relu sur la première configuration qui le porte, champ de manifeste si ambigu un jour
@@ -927,8 +929,8 @@ def _inspect(store, connection, campaign_id):
 
 
 def inspect(store, campaign_id):
-    connection = connection_for(store)
-    with _transaction(connection):
+    connection_for(store)
+    with store.read_snapshot() as connection:
         return _inspect(store, connection, campaign_id)
 
 
@@ -1104,11 +1106,18 @@ def _requester_checks(store, connection, snapshot, session_id, access):
     except LookupError:
         missing = [configuration['model'] for configuration in snapshot['manifest']['panel']]
     total = _estimate_total(snapshot)
+    listed = [item['manifest']['campaign_id'] for item in _requester_campaigns(store, connection, task['dossier_id'])]
+    campaign_id = snapshot['manifest']['campaign_id']
+    latest = listed[-1] if campaign_id in listed else campaign_id
     access_detail = {
         'limit_remaining_usd': access.get('limit_remaining_usd'),
         'limit_usd': access.get('limit_usd'),
     }
     return [
+        # Même règle que `launch` : seule la dernière sélection du dossier se lance
+        {'key': 'selection_current', 'ok': latest == campaign_id, 'latest': latest,
+         'detail': 'Sélection la plus récente' if latest == campaign_id else
+                   'Cette sélection a été remplacée par une plus récente'},
         {'key': 'example_validated', 'ok': validated,
          'detail': 'Exemple validé' if validated else 'Validez l’exemple présenté'},
         {'key': 'example_qualified', 'ok': qualified,
@@ -1129,8 +1138,9 @@ def _requester_checks(store, connection, snapshot, session_id, access):
 def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=None,
                 access_transport=None, judgment_transport=None):
     from ..preparation import owner, page_view
-    connection = connection_for(store)
-    with _transaction(connection):
+    connection_for(store)
+    # Chaque lecture vérifie l'intégrité de la base une fois, pas à chaque pièce ni à chaque jugement
+    with store.read_snapshot() as connection:
         owner(connection, session_id, dossier_id)
         snapshot = _inspect(store, connection, campaign_id)
         if snapshot['task']['dossier_id'] != dossier_id:
@@ -1147,14 +1157,14 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
             _, judgment_estimate = auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport, check_access=False)
         except (ValueError, ConflictError, BudgetError):
             judgment_error = 'Évaluation indisponible : vérifiez votre clé, le budget restant ou la disponibilité du service'
-    with _transaction(connection):
+    with store.read_snapshot() as connection:
         snapshot = _inspect(store, connection, campaign_id)
         if snapshot['task']['dossier_id'] != dossier_id:
             raise ValueError('Campagne étrangère au dossier')
         projected = _projected(store, connection, campaign_id, snapshot)
-        if requester and judgment_transport is not None:
+        if requester and judgment_transport is not None and 'judgment' not in projected:
             from .. import automatic_judgment as auto
-            projected['judgment'] = auto.status(store, connection, campaign_id)
+            projected['judgment'] = auto.status(store, connection, campaign_id, snapshot)
         contract = _approved(store, connection, snapshot['manifest']['contract_sha256'])
         criteria = {key: contract['specification'][key]
                     for key in ('result_expected', 'obligations', 'eliminatory_errors', 'limits')}
@@ -1213,6 +1223,8 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
             snapshot = _inspect(store, connection, campaign_id)
             failed = next((check for check in _requester_checks(
                 store, connection, snapshot, session_id, access) if not check['ok']), None)
+        if failed and failed['key'] == 'selection_current':
+            raise Denied('SELECTION_SUPERSEDED', step=failed['latest'])
         if failed:
             raise Denied(failed['key'])
     if requester_funding:
@@ -1228,6 +1240,10 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
         if requester:
             if access is None:
                 raise Denied('Accès demandeur indisponible')
+            # Seule la dernière sélection du dossier se lance ; le refus nomme celle-ci
+            listed = [item['manifest']['campaign_id'] for item in _requester_campaigns(store, connection, dossier_id)]
+            if campaign_id in listed and listed[-1] != campaign_id:
+                raise Denied('SELECTION_SUPERSEDED', step=listed[-1])
             if (body['manifest_version'], body['frozen_at']) != (
                     snapshot['manifest']['version'], snapshot['manifest']['conditions']['frozen_at']):
                 raise ConflictError('Conditions périmées')
@@ -1404,7 +1420,7 @@ def _projected(store, connection, campaign_id, snapshot) -> dict:
     if manifest.get('funding') == 'requester':
         from .. import automatic_judgment as auto
         if auto.operations(store, connection, campaign_id):
-            projected['judgment'] = auto.status(store, connection, campaign_id)
+            projected['judgment'] = auto.status(store, connection, campaign_id, snapshot)
     return projected
 
 

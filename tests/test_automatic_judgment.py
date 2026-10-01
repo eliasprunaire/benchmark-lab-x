@@ -201,6 +201,8 @@ class AutomaticJudgment(unittest.TestCase):
         self.assertEqual(before, self.store.inspect_operations())
         records = auto.records(self.store, self.store._connection, self.cid)
         self.assertTrue(records[0]['judgment']['evidence_binding']['recovered_from_receipt'])
+        # Le compte léger du suivi suit `records`, proposition récupérée depuis son reçu comprise
+        self.assertEqual(len(records), auto.status(self.store, self.store._connection, self.cid)['completed'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
         self.assertEqual(2, self.http.request.call_count)
 
@@ -212,6 +214,8 @@ class AutomaticJudgment(unittest.TestCase):
         auto.execute_campaign(self.data, ids, self.transport)
         self.assertEqual([], restitution.comparison(self.store, self.sid, 'fixture', self.cid)['rows'])
         self.assertEqual('BLOCKED', auto.status(self.store, self.store._connection, self.cid)['status'])
+        self.assertEqual(len(auto.records(self.store, self.store._connection, self.cid)),
+                         auto.status(self.store, self.store._connection, self.cid)['completed'])
 
     def test_encoded_reflected_key_is_redacted_even_when_judgment_format_is_invalid(self):
         from benchmark import automatic_judgment as auto
@@ -299,6 +303,7 @@ class AutomaticJudgment(unittest.TestCase):
         auto.execute_campaign(self.data, ids, self.transport)
         progress = auto.status(self.store, self.store._connection, self.cid)
         self.assertEqual(('BLOCKED', 1, 2), (progress['status'], progress['completed'], progress['total']))
+        self.assertEqual(len(auto.records(self.store, self.store._connection, self.cid)), progress['completed'])
         view = campaigns.launch_view(self.store, self.sid, 'fixture', self.cid)
         page = views.render(view, 'csrf').decode()
         self.assertIn('Voir les résultats</a>', page)
