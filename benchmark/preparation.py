@@ -14,7 +14,7 @@ import unicodedata
 
 from .storage import (Store, SchemaError, IntegrityError, ConflictError, BudgetError,
                       _transaction, _strict_json as encode, _fields, _text,
-                      _identity, _money, _sum_money, _unique_object, _payload_json)
+                      _identity, _money, _sum_money, _unique_object, _payload_json, locked, retry_locked)
 from .validation import identifier
 
 
@@ -195,18 +195,17 @@ def check_authority(value):
     encode(value)
 
 
-def _not_sent(store, connection, operation_id):
-    """Clore une intention jamais émise : coût nul, et sa session peut renvoyer sans intervention"""
-    with _transaction(connection, write=True):
-        if not connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' "
-                                  "WHERE operation_id=? AND state='INTENT_RECORDED'", (operation_id,)).rowcount:
-            return
-        currency = connection.execute('SELECT b.currency FROM reservations r JOIN budgets b USING(budget_id) '
-                                      'WHERE r.operation_id=?', (operation_id,)).fetchone()[0]
-        store._record_receipt(connection, operation_id,
-            dict(receipt_id='not-sent-' + operation_id, observed_configuration=None, resources_seen=[],
-                 result={'status': 'NOT_SENT'}),
-            dict(status='KNOWN', amount='0', currency=currency, source='Contrôle local : transport non engagé'))
+def _not_sent(store, operation_id):
+    """Clore une intention jamais émise : coût nul, et sa session peut renvoyer sans intervention
+
+    Un échec ici laisse l'intention au démarrage suivant de l'exécuteur, qui la close à son tour
+    """
+    try:
+        return store.close_not_sent(operation_id)
+    except Exception as error:
+        logging.getLogger(__name__).error('NOT_SENT_CLOSE_FAILED operation=%s error=%s',
+                                          operation_id, type(error).__name__)
+        return False
 
 
 
@@ -819,28 +818,31 @@ def execute_qualification(data, operation_id, transport):
                 result = _qualification_result(result)
             except (ValueError, TypeError, KeyError):
                 result = None
-            with _transaction(connection, write=True):
-                store._record_receipt(connection, operation_id, response['receipt'], response['cost'])
-                if result is not None:
-                    cost = response['cost']['amount'] if response['cost']['status'] == 'KNOWN' else None
-                    connection.execute('INSERT INTO s2_qualifications VALUES (?,?,?,?,?,?,?,?,?)',
-                        (operation['dossier_id'], operation['revision'], operation_id, int(result['qualified']),
-                         encode(result['findings']), result['summary'], operation['requested_configuration']['model'],
-                         cost, datetime.now(timezone.utc).isoformat()))
-                    if result['qualified']:
-                        from .acquisition.campaigns import _record_comparison_contract
-                        _record_comparison_contract(store, connection, operation)
+
+            def persist():
+                with _transaction(connection, write=True):
+                    store._record_receipt(connection, operation_id, response['receipt'], response['cost'])
+                    if result is not None:
+                        cost = response['cost']['amount'] if response['cost']['status'] == 'KNOWN' else None
+                        connection.execute('INSERT INTO s2_qualifications VALUES (?,?,?,?,?,?,?,?,?)',
+                            (operation['dossier_id'], operation['revision'], operation_id, int(result['qualified']),
+                             encode(result['findings']), result['summary'], operation['requested_configuration']['model'],
+                             cost, datetime.now(timezone.utc).isoformat()))
+                        if result['qualified']:
+                            from .acquisition.campaigns import _record_comparison_contract
+                            _record_comparison_contract(store, connection, operation)
+            # La réponse reste en mémoire : seule l'écriture locale est retentée, jamais l'appel
+            retry_locked(persist)
             logging.getLogger(__name__).info('QUALIFICATION_RECEIVED operation=%s usable=%s qualified=%s cost=%s',
                 operation_id, result is not None, None if result is None else result['qualified'], response['cost']['status'])
         except Exception as error:
-            if emitted:
-                store.mark_ambiguous(operation_id, 'QUALIFICATION_RESULT_NOT_VERIFIED')
             logging.getLogger(__name__).error('QUALIFICATION_STOPPED operation=%s emitted=%s error=%s',
                                               operation_id, emitted, type(error).__name__)
+            if emitted:
+                retry_locked(lambda: store.mark_ambiguous(operation_id, 'QUALIFICATION_RESULT_NOT_VERIFIED'))
         finally:
-            if operation is not None and not emitted and connection.execute('SELECT state FROM operations WHERE operation_id=?',
-                    (operation_id,)).fetchone() == ('INTENT_RECORDED',):
-                _not_sent(store, connection, operation_id)
+            # Par identifiant : un refus avant chargement de l'opération ne laisse pas d'intention ouverte
+            if not emitted and _not_sent(store, operation_id):
                 logging.getLogger(__name__).warning('QUALIFICATION_BLOCKED operation=%s', operation_id)
 
 
@@ -891,48 +893,55 @@ def execute(data, operation_id, transport):
                                  deepcopy(closed_request))
             _fields(response, ('receipt', 'cost'), 'transport response')
             try:
-                publish(store, operation, request, response)
+                # La réponse reste en mémoire : seule l'écriture locale est retentée, jamais l'appel
+                retry_locked(lambda: publish(store, operation, request, response))
                 logging.getLogger(__name__).info('PREPARATION_RECEIVED operation=%s usable=True cost=%s',
                                                 operation_id, response['cost']['status'])
             except Exception as error:
+                if locked(error):
+                    raise
                 # Publication rolled back; keep the original receipt with an unusable revision
                 # Suspension limitée au cas d'usage : les autres restent ouverts
-                with _transaction(connection, write=True):
-                    dossier_id, before = operation['dossier_id'], operation['revision']
-                    current = connection.execute('SELECT current_revision FROM s2_dossiers WHERE dossier_id=?',
-                                                 (dossier_id,)).fetchone()[0]
-                    if current != before:
-                        raise ConflictError('Révision changée pendant la préparation')
-                    revision = before + 1
-                    previous_checks = json.loads(connection.execute(
-                        'SELECT checks_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
-                        (dossier_id, before)).fetchone()[0])
-                    scope_count = previous_checks.get('scope_confirmation_count', 0)
-                    if type(scope_count) is not int or scope_count < 0:
-                        raise IntegrityError('Compteur de confirmation de périmètre invalide')
-                    store._record_receipt(connection, operation_id, response['receipt'], response['cost'])
-                    store.save_dossier(dossier_id, revision, request['payload'])
-                    connection.execute('INSERT INTO s2_revisions VALUES (?,?,?,?,NULL,NULL,?,?)',
-                                       (dossier_id, revision, 'suspended',
-                                        'Résultat reçu non utilisable : préparation suspendue. '
-                                        'Reçu et coût conservés ; aucune reprise automatique.',
-                                        encode([]), encode({'result_verified': False,
-                                                            'scope_confirmation_count': scope_count})))
-                    connection.execute('UPDATE s2_dossiers SET current_revision=? WHERE dossier_id=?',
-                                       (revision, dossier_id))
+                retry_locked(lambda: _suspend(store, connection, operation, operation_id, request, response))
                 logging.getLogger(__name__).warning('PREPARATION_RECEIVED operation=%s usable=False error=%s cost=%s',
                     operation_id, type(error).__name__, response['cost']['status'])
         except Exception as error:
             # Never log request/response/exception text, which may contain private data
-            if emitted:
-                store.mark_ambiguous(operation_id, 'PREPARATION_RESULT_NOT_VERIFIED')
             logging.getLogger(__name__).error('PREPARATION_STOPPED operation=%s emitted=%s error=%s',
                                               operation_id, emitted, type(error).__name__)
+            if emitted:
+                retry_locked(lambda: store.mark_ambiguous(operation_id, 'PREPARATION_RESULT_NOT_VERIFIED'))
         finally:
-            if operation is not None and not emitted and connection.execute('SELECT state FROM operations WHERE operation_id=?',
-                    (operation_id,)).fetchone() == ('INTENT_RECORDED',):
-                _not_sent(store, connection, operation_id)
+            # Par identifiant : un refus avant chargement de l'opération ne laisse pas d'intention ouverte
+            if not emitted and _not_sent(store, operation_id):
                 logging.getLogger(__name__).warning('PREPARATION_BLOCKED operation=%s', operation_id)
+
+
+def _suspend(store, connection, operation, operation_id, request, response):
+    """Conserver le reçu d'un résultat inutilisable dans une révision suspendue"""
+    with _transaction(connection, write=True):
+        dossier_id, before = operation['dossier_id'], operation['revision']
+        current = connection.execute('SELECT current_revision FROM s2_dossiers WHERE dossier_id=?',
+                                     (dossier_id,)).fetchone()[0]
+        if current != before:
+            raise ConflictError('Révision changée pendant la préparation')
+        revision = before + 1
+        previous_checks = json.loads(connection.execute(
+            'SELECT checks_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
+            (dossier_id, before)).fetchone()[0])
+        scope_count = previous_checks.get('scope_confirmation_count', 0)
+        if type(scope_count) is not int or scope_count < 0:
+            raise IntegrityError('Compteur de confirmation de périmètre invalide')
+        store._record_receipt(connection, operation_id, response['receipt'], response['cost'])
+        store.save_dossier(dossier_id, revision, request['payload'])
+        connection.execute('INSERT INTO s2_revisions VALUES (?,?,?,?,NULL,NULL,?,?)',
+                           (dossier_id, revision, 'suspended',
+                            'Résultat reçu non utilisable : préparation suspendue. '
+                            'Reçu et coût conservés ; aucune reprise automatique.',
+                            encode([]), encode({'result_verified': False,
+                                                'scope_confirmation_count': scope_count})))
+        connection.execute('UPDATE s2_dossiers SET current_revision=? WHERE dossier_id=?',
+                           (revision, dossier_id))
 
 
 def publish(store, operation, request, response):

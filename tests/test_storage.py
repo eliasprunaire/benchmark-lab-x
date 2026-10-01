@@ -404,6 +404,26 @@ class StorageTests(unittest.TestCase):
         finally:compatible.close()
         self.assertEqual(file_hashes(root),before)
 
+    def test_rollback_after_piece_creation_leaves_no_orphan_and_keeps_referenced_pieces(self):
+        self.piece()
+        connection=self.store._connection_checked()
+        with self.assertRaises(RuntimeError):
+            with product._transaction(connection,write=True):
+                self.store._put_piece(connection,"d",1,"lost",name="x",role="candidate",
+                                      media_type="text/plain",content=b"rolled back")
+                raise RuntimeError("annulation fictive")
+        report=self.store.verify_storage()
+        self.assertEqual([],report["orphan_files"]);self.assertTrue(report["integrity_ok"])
+        self.assertEqual(b"original",self.store.read_piece("p"))
+        with self.assertRaises(KeyError):self.store.get_piece("lost")
+
+    def test_lock_during_schema_check_is_not_reported_as_schema_error(self):
+        with closing(sqlite3.connect(self.root/"metadata.sqlite3",isolation_level=None)) as other:
+            other.execute("BEGIN EXCLUSIVE")
+            try:
+                with self.assertRaises(sqlite3.OperationalError):product.Store(self.root)
+            finally:other.execute("ROLLBACK")
+
     def test_process_cuts_preserve_revisions_detect_orphans_and_never_reference_partial_bytes(self):
         for boundary in ("partial_file","published_file","before_commit","after_commit","revision_before","revision_after"):
             with self.subTest(boundary=boundary):

@@ -2,10 +2,11 @@
 from contextlib import closing
 from copy import deepcopy
 import json
+import sqlite3
 import unittest
 from unittest.mock import Mock, patch
 
-from benchmark import evaluation, preparation, provider_access, restitution, service, storage, web_api
+from benchmark import evaluation, judgment, preparation, provider_access, restitution, service, storage, web_api
 from benchmark.acquisition import campaigns, execution
 from benchmark.transports import openrouter
 from benchmark_web import views
@@ -229,7 +230,9 @@ class AutomaticJudgment(unittest.TestCase):
         self.acquire()
         ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
         auto.execute_campaign(self.data, ids, self.transport)
-        received = [op for op in self.store.inspect_operations() if op['operation_id'] in ids and op['receipt']]
+        # Un jugement clos avant envoi n'a aucune réponse à masquer
+        received = [op for op in self.store.inspect_operations()
+                    if op['operation_id'] in ids and op['receipt'] and not storage.not_sent(op)]
         self.assertTrue(received)
         for op in received:
             self.assertTrue(op['receipt']['observed_configuration']['http']['credential_redacted'])
@@ -348,6 +351,108 @@ class AutomaticJudgment(unittest.TestCase):
         self.assertEqual([], restitution.comparison(self.store, self.sid, 'fixture', self.cid)['rows'])
         self.assertEqual('BLOCKED', auto.status(self.store, self.store._connection, self.cid)['status'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
+
+    def judgments(self, ids):
+        return {o['operation_id']: o for o in self.store.inspect_operations() if o['operation_id'] in ids}
+
+    def assert_reopened(self, ids):
+        """Jugements clos sans envoi : la session peut préparer une nouvelle comparaison"""
+        from benchmark import automatic_judgment as auto
+        for op in self.judgments(ids).values():
+            self.assertEqual(('RECEIVED', {'status': 'NOT_SENT'}, '0'),
+                             (op['state'], op['receipt']['result'], op['observed_cost']['amount']))
+        progress = auto.status(self.store, self.store._connection, self.cid)
+        self.assertEqual(('BLOCKED', 0), (progress['status'], progress['completed']))
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
+        self.assertEqual([], auto.records(self.store, self.store._connection, self.cid))
+        self.assertEqual('NOT_SENT', judgment.inspect(self.store, ids[0])['diagnostic']['state'])
+        # Gardes du lancement d'une nouvelle comparaison sur la même enveloppe personnelle
+        auto.guard_budget(self.store, self.store._connection, self.budget, campaign_id='nouvelle-comparaison')
+        auto.preflight(self.store, self.sid, 'fixture', self.cid, self.transport)
+        self.http.request.assert_not_called()
+
+    def test_redemarrage_clot_les_jugements_jamais_emis(self):
+        from benchmark import automatic_judgment as auto, runtime
+        self.acquire()
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        runtime.stop(self.data, self.store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.assert_reopened(ids)
+        auto.execute_campaign(self.data, ids, self.transport)
+        self.http.request.assert_not_called()
+
+    def test_premier_jugement_refuse_avant_emission_clot_les_suivants(self):
+        from benchmark import automatic_judgment as auto
+        self.acquire()
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        with patch.object(type(self.transport), 'authorized', return_value=False):
+            auto.execute_campaign(self.data, ids, self.transport)
+        self.assertEqual('JUDGMENT_STOPPED', campaigns.inspect(self.store, self.cid)['stop_reason'])
+        self.assert_reopened(ids)
+
+    def test_premier_jugement_en_erreur_apres_emission_clot_les_suivants(self):
+        from benchmark import automatic_judgment as auto
+        self.acquire()
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        self.http.request.side_effect = OSError('connexion coupée')
+        auto.execute_campaign(self.data, ids, self.transport)
+        states = self.judgments(ids)
+        # Effets inconnus : jamais rejoué ; la suivante n'est jamais partie
+        self.assertEqual('AMBIGUOUS', states[ids[0]]['state'])
+        self.assertEqual(('RECEIVED', {'status': 'NOT_SENT'}), (states[ids[1]]['state'], states[ids[1]]['receipt']['result']))
+        self.assertEqual(1, self.http.request.call_count)
+        self.assertEqual('BLOCKED', auto.status(self.store, self.store._connection, self.cid)['status'])
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
+
+    def test_verrou_persistant_du_recu_de_jugement_rend_ambigu_sans_reemission(self):
+        from benchmark import automatic_judgment as auto
+        self.acquire()
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        locked = sqlite3.OperationalError('database is locked')
+        locked.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        with patch.object(storage, 'LOCK_RETRY_DELAYS', (0, 0)), \
+                patch.object(storage.Store, 'record_receipt', side_effect=locked) as record:
+            auto.execute_campaign(self.data, ids, self.transport)
+        self.assertEqual(3, record.call_count)
+        self.assertEqual('AMBIGUOUS', self.judgments(ids)[ids[0]]['state'])
+        self.assertEqual(1, self.http.request.call_count)
+
+    def test_erreur_sqlite_pendant_l_acquisition_arrete_la_campagne(self):
+        f = self.fixture
+        ids = campaigns.launch(self.store, self.sid, 'fixture', self.cid, f.body(),
+                               access_secret=SECRET, access_transport=f.access)
+        with patch.object(execution, 'execute', side_effect=sqlite3.OperationalError('database is locked')), \
+                self.assertLogs('benchmark.acquisition.execution', level='WARNING') as journal:
+            execution.execute_launch(self.data, ids, response, access_secret=SECRET, access_transport=f.access)
+        self.assertIn('OperationalError', '\n'.join(journal.output))
+        snapshot = campaigns.inspect(self.store, self.cid)
+        self.assertIsNone(snapshot['admission'])
+        self.assertEqual('ACQUISITION_STOPPED_BEFORE_EMISSION', snapshot['stop_reason'])
+        view = campaigns.launch_view(self.store, self.sid, 'fixture', self.cid)
+        self.assertNotIn('Benchmark en cours', views.render(view, 'csrf').decode())
+
+    def test_fil_de_campagne_survit_a_une_erreur_inattendue(self):
+        f = self.fixture
+        start = self.dispatch('POST', '/start', dict(f.body(), csrf_token='csrf'))[3]
+        with patch.object(execution, 'execute_launch', side_effect=sqlite3.OperationalError('database is locked')), \
+                self.assertLogs('benchmark.service', level='ERROR') as journal:
+            service._campaign_worker(self.data, start, response, None, SECRET, f.access, self.transport)
+        self.assertIn('OperationalError', '\n'.join(journal.output))
+        snapshot = campaigns.inspect(self.store, self.cid)
+        self.assertIsNone(snapshot['admission'])
+        self.assertIsNotNone(snapshot['stop_reason'])
+        from benchmark import automatic_judgment as auto
+        auto.guard_budget(self.store, self.store._connection, self.budget, campaign_id='nouvelle-comparaison')
+
+    def test_annulation_apres_creation_de_piece_ne_laisse_aucun_octet_orphelin(self):
+        f = self.fixture
+        ids = campaigns.launch(self.store, self.sid, 'fixture', self.cid, f.body(),
+                               access_secret=SECRET, access_transport=f.access)
+        # La pièce de sortie est écrite dans la transaction du reçu, puis celle-ci est annulée
+        with patch.object(campaigns, '_attribution', side_effect=RuntimeError('annulation fictive')):
+            execution.execute_launch(self.data, ids[:1], response, access_secret=SECRET, access_transport=f.access)
+        self.assertEqual([], self.store.verify_storage()['orphan_files'])
+        campaigns._intact(self.store)
+        self.assertEqual('AMBIGUOUS', self.judgments(ids)[ids[0]]['state'])
 
     def test_owned_post_and_proof_boundaries(self):
         from benchmark import automatic_judgment as auto

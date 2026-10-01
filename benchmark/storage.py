@@ -24,6 +24,7 @@ import re
 import secrets
 import sqlite3
 import stat
+import time
 
 from .model_catalog import require_current
 
@@ -125,6 +126,34 @@ class ConflictError(ValueError):
 
 class BudgetError(ValueError):
     """The envelope cannot admit another intent with the available evidence"""
+
+
+NOT_SENT = {'status': 'NOT_SENT'}
+# Attentes entre deux écritures refusées par un verrou ; avec le délai SQLite de 5 s par tentative, ~30 s au total
+LOCK_RETRY_DELAYS = (0.5, 1, 2, 4)
+
+
+def not_sent(operation):
+    """Opération close avant toute émission : reçu « non envoyé », coût nul connu"""
+    return operation['receipt'] is not None and operation['receipt']['result'] == NOT_SENT
+
+
+def locked(error):
+    """Verrou SQLite passager : rien n'est corrompu, l'écriture peut être retentée"""
+    return (isinstance(error, sqlite3.OperationalError)
+            and getattr(error, 'sqlite_errorcode', 0) & 0xff in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED))
+
+
+def retry_locked(write):
+    """Rejouer l'écriture locale refusée par un verrou, jamais l'appel distant dont elle garde la réponse"""
+    for delay in LOCK_RETRY_DELAYS:
+        try:
+            return write()
+        except sqlite3.OperationalError as error:
+            if not locked(error):
+                raise
+        time.sleep(delay)
+    return write()
 
 
 _SCHEMA = (
@@ -287,11 +316,15 @@ def _receipt(value, cost):
 
 # Écriture jointe à chaque transaction d'écriture du contexte courant, juste avant son COMMIT
 before_commit: ContextVar[Callable[[sqlite3.Connection], object] | None] = ContextVar('before_commit', default=None)
+# Fichiers de pièces écrits par la transaction en cours, retirés si elle est annulée
+_created_pieces: ContextVar[list | None] = ContextVar('_created_pieces', default=None)
 
 
 @contextmanager
 def _transaction(connection, *, write=False):
     connection.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
+    created: list = []
+    token = _created_pieces.set(created)
     try:
         yield
         joined = before_commit.get() if write else None
@@ -301,7 +334,19 @@ def _transaction(connection, *, write=False):
     except BaseException:
         if connection.in_transaction:
             connection.execute('ROLLBACK')
+        try:
+            for directory, name in created:
+                # Une pièce encore référencée n'est jamais retirée ; un échec garde l'inventaire des orphelins
+                if not connection.execute('SELECT 1 FROM pieces WHERE relative_path=?',
+                                          ('pieces/' + name,)).fetchone():
+                    os.unlink(name, dir_fd=directory)
+            if created:
+                os.fsync(created[0][0])
+        except (OSError, sqlite3.Error):
+            pass
         raise
+    finally:
+        _created_pieces.reset(token)
 
 
 def _text(value, label):
@@ -590,6 +635,8 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
                 raise IntegrityError("broken dossier/piece reference")
         return layout
     except sqlite3.DatabaseError as error:
+        if locked(error):
+            raise
         raise SchemaError("unreadable storage schema") from error
 
 
@@ -1049,6 +1096,28 @@ class Store:
             connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' WHERE operation_id=?",
                                (operation_id,))
 
+    def close_not_sent(self, operation_id: str) -> bool:
+        """Clore une intention jamais émise : reçu « non envoyé », coût nul connu
+
+        L'état est relu sous BEGIN IMMEDIATE : une opération déjà passée en émission possible
+        n'est jamais touchée, et un fil qui voudrait l'émettre ensuite la trouve close. Une base
+        restaurée ne prouve pas l'absence d'envoi après sa sauvegarde : rien n'y est clos
+        """
+        if os.path.lexists(self._root / 'restore.json'):
+            return False
+        connection = self._s1_connection()
+        with _transaction(connection, write=True):
+            if not connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' "
+                                      "WHERE operation_id=? AND state='INTENT_RECORDED'", (operation_id,)).rowcount:
+                return False
+            currency = connection.execute('SELECT b.currency FROM reservations r JOIN budgets b USING(budget_id) '
+                                          'WHERE r.operation_id=?', (operation_id,)).fetchone()[0]
+            self._record_receipt(connection, operation_id,
+                dict(receipt_id='not-sent-' + operation_id, observed_configuration=None, resources_seen=[],
+                     result=dict(NOT_SENT)),
+                dict(status='KNOWN', amount='0', currency=currency, source='Contrôle local : transport non engagé'))
+        return True
+
     def mark_ambiguous(self, operation_id: str, reason: str) -> None:
         _text(operation_id, 'operation_id')
         _text(reason, 'ambiguity_reason')
@@ -1199,7 +1268,7 @@ class Store:
                    name, role, media_type, content):
         if self._pieces_fd is None:
             raise ValueError("store is closed")
-        # Failed commits retain orphan bytes for S1 integrity inspection
+        # Une transaction annulée retire ses octets ; une coupure de processus les laisse à l'inventaire
         _identity(dossier_id, revision)
         for label, value in (("piece_id", piece_id), ("name", name), ("media_type", media_type)):
             _text(value, label)
@@ -1229,6 +1298,9 @@ class Store:
                         dst_dir_fd=self._pieces_fd, follow_symlinks=False)
             except FileExistsError as error:
                 raise ConflictError("piece file already exists") from error
+            created = _created_pieces.get()
+            if created is not None:
+                created.append((self._pieces_fd, filename))
         finally:
             os.unlink(temporary, dir_fd=self._pieces_fd)
         os.fsync(self._pieces_fd)

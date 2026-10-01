@@ -157,16 +157,24 @@ def reserve_campaign(store, session_id, dossier_id, campaign_id, transport):
 
 
 def execute_campaign(data, operation_ids, transport):
-    for operation_id in operation_ids:
+    for index, operation_id in enumerate(operation_ids):
         try:
             judgment.execute(data, operation_id, transport)
         except Exception as error:
-            with closing(storage.Store(data)) as store:
-                op = next(o for o in store.inspect_operations() if o['operation_id'] == operation_id)
-                campaign_id = json.loads(op['resources'][0])['request']['campaign_id']
-                c.stop(store, campaign_id, reason='JUDGMENT_STOPPED')
             logging.getLogger(__name__).warning('AUTOMATIC_JUDGMENT_STOPPED operation=%s error=%s',
                                                operation_id, type(error).__name__)
+            try:
+                with closing(storage.Store(data)) as store:
+                    # Refusé avant émission, puis les suivants : clos sans coût, jamais laissés en attente
+                    for remaining in operation_ids[index:]:
+                        store.close_not_sent(remaining)
+                    op = next(o for o in store.inspect_operations() if o['operation_id'] == operation_id)
+                    campaign_id = json.loads(op['resources'][0])['request']['campaign_id']
+                    c.stop(store, campaign_id, reason='JUDGMENT_STOPPED')
+            except Exception as failure:
+                # Le démarrage suivant de l'exécuteur close ce qui reste ouvert
+                logging.getLogger(__name__).error('AUTOMATIC_JUDGMENT_STOP_FAILED operation=%s error=%s',
+                                                  operation_id, type(failure).__name__)
             return
 
 
@@ -178,7 +186,7 @@ def _completed(store, connection, ops):
     """
     count = 0
     for op in ops:
-        if op['receipt'] is None:
+        if op['receipt'] is None or storage.not_sent(op):
             continue
         if op['receipt']['result'] is not None:
             count += 1

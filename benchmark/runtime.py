@@ -154,6 +154,15 @@ def stop(root, store, reason, after_process_exit=False):
             except BlockingIOError:
                 # Service exit does not establish independent worker exit
                 pass
+        if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s2_control'").fetchone():
+            # Seul un fil de l'exécuteur émet préparations, vérifications et jugements automatiques :
+            # le processus sorti, leurs intentions restées avant émission ne partiront jamais
+            # Candidats et jugements opérateur gardent leurs intentions, reprises par leur autorité
+            from .automatic_judgment import FORMAT
+            for row in store.inspect_operations():
+                if row['state'] == 'INTENT_RECORDED' and (
+                        row['phase'] in ('preparation', 'correction', 'qualification') or row['engine_version'] == FORMAT):
+                    store.close_not_sent(row['operation_id'])
     return status(root, store)
 
 
