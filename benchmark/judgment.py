@@ -244,18 +244,20 @@ def execute(data, operation_id, transport):
                 proposal = None
                 receipt['observed_configuration']['incident'] = 'UNUSABLE_JUDGMENT_PROPOSAL'
             receipt['result'] = proposal
-            store.record_receipt(operation_id, receipt, response['cost'])
+            # La réponse reste en mémoire : seule l'écriture locale est retentée, jamais l'appel
+            storage.retry_locked(lambda: store.record_receipt(operation_id, receipt, response['cost']))
             if proposal and proposal['evidence_binding']['warnings']:
                 logging.getLogger(__name__).warning('JUDGMENT_EVIDENCE_METADATA_CORRECTED operation=%s citations=%s',
                     operation_id, len(proposal['evidence_binding']['warnings']))
             logging.getLogger(__name__).info('JUDGMENT_RECEIVED operation=%s usable=%s cost=%s',
                                             operation_id, proposal is not None, response['cost']['status'])
         except BaseException as error:
-            current = next(x for x in store.inspect_operations() if x['operation_id'] == operation_id)
-            if current['state'] == 'EMISSION_POSSIBLE':
-                store.mark_ambiguous(operation_id, 'JUDGMENT_EFFECTS_UNKNOWN')
             logging.getLogger(__name__).error('JUDGMENT_STOPPED operation=%s error=%s',
                                               operation_id, type(error).__name__)
+            current = storage.retry_locked(lambda: next(
+                x for x in store.inspect_operations() if x['operation_id'] == operation_id))
+            if current['state'] == 'EMISSION_POSSIBLE':
+                storage.retry_locked(lambda: store.mark_ambiguous(operation_id, 'JUDGMENT_EFFECTS_UNKNOWN'))
             raise
 
 
@@ -282,6 +284,8 @@ def diagnostic(store, connection, operation, ctx):
     if receipt is None:
         return dict(state='RECONCILIATION_REQUIRED' if operation['state'] != 'INTENT_RECORDED' else 'EXECUTION_REQUIRED',
                     reason='Jugement sans reçu ; vérifier les effets avant tout nouvel appel')
+    if storage.not_sent(operation):
+        return dict(state='NOT_SENT', reason='Jugement clos avant envoi : aucun appel ni coût')
     proposal = _retained_proposal(store, connection, operation, ctx, recover_metadata=True)
     if proposal and proposal.get('evidence_binding', {}).get('recovered_from_receipt'):
         return dict(state='EVALUATED_METADATA_CORRECTED',
@@ -332,7 +336,7 @@ def evaluation_judgment(store, connection, value, ctx, operation, result):
 
 def _retained_proposal(store, connection, operation, ctx, *, recover_metadata=False):
     receipt = operation['receipt']
-    if receipt is None:
+    if receipt is None or storage.not_sent(operation):
         return None
     wire = operation['resources'][1]
     observed = receipt['observed_configuration']

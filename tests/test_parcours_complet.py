@@ -621,6 +621,35 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual([], sauts)
         self.assertEqual(set(), self.ATTEIGNABLES - set(entrants))
 
+    def test_redemarrage_clot_une_preparation_jamais_envoyee(self):
+        from benchmark import runtime
+        page, _, _ = self.request('/')
+        target = page.link('Décrire mon cas')
+        page, _, _ = self.request(target)
+        key_form = page.form('/access/key')
+        self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
+        page, _, _ = self.request(target)
+        page = self.submit(page, '/dossiers', {'request': 'Transformer des notes de réunion en une liste complète des actions à relire'})
+        dossier = page.link('Actualiser')
+        self.starts.get_nowait()
+        # L'exécuteur redémarre avant d'avoir envoyé la préparation : son fil de travail a disparu
+        with closing(storage.Store(self.data)) as store:
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+            operation = store.inspect_operations()[0]
+        self.assertEqual(('RECEIVED', {'status': 'NOT_SENT'}, '0'),
+                         (operation['state'], operation['receipt']['result'], operation['observed_cost']['amount']))
+        page, _, _ = self.request(dossier)
+        self.assertNotIn('Préparation en attente', page.visible)
+        # La session renvoie sans intervention ; un seul appel part, celui du nouvel envoi
+        page, _, _ = self.request(target)
+        page = self.submit(page, '/dossiers', {'request': 'Relever les décisions prises pendant la réunion et leurs responsables'})
+        second = page.link('Actualiser')
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        page, _, _ = self.request(second)
+        self.examine(page, second, 'clarification après redémarrage', 'Envoyer ma réponse')
+        self.assertEqual(1, len(self.calls))
+        self.assertNotEqual(operation['operation_id'], self.calls[0][1])
+
     def test_acces_openrouter_factice_et_retours(self):
         self.request('/preparation')
         page, _, _ = self.request('/preparation/access')

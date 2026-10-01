@@ -1,10 +1,13 @@
 """Qualification automatisée S17, sans appel réseau réel"""
+from contextlib import closing
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -423,6 +426,85 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.assertEqual(['La vérification de l’exemple est indisponible pour le moment. Réessayez plus tard.',
                           'Ajoutez ou vérifiez votre clé OpenRouter pour continuer. Aucun appel n’a été lancé.'],
                          [response['value']['error'] for response in responses])
+
+    def operation(self, operation_id):
+        return next(o for o in self.store.inspect_operations() if o['operation_id'] == operation_id)
+
+    def assert_not_sent(self, operation_id):
+        operation = self.operation(operation_id)
+        self.assertEqual(('RECEIVED', {'status': 'NOT_SENT'}, 'KNOWN', '0'),
+                         (operation['state'], operation['receipt']['result'],
+                          operation['observed_cost']['status'], operation['observed_cost']['amount']))
+
+    def test_stockage_non_verifie_clot_la_verification_et_la_session_peut_relancer(self):
+        transport, operation_id = self.validate({'qualified': True, 'findings': [], 'summary': 'OK'})
+        with patch.object(storage.Store, 'verify_storage', return_value={'integrity_ok': False, 'orphan_files': []}):
+            prep.execute_qualification(self.data, operation_id, transport)
+        self.assert_not_sent(operation_id)
+        self.assertEqual([], transport.calls)
+        retry, second = self.validate({'qualified': True, 'findings': [], 'summary': 'OK'})
+        self.assertNotEqual(operation_id, second)
+        prep.execute_qualification(self.data, second, retry)
+        self.assertEqual(1, len(retry.calls))
+        self.assertEqual('QUALIFIED', prep.view(self.store, self.session, 'dossier')['qualification']['status'])
+
+    def test_redemarrage_clot_la_verification_jamais_emise_sauf_restauration(self):
+        from benchmark import runtime
+        transport, operation_id = self.validate({'qualified': True, 'findings': [], 'summary': 'OK'})
+        # Une base restaurée ne prouve pas l'absence d'envoi après la sauvegarde : l'intention reste
+        marker = self.data / 'restore.json'
+        os.close(os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        marker.write_text('{"state":"RESTORED_RECONCILIATION_REQUIRED"}')
+        runtime.stop(self.data, self.store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.assertEqual('INTENT_RECORDED', self.operation(operation_id)['state'])
+        marker.unlink()
+        runtime.stop(self.data, self.store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.assert_not_sent(operation_id)
+        prep.execute_qualification(self.data, operation_id, transport)
+        self.assertEqual([], transport.calls)
+
+    def test_recu_verrouille_quelques_secondes_enregistre_sans_second_appel(self):
+        held = threading.Event()
+
+        def reader():
+            # Une lecture longue garde son verrou partagé au-delà du délai d'attente SQLite de 5 s
+            with closing(sqlite3.connect(self.data / 'metadata.sqlite3')) as other:
+                other.execute('BEGIN')
+                other.execute('SELECT count(*) FROM operations').fetchone()
+                held.set()
+                time.sleep(7)
+                other.execute('COMMIT')
+
+        class Locking(QualificationTransport):
+            def __call__(inner, operation, request):
+                threading.Thread(target=reader).start()
+                held.wait(2)
+                return super().__call__(operation, request)
+
+        transport = Locking({'qualified': True, 'findings': [], 'summary': 'OK'})
+        _, operation_id, _ = prep.validate_and_qualify(
+            self.store, self.session, 'dossier',
+            prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']), 'b' * 40, transport)
+        started = time.monotonic()
+        prep.execute_qualification(self.data, operation_id, transport)
+        self.assertGreater(time.monotonic() - started, 5)
+        self.assertEqual(1, len(transport.calls))
+        operation = self.operation(operation_id)
+        self.assertEqual(('RECEIVED', '0.15'), (operation['state'], operation['observed_cost']['amount']))
+        self.assertEqual('QUALIFIED', prep.view(self.store, self.session, 'dossier')['qualification']['status'])
+        self.assertEqual([], self.store.verify_storage()['orphan_files'])
+
+    def test_verrou_persistant_rend_ambigu_sans_reemission(self):
+        transport, operation_id = self.validate({'qualified': True, 'findings': [], 'summary': 'OK'})
+        locked = sqlite3.OperationalError('database is locked')
+        locked.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        with patch.object(storage, 'LOCK_RETRY_DELAYS', (0, 0)), \
+                patch.object(storage.Store, '_record_receipt', side_effect=locked) as record:
+            prep.execute_qualification(self.data, operation_id, transport)
+        self.assertEqual(3, record.call_count)
+        self.assertEqual('AMBIGUOUS', self.operation(operation_id)['state'])
+        prep.execute_qualification(self.data, operation_id, transport)
+        self.assertEqual(1, len(transport.calls))
 
 
 if __name__ == '__main__':

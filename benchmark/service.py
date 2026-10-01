@@ -115,10 +115,12 @@ class BoundedUnixServer(socketserver.UnixStreamServer):
 
     def __init__(self, socket_path, handler, *, data, workers):
         self.request_queue_size = max(EXECUTOR_BACKLOG_MINIMUM, EXECUTOR_BACKLOG_FACTOR * workers)
+        # Avant le bind : un échec y appelle `server_close`, qui doit laisser remonter l'erreur d'origine
+        self._stopped = False
+        self._workers = []
         super().__init__(socket_path, handler)
         self._jobs = queue.SimpleQueue()
         self._free = threading.Semaphore(workers)
-        self._stopped = False
         self._opened = queue.SimpleQueue()
         # Démons : une jointure bornée honore la requête en cours sans retenir le processus à jamais
         self._workers = [threading.Thread(target=self._work, args=(data,), name=f'executor-{index}',
@@ -550,11 +552,11 @@ def _probe_worker(future, data, request, fetch, secret, access_transport, transp
 def _campaign_worker(data, start, candidate_transport, factory, secret, access_transport, judge):
     from . import automatic_judgment as auto
     from .acquisition import campaigns, execution
-    execution.execute_launch(data, start['candidate_attempts'], candidate_transport,
-                             transport_factory=factory, access_secret=secret, access_transport=access_transport)
-    if 'judgment_campaign' not in start:
-        return
     try:
+        execution.execute_launch(data, start['candidate_attempts'], candidate_transport,
+                                 transport_factory=factory, access_secret=secret, access_transport=access_transport)
+        if 'judgment_campaign' not in start:
+            return
         with closing(Store(data)) as store:
             snapshot = campaigns.inspect(store, start['judgment_campaign'])
             if snapshot['admission'] is None:
@@ -565,9 +567,17 @@ def _campaign_worker(data, start, candidate_transport, factory, secret, access_t
                 campaigns.stop(store, start['judgment_campaign'], reason='JUDGMENT_STOPPED')
         auto.execute_campaign(data, ids, judge)
     except Exception as error:
-        with closing(Store(data)) as store:
-            campaigns.stop(store, start['judgment_campaign'], reason='JUDGMENT_STOPPED')
-        logging.getLogger(__name__).error('AUTOMATIC_JUDGMENT_STOPPED error=%s', type(error).__name__)
+        # Un fil qui meurt laisserait la campagne en attente sans fin : l'erreur est journalisée, la campagne arrêtée
+        logging.getLogger(__name__).error('AUTOMATIC_JUDGMENT_STOPPED campaign=%s error=%s',
+                                          start.get('judgment_campaign'), type(error).__name__)
+        if 'judgment_campaign' not in start:
+            return
+        try:
+            with closing(Store(data)) as store:
+                campaigns.stop(store, start['judgment_campaign'], reason='JUDGMENT_STOPPED')
+        except Exception as failure:
+            logging.getLogger(__name__).error('CAMPAIGN_STOP_FAILED campaign=%s error=%s',
+                                              start['judgment_campaign'], type(failure).__name__)
 
 
 def _retention_worker(data, dossier_id, function, *args):

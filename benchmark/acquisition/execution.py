@@ -61,19 +61,26 @@ def execute_launch(data, attempts, transport=None, *, transport_factory=None,
         try:
             execute(data, attempt_id, transport, transport_factory=transport_factory,
                     access_secret=access_secret, access_transport=access_transport)
-        except (ValueError, ConflictError, BudgetError, IntegrityError) as error:
+        except Exception as error:
             # An interruption leaves the remaining intentions for private inspection
+            # Toute erreur, SQLite comprise, arrête la campagne : jamais d'attente sans fil de travail
             logging.getLogger(__name__).warning('ACQUISITION_STOPPED operation=%s error=%s',
                                                 attempt_id, type(error).__name__)
-            with closing(Store(data)) as store:
-                connection = c.connection_for(store)
-                with _transaction(connection, write=True):
-                    row = connection.execute(
-                        'SELECT campaign_id FROM s4_attempts JOIN operations USING(operation_id) '
-                        'JOIN s4_status USING(campaign_id) WHERE operation_id=? '
-                        "AND state='INTENT_RECORDED' AND s4_status.admission_id IS NOT NULL", (attempt_id,)).fetchone()
-                    if row:
-                        c._stop(connection, row[0], 'ACQUISITION_STOPPED_BEFORE_EMISSION')
+            try:
+                with closing(Store(data)) as store:
+                    connection = c.connection_for(store)
+                    with _transaction(connection, write=True):
+                        row = connection.execute(
+                            'SELECT campaign_id, state FROM s4_attempts JOIN operations USING(operation_id) '
+                            'JOIN s4_status USING(campaign_id) WHERE operation_id=? '
+                            'AND s4_status.admission_id IS NOT NULL', (attempt_id,)).fetchone()
+                        if row:
+                            c._stop(connection, row[0], 'ACQUISITION_STOPPED_BEFORE_EMISSION' if row[1] == 'INTENT_RECORDED'
+                                    else 'ACQUISITION_RECEIPT_NOT_VERIFIED')
+            except Exception as failure:
+                # Le démarrage suivant de l'exécuteur ferme l'admission restée ouverte
+                logging.getLogger(__name__).error('ACQUISITION_STOP_FAILED operation=%s error=%s',
+                                                  attempt_id, type(failure).__name__)
             break
 
 
@@ -159,39 +166,47 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
             receipt, cost = response['receipt'], response['cost']
             receipt['resources_seen'] = [p['id'] for p in request['pieces']]
             c._result(receipt, cost)
-            with _transaction(connection, write=True):
-                # A stop during the callback must not discard the late receipt
-                store._record_receipt(connection, attempt_id, receipt, cost)
-                output = receipt['result']['output']
-                output_id = None
-                if output is not None:
-                    output_id = 'output-' + secrets.token_hex(16)
-                    store._put_piece(connection, operation['dossier_id'], operation['revision'], output_id,
-                                     name='Sortie brute ' + attempt_id, role='judge', media_type='text/plain; charset=utf-8', content=output.encode('utf-8'))
-                connection.execute('INSERT INTO s4_results VALUES (?,?,?,?,?)',
-                                   (attempt_id, output_id, value_digest(receipt), value_digest(cost), c._now()))
-                incomplete = (c._attribution(receipt, request['requested_configuration'])
-                              or (cost['status'] == 'UNKNOWN'
-                                  and snapshot['manifest'].get('financial_cost_policy') != 'retain_reserve')
-                              or receipt['result']['emission'] != 'ESTABLISHED')
-                if incomplete:
-                    connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
-                                       ('ACQUISITION_EVIDENCE_INCOMPLETE', c._now(), snapshot['manifest']['campaign_id']))
+            output = receipt['result']['output']
+
+            def persist():
+                with _transaction(connection, write=True):
+                    # A stop during the callback must not discard the late receipt
+                    store._record_receipt(connection, attempt_id, receipt, cost)
+                    output_id = None
+                    if output is not None:
+                        output_id = 'output-' + secrets.token_hex(16)
+                        store._put_piece(connection, operation['dossier_id'], operation['revision'], output_id,
+                                         name='Sortie brute ' + attempt_id, role='judge', media_type='text/plain; charset=utf-8', content=output.encode('utf-8'))
+                    connection.execute('INSERT INTO s4_results VALUES (?,?,?,?,?)',
+                                       (attempt_id, output_id, value_digest(receipt), value_digest(cost), c._now()))
+                    incomplete = (c._attribution(receipt, request['requested_configuration'])
+                                  or (cost['status'] == 'UNKNOWN'
+                                      and snapshot['manifest'].get('financial_cost_policy') != 'retain_reserve')
+                                  or receipt['result']['emission'] != 'ESTABLISHED')
+                    if incomplete:
+                        connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
+                                           ('ACQUISITION_EVIDENCE_INCOMPLETE', c._now(), snapshot['manifest']['campaign_id']))
+                return incomplete
+            # La réponse reste en mémoire : seule l'écriture locale est retentée, jamais l'appel
+            incomplete = storage.retry_locked(persist)
             received = True
             logging.getLogger(__name__).info('ACQUISITION_RECEIVED operation=%s usable=%s cost=%s',
                 attempt_id, output is not None and not incomplete, cost['status'])
         except Exception as error:
             # Exception text can contain private bytes. Preserve a fixed technical
             # reason; neither an unusable response nor an exception settles cost
-            with _transaction(connection, write=True):
-                op = store._operation_for_update(connection, attempt_id, ('EMISSION_POSSIBLE', 'AMBIGUOUS'))
-                if op['state'] == 'EMISSION_POSSIBLE':
-                    connection.execute("UPDATE operations SET state='AMBIGUOUS', ambiguity_reason=? WHERE operation_id=?",
-                                       ('ACQUISITION_RECEIPT_NOT_VERIFIED', attempt_id))
-                connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
-                                   ('ACQUISITION_RECEIPT_NOT_VERIFIED', c._now(), snapshot['manifest']['campaign_id']))
             logging.getLogger(__name__).error('ACQUISITION_AMBIGUOUS operation=%s error=%s',
                                               attempt_id, type(error).__name__)
+
+            def unverified():
+                with _transaction(connection, write=True):
+                    op = store._operation_for_update(connection, attempt_id, ('EMISSION_POSSIBLE', 'AMBIGUOUS'))
+                    if op['state'] == 'EMISSION_POSSIBLE':
+                        connection.execute("UPDATE operations SET state='AMBIGUOUS', ambiguity_reason=? WHERE operation_id=?",
+                                           ('ACQUISITION_RECEIPT_NOT_VERIFIED', attempt_id))
+                    connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
+                                       ('ACQUISITION_RECEIPT_NOT_VERIFIED', c._now(), snapshot['manifest']['campaign_id']))
+            storage.retry_locked(unverified)
     if received:
         continue_preauthorized(data, attempt_id, transport,
                                transport_factory=transport_factory)

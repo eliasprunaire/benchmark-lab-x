@@ -13,6 +13,7 @@ from pathlib import Path
 import shutil
 import signal
 import socket
+import socketserver
 import sqlite3
 import subprocess
 import sys
@@ -1034,3 +1035,13 @@ class ExecutorConcurrencyTests(unittest.TestCase):
             self.assertGreaterEqual(codes[200], 1, codes)
             self.assertLessEqual(codes[200], 2, codes)
             self.assertLess(slowest, 1)
+
+
+class ExecutorBindTests(unittest.TestCase):
+    def test_bind_impossible_fait_remonter_l_erreur_d_origine(self):
+        with tempfile.TemporaryDirectory() as directory:
+            # Chemin trop long pour une socket Unix : le bind échoue avant tout fil de travail
+            path = os.path.join(directory, 'x' * 200 + '.sock')
+            with self.assertRaises(OSError) as raised:
+                service.BoundedUnixServer(path, socketserver.StreamRequestHandler, data=directory, workers=1)
+            self.assertIsNone(raised.exception.__context__)
