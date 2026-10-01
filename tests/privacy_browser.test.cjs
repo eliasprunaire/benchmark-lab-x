@@ -66,7 +66,14 @@ def launch(state=None):
             'checks': [{'key': 'example_validated', 'ok': True, 'detail': 'Exemple validé'}],
             'launchable': state is None, 'judgment_estimate_usd': '0.30', 'estimate_total_usd': None,
             'access': {'status': 'connected', 'limit_remaining_usd': '18.5', 'limit_usd': '20'}}
-print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(),
+# Cas lancé : le consentement est replié dans « Vos données pour ce cas », comme le fait views.render
+from benchmark_web.privacy_views import render_contribution, render_privacy_controls
+case = example_view()
+example_page = views.render(case, 'csrf').decode()
+consent, controls = render_contribution(case, 'csrf'), render_privacy_controls(case, 'csrf')
+assert consent in example_page and controls in example_page
+launched = example_page.replace(consent, '').replace(controls, render_privacy_controls(case, 'csrf', consent))
+print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
                   'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT,
@@ -117,6 +124,8 @@ print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(),
       try { res.setHeader('Content-Type', 'text/javascript'); res.end(readFileSync('benchmark_web/privacy.js')); }
       catch {res.writeHead(404).end();}
     } else if (url.pathname.endsWith('/archive')) {
+      if (mode === 'archiveDown') {res.writeHead(503).end(); return;}
+      if (mode === 'archiveHang') {await new Promise(resolve => {release = resolve;}); res.writeHead(503).end(); return;}
       res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(manifest));
     } else if (url.pathname.endsWith('/items/record')) {
       const part = Number(url.searchParams.get('part'));
@@ -871,10 +880,17 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     const running = () => page.locator('#preparation-progress progress').isVisible();
     await start();
     assert.equal(await page.locator('h1').textContent(), 'Benchmark en cours');
+    // Une zone `aria-live` réécrite à l'identique serait annoncée de nouveau : rien n'est remplacé sans changement
+    await page.evaluate(() => {
+      window.statusMutations = 0;
+      new MutationObserver(records => {window.statusMutations += records.length;})
+        .observe(document.getElementById('campaign-status'), {childList: true, subtree: true, characterData: true});
+    });
     await tick(3000, 503, 'FOLLOWUP_UNAVAILABLE');
     assert.equal(await running(), true, 'suivi arrêté par un échec isolé');
     // Réessai après 8 s ; un succès remet le compte d'échecs à zéro
     await tick(8000, 'followup', 'FOLLOWUP_ACTIVE');
+    assert.equal(await page.evaluate(() => window.statusMutations), 0, 'statut remplacé sans changement');
     await tick(4000, 503, 'FOLLOWUP_UNAVAILABLE');
     await tick(8000, 503, 'FOLLOWUP_UNAVAILABLE');
     assert.equal(await running(), true, 'suivi arrêté après deux échecs');
@@ -888,4 +904,56 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1');
     assert.deepEqual(failures, []);
   } finally {followupReplies = []; await context.close();}
+});
+
+test('after launch, archive errors reach the case archive status, visible at 390 px without moving focus', async () => {
+  fixture();
+  const context = await browser.newContext({viewport: {width: 390, height: 844}});
+  try {
+    const page = await pageFor(context);
+    const failures = [];
+    page.on('pageerror', error => failures.push(error.message));
+    mode = 'archiveDown';
+    await page.goto(origin + '/render/launched');
+    const archiveStatus = page.locator('[data-privacy-controls] > [data-privacy-status]');
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] > [data-privacy-status]')
+      .textContent.includes('Le serveur n’a pas pu envoyer ce cas'));
+    // Le statut du consentement replié garde son propre message
+    assert.equal(await page.locator('.privacy-consent [data-privacy-status]').textContent(), 'Vous ne partagez pas cet exemple.');
+    assert.equal(await archiveStatus.isVisible(), true);
+    assert.equal(await page.evaluate(() => document.activeElement === document.body), true);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.deepEqual(failures, []);
+  } finally {mode = 'normal'; await context.close();}
+});
+
+test('a silent archive server is abandoned after 15 s with the existing message', async () => {
+  fixture();
+  const context = await browser.newContext();
+  try {
+    const page = await pageFor(context);
+    // Délai réel raccourci dans la page ; la durée demandée par le script est relevée
+    await page.addInitScript(() => {
+      const timeout = AbortSignal.timeout.bind(AbortSignal);
+      window.requestedTimeouts = [];
+      AbortSignal.timeout = delay => {window.requestedTimeouts.push(delay); return timeout(50);};
+    });
+    mode = 'archiveHang';
+    await page.goto(origin + '/render/launched');
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] > [data-privacy-status]')
+      .textContent.includes('Le serveur n’a pas pu envoyer ce cas'));
+    assert.equal(await page.evaluate(() => window.requestedTimeouts.every(delay => delay === 15000)
+      && window.requestedTimeouts.length >= 1), true);
+  } finally {mode = 'normal'; release?.(); await context.close();}
+});
+
+test('without JavaScript the case archive status keeps its static text', async () => {
+  const context = await browser.newContext({javaScriptEnabled: false});
+  try {
+    const page = await context.newPage(); page.setDefaultTimeout(3000);
+    await page.goto(origin + '/render/launched');
+    assert.equal(await page.locator('[data-privacy-controls] > [data-privacy-status]').textContent(),
+      'Vos copies s’affichent ici quand JavaScript est activé.');
+    assert.equal(await page.locator('.privacy-consent [data-privacy-status]').textContent(), 'Vous ne partagez pas cet exemple.');
+  } finally {await context.close();}
 });

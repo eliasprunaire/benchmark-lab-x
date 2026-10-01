@@ -353,7 +353,7 @@ const script = require('node:fs').readFileSync(0, 'utf8');
     const timers = new Map(), events = {}, requests = [], navigations = [], logs = [], delays = [];
     // Un échec isolé réessaie plus tard ; trois échecs consécutifs arrêtent le suivi
     const attempts = outcome === 'error' ? 3 : 1;
-    const updates = [], campaignStatus = {replaceChildren: (...nodes) => updates.push(nodes)};
+    const updates = [], campaignStatus = {innerHTML: 'Une réponse reçue', replaceChildren: (...nodes) => updates.push(nodes)};
     const campaign = outcome.startsWith('campaign-');
     const waiting = outcome === 'waiting' || outcome === 'campaign-waiting';
     const status = {}, progress = {}, pause = {addEventListener: (_, fn) => events.pause = fn};
@@ -371,7 +371,7 @@ const script = require('node:fs').readFileSync(0, 'utf8');
       clearTimeout: id => timers.delete(id),
       DOMParser: class {parseFromString() {return {getElementById: id => {
         if (id === 'preparation-progress') return waiting ? panel : null;
-        if (id === 'campaign-status' && campaign) return {childNodes: ['Deux réponses reçues']};
+        if (id === 'campaign-status' && campaign) return {innerHTML: 'Deux réponses reçues', childNodes: ['Deux réponses reçues']};
         if (id === 'campaign-followup' && campaign) return {dataset: outcome === 'campaign-finished' ? {resultsHref: '/results'} : {}};
         return null;
       }};}},

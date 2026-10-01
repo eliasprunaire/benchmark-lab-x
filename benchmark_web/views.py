@@ -89,7 +89,8 @@ PREPARATION_PROGRESS_SCRIPT = """(() => {
         if (!stopped) {
           const current = document.getElementById('campaign-status');
           const updated = next.getElementById('campaign-status');
-          if (current && updated) current.replaceChildren(...updated.childNodes);
+          // Zone `aria-live` : la réécrire à l'identique la ferait annoncer de nouveau
+          if (current && updated && current.innerHTML !== updated.innerHTML) current.replaceChildren(...updated.childNodes);
           failures = 0;
           console.info('FOLLOWUP_ACTIVE', response.status);
         }
@@ -190,18 +191,27 @@ def preparation_steps(value):
     campaigns = [c for c in value.get('campaigns', []) if c['task']['revision'] == revision]
     if not campaign and campaigns:
         campaign = campaigns[-1]
+    # Résultats : la dernière comparaison lancée, même si une sélection plus récente attend son lancement
+    launched = campaign if campaign.get('attempts') else next((c for c in reversed(campaigns) if c['attempts']), {})
     base = value['href'] if kind in ('comparison', 'campaign_models', 'attempt_detail') else dossier + '/campaigns/' + campaign['campaign_id'] if campaign else None
     downstream = kind in ('configurations', 'campaign_launch', 'comparison', 'campaign_models', 'attempt_detail')
     example = downstream or bool(value.get('package'))
     models = downstream or value.get('qualified') or bool(campaign)
-    results = kind in ('comparison', 'campaign_models', 'attempt_detail') or bool(campaign.get('attempts'))
-    current = 5 if kind in ('comparison', 'attempt_detail') or kind == 'campaign_launch' and results else 4 if downstream else 3 if value.get('validation') or value.get('qualified') else 2 if example else 1
-    models_href = base + ('/configurations' if results else '/conditions') if base else dossier + '/configurations'
-    if not downstream and not results and value.get('qualified') and revision == value.get('current_revision', revision):
+    ran = kind in ('comparison', 'campaign_models', 'attempt_detail') or bool(campaign.get('attempts'))
+    results = ran or bool(launched)
+    current = (5 if kind in ('comparison', 'attempt_detail') or kind == 'campaign_launch' and ran else 4 if downstream
+               else 5 if ran else 4 if campaign else 3 if value.get('validation') or value.get('qualified') else 2 if example else 1)
+    models_href = base + ('/configurations' if ran else '/conditions') if base else dossier + '/configurations'
+    if not downstream and not ran and value.get('qualified') and revision == value.get('current_revision', revision):
         models_href = dossier + '/configurations'
     results_href = base
-    if base is not None and campaign.get('judgment') and campaign['judgment']['status'] != 'COMPLETE':
-        results_href = base + '/conditions'
+    if launched:
+        # Le suivi seulement tant qu'aucune évaluation n'est lisible ; les résultats dès la première
+        results_href = dossier + '/campaigns/' + launched['campaign_id']
+        active, ready, _ = campaign_followup(launched)
+        judgment = launched.get('judgment')
+        if active or not ready and judgment and not judgment['completed']:
+            results_href += '/conditions'
     # Sur la page du cas, les trois premières étapes sont un sommaire ; depuis une autre page, elles mènent
     # au haut du cas, où l'encadré d'état dit où l'on en est, jamais au milieu d'une section
     sections = [('' if downstream else '#') + anchor for anchor in ('besoin', 'exemple', 'validation')]
@@ -456,7 +466,10 @@ def render(value, csrf, path='/preparation', *, error=False):
             content += '<div id="availability">' + state_block(tone, 'Où j’en suis', heading,
                 '<p>' + text(next_step) + '</p>', actions) + '</div><script>' + PREPARATION_PROGRESS_SCRIPT + '</script>'
         else:
-            content += state_block(tone, 'Où j’en suis', heading, '<p>' + text(value['explanation']) + '</p><p class="hint">' + text(next_step) + '</p>', actions)
+            # L'explication de l'assistant (question sur l'exemple) ne vaut que tant que l'exemple n'est pas validé
+            body = '<p>' + text(next_step) + '</p>' if value['validation'] else (
+                '<p>' + text(value['explanation']) + '</p><p class="hint">' + text(next_step) + '</p>')
+            content += state_block(tone, 'Où j’en suis', heading, body, actions)
         if referral:
             references = BENCHMARK_REFERENCES.get(referral, ())
             if references:

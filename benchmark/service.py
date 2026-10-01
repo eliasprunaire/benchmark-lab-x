@@ -563,7 +563,7 @@ def _campaign_worker(data, start, candidate_transport, factory, secret, access_t
                 return
             ids = auto.reserve_campaign(store, start['session_id'], start['dossier_id'],
                                         start['judgment_campaign'], judge)
-            if not ids and not any(a['output_piece_id'] for a in snapshot['attempts']):
+            if not ids and not any(campaigns.answered(a) for a in snapshot['attempts']):
                 campaigns.stop(store, start['judgment_campaign'], reason='JUDGMENT_STOPPED')
         auto.execute_campaign(data, ids, judge)
     except Exception as error:

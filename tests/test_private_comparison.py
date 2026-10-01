@@ -402,6 +402,16 @@ class PiTransportTests(unittest.TestCase):
         self.assertEqual('0.1', self.store.inspect_budget('pi-offline')['reserved'])
         self.assertFalse(c.inspect(self.store,'pi-offline')['admission'])
 
+    def test_blank_response_is_an_incident_not_an_answer(self):
+        # Fin normale mais contenu vide ou blanc : réponse inutilisable, jamais une sortie à évaluer
+        document = json.loads(self.raw)
+        document['choices'][0]['message']['content'] = ' \n '
+        self.raw = json.dumps(document).encode()
+        attempt = self.execute()
+        self.assertEqual('RECEIVED', attempt['state'])
+        self.assertEqual('PROVIDER_RESPONSE_INCOMPLETE', attempt['operation']['receipt']['result']['incident'])
+        self.assertTrue(attempt['operation']['receipt']['observed_configuration']['pi']['terminal'])
+
     def test_late_pi_failure_preserves_http_receipt_and_cost(self):
         read = pi._read_line
         def fail_terminal(process, timeout):

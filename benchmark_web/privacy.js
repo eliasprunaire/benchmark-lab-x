@@ -23,11 +23,16 @@ function validRecord(value) {
 function integrity(condition) {
   if (!condition) throw new Error('La copie reçue du serveur est incomplète ou illisible. Aucune nouvelle copie n’a été gardée ; vous pouvez réessayer.');
 }
+// A silent server is abandoned after 15 s with the same message as an HTTP failure
 async function jsonGet(url) {
-  const response = await fetch(url, {credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-    headers: {Accept: 'application/json'}});
-  if (!response.ok) throw new Error('Le serveur n’a pas pu envoyer ce cas. La copie gardée dans ce navigateur n’a pas changé.');
-  return response.json();
+  try {
+    const response = await fetch(url, {credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+      headers: {Accept: 'application/json'}, signal: AbortSignal.timeout(15000)});
+    if (!response.ok) throw new Error();
+    return await response.json();
+  } catch {
+    throw new Error('Le serveur n’a pas pu envoyer ce cas. La copie gardée dans ce navigateur n’a pas changé.');
+  }
 }
 function requestValue(request) {
   return new Promise((resolve, reject) => {
@@ -418,18 +423,23 @@ export async function mountPrivacy(root = document) {
   };
   try {await connect();}
   catch {
-    for (const element of historyRoots) element.querySelector('[data-privacy-status]').textContent =
+    for (const element of historyRoots) element.querySelector(':scope > [data-privacy-status]').textContent =
       'Ce navigateur ne permet pas d’ouvrir l’historique local. Impossible de vérifier quelles copies y sont gardées.';
     return;
   }
   for (const element of historyRoots) {
-    const status = element.querySelector('[data-privacy-status]');
+    // Its own status only: after launch, the folded consent form carries another one inside this element
+    const status = element.querySelector(':scope > [data-privacy-status]');
     const run = async (button, operation) => {
       button.disabled = true;
       try {await operation();}
-      catch (error) {status.textContent = error.name === 'QuotaExceededError'
+      catch (error) {
+        // A failure must be readable: open the folded panel that holds this status, without moving focus
+        if (element instanceof HTMLDetailsElement) element.open = true;
+        status.textContent = error.name === 'QuotaExceededError'
         ? 'Ce navigateur manque de place. Votre copie précédente est intacte. Exportez vos cas avant de libérer de la place.'
-        : error.message || 'L’action n’a pas abouti dans ce navigateur. Aucune copie n’est confirmée ; vous pouvez réessayer.';}
+        : error.message || 'L’action n’a pas abouti dans ce navigateur. Aucune copie n’est confirmée ; vous pouvez réessayer.';
+      }
       finally {button.disabled = false;}
     };
     if (element.hasAttribute('data-privacy-history')) {

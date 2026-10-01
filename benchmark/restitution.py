@@ -15,6 +15,7 @@ ATTRIBUTION = (
     'Le verdict vaut pour chaque modèle tel qu’il a été réglé et appelé ici, dans les conditions communes décrites. '
     'Le fournisseur, le niveau de raisonnement, Pi (l’outil qui fait travailler les modèles) et ses réglages influent aussi sur la réponse : le verdict ne les sépare pas du modèle. '
     'Avec un autre outil, un autre contexte ou un autre environnement, le résultat peut être différent.')
+NO_USABLE_RESPONSE = 'Aucune réponse exploitable de ce modèle : il n’est pas évalué et n’entre pas dans la comparaison.'
 LIMIT = 'Ces résultats portent sur un exemple inventé. Ils ne se transposent pas tels quels à vos dossiers réels et ne s’additionnent pas avec ceux d’autres cas ou d’autres comparaisons.'
 VERDICTS = ('SATISFAIT', 'NE SATISFAIT PAS', 'A_REPRENDRE', 'INDETERMINE')
 FILTERS = ('case', 'sort', 'direction', 'verdict', 'obligation', 'configuration')
@@ -182,8 +183,12 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         progress_reason = progress.get('reason')
         if type(progress_status) is not str or (progress_reason is not None and type(progress_reason) is not str):
             raise ValueError('Progression du jugement invalide')
+        attempts = {a['operation_id']: a for a in campaign['attempts']}
         for attempt in pending:
-            if attempt['state'] == 'REVIEW_REQUIRED':
+            # Rien n'a été envoyé au juge : état terminal, la cellule reste comptée comme non couverte
+            if attempts[attempt['attempt_id']]['state'] == 'RECEIVED' and not attempts[attempt['attempt_id']]['answered']:
+                attempt.update(state='NO_USABLE_RESPONSE', next_action=NO_USABLE_RESPONSE)
+            elif attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='EVALUATION_' + progress_status,
                     next_action=progress_reason or 'Réponse reçue. Son évaluation automatique n’est pas terminée.')
     pending += [dict(attempt_id=record['attempt_id'], **record['decision'])

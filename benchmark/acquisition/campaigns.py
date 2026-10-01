@@ -113,7 +113,7 @@ _MANIFEST = ('campaign_id', 'version', 'contract_sha256', 'cases', 'panel',
 _MANIFEST_OPTIONAL = ('financial_cost_policy', 'recovery_of', 'official_fallback', 'funding')
 _CONFIGURATION = ('id', 'provider', 'model', 'revision', 'access', 'channel_id',
                   'route', 'parameters', 'effort', 'required_observations')
-_CONFIGURATION_OPTIONAL = ('effort_limit', 'estimate', 'effort_requested')
+_CONFIGURATION_OPTIONAL = ('effort_limit', 'estimate', 'effort_requested', 'effort_choice')
 _AUTHORITY = ('actor', 'authority_id', 'purpose', 'manifest_sha256', 'execution_authority',
               'candidate_authority', 'budget_authority', 'budget_id', 'allowed_cells', 'reserve_amounts')
 _OBSERVED = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters', 'effort',
@@ -243,6 +243,8 @@ def _manifest(value, contract, *, require_data_collection=False):
             raise ValueError('Limite d’effort inconnue')
         if config.get('effort_requested', _EFFORT_ORDER[0]) not in _EFFORT_ORDER:
             raise ValueError('Niveau demandé inconnu')
+        if config.get('effort_choice', 'explicit') != 'explicit':
+            raise ValueError('Choix de niveau inconnu')
         if 'estimate' in config:
             encode(config['estimate'])
         _texts(config['required_observations'], 'required_observations', required=True, unique=True)
@@ -466,8 +468,8 @@ def _configuration(model, tier, index, assumptions, fetched_at, chosen=None):
     }
     effort = 'off'
     effort_limit = None
-    # Un niveau choisi pour ce modèle remplace la demande commune, s'il l'accepte
-    requested = chosen if chosen in model['reasoning_levels'] else tier
+    # Un niveau choisi pour ce modèle remplace la demande commune ; s'il ne l'accepte pas, le plus proche est envoyé
+    requested = chosen or tier
     sent = adapted_effort(model['reasoning_levels'], requested)
     if sent is None:
         effort_limit = 'not_adjustable'
@@ -496,6 +498,9 @@ def _configuration(model, tier, index, assumptions, fetched_at, chosen=None):
     if effort not in ('off', requested):
         # Adaptation visible : le niveau demandé reste dans la configuration, à côté de celui envoyé
         configuration['effort_requested'] = requested
+    if chosen:
+        # La relecture distingue ce choix du palier commun, même quand ils coïncident
+        configuration['effort_choice'] = 'explicit'
     return configuration
 
 
@@ -512,7 +517,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
     if body['tier'] not in ('low', 'high'):
         raise ValueError('Palier inconnu')
     if (type(efforts) is not dict or not set(efforts) <= set(body['models'])
-            or any(type(level) is not str for level in efforts.values())):
+            or any(level not in _EFFORT_ORDER for level in efforts.values())):
         raise ValueError('Niveaux par modèle invalides')
     if type(candidate_identity) is not dict:
         raise LookupError('CANDIDATE_PI_UNAVAILABLE')
@@ -592,11 +597,12 @@ def configurations_view(store, session_id, dossier_id):
         panel = [] if not requested else requested[-1]['manifest']['panel']
         selected = {item['model'] for item in panel}
         available_tiers = ['low', 'high']
-        # ponytail: palier commun relu sur la première configuration qui le porte, champ de manifeste si ambigu un jour
+        # Ce qui a été demandé : le palier commun pour les modèles sans choix propre, le choix sinon
         current_tier = next((item.get('effort_requested', item['effort']) for item in panel
-                             if item.get('effort_requested', item['effort']) in available_tiers), 'low')
-        chosen = {item['model']: item['effort'] for item in panel
-                  if 'effort_requested' not in item and item['effort'] not in ('off', current_tier)}
+                             if 'effort_choice' not in item
+                             and item.get('effort_requested', item['effort']) in available_tiers), 'low')
+        chosen = {item['model']: item.get('effort_requested', item['effort']) for item in panel
+                  if 'effort_choice' in item}
         models = []
         for model in [] if catalogue is None else catalogue['models']:
             if model['excluded'] is not None or model['route'] is None:
@@ -1381,6 +1387,11 @@ def close_admission(store, reason):
         connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE admission_id IS NOT NULL', (reason, _now()))
 
 
+def answered(attempt):
+    """Réponse à évaluer : sortie présente et non blanche ; une sortie vide n'est jamais envoyée au juge"""
+    return attempt['output_piece_id'] is not None and bool(attempt['operation']['receipt']['result']['output'].strip())
+
+
 def _projected(store, connection, campaign_id, snapshot) -> dict:
     """Allowlisted session-owner view of one already verified snapshot"""
     manifest = snapshot['manifest']
@@ -1397,7 +1408,7 @@ def _projected(store, connection, campaign_id, snapshot) -> dict:
             observation_sources={field: sources.get(field, 'INCONNU') if type(sources) is dict else 'INCONNU' for field in _OBSERVED},
             observed_cost=op['observed_cost'], receipt_id=receipt['receipt_id'] if receipt else None,
             incident=receipt['result']['incident'] if receipt else None,
-            emission=receipt['result']['emission'] if receipt else 'INCONNU'))
+            emission=receipt['result']['emission'] if receipt else 'INCONNU', answered=answered(attempt)))
     budget = deepcopy(snapshot['budget'])
     if budget:
         # S1 retains its arithmetic remainder as evidence. It is not a known
@@ -1419,7 +1430,8 @@ def _projected(store, connection, campaign_id, snapshot) -> dict:
                 stop_reason=snapshot['stop_reason'], restore_pending=snapshot['restore_pending'])
     if manifest.get('funding') == 'requester':
         from .. import automatic_judgment as auto
-        if auto.operations(store, connection, campaign_id):
+        # Toujours projeté une fois lancé : une évaluation jamais lancée n'est pas une comparaison terminée
+        if snapshot['attempts']:
             projected['judgment'] = auto.status(store, connection, campaign_id, snapshot)
     return projected
 

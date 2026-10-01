@@ -305,12 +305,44 @@ class AutomaticJudgment(unittest.TestCase):
         ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
         auto.execute_campaign(self.data, ids, self.transport)
         progress = auto.status(self.store, self.store._connection, self.cid)
-        self.assertEqual(('BLOCKED', 1, 2), (progress['status'], progress['completed'], progress['total']))
+        # Seule la réponse exploitable est à évaluer : l'évaluation est terminée, la couverture reste partielle
+        self.assertEqual(('COMPLETE', 1, 1, 2), (progress['status'], progress['completed'], progress['total'], progress['cells']))
         self.assertEqual(len(auto.records(self.store, self.store._connection, self.cid)), progress['completed'])
+        # Redémarrage après la fin : l'admission fermée ne transforme pas une évaluation terminée en interruption
+        from benchmark import runtime
+        runtime.stop(self.data, self.store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.assertEqual('COMPLETE', auto.status(self.store, self.store._connection, self.cid)['status'])
         view = campaigns.launch_view(self.store, self.sid, 'fixture', self.cid)
         page = views.render(view, 'csrf').decode()
         self.assertIn('Voir les résultats</a>', page)
         self.assertNotIn('id="preparation-progress"', page)
+        self.assertNotIn('Évaluation interrompue', page)
+        self.assertIn('1 modèle sur 2 n’a pas donné de réponse exploitable', page)
+        value = restitution.comparison(self.store, self.sid, 'fixture', self.cid)
+        self.assertEqual(['NO_USABLE_RESPONSE'], [p['state'] for p in value['pending_attempts']])
+        # Couverture incomplète (RULES §6) : aucun conseil ni comparaison économique complète
+        self.assertIsNone(value['recommendation'])
+        self.assertEqual('INCOMPLETE', value['economic_status'])
+        results = views.render(value, 'csrf').decode()
+        self.assertIn('Aucune réponse exploitable de ce modèle', results)
+        self.assertNotIn('doit être relue', results)
+        self.assertNotIn('les essais se sont arrêtés avant la fin', results)
+
+    def test_empty_candidate_output_is_never_sent_to_the_judge(self):
+        from benchmark import automatic_judgment as auto
+        calls = []
+        def blank(op, value):
+            calls.append(op['operation_id'])
+            if len(calls) == 2:
+                value['receipt']['result']['output'] = ' \n\t '
+        self.candidate_update = blank
+        self.acquire()
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        self.assertEqual(1, len(ids))
+        auto.execute_campaign(self.data, ids, self.transport)
+        self.assertEqual(1, self.http.request.call_count)
+        progress = auto.status(self.store, self.store._connection, self.cid)
+        self.assertEqual(('COMPLETE', 1, 1, 2), (progress['status'], progress['completed'], progress['total'], progress['cells']))
 
     def test_revoked_key_after_reservation_blocks_and_cannot_retry(self):
         from benchmark import automatic_judgment as auto
