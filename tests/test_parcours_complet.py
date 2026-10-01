@@ -485,7 +485,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(len(texts), len(set(texts)))
         self.assertEqual(len(hrefs), len(set(hrefs)))
         self.assertIn(comparison, hrefs)
-        self.assertIn('Comparaison 1 du ' + views.date_lisible_utc(previous['conditions']['frozen_at']), texts)
+        # Le rang suit l'identifiant de campagne : les sélections adaptées enregistrées plus haut le précèdent
+        rank = previous['campaign_id'].rsplit('-c', 1)[1]
+        self.assertIn(f'Comparaison {rank} du ' + views.date_lisible_utc(previous['conditions']['frozen_at']), texts)
         self.assertIn('comparaison terminée', listed['text'])
         self.assertIn('comparaison prête à lancer', listed['text'])
         # Seul le retrait de sa clé ferme la préparation d'un visiteur ; aucune fermeture globale n'existe
