@@ -319,9 +319,18 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                         if any(len(v) != 1 and not (configurations and k == 'models')
                                for k, v in values.items()):
                             raise ValueError('Champ répété')
-                        form_body: dict[str, str | list[str] | int] = {
+                        form_body: dict[str, str | list[str] | int | dict[str, str]] = {
                             k: (v if configurations and k == 'models' else v[0])
                             for k, v in values.items()}
+                        if configurations:
+                            # Dépliant par modèle : `effort:<slug>` vide laisse le niveau adapté automatiquement
+                            efforts: dict[str, str] = {}
+                            for key in [key for key in form_body if key.startswith('effort:')]:
+                                if level := values[key][0]:
+                                    efforts[key.removeprefix('effort:')] = level
+                                del form_body[key]
+                            if efforts:
+                                form_body['efforts'] = efforts
                         if 'revision' in form_body:
                             revision = values['revision'][0]
                             if not re.fullmatch('0|[1-9][0-9]*' if self.path.endswith('/contribution') else '[1-9][0-9]*', revision):

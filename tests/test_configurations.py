@@ -136,8 +136,10 @@ class ConfigurationsTests(unittest.TestCase):
         self.assertEqual('off', by_model['deepseek/deepseek-v4.1-flash']['effort'])
         self.assertEqual(['low', 'high'], high['available_tiers'])
 
-        with self.assertRaisesRegex(ValueError, 'mistralai/mistral-medium-3-5'):
-            self.prepare(['mistralai/mistral-medium-3-5', 'openai/gpt-5.6-sol'], 'high')
+        # Un niveau non accepté est adapté au plus proche et consigné, jamais refusé
+        adapted = self.prepare(['mistralai/mistral-medium-3-5', 'openai/gpt-5.6-sol'], 'high')
+        mistral = next(item for item in adapted['configurations'] if item['model'] == 'mistralai/mistral-medium-3-5')
+        self.assertEqual(('low', 'high'), (mistral['effort'], mistral['effort_requested']))
 
         transport = object.__new__(pi_openrouter.PiOpenRouter)
         payload = transport._payload(by_model['deepseek/deepseek-v4.1-flash'], [])
@@ -258,16 +260,6 @@ class ConfigurationsTests(unittest.TestCase):
             ['openai/gpt-5.6-sol', 'mistralai/mistral-medium-3-5'])
         self.assertEqual('fixture-c1', selected['current_campaign_id'])
         self.assertEqual([], selected['superseded'])
-
-    def test_refuse_un_palier_factice_inexecutable(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'models.toml'
-            path.write_text('[tiers.deepseek]\nenhanced = { effort = "high" }\n',
-                            encoding='utf-8')
-            with patch.object(model_catalogue, 'CONFIG_PATH', path), \
-                    self.assertRaisesRegex(ValueError, 'Palier de raisonnement invalide'):
-                model_catalogue.tiers()
-
 
 if __name__ == '__main__':
     unittest.main()

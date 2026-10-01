@@ -131,8 +131,7 @@ class RuntimeBundleTests(unittest.TestCase):
                             'settings = model_catalogue._settings(model_catalogue._registry()); '
                             'assert (settings["max_per_maker"], settings["max_age_days"], settings["cache_hours"]) == (3, 365, 24); '
                             'assert len(settings["makers"]) == 16; '
-                            'assert (len(settings["baseline_families"]), len(settings["baseline_models"])) == (83, 138); '
-                            'assert model_catalogue.tiers() == {"deepseek": {"enhanced": {"enabled": True}}}'],
+                            'assert (len(settings["baseline_families"]), len(settings["baseline_models"])) == (83, 138)'],
                            cwd=unpacked, check=True)
             # Un commit sans configuration de catalogue ne produit pas d'archive
             git('rm', '--cached', '--quiet', 'benchmark/models.toml')

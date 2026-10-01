@@ -170,7 +170,7 @@ class AccessViewTests(unittest.TestCase):
             'fetched_at': '2026-09-15T12:00:00+00:00',
             'models': [
                 {'id': 'modele-a', 'name': 'Modèle A', 'selected': True,
-                 'not_adjustable': False},
+                 'not_adjustable': False, 'levels': ['medium', 'xhigh'], 'chosen': 'xhigh'},
                 {'id': 'modele-b', 'name': 'Modèle B', 'selected': True,
                  'not_adjustable': True},
             ],
@@ -194,7 +194,13 @@ class AccessViewTests(unittest.TestCase):
         self.assertTrue(any(tag == 'select' and attrs.get('name') == 'tier'
                             and attrs.get('aria-describedby') == 'reasoning-help'
                             for tag, attrs in markup.tags))
-        self.assertIn('Si un modèle ne l’accepte pas, il est refusé', page)
+        self.assertIn('reçoit le niveau le plus proche qu’il propose', page)
+        # Dépliant : seuls les niveaux du modèle, rattachés au formulaire d'enregistrement
+        self.assertTrue(any(tag == 'select' and attrs.get('name') == 'effort:modele-a'
+                            and attrs.get('form') == 'configurations-form' for tag, attrs in markup.tags))
+        self.assertIn('selected', options['xhigh'])
+        self.assertNotIn('selected', options['medium'])
+        self.assertIn('Ajuster le niveau par modèle', page)
         self.assertIn('sans garantir qu’elle soit meilleure', page)
         self.assertIn('niveau de raisonnement fixe', page)
         for technical in ('modele-a', 'modele-b'):

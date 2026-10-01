@@ -261,8 +261,3 @@ baseline_models = [
   "z-ai/glm-5.3-flash",
   "z-ai/glm-5v-turbo",
 ]
-
-[tiers]
-
-[tiers.deepseek]
-enhanced = { enabled = true }

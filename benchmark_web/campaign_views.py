@@ -342,7 +342,11 @@ def effort_label(configuration):
         return 'Niveau de raisonnement non renseigné'
     if effort == 'on':
         return 'Raisonnement activé · niveau non renseigné'
-    return 'Niveau de raisonnement : ' + str(EFFORT_LABELS.get(effort, effort))
+    label = 'Niveau de raisonnement : ' + str(EFFORT_LABELS.get(effort, effort))
+    requested = configuration.get('effort_requested')
+    if requested:
+        label += ' · adapté : ce modèle n’accepte pas ' + str(EFFORT_LABELS.get(requested, requested))
+    return label
 
 
 def model_name(configuration, names):
@@ -563,7 +567,19 @@ def render_configurations(value, csrf):
                          (' selected' if value['current_tier'] == tier else '') + '>' +
                          text(labels.get(tier, tier)) + '</option>' for tier in value['available_tiers'])
         tiers += '</select><p class="hint" id="reasoning-help">Ce niveau est transmis aux modèles qui le proposent. '
-        tiers += 'Si un modèle ne l’accepte pas, il est refusé : aucun autre niveau n’est choisi à votre place. Un niveau plus élevé peut rendre la réponse plus lente et plus chère, sans garantir qu’elle soit meilleure.</p>'
+        tiers += 'Un modèle qui ne l’accepte pas reçoit le niveau le plus proche qu’il propose, affiché dans votre sélection. Les modèles à niveau fixe sont comparés tels quels. Un niveau plus élevé peut rendre la réponse plus lente et plus chère, sans garantir qu’elle soit meilleure.</p>'
+        tunable = [model for model in value['models'] if len(model.get('levels', ())) > 1]
+        if tunable:
+            tiers += '<details><summary>Ajuster le niveau par modèle</summary><p class="hint">« Automatique » suit le niveau demandé ci-dessus. Seuls les niveaux acceptés par chaque modèle sont proposés.</p>'
+            for index, model in enumerate(tunable, 1):
+                field = 'effort-' + str(index)
+                tiers += ('<label for="' + field + '">' + text(model['name']) + '</label><select id="' + field +
+                          '" form="configurations-form" name="' + text('effort:' + model['id']) + '">' +
+                          '<option value="">Automatique</option>' +
+                          ''.join('<option value="' + text(level) + '"' + (' selected' if model.get('chosen') == level else '') +
+                                  '>' + text(labels.get(level, level)) + '</option>' for level in model['levels']) +
+                          '</select>')
+            tiers += '</details>'
         content += ('<form id="configurations-form" method="post" action="' + text(dossier_url + '/configurations') + '">' +
                     hidden('csrf_token', csrf) + '<fieldset id="model-choices"><legend>Modèles à comparer</legend>' +
                     choices + '</fieldset></form>')

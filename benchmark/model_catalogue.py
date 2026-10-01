@@ -137,19 +137,6 @@ def _provider_slug(endpoint):
     return endpoint['tag'].split('/', 1)[0]
 
 
-def tiers():
-    value = _registry().get('tiers', {})
-    if type(value) is not dict:
-        raise ValueError('Configuration [tiers] invalide')
-    for maker, tier in value.items():
-        if (type(maker) is not str or not maker or type(tier) is not dict
-                or tier.keys() != {'enhanced'}
-                or tier['enhanced'] != {'enabled': True}):
-            raise ValueError('Palier de raisonnement invalide')
-        storage._strict_json(tier['enhanced'])
-    return value
-
-
 def _latest(store):
     connection = store._connection_checked()
     if not connection.execute(

@@ -112,8 +112,9 @@ class ParcoursComplet(unittest.TestCase):
         self.bound = None
         with closing(storage.Store(self.data)) as store:
             rows =[model('openai/gpt-5.6-sol', 'openai', ['high']),
-                    model('deepseek/deepseek-v4.1-flash', 'deepseek', [])]
-            rows[0][0]['name'], rows[1][0]['name'] = 'Modèle A', 'Modèle B'
+                    model('deepseek/deepseek-v4.1-flash', 'deepseek', []),
+                    model('mistralai/mistral-small-2603', 'mistral', ['high', 'none'])]
+            rows[0][0]['name'], rows[1][0]['name'], rows[2][0]['name'] = 'Modèle A', 'Modèle B', 'Modèle C'
             document = {'models': [row[0] for row in rows],
                         'endpoints': {row[0]['id']: row[1] for row in rows}}
             store._connection.execute(model_catalogue.TABLE_SQL)
@@ -336,6 +337,34 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Relevé des modèles du', page.visible)
         self.assertNotIn('2026-09-15T12:00:00+00:00', page.visible)
         form = page.form('/configurations')
+        # Niveau adapté à chaque modèle : aucun refus, l'adaptation est montrée avant le lancement
+        tuning = next(n for n in page.nodes if n['tag'] == 'details' and 'Ajuster le niveau par modèle' in n['text'])
+        self.assertIn('Modèle C', tuning['text'])
+        self.assertNotIn('Modèle B', tuning['text'])
+        self.request(form['action'], form['fields'] | {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
+            'tier': 'low', 'effort:mistralai/mistral-small-2603': 'none'}, status=303)
+        # Un niveau visant un modèle non coché est refusé ; un niveau hors de ceux du modèle retombe sur l'adaptation
+        self.request(form['action'], form['fields'] | {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+            'tier': 'low', 'effort:mistralai/mistral-small-2603': 'high'}, status=400)
+        self.request(form['action'], form['fields'] | {
+            'models': ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'],
+            'tier': 'low', 'effort:openai/gpt-5.6-sol': 'max'}, status=303)
+        page, _, _ = self.request(configurations)
+        selection = next(n for n in page.nodes if n['tag'] == 'section' and 'Votre sélection' in n['text'])
+        self.assertEqual(2, selection['text'].count('adapté'))
+        self.request(form['action'], form['fields'] | {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
+            'tier': 'low', 'effort:mistralai/mistral-small-2603': 'none'}, status=303)
+        page, _, _ = self.request(configurations)
+        selection = next(n for n in page.nodes if n['tag'] == 'section' and 'Votre sélection' in n['text'])
+        self.assertIn('Modèle A · coût', selection['text'])
+        self.assertIn('Niveau de raisonnement : Élevé (high) · adapté : ce modèle n’accepte pas Faible (low)',
+                      selection['text'])
+        self.assertIn('Niveau de raisonnement fixe', selection['text'])
+        self.assertIn('Niveau de raisonnement : Désactivé (none)', selection['text'])
+        self.assertEqual(1, selection['text'].count('adapté'))
         _, _, raw = self.request(form['action'], form['fields'] | {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
             'tier': 'high'}, status=201, json_response=True)
@@ -447,7 +476,8 @@ class ParcoursComplet(unittest.TestCase):
         listed = next(n for n in page.nodes if n['attrs'].get('id') == 'comparaison')
         campaign_links = [n for n in page.nodes if n['tag'] == 'a' and not n['details']
                           and n['text'].startswith('Comparaison ')]
-        self.assertEqual(2, len(campaign_links))
+        # Les trois sélections adaptées envoyées plus haut comptent parmi les comparaisons préparées
+        self.assertEqual(5, len(campaign_links))
         with closing(storage.Store(self.data)) as store:
             previous = campaigns.inspect(store, recap.split('/')[-2])['manifest']
         texts = [n['text'] for n in campaign_links]
