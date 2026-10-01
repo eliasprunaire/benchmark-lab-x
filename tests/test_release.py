@@ -10,6 +10,10 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual('patch', release.classify('fix(web): corriger la vue'))
         self.assertEqual('minor', release.classify('feat: ajouter la comparaison'))
         self.assertIsNone(release.classify('feat(ci): modifier le pipeline'))
+        # Un refactor ou une optimisation fusionnés partent en production comme un correctif
+        self.assertEqual('patch', release.classify('refactor(privacy): retirer un code mort'))
+        self.assertEqual('patch', release.classify('perf: accélérer la page'))
+        self.assertIsNone(release.classify('chore: ranger le dépôt'))
         self.assertEqual('breaking', release.classify('fix!: retirer une option'))
         self.assertEqual('breaking', release.classify('fix: changer le contrat', 'BREAKING CHANGE: option retiree'))
         self.assertEqual('0.2.0', release.bump('0.1.9', 'breaking'))

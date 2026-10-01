@@ -27,7 +27,8 @@ def classify(subject, body=''):
         return None
     if match['breaking'] or re.search(r'^BREAKING CHANGE:', body, re.MULTILINE):
         return 'breaking'
-    return {'feat': 'minor', 'fix': 'patch'}.get(match['kind'])
+    # refactor et perf changent le code livré : sans version, ils resteraient fusionnés hors production
+    return {'feat': 'minor', 'fix': 'patch', 'refactor': 'patch', 'perf': 'patch'}.get(match['kind'])
 
 
 def bump(version, level):
