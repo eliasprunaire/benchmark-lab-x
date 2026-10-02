@@ -27,6 +27,7 @@ from tests.test_openrouter_qualification import QualificationTransport
 from tests.test_provider_access import AccessTransport, KEY, SECRET
 from tests.test_s2_review_regressions import SessionAssistant, response_for
 from tests.test_s4_regressions import response
+from tests.test_s3_regressions import ACTOR, check, specification
 from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 
@@ -767,6 +768,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertFalse(any(n['tag'] == 'a' and n['text'] == 'Choisir les modèles' for n in page.nodes))
         _, _, raw = self.request(dossier + '/configurations', status=403)
         self.assertIn('Terminez l’étape précédente avant de poursuivre.', raw.decode())
+        self.assertIn(constat['text'], Page(raw).visible)
         self.assertNotIn(reference, raw.decode())
         # Le motif reste consultable et la correction possible depuis la page bloquée
         consigne.append(convention)
@@ -831,6 +833,50 @@ class ParcoursComplet(unittest.TestCase):
                  'pieces_transmises': [piece['name'] for piece in sortant['pieces']],
                  'reference_absente_du_paquet_candidat': reference not in brut},
                 ensure_ascii=False, indent=2) + '\n')
+
+    def test_contrat_operateur_bloque_montre_ses_constats_au_demandeur(self):
+        """Un contrat opérateur bloqué après la préparation de la comparaison : le refus nomme ce qui bloque
+
+        Modes d'échec couverts :
+        1. la page de refus ne dit pas pourquoi l'exemple n'est plus prêt ;
+        2. un contrôle réussi est présenté comme un motif ;
+        3. la preuve d'un contrôle, qui cite la référence de jugement, s'affiche chez le demandeur
+        """
+        dossier = self.exemple_qualifie()
+        page, _, _ = self.request(dossier + '/configurations')
+        self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+                                              'tier': 'high'})
+        recap = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions'
+        page, _, _ = self.request(recap)
+        self.examine(page, recap, 'prêt à lancer', 'Lancer le benchmark')
+        start = page.form('/start')
+        motif = 'Aucun passage des notes ne prouve l’obligation sur les actions'
+        with closing(storage.Store(self.data)) as store:
+            dossier_id = dossier.rsplit('/', 1)[1]
+            revision, reference = store._connection.execute(
+                "SELECT revision, piece_id FROM pieces WHERE dossier_id=? AND role='judge' "
+                'ORDER BY revision DESC LIMIT 1', (dossier_id,)).fetchone()
+            reserve = store.read_piece(reference).decode()
+            candidate = qualification.draft(store, dossier_id, revision, specification(reference))
+
+            def bloque(contract, resources):
+                review = check(contract, resources)
+                review['checks'][0].update(status='FAIL', finding=motif)
+                return review
+            self.assertEqual('BLOCKED', qualification.qualify(
+                store, candidate['contract_sha256'], reviewer=ACTOR, check=bloque)['status'])
+        for path, fields in ((recap, None), (dossier + '/configurations', None),
+                             (start['action'], start['fields'])):
+            with self.subTest(route=path):
+                page, _, raw = self.request(path, fields, status=403)
+                self.examine(page, path, 'exemple bloqué par le contrat opérateur', 'Retrouver mes cas d’usage')
+                self.assertIn('Terminez l’étape précédente avant de poursuivre.', page.visible)
+                self.assertIn('Ce que la vérification de l’exemple a relevé', page.visible)
+                self.assertIn(motif, page.visible)
+                self.assertNotIn('Omission témoin repérée', raw.decode())
+                self.assertNotIn(reserve, raw.decode())
+        _, _, raw = self.request(recap, status=403, json_response=True)
+        self.assertEqual([{'text': motif}], json.loads(raw)['findings'])
 
     @staticmethod
     def etape(page):
