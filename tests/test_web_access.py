@@ -22,6 +22,7 @@ from benchmark.storage import _strict_json
 from benchmark_web import views
 from benchmark_web.server import canonical_route, serve_web
 from tests.test_s6_regressions import Markup
+from tests.hermetique.sitecustomize import garder_module
 
 
 CSP = ("default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; "
@@ -30,6 +31,7 @@ CSP = ("default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; "
 
 def setUpModule():
     """Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page rendue ne compte sur elle"""
+    garder_module()
     render = views.render
 
     def checked(value, *args, **kwargs):
@@ -503,6 +505,9 @@ class WebServerCase(unittest.TestCase):
     def tearDown(self):
         self.web.terminate()
         self.web.join(5)
+        if self.web.is_alive():
+            self.web.kill()
+            self.web.join()
         self.executor.__exit__(None, None, None)
         self.temporary.cleanup()
 
