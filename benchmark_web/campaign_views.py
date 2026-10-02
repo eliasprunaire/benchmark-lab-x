@@ -267,13 +267,6 @@ def _failure_reason(record):
     return ' '.join(parts) or _readable_reason(record)
 
 
-def _incident_hint(record):
-    """Une réponse jugée malgré un incident le dit, avec la cause lue dans son reçu"""
-    if not record.get('incident'):
-        return ''
-    return '<p class="hint">' + text('Incident sur cette réponse : ' + (record.get('response_cause') or 'cause non établie par le reçu') + '.') + '</p>'
-
-
 def render_evaluations(evaluations, dossier_url):
     """Inert evidence and recorded corrections inside the owner's existing page.
 
@@ -534,7 +527,7 @@ def render_comparison(value):
             # Les critères qui fondent le verdict, entiers ; l'explication du juge reste dans le détail
             reason = ('Toutes les exigences sont respectées.' if row['verdict'] == 'SATISFAIT' else
                       _failure_reason(row) if row['verdict'] == 'NE SATISFAIT PAS' else 'Le verdict n’est pas encore disponible.')
-            content += '<td>' + badge(row['verdict']) + '<p class="hint">' + text(reason) + '</p>' + _incident_hint(row) + '</td>'
+            content += '<td>' + badge(row['verdict']) + '<p class="hint">' + text(reason) + '</p></td>'
             if quality_columns:
                 content += '<td><ul class="quality-list">'
                 for column in quality_columns:
@@ -924,7 +917,6 @@ def render_result(record, names=None):
     cost = record['candidate_cost']
     content += '<p class="result-verdict">' + badge(verdict) + ' <span>Coût observé : ' + text(
         'inconnu' if cost is None or cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']) + '</span></p>'
-    content += _incident_hint(record)
     if verdict is None and record['decision'].get('next_action'):
         content += '<p>' + text(record['decision']['next_action']) + '</p>'
     # Ce que le modèle a produit

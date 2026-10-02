@@ -28,7 +28,7 @@ RESPONSE_CAUSES = {'EMPTY_OUTPUT': 'réponse terminée sans texte',
 
 
 def _response_cause(attempt):
-    """Cause lisible d'une réponse reçue avec incident, ou None si le reçu ne l'établit pas"""
+    """Cause lisible d'une réponse inexploitable, ou None si le reçu ne l'établit pas"""
     from .acquisition import recovery
     try:
         kind = recovery.observation(attempt)['kind']
@@ -190,14 +190,12 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     _queries(query, campaign, spec, columns)
     records = e.projection(store, connection, dossier_id, campaign_id)
     causes = {}
+    latest = {record['attempt_id']: record for record in records}
     concerned = {a['operation_id'] for a in campaign['attempts']
-                 if a['state'] == 'RECEIVED' and (a['incident'] is not None or not a['answered'])}
+                 if a['state'] == 'RECEIVED' and not a['answered'] and a['operation_id'] not in latest}
     if concerned:
         causes = {a['operation_id']: _response_cause(a)
                   for a in c._inspect(store, connection, campaign_id)['attempts'] if a['operation_id'] in concerned}
-    for record in records:
-        record['response_cause'] = causes.get(record['attempt_id'])
-    latest = {record['attempt_id']: record for record in records}
     pending = [dict(attempt_id=a['operation_id'], verdict=None,
                     state='REVIEW_REQUIRED' if a['state'] == 'RECEIVED' and a['incident'] is None else 'EXECUTION_REQUIRED',
                     next_action='Cette réponse doit être relue et son évaluation terminée avant de conclure.')

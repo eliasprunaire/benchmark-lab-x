@@ -790,7 +790,7 @@ class ParcoursComplet(unittest.TestCase):
         2. le tableau tait une exigence en défaut, ou nomme un constat FAIL qui n'a pas fondé le verdict ;
         3. le détail marque « Non respectée » une exigence que le verdict n'a pas retenue ;
         4. une cellule sans réponse exploitable n'est ni nommée ni expliquée ;
-        5. une réponse coupée par la limite de sortie est jugée sans que la coupure soit dite
+        5. une réponse coupée par la limite de sortie part au juge : elle ne pourrait qu'échouer ;
         6. un reçu complet de structure inattendue fait échouer la page de résultats
         """
         from base64 import b64encode
@@ -810,7 +810,7 @@ class ParcoursComplet(unittest.TestCase):
                 # Preuve jugée insuffisante par le juge : ce FAIL ne fonde pas le verdict
                 return 'FAIL', 'evidence', 'Échéance peut-être absente'
             return 'FAIL', 'candidate', 'Une action de suivi est inventée'
-        self.juge_factice(constat)
+        judge = self.juge_factice(constat)
         dossier = self.exemple_qualifie()
         page, _, _ = self.request(dossier + '/configurations')
         page = self.submit(page, '/configurations', {
@@ -843,6 +843,8 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(page.link('Lancer l’évaluation'))
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
+        # Seule la réponse complète de Modèle A est jugée
+        self.assertEqual(1, judge.request.call_count)
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
         results, _, raw = self.request(comparison)
         self.examine(results, comparison, 'résultats et motifs', None)
@@ -851,28 +853,23 @@ class ParcoursComplet(unittest.TestCase):
         def ligne(nom):
             return next(chunk for chunk in html.split('<tr id="attempt-')[1:]
                         if '<strong>' + nom + '</strong>' in chunk).split('</tr>')[0]
-        for nom in ('Modèle A', 'Modèle C'):
-            with self.subTest(ligne=nom):
-                cellule = ligne(nom)
-                self.assertIn('Erreur éliminatoire : Inventer une décision absente du compte rendu. '
-                              'Exigence non respectée : ' + tableau + '.', cellule)
-                self.assertNotIn('Le tableau a bien', cellule)
-                self.assertNotIn(echeances, cellule)
-                self.assertNotIn('…', cellule)
-        self.assertNotIn('Incident sur cette réponse', ligne('Modèle A'))
-        coupure = 'Incident sur cette réponse : arrêt pour longueur, plafond demandé : 4096 jetons de sortie.'
-        self.assertIn(coupure, ligne('Modèle C'))
+        cellule = ligne('Modèle A')
+        self.assertIn('Erreur éliminatoire : Inventer une décision absente du compte rendu. '
+                      'Exigence non respectée : ' + tableau + '.', cellule)
+        self.assertNotIn('Le tableau a bien', cellule)
+        self.assertNotIn(echeances, cellule)
+        self.assertNotIn('…', cellule)
+        self.assertNotIn('<strong>Modèle C</strong>', html.split('<table')[1])
+        self.assertIn('Aucune réponse exploitable pour Modèle C (arrêt pour longueur, '
+                      'plafond demandé : 4096 jetons de sortie). Ce modèle', html)
         self.assertIn('Aucune réponse exploitable pour Modèle B. Ce modèle', html)
-        for nom, incident in (('Modèle A', False), ('Modèle C', True)):
-            with self.subTest(détail=nom):
-                _, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', ligne(nom))[1].replace('&amp;', '&'))
-                text = raw.decode()
-                self.assertIn('0 exigence sur 2 respectée, 1 non respectée, 1 non vérifiable. 1 erreur éliminatoire relevée.', text)
-                states = re.findall(r'>([^<>]+)</span><span>([^<]+)</span>', text)
-                self.assertIn(('Non respectée', tableau), states)
-                self.assertIn(('Non vérifiable', echeances), states)
-                self.assertIn(explication, text)
-                self.assertEqual(incident, coupure in text)
+        _, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
+        text = raw.decode()
+        self.assertIn('0 exigence sur 2 respectée, 1 non respectée, 1 non vérifiable. 1 erreur éliminatoire relevée.', text)
+        states = re.findall(r'>([^<>]+)</span><span>([^<]+)</span>', text)
+        self.assertIn(('Non respectée', tableau), states)
+        self.assertIn(('Non vérifiable', echeances), states)
+        self.assertIn(explication, text)
 
     def niveaux_envoyes(self, campaign_id):
         with closing(storage.Store(self.data)) as store:
