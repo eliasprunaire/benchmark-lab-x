@@ -304,6 +304,53 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertEqual(consent['contribution']['expires_at'], metadata['expires_at'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
+    def test_archive_and_corpus_keep_a_recovery_while_judgment_is_pending(self):
+        """Production, 2026-10-02 : l'archive échouait (500, StopIteration) tant qu'une reprise attendait son jugement
+
+        Modes d'échec : la reprise n'est cherchée que dans la comparaison d'origine, ce qui fait échouer
+        l'archive et la contribution ; la copie omet la reprise ou montre la tentative coupée à sa place
+        """
+        from base64 import b64encode
+        # Routes avec limite et tarifs : le lancement préautorise la reprise pour longueur
+        fetched_at, raw = self.store._connection.execute('SELECT fetched_at, raw_json FROM s2_model_catalogue').fetchone()
+        document = json.loads(raw)
+        for detail in document['endpoints'].values():
+            for endpoint in detail['endpoints']:
+                endpoint.update(max_completion_tokens=32768, context_length=64000,
+                                pricing={'prompt': '0.000002', 'completion': '0.00001'})
+        self.store._connection.execute('UPDATE s2_model_catalogue SET raw_json=? WHERE fetched_at=?',
+                                       (storage._strict_json(document), fetched_at))
+        self.prepare('recovery')
+        self.qualify('recovery')
+        self.contribute('recovery')
+        cid, attempts, _ = self.campaign('recovery')
+        sent = []
+
+        def candidate(operation, request):
+            value = self.candidate(operation, request)
+            config = request['requested_configuration']
+            sent.append((config['model'], config['parameters']['max_tokens']))
+            if config['model'] == 'deepseek/deepseek-v4.1-flash' and config['parameters']['max_tokens'] == 4096:
+                # Arrêt pour longueur sans texte, avec la quantité d'entrée que la reprise exige
+                body = storage._strict_json({'choices': [{'finish_reason': 'length', 'message': {
+                    'role': 'assistant', 'content': None}}], 'usage': {'prompt_tokens': 120}}).encode()
+                value['receipt']['observed_configuration']['http'] = dict(
+                    status=200, complete=True, credential_redacted=False,
+                    body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest())
+                value['receipt']['result'].update(output=None, incident='PROVIDER_RESPONSE_INCOMPLETE')
+            return value
+        # Comme en production : la contribution se rafraîchit à la fin du travail d'acquisition
+        service._retention_worker(self.data, 'recovery', lambda launched: execution.execute_launch(
+            self.data, launched, candidate, access_secret=SECRET, access_transport=self.access), attempts)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096),
+                          ('deepseek/deepseek-v4.1-flash', 8192)], sent)
+        pending = self.record('recovery', archive.archive_manifest(self.store, self.sid, 'recovery'))
+        models = pending['campaigns'][0]['models']
+        self.assertEqual(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], [row['name'] for row in models])
+        self.assertTrue(all(row['verdict'] is None and row['answer'] == '  fictional raw output\n' for row in models))
+        self.assertIn('"max_tokens":8192', models[1]['evidence'][0]['text'])
+        self.assertEqual(pending['campaigns'], self.corpus('recovery')['campaigns'])
+
     def test_dossier_view_checks_the_database_once_then_only_after_a_change(self):
         self.prepare('vue')
         checks = []
