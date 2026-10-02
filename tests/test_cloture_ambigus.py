@@ -16,10 +16,11 @@ import time
 import unittest
 from unittest.mock import patch
 
-from benchmark import preparation as prep, runtime, service, storage, web_api
+from benchmark import model_probes, preparation as prep, runtime, service, storage, web_api
 from benchmark.acquisition import campaigns, execution
 from benchmark_web import views
 from tests import test_automatic_judgment as judgment_fixture
+from tests import test_model_probes as probes_fixture
 from tests import test_openrouter_preparation as fixture
 from tests.test_openrouter_preparation import CLARIFICATION, NEED
 from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
@@ -301,6 +302,41 @@ class Evaluation(unittest.TestCase):
         budget = self.store.inspect_budget(authority['budget_id'])
         self.assertEqual([calls[0]], budget['unknown_cost_operations'])
         self.assertEqual(1, len(calls))
+
+
+class ModelProbe(unittest.TestCase):
+    """Vérification d'un modèle personnalisé : ambiguë, close après 15 minutes, jamais rejouée"""
+    setUp = probes_fixture.ModelProbeTests.setUp
+    fetch = probes_fixture.ModelProbeTests.fetch
+    submit = probes_fixture.ModelProbeTests.submit
+    post = probes_fixture.ModelProbeTests.post
+    respond = probes_fixture.ModelProbeTests.respond
+
+    def test_verification_ambigue_close_debloque_sans_rejouer(self):
+        operation_id, key = self.submit()
+        with patch.object(model_probes, 'post', side_effect=TimeoutError):
+            model_probes.execute(self.data, operation_id, key)
+        self.assertEqual('AMBIGUOUS', model_probes.view(self.store, self.session, 'fixture')[0]['status'])
+        with self.assertRaises(prep.Denied):
+            self.submit(action='retry')
+        created = datetime.fromisoformat(operation(self.store, operation_id)['created_at'])
+        self.assertEqual([], self.store.close_expired_ambiguous(created + FIFTEEN - timedelta(seconds=1)))
+        self.assertEqual([operation_id], self.store.close_expired_ambiguous(created + FIFTEEN))
+        closed = operation(self.store, operation_id)
+        self.assertEqual(('RECEIVED', 'AMBIGUOUS_EXPIRED', 'UNKNOWN'),
+                         (closed['state'], closed['receipt']['observed_configuration']['incident'],
+                          closed['observed_cost']['status']))
+        record = model_probes.view(self.store, self.session, 'fixture')[0]
+        self.assertEqual((storage.AMBIGUOUS_EXPIRED, CLOSED_TEXT, False),
+                         (record['status'], record['detail'], record['usable']))
+        self.assertNotIn(probes_fixture.SLUG, [m['id'] for m in model_probes.selection(self.store, self.session, 'fixture')['models']])
+        # Session débloquée : une nouvelle vérification part, l'opération close n'est jamais renvoyée
+        retry_id, retry_key = self.submit(action='retry')
+        self.assertNotEqual(operation_id, retry_id)
+        self.respond(retry_id, retry_key)
+        self.assertEqual(1, len(self.calls))
+        self.assertIn(probes_fixture.SLUG, [m['id'] for m in model_probes.selection(self.store, self.session, 'fixture')['models']])
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
 
 SECRET = judgment_fixture.SECRET

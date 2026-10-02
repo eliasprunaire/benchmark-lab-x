@@ -265,7 +265,7 @@ class PrivacyArchiveTests(unittest.TestCase):
 
 
     def test_storage_verifier_checks_exact_schema_and_closed_payloads(self):
-        manifest = archive.archive_manifest(self.store, self.sid, 'fixture')
+        archive.archive_manifest(self.store, self.sid, 'fixture')
         archive.change_contribution(self.store, self.session_token, 'fixture', self.consent(), now=self.now)
         archive.verify(self.store, self.connection)
         self.connection.execute('DROP INDEX s7_contributions_expiry')

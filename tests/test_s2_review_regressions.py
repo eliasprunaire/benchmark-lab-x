@@ -2,7 +2,6 @@
 from contextlib import closing
 from copy import copy, deepcopy
 from html.parser import HTMLParser
-import json
 import multiprocessing
 from pathlib import Path
 import socket

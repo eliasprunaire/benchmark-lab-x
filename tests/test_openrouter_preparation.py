@@ -310,7 +310,6 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
     def test_personal_authorization_reports_unavailable_without_destroying_access(self):
-        from benchmark import provider_access
         bound, secret, key = self.personal_transport()
         unavailable = self.transport.for_session(key, self.session, b'\x22' * 32)
         before = list(self.store._connection.iterdump())

@@ -14,6 +14,7 @@ from tests import test_campaign_launch as campaign_fixture
 from tests.test_openrouter_preparation import SYNTHETIC_PROFILE, estimate_for
 from tests.test_provider_access import KEY, SECRET
 from tests.test_s4_regressions import response
+from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 
 class AutomaticJudgment(unittest.TestCase):
@@ -35,6 +36,8 @@ class AutomaticJudgment(unittest.TestCase):
         self.http.getresponse.return_value.length = 0
         self.http.getresponse.return_value.getheader.return_value = None
         self.enterContext(patch.object(openrouter, 'HTTPSConnection', return_value=self.http))
+        # Une clé refusée (401/402) est revérifiée : par le transport factice, jamais chez OpenRouter
+        self.enterContext(patch.object(provider_access, 'OpenRouterAccess', return_value=f.access))
         self.http.request.side_effect = self.answer
         self.response_update = lambda document: None
         self.candidate_update = lambda op, value: None

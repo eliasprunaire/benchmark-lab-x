@@ -250,7 +250,7 @@ class PiTransportTests(unittest.TestCase):
         # The simulated fixture remains; add a separate campaign with actual Pi identity
         # This fixture declares TEST in its frozen cost basis: use a fresh qualified USD fixture
         from tests.test_s3_regressions import fixture, specification, check, ACTOR, AUTHORITY
-        from benchmark import qualification as q, web_api
+        from benchmark import qualification as q
         self.realdata = self.fixture.home / 'pi-private'
         session, view, reference = fixture(self.realdata)
         self.session = session
