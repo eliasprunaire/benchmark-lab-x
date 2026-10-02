@@ -44,6 +44,7 @@ une indisponibilité annoncée plutôt qu'un corps nul ou une page rompue.
 from copy import copy
 from contextlib import ExitStack, closing, contextmanager
 from concurrent.futures import Future
+from datetime import datetime
 from http.client import HTTPException
 import fcntl
 import json
@@ -65,7 +66,7 @@ from .storage import ConflictError, BudgetError, IntegrityError, SchemaError, _u
 
 from .provider_access import ACCESS_BUDGET_SECONDS, READ_CHUNK_BYTES, remaining_budget
 from .privacy import Gone
-from .storage import Store
+from .storage import AMBIGUITY_DELAY, Store
 from .runtime import encode, status, stop, verify
 
 
@@ -695,6 +696,7 @@ def _resume_retries(store, data, retries, *, session_id=None, dossier_id=None):
     un redémarrage ne perd donc aucune relance. `retries` : par nature, profil non lié, secret d'accès,
     transport d'accès, source et minuteurs par opération
     """
+    _close_expired_ambiguous(store, data, retries)
     kinds = _retry_kinds()
     for kind, retry in retries.items():
         profile, _, _, _, timers = retry
@@ -709,6 +711,38 @@ def _resume_retries(store, data, retries, *, session_id=None, dossier_id=None):
             timer.daemon = True
             timers[operation_id] = timer
             timer.start()
+
+
+_AMBIGUITY_TIMER = 'ambiguous-expiry'
+
+
+def _close_expired_ambiguous(store, data, retries):
+    """Clore les opérations ambiguës échues, puis programmer la clôture de la prochaine
+
+    Aucun appel n'est relancé : la clôture garde le coût inconnu et la réserve, et libère la session
+    """
+    from . import preparation
+    now = preparation._now()
+    store.close_expired_ambiguous(now)
+    timers = next(iter(retries.values()))[4]
+    expiries = [datetime.fromisoformat(op['created_at']) + AMBIGUITY_DELAY
+                for op in store.inspect_operations() if op['state'] == 'AMBIGUOUS']
+    if expiries and _AMBIGUITY_TIMER not in timers:
+        timer = threading.Timer(max(0, (min(expiries) - now).total_seconds()), _retention_worker,
+                                args=(data, None, _expire_ambiguous, data, retries))
+        timer.daemon = True
+        timers[_AMBIGUITY_TIMER] = timer
+        timer.start()
+
+
+def _expire_ambiguous(data, retries):
+    next(iter(retries.values()))[4].pop(_AMBIGUITY_TIMER, None)
+    try:
+        with closing(Store(data)) as store:
+            _resume_retries(store, data, retries)
+    except Exception as error:
+        # Le prochain POST ou démarrage reprend la clôture
+        logging.getLogger(__name__).warning('AMBIGUOUS_CLOSE_DEFERRED error=%s', type(error).__name__)
 
 
 def _retry(kind, data, dossier_id, session_id, operation_id, retry):

@@ -21,6 +21,7 @@ MESSAGES = [{'role': 'user', 'content': 'Reply with the single word OK.'}]
 STATUS_TEXT = {
     'EMISSION_POSSIBLE': 'Vérification en cours…',
     'AMBIGUOUS': 'Vérification interrompue : les effets de l’appel restent inconnus. Aucune relance automatique.',
+    storage.AMBIGUOUS_EXPIRED: storage.AMBIGUOUS_EXPIRED_TEXT,
     'RESPONDED': 'Le modèle a répondu. Vous pouvez le sélectionner pour la comparaison.',
     'UNCONFIRMED': 'Aucune réponse complète vérifiable : erreur, refus, réponse vide ou interrompue. Le modèle n’a pas été ajouté.',
     'TRUNCATED': 'Le modèle a répondu, mais sa réponse a été coupée par la limite de sortie de la vérification. '

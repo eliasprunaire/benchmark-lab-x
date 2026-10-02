@@ -974,12 +974,15 @@ def _envelope(store, connection, snapshot, authority):
     operations = store._operations(connection)
     budget = store._budget(connection, authority['budget_id'], operations)
     campaign_operations = {row[0] for row in connection.execute('SELECT operation_id FROM s4_attempts')}
+    # Une tentative close après 15 minutes d'effets inconnus ne bloque que sa propre campagne, plus la session
+    expired = {op['operation_id'] for op in operations if storage.ambiguous_expired(op)}
     dependent_receipts = [op for op in operations if op['operation_id'] in campaign_operations
-                          and op['budget_id'] == authority['budget_id'] and op['receipt'] is not None]
+                          and op['budget_id'] == authority['budget_id'] and op['receipt'] is not None
+                          and op['operation_id'] not in expired]
     if budget['currency'] != snapshot['manifest']['cost_basis']['unit']:
         raise BudgetError('Unité du budget différente de la base de coût')
     retained = _retained_costs(snapshot, store, connection)
-    if (set(budget['unknown_cost_operations']) - retained or not budget['provider_managed'] and Decimal(budget['available']) < 0
+    if (set(budget['unknown_cost_operations']) - retained - expired or not budget['provider_managed'] and Decimal(budget['available']) < 0
             or any((_attribution(op['receipt'], op['requested_configuration']) and not routing_error(op))
                    or op['receipt']['result']['emission'] != 'ESTABLISHED' for op in dependent_receipts)
             or any(op['budget_id'] == authority['budget_id'] and op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') for op in operations)

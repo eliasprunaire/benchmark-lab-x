@@ -347,7 +347,9 @@ def status(store, connection, campaign_id, snapshot=None):
     elif snapshot['stop_reason'] == 'JUDGMENT_STOPPED':
         unreachable = any(storage.not_sent(o) and (o['receipt']['observed_configuration'] or {}).get('incident')
                           == 'CONNECTION_FAILED' for o in ops)
-        result.update(status='BLOCKED', reason=(p.NOT_SENT_TEXT + ' ' if unreachable else '') + 'Évaluation interrompue. '
+        closed = any(storage.ambiguous_expired(o) for o in ops)
+        result.update(status='BLOCKED', reason=(p.NOT_SENT_TEXT + ' ' if unreachable else '')
+                      + (storage.AMBIGUOUS_EXPIRED_TEXT + ' ' if closed else '') + 'Évaluation interrompue. '
                       'Les réponses sont conservées ; aucun appel ne sera relancé automatiquement.')
     elif due:
         # Incident du fournisseur : l'évaluation reprend d'elle-même à la première échéance
@@ -358,6 +360,9 @@ def status(store, connection, campaign_id, snapshot=None):
         # Rien de dû, rien en cours, campagne non arrêtée : seule une série épuisée garde un incident relancé
         result.update(status='BLOCKED', reason=f'L’évaluation n’a pas abouti après {p.RETRY_ATTEMPTS} tentatives '
                       f'automatiques. {p._incident_reason(exhausted[0])} Les réponses et reçus sont conservés.')
+    elif any(storage.ambiguous_expired(o) for o in latest):
+        result.update(status='BLOCKED', reason=storage.AMBIGUOUS_EXPIRED_TEXT
+                      + ' Les réponses et reçus sont conservés ; cette réponse n’est pas évaluée.')
     elif unusable or any(o['state'] == 'AMBIGUOUS' for o in ops):
         result.update(status='BLOCKED', reason='L’évaluation n’a pas fourni de preuves exploitables. Les réponses et reçus sont conservés.')
     elif ops:

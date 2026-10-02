@@ -22,6 +22,12 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         return 200, {'kind': 'privacy_data'}, None, None
     if enabled and privacy.quarantined(store):
         return 503, {'error': 'Données en attente de vérification après restauration.', 'error_code': 'RESTORE_PENDING'}, None, None
+    if method == 'POST':
+        # Un effet d'appel inconnu depuis 15 minutes ne bloque plus la session : clos avant d'examiner la demande
+        try:
+            store.close_expired_ambiguous(p._now())
+        except (storage.SchemaError, sqlite3.Error) as error:
+            logging.getLogger(__name__).warning('AMBIGUOUS_CLOSE_SKIPPED error=%s', type(error).__name__)
     if enabled and method == 'GET' and path == '/preparation/activity':
         try:
             session_id, csrf, _ = p.session(store, token)
