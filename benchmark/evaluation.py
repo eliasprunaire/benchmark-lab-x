@@ -352,6 +352,19 @@ def _configuration_links(store, connection, ctx, judgment):
     return result
 
 
+def defects(findings, output):
+    """Constats qui fondent NE SATISFAIT PAS : FAIL attribué au candidat, prouvé sur sa sortie, sans PASS sur le même contrôle
+
+    Seule définition du défaut : le verdict et son explication affichée la partagent
+    """
+    grouped = {}
+    for finding in findings:
+        grouped.setdefault((finding['criterion_id'], finding['control_id']), []).append(finding)
+    return [f for group in grouped.values() if not any(x['status'] == 'PASS' for x in group)
+            for f in group if f['status'] == 'FAIL' and f['attribution'] == 'candidate'
+            and any(e['piece_id'] == output for e in f['evidence'])]
+
+
 def _verdict(ctx, findings, judgment):
     attempt = ctx['attempt']
     receipt = attempt['operation']['receipt']
@@ -362,24 +375,17 @@ def _verdict(ctx, findings, judgment):
     if judgment['mode'] == 'assisted' and judgment['operation']['receipt'] is None:
         return 'INDETERMINE', 'Reçu de jugement absent ; effets et coût inconnus'
     output = attempt['output_piece_id']
-    grouped = {}
-    for finding in findings:
-        grouped.setdefault((finding['criterion_id'], finding['control_id']), []).append(finding)
-    defects = []
-    for group in grouped.values():
-        if any(f['status'] == 'PASS' for f in group):
-            continue
-        defects.extend(f for f in group if f['status'] == 'FAIL' and f['attribution'] == 'candidate'
-                       and any(e['piece_id'] == output for e in f['evidence']))
-    if defects:
-        return 'NE SATISFAIT PAS', '; '.join(f['criterion_id'] + ' : ' + f['finding'] for f in defects)
+    established = defects(findings, output)
+    if established:
+        return 'NE SATISFAIT PAS', '; '.join(f['criterion_id'] + ' : ' + f['finding'] for f in established)
     if receipt['result']['incident'] is not None:
         return 'INDETERMINE', 'Incident conservé ; aucune erreur candidate établie indépendamment'
     if any(d['arbitration'] is None for d in judgment['disagreements']):
         return 'INDETERMINE', 'Désaccord de jugement non arbitré'
     if all(f['status'] == 'PASS' and f['attribution'] in ('candidate', 'evidence')
            and any(e['piece_id'] == output for e in f['evidence']) for f in findings):
-        return 'SATISFAIT', 'Résultat et obligations prouvés ; contrôles éliminatoires satisfaits : ' + ', '.join(grouped_key[0] for grouped_key in grouped)
+        return 'SATISFAIT', 'Résultat et obligations prouvés ; contrôles éliminatoires satisfaits : ' + ', '.join(
+            cid for cid, _ in dict.fromkeys((f['criterion_id'], f['control_id']) for f in findings))
     return 'INDETERMINE', 'Preuve insuffisante ou contradictoire : ' + ', '.join(
         dict.fromkeys(f['criterion_id'] for f in findings if f['status'] != 'PASS'
                       or f['attribution'] not in ('candidate', 'evidence')

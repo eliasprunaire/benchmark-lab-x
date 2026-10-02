@@ -14,6 +14,7 @@ import secrets
 
 from benchmark.storage import _strict_json as encode
 from benchmark.preparation import NOT_SENT_TEXT
+from benchmark.evaluation import defects
 
 from .fragments import (VERDICT_BADGES, valeur_mesure, access_summary, badge, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
                         personal_key_form, readable_fields, section, state_block, text)
@@ -247,6 +248,32 @@ def _readable_reason(record):
                   lambda match: labels[match[0]], record['reason'])
 
 
+def _failed(record):
+    """Identifiants des critères qui fondent NE SATISFAIT PAS, par la règle même du verdict"""
+    if record['verdict'] != 'NE SATISFAIT PAS':
+        return set()
+    return {f['criterion_id'] for f in defects(record['findings'], record['output_piece_id'])}
+
+
+def _failure_reason(record):
+    """Motif court d'un NE SATISFAIT PAS : les critères en défaut, entiers, éliminatoires d'abord"""
+    spec, failed = record['qualification']['contract']['specification'], _failed(record)
+    parts = []
+    for criteria, one, many in ((spec['eliminatory_errors'], 'Erreur éliminatoire', 'Erreurs éliminatoires'),
+                                (spec['obligations'], 'Exigence non respectée', 'Exigences non respectées')):
+        named = [c['description'] for c in criteria if c['id'] in failed]
+        if named:
+            parts.append((many if len(named) > 1 else one) + ' : ' + ' ; '.join(named) + '.')
+    return ' '.join(parts) or _readable_reason(record)
+
+
+def _incident_hint(record):
+    """Une réponse jugée malgré un incident le dit, avec la cause lue dans son reçu"""
+    if not record.get('incident'):
+        return ''
+    return '<p class="hint">' + text('Incident sur cette réponse : ' + (record.get('response_cause') or 'cause non établie par le reçu') + '.') + '</p>'
+
+
 def render_evaluations(evaluations, dossier_url):
     """Inert evidence and recorded corrections inside the owner's existing page.
 
@@ -390,7 +417,18 @@ def render_comparison(value):
         received = any(cell['state'] == 'RECEIVED' for cell in value['cells'])
         content += '<p>' + ('Des réponses sont arrivées. Leur verdict n’est pas encore disponible.' if received else
                              'Aucune réponse n’a encore été évaluée. Le suivi indique où en est la comparaison.') + '</p>'
-    pending_reasons = list(dict.fromkeys(item['next_action'] for item in value.get('pending_attempts', [])))
+    panel = {configuration['id']: configuration for configuration in value.get('panel', [])}
+
+    def pending_reason(item):
+        # Le modèle sans réponse exploitable est nommé comme dans le tableau, avec la cause lue dans son reçu
+        configuration = panel.get(item.get('configuration_id'))
+        if item['state'] != 'NO_USABLE_RESPONSE' or configuration is None:
+            return item['next_action']
+        return ('Aucune réponse exploitable pour ' + model_name(configuration, names)
+                + (' · ' + effort_label(configuration) if sum(c['model'] == configuration['model'] for c in panel.values()) > 1 else '')
+                + (' (' + item['cause'] + ')' if item.get('cause') else '')
+                + '. Ce modèle n’est pas évalué et n’entre pas dans la comparaison.')
+    pending_reasons = list(dict.fromkeys(pending_reason(item) for item in value.get('pending_attempts', [])))
     if pending_reasons:
         content += listing(pending_reasons)
     # Un modèle sans réponse exploitable est terminé : il ne fait pas dire que les essais se sont arrêtés
@@ -493,10 +531,10 @@ def render_comparison(value):
             content += '<tr id="attempt-' + text(row['attempt_id']) + '"' + ('' if row['verdict'] == 'SATISFAIT' else ' class="out"') + ' tabindex="-1"><th scope="row">'
             content += '<strong>' + text(model_name(row['requested_configuration'], names)) + '</strong>'
             content += '<p class="hint">' + text(effort_label(row['requested_configuration'])) + '</p></th>'
-            # Le motif du juge, critères nommés, plutôt qu'une phrase générique
+            # Les critères qui fondent le verdict, entiers ; l'explication du juge reste dans le détail
             reason = ('Toutes les exigences sont respectées.' if row['verdict'] == 'SATISFAIT' else
-                      short_label(_readable_reason(row), 16) if row['verdict'] == 'NE SATISFAIT PAS' else 'Le verdict n’est pas encore disponible.')
-            content += '<td>' + badge(row['verdict']) + '<p class="hint">' + text(reason) + '</p></td>'
+                      _failure_reason(row) if row['verdict'] == 'NE SATISFAIT PAS' else 'Le verdict n’est pas encore disponible.')
+            content += '<td>' + badge(row['verdict']) + '<p class="hint">' + text(reason) + '</p>' + _incident_hint(row) + '</td>'
             if quality_columns:
                 content += '<td><ul class="quality-list">'
                 for column in quality_columns:
@@ -824,10 +862,10 @@ def _plural(count, label, *, number=True):
     return (str(count) + ' ' if number else '') + words
 
 
-def _criterion_state(findings):
-    """Tous les contrôles PASS ; sinon FAIL dès qu'un contrôle échoue ; sinon non conclu"""
+def _criterion_state(findings, failed):
+    """Tous les contrôles PASS ; sinon FAIL si le critère fonde le verdict ; sinon non conclu"""
     statuses = {finding['status'] for finding in findings}
-    return 'PASS' if statuses == {'PASS'} else 'FAIL' if 'FAIL' in statuses else 'INDETERMINE'
+    return 'PASS' if statuses == {'PASS'} else 'FAIL' if failed else 'INDETERMINE'
 
 
 def _proof_anchor(record, piece_id):
@@ -841,9 +879,10 @@ def _proof_anchor(record, piece_id):
 
 def _criteria_list(record, criteria, kind):
     content = '<ul class="checks">'
+    failed = _failed(record)
     for criterion in criteria:
         findings = [f for f in record['findings'] if f['criterion_id'] == criterion['id']]
-        tone, name, label = CRITERION_STATES[kind][_criterion_state(findings)]
+        tone, name, label = CRITERION_STATES[kind][_criterion_state(findings, criterion['id'] in failed)]
         content += '<li><span class="badge ' + tone + '">' + icon(name) + label + '</span><span>' + text(criterion['description']) + '</span>'
         if findings:
             content += '<details><summary>Constats et extraits</summary><ul>'
@@ -885,6 +924,7 @@ def render_result(record, names=None):
     cost = record['candidate_cost']
     content += '<p class="result-verdict">' + badge(verdict) + ' <span>Coût observé : ' + text(
         'inconnu' if cost is None or cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']) + '</span></p>'
+    content += _incident_hint(record)
     if verdict is None and record['decision'].get('next_action'):
         content += '<p>' + text(record['decision']['next_action']) + '</p>'
     # Ce que le modèle a produit
@@ -904,7 +944,9 @@ def render_result(record, names=None):
         content += '<p>Aucune réponse n’a été enregistrée pour ce modèle.</p>'
     # Pourquoi ce verdict
     content += '<h3>Pourquoi ce verdict</h3>'
-    states = {criterion['id']: _criterion_state([f for f in record['findings'] if f['criterion_id'] == criterion['id']])
+    failed = _failed(record)
+    states = {criterion['id']: _criterion_state([f for f in record['findings'] if f['criterion_id'] == criterion['id']],
+                                                criterion['id'] in failed)
               for criterion in spec['obligations'] + spec['eliminatory_errors']}
     obligations = [states[c['id']] for c in spec['obligations']]
     eliminatory = [states[c['id']] for c in spec['eliminatory_errors']]
