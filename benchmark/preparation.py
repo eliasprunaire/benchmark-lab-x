@@ -599,8 +599,8 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
                                   and os.path.lexists(store._root / 'restore.json'))
                 result['stage'] = 'suspended' if ambiguous or blocked_intent else 'waiting'
                 result['explanation'] = (
-                    'Effets inconnus : préparation suspendue, aucun rejeu autorisé.' if ambiguous else
-                    'Service restauré : intention conservée sans émission ni reprise automatique.' if blocked_intent else
+                    'Nous ne savons pas si le modèle a répondu à votre dernier message.' if ambiguous else
+                    'Votre dernier message n’a pas été envoyé : le service est momentanément indisponible.' if blocked_intent else
                     'Préparation en attente. Actualisez pour consulter son avancement ; aucun appel ne sera relancé.')
                 result['validation'] = None
         contract = (connection.execute('SELECT 1 FROM s3_contracts WHERE dossier_id=? AND revision=?',

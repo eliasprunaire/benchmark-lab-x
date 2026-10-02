@@ -245,6 +245,8 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIn('Révision : aaaaaaa', page.visible)
             self.assertNotIn('v0.1.0', page.visible)
             self.assertNotIn(KEY, page.visible)
+            # Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page ne compte sur elle
+            self.assertNotIn('équipe Bench-X', ' '.join(n['text'] for n in page.nodes))
             focus = [n for n in page.nodes if not n['hidden'] and not n['details']
                      and 'disabled' not in n['attrs'] and n['attrs'].get('type') != 'hidden'
                      and n['attrs'].get('tabindex') != '-1'
@@ -761,7 +763,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(('5Résultats', comparison), self.etape(page))
         results, _, _ = self.request(comparison)
         self.examine(results, comparison, 'résultats partiels', None)
-        self.assertIn('Aucune réponse exploitable de ce modèle', results.visible)
+        self.assertIn('Aucune réponse exploitable pour Modèle B.', results.visible)
         self.assertNotIn('doit être relue', results.visible)
         self.assertNotIn('les essais se sont arrêtés avant la fin', results.visible)
         followup, _, _ = self.request(recap)

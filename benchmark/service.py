@@ -308,7 +308,7 @@ def executor_health(path):
 
 def denied_response(error):
     generic = ('Vous ne pouvez pas faire cette action depuis ce navigateur. Rouvrez votre cas d’usage '
-               'depuis Mes cas d’usage. Si le problème continue, contactez l’équipe Bench-X.')
+               'depuis Mes cas d’usage.')
     if error.code == 'NOT_FOUND':
         return {'status': 404, 'value': {'error': 'Cette page n’existe pas ou ne vous est pas accessible.', 'error_code': 'NOT_FOUND'}}
     if not error.code:
@@ -316,7 +316,7 @@ def denied_response(error):
         return {'status': 403, 'value': {'error': generic, 'error_code': 'DENIED'}}
     unavailable = {
         'ACCESS_UNAVAILABLE': 'L’accès aux clés OpenRouter est indisponible sur le serveur pour le moment. '
-                              'Aucun appel n’a été lancé. Réessayez plus tard ; si cela continue, contactez l’équipe Bench-X.',
+                              'Aucun appel n’a été lancé. Réessayez dans quelques minutes.',
         'PRIVACY_MIGRATION_PENDING': 'Bench-X termine une mise à jour de ses données. Réessayez dans quelques minutes.',
     }
     if error.code in unavailable:
@@ -324,7 +324,7 @@ def denied_response(error):
                                          'unavailable': True}}
     messages = {
         'SESSION_EXPIRED': 'Votre session a expiré. Les copies gardées dans ce navigateur restent consultables dans Mes données.',
-        'RESTORE_PENDING': 'Service fermé pour le moment : l’équipe Bench-X doit vérifier une restauration. Réessayez plus tard.',
+        'RESTORE_PENDING': 'Service momentanément indisponible, réessayez plus tard.',
         'CONTRIBUTION_SENSITIVE_DATA': 'Cette contribution n’a pas été envoyée : elle contient peut-être une donnée sensible. Votre cas d’usage et ses résultats restent accessibles.',
         'TEXT_TOO_SHORT': 'Ce texte est trop court.',
         'TEXT_TOO_LONG': 'Ce texte est trop long. Raccourcissez-le, puis renvoyez-le.',

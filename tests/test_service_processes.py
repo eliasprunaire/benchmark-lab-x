@@ -338,13 +338,20 @@ class ServiceProcessesTests(unittest.TestCase):
 
     def test_refus_inconnu_reste_generique(self):
         generic = ('Vous ne pouvez pas faire cette action depuis ce navigateur. Rouvrez votre cas d’usage '
-                   'depuis Mes cas d’usage. Si le problème continue, contactez l’équipe Bench-X.')
+                   'depuis Mes cas d’usage.')
         with patch('socket.socket.connect', side_effect=AssertionError('No network')):
             responses = [denied_response(preparation.Denied(reason))
                          for reason in ('Motif', 'FUTUR')]
         self.assertEqual([403, 403], [response['status'] for response in responses])
         self.assertEqual([generic, generic],
                          [response['value']['error'] for response in responses])
+        # L'équipe Bench-X n'intervient jamais : chaque refus dit quoi faire sans elle
+        unavailable = denied_response(preparation.Denied('ACCESS_UNAVAILABLE'))['value']['error']
+        self.assertIn('Réessayez dans quelques minutes.', unavailable)
+        restore = denied_response(preparation.Denied('RESTORE_PENDING'))['value']['error']
+        self.assertEqual('Service momentanément indisponible, réessayez plus tard.', restore)
+        for error in (unavailable, restore, *[r['value']['error'] for r in responses]):
+            self.assertNotIn('équipe', error)
 
     def test_deux_identites_inconnues_ne_sont_pas_pretes(self):
         with tempfile.TemporaryDirectory() as directory:
