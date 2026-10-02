@@ -711,6 +711,127 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Nouvelle tentative automatique', page.visible)
         self.assertEqual(2, len(self.calls))
 
+    def test_exclusion_par_convention_cachee_bloquee_puis_corrigee(self):
+        """Issue #438 : une exclusion que seule la référence justifie bloque la vérification, puis se corrige
+
+        Modes d'échec couverts :
+        1. le constat bloquant laisse choisir les modèles, ou son motif n'est pas consultable ;
+        2. aucune correction n'est proposée après le blocage ;
+        3. la correction réécrit les notes, ou la version corrigée est vérifiée sans nouvelle validation ;
+        4. la référence ou un indice part chez les candidats, ou la convention ajoutée n'y part pas
+        """
+        notes = ('Décision : le budget formation est validé.\n'
+                 'Action : Camille relit le devis avant vendredi.\n'
+                 'Sujet : déménagement du stock, à reprendre à la prochaine réunion.\n')
+        reference = ('Attendus : la décision sur le budget formation et l’action de Camille. Le déménagement '
+                     'du stock est exclu : sujet reporté, ni décision ni action.')
+        convention = 'Un sujet reporté à une prochaine réunion n’est ni une décision ni une action.'
+        consigne = ['Relever les décisions et les actions à mener dans les notes.']
+        envois = []
+
+        def preparer(operation, request):
+            self.calls.append(('préparation', operation['operation_id']))
+            envois.append(request['outgoing'])
+            value = response_for(operation)
+            value['cost'].update(amount='0.10', currency='USD', source='Reçu simulé #438')
+            result = value['receipt']['result']
+            result['explanation'] = 'Cet exemple correspond-il bien à votre travail ?'
+            result['package']['candidate'].update(instruction=' '.join(consigne),
+                deliverables=['Liste des décisions et des actions'], pieces=[{'name': 'notes.txt', 'content': notes}])
+            result['package']['judgment']['pieces'] = [{'name': 'reference.txt', 'content': reference}]
+            return value
+        self.assistants['transport'] = SessionAssistant(preparer, {'model': 'factice'})
+        constat = {'kind': 'decidability', 'severity': 'blocking',
+                   'text': 'La référence exclut le sujet « à reprendre à la prochaine réunion » selon une convention '
+                           'absente du paquet candidat : la consigne demande les décisions et les actions sans dire '
+                           'qu’un sujet reporté en est exclu.'}
+        self.qualifier.result = {'qualified': False, 'findings': [constat],
+                                 'summary': 'Une exclusion repose sur la seule référence de jugement.'}
+        page, _, _ = self.request('/')
+        target = page.link('Décrire mon cas')
+        page, _, _ = self.request(target)
+        key_form = page.form('/access/key')
+        self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
+        page, _, _ = self.request(target)
+        page = self.submit(page, '/dossiers', {'request': 'Relever les décisions et les actions à mener dans mes notes de réunion'})
+        dossier = page.link('Actualiser')
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        page, _, _ = self.request(dossier)
+        page = self.submit(page, '/validation', {})
+        prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+        page, _, _ = self.request(dossier)
+        self.examine(page, dossier, 'exemple bloqué', None)
+        self.assertIn('Exemple à revoir avant comparaison', page.visible)
+        self.assertIn('Une exclusion repose sur la seule référence de jugement.', page.visible)
+        self.assertTrue(any(constat['text'] in n['text'] for n in page.nodes if n['tag'] == 'details'))
+        self.assertFalse(any(n['tag'] == 'a' and n['text'] == 'Choisir les modèles' for n in page.nodes))
+        _, _, raw = self.request(dossier + '/configurations', status=403)
+        self.assertIn('Terminez l’étape précédente avant de poursuivre.', raw.decode())
+        self.assertNotIn(reference, raw.decode())
+        # Le motif reste consultable et la correction possible depuis la page bloquée
+        consigne.append(convention)
+        self.submit(page, '/messages', {'kind': 'correct',
+                                        'message': 'Dire dans la consigne qu’un sujet reporté n’est ni une décision ni une action'})
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        page, _, _ = self.request(dossier)
+        self.examine(page, dossier, 'exemple corrigé à valider', 'Oui, c’est le travail à tester')
+        self.assertIn('Cet exemple n’est pas encore validé.', page.visible)
+        self.assertIn(convention, page.visible)
+        # Le préparateur reçoit la version validée et la correction, pas la référence
+        self.assertEqual([{'name': 'notes.txt', 'content': notes}], envois[-1]['previous_candidate']['pieces'])
+        self.assertIn('sujet reporté', envois[-1]['message'])
+        self.assertNotIn(reference, storage._strict_json(envois))
+        # Une version corrigée n'est vérifiée qu'après sa propre validation ; l'ancienne reste validée telle quelle
+        self.assertEqual(1, len(self.qualifier.calls))
+        with closing(storage.Store(self.data)) as store:
+            revisions = [row[0] for row in store._connection.execute(
+                "SELECT revision FROM pieces WHERE dossier_id=? AND role='candidate' AND name='notes.txt' "
+                'ORDER BY revision', (dossier.rsplit('/', 1)[1],))]
+            contents = {store.read_piece(row[0]) for row in store._connection.execute(
+                "SELECT piece_id FROM pieces WHERE dossier_id=? AND role='candidate'", (dossier.rsplit('/', 1)[1],))}
+            validations = store._connection.execute(
+                'SELECT v.revision FROM s2_validations v JOIN s2_revisions r USING(dossier_id,revision) '
+                'WHERE v.dossier_id=? AND v.package_sha256=r.package_sha256', (dossier.rsplit('/', 1)[1],)).fetchall()
+        self.assertEqual(2, len(revisions))
+        self.assertEqual({notes.encode()}, contents)
+        self.assertEqual([(revisions[0],)], validations)
+        self.qualifier.result = {'qualified': True, 'findings': [],
+                                 'summary': 'Chaque exclusion découle de la consigne.'}
+        self.submit(page, '/validation', {})
+        prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+        self.assertIn(convention, self.qualifier.calls[1][1]['outgoing']['instruction'])
+        page, _, _ = self.request(dossier)
+        self.examine(page, dossier, 'exemple corrigé vérifié', 'Choisir les modèles')
+        page, _, _ = self.request(page.link('Choisir les modèles'))
+        page = self.submit(page, '/configurations', {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'tier': 'high'})
+        self.submit(page, '/start', {})
+        transmis = []
+
+        def candidat(operation, request):
+            transmis.append(request)
+            return self.candidate(operation, request)
+        execution.execute_launch(self.data, self.starts.get_nowait()['candidate_attempts'], candidat,
+                                 access_secret=SECRET, access_transport=self.access)
+        self.assertEqual(2, len(transmis))
+        # Chaque candidat reçoit le même paquet : la convention, les notes intactes, rien de la référence
+        self.assertEqual(1, len({storage._strict_json(request['outgoing']) for request in transmis}))
+        sortant = transmis[0]['outgoing']
+        self.assertEqual([{'name': 'notes.txt', 'content': notes}], sortant['pieces'])
+        self.assertIn(convention, sortant['instruction'])
+        brut = storage._strict_json(transmis)
+        for reserve in (reference, 'reference.txt', 'Attendus'):
+            self.assertNotIn(reserve, brut)
+        artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
+        if artefacts:
+            Path(artefacts).mkdir(parents=True, exist_ok=True)
+            Path(artefacts, 'exclusion-convention-cachee.json').write_text(json.dumps(
+                {'constat_bloquant': constat, 'verifications': len(self.qualifier.calls),
+                 'consigne_transmise': sortant['instruction'],
+                 'pieces_transmises': [piece['name'] for piece in sortant['pieces']],
+                 'reference_absente_du_paquet_candidat': reference not in brut},
+                ensure_ascii=False, indent=2) + '\n')
+
     @staticmethod
     def etape(page):
         """Étape courante de la barre et cible de l'onglet Résultats (None s'il est désactivé)"""
