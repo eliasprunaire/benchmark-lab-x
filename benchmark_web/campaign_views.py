@@ -643,6 +643,11 @@ def campaign_followup(campaign):
             return False, True, ' '.join(filter(None, ('Évaluation terminée.', judgment.get('reason'), 'Vos résultats sont prêts.')))
         if status == 'BLOCKED':
             return False, False, judgment.get('reason') or 'L’évaluation s’est arrêtée. Elle ne reprendra pas d’elle-même.'
+        if judgment.get('recovering'):
+            count = judgment['recovering']
+            return True, False, (str(count) + (' modèles arrêtés' if count > 1 else ' modèle arrêté')
+                                 + ' par la limite de longueur ' + ('sont relancés' if count > 1 else 'est relancé')
+                                 + ' avec une limite de sortie plus haute. Les réponses arrivent au fur et à mesure.')
         if status in ('WAITING', 'RUNNING') and cells and all(c['state'] == 'RECEIVED' for c in cells):
             # Une relance automatique programmée dit sa cause et son délai ; rien n'est à faire
             return True, False, ('Toutes les réponses sont arrivées. Leur évaluation attend son tour.' if status == 'WAITING'

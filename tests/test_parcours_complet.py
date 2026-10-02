@@ -736,10 +736,11 @@ class ParcoursComplet(unittest.TestCase):
         prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
         return dossier
 
-    def juge_factice(self, constat=None):
+    def juge_factice(self, constat=None, mesure=None):
         """Juge OpenRouter réel sur une connexion HTTP simulée : chaque réponse évaluée ne satisfait pas une obligation
 
-        `constat(critère)` remplace ce FAIL uniforme par (statut, attribution, texte du constat)
+        `constat(critère)` remplace ce FAIL uniforme par (statut, attribution, texte du constat) ;
+        `mesure` est la valeur rendue pour chaque critère de qualité, sinon aucun n'est mesuré
         """
         from unittest.mock import Mock
         from benchmark.transports import openrouter
@@ -760,7 +761,9 @@ class ParcoursComplet(unittest.TestCase):
                                  ('FAIL', 'candidate', 'Obligation non satisfaite')),
                              criterion_id=x['id'], control_id=k, evidence=[proof])
                         for x in content['obligations'] + content['eliminatory_errors'] for k in x['control_ids']]
-            result = dict(findings=findings, measures=[], limits=[], proposed_verdict='SATISFAIT')
+            measures = [dict(criterion_id=x['id'], value=mesure, unit=x['unit'], evidence=[proof])
+                        for x in content['secondary_criteria']] if mesure is not None else []
+            result = dict(findings=findings, measures=measures, limits=[], proposed_verdict='SATISFAIT')
             document = dict(id='fixture-judge', model=profile['revision'],
                 choices=[dict(finish_reason='stop', message=dict(role='assistant', content=storage._strict_json(result)))],
                 usage=dict(cost='0.001'), openrouter_metadata=dict(requested=profile['model'],
@@ -918,92 +921,133 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn(('Non vérifiable', echeances), states)
         self.assertIn(explication, text)
 
-    def test_reponse_coupee_reprise_au_plus_deux_fois(self):
-        """Décision d'Ayo du 2026-10-02 : un modèle arrêté pour longueur est repris au plus deux fois
+    # Formes relevées sur OpenRouter le 2026-10-02 (valeurs inventées)
+    TARIFS_PUBLIES = {
+        'deepseek/deepseek-v4.1-flash': {
+            'prompt': '0.000002', 'completion': '0.00001', 'web_search': '0.01',
+            'overrides': [{'utc_start': 0, 'utc_end': 1400, 'prompt': '0.000003', 'completion': '0.000012'},
+                          {'utc_start': 1400, 'utc_end': 0, 'prompt': '0.000001', 'completion': '0.000006'}]},
+        'mistralai/mistral-small-2603': {
+            'prompt': '0.000002', 'completion': '0.00001', 'image': '0.000002', 'audio': '0.000002',
+            'input_audio_cache': '0.0000002', 'input_cache_write_1h': '0.000004', 'internal_reasoning': '0.000012',
+            'overrides': [{'min_prompt_tokens': 200000, 'prompt': '0.000004', 'completion': '0.000018',
+                           'audio': '0.000004'}]}}
+    # Majorant attendu de chaque route : (entrée, sortie)
+    MAJORANTS = {'openai/gpt-5.6-sol': ('0.000002', '0.00001'),
+                 'deepseek/deepseek-v4.1-flash': ('0.000003', '0.000012'),
+                 'mistralai/mistral-small-2603': ('0.000004', '0.000018')}
 
-        Modes d'échec couverts :
-        1. la reprise ne part pas, faute de clé du demandeur transmise ;
-        2. un modèle est repris plus de deux fois, ou un modèle complet est repris ;
-        3. la limite relevée change la demande d'un autre modèle ;
-        4. la réponse reprise n'est pas jugée, ou s'affiche sans dire qu'elle est une reprise ;
-        5. une chaîne de reprises sans réponse affiche une ligne par essai au lieu d'une seule ;
-        6. le récapitulatif avant lancement tait les reprises possibles ;
-        7. un conseil est donné alors que la comparaison compte une reprise ;
-        8. une route n'est pas reprise parce que son tarif publié porte des composants qui ne
-           s'appliquent pas à la requête (recherche web, image, audio), ou des tarifs par tranche,
-           par horaire ou de raisonnement, comme ceux des grands fournisseurs
+    def lancer_avec_reprises(self, models, comportement):
+        """Relevé aux tarifs publiés, lancement public, puis exécution par une fabrique liée à la clé
+
+        `comportement(valeur, modèle, limite, suivi)` modifie la réponse factice ; `suivi` est l'adresse
+        du suivi de la comparaison. Renvoie le dossier, le récapitulatif avant lancement, les envois
+        (modèle, limite) et les clés reçues par la fabrique
         """
-        from base64 import b64encode
-        from hashlib import sha256
-        from benchmark import automatic_judgment as auto
-        judge = self.juge_factice()
-        # Formes relevées sur OpenRouter le 2026-10-02 (valeurs inventées)
-        publies = {
-            'deepseek/deepseek-v4.1-flash': {
-                'prompt': '0.000002', 'completion': '0.00001', 'web_search': '0.01',
-                'overrides': [{'utc_start': 0, 'utc_end': 1400, 'prompt': '0.000003', 'completion': '0.000012'},
-                              {'utc_start': 1400, 'utc_end': 0, 'prompt': '0.000001', 'completion': '0.000006'}]},
-            'mistralai/mistral-small-2603': {
-                'prompt': '0.000002', 'completion': '0.00001', 'image': '0.000002', 'audio': '0.000002',
-                'input_audio_cache': '0.0000002', 'input_cache_write_1h': '0.000004', 'internal_reasoning': '0.000012',
-                'overrides': [{'min_prompt_tokens': 200000, 'prompt': '0.000004', 'completion': '0.000018',
-                               'audio': '0.000004'}]}}
         with closing(storage.Store(self.data)) as store:
-            # Relevé complet : routes avec limites et tarifs, dont un tarif additionnel nul
             fetched_at, raw = store._connection.execute('SELECT fetched_at, raw_json FROM s2_model_catalogue').fetchone()
             document = json.loads(raw)
             for model_id, detail in document['endpoints'].items():
                 for endpoint in detail['endpoints']:
-                    endpoint.update(max_completion_tokens=32768, context_length=64000,
-                                    pricing=publies.get(model_id, {'prompt': '0.000002', 'completion': '0.00001', 'request': '0'}))
+                    endpoint.update(max_completion_tokens=32768, context_length=64000, pricing=self.TARIFS_PUBLIES.get(
+                        model_id, {'prompt': '0.000002', 'completion': '0.00001', 'request': '0'}))
             store._connection.execute('UPDATE s2_model_catalogue SET raw_json=? WHERE fetched_at=?',
                                       (storage._strict_json(document), fetched_at))
         dossier = self.exemple_qualifie()
+        suivi = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions'
         page, _, _ = self.request(dossier + '/configurations')
-        page = self.submit(page, '/configurations', {
-            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
-            'tier': 'low'})
-        self.assertIn('arrêté par la limite de longueur est relancé au plus deux fois', page.visible)
-        self.submit(page, '/start', {})
+        recap = self.submit(page, '/configurations', {'models': models, 'tier': 'low'})
+        self.submit(recap, '/start', {})
         attempts = self.starts.get_nowait()['candidate_attempts']
-        envois = []
-
-        def coupee(value, content, limit):
-            body = storage._strict_json({'choices': [{'finish_reason': 'length', 'message': {
-                'role': 'assistant', 'content': content}}], 'usage': {'prompt_tokens': 120, 'completion_tokens': limit}}).encode()
-            value['receipt']['observed_configuration']['http'] = dict(
-                status=200, complete=True, credential_redacted=False,
-                body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest())
-            value['receipt']['result'].update(output=content, incident='PROVIDER_RESPONSE_INCOMPLETE')
+        envois, cles = [], []
 
         def candidat(operation, request):
             value = self.candidate(operation, request)
             config = request['requested_configuration']
-            limit = config['parameters']['max_tokens']
-            envois.append((config['model'], limit))
-            if config['model'] == 'deepseek/deepseek-v4.1-flash':
-                value['cost'].update(status='KNOWN', amount='0.05')
-                if limit == 4096:
-                    # Tout le budget part en raisonnement, sans texte
-                    coupee(value, None, limit)
-            elif config['model'] == 'mistralai/mistral-small-2603':
-                # Coupé à chaque limite, avec une sortie qui progresse
-                coupee(value, 'Action : relire' + ' | suite' * (limit // 1024), limit)
+            envois.append((config['model'], config['parameters']['max_tokens']))
+            comportement(value, config['model'], config['parameters']['max_tokens'], suivi)
             return value
-        execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
-        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096),
-                          ('deepseek/deepseek-v4.1-flash', 8192), ('mistralai/mistral-small-2603', 4096),
-                          ('mistralai/mistral-small-2603', 8192), ('mistralai/mistral-small-2603', 16384)], envois)
+
+        def fabrique(channel_id, key):
+            cles.append(key)
+            return candidat
+        execution.execute_launch(self.data, attempts, transport_factory=fabrique,
+                                 access_secret=SECRET, access_transport=self.access)
+        return dossier, recap, envois, cles
+
+    @staticmethod
+    def coupee(value, content, limit):
+        """Réponse arrêtée pour longueur, avec la quantité d'entrée que la reprise exige"""
+        from base64 import b64encode
+        from hashlib import sha256
+        body = storage._strict_json({'choices': [{'finish_reason': 'length', 'message': {
+            'role': 'assistant', 'content': content}}], 'usage': {'prompt_tokens': 120, 'completion_tokens': limit}}).encode()
+        value['receipt']['observed_configuration']['http'] = dict(
+            status=200, complete=True, credential_redacted=False,
+            body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest())
+        value['receipt']['result'].update(output=content, incident='PROVIDER_RESPONSE_INCOMPLETE')
+
+    def evaluer(self, dossier):
+        from benchmark import automatic_judgment as auto
         page, _, _ = self.request(dossier)
         page, _, _ = self.request(page.link('Lancer l’évaluation'))
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
-        # Modèle A et la reprise de Modèle B ; les réponses coupées de Modèle C ne partent jamais au juge
-        self.assertEqual(2, judge.request.call_count)
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
         results, _, raw = self.request(comparison)
         self.examine(results, comparison, 'résultats avec reprises', None)
-        html = raw.decode()
+        return raw.decode()
+
+    def test_reponse_coupee_reprise_au_plus_deux_fois(self):
+        """Décision d'Ayo du 2026-10-02 : un modèle arrêté pour longueur est repris au plus deux fois
+
+        Modes d'échec couverts :
+        1. la reprise ne part pas, ou part sans la clé du demandeur ;
+        2. un modèle est repris plus de deux fois, ou un modèle complet est repris ;
+        3. la limite relevée change la demande d'un autre modèle ;
+        4. la réponse reprise n'est pas jugée, ou s'affiche sans dire qu'elle est une reprise ;
+        5. une chaîne de reprises sans réponse affiche une ligne par essai au lieu d'une seule ;
+        6. le récapitulatif avant lancement tait les reprises possibles, ou sous-estime leur coût
+           maximal par rapport aux tarifs majorants figés ;
+        7. une route n'est pas reprise parce que son tarif publié porte des composants qui ne
+           s'appliquent pas à la requête (recherche web, image, audio), ou des tarifs par tranche,
+           par horaire ou de raisonnement, comme ceux des grands fournisseurs ;
+        8. pendant la reprise du dernier modèle, le suivi dit que toutes les réponses sont arrivées
+        """
+        from decimal import Decimal
+        from benchmark_web.fragments import montant_lisible
+        judge = self.juge_factice()
+        suivis = []
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+                if limit == 4096:
+                    # Tout le budget part en raisonnement, sans texte
+                    self.coupee(value, None, limit)
+            elif model == 'mistralai/mistral-small-2603':
+                if limit == 8192:
+                    # Reprise du dernier modèle : toutes les cellules sources ont déjà leur réponse
+                    suivis.append(self.request(suivi)[0].visible)
+                # Coupé à chaque limite, avec une sortie qui progresse
+                self.coupee(value, 'Action : relire' + ' | suite' * (limit // 1024), limit)
+        dossier, recap, envois, cles = self.lancer_avec_reprises(list(self.MAJORANTS), comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096),
+                          ('deepseek/deepseek-v4.1-flash', 8192), ('mistralai/mistral-small-2603', 4096),
+                          ('mistralai/mistral-small-2603', 8192), ('mistralai/mistral-small-2603', 16384)], envois)
+        self.assertEqual([KEY] * len(envois), cles)
+        with closing(storage.Store(self.data)) as store:
+            panel = campaigns.inspect(store, dossier.rsplit('/', 1)[1] + '-c1')['manifest']['panel']
+        maximum = sum(Decimal(self.MAJORANTS[c['model']][0]) * c['estimate']['assumptions']['input_tokens'] * 2
+                      + Decimal(self.MAJORANTS[c['model']][1]) * (8192 + 16384) for c in panel)
+        self.assertIn('arrêté par la limite de longueur est relancé au plus deux fois', recap.visible)
+        self.assertIn('repris deux fois : ' + montant_lisible(str(maximum)) + ' USD', recap.visible)
+        self.assertEqual(1, len(suivis))
+        self.assertIn('relancé avec une limite de sortie plus haute', suivis[0])
+        self.assertNotIn('Toutes les réponses sont arrivées', suivis[0])
+        html = self.evaluer(dossier)
+        # Modèle A et la reprise de Modèle B ; les réponses coupées de Modèle C ne partent jamais au juge
+        self.assertEqual(2, judge.request.call_count)
         rows = html.split('<tbody>')[1].split('</tbody>')[0]
         self.assertEqual(2, rows.count('<tr id="attempt-'))
         reprise = next(chunk for chunk in rows.split('<tr id="attempt-')[1:] if '<strong>Modèle B</strong>' in chunk)
@@ -1014,6 +1058,62 @@ class ParcoursComplet(unittest.TestCase):
                       '16384 jetons de sortie ; 2 reprises).', html)
         self.assertNotIn('Notre conseil', html)
         self.assertNotIn('rien n’est relancé automatiquement', html)
+
+    def test_reprise_reussie_sans_conseil(self):
+        """Décision d'Ayo du 2026-10-02 : pas de conseil sur une comparaison qui compte une reprise
+
+        Mode d'échec : chaque modèle a une réponse satisfaisante, dont une après reprise, et le
+        conseil est donné comme si chaque configuration n'avait qu'une tentative
+        """
+        # Critère de qualité mesuré et coûts connus : sans la règle, un conseil serait donné
+        self.criteria = {'eliminatory': [], 'obligations': ['Toutes les actions présentes'], 'quality': [
+            {'label': 'Clarté du tableau', 'scale': ['excellent', 'acceptable', 'faible'], 'favorable': 'excellent'}]}
+        self.juge_factice(lambda critere: ('PASS', 'candidate', 'Exigence respectée'), mesure='excellent')
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+                if limit == 4096:
+                    self.coupee(value, None, limit)
+        dossier, _, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        self.assertEqual(3, len(envois))
+        html = self.evaluer(dossier)
+        self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
+        self.assertNotIn('Aucune réponse exploitable', html)
+        self.assertNotIn('Notre conseil', html)
+
+    def test_reprise_refusee_ne_bloque_pas_la_comparaison(self):
+        """Une reprise refusée avant envoi (clé révoquée, par exemple) ne reste pas en attente
+
+        Modes d'échec : l'erreur est ignorée sans trace, la reprise réservée reste en attente
+        d'envoi et bloque l'évaluation des autres modèles, ou la comparaison entière s'arrête
+        """
+        judge = self.juge_factice()
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+                self.coupee(value, None, limit)
+                # Clé déconnectée pendant cet appel : la reprise est refusée avant tout envoi
+                with closing(storage.Store(self.data)) as store:
+                    for (session_id,) in store._connection.execute('SELECT session_id FROM s2_provider_access').fetchall():
+                        provider_access.disconnect(store, session_id, SECRET)
+        with self.assertLogs('benchmark.acquisition.execution', 'WARNING') as logs:
+            dossier, _, envois, _ = self.lancer_avec_reprises(
+                ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096)], envois)
+        self.assertTrue(any('RECOVERY_STOPPED' in line and 'Denied' in line for line in logs.output), logs.output)
+        # L'utilisateur reconnecte sa clé : l'évaluation des autres modèles n'attend pas la reprise refusée
+        page, _, _ = self.request(self.request('/')[0].link('Décrire mon cas'))
+        key_form = page.form('/access/key')
+        self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
+        html = self.evaluer(dossier)
+        self.assertEqual(1, judge.request.call_count)
+        # La reprise n'a pas eu lieu : la ligne dit la cause de la tentative source
+        self.assertIn('Aucune réponse exploitable pour Modèle B (arrêt pour longueur, plafond demandé : 4096 '
+                      'jetons de sortie).', html)
+        self.assertEqual(1, html.count('Aucune réponse exploitable pour Modèle B'))
 
     def niveaux_envoyes(self, campaign_id):
         with closing(storage.Store(self.data)) as store:

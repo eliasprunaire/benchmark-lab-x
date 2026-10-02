@@ -1086,17 +1086,22 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
     return dict(operation_id=attempt_id, execution_id=execution_id, cell_id=cell_id, output_piece_id=None)
 
 
-def _recovery_estimate(snapshot):
-    """Coût estimé si chaque modèle était repris aux deux paliers ; None si un tarif manque"""
+def _recovery_estimate(store, snapshot):
+    """Coût maximal si chaque modèle repris l'était aux deux paliers, aux tarifs majorants que le lancement fige
+
+    Un modèle sans reprise possible ne compte pas. Distinct de la prévision des réponses (RULES.md §8)
+    """
+    grant = _requester_recovery(store, snapshot['manifest']['panel'])
+    if grant is None:
+        return '0'
+    inputs = {configuration['model']: configuration['estimate']['assumptions']['input_tokens']
+              for configuration in snapshot['manifest']['panel']}
     amounts = []
-    for configuration in snapshot['manifest']['panel']:
-        estimate = configuration.get('estimate', {})
-        components = estimate.get('forecast', {}).get('components_usd', {})
-        if components.get('prompt') is None or components.get('completion') is None:
-            return None
-        output = estimate['assumptions']['output_tokens']
-        amounts.append(_money(components['prompt']) * len(LENGTH_RECOVERY_LIMITS)
-                       + _money(components['completion']) * sum(LENGTH_RECOVERY_LIMITS) / output)
+    for item in grant['capabilities']:
+        for endpoint in item['endpoints']:
+            limits = [min(limit, endpoint['max_completion_tokens']) for limit in LENGTH_RECOVERY_LIMITS]
+            amounts.append(_money(endpoint['pricing']['prompt']) * inputs[item['id']] * len(limits)
+                           + _money(endpoint['pricing']['completion']) * sum(limits))
     return str(_sum_money(amounts))
 
 
@@ -1132,7 +1137,7 @@ def _frozen_pricing(pricing):
     return frozen
 
 
-def _requester_recovery(store, panel):
+def _requester_recovery(store, panel) -> dict | None:
     """Préautorisation de reprise pour longueur, figée au lancement depuis le relevé OpenRouter conservé
 
     La limite de sortie figée de chaque route est bornée au dernier palier : le doublement existant
@@ -1161,7 +1166,7 @@ def _requester_recovery(store, panel):
         except (KeyError, TypeError, ValueError):
             continue
         capabilities.append(item)
-    return dict(capabilities=capabilities) if capabilities else None
+    return dict(capabilities=capabilities, max_recoveries=len(LENGTH_RECOVERY_LIMITS)) if capabilities else None
 
 
 def _estimate_total(snapshot):
@@ -1271,7 +1276,7 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
                 and not snapshot['admissions'] and not snapshot['attempts'],
                 judgment_estimate_usd=judgment_estimate,
                 estimate_total_usd=None if total is None else str(total), access=access,
-                recovery_limits=list(LENGTH_RECOVERY_LIMITS), recovery_estimate_usd=_recovery_estimate(snapshot),
+                recovery_limits=list(LENGTH_RECOVERY_LIMITS), recovery_estimate_usd=_recovery_estimate(store, snapshot),
                 model_names=model_catalogue.display_names(store)))
         admission = snapshot['admission']
         grant = admission['authority'].get('browser_launch') if admission else None
@@ -1544,6 +1549,8 @@ def projection(store, connection, dossier_id, campaign_id=None):
         query += ' AND c.campaign_id=?'
     rows = connection.execute(query + ' ORDER BY c.rowid', parameters).fetchall()
     snapshots = [(cid, _inspect(store, connection, cid)) for (cid,) in rows]
-    # Une campagne de reprise se lit avec sa campagne source, jamais comme une comparaison de plus
+    # Une reprise publique se lit avec sa comparaison source, jamais comme une comparaison de plus ;
+    # une reprise opérateur reste listée, comme avant
     return [_projected(store, connection, cid, snapshot) for cid, snapshot in snapshots
-            if campaign_id is not None or not snapshot['manifest'].get('recovery_of')]
+            if campaign_id is not None or not (snapshot['manifest'].get('recovery_of')
+                                               and snapshot['manifest'].get('funding') == 'requester')]

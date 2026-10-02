@@ -193,10 +193,14 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     # Reprises techniques (RULES.md §9) : chaque reprise vise une tentative ; seule la dernière d'une chaîne compte
     descendants = auto.family(connection, campaign_id)[1:]
     snapshots = [c._inspect(store, connection, cid) for cid in descendants]
-    parents = {a['operation_id']: s['manifest']['recovery_of'] for s in snapshots for a in s['attempts']}
+    # Une reprise arrêtée avant tout envoi n'a pas eu lieu : la tentative source reste la dernière
+    held = {a['operation_id'] for _, a in auto._attempts(store, connection, campaign_id)}
+    parents = {a['operation_id']: s['manifest']['recovery_of'] for s in snapshots for a in s['attempts']
+               if a['operation_id'] in held}
     superseded = set(parents.values())
     every = campaign['attempts'] + [a for cid in descendants
-                                    for a in c.projection(store, connection, dossier_id, cid)[0]['attempts']]
+                                    for a in c.projection(store, connection, dossier_id, cid)[0]['attempts']
+                                    if a['operation_id'] in held]
     visible = [a for a in every if a['operation_id'] not in superseded]
 
     def recoveries(attempt_id):

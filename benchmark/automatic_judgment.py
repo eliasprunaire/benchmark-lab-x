@@ -89,7 +89,14 @@ def admission(store, connection):
 
 
 def family(connection, campaign_id):
-    """Campagne source et ses reprises techniques : l'utilisateur lit une seule comparaison"""
+    """Comparaison publique et ses reprises techniques : l'utilisateur lit une seule comparaison
+
+    Une campagne opérateur garde ses reprises comme campagnes distinctes, telles qu'elles ont été évaluées
+    """
+    row = connection.execute('SELECT manifest_json, manifest_sha256 FROM s4_campaigns WHERE campaign_id=?',
+                             (campaign_id,)).fetchone()
+    if row is None or c.q._decode(*row).get('funding') != 'requester':
+        return [campaign_id]
     return [campaign_id] + c._recovery_descendants(connection, campaign_id)
 
 
@@ -101,9 +108,17 @@ def operations(store, connection, campaign_id):
 
 
 def _attempts(store, connection, campaign_id):
-    """Tentatives de la campagne et de ses reprises, chacune avec l'identifiant de sa campagne"""
-    return [(cid, attempt) for cid in family(connection, campaign_id)
-            for attempt in c._inspect(store, connection, cid)['attempts']]
+    """Tentatives de la campagne et de ses reprises, chacune avec l'identifiant de sa campagne
+
+    Une reprise arrêtée avant tout envoi (clé refusée, par exemple) reste consignée mais n'a pas eu
+    lieu : elle n'est ni attendue, ni jugée, ni affichée
+    """
+    result = []
+    for cid in family(connection, campaign_id):
+        snapshot = c._inspect(store, connection, cid)
+        result += [(cid, attempt) for attempt in snapshot['attempts']
+                   if cid == campaign_id or snapshot['admission'] is not None or attempt['state'] != 'INTENT_RECORDED']
+    return result
 
 
 def guard_budget(store, connection, budget_id, *, campaign_id=None):
@@ -341,11 +356,14 @@ def status(store, connection, campaign_id, snapshot=None):
     # Seule la dernière opération de chaque série compte : un jugement relancé reste un seul jugement
     latest = [op for op, _ in _latest(ops).values()]
     # Un jugement est réservé par réponse à évaluer, une fois toutes les réponses reçues, reprises comprises
-    attempts = [a for _, a in _attempts(store, connection, campaign_id)]
+    family = _attempts(store, connection, campaign_id)
+    attempts = [a for _, a in family]
     total = len(latest) if ops else sum(c.answered(a) for a in attempts)
     cells = len(snapshot['manifest']['plan'])
     completed, unusable = _completed(store, connection, latest)
-    result = dict(status='NOT_STARTED', total=total, cells=cells, completed=completed, reason=None, can_start=False)
+    result = dict(status='NOT_STARTED', total=total, cells=cells, completed=completed, reason=None, can_start=False,
+                  # Reprises techniques pas encore reçues : le suivi les dit au lieu d'annoncer toutes les réponses
+                  recovering=sum(cid != campaign_id and a['state'] != 'RECEIVED' for cid, a in family))
     due = _due(snapshot['stop_reason'], ops)
     exhausted = [incident for incident in (p._provider_incident(op, unsent=True) for op in latest)
                  if incident in p._RETRIED_INCIDENTS]
