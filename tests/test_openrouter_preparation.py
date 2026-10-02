@@ -444,6 +444,18 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('0', self.store.inspect_budget('fixture')['reserved'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
+    def test_convention_d_inclusion_visible_et_indice_reserve_au_jugement(self):
+        # Issue #438 : une exclusion se justifie par une exigence visible, jamais par la seule référence cachée
+        for profile_name in (assistant.ASSISTANT, assistant.FALLBACK_ASSISTANT):
+            system = ' '.join(assistant.load_profile(profile_name)['system'].split())
+            self.assertIn("Une convention qui décide d'inclure ou d'exclure un élément", system)
+            self.assertIn('Un indice qui désigne un élément ou révèle la réponse reste dans judgment', system)
+            self.assertIn('toutes les lectures défendables', system)
+        system = assistant.load_profile(str(
+            Path(assistant.__file__).parent / 'profiles' / 'qualification.profile.json'))['system']
+        self.assertIn('ne repose sur une convention absente du paquet candidat', system)
+        self.assertIn("n'est pas une fuite", system)
+
     def test_story_15_accepts_criteria_by_severity_and_rejects_quality_limit(self):
         for profile_name in (assistant.ASSISTANT, assistant.FALLBACK_ASSISTANT):
             system = assistant.load_profile(profile_name)['system']
