@@ -304,17 +304,37 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertEqual(consent['contribution']['expires_at'], metadata['expires_at'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
+    def test_dossier_view_checks_the_database_once_then_only_after_a_change(self):
+        self.prepare('vue')
+        checks = []
+        self.store._connection.set_trace_callback(lambda sql: checks.append(sql) if sql == 'PRAGMA quick_check' else None)
+        self.addCleanup(self.store._connection.set_trace_callback, None)
+
+        def view():
+            code, _, _, _ = web_api.dispatch(self.store, 'GET', '/preparation/dossiers/vue', self.token,
+                                             None, 'a' * 40, None)
+            self.assertEqual(200, code)
+            count = len(checks)
+            checks.clear()
+            return count
+        self.assertLessEqual(view(), 1)
+        # Rafraîchissement du suivi sans écriture : aucune vérification refaite
+        self.assertEqual(0, view())
+        with closing(sqlite3.connect(self.data / 'metadata.sqlite3', isolation_level=None)) as other:
+            other.execute("INSERT INTO budgets VALUES ('externe', '1', 'USD')")
+        self.assertEqual(1, view())
+
     def test_archive_compares_each_campaign_once_and_keeps_only_the_previous_version(self):
         self.prepare('arch')
         self.qualify('arch')
         first = archive.archive_manifest(self.store, self.sid, 'arch')
         cid, attempts, _ = self.campaign('arch')
-        # Vue des modèles : une seule vérification de la base pour toute la lecture
+        # Vue des modèles : au plus une vérification de la base pour toute la lecture, aucune si rien n'a changé
         checks = []
         self.store._connection.set_trace_callback(lambda sql: checks.append(sql) if 'quick_check' in sql else None)
         campaigns.configurations_view(self.store, self.sid, 'arch')
         self.store._connection.set_trace_callback(None)
-        self.assertEqual(1, len(checks))
+        self.assertLessEqual(len(checks), 1)
         service._retention_worker(self.data, 'arch', self.acquire, attempts)
         second = archive.archive_manifest(self.store, self.sid, 'arch')
         self.stage = 'judgment'
