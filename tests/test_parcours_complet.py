@@ -928,20 +928,34 @@ class ParcoursComplet(unittest.TestCase):
         4. la réponse reprise n'est pas jugée, ou s'affiche sans dire qu'elle est une reprise ;
         5. une chaîne de reprises sans réponse affiche une ligne par essai au lieu d'une seule ;
         6. le récapitulatif avant lancement tait les reprises possibles ;
-        7. un conseil est donné alors que la comparaison compte une reprise
+        7. un conseil est donné alors que la comparaison compte une reprise ;
+        8. une route n'est pas reprise parce que son tarif publié porte des composants qui ne
+           s'appliquent pas à la requête (recherche web, image, audio), ou des tarifs par tranche,
+           par horaire ou de raisonnement, comme ceux des grands fournisseurs
         """
         from base64 import b64encode
         from hashlib import sha256
         from benchmark import automatic_judgment as auto
         judge = self.juge_factice()
+        # Formes relevées sur OpenRouter le 2026-10-02 (valeurs inventées)
+        publies = {
+            'deepseek/deepseek-v4.1-flash': {
+                'prompt': '0.000002', 'completion': '0.00001', 'web_search': '0.01',
+                'overrides': [{'utc_start': 0, 'utc_end': 1400, 'prompt': '0.000003', 'completion': '0.000012'},
+                              {'utc_start': 1400, 'utc_end': 0, 'prompt': '0.000001', 'completion': '0.000006'}]},
+            'mistralai/mistral-small-2603': {
+                'prompt': '0.000002', 'completion': '0.00001', 'image': '0.000002', 'audio': '0.000002',
+                'input_audio_cache': '0.0000002', 'input_cache_write_1h': '0.000004', 'internal_reasoning': '0.000012',
+                'overrides': [{'min_prompt_tokens': 200000, 'prompt': '0.000004', 'completion': '0.000018',
+                               'audio': '0.000004'}]}}
         with closing(storage.Store(self.data)) as store:
             # Relevé complet : routes avec limites et tarifs, dont un tarif additionnel nul
             fetched_at, raw = store._connection.execute('SELECT fetched_at, raw_json FROM s2_model_catalogue').fetchone()
             document = json.loads(raw)
-            for detail in document['endpoints'].values():
+            for model_id, detail in document['endpoints'].items():
                 for endpoint in detail['endpoints']:
                     endpoint.update(max_completion_tokens=32768, context_length=64000,
-                                    pricing={'prompt': '0.000002', 'completion': '0.00001', 'request': '0'})
+                                    pricing=publies.get(model_id, {'prompt': '0.000002', 'completion': '0.00001', 'request': '0'}))
             store._connection.execute('UPDATE s2_model_catalogue SET raw_json=? WHERE fetched_at=?',
                                       (storage._strict_json(document), fetched_at))
         dossier = self.exemple_qualifie()

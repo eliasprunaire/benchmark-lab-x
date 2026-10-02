@@ -1100,6 +1100,38 @@ def _recovery_estimate(snapshot):
     return str(_sum_money(amounts))
 
 
+# Composants publiés liés à une fonction que la campagne n'envoie jamais : recherche web, image, audio, cache d'une heure
+_UNSENT_PRICES = {'web_search', 'image', 'audio', 'input_audio_cache', 'input_cache_write_1h'}
+
+
+def _frozen_pricing(pricing):
+    """Tarif figé majorant : le plus haut de chaque composant, toutes tranches et tous horaires confondus
+
+    Le raisonnement est compté au tarif de sortie le plus haut, la remise est ignorée. Un frais par
+    requête non nul ou un composant inconnu refuse la route
+    """
+    overrides = pricing.get('overrides', [])
+    if type(overrides) is not list:
+        raise ValueError('Tranches de tarif illisibles')
+    frozen = {}
+    for row in [pricing, *overrides]:
+        if type(row) is not dict:
+            raise ValueError('Tranche de tarif illisible')
+        for key, value in row.items():
+            if key in _UNSENT_PRICES or key in ('overrides', 'discount', 'min_prompt_tokens', 'utc_start', 'utc_end'):
+                continue
+            if key == 'request':
+                if _money(value) != 0:
+                    raise ValueError('Frais par requête')
+                continue
+            target = 'completion' if key == 'internal_reasoning' else key
+            if target not in ('prompt', 'completion', 'input_cache_read', 'input_cache_write'):
+                raise ValueError('Composant de tarif inconnu')
+            if target not in frozen or _money(value) > _money(frozen[target]):
+                frozen[target] = value
+    return frozen
+
+
 def _requester_recovery(store, panel):
     """Préautorisation de reprise pour longueur, figée au lancement depuis le relevé OpenRouter conservé
 
@@ -1112,7 +1144,6 @@ def _requester_recovery(store, panel):
     documents = latest[1].get('endpoints') if latest else None
     if type(documents) is not dict:
         return None
-    allowed = {'prompt', 'completion', 'input_cache_read', 'input_cache_write', 'discount'}
     capabilities = []
     for configuration in panel:
         try:
@@ -1120,15 +1151,11 @@ def _requester_recovery(store, panel):
             for endpoint in documents[configuration['model']]['endpoints']:
                 if endpoint['tag'] not in configuration['parameters']['provider']['only']:
                     continue
-                pricing = endpoint['pricing']
-                # Un tarif additionnel non nul changerait le coût : la route n'est alors pas reprise
-                if any(_money(pricing[key]) != 0 for key in pricing.keys() - allowed):
-                    raise ValueError('Tarif additionnel')
                 endpoints.append(dict(
                     tag=endpoint['tag'], status=endpoint['status'], context_length=endpoint['context_length'],
                     max_completion_tokens=min(endpoint['max_completion_tokens'], LENGTH_RECOVERY_LIMITS[-1]),
                     supported_parameters=endpoint['supported_parameters'],
-                    pricing={key: pricing[key] for key in pricing.keys() & allowed}))
+                    pricing=_frozen_pricing(endpoint['pricing'])))
             item = dict(id=configuration['model'], endpoints=endpoints)
             recovery._capability(item)
         except (KeyError, TypeError, ValueError):
