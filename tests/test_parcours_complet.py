@@ -179,6 +179,7 @@ class ParcoursComplet(unittest.TestCase):
         self.enterContext(patch('socket.socket.connect_ex', side_effect=AssertionError('No network')))
         self.cookies = SimpleCookie()
         self.preparation_stage = 'clarification'
+        self.criteria = None
 
     def prepare(self, operation, request):
         self.calls.append(('préparation', operation['operation_id']))
@@ -191,6 +192,8 @@ class ParcoursComplet(unittest.TestCase):
             # La question posée avec l'exemple ne doit plus apparaître une fois l'exemple validé
             result['explanation'] = 'Cet exemple correspond-il bien à votre travail ?'
             result['package']['candidate']['instruction'] = 'Relever toutes les actions dans les notes'
+            if self.criteria is not None:
+                result['package']['candidate']['criteria'] = self.criteria
             if self.preparation_stage == 'correction':
                 result['package']['candidate']['deliverables'] = ['Tableau des actions avec responsable']
         return value
@@ -733,8 +736,11 @@ class ParcoursComplet(unittest.TestCase):
         prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
         return dossier
 
-    def juge_factice(self):
-        """Juge OpenRouter réel sur une connexion HTTP simulée : chaque réponse évaluée ne satisfait pas une obligation"""
+    def juge_factice(self, constat=None):
+        """Juge OpenRouter réel sur une connexion HTTP simulée : chaque réponse évaluée ne satisfait pas une obligation
+
+        `constat(critère)` remplace ce FAIL uniforme par (statut, attribution, texte du constat)
+        """
         from unittest.mock import Mock
         from benchmark.transports import openrouter
         from tests.test_openrouter_preparation import SYNTHETIC_PROFILE, estimate_for
@@ -750,8 +756,9 @@ class ParcoursComplet(unittest.TestCase):
             content = json.loads(json.loads(body)['messages'][1]['content'])
             output = content['output']
             proof = {'piece_id': output['piece_id'], 'sha256': output['sha256'], 'passage': output['content']}
-            findings = [dict(criterion_id=x['id'], control_id=k, status='FAIL', attribution='candidate',
-                             finding='Obligation non satisfaite', evidence=[proof])
+            findings = [dict(zip(('status', 'attribution', 'finding'), constat(x) if constat else
+                                 ('FAIL', 'candidate', 'Obligation non satisfaite')),
+                             criterion_id=x['id'], control_id=k, evidence=[proof])
                         for x in content['obligations'] + content['eliminatory_errors'] for k in x['control_ids']]
             result = dict(findings=findings, measures=[], limits=[], proposed_verdict='SATISFAIT')
             document = dict(id='fixture-judge', model=profile['revision'],
@@ -821,6 +828,95 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         self.assertEqual(('4Modèles', comparison), self.etape(page))
         self.assertEqual(2, judge.request.call_count)
+
+    def test_motif_du_verdict_nomme_les_exigences_qui_le_fondent(self):
+        """Un « Ne satisfait pas » ne s'explique pas par la partie respectée d'une exigence composée
+
+        Modes d'échec couverts :
+        1. le tableau coupe le texte du juge et n'en montre que la partie respectée ;
+        2. le tableau tait une exigence en défaut, ou nomme un constat FAIL qui n'a pas fondé le verdict ;
+        3. le détail marque « Non respectée » une exigence que le verdict n'a pas retenue ;
+        4. une cellule sans réponse exploitable n'est ni nommée ni expliquée ;
+        5. une réponse coupée par la limite de sortie part au juge : elle ne pourrait qu'échouer ;
+        6. un reçu complet de structure inattendue fait échouer la page de résultats
+        """
+        from base64 import b64encode
+        from hashlib import sha256
+        from benchmark import automatic_judgment as auto
+        tableau = 'Présenter un tableau à trois colonnes avec une ligne par action'
+        echeances = 'Indiquer pour chaque action son responsable et son échéance'
+        self.criteria = {'eliminatory': ['Inventer une décision absente du compte rendu'],
+                         'obligations': [tableau, echeances], 'quality': []}
+        explication = ('Le tableau a bien trois colonnes, mais les actions de relecture '
+                       'et d’envoi partagent une même ligne.')
+
+        def constat(critere):
+            if critere['description'] == tableau:
+                return 'FAIL', 'candidate', explication
+            if critere['description'] == echeances:
+                # Preuve jugée insuffisante par le juge : ce FAIL ne fonde pas le verdict
+                return 'FAIL', 'evidence', 'Échéance peut-être absente'
+            return 'FAIL', 'candidate', 'Une action de suivi est inventée'
+        judge = self.juge_factice(constat)
+        dossier = self.exemple_qualifie()
+        page, _, _ = self.request(dossier + '/configurations')
+        page = self.submit(page, '/configurations', {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
+            'tier': 'low'})
+        self.submit(page, '/start', {})
+        attempts = self.starts.get_nowait()['candidate_attempts']
+
+        def coupee(value, content, choices=None):
+            """Reçu OpenRouter terminé par la limite de sortie, comme le transport Pi le conserve"""
+            body = storage._strict_json({'choices': choices or [{'finish_reason': 'length', 'message': {
+                'role': 'assistant', 'content': content}}]}).encode()
+            value['receipt']['observed_configuration']['http'] = dict(
+                status=200, complete=True, credential_redacted=False,
+                body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest())
+            value['receipt']['result'].update(output=content, incident='PROVIDER_RESPONSE_INCOMPLETE')
+
+        def candidat(operation, request):
+            value = self.candidate(operation, request)
+            model = request['requested_configuration']['model']
+            if model == 'deepseek/deepseek-v4.1-flash':
+                # Reçu complet mais de structure inattendue : aucune cause n'est avancée, la page reste lisible
+                coupee(value, None, [None])
+                value['cost'].update(status='KNOWN', amount='0.05')
+            elif model == 'mistralai/mistral-small-2603':
+                coupee(value, 'Action : relire | Responsable : Camille')
+            return value
+        execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
+        page, _, _ = self.request(dossier)
+        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        self.submit(page, '/evaluate', {})
+        auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
+        # Seule la réponse complète de Modèle A est jugée
+        self.assertEqual(1, judge.request.call_count)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        results, _, raw = self.request(comparison)
+        self.examine(results, comparison, 'résultats et motifs', None)
+        html = raw.decode()
+
+        def ligne(nom):
+            return next(chunk for chunk in html.split('<tr id="attempt-')[1:]
+                        if '<strong>' + nom + '</strong>' in chunk).split('</tr>')[0]
+        cellule = ligne('Modèle A')
+        self.assertIn('Erreur éliminatoire : Inventer une décision absente du compte rendu. '
+                      'Exigence non respectée : ' + tableau + '.', cellule)
+        self.assertNotIn('Le tableau a bien', cellule)
+        self.assertNotIn(echeances, cellule)
+        self.assertNotIn('…', cellule)
+        self.assertNotIn('<strong>Modèle C</strong>', html.split('<table')[1])
+        self.assertIn('Aucune réponse exploitable pour Modèle C (arrêt pour longueur, '
+                      'plafond demandé : 4096 jetons de sortie). Ce modèle', html)
+        self.assertIn('Aucune réponse exploitable pour Modèle B. Ce modèle', html)
+        _, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
+        text = raw.decode()
+        self.assertIn('0 exigence sur 2 respectée, 1 non respectée, 1 non vérifiable. 1 erreur éliminatoire relevée.', text)
+        states = re.findall(r'>([^<>]+)</span><span>([^<]+)</span>', text)
+        self.assertIn(('Non respectée', tableau), states)
+        self.assertIn(('Non vérifiable', echeances), states)
+        self.assertIn(explication, text)
 
     def niveaux_envoyes(self, campaign_id):
         with closing(storage.Store(self.data)) as store:

@@ -1390,8 +1390,15 @@ def close_admission(store, reason):
 
 
 def answered(attempt):
-    """Réponse à évaluer : sortie présente et non blanche ; une sortie vide n'est jamais envoyée au juge"""
-    return attempt['output_piece_id'] is not None and bool(attempt['operation']['receipt']['result']['output'].strip())
+    """Réponse à évaluer : sortie présente, non blanche et reçue sans incident
+
+    Une sortie avec incident (coupée par la limite, refusée, d'une autre identité) ne peut
+    jamais obtenir SATISFAIT : le juge ne pourrait que la faire échouer, elle ne lui est pas envoyée
+    """
+    if attempt['output_piece_id'] is None:
+        return False
+    result = attempt['operation']['receipt']['result']
+    return bool(result['output'].strip()) and result['incident'] is None
 
 
 def _projected(store, connection, campaign_id, snapshot) -> dict:
