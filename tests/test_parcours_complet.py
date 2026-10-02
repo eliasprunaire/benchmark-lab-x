@@ -727,9 +727,11 @@ class ParcoursComplet(unittest.TestCase):
                      'du stock est exclu : sujet reporté, ni décision ni action.')
         convention = 'Un sujet reporté à une prochaine réunion n’est ni une décision ni une action.'
         consigne = ['Relever les décisions et les actions à mener dans les notes.']
+        envois = []
 
         def preparer(operation, request):
             self.calls.append(('préparation', operation['operation_id']))
+            envois.append(request['outgoing'])
             value = response_for(operation)
             value['cost'].update(amount='0.10', currency='USD', source='Reçu simulé #438')
             result = value['receipt']['result']
@@ -775,7 +777,11 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, dossier, 'exemple corrigé à valider', 'Oui, c’est le travail à tester')
         self.assertIn('Cet exemple n’est pas encore validé.', page.visible)
         self.assertIn(convention, page.visible)
-        # Une version corrigée n'est vérifiée qu'après sa propre validation
+        # Le préparateur reçoit la version validée et la correction, pas la référence
+        self.assertEqual([{'name': 'notes.txt', 'content': notes}], envois[-1]['previous_candidate']['pieces'])
+        self.assertIn('sujet reporté', envois[-1]['message'])
+        self.assertNotIn(reference, storage._strict_json(envois))
+        # Une version corrigée n'est vérifiée qu'après sa propre validation ; l'ancienne reste validée telle quelle
         self.assertEqual(1, len(self.qualifier.calls))
         with closing(storage.Store(self.data)) as store:
             revisions = [row[0] for row in store._connection.execute(
@@ -783,8 +789,12 @@ class ParcoursComplet(unittest.TestCase):
                 'ORDER BY revision', (dossier.rsplit('/', 1)[1],))]
             contents = {store.read_piece(row[0]) for row in store._connection.execute(
                 "SELECT piece_id FROM pieces WHERE dossier_id=? AND role='candidate'", (dossier.rsplit('/', 1)[1],))}
+            validations = store._connection.execute(
+                'SELECT v.revision FROM s2_validations v JOIN s2_revisions r USING(dossier_id,revision) '
+                'WHERE v.dossier_id=? AND v.package_sha256=r.package_sha256', (dossier.rsplit('/', 1)[1],)).fetchall()
         self.assertEqual(2, len(revisions))
         self.assertEqual({notes.encode()}, contents)
+        self.assertEqual([(revisions[0],)], validations)
         self.qualifier.result = {'qualified': True, 'findings': [],
                                  'summary': 'Chaque exclusion découle de la consigne.'}
         self.submit(page, '/validation', {})
