@@ -44,6 +44,9 @@ try:
     # Le motif vient d'un modèle juge : il reste du texte, jamais du balisage
     failed = next(row for row in results['rows'] if row['verdict'] == 'NE SATISFAIT PAS')
     failed['reason'] += ' <img src=x onerror=alert(1)>'
+    # Le tableau nomme les exigences en défaut : leur libellé vient aussi d'un modèle
+    for item in failed['qualification']['contract']['specification']['obligations']:
+        item['description'] += ' <img src=x onerror=alert(1)>'
     attempt['results'] = views.render(results, '').decode()
     attempt['preview'] = views.render(restitution.preview_view(proof.store, proof.sid, 'fixture', 'comparison',
                                                                piece_ids=[], presentation=projection), '').decode()
@@ -766,8 +769,8 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     const fills = await page.$$eval('.costbar rect', rects => rects.map(rect => getComputedStyle(rect).fill));
     assert.ok(fills.length > 1, 'barres de coût absentes');
     assert.ok(fills.every(fill => fill !== accent), 'barre de coût en couleur d’accent');
-    // Verdict et motif précis ; contexte, attribution et conditions dans « Comment lire »
-    assert.match((await page.locator('table').allInnerTexts()).join(' '), /Action omise, précision conservée <img src=x/);
+    // Verdict et exigence en défaut, entière ; l'explication du juge reste dans le détail
+    assert.match((await page.locator('table').allInnerTexts()).join(' '), /Exigence non respectée : Action présente <img src=x onerror=alert\(1\)>\./);
     assert.equal(await page.locator('table img').count(), 0, 'motif du juge interprété comme HTML');
     // Une mesure booléenne se lit Oui ou Non, jamais True ou False
     assert.doesNotMatch((await page.locator('table').allInnerTexts()).join(' '), /\b(True|False)\b/);

@@ -9,7 +9,7 @@ from .validation import identifier
 from .acquisition import campaigns as c
 from . import evaluation as e, model_catalogue, preparation as p, qualification as q
 from .publications import SCHEMA, PRESENTATION_VERSION, _decode
-from .storage import _strict_json as encode
+from .storage import ConflictError, IntegrityError, _strict_json as encode
 
 ATTRIBUTION = (
     'Le verdict vaut pour chaque modèle tel qu’il a été réglé et appelé ici, dans les conditions communes décrites. '
@@ -19,6 +19,25 @@ NO_USABLE_RESPONSE = 'Aucune réponse exploitable de ce modèle : il n’est pas
 LIMIT = 'Ces résultats portent sur un exemple inventé. Ils ne se transposent pas tels quels à vos dossiers réels et ne s’additionnent pas avec ceux d’autres cas ou d’autres comparaisons.'
 VERDICTS = ('SATISFAIT', 'NE SATISFAIT PAS', 'A_REPRENDRE', 'INDETERMINE')
 FILTERS = ('case', 'sort', 'direction', 'verdict', 'obligation', 'configuration')
+
+
+# Lues dans le reçu HTTP conservé ; un reçu illisible ne fait avancer aucune cause
+RESPONSE_CAUSES = {'EMPTY_OUTPUT': 'réponse terminée sans texte',
+                   'ROUTE_ERROR': 'fournisseur indisponible ou limite de débit atteinte',
+                   'CONTENT_REFUSAL': 'refus du modèle'}
+
+
+def _response_cause(attempt):
+    """Cause lisible d'une réponse inexploitable, ou None si le reçu ne l'établit pas"""
+    from .acquisition import recovery
+    try:
+        kind = recovery.observation(attempt)['kind']
+    except (ValueError, KeyError, TypeError, AttributeError, ConflictError, IntegrityError):
+        return None
+    if kind == 'LENGTH':
+        limit = attempt['operation']['requested_configuration'].get('parameters', {}).get('max_tokens')
+        return 'arrêt pour longueur' + (f', plafond demandé : {limit} jetons de sortie' if type(limit) is int else '')
+    return RESPONSE_CAUSES.get(kind)
 
 
 def campaign_url(dossier_id, campaign_id):
@@ -170,7 +189,13 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                             unit=definition['unit'], favorable=favorable, proof=definition['proof']))
     _queries(query, campaign, spec, columns)
     records = e.projection(store, connection, dossier_id, campaign_id)
+    causes = {}
     latest = {record['attempt_id']: record for record in records}
+    concerned = {a['operation_id'] for a in campaign['attempts']
+                 if a['state'] == 'RECEIVED' and not a['answered'] and a['operation_id'] not in latest}
+    if concerned:
+        causes = {a['operation_id']: _response_cause(a)
+                  for a in c._inspect(store, connection, campaign_id)['attempts'] if a['operation_id'] in concerned}
     pending = [dict(attempt_id=a['operation_id'], verdict=None,
                     state='REVIEW_REQUIRED' if a['state'] == 'RECEIVED' and a['incident'] is None else 'EXECUTION_REQUIRED',
                     next_action='Cette réponse doit être relue et son évaluation terminée avant de conclure.')
@@ -189,7 +214,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
             if attempts[attempt['attempt_id']]['state'] == 'RECEIVED' and not attempts[attempt['attempt_id']]['answered']:
                 cell = next(c for c in campaign['cells'] if c['cell_id'] == attempts[attempt['attempt_id']]['cell_id'])
                 attempt.update(state='NO_USABLE_RESPONSE', next_action=NO_USABLE_RESPONSE,
-                               configuration_id=cell['configuration_id'])
+                               configuration_id=cell['configuration_id'], cause=causes.get(attempt['attempt_id']))
             elif attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='EVALUATION_' + progress_status,
                     next_action=progress_reason or 'Réponse reçue. Son évaluation automatique n’est pas terminée.')
