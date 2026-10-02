@@ -33,12 +33,12 @@ OUT_OF_SCOPE_CATEGORIES = ('math', 'coding', 'other')
 _SOURCE_ACCEPTED = {}
 # Registre de module partagé par tous les fils de travail de l'exécuteur
 _SOURCE_GUARD = threading.Lock()
-# Vérification de l'exemple : relance automatique, sans bouton, après un incident fournisseur reçu ou une
-# connexion impossible, au plus cinq tentatives par version pour borner le coût ; jamais après un effet
-# ambigu, une clé refusée ou un crédit épuisé. Attente avant chaque nouvelle tentative, allongée par un
-# Retry-After plus long
-QUALIFICATION_ATTEMPTS = 5
-QUALIFICATION_RETRY_SECONDS = (30, 120, 600, 1800)
+# Préparation, correction, vérification de l'exemple et évaluation : relance automatique, sans bouton, après
+# un incident fournisseur reçu ou une connexion impossible, au plus cinq tentatives par série pour borner le
+# coût ; jamais après un effet ambigu, une clé refusée ou un crédit épuisé. Attente avant chaque nouvelle
+# tentative, allongée par un Retry-After plus long
+RETRY_ATTEMPTS = 5
+RETRY_SECONDS = (30, 120, 600, 1800)
 # NOT_SENT : relance programmée close avant envoi par un redémarrage, elle n'a consommé aucune tentative
 _RETRIED_INCIDENTS = ('RATE_LIMITED', 'PROVIDER_ERROR', 'CONNECTION_FAILED', 'NOT_SENT')
 _KEY_INCIDENTS = ('KEY_REJECTED', 'CREDIT_EXHAUSTED')
@@ -369,8 +369,12 @@ def _package_changes(connection, dossier_id, revision, package):
     return changes, piece_changes
 
 
-def _qualification_incident(operation):
-    """Incident fournisseur d'une vérification close sans résultat, ou None"""
+def _provider_incident(operation, *, unsent=False):
+    """Incident fournisseur d'un appel assisté clos sans résultat, ou None
+
+    Une clôture avant envoi ne compte que pour une relance déjà programmée, ou pour toute opération si
+    `unsent` : l'évaluation n'a pas d'autre voie pour reprendre un jugement clos par un redémarrage
+    """
     if operation['state'] != 'RECEIVED':
         return None
     observed = operation['receipt']['observed_configuration']
@@ -378,13 +382,13 @@ def _qualification_incident(operation):
     if operation['receipt']['result'] == {'status': 'NOT_SENT'}:
         if incident == 'CONNECTION_FAILED':
             return incident
-        return 'NOT_SENT' if len(operation['resources']) > 2 else None
+        return 'NOT_SENT' if unsent or len(operation['resources']) > 2 else None
     if operation['receipt']['result'] is None and incident in _RETRIED_INCIDENTS + _KEY_INCIDENTS:
         return incident
     return None
 
 
-def _qualification_attempt(operation):
+def _retry_attempt(operation):
     """Rang dans la série automatique, lu dans le lien conservé avec les ressources de l'opération"""
     return json.loads(operation['resources'][2])['attempt'] if len(operation['resources']) > 2 else 1
 
@@ -400,13 +404,13 @@ def _retry_after(value, received):
         return 0
 
 
-def _retry_due(operation):
+def _retry_due(operation, *, unsent=False):
     """Échéance de la relance automatique, ou None quand aucune n'est permise"""
-    incident = _qualification_incident(operation)
+    incident = _provider_incident(operation, unsent=unsent)
     if incident == 'NOT_SENT':
         return datetime.fromisoformat(operation['created_at'])
-    attempt = _qualification_attempt(operation)
-    if incident not in _RETRIED_INCIDENTS or attempt >= QUALIFICATION_ATTEMPTS:
+    attempt = _retry_attempt(operation)
+    if incident not in _RETRIED_INCIDENTS or attempt >= RETRY_ATTEMPTS:
         return None
     observed = operation['receipt']['observed_configuration'] or {}
     http = observed.get('http')
@@ -415,7 +419,7 @@ def _retry_due(operation):
                                        else http['received_at'])
     headers = http.get('response_headers')
     headers = headers if isinstance(headers, dict) else {}
-    wait = max(QUALIFICATION_RETRY_SECONDS[attempt - 1], _retry_after(headers.get('Retry-After'), failed_at))
+    wait = max(RETRY_SECONDS[attempt - 1], _retry_after(headers.get('Retry-After'), failed_at))
     return failed_at + timedelta(seconds=wait)
 
 
@@ -423,20 +427,35 @@ def _duration(seconds):
     return f'{seconds} s' if seconds < 60 else f'{math.ceil(seconds / 60)} min'
 
 
+def retry_link(operation, *, unsent=False):
+    """Lien de la tentative suivante ; une tentative close avant envoi n'a rien consommé : son rang est repris"""
+    kept = _provider_incident(operation, unsent=unsent) == 'NOT_SENT'
+    return encode({'retry_of': operation['operation_id'], 'attempt': _retry_attempt(operation) + (0 if kept else 1)})
+
+
+def retry_notice(operation, due):
+    """Cause de l'incident et délai avant la relance automatique, pour les pages"""
+    retry_in = max(0, math.ceil((due - _now()).total_seconds()))
+    return _incident_reason(_provider_incident(operation, unsent=True)) + (
+        ' Nouvelle tentative automatique dans ' + _duration(retry_in) + '.' if retry_in
+        else ' Nouvelle tentative automatique dès que possible.'), retry_in
+
+
+def _incident_reason(incident):
+    return (NOT_SENT_TEXT if incident == 'CONNECTION_FAILED'
+            else 'Tentative interrompue avant envoi, sans coût.' if incident == 'NOT_SENT' else INCIDENT_TEXT[incident])
+
+
 def _provider_qualification(operation, incident):
     """Vérification arrêtée chez le fournisseur : l'exemple n'est jamais mis en cause"""
-    reason = (NOT_SENT_TEXT if incident == 'CONNECTION_FAILED'
-              else 'Tentative interrompue avant envoi, sans coût.' if incident == 'NOT_SENT' else INCIDENT_TEXT[incident])
     due, retry_in = _retry_due(operation), None
     if incident in _KEY_INCIDENTS:
         status, cause = 'BLOCKED', 'key'
-        summary = (reason + ' La vérification de l’exemple n’a pas eu lieu. Une fois votre clé ou son crédit '
-                   'corrigés, une modification de l’exemple lancera une nouvelle vérification.')
+        summary = (_incident_reason(incident) + ' La vérification de l’exemple n’a pas eu lieu. Une fois votre '
+                   'clé ou son crédit corrigés, une modification de l’exemple lancera une nouvelle vérification.')
     elif due is not None:
         status, cause = 'PENDING', 'provider'
-        retry_in = max(0, math.ceil((due - _now()).total_seconds()))
-        summary = reason + (' Nouvelle tentative automatique dans ' + _duration(retry_in) + '.' if retry_in
-                            else ' Nouvelle tentative automatique dès que possible.')
+        summary, retry_in = retry_notice(operation, due)
     else:
         status, cause = 'BLOCKED', 'provider'
         summary = 'Vérification impossible pour le moment chez le fournisseur. L’exemple n’est pas en cause.'
@@ -465,7 +484,7 @@ def _automatic_qualification(store, connection, dossier_id, revision):
             return None
         if validated is None:
             raise IntegrityError('Qualification sans validation du besoin')
-        incident = _qualification_incident(operation)
+        incident = _provider_incident(operation)
         if incident is not None:
             return _provider_qualification(operation, incident)
         blocked_intent = (operation['state'] == 'INTENT_RECORDED'
@@ -563,9 +582,10 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
         result['example_contents'] = {piece['id']: store.read_piece(piece['id']).decode('utf-8')
                                       for piece in (package['pieces'] if package is not None else [])}
         result['rechecked'] = result['checks'].get('fields', [])
+        # La dernière : seule elle a produit cette version, après d'éventuelles tentatives en incident
         completed = connection.execute('SELECT a.request_json,o.observed_cost_json,o.operation_id FROM s2_actions a '
                                        'JOIN operations o USING(operation_id) WHERE a.dossier_id=? '
-                                       'AND a.input_revision=? AND o.state=?',
+                                       'AND a.input_revision=? AND o.state=? ORDER BY o.created_at DESC, o.rowid DESC',
                                        (dossier_id, revision - 1, 'RECEIVED')).fetchone()
         result['message'] = None if completed is None else json.loads(completed[0])
         result['observed_cost'] = None if completed is None else json.loads(completed[1])
@@ -588,7 +608,12 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
             if last is not None:
                 operation = store._operations(connection, operation_ids={last[0]})[0]
                 observed = (operation['receipt'] or {}).get('observed_configuration')
-                if type(observed) is dict and observed.get('incident') == 'CONNECTION_FAILED':
+                due = _retry_due(operation)
+                if due is not None:
+                    # Relance automatique programmée : rien à renvoyer, la page dit seulement quand
+                    result['notice'], result['retry_in'] = retry_notice(operation, due)
+                    result.update(stage='waiting', explanation=result['notice'], validation=None)
+                elif type(observed) is dict and observed.get('incident') == 'CONNECTION_FAILED':
                     result['notice'] = NOT_SENT_TEXT + ' Vous pouvez renvoyer votre message.'
             pending = connection.execute('SELECT o.state FROM s2_actions a JOIN operations o USING(operation_id) '
                                          'WHERE a.dossier_id=? AND a.input_revision=? AND o.state!=?',
@@ -754,25 +779,101 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
         for piece in (request['package'] or {}).get('pieces', []):
             request['pieces_seen'].append({'id': piece['id'], 'name': piece['name'], 'role': 'candidate', 'sha256': piece['sha256'],
                                            'content': store.read_piece(piece['id']).decode('utf-8')})
-        resources = [encode(request)]
-        operation = dict(operation_id=operation_id, phase='correction' if kind == 'correct' else 'preparation',
-                         dossier_id=dossier_id, revision=revision, authority=authority['authority_id'],
-                         engine_version=source, requested_configuration=authority['requested_configuration'], resources=resources)
-        store._reserve_intent(connection, operation, authority['budget_id'], authority['reserve_amount'],
-                              created_at=now)
-        if callable(getattr(transport, 'prepare', None)):
-            # A refused body rolls back the dossier, intention and reserve together
-            operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
-            wire = transport.prepare(_closed_preparation_operation(operation), _closed_preparation_request(request))
-            _text(wire, 'prepared request')
-            operation['resources'].append(wire)
-            connection.execute('UPDATE operations SET resources_json=? WHERE operation_id=?',
-                               (encode(operation['resources']), operation_id))
-        connection.execute('INSERT INTO s2_actions VALUES (?,?,?,?,?,?)',
-                           (dossier_id, body['action_id'], revision, kind, request_json, operation_id))
+        _reserve_action(store, connection, transport, authority, operation_id, dossier_id, revision, source,
+                        encode(request), kind, body['action_id'], request_json, created_at=now)
         if enforce_limits:
             _source_accepted(source_sha256, now)
         return operation_id, True
+
+
+def _reserve_action(store, connection, transport, authority, operation_id, dossier_id, revision, source,
+                    request_json, kind, action_id, action_json, *, created_at=None, link=None):
+    """Intention, corps préparé et action du cas ; `link` relie une relance automatique à la tentative précédente"""
+    operation = dict(operation_id=operation_id, phase='correction' if kind == 'correct' else 'preparation',
+                     dossier_id=dossier_id, revision=revision, authority=authority['authority_id'],
+                     engine_version=source, requested_configuration=authority['requested_configuration'],
+                     resources=[request_json])
+    store._reserve_intent(connection, operation, authority['budget_id'], authority['reserve_amount'],
+                          created_at=created_at)
+    if callable(getattr(transport, 'prepare', None)):
+        # A refused body rolls back the dossier, intention and reserve together
+        operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
+        wire = transport.prepare(_closed_preparation_operation(operation),
+                                 _closed_preparation_request(json.loads(request_json)))
+        _text(wire, 'prepared request')
+        operation['resources'] += [wire] + ([link] if link is not None else [])
+        connection.execute('UPDATE operations SET resources_json=? WHERE operation_id=?',
+                           (encode(operation['resources']), operation_id))
+    connection.execute('INSERT INTO s2_actions VALUES (?,?,?,?,?,?)',
+                       (dossier_id, action_id, revision, kind, action_json, operation_id))
+
+
+def _retryable_preparation(store, connection, operation_id):
+    """L'échange, s'il est encore le dernier de la version courante de son cas, avec sa session et son action"""
+    row = connection.execute(
+        'SELECT a.kind, a.request_json, d.session_id FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) '
+        'JOIN operations o USING(operation_id) WHERE a.operation_id=? AND a.input_revision=d.current_revision '
+        'AND o.operation_id=(SELECT o2.operation_id FROM s2_actions a2 JOIN operations o2 USING(operation_id) '
+        'WHERE a2.dossier_id=a.dossier_id AND a2.input_revision=a.input_revision '
+        'ORDER BY o2.created_at DESC, o2.rowid DESC LIMIT 1)', (operation_id,)).fetchone()
+    return None if row is None else (store._operations(connection, operation_ids={operation_id})[0], *row)
+
+
+def due_preparation_retries(store, *, session_id=None, dossier_id=None):
+    """Relances automatiques de préparation et de correction : (opération, cas, session, secondes)"""
+    connection = connection_for(store)
+    result = []
+    with _transaction(connection):
+        rows = connection.execute(
+            "SELECT o.operation_id FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) JOIN operations o "
+            "USING(operation_id) WHERE a.input_revision=d.current_revision AND o.state='RECEIVED' "
+            "AND (? IS NULL OR d.session_id=?) AND (? IS NULL OR d.dossier_id=?)",
+            (session_id, session_id, dossier_id, dossier_id)).fetchall()
+        for (operation_id,) in rows:
+            found = _retryable_preparation(store, connection, operation_id)
+            if found is None:
+                continue
+            due = _retry_due(found[0])
+            if due is not None:
+                result.append((operation_id, found[0]['dossier_id'], found[3],
+                               max(0, math.ceil((due - _now()).total_seconds()))))
+    return result
+
+
+def retry_preparation(store, operation_id, transport, source):
+    """Même message renvoyé d'office après un incident fournisseur, nouvelle opération liée, jamais un rejeu
+
+    Rend son identifiant, ou None si rien n'est dû. L'identifiant dérive de la tentative relancée : un
+    minuteur et un POST concurrents réservent la même opération, une seule passe
+    """
+    if transport is None or not callable(getattr(transport, 'prepare', None)):
+        return None
+    connection = connection_for(store)
+    try:
+        with _transaction(connection, write=True):
+            found = _retryable_preparation(store, connection, operation_id)
+            if found is None:
+                return None
+            operation, kind, action_json, session_id = found
+            due = _retry_due(operation)
+            if due is None or _now() < due:
+                return None
+            authority = admission(store, connection, transport=transport)
+            if authority is None:
+                raise Denied('ADMISSION_CLOSED')
+            if _pending_preparations(connection, session_id):
+                raise Denied('PREPARATION_IN_PROGRESS')
+            budget = store._budget(connection, authority['budget_id'], store._operations(connection))
+            _usd_budget(authority['reserve_amount'], authority['requested_configuration'], budget)
+            retry_id = sha256(('retry:' + operation_id).encode()).hexdigest()[:32]
+            _reserve_action(store, connection, transport, authority, retry_id, operation['dossier_id'],
+                            operation['revision'], source, operation['resources'][0], kind, 'retry-' + retry_id,
+                            action_json, link=retry_link(operation))
+            return retry_id
+    except (Denied, BudgetError, ConflictError, ValueError) as error:
+        logging.getLogger(__name__).warning('PREPARATION_RETRY_SKIPPED operation=%s error=%s',
+                                            operation_id, type(error).__name__)
+        return None
 
 
 def _validate(store, connection, session_id, dossier_id, body):
@@ -838,7 +939,7 @@ def validate_and_qualify(store, session_id, dossier_id, body, source, transport)
         existing = _latest_qualification(store, connection, dossier_id, revision)
         # Close sans envoi hors série automatique, elle se relance ; toute autre reste unique pour sa version
         if existing and not (existing['state'] == 'RECEIVED' and existing['receipt']['result'] == {'status': 'NOT_SENT'}
-                             and _qualification_incident(existing) is None):
+                             and _provider_incident(existing) is None):
             return result, existing['operation_id'], False
         return result, _reserve_qualification(store, connection, session_id, dossier_id, revision,
                                               source, transport, configuration), True
@@ -933,11 +1034,9 @@ def retry_qualification(store, operation_id, transport, source):
                 return None
             session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
                                             (operation['dossier_id'],)).fetchone()[0]
-            # Une tentative close avant envoi n'a rien consommé : la suivante garde son rang
-            unsent = _qualification_incident(operation) == 'NOT_SENT'
-            link = encode({'retry_of': operation_id, 'attempt': _qualification_attempt(operation) + (0 if unsent else 1)})
             return _reserve_qualification(store, connection, session_id, operation['dossier_id'],
-                                          operation['revision'], source, transport, configuration, link)
+                                          operation['revision'], source, transport, configuration,
+                                          retry_link(operation))
     except (Denied, BudgetError, ConflictError) as error:
         logging.getLogger(__name__).warning('QUALIFICATION_RETRY_SKIPPED operation=%s error=%s',
                                             operation_id, type(error).__name__)
@@ -1078,7 +1177,7 @@ def execute(data, operation_id, transport):
                 closed_operation = _closed_preparation_operation(operation)
                 if callable(getattr(transport, 'prepare', None)):
                     prepared = transport.prepare(deepcopy(closed_operation), deepcopy(closed_request))
-                    if len(operation['resources']) != 2 or prepared != operation['resources'][1]:
+                    if len(operation['resources']) not in (2, 3) or prepared != operation['resources'][1]:
                         raise ConflictError('Contenu sortant modifié depuis la réservation')
                 connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' WHERE operation_id=?", (operation_id,))
             emitted = True
@@ -1098,9 +1197,15 @@ def execute(data, operation_id, transport):
             except Exception as error:
                 if locked(error):
                     raise
-                # Publication rolled back; keep the original receipt with an unusable revision
-                # Suspension limitée au cas d'usage : les autres restent ouverts
-                retry_locked(lambda: _suspend(store, connection, operation, operation_id, request, response))
+                observed = response['receipt'].get('observed_configuration')
+                incident = observed.get('incident') if type(observed) is dict else None
+                if incident in ('RATE_LIMITED', 'PROVIDER_ERROR') and _retry_attempt(operation) < RETRY_ATTEMPTS:
+                    # Relance automatique due : reçu conservé, la version reste celle que la relance reprend
+                    retry_locked(lambda: store.record_receipt(operation_id, response['receipt'], response['cost']))
+                else:
+                    # Publication rolled back; keep the original receipt with an unusable revision
+                    # Suspension limitée au cas d'usage : les autres restent ouverts
+                    retry_locked(lambda: _suspend(store, connection, operation, operation_id, request, response))
                 logging.getLogger(__name__).warning('PREPARATION_RECEIVED operation=%s usable=False error=%s cost=%s',
                     operation_id, type(error).__name__, response['cost']['status'])
             _recheck_key(store, transport, response)
@@ -1134,9 +1239,13 @@ def _suspend(store, connection, operation, operation_id, request, response):
         store._record_receipt(connection, operation_id, response['receipt'], response['cost'])
         store.save_dossier(dossier_id, revision, request['payload'])
         observed = response['receipt'].get('observed_configuration')
-        reason = INCIDENT_TEXT.get((observed.get('incident') if type(observed) is dict else None) or '')
+        incident = (observed.get('incident') if type(observed) is dict else None) or ''
+        reason = INCIDENT_TEXT.get(incident)
         connection.execute('INSERT INTO s2_revisions VALUES (?,?,?,?,NULL,NULL,?,?)',
                            (dossier_id, revision, 'suspended',
+                            # Seule une série épuisée arrive ici avec un incident relancé
+                            INCIDENT_TEXT[incident] + f' Préparation arrêtée après {RETRY_ATTEMPTS} tentatives '
+                            'automatiques. Reçu et coût conservés.' if incident in _RETRIED_INCIDENTS else
                             (reason + ' Préparation suspendue. ' if reason else
                              'Résultat reçu non utilisable : préparation suspendue. ')
                             + 'Reçu et coût conservés ; aucune reprise automatique.',

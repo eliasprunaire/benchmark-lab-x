@@ -387,14 +387,17 @@ class AutomaticJudgment(unittest.TestCase):
     def judgments(self, ids):
         return {o['operation_id']: o for o in self.store.inspect_operations() if o['operation_id'] in ids}
 
-    def assert_reopened(self, ids):
-        """Jugements clos sans envoi : la session peut préparer une nouvelle comparaison"""
+    def assert_reopened(self, ids, status='BLOCKED'):
+        """Jugements clos sans envoi : la session peut préparer une nouvelle comparaison
+
+        `RUNNING` : clôture sans faute de la session (redémarrage, connexion impossible), relancée d'office
+        """
         from benchmark import automatic_judgment as auto
         for op in self.judgments(ids).values():
             self.assertEqual(('RECEIVED', {'status': 'NOT_SENT'}, '0'),
                              (op['state'], op['receipt']['result'], op['observed_cost']['amount']))
         progress = auto.status(self.store, self.store._connection, self.cid)
-        self.assertEqual(('BLOCKED', 0), (progress['status'], progress['completed']))
+        self.assertEqual((status, 0), (progress['status'], progress['completed']))
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
         self.assertEqual([], auto.records(self.store, self.store._connection, self.cid))
         self.assertEqual('NOT_SENT', judgment.inspect(self.store, ids[0])['diagnostic']['state'])
@@ -408,7 +411,10 @@ class AutomaticJudgment(unittest.TestCase):
         self.acquire()
         ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
         runtime.stop(self.data, self.store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
-        self.assert_reopened(ids)
+        # Jamais émis : ces intentions closes ne partent plus ; la relance automatique en crée de nouvelles
+        self.assert_reopened(ids, 'RUNNING')
+        self.assertIn('Nouvelle tentative automatique dès que possible',
+                      auto.status(self.store, self.store._connection, self.cid)['reason'])
         auto.execute_campaign(self.data, ids, self.transport)
         self.http.request.assert_not_called()
 
@@ -521,7 +527,7 @@ class AutomaticJudgment(unittest.TestCase):
         self.http.connect.side_effect = socket.gaierror(8, 'nodename nor servname provided')
         auto.execute_campaign(self.data, ids, self.transport)
         self.http.request.assert_not_called()
-        self.assert_reopened(ids)
+        self.assert_reopened(ids, 'RUNNING')
         self.assertEqual('CONNECTION_FAILED', self.judgments(ids)[ids[0]]['receipt']['observed_configuration']['incident'])
         self.assertFalse(any(o['state'] == 'AMBIGUOUS' for o in self.store.inspect_operations()))
         reason = auto.status(self.store, self.store._connection, self.cid)['reason']
@@ -553,6 +559,261 @@ class AutomaticJudgment(unittest.TestCase):
         from benchmark_web import campaign_views
         _, _, message = campaign_views.campaign_followup(campaigns.projection(self.store, self.store._connection, 'fixture')[-1])
         self.assertIn('Impossible de joindre OpenRouter, rien n’a été envoyé ni facturé', message)
+
+
+class AutomaticJudgmentRetries(unittest.TestCase):
+    """Relance automatique bornée de l'évaluation : horloge simulée, HTTP simulé, aucun bouton
+
+    Modes d'échec couverts : relance jamais faite, faite trop tôt, au-delà de cinq tentatives, après un effet
+    ambigu ou une clé refusée ; Retry-After ignoré ; minuteur perdu au redémarrage ; double réservation
+    par un minuteur et un POST concurrents ; identifiant de rang 1 modifié ; jugement relancé compté deux
+    fois ou absent des résultats ; bouton de relance affiché
+    """
+    acquire, answer, dispatch = AutomaticJudgment.acquire, AutomaticJudgment.answer, AutomaticJudgment.dispatch
+
+    def setUp(self):
+        AutomaticJudgment.setUp(self)
+        from datetime import datetime, timezone
+        self.now = [datetime.now(timezone.utc).replace(microsecond=0)]
+        now = self.now
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now[0]
+        self.enterContext(patch.object(preparation, '_now', side_effect=lambda: now[0]))
+        self.enterContext(patch.object(openrouter, 'datetime', Clock))
+        self.steps = []
+        self.http.connect.side_effect = self.connect
+        self.http.request.side_effect = self.scripted
+
+    def connect(self):
+        import socket
+        if self.steps and self.steps[0] == 'unreachable':
+            self.steps.pop(0)
+            raise socket.gaierror(8, 'nodename nor servname provided')
+
+    def scripted(self, method, path, *, body, headers):
+        """Chaque appel suit le script : None, réponse normale ; statut HTTP, avec en-têtes ; exception"""
+        step = self.steps.pop(0) if self.steps else None
+        response = self.http.getresponse.return_value
+        if step is None:
+            response.status, response.getheader.side_effect = 200, None
+            return self.answer(method, path, body=body, headers=headers)
+        if isinstance(step, Exception):
+            raise step
+        status, extra = step if type(step) is tuple else (step, {})
+        response.status, response.getheader.side_effect = status, extra.get
+        response.read.return_value = storage._strict_json({'error': {'code': status}}).encode()
+
+    def advance(self, seconds):
+        from datetime import timedelta
+        self.now[0] += timedelta(seconds=seconds)
+
+    def retry_context(self):
+        timers = {}
+        return (self.transport, None, None, 'a' * 40, timers), timers
+
+    def launch(self, steps):
+        """Réponses reçues, puis évaluation lancée par le fil de campagne, minuteurs simulés"""
+        self.steps = list(steps)
+        self.acquire()
+        retry, timers = self.retry_context()
+        with patch.object(service.threading, 'Timer') as timer:
+            service._campaign_worker(self.data, dict(candidate_attempts=[], judgment_campaign=self.cid,
+                session_id=self.sid, dossier_id='fixture'), response, None, SECRET, self.fixture.access,
+                self.transport, retry)
+        return retry, timers, timer
+
+    def due(self):
+        from benchmark import automatic_judgment as auto
+        return {o: d for o, _, _, d in auto.due_retries(self.store)}
+
+    def progress(self):
+        from benchmark import automatic_judgment as auto
+        return auto.status(self.store, self.store._connection, self.cid)
+
+    def page(self):
+        return views.render(campaigns.launch_view(self.store, self.sid, 'fixture', self.cid), 'csrf').decode()
+
+    def assert_no_manual_retry(self, page):
+        self.assertNotIn('/evaluate', page)
+        self.assertNotIn('Relancer', page)
+        self.assertNotIn('Évaluer les réponses reçues', page)
+
+    def series(self, attempt_id):
+        return sorted((o for o in self.store.inspect_operations() if o['phase'] == 'judgment'
+                       and json.loads(o['resources'][0])['request']['attempt_id'] == attempt_id),
+                      key=lambda o: o['created_at'])
+
+    def test_jugement_503_puis_succes_automatique_sans_action(self):
+        from hashlib import sha256
+        retry, timers, timer = self.launch([503])
+        self.assertEqual(2, self.http.request.call_count)
+        first, = timers
+        attempt_id = json.loads(next(o for o in self.store.inspect_operations()
+                                     if o['operation_id'] == first)['resources'][0])['request']['attempt_id']
+        # Rang 1 : identifiant inchangé, compatible avec les données déjà enregistrées
+        self.assertEqual('judge-' + sha256((self.cid + ':' + attempt_id).encode()).hexdigest()[:40], first)
+        self.assertEqual(30, timer.call_args.args[0])
+        self.assertEqual({first: timer.return_value}, timers)
+        progress = self.progress()
+        self.assertEqual(('RUNNING', 1, 2), (progress['status'], progress['completed'], progress['total']))
+        page = self.page()
+        self.assertIn('Nouvelle tentative automatique dans 30 s', page)
+        self.assert_no_manual_retry(page)
+        self.advance(30)
+        with patch.object(service.threading, 'Timer'):
+            timer.call_args.args[1](*timer.call_args.kwargs['args'])
+        self.assertEqual(3, self.http.request.call_count)
+        second = self.series(attempt_id)[-1]
+        self.assertEqual('judge-' + sha256((self.cid + ':' + attempt_id + ':2').encode()).hexdigest()[:40],
+                         second['operation_id'])
+        self.assertEqual({'retry_of': first, 'attempt': 2}, json.loads(second['resources'][2]))
+        progress = self.progress()
+        self.assertEqual(('COMPLETE', 2, 2), (progress['status'], progress['completed'], progress['total']))
+        # Restitué comme un jugement normal : une ligne par réponse, sans trace de l'échec
+        rows = restitution.comparison(self.store, self.sid, 'fixture', self.cid)['rows']
+        self.assertEqual(['NE SATISFAIT PAS'] * 2, [r['verdict'] for r in rows])
+        self.assertEqual(2, len(auto_records(self.store, self.cid)))
+        self.assertEqual({}, self.due())
+        self.assertEqual({}, timers)
+        self.assertNotEqual('JUDGMENT_STOPPED', campaigns.inspect(self.store, self.cid)['stop_reason'])
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
+
+    def test_cinq_echecs_puis_message_final_sans_autre_relance(self):
+        from benchmark import automatic_judgment as auto
+        self.launch([503, None, 502, 500, 429, 504])
+        first = next(iter(self.due()))
+        attempt_id = json.loads(next(o for o in self.store.inspect_operations()
+                                     if o['operation_id'] == first)['resources'][0])['request']['attempt_id']
+        for delay in (30, 120, 600, 1800):
+            last = self.series(attempt_id)[-1]['operation_id']
+            self.assertEqual({last: delay}, self.due())
+            self.advance(delay - 1)
+            self.assertEqual([], auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport))
+            self.advance(1)
+            ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+            self.assertEqual(1, len(ids))
+            auto.execute_campaign(self.data, ids, self.transport)
+        self.assertEqual(6, self.http.request.call_count)
+        self.assertEqual(5, json.loads(self.series(attempt_id)[-1]['resources'][2])['attempt'])
+        self.assertEqual({}, self.due())
+        self.advance(86400)
+        self.assertEqual([], auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport))
+        self.assertEqual(6, self.http.request.call_count)
+        progress = self.progress()
+        self.assertEqual(('BLOCKED', 1, 2), (progress['status'], progress['completed'], progress['total']))
+        self.assertIn('après 5 tentatives automatiques', progress['reason'])
+        page = self.page()
+        self.assertIn('après 5 tentatives automatiques', page)
+        self.assertNotIn('Nouvelle tentative automatique', page)
+        self.assertNotIn('équipe', page)
+        self.assert_no_manual_retry(page)
+        self.assertEqual(1, len(restitution.comparison(self.store, self.sid, 'fixture', self.cid)['rows']))
+
+    def test_aucune_relance_apres_effet_ambigu(self):
+        from benchmark import automatic_judgment as auto
+        self.launch([503, OSError('connexion coupée après envoi')])
+        self.assertTrue(any(o['state'] == 'AMBIGUOUS' for o in self.store.inspect_operations()))
+        self.assertEqual({}, self.due())
+        self.advance(3600)
+        self.assertEqual([], auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport))
+        self.assertEqual(2, self.http.request.call_count)
+        self.assertNotIn('Nouvelle tentative automatique', self.page())
+
+    def test_cle_refusee_ou_credit_epuise_jamais_relances(self):
+        from benchmark import automatic_judgment as auto
+        for status in (401, 402):
+            with self.subTest(status=status):
+                self.setUp()
+                self.launch([status])
+                self.assertEqual({}, self.due())
+                self.advance(3600)
+                self.assertEqual([], auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport))
+                self.assertEqual(1, self.http.request.call_count)
+
+    def test_retry_after_plus_long_respecte(self):
+        from benchmark import automatic_judgment as auto
+        self.launch([(429, {'Retry-After': '300'})])
+        self.assertEqual([300], list(self.due().values()))
+        self.advance(299)
+        self.assertEqual([], auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport))
+        self.advance(1)
+        self.assertEqual(1, len(auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)))
+
+    def test_redemarrage_pendant_l_attente_reprend_la_relance(self):
+        from benchmark import automatic_judgment as auto, runtime
+        retry, _, _ = self.launch([503])
+        first = next(iter(self.due()))
+        # Arrêt puis démarrage : le minuteur en mémoire est perdu, le démarrage le reprogramme
+        runtime.stop(self.data, self.store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        retry, timers = self.retry_context()
+        with patch.object(service.threading, 'Timer') as timer:
+            service._resume_retries(self.store, self.data, dict(judgment=retry))
+            self.assertEqual(30, timer.call_args.args[0])
+            self.assertEqual([first], list(timers))
+        # Relance réservée puis processus arrêté avant envoi : close sans coût, reprise sans consommer de rang
+        self.advance(30)
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        runtime.stop(self.data, self.store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.assertEqual({'status': 'NOT_SENT'}, self.series(json.loads(next(
+            o for o in self.store.inspect_operations() if o['operation_id'] == ids[0])['resources'][0])
+            ['request']['attempt_id'])[-1]['receipt']['result'])
+        self.assertEqual('RUNNING', self.progress()['status'])
+        retry, timers = self.retry_context()
+        with patch.object(service.threading, 'Timer') as timer:
+            service._resume_retries(self.store, self.data, dict(judgment=retry))
+            self.assertEqual(0, timer.call_args.args[0])
+            with patch.object(service.threading, 'Timer'):
+                timer.call_args.args[1](*timer.call_args.kwargs['args'])
+        third = next(o for o in self.store.inspect_operations() if o['operation_id'] not in ids
+                     and o['resources'][2:] and json.loads(o['resources'][2])['retry_of'] == ids[0])
+        self.assertEqual({'retry_of': ids[0], 'attempt': 2}, json.loads(third['resources'][2]))
+        self.assertEqual('COMPLETE', self.progress()['status'])
+        self.assertEqual(3, self.http.request.call_count)
+
+    def test_minuteur_et_post_concurrents_une_seule_operation(self):
+        from benchmark import automatic_judgment as auto, judgment
+        _, _, timer = self.launch([503])
+        self.advance(30)
+        # Deux calculs faits avant toute écriture donnent le même identifiant : seul le premier passe
+        plans = [auto._plan(self.store, self.store._connection, self.sid, 'fixture', self.cid, self.transport)
+                 for _ in range(2)]
+        self.assertEqual(plans[0][0][0]['operation_id'], plans[1][0][0]['operation_id'])
+        connection = evaluation.connection_for(self.store)
+        with storage._transaction(connection, write=True):
+            request, ctx, content, link = plans[0][0]
+            judgment._reserve(self.store, connection, request, self.transport, automatic=True,
+                              prepared=(ctx, content), link=link)
+        with self.assertRaises((storage.ConflictError, storage.IntegrityError, storage.BudgetError)):
+            with storage._transaction(connection, write=True):
+                request, ctx, content, link = plans[1][0]
+                judgment._reserve(self.store, connection, request, self.transport, automatic=True,
+                                  prepared=(ctx, content), link=link)
+        # Le POST et le minuteur suivants ne trouvent plus rien de dû
+        self.assertEqual([], self.dispatch('POST', '/evaluate', dict(confirm='yes', csrf_token='csrf'))[3] or [])
+        with patch.object(service.threading, 'Timer'):
+            timer.call_args.args[1](*timer.call_args.kwargs['args'])
+        self.assertEqual(3, len([o for o in self.store.inspect_operations() if o['phase'] == 'judgment']))
+
+    def test_connexion_impossible_relancee_apres_attente(self):
+        retry, timers, timer = self.launch(['unreachable'])
+        self.assertEqual(1, self.http.request.call_count)
+        progress = self.progress()
+        self.assertEqual('RUNNING', progress['status'])
+        self.assertIn('Impossible de joindre OpenRouter, rien n’a été envoyé ni facturé', progress['reason'])
+        self.assertIn('Nouvelle tentative automatique dans 30 s', progress['reason'])
+        self.advance(30)
+        with patch.object(service.threading, 'Timer'):
+            timer.call_args.args[1](*timer.call_args.kwargs['args'])
+        self.assertEqual('COMPLETE', self.progress()['status'])
+        self.assertEqual(2, self.http.request.call_count)
+
+
+def auto_records(store, campaign_id):
+    from benchmark import automatic_judgment as auto
+    return auto.records(store, store._connection, campaign_id)
 
 
 if __name__ == '__main__':

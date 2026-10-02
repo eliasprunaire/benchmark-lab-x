@@ -615,7 +615,9 @@ def campaign_followup(campaign):
         if status == 'BLOCKED':
             return False, False, judgment.get('reason') or 'L’évaluation s’est arrêtée. Elle ne reprendra pas d’elle-même.'
         if status in ('WAITING', 'RUNNING') and cells and all(c['state'] == 'RECEIVED' for c in cells):
+            # Une relance automatique programmée dit sa cause et son délai ; rien n'est à faire
             return True, False, ('Toutes les réponses sont arrivées. Leur évaluation attend son tour.' if status == 'WAITING'
+                                 else 'Évaluation en cours. ' + judgment['reason'] if judgment.get('reason')
                                  else 'Évaluation en cours : chaque réponse est vérifiée selon les critères de votre exemple.')
         if status == 'NOT_STARTED' and cells and all(c['state'] == 'RECEIVED' for c in cells):
             return False, False, 'Toutes les réponses sont arrivées. Leur évaluation n’est pas encore lancée.'

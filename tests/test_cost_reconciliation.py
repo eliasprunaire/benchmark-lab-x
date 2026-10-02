@@ -39,8 +39,9 @@ class CostReconciliationTests(unittest.TestCase):
         self.transport = Authorized(assistant.OpenRouterPreparation(KEY), **self.authority)
         self.http = Mock()
         self.response = self.http.getresponse.return_value
-        self.response.status, self.response.length = 429, 0
-        self.response.read.return_value = b'{"error":{"code":429,"message":"fictional upstream unavailable"}}'
+        # Réponse inutilisable au coût inconnu, sans relance automatique (un 429 ou un 5xx serait relancé)
+        self.response.status, self.response.length = 400, 0
+        self.response.read.return_value = b'{"error":{"code":400,"message":"fictional unusable request"}}'
         self.response.getheader.return_value = None
         patched = patch.object(assistant, 'HTTPSConnection', return_value=self.http)
         patched.start()

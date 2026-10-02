@@ -138,6 +138,18 @@ def not_sent(operation):
     return operation['receipt'] is not None and operation['receipt']['result'] == NOT_SENT
 
 
+def provider_incident(operation):
+    """Réponse reçue en incident fournisseur (429, 5xx, corps illisible), sans résultat : relancée d'office
+
+    Son coût reste INCONNU et sa réserve comptée, sans bloquer la relance qui la suit
+    """
+    receipt = operation['receipt']
+    if operation['state'] != 'RECEIVED' or receipt is None or receipt['result'] is not None:
+        return False
+    observed = receipt['observed_configuration']
+    return type(observed) is dict and observed.get('incident') in ('RATE_LIMITED', 'PROVIDER_ERROR')
+
+
 def locked(error):
     """Verrou SQLite passager : rien n'est corrompu, l'écriture peut être retentée"""
     return (isinstance(error, sqlite3.OperationalError)
@@ -1047,7 +1059,8 @@ class Store:
                 if row['operation_id'] in budget['unknown_cost_operations']
                 and not (phase in ('preparation', 'correction', 'qualification')
                          and row['phase'] in ('preparation', 'correction', 'qualification')
-                         and row['state'] == 'RECEIVED')]
+                         and row['state'] == 'RECEIVED')
+                and not provider_incident(row)]
 
     def inspect_budget(self, budget_id: str) -> dict:
         _text(budget_id, 'budget_id')

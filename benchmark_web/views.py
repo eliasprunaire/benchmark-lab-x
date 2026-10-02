@@ -473,8 +473,10 @@ def render(value, csrf, path='/preparation', *, error=False):
                        '<p class="hint" role="status">Cette page se met à jour d’elle-même si JavaScript est activé. Sinon, actualisez-la de temps en temps.</p>'
                        '<div class="actions"><a href="' + text(url) + '">Actualiser</a>'
                        '<button type="button" class="sec" hidden>Arrêter la mise à jour automatique</button></div></div>')
+            # Relance automatique programmée : sa cause et son délai, sans rien à renvoyer
+            notice = '<p class="notice">' + text(value['notice']) + '</p>' if value.get('notice') else ''
             content += '<div id="availability">' + state_block(tone, 'Où j’en suis', heading,
-                '<p>' + text(next_step) + '</p>', actions) + '</div><script>' + PREPARATION_PROGRESS_SCRIPT + '</script>'
+                notice + '<p>' + text(next_step) + '</p>', actions) + '</div><script>' + PREPARATION_PROGRESS_SCRIPT + '</script>'
         else:
             # L'explication de l'assistant (question sur l'exemple) ne vaut que tant que l'exemple n'est pas validé
             body = '<p>' + text(next_step) + '</p>' if value['validation'] else (

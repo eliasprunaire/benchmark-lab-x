@@ -665,6 +665,49 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(1, len(self.calls))
         self.assertNotEqual(operation['operation_id'], self.calls[0][1])
 
+    def test_incident_fournisseur_de_preparation_relance_sans_renvoi(self):
+        """429 reçu : la page dit que la relance part d'elle-même, sans bouton ; la relance prépare l'exemple"""
+        test = self
+
+        class Assistant:
+            """Premier appel limité par le fournisseur, les suivants normaux"""
+            def __call__(self, operation, request):
+                if test.calls:
+                    return test.prepare(operation, request)
+                test.calls.append(('préparation', operation['operation_id']))
+                return {'receipt': {'receipt_id': 'fixture-' + operation['operation_id'], 'resources_seen': [], 'result': None,
+                                    'observed_configuration': {'model': 'factice', 'incident': 'RATE_LIMITED', 'http': {
+                                        'received_at': test.clock.isoformat(), 'response_headers': {}}}},
+                        'cost': {'status': 'UNKNOWN', 'amount': None, 'currency': 'USD', 'source': 'Reçu simulé'}}
+
+            def prepare(self, operation, request):
+                return storage._strict_json(request)
+        self.assistants['transport'] = SessionAssistant(Assistant(), {'model': 'factice'})
+        page, _, _ = self.request('/')
+        target = page.link('Décrire mon cas')
+        page, _, _ = self.request(target)
+        key_form = page.form('/access/key')
+        self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
+        page, _, _ = self.request(target)
+        page = self.submit(page, '/dossiers', {'request': 'Transformer des notes de réunion en une liste complète des actions à relire'})
+        dossier = page.link('Actualiser')
+        operation = self.starts.get_nowait()
+        prep.execute(self.data, operation, self.bound[0])
+        page, _, _ = self.request(dossier)
+        self.examine(page, dossier, 'relance automatique en attente', None)
+        self.assertIn('OpenRouter limite temporairement les demandes. Nouvelle tentative automatique', page.visible)
+        self.assertNotIn('Renvoyez', page.visible)
+        self.assertFalse([f for f in page.forms if f['action'].endswith('/messages')])
+        # Le minuteur de l'exécuteur, à l'échéance : même message, nouvelle opération liée
+        self.clock += timedelta(seconds=30)
+        with closing(storage.Store(self.data)) as store:
+            retried = prep.retry_preparation(store, operation, self.bound[0], 'a' * 40)
+        prep.execute(self.data, retried, self.bound[0])
+        page, _, _ = self.request(dossier)
+        self.examine(page, dossier, 'clarification après relance', 'Envoyer ma réponse')
+        self.assertNotIn('Nouvelle tentative automatique', page.visible)
+        self.assertEqual(2, len(self.calls))
+
     @staticmethod
     def etape(page):
         """Étape courante de la barre et cible de l'onglet Résultats (None s'il est désactivé)"""

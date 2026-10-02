@@ -36,5 +36,5 @@ Les exigences suivantes du PRD n’ont pas encore de jalon. Les dater demande un
 - résultats réellement acquis et évalués sur le catalogue et le panel approuvés ([§5.1](PRD.md#51-capacités))
 - classements par critère et filtres combinés, sans note pondérée ni désignation automatique du meilleur modèle ([§5.1](PRD.md#51-capacités), [§7](PRD.md#7-ordre-de-décision))
 - secours officiel candidat en dernier recours selon les conditions de l’ARD ([§5.1](PRD.md#51-capacités))
-- suivi des tentatives, incidents, coûts et preuves sans relance implicite ([§5.1](PRD.md#51-capacités))
+- suivi des tentatives, incidents, coûts et preuves, sans relance implicite hors la relance automatique bornée des appels assistés ([§5.1](PRD.md#51-capacités))
 - extensions : score pondéré personnalisé, couverture de métiers variés, modèles locaux, abonnements, produits agentiques et comparaison de harnais ([§5.2](PRD.md#52-extensions))

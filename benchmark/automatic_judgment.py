@@ -4,12 +4,14 @@ from copy import deepcopy
 from hashlib import sha256
 import json
 import logging
+import math
 import os
 
 from . import evaluation as e, judgment, preparation as p, provider_access, storage
 from .acquisition import campaigns as c
 from .runtime import worker_lock
 from .storage import BudgetError, ConflictError, IntegrityError, _money, _transaction
+from .transports.openrouter import NotSent
 from .validation import digest
 
 FORMAT = 'benchmark-lab-x/automatic-judgment/v1'
@@ -105,7 +107,44 @@ def guard_budget(store, connection, budget_id, *, campaign_id=None):
             raise BudgetError('Enveloppe personnelle réservée à l’évaluation de la comparaison en cours')
 
 
-def preflight(store, session_id, dossier_id, campaign_id, transport, *, check_access=True):
+def _operation_id(campaign_id, attempt_id, index):
+    """Rang 1 : identifiant d'origine, inchangé pour les données existantes ; rang n : n-ième de la série"""
+    seed = campaign_id + ':' + attempt_id + ('' if index == 1 else ':' + str(index))
+    return 'judge-' + sha256(seed.encode()).hexdigest()[:40]
+
+
+def _latest(ops):
+    """Par réponse jugée : sa dernière opération et la longueur de sa série, lues sur les identifiants"""
+    series = {}
+    for op in ops:
+        request = json.loads(op['resources'][0])['request']
+        series.setdefault((request['campaign_id'], request['attempt_id']), {})[op['operation_id']] = op
+    result = {}
+    for (campaign_id, attempt_id), found in series.items():
+        last = found.get(_operation_id(campaign_id, attempt_id, len(found)))
+        if last is None:
+            raise IntegrityError('Série de jugements incomplète')
+        result[attempt_id] = (last, len(found))
+    return result
+
+
+def _due(stop_reason, ops):
+    """Relances programmées : {réponse: (dernière opération, longueur de série, échéance)}
+
+    Aucune après l'arrêt de l'évaluation ni tant qu'un jugement de la campagne est en cours ou ambigu
+    """
+    if stop_reason == 'JUDGMENT_STOPPED' or any(o['state'] != 'RECEIVED' for o in ops):
+        return {}
+    result = {}
+    for attempt_id, (op, length) in _latest(ops).items():
+        # Un jugement clos avant envoi, par un redémarrage, se reprend aussi : rien d'autre ne le relancerait
+        due = p._retry_due(op, unsent=True)
+        if due is not None:
+            result[attempt_id] = (op, length, due)
+    return result
+
+
+def preflight(store, session_id, dossier_id, campaign_id, transport, *, check_access=True, count=None):
     if transport is None or getattr(transport, '_session_id', None) != session_id:
         raise p.Denied('ACCESS_REQUIRED')
     if check_access and not transport.authorized(store):
@@ -121,8 +160,9 @@ def preflight(store, session_id, dossier_id, campaign_id, transport, *, check_ac
         if snapshot['task']['dossier_id'] != dossier_id or snapshot['manifest'].get('funding') != 'requester':
             raise p.Denied('Campagne inaccessible')
         c._comparison_contract(store, connection, snapshot['manifest']['contract_sha256'])
-        completed = len(operations(store, connection, campaign_id))
-        count = len(snapshot['manifest']['plan']) - completed
+        if count is None:
+            # Une réponse déjà jugée compte une fois, quelle que soit la longueur de sa série
+            count = len(snapshot['manifest']['plan']) - len(_latest(operations(store, connection, campaign_id)))
         budget_id = provider_access.preparation_budget_id(session_id)
         guard_budget(store, connection, budget_id, campaign_id=campaign_id)
         grant = (snapshot['admission'] or {}).get('authority', {}).get('automatic_judgment')
@@ -151,35 +191,87 @@ def reserve_campaign(store, session_id, dossier_id, campaign_id, transport):
         with _transaction(connection, write=True):
             if storage.data_version(connection) != version:
                 plan = _plan(store, connection, session_id, dossier_id, campaign_id, transport)
-            for request, ctx, content in plan:
-                judgment._reserve(store, connection, request, transport, automatic=True, prepared=(ctx, content))
-            return [request['operation_id'] for request, _, _ in plan]
+            for request, ctx, content, link in plan:
+                judgment._reserve(store, connection, request, transport, automatic=True,
+                                  prepared=(ctx, content), link=link)
+            return [request['operation_id'] for request, _, _, _ in plan]
+
+
+def retry(store, operation_id, transport, source=None):
+    """Relances échues de la campagne de `operation_id`, réservées comme par un POST de sa session
+
+    `source` : signature commune aux relances ; un jugement porte l'empreinte de son moteur
+    """
+    connection = e.connection_for(store)
+    found = store._operations(connection, operation_ids={operation_id})
+    if not found:
+        return []
+    dossier_id = found[0]['dossier_id']
+    session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
+    campaign_id = json.loads(found[0]['resources'][0])['request']['campaign_id']
+    return reserve_campaign(store, session_id, dossier_id, campaign_id, transport)
+
+
+def due_retries(store, *, session_id=None, dossier_id=None):
+    """Relances d'évaluation à programmer : (dernière opération, cas, session, secondes avant l'échéance)"""
+    connection = p.connection_for(store)
+    result = []
+    with _transaction(connection):
+        if not connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_control'").fetchone():
+            return result
+        rows = connection.execute(
+            'SELECT o.operation_id, d.dossier_id, d.session_id FROM operations o JOIN s2_dossiers d '
+            'ON d.dossier_id=o.dossier_id WHERE o.engine_version=? '
+            'AND (? IS NULL OR d.session_id=?) AND (? IS NULL OR d.dossier_id=?)',
+            (FORMAT, session_id, session_id, dossier_id, dossier_id)).fetchall()
+        owners = {row[0]: row[1:] for row in rows}
+        # Lu à chaque POST : un regroupement et l'état d'arrêt suffisent, sans relire chaque campagne
+        campaigns = {}
+        for op in store._operations(connection, operation_ids=set(owners)):
+            campaigns.setdefault(json.loads(op['resources'][0])['request']['campaign_id'], []).append(op)
+        for campaign_id, ops in sorted(campaigns.items()):
+            stop_reason = connection.execute('SELECT stop_reason FROM s4_status WHERE campaign_id=?',
+                                             (campaign_id,)).fetchone()[0]
+            for op, _, due in _due(stop_reason, ops).values():
+                result.append((op['operation_id'], *owners[op['operation_id']],
+                               max(0, math.ceil((due - p._now()).total_seconds()))))
+    return result
 
 
 def _plan(store, connection, session_id, dossier_id, campaign_id, transport):
     existing = operations(store, connection, campaign_id)
     p.owner(connection, session_id, dossier_id)
+    due = None
     if existing:
-        # One automatic evaluation per retained response; POST and process restarts never retry
-        return []
-    config, _ = preflight(store, session_id, dossier_id, campaign_id, transport)
+        # Une évaluation par réponse retenue ; seule une relance automatique échue en ajoute une à sa série,
+        # que la demande vienne d'un minuteur ou d'un POST : les deux calculent le même identifiant
+        now = p._now()
+        stop_reason = connection.execute('SELECT stop_reason FROM s4_status WHERE campaign_id=?',
+                                         (campaign_id,)).fetchone()[0]
+        due = {attempt_id: item for attempt_id, item in _due(stop_reason, existing).items() if item[2] <= now}
+        if not due:
+            return []
+    config, _ = preflight(store, session_id, dossier_id, campaign_id, transport,
+                          count=None if due is None else len(due))
     snapshot = c._inspect(store, connection, campaign_id)
     if not snapshot['attempts'] or any(a['state'] != 'RECEIVED' for a in snapshot['attempts']):
         raise ConflictError('Réponses candidates à rapprocher avant l’évaluation')
     plan = []
     for attempt in snapshot['attempts']:
         # Sortie absente, vide ou blanche : rien à juger, aucun appel payant
-        if not c.answered(attempt):
+        if not c.answered(attempt) or due is not None and attempt['operation_id'] not in due:
             continue
+        previous, length, _ = due[attempt['operation_id']] if due is not None else (None, 0, None)
         ctx = context(store, connection, campaign_id, attempt['operation_id'])
         content = e._review_content(store, ctx)
-        oid = 'judge-' + sha256((campaign_id + ':' + attempt['operation_id']).encode()).hexdigest()[:40]
-        request = dict(operation_id=oid, campaign_id=campaign_id, attempt_id=attempt['operation_id'],
+        request = dict(operation_id=_operation_id(campaign_id, attempt['operation_id'], length + 1),
+            campaign_id=campaign_id, attempt_id=attempt['operation_id'],
             review_sha256=digest(content), previous_evaluation_id=None,
             authority=authority(connection, ctx), budget_id=provider_access.preparation_budget_id(session_id),
             reserve_amount=config['reserve_usd'], requested_configuration=config)
+        link = None if previous is None else p.retry_link(previous, unsent=True)
         # Mêmes contrôles qu'à la réservation, avant toute écriture
-        plan.append((request, *judgment._inputs(store, connection, request, automatic=True)))
+        plan.append((request, *judgment._inputs(store, connection, request, automatic=True), link))
     return plan
 
 
@@ -190,6 +282,9 @@ def execute_campaign(data, operation_ids, transport):
         except Exception as error:
             logging.getLogger(__name__).warning('AUTOMATIC_JUDGMENT_STOPPED operation=%s error=%s',
                                                operation_id, type(error).__name__)
+            if isinstance(error, NotSent):
+                # Connexion impossible : rien n'est parti, la relance automatique reprend ce jugement
+                continue
             try:
                 with closing(storage.Store(data)) as store:
                     # Refusé avant émission, puis les suivants : clos sans coût, jamais laissés en attente
@@ -231,11 +326,16 @@ def status(store, connection, campaign_id, snapshot=None):
     """`total` compte les réponses à évaluer ; `cells`, les modèles prévus, pour montrer la couverture"""
     snapshot = snapshot or c._inspect(store, connection, campaign_id)
     ops = operations(store, connection, campaign_id)
+    # Seule la dernière opération de chaque série compte : un jugement relancé reste un seul jugement
+    latest = [op for op, _ in _latest(ops).values()]
     # Un jugement est réservé par réponse à évaluer, une fois toutes les réponses reçues
-    total = len(ops) if ops else sum(c.answered(a) for a in snapshot['attempts'])
+    total = len(latest) if ops else sum(c.answered(a) for a in snapshot['attempts'])
     cells = len(snapshot['manifest']['plan'])
-    completed, unusable = _completed(store, connection, ops)
+    completed, unusable = _completed(store, connection, latest)
     result = dict(status='NOT_STARTED', total=total, cells=cells, completed=completed, reason=None, can_start=False)
+    due = _due(snapshot['stop_reason'], ops)
+    exhausted = [incident for incident in (p._provider_incident(op, unsent=True) for op in latest)
+                 if incident in p._RETRIED_INCIDENTS]
     if ops and completed == total:
         # Terminée avant toute autre lecture : une admission fermée après la fin n'est pas une interruption
         result['status'] = 'COMPLETE'
@@ -249,14 +349,23 @@ def status(store, connection, campaign_id, snapshot=None):
                           == 'CONNECTION_FAILED' for o in ops)
         result.update(status='BLOCKED', reason=(p.NOT_SENT_TEXT + ' ' if unreachable else '') + 'Évaluation interrompue. '
                       'Les réponses sont conservées ; aucun appel ne sera relancé automatiquement.')
+    elif due:
+        # Incident du fournisseur : l'évaluation reprend d'elle-même à la première échéance
+        op, _, when = min(due.values(), key=lambda item: item[2])
+        reason, retry_in = p.retry_notice(op, when)
+        result.update(status='RUNNING', reason=reason, retry_in=retry_in)
+    elif exhausted and all(o['state'] == 'RECEIVED' for o in ops):
+        # Rien de dû, rien en cours, campagne non arrêtée : seule une série épuisée garde un incident relancé
+        result.update(status='BLOCKED', reason=f'L’évaluation n’a pas abouti après {p.RETRY_ATTEMPTS} tentatives '
+                      f'automatiques. {p._incident_reason(exhausted[0])} Les réponses et reçus sont conservés.')
     elif unusable or any(o['state'] == 'AMBIGUOUS' for o in ops):
         result.update(status='BLOCKED', reason='L’évaluation n’a pas fourni de preuves exploitables. Les réponses et reçus sont conservés.')
     elif ops:
-        saved = json.loads(ops[0]['resources'][0])['context']['campaign']
         # Jugements restants clos sans envoi, ou campagne arrêtée depuis leur réservation (`judgment.execute`
         # les refuse alors avant émission) : seule une vraie interruption arrive ici
         if all(o['state'] == 'RECEIVED' for o in ops) or any(
-                snapshot[key] != saved[key] for key in ('admission', 'stop_reason', 'restore_pending')):
+                snapshot[key] != json.loads(o['resources'][0])['context']['campaign'][key]
+                for o in ops if o['state'] != 'RECEIVED' for key in ('admission', 'stop_reason', 'restore_pending')):
             result.update(status='BLOCKED', reason='Évaluation interrompue. Aucun appel ne sera relancé automatiquement.')
         else:
             result['status'] = 'RUNNING'

@@ -615,7 +615,7 @@ def _probe_worker(future, data, request, fetch, secret, access_transport, transp
     future.set_result(result)
 
 
-def _campaign_worker(data, start, candidate_transport, factory, secret, access_transport, judge):
+def _campaign_worker(data, start, candidate_transport, factory, secret, access_transport, judge, retry=None):
     from . import automatic_judgment as auto
     from .acquisition import campaigns, execution
     try:
@@ -631,7 +631,7 @@ def _campaign_worker(data, start, candidate_transport, factory, secret, access_t
                                         start['judgment_campaign'], judge)
             if not ids and not any(campaigns.answered(a) for a in snapshot['attempts']):
                 campaigns.stop(store, start['judgment_campaign'], reason='JUDGMENT_STOPPED')
-        auto.execute_campaign(data, ids, judge)
+        _judgment_worker(data, start['dossier_id'], ids, judge, retry)
     except Exception as error:
         # Un fil qui meurt laisserait la campagne en attente sans fin : l'erreur est journalisée, la campagne arrêtée
         logging.getLogger(__name__).error('AUTOMATIC_JUDGMENT_STOPPED campaign=%s error=%s',
@@ -651,47 +651,83 @@ def _qualification_worker(data, dossier_id, operation_id, transport, retry):
     from . import preparation
     preparation.execute_qualification(data, operation_id, transport)
     with closing(Store(data)) as store:
-        _resume_qualification_retries(store, data, retry, dossier_id=dossier_id)
+        _resume_retries(store, data, dict(qualification=retry), dossier_id=dossier_id)
+
+
+def _preparation_worker(data, dossier_id, operation_id, transport, retry):
+    """Préparer ou corriger, puis programmer la relance due après un incident fournisseur"""
+    from . import preparation
+    preparation.execute(data, operation_id, transport)
+    with closing(Store(data)) as store:
+        _resume_retries(store, data, dict(preparation=retry), dossier_id=dossier_id)
+
+
+def _judgment_worker(data, dossier_id, operation_ids, transport, retry):
+    """Évaluer, puis programmer les relances dues après un incident fournisseur ; sans `retry`, aucune"""
+    from .automatic_judgment import execute_campaign
+    execute_campaign(data, operation_ids, transport)
+    if retry is None:
+        return
+    try:
+        with closing(Store(data)) as store:
+            _resume_retries(store, data, dict(judgment=retry), dossier_id=dossier_id)
+    except Exception as error:
+        # Jamais un arrêt de la campagne : le prochain POST ou démarrage reprogramme la relance
+        logging.getLogger(__name__).warning('JUDGMENT_RETRY_RESUME_SKIPPED error=%s', type(error).__name__)
 
 
 def _resume_qualification_retries(store, data, retry, *, session_id=None, dossier_id=None):
-    """Programmer chaque relance due qui ne l'est pas encore
+    _resume_retries(store, data, dict(qualification=retry), session_id=session_id, dossier_id=dossier_id)
 
-    Appelée après une vérification, au démarrage de l'exécuteur et à chaque POST d'une session :
-    un redémarrage ne perd donc aucune relance. `retry` : profil non lié, secret d'accès, transport
-    d'accès, source et minuteurs par opération
+
+def _retry_kinds():
+    """Par nature d'appel assisté : relances dues, réservation de la suivante, fil qui l'exécute"""
+    from . import automatic_judgment as auto, preparation
+    return dict(qualification=(preparation.due_qualification_retries, preparation.retry_qualification, _qualification_worker),
+                preparation=(preparation.due_preparation_retries, preparation.retry_preparation, _preparation_worker),
+                judgment=(auto.due_retries, auto.retry, _judgment_worker))
+
+
+def _resume_retries(store, data, retries, *, session_id=None, dossier_id=None):
+    """Programmer chaque relance automatique due qui ne l'est pas encore
+
+    Appelée après chaque appel assisté, au démarrage de l'exécuteur et à chaque POST d'une session :
+    un redémarrage ne perd donc aucune relance. `retries` : par nature, profil non lié, secret d'accès,
+    transport d'accès, source et minuteurs par opération
     """
-    from . import preparation
-    profile, _, _, _, timers = retry
-    if profile is None:
-        return
-    for operation_id, dossier, session, delay in preparation.due_qualification_retries(
-            store, session_id=session_id, dossier_id=dossier_id):
-        if operation_id in timers:
+    kinds = _retry_kinds()
+    for kind, retry in retries.items():
+        profile, _, _, _, timers = retry
+        if profile is None:
             continue
-        timer = threading.Timer(delay, _retention_worker, args=(
-            data, dossier, _qualification_retry, data, dossier, session, operation_id, retry))
-        timer.daemon = True
-        timers[operation_id] = timer
-        timer.start()
+        for operation_id, dossier, session, delay in kinds[kind][0](
+                store, session_id=session_id, dossier_id=dossier_id):
+            if operation_id in timers:
+                continue
+            timer = threading.Timer(delay, _retention_worker, args=(
+                data, dossier, _retry, kind, data, dossier, session, operation_id, retry))
+            timer.daemon = True
+            timers[operation_id] = timer
+            timer.start()
 
 
-def _qualification_retry(data, dossier_id, session_id, operation_id, retry):
-    from . import preparation, provider_access
+def _retry(kind, data, dossier_id, session_id, operation_id, retry):
+    from . import provider_access
     profile, secret, access_transport, source, timers = retry
     timers.pop(operation_id, None)
+    _, reserve, worker = _retry_kinds()[kind]
     try:
         with closing(Store(data)) as store:
             # Clé relue à l'échéance : celle que la session a connectée à cet instant
             transport = profile if secret is None else profile.for_session(
                 provider_access.key_for_session(store, session_id, secret, access_transport), session_id, secret)
-            operation = preparation.retry_qualification(store, operation_id, transport, source)
-        if operation is not None:
-            _qualification_worker(data, dossier_id, operation, transport, retry)
+            following = reserve(store, operation_id, transport, source)
+        if following:
+            worker(data, dossier_id, following, transport, retry)
     except Exception as error:
         # Clé absente ou autre refus : le prochain POST de la session reprogramme la relance
-        logging.getLogger(__name__).warning('QUALIFICATION_RETRY_DEFERRED operation=%s error=%s',
-                                            operation_id, type(error).__name__)
+        logging.getLogger(__name__).warning('%s_RETRY_DEFERRED operation=%s error=%s',
+                                            kind.upper(), operation_id, type(error).__name__)
 
 
 def _retention_worker(data, dossier_id, function, *args):
@@ -745,14 +781,16 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
 
             # Registre partagé par tous les fils de travail : ses lectures et écritures sont gardées
             probe_jobs, probe_guard = {}, threading.Lock()
-            # Relances automatiques de vérification programmées, annulées à l'arrêt ; celles déjà dues
-            # avant ce démarrage sont reprogrammées tout de suite
+            # Relances automatiques de préparation, de vérification et d'évaluation programmées, annulées à
+            # l'arrêt ; celles déjà dues avant ce démarrage sont reprogrammées tout de suite
             retry_timers = {}
-            retry = (qualification_transport, access_secret, access_transport, source, retry_timers)
+            retries = {kind: (profile, access_secret, access_transport, source, retry_timers) for kind, profile in
+                       (('qualification', qualification_transport), ('preparation', transport),
+                        ('judgment', judgment_transport))}
             try:
-                _resume_qualification_retries(store, data, retry)
+                _resume_retries(store, data, retries)
             except Exception as error:
-                logging.getLogger(__name__).error('QUALIFICATION_RETRY_RESUME_FAILED error=%s', type(error).__name__)
+                logging.getLogger(__name__).error('ASSISTED_RETRY_RESUME_FAILED error=%s', type(error).__name__)
 
             def handle_message(message):
                 from .runtime import maintenance_gate, worker_lock
@@ -784,11 +822,11 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     # Toute activité de la session reprogramme ses relances dues, perdues par un redémarrage
                     try:
                         session_id, _, _ = preparation.session(store, cookie or message['token'])
-                        _resume_qualification_retries(store, data, retry, session_id=session_id)
+                        _resume_retries(store, data, retries, session_id=session_id)
                     except preparation.Denied:
                         pass
                     except Exception as error:
-                        logging.getLogger(__name__).warning('QUALIFICATION_RETRY_RESUME_SKIPPED error=%s',
+                        logging.getLogger(__name__).warning('ASSISTED_RETRY_RESUME_SKIPPED error=%s',
                                                             type(error).__name__)
                 if isinstance(start, dict):
                     if 'model_probe' in start:
@@ -811,17 +849,19 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                         threading.Thread(target=_retention_worker,
                                          args=(data, value.get('dossier_id'), _qualification_worker, data,
                                                value.get('dossier_id'), start['qualification_operation'],
-                                               active_qualification, retry),
+                                               active_qualification, retries['qualification']),
                                          daemon=True).start()
                     elif 'judgment_operations' in start:
-                        from .automatic_judgment import execute_campaign
                         threading.Thread(target=_retention_worker,
-                            args=(data, value.get('dossier_id'), execute_campaign, data, start['judgment_operations'], active_judgment), daemon=True).start()
+                            args=(data, value.get('dossier_id'), _judgment_worker, data, value.get('dossier_id'),
+                                  start['judgment_operations'], active_judgment, retries['judgment']), daemon=True).start()
                     else:
                         threading.Thread(target=_retention_worker, args=(data, value.get('dossier_id'), _campaign_worker, data, start, candidate_transport,
-                            candidate_transport_factory, access_secret, access_transport, active_judgment), daemon=True).start()
+                            candidate_transport_factory, access_secret, access_transport, active_judgment,
+                            retries['judgment']), daemon=True).start()
                 elif start:
-                    threading.Thread(target=_retention_worker, args=(data, value.get('dossier_id'), preparation.execute, data, start, active_transport), daemon=True).start()
+                    threading.Thread(target=_retention_worker, args=(data, value.get('dossier_id'), _preparation_worker, data,
+                        value.get('dossier_id'), start, active_transport, retries['preparation']), daemon=True).start()
                 if isinstance(value, dict) and value.get('kind') == 'configurations':
                     try:
                         session_id, _, _ = preparation.session(store, message['token'])
