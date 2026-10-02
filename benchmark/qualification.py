@@ -454,3 +454,13 @@ def projection(store, connection, dossier_id, revision, *, eligible):
     except (ValueError, KeyError):
         result.update(status='BLOCKED', qualification_status='BLOCKED')
     return result
+
+
+def refusal_findings(store, connection, contract_sha256):
+    """Texte des contrôles non réussis de la dernière qualification ; preuves, limites et désaccords restent privés"""
+    try:
+        receipts = _inspect(store, connection, contract_sha256)['qualifications']
+    except (ValueError, KeyError):
+        return []
+    return [{'text': row['finding']} for row in (receipts[-1]['checks'] if receipts else [])
+            if row['status'] != 'PASS']

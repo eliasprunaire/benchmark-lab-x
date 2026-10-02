@@ -396,6 +396,41 @@ class OpenRouterQualificationTests(unittest.TestCase):
                                  {'csrf_token': self.csrf}, 'b' * 40, True, candidate_transport=lambda *_: None)
             self.assertEqual('NOT_QUALIFIED', refused.exception.code)
 
+    def test_contrat_operateur_bloque_refuse_avec_ses_constats_sans_preuve(self):
+        """Contrat opérateur bloqué : le refus porte le texte des contrôles non réussis, jamais leurs preuves
+
+        Modes d'échec couverts :
+        1. le refus ne porte aucun constat (findings vide) ;
+        2. un contrôle réussi est présenté comme un motif de refus ;
+        3. la preuve du contrôle, qui contient la référence de jugement, franchit la frontière du demandeur
+        """
+        qualification.initialize(self.data)
+        transport, operation_id = self.validate({'qualified': True, 'findings': [], 'summary': 'Exemple qualifié'})
+        prep.execute_qualification(self.data, operation_id, transport)
+        reference = self.store._connection.execute("SELECT piece_id FROM pieces WHERE role='judge'").fetchone()[0]
+        candidate = qualification.draft(self.store, 'dossier', self.preview['revision'], specification(reference))
+        motif = 'Obligation O1 : aucun passage des notes ne la prouve'
+
+        def bloque(contract, resources):
+            review = check(contract, resources)
+            review['checks'][0].update(status='FAIL', finding=motif)
+            return review
+        receipt = qualification.qualify(self.store, candidate['contract_sha256'], reviewer=ACTOR, check=bloque)
+        self.assertEqual('BLOCKED', receipt['status'])
+        snapshot = {'task': {'dossier_id': 'dossier', 'revision': self.preview['revision']}}
+        path = '/preparation/dossiers/dossier/campaigns/campagne/conditions'
+        with patch.object(campaigns, 'inspect', return_value=snapshot), \
+                patch.object(campaigns, 'connection_for') as connection:
+            connection.return_value.execute.return_value.fetchone.return_value = (1,)
+            with self.assertRaises(prep.Denied) as refused:
+                web_api.dispatch(self.store, 'GET', path, self.token, None, 'b' * 40, True)
+        self.assertEqual(('NOT_QUALIFIED', [{'text': motif}]),
+                         (refused.exception.code, refused.exception.findings))
+        sortie = storage._strict_json(service.denied_response(refused.exception))
+        self.assertIn(motif, sortie)
+        self.assertNotIn(self.store.read_piece(reference).decode(), sortie)
+        self.assertNotIn('Omission témoin repérée', sortie)
+
     def test_double_validation_ne_relance_pas_et_garde_admission_ouverte(self):
         transport = SlowQualificationTransport(
             {'qualified': True, 'findings': [], 'summary': 'Paquet cohérent'})

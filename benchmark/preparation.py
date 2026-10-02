@@ -529,11 +529,11 @@ def require_qualification(store, connection, dossier_id, revision):
         row = connection.execute('SELECT contract_sha256 FROM s3_contracts WHERE dossier_id=? AND revision=? '
                                  'ORDER BY version DESC LIMIT 1', (dossier_id, revision)).fetchone()
         if row:
-            from .qualification import projection
+            from .qualification import projection, refusal_findings
             state = projection(store, connection, dossier_id, revision, eligible=True)
             if state['status'] in ('QUALIFIED', 'APPROVED'):
                 return
-            raise Denied('NOT_QUALIFIED', findings=[])
+            raise Denied('NOT_QUALIFIED', findings=refusal_findings(store, connection, row[0]))
     qualification = _automatic_qualification(store, connection, dossier_id, revision)
     if qualification is None or not qualification['qualified']:
         raise Denied('NOT_QUALIFIED', findings=[] if qualification is None else qualification['findings'])
