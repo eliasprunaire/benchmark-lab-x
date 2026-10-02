@@ -850,7 +850,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'prêt à lancer', 'Lancer le benchmark')
         start = page.form('/start')
-        motif = 'Obligation O1 : aucun passage des notes ne la prouve'
+        motif = 'Aucun passage des notes ne prouve l’obligation sur les actions'
         with closing(storage.Store(self.data)) as store:
             dossier_id = dossier.rsplit('/', 1)[1]
             revision, reference = store._connection.execute(
@@ -869,6 +869,7 @@ class ParcoursComplet(unittest.TestCase):
                              (start['action'], start['fields'])):
             with self.subTest(route=path):
                 page, _, raw = self.request(path, fields, status=403)
+                self.examine(page, path, 'exemple bloqué par le contrat opérateur', 'Retrouver mes cas d’usage')
                 self.assertIn('Terminez l’étape précédente avant de poursuivre.', page.visible)
                 self.assertIn('Ce que la vérification de l’exemple a relevé', page.visible)
                 self.assertIn(motif, page.visible)
