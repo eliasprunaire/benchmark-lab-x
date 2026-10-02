@@ -730,6 +730,7 @@ class Store:
         self._verified_operations = None
         self._verified_contexts = None
         self._verified_schema = None
+        self._checked_data = None
         # Automatic judgment contexts, valid for one data version only (see `data_version`)
         self._judgment_contexts = (None, {})
         self._root_fd = self._pieces_fd = None
@@ -743,7 +744,7 @@ class Store:
                 check.close()
             self._pieces_fd = _open_directory(self._root / "pieces")
             self._connection = _connect(self._root, "rw")
-            _check_schema(self._connection)
+            self._schema_checked(self._connection)
             self._connection.execute("PRAGMA synchronous=FULL")
             self._database_identity = _database_files(self._root)
         except BaseException:
@@ -777,8 +778,18 @@ class Store:
                 != (self._database_identity.st_dev, self._database_identity.st_ino)):
             raise IntegrityError("database identity changed")
         if schema and not unchanged:
-            _check_schema(self._connection)
+            self._schema_checked(self._connection)
         return self._connection
+
+    def _schema_checked(self, connection):
+        # Données revérifiées dès que la base a pu changer (data_version, total_changes, schema_version), schéma toujours ;
+        # limite : une corruption silencieuse du support sans écriture n'est vue qu'au démarrage, par verify_task ou après une écriture
+        # Clé lue avant le contrôle : schema_version prend le verrou partagé, data_version est alors à jour
+        key = (connection.execute('PRAGMA schema_version').fetchone()[0],
+               connection.execute('PRAGMA data_version').fetchone()[0], connection.total_changes)
+        layout = _check_schema(connection, check_data=key != self._checked_data)
+        self._checked_data = key
+        return layout
 
     def _s1_connection(self):
         connection = self._connection_checked()
@@ -1179,8 +1190,8 @@ class Store:
         # Paths and identities here; schema and data once, inside the snapshot itself
         connection = self._connection_checked(schema=False)
         with _transaction(connection):
-            _check_schema(connection)
-            previous = (self._verified_read_changes, self._verified_operations, self._verified_contexts,
+            self._schema_checked(connection)
+            previous =(self._verified_read_changes, self._verified_operations, self._verified_contexts,
                         self._verified_schema)
             self._verified_read_changes = connection.total_changes
             self._verified_schema = connection.execute('PRAGMA schema_version').fetchone()[0]
@@ -1208,6 +1219,8 @@ class Store:
         objects a task uses stay checked where it uses them: piece size and SHA-256 on each
         `read_piece`, its budget by `_budget` inside the reserving transaction. Returns orphan files
         """
+        # Contrôle par tâche complet, jamais dispensé par le cache de `_schema_checked`
+        self._checked_data = None
         with self.read_snapshot() as connection:
             return self._orphan_files(connection)
 

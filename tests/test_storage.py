@@ -170,6 +170,12 @@ def ambiguous_worker(root, counter):
     os._exit(77)
 
 
+def external_write(root,sql):
+    # Another process commits without this Store's checks, foreign keys off
+    with closing(sqlite3.connect(Path(root)/"metadata.sqlite3",isolation_level=None)) as db:
+        db.execute("PRAGMA foreign_keys=OFF");db.execute(sql)
+
+
 def cut_worker(root, boundary):
     """Kill at ordinary I/O or SQL boundaries; never rely on candidate test hooks"""
     s=product.Store(Path(root))
@@ -427,9 +433,39 @@ class StorageTests(unittest.TestCase):
                 for _ in range(5):self.assertEqual(b"original",self.store.read_piece("p"))
             # One quick_check for the snapshot, one path walk at its entry, none per piece access
             self.assertEqual((1,1),(len(checks),paths.call_count))
-            # Outside a snapshot each access checks again
+            # Outside a snapshot each access checks paths again, the data only if the base may have changed
             self.store.read_piece("p")
-            self.assertEqual((2,2),(len(checks),paths.call_count))
+            self.assertEqual((1,2),(len(checks),paths.call_count))
+
+    def test_data_check_reruns_only_when_the_database_may_have_changed(self):
+        self.piece()
+        checks=[];self.store._connection.set_trace_callback(lambda sql:checks.append(sql) if sql in ("PRAGMA quick_check","PRAGMA foreign_key_check") else None)
+        # Our own write is checked once on the next access, an unchanged base never again
+        self.store.read_piece("p");self.store.read_piece("p");self.assertEqual(2,len(checks))
+        # A commit from another process is seen through data_version
+        self.child(external_write,str(self.root),"INSERT INTO budgets VALUES ('externe','1','TEST')")
+        self.store.read_piece("p");self.store.read_piece("p");self.assertEqual(4,len(checks))
+        # A commit from this connection is seen through total_changes
+        self.store.create_budget("b","1","TEST")
+        self.store.read_piece("p");self.assertEqual(6,len(checks))
+        # The per-task check never relies on the cache
+        self.assertEqual([],self.store.verify_task());self.assertEqual(8,len(checks))
+
+    def test_external_broken_reference_is_refused_before_the_next_write(self):
+        self.piece();self.store.read_piece("p")
+        self.child(external_write,str(self.root),"UPDATE pieces SET dossier_id='absent' WHERE piece_id='p'")
+        with self.assertRaises(product.IntegrityError):self.store.save_dossier("d",2,copy.deepcopy(PAYLOAD))
+        with closing(sqlite3.connect(self.root/"metadata.sqlite3")) as db:
+            self.assertEqual([(1,)],db.execute("SELECT count(*) FROM dossier_revisions").fetchall())
+
+    def test_schema_change_is_detected_from_this_or_another_connection(self):
+        self.store.get_dossier("d",1)
+        self.child(external_write,str(self.root),"CREATE TABLE externe (x)")
+        with self.assertRaises(product.SchemaError):self.store.get_dossier("d",1)
+        self.child(external_write,str(self.root),"DROP TABLE externe")
+        self.store.get_dossier("d",1)
+        self.store._connection.execute("CREATE TABLE locale (x)")
+        with self.assertRaises(product.SchemaError):self.store.save_dossier("d",2,copy.deepcopy(PAYLOAD))
 
     def test_task_check_lists_orphans_without_the_full_audit(self):
         self.piece()
