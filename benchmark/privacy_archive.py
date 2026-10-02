@@ -138,15 +138,22 @@ def _revision(view):
 
 
 def _pending_model(store, connection, session_id, dossier_id, campaign, comparison, attempt_id):
-    attempt = next(item for item in campaign['attempts'] if item['operation_id'] == attempt_id)
-    cell = next(item for item in comparison['cells'] if item['cell_id'] == attempt['cell_id'])
-    configuration = next(item for item in comparison['panel'] if item['id'] == cell['configuration_id'])
+    from . import automatic_judgment as auto
+    from .acquisition import campaigns as c
+    # Une reprise en attente de jugement vit dans sa propre campagne, avec sa propre configuration
+    owner, attempt = next((owner, item) for cid in auto.family(connection, campaign['campaign_id'])
+                          for owner in [campaign if cid == campaign['campaign_id']
+                                        else c.projection(store, connection, dossier_id, cid)[0]]
+                          for item in owner['attempts'] if item['operation_id'] == attempt_id)
+    campaign_id = owner['campaign_id']
+    cell = next(item for item in owner['cells'] if item['cell_id'] == attempt['cell_id'])
+    configuration = next(item for item in owner['panel'] if item['id'] == cell['configuration_id'])
     _authorize(connection, session_id, dossier_id)
     row = connection.execute(
         'SELECT r.output_piece_id FROM s4_attempts a JOIN operations o USING(operation_id) '
         'LEFT JOIN s4_results r USING(operation_id) '
         'WHERE a.operation_id=? AND a.campaign_id=? AND o.dossier_id=?',
-        (attempt_id, campaign['campaign_id'], dossier_id)).fetchone()
+        (attempt_id, campaign_id, dossier_id)).fetchone()
     if row is None:
         raise p.Denied('Tentative inaccessible')
     # Only the output explicitly linked by S4 is read, never a judge-role inventory
