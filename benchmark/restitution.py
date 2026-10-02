@@ -189,32 +189,52 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                             unit=definition['unit'], favorable=favorable, proof=definition['proof']))
     _queries(query, campaign, spec, columns)
     records = e.projection(store, connection, dossier_id, campaign_id)
+    from . import automatic_judgment as auto
+    # Reprises techniques (RULES.md §9) : chaque reprise vise une tentative ; seule la dernière d'une chaîne compte
+    descendants = auto.family(connection, campaign_id)[1:]
+    snapshots = [c._inspect(store, connection, cid) for cid in descendants]
+    # Une reprise arrêtée avant tout envoi n'a pas eu lieu : la tentative source reste la dernière
+    held = {a['operation_id'] for _, a in auto._attempts(store, connection, campaign_id)}
+    parents = {a['operation_id']: s['manifest']['recovery_of'] for s in snapshots for a in s['attempts']
+               if a['operation_id'] in held}
+    superseded = set(parents.values())
+    every = campaign['attempts'] + [a for cid in descendants
+                                    for a in c.projection(store, connection, dossier_id, cid)[0]['attempts']
+                                    if a['operation_id'] in held]
+    visible = [a for a in every if a['operation_id'] not in superseded]
+
+    def recoveries(attempt_id):
+        count = 0
+        while attempt_id in parents:
+            attempt_id, count = parents[attempt_id], count + 1
+        return count
     causes = {}
     latest = {record['attempt_id']: record for record in records}
-    concerned = {a['operation_id'] for a in campaign['attempts']
+    concerned = {a['operation_id'] for a in visible
                  if a['state'] == 'RECEIVED' and not a['answered'] and a['operation_id'] not in latest}
     if concerned:
         causes = {a['operation_id']: _response_cause(a)
-                  for a in c._inspect(store, connection, campaign_id)['attempts'] if a['operation_id'] in concerned}
-    pending = [dict(attempt_id=a['operation_id'], verdict=None,
+                  for s in [c._inspect(store, connection, campaign_id)] + snapshots
+                  for a in s['attempts'] if a['operation_id'] in concerned}
+    pending: list[dict] = [dict(attempt_id=a['operation_id'], verdict=None,
                     state='REVIEW_REQUIRED' if a['state'] == 'RECEIVED' and a['incident'] is None else 'EXECUTION_REQUIRED',
                     next_action='Cette réponse doit être relue et son évaluation terminée avant de conclure.')
-               for a in campaign['attempts'] if a['operation_id'] not in latest]
+               for a in visible if a['operation_id'] not in latest]
     if pending and connection.execute('SELECT 1 FROM s2_comparison_contracts WHERE contract_sha256=?',
                           (campaign['contract_sha256'],)).fetchone():
-        from . import automatic_judgment as auto
         progress = campaign.get('judgment') or auto.status(store, connection, campaign_id)
         progress_status = progress.get('status')
         progress_reason = progress.get('reason')
         if type(progress_status) is not str or (progress_reason is not None and type(progress_reason) is not str):
             raise ValueError('Progression du jugement invalide')
-        attempts = {a['operation_id']: a for a in campaign['attempts']}
+        attempts = {a['operation_id']: a for a in visible}
         for attempt in pending:
             # Rien n'a été envoyé au juge : état terminal, la cellule reste comptée comme non couverte
             if attempts[attempt['attempt_id']]['state'] == 'RECEIVED' and not attempts[attempt['attempt_id']]['answered']:
                 cell = next(c for c in campaign['cells'] if c['cell_id'] == attempts[attempt['attempt_id']]['cell_id'])
                 attempt.update(state='NO_USABLE_RESPONSE', next_action=NO_USABLE_RESPONSE,
-                               configuration_id=cell['configuration_id'], cause=causes.get(attempt['attempt_id']))
+                               configuration_id=cell['configuration_id'], cause=causes.get(attempt['attempt_id']),
+                               recoveries=recoveries(attempt['attempt_id']))
             elif attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='EVALUATION_' + progress_status,
                     next_action=progress_reason or 'Réponse reçue. Son évaluation automatique n’est pas terminée.')
@@ -227,7 +247,10 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     for record in latest.values():
         row = deepcopy(record)
         row['verdict'] = row['decision']['verdict']
-        attempt = next(a for a in campaign['attempts'] if a['operation_id'] == record['attempt_id'])
+        # Une reprise est une configuration distincte, dite sur sa ligne (RULES.md §5)
+        row['recovery_limit'] = (record['requested_configuration']['parameters']['max_tokens']
+                                 if record['attempt_id'] in parents else None)
+        attempt = next(a for a in visible if a['operation_id'] == record['attempt_id'])
         incompatible = ('Impossible de confirmer que la réponse vient du modèle demandé' if record['attribution_incident'] else
                         'Un problème technique empêche de rattacher la réponse au modèle' if record['incident'] == 'HARNESS_ERROR' else
                         'Réponse absente ou envoi de l’appel non confirmé' if record['output_piece_id'] is None or attempt['emission'] != 'ESTABLISHED' else None)
@@ -300,7 +323,8 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 result_expected=spec['result_expected'], human_work=contract['package']['human_work'],
                 conclusion=conclusion, coverage=coverage, population=population, filter_scope=deepcopy(query),
                 economic_status='COMPLETE' if complete else 'INCOMPLETE', columns=columns, rows=ordered,
-                recommendation=_recommendation(rows, columns, len(campaign['cases']), coverage, pending),
+                # Décision d'Ayo : pas de conseil sur une comparaison qui compte une reprise (une tentative par configuration)
+                recommendation=None if descendants else _recommendation(rows, columns, len(campaign['cases']), coverage, pending),
                 cases=campaign['cases'], panel=campaign['panel'], conditions=campaign['conditions'],
                 obligations=spec['obligations'], cost_basis=basis, cells=campaign['cells'],
                 campaign_state=campaign['state'], history=records, href=base, pending_attempts=pending,

@@ -388,6 +388,14 @@ def _official_proposal(store, connection, operation_id, grant, budget_id, *, che
 def _automatic_proposal(store, connection, operation_id, grant, *, allow_official,
                         check_budget=True):
     snapshot, attempt = parent(store, connection, operation_id)
+    if 'max_recoveries' in grant:
+        # Compteur explicite : les limites calculées ne suffisent pas à borner la chaîne
+        depth, current = 0, snapshot
+        while current['manifest'].get('recovery_of'):
+            depth += 1
+            current, _ = parent(store, connection, current['manifest']['recovery_of'])
+        if depth >= grant['max_recoveries']:
+            raise ValueError('Nombre de reprises préautorisées atteint')
     budget_id = snapshot['admissions'][-1]['authority']['budget_id']
     capabilities = frozen_capabilities(grant, attempt['operation']['requested_configuration']['model'])
     try:
@@ -482,8 +490,11 @@ def _capability(value):
 def validate_grant(grant, *, purpose, recovery):
     if purpose != 'start' or recovery:
         raise ValueError('Préautorisation figée à l’admission propriétaire initiale')
-    extra = ('official_fallbacks',) if 'official_fallbacks' in grant else ()
+    extra = tuple(key for key in ('official_fallbacks', 'max_recoveries') if key in grant)
     _fields(grant, ('capabilities',) + extra, 'technical recovery')
+    limit = grant.get('max_recoveries', 1)
+    if type(limit) is not int or limit < 1:
+        raise ValueError('Nombre de reprises invalide')
     capabilities = grant['capabilities']
     if type(capabilities) is dict:
         items = [capabilities]

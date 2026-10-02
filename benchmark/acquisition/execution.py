@@ -67,22 +67,30 @@ def execute_launch(data, attempts, transport=None, *, transport_factory=None,
             # Toute erreur, SQLite comprise, arrête la campagne : jamais d'attente sans fil de travail
             logging.getLogger(__name__).warning('ACQUISITION_STOPPED operation=%s error=%s',
                                                 attempt_id, type(error).__name__)
-            try:
-                with closing(Store(data)) as store:
-                    connection = c.connection_for(store)
-                    with _transaction(connection, write=True):
-                        row = connection.execute(
-                            'SELECT campaign_id, state FROM s4_attempts JOIN operations USING(operation_id) '
-                            'JOIN s4_status USING(campaign_id) WHERE operation_id=? '
-                            'AND s4_status.admission_id IS NOT NULL', (attempt_id,)).fetchone()
-                        if row:
-                            c._stop(connection, row[0], 'ACQUISITION_STOPPED_BEFORE_EMISSION' if row[1] == 'INTENT_RECORDED'
-                                    else 'ACQUISITION_RECEIPT_NOT_VERIFIED')
-            except Exception as failure:
-                # Le démarrage suivant de l'exécuteur ferme l'admission restée ouverte
-                logging.getLogger(__name__).error('ACQUISITION_STOP_FAILED operation=%s error=%s',
-                                                  attempt_id, type(failure).__name__)
+            _stop_after_failure(data, attempt_id)
             break
+
+
+def _stop_after_failure(data, attempt_id, *, unsent_only=False):
+    """Arrête la campagne de la tentative en échec ; une intention de candidat jamais émise reste consignée
+
+    `unsent_only` : une tentative déjà émise appartient à un autre fil, qui la mène à son terme
+    """
+    try:
+        with closing(Store(data)) as store:
+            connection = c.connection_for(store)
+            with _transaction(connection, write=True):
+                row = connection.execute(
+                    'SELECT campaign_id, state FROM s4_attempts JOIN operations USING(operation_id) '
+                    'JOIN s4_status USING(campaign_id) WHERE operation_id=? '
+                    'AND s4_status.admission_id IS NOT NULL', (attempt_id,)).fetchone()
+                if row and not (unsent_only and row[1] != 'INTENT_RECORDED'):
+                    c._stop(connection, row[0], 'ACQUISITION_STOPPED_BEFORE_EMISSION' if row[1] == 'INTENT_RECORDED'
+                            else 'ACQUISITION_RECEIPT_NOT_VERIFIED')
+    except Exception as failure:
+        # Le démarrage suivant de l'exécuteur ferme l'admission restée ouverte
+        logging.getLogger(__name__).error('ACQUISITION_STOP_FAILED operation=%s error=%s',
+                                          attempt_id, type(failure).__name__)
 
 
 def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
@@ -231,8 +239,8 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
                                        ('ACQUISITION_RECEIPT_NOT_VERIFIED', c._now(), snapshot['manifest']['campaign_id']))
             storage.retry_locked(unverified)
     if received:
-        continue_preauthorized(data, attempt_id, transport,
-                               transport_factory=transport_factory)
+        continue_preauthorized(data, attempt_id, transport, transport_factory=transport_factory,
+                               access_secret=access_secret, access_transport=access_transport)
 
 
 def _derive_authority(owner_record, snapshot, operation_id, reserve_amount, budget_id):
@@ -322,17 +330,28 @@ def _next_preauthorized_attempt(store, operation_id, *, allow_official=False):
         return None
 
 
-def continue_preauthorized(data, operation_id, transport=None, *, transport_factory=None):
-    """Create, admit, reserve and execute the next frozen recovery, or stop"""
+def continue_preauthorized(data, operation_id, transport=None, *, transport_factory=None,
+                           access_secret=None, access_transport=None):
+    """Create, admit, reserve and execute the next frozen recovery, or stop
+
+    Une campagne financée par le demandeur reprend avec sa clé, comme la tentative source. Une reprise
+    qui échoue est journalisée et arrêtée seule : la comparaison source continue
+    """
     try:
         with closing(Store(data)) as store:
             nxt = _next_preauthorized_attempt(store, operation_id,
                                               allow_official=transport_factory is not None)
-        if nxt is None:
-            return
-        if transport_factory is None:
-            execute(data, nxt, transport)
-        else:
-            execute(data, nxt, transport_factory=transport_factory)
     except (ValueError, KeyError, ConflictError, BudgetError, IntegrityError):
         return
+    if nxt is None:
+        return
+    try:
+        if transport_factory is None:
+            execute(data, nxt, transport, access_secret=access_secret, access_transport=access_transport)
+        else:
+            execute(data, nxt, transport_factory=transport_factory,
+                    access_secret=access_secret, access_transport=access_transport)
+    except Exception as error:
+        logging.getLogger(__name__).warning('RECOVERY_STOPPED operation=%s error=%s', nxt, type(error).__name__)
+        # Une continuation concurrente qui trouve la reprise déjà émise n'arrête pas le fil qui l'a émise
+        _stop_after_failure(data, nxt, unsent_only=True)

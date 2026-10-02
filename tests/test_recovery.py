@@ -40,15 +40,17 @@ class Recovery(unittest.TestCase):
              context_length=10000,supported_parameters=['max_tokens'],
              pricing=dict(prompt='0.000001',completion='0.000002')) for t in ['one','two']])
 
-    def admit(self, cid, grant=False, owner=False, capabilities=None):
+    def admit(self, cid, grant=False, owner=False, capabilities=None, max_recoveries=None):
         snap=c.inspect(self.store,cid)
         a,e=inputs(snap,cells=[p['cell_id'] for p in snap['manifest']['plan']])
         a['reserve_amounts']={k:v for k,v in a['reserve_amounts'].items() if k in a['allowed_cells']}
         if grant:
             a['technical_recovery']=dict(capabilities=deepcopy(capabilities if capabilities is not None else self.caps))
+            if max_recoveries is not None:
+                a['technical_recovery']['max_recoveries']=max_recoveries
         return c.admit(self.store,cid,a,e,owner_launch=owner)
 
-    def granted(self, name='preauthorized', capabilities=None, only=None):
+    def granted(self, name='preauthorized', capabilities=None, only=None, max_recoveries=None):
         m=deepcopy(c.inspect(self.store,'local-comparison')['manifest'])
         m['campaign_id']=name
         if only is not None:
@@ -58,7 +60,7 @@ class Recovery(unittest.TestCase):
         caps=deepcopy(capabilities if capabilities is not None else self.caps)
         if only is not None:
             caps['endpoints']=[e for e in caps['endpoints'] if e['tag'] in only]
-        self.admit(name,grant=True,capabilities=caps)
+        self.admit(name,grant=True,capabilities=caps,max_recoveries=max_recoveries)
         return name
 
     def build_response(self, op, request, finish='length', output='', unknown=False,
@@ -315,6 +317,42 @@ class Recovery(unittest.TestCase):
         self.assertEqual(calls[1]['operation_id'],profile['operation_id'])
         self.assertEqual(200,profile['parameters']['max_tokens'])
         self.assertIsNone(r.profile(self.store,self.ident(recovered['manifest']['panel'][0],revision='other-rev')))
+
+    def test_preauthorized_length_stops_at_max_recoveries(self):
+        """Décision d'Ayo du 2026-10-02 : le nombre de reprises est borné par un compteur
+
+        Modes d'échec : une troisième reprise part parce que la route accepte encore une limite plus
+        haute ; un plafond invalide est accepté dans la préautorisation
+        """
+        cid=self.granted('plafond',max_recoveries=2)
+        c.reserve(self.store,cid,'x','first')
+        # Sortie qui progresse à chaque essai : seule la borne arrête la chaîne
+        transport,calls=self.sequence(*(dict(finish='length',output='x'*n) for n in range(1,6)))
+        execution.execute(self.data,'first',transport)
+        self.assertEqual([100,200,400],[call['request']['parameters']['max_tokens'] for call in calls])
+        for value in (0,'2',True):
+            with self.subTest(max_recoveries=value), self.assertRaises(ValueError):
+                self.granted('plafond-'+str(value),max_recoveries=value)
+
+    def test_concurrent_continuation_does_not_stop_active_recovery(self):
+        """Deux continuations obtiennent la même reprise ; la seconde arrive après l'émission de la première
+
+        Mode d'échec : la seconde traite « déjà émise » comme un échec et arrête la campagne de la
+        première, ce qui empêche sa reprise suivante
+        """
+        from unittest.mock import patch
+        cid=self.granted('concurrence',max_recoveries=2)
+        c.reserve(self.store,cid,'x','first')
+        sent=[]
+        def transport(op,request):
+            sent.append(op['operation_id'])
+            if len(sent)==2:
+                with patch.object(execution,'_next_preauthorized_attempt',return_value=op['operation_id']):
+                    execution.continue_preauthorized(self.data,'first',transport)
+            return self.build_response(op,request,finish='length',output='x'*len(sent))
+        execution.execute(self.data,'first',transport)
+        self.assertEqual(3,len(sent))
+        self.assertIsNone(c.inspect(self.store,self._recovery('first')['manifest']['campaign_id'])['stop_reason'])
 
     def test_preauthorized_route_error_excludes_faulty_route(self):
         cid=self.granted()
@@ -605,11 +643,11 @@ class Recovery(unittest.TestCase):
         cid=self.granted('prepared-then-stop')
         c.reserve(self.store,cid,'x','first')
         real_execute=execution.execute
-        def execute_child_after_source_stop(data,oid,transport=None):
+        def execute_child_after_source_stop(data,oid,transport=None,**access):
             if oid!='first':
                 with closing(storage.Store(self.data)) as other:
                     c.stop(other,cid)
-            return real_execute(data,oid,transport)
+            return real_execute(data,oid,transport,**access)
         transport,calls=self.sequence(dict(finish='length',output='partial'),
                                       dict(finish='stop',output='Complete'))
         try:

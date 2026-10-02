@@ -119,6 +119,8 @@ _AUTHORITY = ('actor', 'authority_id', 'purpose', 'manifest_sha256', 'execution_
 _OBSERVED = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters', 'effort',
              'data_collection')
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
+# Paliers des reprises après un arrêt pour longueur, dans le parcours public (RULES.md §9)
+LENGTH_RECOVERY_LIMITS = (DEFAULT_MAX_OUTPUT_TOKENS * 2, DEFAULT_MAX_OUTPUT_TOKENS * 4)
 COMPARISON_COST_BASIS = {'scope': 'Une tentative par cellule', 'attempts': 'Sans reprise',
                          'unit': 'USD', 'conversion': None}
 BYTES_PER_TOKEN = 3
@@ -1084,6 +1086,89 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
     return dict(operation_id=attempt_id, execution_id=execution_id, cell_id=cell_id, output_piece_id=None)
 
 
+def _recovery_estimate(store, snapshot):
+    """Coût estimé si chaque modèle repris l'était aux deux paliers, aux tarifs majorants que le lancement fige
+
+    L'entrée reste une estimation : ce n'est pas un maximum garanti. Un modèle sans reprise possible ne compte pas. Distinct de la prévision des réponses (RULES.md §8)
+    """
+    grant = _requester_recovery(store, snapshot['manifest']['panel'])
+    if grant is None:
+        return '0'
+    inputs = {configuration['model']: configuration['estimate']['assumptions']['input_tokens']
+              for configuration in snapshot['manifest']['panel']}
+    amounts = []
+    for item in grant['capabilities']:
+        for endpoint in item['endpoints']:
+            limits = [min(limit, endpoint['max_completion_tokens']) for limit in LENGTH_RECOVERY_LIMITS]
+            amounts.append(_money(endpoint['pricing']['prompt']) * inputs[item['id']] * len(limits)
+                           + _money(endpoint['pricing']['completion']) * sum(limits))
+    return str(_sum_money(amounts))
+
+
+# Composants publiés liés à une fonction que la campagne n'envoie jamais : recherche web, image, audio, cache d'une heure
+_UNSENT_PRICES = {'web_search', 'image', 'audio', 'input_audio_cache', 'input_cache_write_1h'}
+
+
+def _frozen_pricing(pricing):
+    """Tarif figé majorant : le plus haut de chaque composant, toutes tranches et tous horaires confondus
+
+    Le raisonnement est compté au tarif de sortie le plus haut, la remise est ignorée. Un frais par
+    requête non nul ou un composant inconnu refuse la route
+    """
+    overrides = pricing.get('overrides', [])
+    if type(overrides) is not list:
+        raise ValueError('Tranches de tarif illisibles')
+    frozen = {}
+    for row in [pricing, *overrides]:
+        if type(row) is not dict:
+            raise ValueError('Tranche de tarif illisible')
+        for key, value in row.items():
+            if key in _UNSENT_PRICES or key in ('overrides', 'discount', 'min_prompt_tokens', 'utc_start', 'utc_end'):
+                continue
+            if key == 'request':
+                if _money(value) != 0:
+                    raise ValueError('Frais par requête')
+                continue
+            target = 'completion' if key == 'internal_reasoning' else key
+            if target not in ('prompt', 'completion', 'input_cache_read', 'input_cache_write'):
+                raise ValueError('Composant de tarif inconnu')
+            if target not in frozen or _money(value) > _money(frozen[target]):
+                frozen[target] = value
+    return frozen
+
+
+def _requester_recovery(store, panel) -> dict | None:
+    """Préautorisation de reprise pour longueur, figée au lancement depuis le relevé OpenRouter conservé
+
+    La limite de sortie figée de chaque route est bornée au dernier palier : le doublement existant
+    s'arrête donc après deux reprises. Une route sans limite ni tarif établis n'est pas reprise
+    """
+    from . import recovery
+    from .. import model_catalogue
+    latest = model_catalogue._latest(store)
+    documents = latest[1].get('endpoints') if latest else None
+    if type(documents) is not dict:
+        return None
+    capabilities = []
+    for configuration in panel:
+        try:
+            endpoints = []
+            for endpoint in documents[configuration['model']]['endpoints']:
+                if endpoint['tag'] not in configuration['parameters']['provider']['only']:
+                    continue
+                endpoints.append(dict(
+                    tag=endpoint['tag'], status=endpoint['status'], context_length=endpoint['context_length'],
+                    max_completion_tokens=min(endpoint['max_completion_tokens'], LENGTH_RECOVERY_LIMITS[-1]),
+                    supported_parameters=endpoint['supported_parameters'],
+                    pricing=_frozen_pricing(endpoint['pricing'])))
+            item = dict(id=configuration['model'], endpoints=endpoints)
+            recovery._capability(item)
+        except (KeyError, TypeError, ValueError):
+            continue
+        capabilities.append(item)
+    return dict(capabilities=capabilities, max_recoveries=len(LENGTH_RECOVERY_LIMITS)) if capabilities else None
+
+
 def _estimate_total(snapshot):
     values = [configuration.get('estimate', {}).get('amount_usd')
               for configuration in snapshot['manifest']['panel']]
@@ -1191,6 +1276,7 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
                 and not snapshot['admissions'] and not snapshot['attempts'],
                 judgment_estimate_usd=judgment_estimate,
                 estimate_total_usd=None if total is None else str(total), access=access,
+                recovery_limits=list(LENGTH_RECOVERY_LIMITS), recovery_estimate_usd=_recovery_estimate(store, snapshot),
                 model_names=model_catalogue.display_names(store)))
         admission = snapshot['admission']
         grant = admission['authority'].get('browser_launch') if admission else None
@@ -1288,6 +1374,10 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
                 config, _ = auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport)
                 authority['automatic_judgment'] = dict(
                     budget_id=provider_access.preparation_budget_id(session_id), configuration=config)
+            # Décision d'Ayo (RULES.md §9) : le lancement préautorise deux reprises pour longueur au plus
+            grant = _requester_recovery(store, snapshot['manifest']['panel'])
+            if grant is not None:
+                authority['technical_recovery'] = grant
             fetched_at = snapshot['manifest']['panel'][0]['estimate']['fetched_at']
             channels = {}
             for configuration in snapshot['manifest']['panel']:
@@ -1458,4 +1548,9 @@ def projection(store, connection, dossier_id, campaign_id=None):
     if campaign_id is not None:
         query += ' AND c.campaign_id=?'
     rows = connection.execute(query + ' ORDER BY c.rowid', parameters).fetchall()
-    return [_projected(store, connection, cid, _inspect(store, connection, cid)) for (cid,) in rows]
+    snapshots = [(cid, _inspect(store, connection, cid)) for (cid,) in rows]
+    # Une reprise publique se lit avec sa comparaison source, jamais comme une comparaison de plus ;
+    # une reprise opérateur reste listée, comme avant
+    return [_projected(store, connection, cid, snapshot) for cid, snapshot in snapshots
+            if campaign_id is not None or not (snapshot['manifest'].get('recovery_of')
+                                               and snapshot['manifest'].get('funding') == 'requester')]
