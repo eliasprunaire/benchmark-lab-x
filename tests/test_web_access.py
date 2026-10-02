@@ -28,6 +28,22 @@ CSP = ("default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; "
        "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 
 
+def setUpModule():
+    """Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page rendue ne compte sur elle"""
+    render = views.render
+
+    def checked(value, *args, **kwargs):
+        page = render(value, *args, **kwargs)
+        # Seul le lancement préparé par l'opérateur (sans contrôles demandeur) reste hors du parcours public
+        operator = type(value) is dict and value.get('kind') == 'campaign_launch' and 'checks' not in value
+        if not operator and 'équipe Bench-X' in page.decode():
+            raise AssertionError('Page rendue qui compte sur l’équipe Bench-X')
+        return page
+    patcher = patch.object(views, 'render', checked)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+
+
 def _port():
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
@@ -234,6 +250,13 @@ class AccessViewTests(unittest.TestCase):
         page = views.render(value, 'csrf').decode()
         self.assertNotIn('0,125', page)
         self.assertIn('réservé pour l’évaluation : inconnu', page)
+
+    def test_execution_indisponible_propose_de_reessayer(self):
+        value = self.campaign({'status': 'connected'})
+        value.update(checks=[], launchable=False, cap_usd='30.00')
+        page = views.render(value, 'csrf').decode()
+        self.assertIn('Impossible de lancer pour l’instant : le service d’exécution est indisponible. '
+                      'Réessayez dans quelques minutes.', page)
 
     def test_judgment_preflight_failure_remains_readable(self):
         value = self.campaign({'status': 'connected'})

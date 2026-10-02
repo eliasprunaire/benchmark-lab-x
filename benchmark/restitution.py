@@ -187,7 +187,9 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         for attempt in pending:
             # Rien n'a été envoyé au juge : état terminal, la cellule reste comptée comme non couverte
             if attempts[attempt['attempt_id']]['state'] == 'RECEIVED' and not attempts[attempt['attempt_id']]['answered']:
-                attempt.update(state='NO_USABLE_RESPONSE', next_action=NO_USABLE_RESPONSE)
+                cell = next(c for c in campaign['cells'] if c['cell_id'] == attempts[attempt['attempt_id']]['cell_id'])
+                attempt.update(state='NO_USABLE_RESPONSE', next_action=NO_USABLE_RESPONSE,
+                               configuration_id=cell['configuration_id'])
             elif attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='EVALUATION_' + progress_status,
                     next_action=progress_reason or 'Réponse reçue. Son évaluation automatique n’est pas terminée.')
