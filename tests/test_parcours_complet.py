@@ -248,6 +248,8 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIn('Révision : aaaaaaa', page.visible)
             self.assertNotIn('v0.1.0', page.visible)
             self.assertNotIn(KEY, page.visible)
+            # Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page ne compte sur elle
+            self.assertNotIn('équipe Bench-X', ' '.join(n['text'] for n in page.nodes))
             focus = [n for n in page.nodes if not n['hidden'] and not n['details']
                      and 'disabled' not in n['attrs'] and n['attrs'].get('type') != 'hidden'
                      and n['attrs'].get('tabindex') != '-1'

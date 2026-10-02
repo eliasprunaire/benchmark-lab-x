@@ -13,6 +13,7 @@ from benchmark import preparation as prep, restitution as r, storage, web_api
 from benchmark_web import projection, views
 from tests.test_s2_review_regressions import Authorized, response_for
 from tests.test_s6_regressions import Markup, build
+from tests.test_web_access import setUpModule  # noqa: F401  contrôle global des pages rendues
 
 AVAILABILITY = {'assistant_configured': True, 'admission_open': True, 'can_submit': True, 'reason': 'open'}
 
@@ -251,6 +252,66 @@ class DossierPageTests(unittest.TestCase):
                     self.assertIn('href="' + link + '"', page)
                 if category == 'math':
                     self.assertNotIn('https://livecodebench.github.io/', page)
+
+    def suspended(self, explanation, availability):
+        return views.render({
+            'dossier_id': 'd1', 'revision': 2, 'stage': 'suspended', 'package': None,
+            'validation': None, 'qualified': False, 'explanation': explanation,
+            'payload': {'request': 'Trier des notes inventées', 'clarifications': [],
+                        'validated_assumptions': [], 'reformulation': '', 'fictional_parameters': {}},
+            'availability': availability}, 'csrf', '/preparation/dossiers/d1').decode()
+
+    def test_preparation_suspendue_dit_la_cause_et_propose_de_renvoyer(self):
+        page = self.suspended('Incident chez OpenRouter ou chez le fournisseur du modèle. Préparation suspendue. '
+                              'Reçu et coût conservés ; aucune reprise automatique.', AVAILABILITY)
+        self.assertIn('Incident chez OpenRouter ou chez le fournisseur du modèle.', page)
+        self.assertIn('Renvoyez votre message', page)
+        self.assertNotIn('ne reprendra pas d’elle-même', page)
+        # L'envoi reste ouvert : le formulaire de réponse n'est pas désactivé
+        self.assertIn('<button type="submit">Envoyer ma réponse</button>', page)
+
+    def test_envoi_ferme_sans_attente_de_l_equipe(self):
+        cases = {'interrupted': 'Nous ne savons pas si le modèle a répondu. Rien n’est relancé ; '
+                                'cette opération sera close automatiquement.',
+                 'restore': 'Service momentanément indisponible, réessayez plus tard.'}
+        for reason, expected in cases.items():
+            with self.subTest(reason=reason):
+                page = self.suspended('Nous ne savons pas si le modèle a répondu à votre dernier message.',
+                                      dict(AVAILABILITY, can_submit=False, reason=reason))
+                self.assertIn(expected, page)
+                self.assertNotIn('Renvoyez votre message', page)
+                self.assertIn('disabled', page.split('Envoyer ma réponse')[0].rsplit('<button', 1)[1])
+
+    def test_exemple_valide_sans_verification_automatique_ne_compte_pas_sur_l_equipe(self):
+        page = views.render({
+            'dossier_id': 'd1', 'revision': 1, 'stage': 'preview',
+            'package': {'instruction': 'Relever les actions', 'deliverables': ['Liste'], 'pieces': [],
+                        'human_work': 'Relire', 'acceptable_ambiguities': [], 'limits': []},
+            'criteria': {'eliminatory': [], 'obligations': ['Action présente'], 'quality': []},
+            'criteria_rule': 'Règle', 'example_contents': {}, 'changes': [], 'piece_changes': {},
+            'validation': {'validated_at': '2026-09-16T08:00:00Z'}, 'qualified': False,
+            'qualification': {'status': 'PENDING', 'qualification_status': 'PENDING', 'approval_status': 'PENDING'},
+            'explanation': '',
+            'payload': {'request': 'Trier des notes inventées', 'clarifications': [],
+                        'validated_assumptions': [], 'reformulation': '', 'fictional_parameters': {}},
+            'availability': AVAILABILITY}, 'csrf', '/preparation/dossiers/d1').decode()
+        self.assertIn('La vérification de l’exemple n’a pas pu démarrer.', page)
+        self.assertNotIn('Approbation', page)
+
+    def test_historique_d_une_comparaison_arretee_sans_autorisation_a_attendre(self):
+        from benchmark_web.campaign_views import render_campaign_records
+        campaign = dict(campaign_id='c1', task={'version': 1, 'revision': 1}, panel=[], cells=[], attempts=[],
+                        conditions=dict(pi={'package': 'pi', 'version': '1', 'status': 'PINNED'},
+                                        frozen_at='2026-09-15T00:00:00Z', packages=[], tools=[], skills=[],
+                                        defaults={}, environment={}),
+                        admission_open=False, allowed_cells=[], restore_pending=True, stop_reason=None,
+                        missing_authorities=['exécution', 'appels candidats', 'budget'],
+                        budget=None, reserve_amounts=None, cost_basis={})
+        page = render_campaign_records([campaign], '/preparation/dossiers/d1')
+        self.assertIn('Aucun nouvel essai ne peut être lancé pour cette comparaison.', page)
+        self.assertIn('Service momentanément indisponible, réessayez plus tard.', page)
+        for absent in ('équipe', 'Autorisation', 'autorisation', 'appels candidats'):
+            self.assertNotIn(absent, page)
 
     def test_criteria_groups_render_versioned_packages(self):
         def render(criteria):

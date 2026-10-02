@@ -795,7 +795,7 @@ def render_campaign_launch_requester(value, csrf):
         if failed['key'] == 'access_connected':
             check_content += personal_key_form(csrf, value.get('access', {}), base + '/conditions', opened=True)
     elif not value['launchable']:
-        check_content = '<p class="note">Impossible de lancer pour l’instant : le service d’exécution est indisponible. L’équipe Bench-X doit d’abord régler ce point.</p>'
+        check_content = '<p class="note">Impossible de lancer pour l’instant : le service d’exécution est indisponible. Réessayez dans quelques minutes.</p>'
     content += section('Avant de lancer', check_content)
     return content
 
@@ -1036,11 +1036,11 @@ def render_campaign_records(campaigns, url):
             f'{pi["package"]} {pi["version"]} ; état {pi["status"]} ; fixé le {conditions["frozen_at"]}') + '</p>'
         content += '<details><summary>Contexte et environnement communs</summary>' + listing(
             f'{k} : {encode(conditions[k])}' for k in ('packages', 'tools', 'skills', 'defaults', 'environment')) + '</details>'
-        content += '<h4>Autorisations et budget</h4><p>' + (
-            'Essais autorisés : ' + text(', '.join(campaign['allowed_cells'])) if campaign['admission_open'] else
-            'Aucun nouvel essai autorisé. Autorisations que l’équipe Bench-X doit fournir ou renouveler : ' + text(', '.join(campaign['missing_authorities']))) + '.</p>'
+        content += '<h4>Essais et budget</h4><p>' + (
+            'Essais pouvant être lancés : ' + text(', '.join(campaign['allowed_cells'])) + '.' if campaign['admission_open'] else
+            'Aucun nouvel essai ne peut être lancé pour cette comparaison.') + '</p>'
         if campaign['restore_pending']:
-            content += '<p>Une restauration des données doit être vérifiée. D’ici là, aucun nouvel essai ne peut être lancé.</p>'
+            content += '<p>Service momentanément indisponible, réessayez plus tard.</p>'
         if campaign['stop_reason']:
             content += '<p>Motif d’arrêt : ' + text(campaign['stop_reason']) + '.</p>'
         budget = campaign['budget']
@@ -1052,9 +1052,9 @@ def render_campaign_records(campaigns, url):
                 content += '<p>' + text(f'Budget {budget["budget_id"]} : {budget["limit"]} {budget["currency"]}. '
                     f'Reste disponible : {budget["available"] if budget["balance_status"] == "KNOWN" else "inconnu"}.') + '</p>'
         else:
-            content += '<p>Budget pas encore fixé : l’équipe Bench-X doit le définir.</p>'
+            content += '<p>Budget pas encore fixé.</p>'
         content += '<p>Montant mis de côté par essai : ' + text(
-            encode(campaign['reserve_amounts']) if campaign['reserve_amounts'] else 'inconnu, en attente d’autorisation') + '.</p>'
+            encode(campaign['reserve_amounts']) if campaign['reserve_amounts'] else 'inconnu') + '.</p>'
         content += '<p>Mode de calcul du coût : ' + text(encode(campaign['cost_basis'])) + '.</p>'
         content += '<p>Le montant mis de côté ne garantit pas un plafond de facturation. La préparation et l’évaluation sont comptées séparément.</p>'
         content += '<h4>Essais prévus</h4>' + listing(
@@ -1079,7 +1079,7 @@ def render_campaign_records(campaigns, url):
             if evaluations:
                 content += render_evaluations(evaluations, url)
             else:
-                content += '<p>Cette réponse n’a pas été évaluée. Son texte brut n’est consultable que par l’équipe Bench-X.</p>'
+                content += '<p>Cette réponse n’a pas été évaluée.</p>'
             content += '</details>'
         content += '</article>'
     if not campaigns:

@@ -421,7 +421,9 @@ def render(value, csrf, path='/preparation', *, error=False):
                   'scope_confirmation': ('action', 'Précisez le travail à comparer',
                       'Bench-X compare des modèles sur un travail concret, avec un résultat attendu et des critères que l’on peut vérifier. '
                       'Précisez ou confirmez le travail que vous voulez comparer. Aucune comparaison ne peut être lancée à cette étape.'),
-                  'suspended': ('err', 'Préparation suspendue', 'La préparation s’est arrêtée et ne reprendra pas d’elle-même. L’équipe Bench-X doit intervenir.')}
+                  # La cause est dans l'explication ; l'envoi reste ouvert sauf motif de disponibilité affiché à part
+                  'suspended': ('err', 'Préparation arrêtée', 'Renvoyez votre message pour relancer la préparation.' if can_submit
+                                else 'Vous pourrez renvoyer votre message quand l’envoi sera de nouveau possible.')}
         tone, heading, next_step = stages[value['stage']]
         if referral:
             title = 'Tâche hors du champ de Bench-X'
@@ -431,7 +433,10 @@ def render(value, csrf, path='/preparation', *, error=False):
         qualification = value.get('qualification', {})
         automatic = 'operation_id' in qualification
         if value['validation']:
-            tone, heading, next_step = ('done', 'Cas d’usage validé', 'L’équipe Bench-X doit maintenant préparer la comparaison. Vous n’avez rien à faire pour l’instant.') if not current_campaigns \
+            # Sans vérification automatique : l'exemple n'attend personne, il se relance par une correction
+            tone, heading, next_step = (('done', 'Exemple vérifié, prêt à comparer', 'Choisissez les modèles à comparer.') if value.get('qualified')
+                                        else ('unk', 'Cas d’usage validé', 'La vérification de l’exemple n’a pas pu démarrer. '
+                                              'Pour la relancer, précisez ou corrigez l’exemple, puis validez-le de nouveau.')) if not current_campaigns \
                 else ('done', 'Cas d’usage validé', 'Une comparaison est prête ou déjà lancée. Suivez-la à l’étape Modèles.')
         if value['validation'] and automatic:
             if value.get('qualified'):
@@ -583,8 +588,6 @@ def render(value, csrf, path='/preparation', *, error=False):
             content += '<section id="validation"><h2>Valider l’exemple</h2>'
             if value['validation']:
                 content += '<p class="note">Vous avez validé cet exemple, dans cette version précise.</p>'
-                if not current_campaigns and not automatic:
-                    content += '<p>L’équipe Bench-X doit maintenant préparer les conditions de la comparaison.</p>'
             else:
                 content += '<p class="note">Cet exemple n’est pas encore validé. Relisez-le, puis validez-le pour passer à la suite.</p>'
             if editable and value['stage'] == 'preview' and value['validation'] is None:
@@ -610,8 +613,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                             'une nouvelle comparaison sera préparée, et les résultats actuels restent disponibles.</p>')
             content += '</section>'
         labels = {'PENDING': 'En attente', 'QUALIFIED': 'Vérification réussie',
-                  'BLOCKED': 'Bloquée : la réponse de référence ou les contrôles ne sont pas assez établis',
-                  'APPROVED': 'Approuvée par l’équipe Bench-X'}
+                  'BLOCKED': 'Bloquée : la réponse de référence ou les contrôles ne sont pas assez établis'}
         if package and not referral:
             if automatic:
                 # Parcours public : la qualification automatique suffit, aucune approbation opérateur n'est attendue
@@ -621,14 +623,9 @@ def render(value, csrf, path='/preparation', *, error=False):
                                    + '<p>' + text(qualification['summary']) + '</p>'
                                    + listing(finding['text'] for finding in qualification.get('findings', [])))
             else:
-                content += '<details><summary>Vérification et approbation de l’exemple</summary>'
+                content += '<details><summary>Vérification de l’exemple</summary>'
                 content += section('Vérification', '<p>' + text(labels.get(
                     qualification.get('qualification_status'), 'En attente')) + '</p>')
-                content += section('Approbation', '<p>' + text(labels.get(
-                    qualification.get('approval_status'), 'En attente')) + '</p>'
-                    '<p>Votre validation, la vérification de l’exemple et l’approbation de l’équipe Bench-X sont des étapes séparées. '
-                    'Aucune ne lance d’appel ni ne publie quoi que ce soit. Seule l’équipe Bench-X peut consulter les preuves, la réponse de référence '
-                    'et les limites d’évaluation.</p>')
             content += '</details>'
         if value.get('campaigns'):
             content += render_campaign_records(value['campaigns'], url)
@@ -638,8 +635,8 @@ def render(value, csrf, path='/preparation', *, error=False):
             'open': 'Vous pouvez envoyer votre demande. Chaque envoi est contrôlé avant d’être traité.',
             'unconfigured': 'Préparation indisponible : aucun assistant n’est en service pour le moment.',
             'waiting': 'Votre préparation précédente est en cours. Actualisez la page pour voir où elle en est.',
-            'interrupted': 'Votre préparation précédente s’est arrêtée sans résultat vérifié. L’équipe Bench-X doit intervenir avant un nouvel envoi depuis ce navigateur.',
-            'restore': 'Envois fermés : le service vient d’être restauré et l’équipe Bench-X doit le vérifier.',
+            'interrupted': 'Nous ne savons pas si le modèle a répondu. Rien n’est relancé ; cette opération sera close automatiquement.',
+            'restore': 'Service momentanément indisponible, réessayez plus tard.',
             'unresolved': 'Envois fermés : le résultat ou le coût d’un appel précédent n’est pas encore connu.'}
         # L'encadré porte l'état seul (DESIGN.md) : le motif suffit, sans titre ni note de financement
         content = ('<aside id="availability" class="availability" aria-label="État de la préparation"><p>'
