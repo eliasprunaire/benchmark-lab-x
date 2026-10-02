@@ -555,7 +555,7 @@ def require_requester_steps(store, connection, session_id, dossier_id, revision)
     except Denied as error:
         if error.code != 'NOT_QUALIFIED':
             raise
-        raise Denied('STEP_INCOMPLETE', step='example_qualified') from None
+        raise Denied('STEP_INCOMPLETE', step='example_qualified', findings=error.findings) from None
 
 
 def view(store, session_id, dossier_id, revision=None, *, include_history=False):

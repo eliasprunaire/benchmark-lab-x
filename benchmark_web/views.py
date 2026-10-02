@@ -260,6 +260,9 @@ def render(value, csrf, path='/preparation', *, error=False):
         attached = (value.get('error_field') if type(submitted) is dict
                     and value.get('error_field') in submitted else None)
         content = '' if attached else '<p role="alert">' + text(value['error']) + '</p>'
+        if value.get('step') == 'example_qualified' and value.get('findings'):
+            content += '<p>Ce que la vérification de l’exemple a relevé</p>' + listing(
+                finding['text'] for finding in value['findings'])
         if type(submitted) is dict and 'request' in submitted:
             content += form(csrf, path, {key: submitted[key] for key in ('dossier_id', 'action_id')},
                 REQUEST_FIELDS.format(
