@@ -778,7 +778,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('gen-fixture-error', observed['generation_id'])
         self.assertEqual({'X-Generation-Id': 'gen-fixture-error', 'Retry-After': '30'}, observed['http']['response_headers'])
         self.assertEqual('UNKNOWN', operation['observed_cost']['status'])
-        self.assertEqual('suspended', view['stage'])
+        # Relance programmée par Bench-X (Retry-After lu), jamais un nouvel essai caché dans le transport
+        self.assertEqual('waiting', view['stage'])
         self.assertEqual(RESERVE, self.store.inspect_budget('fixture')['reserved'])
         self.assertEqual(1, self.http.request.call_count)
         self.assertEqual({'X-Generation-Id', 'Retry-After'}, {c.args[0] for c in response.getheader.call_args_list})
@@ -911,16 +912,17 @@ class OpenRouterPreparationTests(unittest.TestCase):
         response.read.return_value = b'{"error":{"code":429}}'
         original, view = self.execute()
         frozen = storage._strict_json(original)
-        self.assertEqual('suspended', view['stage'])
+        # Relance automatique en attente : la même version reste ouverte à un nouveau message
+        self.assertEqual(('waiting', 1), (view['stage'], view['revision']))
         self.assertNotIn('indicative_cost', view)
         self.assertEqual('UNKNOWN', original['observed_cost']['status'])
         response.status = 200
         response.read.return_value = http_body(result('clarification'), usage={'prompt_tokens': 1000, 'completion_tokens': 200})
-        second, view = self.execute(action_id='new', revision=2, kind='clarify', message=CLARIFICATION)
+        second, view = self.execute(action_id='new', revision=1, kind='clarify', message=CLARIFICATION)
         self.assertEqual('UNKNOWN', second['observed_cost']['status'])
         self.assertEqual('0.02000', view['indicative_cost']['token_subtotal_usd'])
         response.read.return_value = http_body(usage=None)
-        third, view = self.execute(action_id='correct', revision=3, kind='correct', message=CORRECTION)
+        third, view = self.execute(action_id='correct', revision=2, kind='correct', message=CORRECTION)
         self.assertEqual('preview', view['stage'])
         self.assertIsNone(view['indicative_cost'])
         budget = self.store.inspect_budget('fixture')
@@ -1397,14 +1399,152 @@ class OpenRouterPreparationTests(unittest.TestCase):
             with self.subTest(status=status):
                 self.http.reset_mock()
                 response.status, response.read.return_value = status, raw
+                # 429 et 5xx gardent la version, relancée d'office ; les autres incidents la suspendent
                 fields = (dict(action_id='create', request=NEED) if index == 0 else
-                          dict(action_id='status-' + str(index), revision=index + 1, kind='clarify', message=CLARIFICATION))
+                          dict(action_id='status-' + str(index), revision=prep.view(self.store, self.session, 'd')['revision'],
+                               kind='clarify', message=CLARIFICATION))
                 operation, view = self.execute(**fields)
                 observed = operation['receipt']['observed_configuration']
                 self.assertEqual(('RECEIVED', incident), (operation['state'], observed['incident']))
                 self.assertEqual('120', observed['http']['response_headers']['Retry-After'])
                 self.assertIn(message, view['explanation'])
+                self.assertEqual('waiting' if incident in ('RATE_LIMITED', 'PROVIDER_ERROR') else 'suspended', view['stage'])
                 self.assertEqual(1, self.http.request.call_count)
+
+    def clock(self):
+        """Horloge simulée partagée par l'échéance et l'heure de réception du transport"""
+        from datetime import timedelta
+        now = [datetime.now(timezone.utc).replace(microsecond=0)]
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now[0]
+        self.enterContext(patch.object(prep, '_now', side_effect=lambda: now[0]))
+        self.enterContext(patch.object(assistant, 'datetime', Clock))
+        return lambda seconds: now.__setitem__(0, now[0] + timedelta(seconds=seconds))
+
+    def fail_with(self, status, headers=None):
+        response = self.http.getresponse.return_value
+        response.status, response.read.return_value = status, b'{"error":{"code":%d}}' % status
+        response.getheader.side_effect = (headers or {}).get
+
+    def succeed(self, value=None):
+        response = self.http.getresponse.return_value
+        response.status, response.read.return_value = 200, http_body(value)
+        response.getheader.side_effect = None
+
+    def due(self):
+        return {o: d for o, _, _, d in prep.due_preparation_retries(self.store)}
+
+    def page(self):
+        value = prep.view(self.store, self.session, 'd')
+        value['availability'] = {'assistant_configured': True, 'admission_open': True, 'can_submit': True, 'reason': 'open'}
+        return views.render(value, 'csrf', '/preparation/dossiers/d').decode()
+
+    def test_preparation_429_relancee_seule_puis_exemple_pret(self):
+        advance = self.clock()
+        self.fail_with(429)
+        operation, view = self.execute()
+        # Attente visible, aucun renvoi demandé ni bouton : la révision ne change pas
+        self.assertEqual(('waiting', 1, 30), (view['stage'], view['revision'], view['retry_in']))
+        self.assertIn('OpenRouter limite temporairement les demandes. Nouvelle tentative automatique dans 30 s.', view['notice'])
+        page = self.page()
+        self.assertIn('Nouvelle tentative automatique dans 30 s', page)
+        self.assertNotIn('Renvoyez', page)
+        self.assertNotIn('<textarea', page)
+        self.assertEqual({operation['operation_id']: 30}, self.due())
+        self.assertIsNone(prep.retry_preparation(self.store, operation['operation_id'], self.transport, 'a' * 40))
+        advance(30)
+        self.succeed()
+        second = prep.retry_preparation(self.store, operation['operation_id'], self.transport, 'a' * 40)
+        self.assertIsNone(prep.retry_preparation(self.store, operation['operation_id'], self.transport, 'a' * 40))
+        retried = next(o for o in self.store.inspect_operations() if o['operation_id'] == second)
+        self.assertEqual({'retry_of': operation['operation_id'], 'attempt': 2}, json.loads(retried['resources'][2]))
+        self.assertEqual(operation['resources'][:2], retried['resources'][:2])
+        prep.execute(self.data, second, self.transport)
+        view = prep.view(self.store, self.session, 'd')
+        self.assertEqual(('preview', 2), (view['stage'], view['revision']))
+        self.assertIsNotNone(view['package'])
+        self.assertNotIn('notice', view)
+        self.assertEqual(2, self.http.request.call_count)
+        self.assertEqual({}, self.due())
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
+
+    def test_correction_503_relancee_par_le_service_sans_renvoi(self):
+        advance = self.clock()
+        _, view = self.execute()
+        self.assertEqual('preview', view['stage'])
+        self.fail_with(503)
+        operation = self.submit(action_id='correct', revision=2, kind='correct', message=CORRECTION)
+        timers = {}
+        retry = (self.transport, None, None, 'a' * 40, timers)
+        with patch.object(service.threading, 'Timer') as timer:
+            service._preparation_worker(self.data, 'd', operation, self.transport, retry)
+            self.assertEqual(30, timer.call_args.args[0])
+            self.assertEqual([operation], list(timers))
+        view = prep.view(self.store, self.session, 'd')
+        self.assertEqual(('waiting', 2), (view['stage'], view['revision']))
+        advance(30)
+        self.succeed()
+        with patch.object(service.threading, 'Timer'):
+            timer.call_args.args[1](*timer.call_args.kwargs['args'])
+        view = prep.view(self.store, self.session, 'd')
+        self.assertEqual(('preview', 3), (view['stage'], view['revision']))
+        self.assertEqual('correct', view['message']['kind'])
+        self.assertEqual(3, self.http.request.call_count)
+        self.assertEqual({}, timers)
+
+    def test_preparation_cinq_echecs_puis_message_et_renvoi_possible(self):
+        advance = self.clock()
+        self.fail_with(503)
+        operation, _ = self.execute()
+        current = operation['operation_id']
+        for status, delay in ((502, 30), (500, 120), (429, 600), (504, 1800)):
+            self.assertEqual({current: delay}, self.due())
+            advance(delay)
+            self.fail_with(status)
+            current = prep.retry_preparation(self.store, current, self.transport, 'a' * 40)
+            prep.execute(self.data, current, self.transport)
+        self.assertEqual(5, self.http.request.call_count)
+        self.assertEqual({}, self.due())
+        view = prep.view(self.store, self.session, 'd')
+        self.assertEqual('suspended', view['stage'])
+        self.assertIn('après 5 tentatives automatiques', view['explanation'])
+        page = self.page()
+        self.assertNotIn('Nouvelle tentative automatique', page)
+        self.assertNotIn('équipe', page)
+        advance(86400)
+        self.assertIsNone(prep.retry_preparation(self.store, current, self.transport, 'a' * 40))
+        # Le flux existant reste ouvert : l'utilisateur renvoie son message
+        self.succeed(result('clarification'))
+        _, view = self.execute(action_id='resend', revision=view['revision'], kind='clarify', message=CLARIFICATION)
+        self.assertEqual('clarification', view['stage'])
+        self.assertEqual(6, self.http.request.call_count)
+
+    def test_preparation_jamais_relancee_sur_cle_refusee_ou_effet_ambigu(self):
+        advance = self.clock()
+        self.fail_with(401)
+        _, view = self.execute()
+        self.assertEqual('suspended', view['stage'])
+        self.assertEqual({}, self.due())
+        self.http.getresponse.side_effect = TimeoutError('coupure après envoi')
+        operation, view = self.execute(action_id='after', revision=view['revision'], kind='clarify', message=CLARIFICATION)
+        self.assertEqual('AMBIGUOUS', operation['state'])
+        advance(3600)
+        self.assertEqual({}, self.due())
+        self.assertIsNone(prep.retry_preparation(self.store, operation['operation_id'], self.transport, 'a' * 40))
+        self.assertEqual(2, self.http.request.call_count)
+
+    def test_preparation_retry_after_plus_long_respecte(self):
+        advance = self.clock()
+        self.fail_with(429, {'Retry-After': '300'})
+        operation, view = self.execute()
+        self.assertEqual(300, view['retry_in'])
+        advance(299)
+        self.assertIsNone(prep.retry_preparation(self.store, operation['operation_id'], self.transport, 'a' * 40))
+        advance(1)
+        self.assertIsNotNone(prep.retry_preparation(self.store, operation['operation_id'], self.transport, 'a' * 40))
 
     def test_cle_refusee_ou_credit_epuise_revérifie_la_cle(self):
         from benchmark import provider_access

@@ -76,7 +76,7 @@ def _envelope(store, connection, request, operation_id=None):
         cost = store._effective_cost(connection, op)
         if source['campaign_id'] == request['campaign_id'] and (
                 op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS')
-                or cost is not None and cost['status'] == 'UNKNOWN'):
+                or cost is not None and cost['status'] == 'UNKNOWN' and not storage.provider_incident(op)):
             raise BudgetError('Jugement dépendant non résolu, même avec une autre enveloppe')
 
 
@@ -90,8 +90,11 @@ def reserve(store, request, transport):
     return inspect(store, request['operation_id'])
 
 
-def _reserve(store, connection, request, transport, *, automatic=False, prepared=None):
-    """`prepared` : contexte et contenu déjà vérifiés par `_inputs` sur les mêmes données"""
+def _reserve(store, connection, request, transport, *, automatic=False, prepared=None, link=None):
+    """`prepared` : contexte et contenu déjà vérifiés par `_inputs` sur les mêmes données
+
+    `link` : lien `{retry_of, attempt}` d'une relance automatique, conservé en troisième ressource
+    """
     from . import automatic_judgment as auto
     ctx, content = prepared or _inputs(store, connection, request, automatic=automatic)
     aid = auto.admission(store, connection) if automatic else _admission(store, ctx)
@@ -106,14 +109,15 @@ def _reserve(store, connection, request, transport, *, automatic=False, prepared
     if automatic:
         saved['engine_source_sha256'] = sha256(Path(auto.__file__).read_bytes() + Path(e.__file__).read_bytes()
                                              + Path(__file__).read_bytes()).hexdigest()
-    operation['resources'] = [encode(saved), wire]
+    operation['resources'] = [encode(saved), wire] + ([link] if automatic and link is not None else [])
     store._reserve_intent(connection, operation, request['budget_id'], request['reserve_amount'])
 
 
 def _bound(store, connection, operation, *, latest=False):
     from .automatic_judgment import FORMAT as automatic_format
     automatic = operation['engine_version'] == automatic_format
-    if operation['engine_version'] not in (FORMAT, automatic_format) or operation['phase'] != 'judgment' or len(operation['resources']) != 2:
+    if (operation['engine_version'] not in (FORMAT, automatic_format) or operation['phase'] != 'judgment'
+            or len(operation['resources']) not in ((2, 3) if automatic else (2,))):
         raise ValueError('Intention S14 requise')
     saved = json.loads(operation['resources'][0], object_pairs_hook=storage._unique_object)
     _fields(saved, ('request', 'admission_id', 'context_sha256', 'context', 'content') +
@@ -250,7 +254,10 @@ def execute(data, operation_id, transport):
                 proposal = _proposal(store, connection, operation, ctx, receipt['result'], bind_evidence=True)
             except (ValueError, KeyError, TypeError):
                 proposal = None
-                receipt['observed_configuration']['incident'] = 'UNUSABLE_JUDGMENT_PROPOSAL'
+                from .transports.openrouter import INCIDENT_TEXT
+                # Un incident du fournisseur (401, 402, 429, 5xx) garde sa cause : elle décide de la relance
+                if receipt['observed_configuration']['incident'] not in INCIDENT_TEXT:
+                    receipt['observed_configuration']['incident'] = 'UNUSABLE_JUDGMENT_PROPOSAL'
             receipt['result'] = proposal
             # La réponse reste en mémoire : seule l'écriture locale est retentée, jamais l'appel
             storage.retry_locked(lambda: store.record_receipt(operation_id, receipt, response['cost']))
