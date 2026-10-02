@@ -829,8 +829,9 @@ def _result(receipt, cost):
         result['output'].encode('utf-8')
     if result['incident'] is not None:
         _present(result['incident'], 'incident')
-    if result['emission'] not in ('ESTABLISHED', 'UNKNOWN', 'INCONNU'):
-        raise ValueError('Émission établie ou inconnue requise')
+    # NOT_SENT : connexion au fournisseur impossible, aucune requête partie
+    if result['emission'] not in ('ESTABLISHED', 'UNKNOWN', 'INCONNU', 'NOT_SENT'):
+        raise ValueError('Émission établie, inconnue ou non envoyée requise')
 
 
 def _inspect(store, connection, campaign_id):

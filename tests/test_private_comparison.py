@@ -445,6 +445,20 @@ class PiTransportTests(unittest.TestCase):
             self.assertNotIn(self.transport._key, storage._strict_json(result))
         self.assertEqual('INTENT_RECORDED', c.inspect(self.store, 'pi-offline')['attempts'][0]['state'])
 
+    def test_statuts_http_du_candidat_distingues_sans_ambiguite(self):
+        request = json.loads(self.store._connection.execute(
+            'SELECT request_json FROM s4_attempts WHERE operation_id=?', ('pi-intent',)).fetchone()[0])
+        operation = next(o for o in self.store.inspect_operations() if o['operation_id'] == 'pi-intent')
+        self.transport.prepare(execution._transport_operation(operation), execution._transport_view(request))
+        for status, incident in ((401, 'KEY_REJECTED'), (402, 'CREDIT_EXHAUSTED'), (429, 'RATE_LIMITED'),
+                                 (503, 'PROVIDER_ERROR'), (400, 'PROVIDER_RESPONSE_INCOMPLETE')):
+            with self.subTest(status=status), patch.object(pi.http, 'post', return_value=(
+                    status, {'Retry-After': '60'}, b'{"error":{"code":%d}}' % status, True,
+                    '2026-09-10T10:00:00+00:00', time.monotonic())):
+                result = self.transport._exchange(operation, request)
+            self.assertEqual(incident, result['receipt']['result']['incident'])
+            self.assertEqual('60', result['receipt']['observed_configuration']['http']['response_headers']['Retry-After'])
+
     def test_cli_executes_only_named_admitted_attempt(self):
         request = self.fixture.home / 'execute.json'
         request.write_text(json.dumps(dict(campaign_id='pi-offline',attempt_id='pi-intent')))

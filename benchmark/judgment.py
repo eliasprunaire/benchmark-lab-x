@@ -265,8 +265,11 @@ def execute(data, operation_id, transport):
             current = storage.retry_locked(lambda: next(
                 x for x in store.inspect_operations() if x['operation_id'] == operation_id))
             if current['state'] == 'EMISSION_POSSIBLE':
-                storage.retry_locked(lambda: store.mark_ambiguous(operation_id, 'JUDGMENT_EFFECTS_UNKNOWN'))
+                from .preparation import _interrupted
+                _interrupted(store, operation_id, error, 'JUDGMENT_EFFECTS_UNKNOWN')
             raise
+        from .preparation import _recheck_key
+        _recheck_key(store, transport, response)
 
 
 def inspect(store, operation_id):

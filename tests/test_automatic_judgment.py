@@ -513,6 +513,47 @@ class AutomaticJudgment(unittest.TestCase):
             self.assertTrue(reader.verify_storage()['integrity_ok'])
         self.assertEqual(2, self.http.request.call_count)
 
+    def test_connexion_impossible_au_jugement_clot_sans_cout_et_le_dit(self):
+        import socket
+        from benchmark import automatic_judgment as auto
+        self.acquire()
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        self.http.connect.side_effect = socket.gaierror(8, 'nodename nor servname provided')
+        auto.execute_campaign(self.data, ids, self.transport)
+        self.http.request.assert_not_called()
+        self.assert_reopened(ids)
+        self.assertEqual('CONNECTION_FAILED', self.judgments(ids)[ids[0]]['receipt']['observed_configuration']['incident'])
+        self.assertFalse(any(o['state'] == 'AMBIGUOUS' for o in self.store.inspect_operations()))
+        reason = auto.status(self.store, self.store._connection, self.cid)['reason']
+        self.assertIn('Impossible de joindre OpenRouter, rien n’a été envoyé ni facturé', reason)
+        # La session reste utilisable : la même enveloppe admet une nouvelle comparaison
+        auto.guard_budget(self.store, self.store._connection, self.budget, campaign_id='nouvelle-comparaison')
+
+    def test_connexion_impossible_pour_un_candidat_clot_la_tentative_sans_cout(self):
+        f = self.fixture
+        ids = campaigns.launch(self.store, self.sid, 'fixture', self.cid, f.body(),
+                               access_secret=SECRET, access_transport=f.access)
+        calls = []
+
+        def unreachable(op, request):
+            calls.append(op['operation_id'])
+            raise openrouter.NotSent('Connexion à OpenRouter impossible')
+        execution.execute_launch(self.data, ids, unreachable, access_secret=SECRET, access_transport=f.access)
+        self.assertEqual(1, len(calls))
+        snapshot = campaigns.inspect(self.store, self.cid)
+        attempt = next(a for a in snapshot['attempts'] if a['operation_id'] == calls[0])
+        receipt, cost = attempt['operation']['receipt'], attempt['operation']['observed_cost']
+        self.assertEqual(('RECEIVED', 'CONNECTION_FAILED', 'NOT_SENT', 'KNOWN', '0'),
+                         (attempt['state'], receipt['result']['incident'], receipt['result']['emission'],
+                          cost['status'], cost['amount']))
+        self.assertIsNone(attempt['output_piece_id'])
+        self.assertEqual('ACQUISITION_NOT_SENT', snapshot['stop_reason'])
+        self.assertFalse(any(o['state'] in ('AMBIGUOUS', 'EMISSION_POSSIBLE') for o in self.store.inspect_operations()))
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
+        from benchmark_web import campaign_views
+        _, _, message = campaign_views.campaign_followup(campaigns.projection(self.store, self.store._connection, 'fixture')[-1])
+        self.assertIn('Impossible de joindre OpenRouter, rien n’a été envoyé ni facturé', message)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -11,6 +11,7 @@ import sqlite3
 
 from . import campaigns as c, recovery as r
 from .. import storage
+from ..transports.openrouter import NotSent
 from ..validation import digest as value_digest
 from ..storage import (Store, BudgetError, ConflictError, IntegrityError,
                        _fields, _transaction)
@@ -192,6 +193,28 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
             received = True
             logging.getLogger(__name__).info('ACQUISITION_RECEIVED operation=%s usable=%s cost=%s',
                 attempt_id, output is not None and not incomplete, cost['status'])
+            from ..provider_access import recheck
+            recheck(store, session_id, requester_key, receipt['result']['incident'])
+        except NotSent:
+            # Connexion impossible : rien n'est parti, la tentative est close sans coût et la campagne arrêtée
+            logging.getLogger(__name__).warning('ACQUISITION_NOT_SENT operation=%s', attempt_id)
+
+            def not_sent():
+                with _transaction(connection, write=True):
+                    store._operation_for_update(connection, attempt_id, ('EMISSION_POSSIBLE',))
+                    currency = connection.execute('SELECT currency FROM budgets WHERE budget_id=?',
+                                                  (operation['budget_id'],)).fetchone()[0]
+                    receipt = dict(receipt_id='not-sent-' + attempt_id, resources_seen=[],
+                                   observed_configuration=dict(incident='CONNECTION_FAILED', observed_at=c._now()),
+                                   result=dict(output=None, incident='CONNECTION_FAILED', emission='NOT_SENT'))
+                    cost = dict(status='KNOWN', amount='0', currency=currency,
+                                source='Connexion au fournisseur impossible : requête non envoyée')
+                    store._record_receipt(connection, attempt_id, receipt, cost)
+                    connection.execute('INSERT INTO s4_results VALUES (?,?,?,?,?)',
+                                       (attempt_id, None, value_digest(receipt), value_digest(cost), c._now()))
+                    connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
+                                       ('ACQUISITION_NOT_SENT', c._now(), snapshot['manifest']['campaign_id']))
+            storage.retry_locked(not_sent)
         except Exception as error:
             # Exception text can contain private bytes. Preserve a fixed technical
             # reason; neither an unusable response nor an exception settles cost

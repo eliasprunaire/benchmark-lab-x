@@ -436,8 +436,13 @@ def render(value, csrf, path='/preparation', *, error=False):
         if value['validation'] and automatic:
             if value.get('qualified'):
                 tone, heading, next_step = 'done', 'Exemple vérifié, prêt à comparer', 'Lisez les remarques de la vérification, puis choisissez les modèles à comparer.'
+            elif qualification.get('status') == 'BLOCKED' and qualification.get('cause'):
+                # Incident chez le fournisseur ou clé : l'exemple n'est pas en cause
+                tone, heading, next_step = 'unk', 'Vérification impossible pour le moment', qualification['summary']
             elif qualification.get('status') == 'BLOCKED':
                 tone, heading, next_step = 'err', 'Exemple à revoir avant comparaison', qualification['summary']
+            elif qualification.get('cause'):
+                tone, heading, next_step = 'wait', 'Vérification de l’exemple en attente', qualification['summary']
             else:
                 tone, heading, next_step = 'wait', 'Vérification de l’exemple en cours', 'Votre validation est enregistrée. L’assistant vérifie que l’exemple est cohérent et que ses critères peuvent être contrôlés.'
         actions = ''
@@ -469,6 +474,8 @@ def render(value, csrf, path='/preparation', *, error=False):
             # L'explication de l'assistant (question sur l'exemple) ne vaut que tant que l'exemple n'est pas validé
             body = '<p>' + text(next_step) + '</p>' if value['validation'] else (
                 '<p>' + text(value['explanation']) + '</p><p class="hint">' + text(next_step) + '</p>')
+            if value.get('notice'):
+                body = '<p class="notice">' + text(value['notice']) + '</p>' + body
             content += state_block(tone, 'Où j’en suis', heading, body, actions)
         if referral:
             references = BENCHMARK_REFERENCES.get(referral, ())
@@ -609,7 +616,8 @@ def render(value, csrf, path='/preparation', *, error=False):
             if automatic:
                 # Parcours public : la qualification automatique suffit, aucune approbation opérateur n'est attendue
                 content += '<details><summary>Détail de la vérification de l’exemple</summary>'
-                content += section('Vérification', '<p>' + text(labels.get(qualification.get('qualification_status'), 'En attente')) + '</p>'
+                content += section('Vérification', '<p>' + text('Vérification impossible pour le moment' if qualification.get('cause')
+                                                                 else labels.get(qualification.get('qualification_status'), 'En attente')) + '</p>'
                                    + '<p>' + text(qualification['summary']) + '</p>'
                                    + listing(finding['text'] for finding in qualification.get('findings', [])))
             else:

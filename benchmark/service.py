@@ -646,6 +646,54 @@ def _campaign_worker(data, start, candidate_transport, factory, secret, access_t
                                               start['judgment_campaign'], type(failure).__name__)
 
 
+def _qualification_worker(data, dossier_id, operation_id, transport, retry):
+    """Vérifier l'exemple, puis programmer la relance due après un incident fournisseur"""
+    from . import preparation
+    preparation.execute_qualification(data, operation_id, transport)
+    with closing(Store(data)) as store:
+        _resume_qualification_retries(store, data, retry, dossier_id=dossier_id)
+
+
+def _resume_qualification_retries(store, data, retry, *, session_id=None, dossier_id=None):
+    """Programmer chaque relance due qui ne l'est pas encore
+
+    Appelée après une vérification, au démarrage de l'exécuteur et à chaque POST d'une session :
+    un redémarrage ne perd donc aucune relance. `retry` : profil non lié, secret d'accès, transport
+    d'accès, source et minuteurs par opération
+    """
+    from . import preparation
+    profile, _, _, _, timers = retry
+    if profile is None:
+        return
+    for operation_id, dossier, session, delay in preparation.due_qualification_retries(
+            store, session_id=session_id, dossier_id=dossier_id):
+        if operation_id in timers:
+            continue
+        timer = threading.Timer(delay, _retention_worker, args=(
+            data, dossier, _qualification_retry, data, dossier, session, operation_id, retry))
+        timer.daemon = True
+        timers[operation_id] = timer
+        timer.start()
+
+
+def _qualification_retry(data, dossier_id, session_id, operation_id, retry):
+    from . import preparation, provider_access
+    profile, secret, access_transport, source, timers = retry
+    timers.pop(operation_id, None)
+    try:
+        with closing(Store(data)) as store:
+            # Clé relue à l'échéance : celle que la session a connectée à cet instant
+            transport = profile if secret is None else profile.for_session(
+                provider_access.key_for_session(store, session_id, secret, access_transport), session_id, secret)
+            operation = preparation.retry_qualification(store, operation_id, transport, source)
+        if operation is not None:
+            _qualification_worker(data, dossier_id, operation, transport, retry)
+    except Exception as error:
+        # Clé absente ou autre refus : le prochain POST de la session reprogramme la relance
+        logging.getLogger(__name__).warning('QUALIFICATION_RETRY_DEFERRED operation=%s error=%s',
+                                            operation_id, type(error).__name__)
+
+
 def _retention_worker(data, dossier_id, function, *args):
     from . import privacy, privacy_archive
     from .runtime import maintenance_gate, worker_lock
@@ -697,6 +745,14 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
 
             # Registre partagé par tous les fils de travail : ses lectures et écritures sont gardées
             probe_jobs, probe_guard = {}, threading.Lock()
+            # Relances automatiques de vérification programmées, annulées à l'arrêt ; celles déjà dues
+            # avant ce démarrage sont reprogrammées tout de suite
+            retry_timers = {}
+            retry = (qualification_transport, access_secret, access_transport, source, retry_timers)
+            try:
+                _resume_qualification_retries(store, data, retry)
+            except Exception as error:
+                logging.getLogger(__name__).error('QUALIFICATION_RETRY_RESUME_FAILED error=%s', type(error).__name__)
 
             def handle_message(message):
                 from .runtime import maintenance_gate, worker_lock
@@ -724,6 +780,16 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     candidate_transport=candidate_transport or candidate_transport_factory,
                     candidate_identity=candidate_identity, access_secret=access_secret,
                     access_transport=access_transport, presentation=presentation)
+                if message['method'] == 'POST':
+                    # Toute activité de la session reprogramme ses relances dues, perdues par un redémarrage
+                    try:
+                        session_id, _, _ = preparation.session(store, cookie or message['token'])
+                        _resume_qualification_retries(store, data, retry, session_id=session_id)
+                    except preparation.Denied:
+                        pass
+                    except Exception as error:
+                        logging.getLogger(__name__).warning('QUALIFICATION_RETRY_RESUME_SKIPPED error=%s',
+                                                            type(error).__name__)
                 if isinstance(start, dict):
                     if 'model_probe' in start:
                         with probe_guard:
@@ -743,8 +809,9 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                                     daemon=True).start()
                     elif 'qualification_operation' in start:
                         threading.Thread(target=_retention_worker,
-                                         args=(data, value.get('dossier_id'), preparation.execute_qualification,
-                                               data, start['qualification_operation'], active_qualification),
+                                         args=(data, value.get('dossier_id'), _qualification_worker, data,
+                                               value.get('dossier_id'), start['qualification_operation'],
+                                               active_qualification, retry),
                                          daemon=True).start()
                     elif 'judgment_operations' in start:
                         from .automatic_judgment import execute_campaign
@@ -805,6 +872,8 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     run(server)
                 finally:
                     stopping.set()
+                    for timer in list(retry_timers.values()):
+                        timer.cancel()
                     server.server_close()
                     if catalogue_worker is not None:
                         # `fetch_unless_stopping` empêche d'écrire un relevé récupéré après `stopping` ; le budget
