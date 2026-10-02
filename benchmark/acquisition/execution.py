@@ -71,8 +71,11 @@ def execute_launch(data, attempts, transport=None, *, transport_factory=None,
             break
 
 
-def _stop_after_failure(data, attempt_id):
-    """Arrête la campagne de la tentative en échec ; une intention de candidat jamais émise reste consignée"""
+def _stop_after_failure(data, attempt_id, *, unsent_only=False):
+    """Arrête la campagne de la tentative en échec ; une intention de candidat jamais émise reste consignée
+
+    `unsent_only` : une tentative déjà émise appartient à un autre fil, qui la mène à son terme
+    """
     try:
         with closing(Store(data)) as store:
             connection = c.connection_for(store)
@@ -81,7 +84,7 @@ def _stop_after_failure(data, attempt_id):
                     'SELECT campaign_id, state FROM s4_attempts JOIN operations USING(operation_id) '
                     'JOIN s4_status USING(campaign_id) WHERE operation_id=? '
                     'AND s4_status.admission_id IS NOT NULL', (attempt_id,)).fetchone()
-                if row:
+                if row and not (unsent_only and row[1] != 'INTENT_RECORDED'):
                     c._stop(connection, row[0], 'ACQUISITION_STOPPED_BEFORE_EMISSION' if row[1] == 'INTENT_RECORDED'
                             else 'ACQUISITION_RECEIPT_NOT_VERIFIED')
     except Exception as failure:
@@ -350,4 +353,5 @@ def continue_preauthorized(data, operation_id, transport=None, *, transport_fact
                     access_secret=access_secret, access_transport=access_transport)
     except Exception as error:
         logging.getLogger(__name__).warning('RECOVERY_STOPPED operation=%s error=%s', nxt, type(error).__name__)
-        _stop_after_failure(data, nxt)
+        # Une continuation concurrente qui trouve la reprise déjà émise n'arrête pas le fil qui l'a émise
+        _stop_after_failure(data, nxt, unsent_only=True)

@@ -1087,9 +1087,9 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
 
 
 def _recovery_estimate(store, snapshot):
-    """Coût maximal si chaque modèle repris l'était aux deux paliers, aux tarifs majorants que le lancement fige
+    """Coût estimé si chaque modèle repris l'était aux deux paliers, aux tarifs majorants que le lancement fige
 
-    Un modèle sans reprise possible ne compte pas. Distinct de la prévision des réponses (RULES.md §8)
+    L'entrée reste une estimation : ce n'est pas un maximum garanti. Un modèle sans reprise possible ne compte pas. Distinct de la prévision des réponses (RULES.md §8)
     """
     grant = _requester_recovery(store, snapshot['manifest']['panel'])
     if grant is None:

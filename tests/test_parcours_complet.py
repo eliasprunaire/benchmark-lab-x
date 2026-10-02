@@ -1007,8 +1007,9 @@ class ParcoursComplet(unittest.TestCase):
         3. la limite relevée change la demande d'un autre modèle ;
         4. la réponse reprise n'est pas jugée, ou s'affiche sans dire qu'elle est une reprise ;
         5. une chaîne de reprises sans réponse affiche une ligne par essai au lieu d'une seule ;
-        6. le récapitulatif avant lancement tait les reprises possibles, ou sous-estime leur coût
-           maximal par rapport aux tarifs majorants figés ;
+        6. le récapitulatif avant lancement tait les reprises possibles, calcule leur coût estimé sans
+           les tarifs majorants figés, ou le présente comme un maximum garanti (décision d'Ayo : l'entrée
+           reste une estimation) ;
         7. une route n'est pas reprise parce que son tarif publié porte des composants qui ne
            s'appliquent pas à la requête (recherche web, image, audio), ou des tarifs par tranche,
            par horaire ou de raisonnement, comme ceux des grands fournisseurs ;
@@ -1041,7 +1042,9 @@ class ParcoursComplet(unittest.TestCase):
         maximum = sum(Decimal(self.MAJORANTS[c['model']][0]) * c['estimate']['assumptions']['input_tokens'] * 2
                       + Decimal(self.MAJORANTS[c['model']][1]) * (8192 + 16384) for c in panel)
         self.assertIn('arrêté par la limite de longueur est relancé au plus deux fois', recap.visible)
-        self.assertIn('repris deux fois : ' + montant_lisible(str(maximum)) + ' USD', recap.visible)
+        self.assertIn('Coût estimé si tous les modèles étaient repris deux fois : '
+                      + montant_lisible(str(maximum)) + ' USD', recap.visible)
+        self.assertNotIn('maximal', recap.visible)
         self.assertEqual(1, len(suivis))
         self.assertIn('relancé avec une limite de sortie plus haute', suivis[0])
         self.assertNotIn('Toutes les réponses sont arrivées', suivis[0])

@@ -334,6 +334,26 @@ class Recovery(unittest.TestCase):
             with self.subTest(max_recoveries=value), self.assertRaises(ValueError):
                 self.granted('plafond-'+str(value),max_recoveries=value)
 
+    def test_concurrent_continuation_does_not_stop_active_recovery(self):
+        """Deux continuations obtiennent la même reprise ; la seconde arrive après l'émission de la première
+
+        Mode d'échec : la seconde traite « déjà émise » comme un échec et arrête la campagne de la
+        première, ce qui empêche sa reprise suivante
+        """
+        from unittest.mock import patch
+        cid=self.granted('concurrence',max_recoveries=2)
+        c.reserve(self.store,cid,'x','first')
+        sent=[]
+        def transport(op,request):
+            sent.append(op['operation_id'])
+            if len(sent)==2:
+                with patch.object(execution,'_next_preauthorized_attempt',return_value=op['operation_id']):
+                    execution.continue_preauthorized(self.data,'first',transport)
+            return self.build_response(op,request,finish='length',output='x'*len(sent))
+        execution.execute(self.data,'first',transport)
+        self.assertEqual(3,len(sent))
+        self.assertIsNone(c.inspect(self.store,self._recovery('first')['manifest']['campaign_id'])['stop_reason'])
+
     def test_preauthorized_route_error_excludes_faulty_route(self):
         cid=self.granted()
         c.reserve(self.store,cid,'x','first')
