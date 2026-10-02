@@ -13,6 +13,7 @@ import re
 import secrets
 
 from benchmark.storage import _strict_json as encode
+from benchmark.preparation import NOT_SENT_TEXT
 
 from .fragments import (VERDICT_BADGES, valeur_mesure, access_summary, badge, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
                         personal_key_form, readable_fields, section, state_block, text)
@@ -614,6 +615,8 @@ def campaign_followup(campaign):
         return True, False, 'Les modèles sont interrogés. Les réponses arrivent au fur et à mesure.'
     if not stopped and any(c['state'] == 'INTENT_RECORDED' for c in cells):
         return True, False, 'Votre lancement est enregistré. Les essais n’ont pas encore démarré.'
+    if any(a.get('incident') == 'CONNECTION_FAILED' for a in campaign['attempts']):
+        return False, False, NOT_SENT_TEXT + ' La comparaison s’est arrêtée et rien n’est relancé automatiquement.'
     if any(a.get('incident') or a.get('attribution_incident') for a in campaign['attempts']):
         return False, False, 'Un problème technique est survenu. Le suivi s’est arrêté et rien n’est relancé automatiquement.'
     if any(c['state'] == 'AMBIGUOUS' for c in cells) or campaign.get('state') == 'BLOCKED':

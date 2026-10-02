@@ -29,7 +29,8 @@ class ModelCatalogueTests(unittest.TestCase):
                 return FIXTURE
             model_id = path.removeprefix('/api/v1/models/').removesuffix('/endpoints')
             tag = 'openai' if model_id == 'openai/gpt-5.6-sol' else 'fixture'
-            endpoint = {'model_id': model_id, 'tag': tag, 'status': 0}
+            endpoint = {'model_id': model_id, 'tag': tag, 'status': 0,
+                        'supported_parameters': ['max_tokens', 'reasoning']}
             if statuses is not None and model_id in statuses:
                 endpoint['status'] = statuses[model_id]
             return {'data': {'id': model_id, 'endpoints': [endpoint]}}
@@ -106,7 +107,8 @@ class ModelCatalogueTests(unittest.TestCase):
             if path == '/api/v1/models':
                 return {'data': rows}
             model_id = path.removeprefix('/api/v1/models/').removesuffix('/endpoints')
-            return {'data': {'id': model_id, 'endpoints': [{'tag': 'fixture', 'status': 0}]}}
+            return {'data': {'id': model_id, 'endpoints': [{'tag': 'fixture', 'status': 0,
+                                                             'supported_parameters': ['max_tokens', 'reasoning']}]}}
         with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store, \
                 patch.object(catalogue, '_now', return_value=NOW):
             result = catalogue.refresh(store, fetch)
@@ -141,7 +143,8 @@ class ModelCatalogueTests(unittest.TestCase):
             if path == '/api/v1/models':
                 return {'data': rows}
             model_id = path.removeprefix('/api/v1/models/').removesuffix('/endpoints')
-            return {'data': {'id': model_id, 'endpoints': [{'tag': 'fixture', 'status': 0}]}}
+            return {'data': {'id': model_id, 'endpoints': [{'tag': 'fixture', 'status': 0,
+                                                             'supported_parameters': ['max_tokens', 'reasoning']}]}}
         with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store, \
                 patch.object(catalogue, '_now', return_value=NOW):
             result = catalogue.refresh(store, fetch)
@@ -299,6 +302,31 @@ excluded_providers = "fixture"
             catalogue.report(models, registry, NOW))
         self.assertEqual(catalogue.report(FIXTURE['data'], registry, NOW)['missing_models'],
                          ['openai/ancien-1', 'openai/ancien-2'])
+
+    def test_route_compatible_avec_max_tokens_et_raisonnement_et_son_prix(self):
+        from tests.test_configurations import model
+        value, detail = model('openai/route-test', 'zzz', ['low', 'high'])
+        detail['endpoints'] = [
+            {'model_id': value['id'], 'tag': 'aaa', 'status': 0, 'supported_parameters': ['max_tokens']},
+            {'model_id': value['id'], 'tag': 'bbb', 'status': 0, 'supported_parameters': ['reasoning']},
+            {'model_id': value['id'], 'tag': 'zzz', 'status': 0, 'supported_parameters': ['max_tokens', 'reasoning'],
+             'pricing': {'prompt': '0.000003', 'completion': '0.00002'}}]
+        view = catalogue.model_view(value, detail, [])
+        self.assertEqual(('zzz', None), (view['route'], view['excluded']))
+        self.assertEqual(('3.000000', '20.00000'), (view['input_price_per_million'], view['output_price_per_million']))
+        # Sans niveau de raisonnement, max_tokens suffit ; sans prix d'endpoint, le prix du modèle reste
+        value.pop('reasoning')
+        self.assertEqual(('aaa', '2.000000'), (catalogue.model_view(value, detail, [])['route'],
+                                              catalogue.model_view(value, detail, [])['input_price_per_million']))
+
+    def test_aucun_endpoint_compatible_exclut_le_modele_avec_un_motif(self):
+        from tests.test_configurations import model
+        value, detail = model('openai/route-test', 'aaa', ['low', 'high'])
+        detail['endpoints'] = [
+            {'model_id': value['id'], 'tag': 'aaa', 'status': 0, 'supported_parameters': ['max_tokens']},
+            {'model_id': value['id'], 'tag': 'bbb', 'status': 0}]
+        view = catalogue.model_view(value, detail, [])
+        self.assertEqual((None, 'no_compatible_endpoint'), (view['route'], view['excluded']))
 
 
 if __name__ == '__main__':

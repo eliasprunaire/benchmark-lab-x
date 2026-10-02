@@ -312,12 +312,47 @@ def consumption(document, *, complete=True):
             'source': 'HTTP response JSON /usage/cost', 'method': deepcopy(USAGE_METHOD), 'invoice': False}
 
 
+NOT_SENT_TEXT = 'Impossible de joindre OpenRouter, rien n’a été envoyé ni facturé.'
+# Réponses reçues d'OpenRouter : statut HTTP, puis message destiné au demandeur
+INCIDENT_TEXT = {
+    'KEY_REJECTED': 'OpenRouter a refusé votre clé : vérifiez-la ou reconnectez-la.',
+    'CREDIT_EXHAUSTED': 'Crédit OpenRouter épuisé pour votre clé : rechargez-le ou relevez son plafond.',
+    'RATE_LIMITED': 'OpenRouter limite temporairement les demandes.',
+    'PROVIDER_ERROR': 'Incident chez OpenRouter ou chez le fournisseur du modèle.',
+}
+
+
+class NotSent(OSError):
+    """Connexion impossible (DNS, refus, TLS) : aucun octet de la requête n'est parti"""
+
+
+def incident_for(status):
+    """Incident d'une réponse HTTP reçue ; None pour 200, que la suite du contrôle juge"""
+    if status == 401:
+        return 'KEY_REJECTED'
+    if status == 402:
+        return 'CREDIT_EXHAUSTED'
+    if status == 429:
+        return 'RATE_LIMITED'
+    if type(status) is int and 500 <= status <= 599:
+        return 'PROVIDER_ERROR'
+    return None
+
+
 def post(api_key, wire, timeout=TIMEOUT_SECONDS, max_response_bytes=MAX_RESPONSE_BYTES):
-    """One OpenRouter HTTP exchange; response bytes retained, no automatic retry"""
+    """One OpenRouter HTTP exchange; response bytes retained, no automatic retry
+
+    Seule l'ouverture de la connexion (DNS, TCP, TLS) prouve l'absence d'envoi : elle lève `NotSent`.
+    Toute erreur après le début de l'envoi garde ses effets inconnus
+    """
     started = datetime.now(timezone.utc).isoformat()
     clock = time.monotonic()
     connection = HTTPSConnection(HOST, timeout=timeout)
     try:
+        try:
+            connection.connect()
+        except OSError as error:
+            raise NotSent('Connexion à OpenRouter impossible') from error
         connection.request('POST', PATH, body=wire.encode(), headers={
             'Authorization': 'Bearer ' + api_key, 'Content-Type': 'application/json',
             'X-OpenRouter-Metadata': 'enabled'})
@@ -498,11 +533,14 @@ class OpenRouterPreparation:
         redacted = key.encode() in raw
         if redacted:
             raw = raw.replace(key.encode(), b'[REDACTED_CREDENTIAL]')
-        document, result, incident = None, None, 'UNUSABLE_RESPONSE'
+        # Corps illisible : panne côté fournisseur ou passerelle, jamais un défaut de la demande
+        document, result = None, None
+        incident = incident_for(status) or 'PROVIDER_ERROR'
         try:
             parsed = json.loads(raw, object_pairs_hook=_unique_object, parse_float=str)
             encode(parsed)
             document = parsed
+            incident = incident_for(status) or 'UNUSABLE_RESPONSE'
             if key in encode(document):
                 redacted = True
             if (status != 200 or not complete or redacted or type(document) is not dict

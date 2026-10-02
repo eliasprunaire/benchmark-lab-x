@@ -1111,26 +1111,34 @@ class Store:
             connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' WHERE operation_id=?",
                                (operation_id,))
 
-    def close_not_sent(self, operation_id: str) -> bool:
+    def close_not_sent(self, operation_id: str, *, unreachable_at: str | None = None) -> bool:
         """Clore une intention jamais émise : reçu « non envoyé », coût nul connu
 
         L'état est relu sous BEGIN IMMEDIATE : une opération déjà passée en émission possible
         n'est jamais touchée, et un fil qui voudrait l'émettre ensuite la trouve close. Une base
         restaurée ne prouve pas l'absence d'envoi après sa sauvegarde : rien n'y est clos
+
+        `unreachable_at` : date à laquelle le fil émetteur a échoué à ouvrir la connexion (DNS, refus,
+        TLS), avant tout octet de requête. Lui seul clôt ainsi son opération passée en émission possible
         """
         if os.path.lexists(self._root / 'restore.json'):
             return False
         connection = self._s1_connection()
         with _transaction(connection, write=True):
             if not connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' "
-                                      "WHERE operation_id=? AND state='INTENT_RECORDED'", (operation_id,)).rowcount:
+                                      "WHERE operation_id=? AND state=?",
+                                      (operation_id, 'INTENT_RECORDED' if unreachable_at is None
+                                       else 'EMISSION_POSSIBLE')).rowcount:
                 return False
             currency = connection.execute('SELECT b.currency FROM reservations r JOIN budgets b USING(budget_id) '
                                           'WHERE r.operation_id=?', (operation_id,)).fetchone()[0]
+            observed = None if unreachable_at is None else dict(incident='CONNECTION_FAILED', observed_at=unreachable_at)
             self._record_receipt(connection, operation_id,
-                dict(receipt_id='not-sent-' + operation_id, observed_configuration=None, resources_seen=[],
+                dict(receipt_id='not-sent-' + operation_id, observed_configuration=observed, resources_seen=[],
                      result=dict(NOT_SENT)),
-                dict(status='KNOWN', amount='0', currency=currency, source='Contrôle local : transport non engagé'))
+                dict(status='KNOWN', amount='0', currency=currency,
+                     source='Contrôle local : transport non engagé' if unreachable_at is None
+                     else 'Connexion au fournisseur impossible : requête non envoyée'))
         return True
 
     def mark_ambiguous(self, operation_id: str, reason: str) -> None:

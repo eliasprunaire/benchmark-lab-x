@@ -8,19 +8,23 @@ import os
 
 from . import model_catalogue, preparation as p, provider_access, storage
 from .model_catalog import require_current
-from .transports.openrouter import ENDPOINT, consumption, post
+from .transports.openrouter import ENDPOINT, INCIDENT_TEXT, NOT_SENT_TEXT, consumption, incident_for, post
 from .transports.prices import UNITS, price_row
 from .validation import identifier
 
 
 ENGINE = 'benchmark-lab-x/openrouter-slug-check/v1'
 MAX_OUTPUT_TOKENS = 128
+# Un raisonnement obligatoire consomme des tokens avant « OK » : 128 couperait la réponse
+MANDATORY_REASONING_OUTPUT_TOKENS = 1024
 MESSAGES = [{'role': 'user', 'content': 'Reply with the single word OK.'}]
 STATUS_TEXT = {
     'EMISSION_POSSIBLE': 'Vérification en cours…',
     'AMBIGUOUS': 'Vérification interrompue : les effets de l’appel restent inconnus. Aucune relance automatique.',
     'RESPONDED': 'Le modèle a répondu. Vous pouvez le sélectionner pour la comparaison.',
     'UNCONFIRMED': 'Aucune réponse complète vérifiable : erreur, refus, réponse vide ou interrompue. Le modèle n’a pas été ajouté.',
+    'TRUNCATED': 'Le modèle a répondu, mais sa réponse a été coupée par la limite de sortie de la vérification. '
+                 'Le modèle n’a pas été ajouté ; aucun nouvel appel automatique.',
     'EXPIRED': 'Vérification à renouveler : le relevé a expiré ou votre clé a changé.',
     'NOT_SENT': 'Vérification annulée avant envoi : aucun appel ni coût.',
 }
@@ -82,9 +86,12 @@ def view(store, session_id, dossier_id):
         usable = _valid(record, binding)
         if status == 'RESPONDED' and not usable:
             status = 'EXPIRED'
+        observed = record['receipt']['observed_configuration'] if state == 'RECEIVED' else None
+        detail = (NOT_SENT_TEXT if (observed or {}).get('incident') == 'CONNECTION_FAILED'
+                  else INCIDENT_TEXT.get(incident_for(result.get('http_status')) or '', STATUS_TEXT.get(status, 'Vérification en attente.')))
         results.append({'operation_id': record['operation_id'], 'slug': config['model'],
             'name': config['metadata']['name'], 'status': status, 'usable': usable,
-            'detail': STATUS_TEXT.get(status, 'Vérification en attente.'), 'cost': record['observed_cost'],
+            'detail': detail, 'cost': record['observed_cost'],
             'reserve_usd': record['reserved_amount']})
     return list(reversed(results))
 
@@ -97,11 +104,14 @@ def _metadata(slug, fetch):
             or type(detail.get('endpoints')) is not list):
         raise ValueError('Identité ou sortie texte non vérifiée')
     excluded = model_catalogue._settings(model_catalogue._registry()).get('excluded_providers', [])
+    reasoning = model.get('reasoning')
+    cap = (MANDATORY_REASONING_OUTPUT_TOKENS if type(reasoning) is dict and reasoning.get('mandatory') is True
+           else MAX_OUTPUT_TOKENS)
     detail = {**detail, 'endpoints': [row for row in detail['endpoints']
         if type(row) is dict and row.get('model_id') == slug
         and 'max_tokens' in row.get('supported_parameters', [])
-        and type(row.get('context_length')) is int and row['context_length'] >= MAX_OUTPUT_TOKENS
-        and type(row.get('max_completion_tokens')) is int and row['max_completion_tokens'] >= MAX_OUTPUT_TOKENS]}
+        and type(row.get('context_length')) is int and row['context_length'] >= cap
+        and type(row.get('max_completion_tokens')) is int and row['max_completion_tokens'] >= cap]}
     metadata = model_catalogue.model_view(model, detail, excluded)
     endpoint = next((row for row in detail['endpoints'] if row.get('tag') == metadata['route']), None)
     if endpoint is None:
@@ -110,7 +120,7 @@ def _metadata(slug, fetch):
     allowed = UNITS.keys() | {'discount', 'overrides'}
     if type(pricing) is not dict or pricing.keys() - allowed:
         raise ValueError('Tarification non prise en charge')
-    parameters: dict = {'max_tokens': MAX_OUTPUT_TOKENS, 'stream': False,
+    parameters: dict = {'max_tokens': cap, 'stream': False,
         'provider': {'only': [metadata['route']], 'order': [metadata['route']],
                      'allow_fallbacks': False, 'require_parameters': True, 'data_collection': 'deny'}}
     levels = metadata['reasoning_levels']
@@ -120,13 +130,12 @@ def _metadata(slug, fetch):
         if lowest is not None:
             parameters['reasoning'] = {'effort': lowest}
     # Réserve prudente : un token par octet du message, plus l'enveloppe de chat
-    input_tokens = len(storage._strict_json(MESSAGES).encode()) + MAX_OUTPUT_TOKENS
+    input_tokens = len(storage._strict_json(MESSAGES).encode()) + cap
     overrides = pricing.get('overrides', [])
     if type(overrides) is not list or any(type(row) is not dict or row.keys() - (UNITS.keys() | {'min_prompt_tokens'})
             or type(minimum := row.get('min_prompt_tokens')) is not int or minimum < 0 for row in overrides):
         raise ValueError('Tarification conditionnelle non prise en charge')
-    quantities = {'prompt': input_tokens, 'completion': MAX_OUTPUT_TOKENS,
-                  'request': 1, 'internal_reasoning': MAX_OUTPUT_TOKENS}
+    quantities = {'prompt': input_tokens, 'completion': cap, 'request': 1, 'internal_reasoning': cap}
     forecast = price_row({'request': '0', 'internal_reasoning': '0', **pricing}, quantities)
     reserve = forecast['forecast']['token_subtotal_usd']
     if reserve is None:
@@ -228,8 +237,8 @@ def execute(data, operation_id, key, transport=None):
         try:
             status, headers, raw, complete, started, _ = transport(
                 key, operation['resources'][0], max_response_bytes=65536)
-        except Exception:
-            store.mark_ambiguous(operation_id, 'MODEL_PROBE_INTERRUPTED_NO_RETRY')
+        except Exception as error:
+            p._interrupted(store, operation_id, error, 'MODEL_PROBE_INTERRUPTED_NO_RETRY')
             return
         sensitive = key.encode() in raw
         raw = raw.replace(key.encode(), b'[REDACTED]')
@@ -252,7 +261,8 @@ def execute(data, operation_id, key, transport=None):
                    and observed in (config['model'], config['canonical_slug'])
                    and choice.get('finish_reason') == 'stop' and not message.get('refusal')
                    and type(content) is str and content.strip().casefold() in ('ok', 'ok.'))
-        result = {'status': 'RESPONDED' if success else 'UNCONFIRMED',
+        truncated = status == 200 and complete and not sensitive and choice.get('finish_reason') == 'length'
+        result = {'status': 'RESPONDED' if success else 'TRUNCATED' if truncated else 'UNCONFIRMED',
                   'http_status': status, 'complete': complete, 'response': document,
                   'received_at': datetime.now(timezone.utc).isoformat(), 'started_at': started}
         store.record_receipt(operation_id, dict(receipt_id='probe-' + operation_id,
@@ -260,3 +270,4 @@ def execute(data, operation_id, key, transport=None):
             resources_seen=operation['resources'], result=result),
             dict(status='KNOWN' if charge['amount'] is not None else 'UNKNOWN',
                  amount=charge['amount'], currency='USD', source=charge['source']))
+        provider_access.recheck(store, session_id, key, incident_for(status))

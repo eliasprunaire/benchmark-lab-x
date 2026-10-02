@@ -298,22 +298,32 @@ def model_view(model, detail, excluded_providers):
     if max_output is not None and type(max_output) is not int:
         raise ValueError('Limite de sortie invalide')
     endpoints = detail['endpoints']
-    available_routes = sorted(endpoint['tag'] for endpoint in endpoints
-                              if type(endpoint) is dict and type(endpoint.get('tag')) is str
-                              and not (type(endpoint.get('status')) in (int, float)
-                                       and endpoint['status'] < 0)
-                              and _provider_slug(endpoint) not in excluded_providers)
+    available = sorted((endpoint for endpoint in endpoints
+                        if type(endpoint) is dict and type(endpoint.get('tag')) is str
+                        and not (type(endpoint.get('status')) in (int, float)
+                                 and endpoint['status'] < 0)
+                        and _provider_slug(endpoint) not in excluded_providers), key=lambda row: row['tag'])
+    # La campagne envoie max_tokens, et reasoning dès que le modèle a des niveaux : la route doit les accepter
+    required = {'max_tokens', 'reasoning'} if levels else {'max_tokens'}
+    compatible = [endpoint for endpoint in available if type(endpoint.get('supported_parameters')) is list
+                  and required <= set(endpoint['supported_parameters'])]
     if detail.get('id') != model_id:
         # Conserver le constat fournisseur sans rendre un alias substituable à sa cible
-        available_routes = []
+        compatible = []
         excluded = 'endpoint_identity_mismatch'
-    elif available_routes:
+    elif compatible:
         excluded = None
+    elif available:
+        excluded = 'no_compatible_endpoint'
     elif endpoints and all(_provider_slug(endpoint) in excluded_providers
                            for endpoint in endpoints):
         excluded = 'provider_excluded'
     else:
         excluded = 'no_available_endpoint'
+    route = compatible[0] if compatible else None
+    # Prix de la route choisie quand le relevé le donne, sinon prix affiché du modèle
+    if route is not None and type(route.get('pricing')) is dict:
+        pricing = {**pricing, **{key: route['pricing'][key] for key in ('prompt', 'completion') if key in route['pricing']}}
     context_length = model.get('context_length')
     if context_length is not None and (type(context_length) is not int or context_length <= 0):
         raise ValueError('Fenêtre de contexte invalide')
@@ -327,7 +337,7 @@ def model_view(model, detail, excluded_providers):
         'output_price_per_million': _million_price(pricing.get('completion')),
         'reasoning_levels': levels,
         'context_length': context_length,
-        'route': available_routes[0] if available_routes else None,
+        'route': route['tag'] if route is not None else None,
         'max_output_tokens': max_output,
         'variant': _variant(model_id),
         'excluded': excluded,

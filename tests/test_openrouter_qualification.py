@@ -1,6 +1,7 @@
 """Qualification automatisée S17, sans appel réseau réel"""
 from contextlib import closing
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -59,6 +60,32 @@ class QualificationTransport:
                             'result': deepcopy(self.result)},
                 'cost': {'status': 'KNOWN', 'amount': '0.15', 'currency': 'USD',
                          'source': 'Reçu synthétique S17'}}
+
+
+class ScriptedQualification(QualificationTransport):
+    """Chaque appel suit le script : statut HTTP d'incident, exception, ou None pour la réponse normale"""
+    INCIDENTS = {401: 'KEY_REJECTED', 402: 'CREDIT_EXHAUSTED', 429: 'RATE_LIMITED'}
+
+    def __init__(self, script, result=None):
+        super().__init__(result or {'qualified': True, 'findings': [], 'summary': 'Exemple qualifié'})
+        self.script = list(script)
+
+    def __call__(self, operation, request):
+        step = self.script.pop(0) if self.script else None
+        if step is None:
+            return super().__call__(operation, request)
+        self.calls.append((deepcopy(operation), deepcopy(request)))
+        if isinstance(step, Exception):
+            raise step
+        status, headers = step if type(step) is tuple else (step, {})
+        # Forme rendue par OpenRouterPreparation.__call__ pour une réponse d'erreur reçue
+        return {'receipt': {'receipt_id': 'q-' + operation['operation_id'],
+                            'observed_configuration': {
+                                'incident': self.INCIDENTS.get(status, 'PROVIDER_ERROR'),
+                                'http': {'status': status, 'response_headers': headers,
+                                         'received_at': prep._now().isoformat()}},
+                            'resources_seen': [], 'result': None},
+                'cost': {'status': 'UNKNOWN', 'amount': None, 'currency': 'USD', 'source': 'coût INCONNU'}}
 
 
 class SlowQualificationTransport(QualificationTransport):
@@ -506,6 +533,169 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.assertEqual('AMBIGUOUS', self.operation(operation_id)['state'])
         prep.execute_qualification(self.data, operation_id, transport)
         self.assertEqual(1, len(transport.calls))
+
+    def scripted(self, script, execute=True):
+        self.clock = [datetime(2026, 10, 2, 12, tzinfo=timezone.utc)]
+        self.enterContext(patch.object(prep, '_now', side_effect=lambda: self.clock[0]))
+        transport = ScriptedQualification(script)
+        _, operation_id, start = self.revalidate(transport)
+        self.assertTrue(start)
+        if execute:
+            prep.execute_qualification(self.data, operation_id, transport)
+        return transport, operation_id
+
+    def revalidate(self, transport):
+        return prep.validate_and_qualify(
+            self.store, self.session, 'dossier',
+            prep.binding('dossier', self.preview['revision'], self.preview['package_sha256']), 'b' * 40, transport)
+
+    def delay(self, operation_id):
+        return next((d for o, _, _, d in prep.due_qualification_retries(self.store) if o == operation_id), None)
+
+    def page(self):
+        from benchmark_web import views
+        value = prep.view(self.store, self.session, 'dossier')
+        value['availability'] = {'assistant_configured': True, 'admission_open': True, 'can_submit': True, 'reason': 'open'}
+        return value['qualification'], views.render(value, 'csrf', '/preparation/dossiers/dossier').decode()
+
+    def assert_no_manual_retry(self, page, operation_id, transport):
+        self.assertNotIn('Relancer', page)
+        self.assertNotIn('dossier/validation', page)
+        self.assertNotIn('Exemple à revoir', page)
+        # Une nouvelle validation de la même version ne relance rien
+        self.assertEqual((operation_id, False), self.revalidate(transport)[1:])
+
+    def test_incident_fournisseur_relance_seule_puis_exemple_verifie(self):
+        transport, first = self.scripted([503])
+        qualification, page = self.page()
+        self.assertEqual(('PENDING', 'provider', 30), (qualification['status'], qualification['cause'], qualification['retry_in']))
+        self.assertIn('Nouvelle tentative automatique dans 30 s', page)
+        self.assert_no_manual_retry(page, first, transport)
+        # Jamais avant l'échéance, et une seule tentative liée par opération échouée
+        self.assertEqual(30, self.delay(first))
+        self.assertIsNone(prep.retry_qualification(self.store, first, transport, 'b' * 40))
+        self.clock[0] += timedelta(seconds=30)
+        second = prep.retry_qualification(self.store, first, transport, 'b' * 40)
+        self.assertIsNotNone(second)
+        self.assertIsNone(prep.retry_qualification(self.store, first, transport, 'b' * 40))
+        self.assertEqual({'retry_of': first, 'attempt': 2}, json.loads(self.operation(second)['resources'][2]))
+        prep.execute_qualification(self.data, second, transport)
+        view = prep.view(self.store, self.session, 'dossier')
+        self.assertTrue(view['qualified'])
+        self.assertEqual('QUALIFIED', view['qualification']['status'])
+        self.assertEqual(2, len(transport.calls))
+        self.assertEqual([], prep.due_qualification_retries(self.store))
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
+
+    def test_cinq_tentatives_au_plus_selon_le_calendrier_puis_message_sans_bouton(self):
+        transport, operation_id = self.scripted([503, 502, 500, 429, 504])
+        for delay in (30, 120, 600, 1800):
+            self.assertEqual(delay, self.delay(operation_id))
+            self.clock[0] += timedelta(seconds=delay - 1)
+            self.assertIsNone(prep.retry_qualification(self.store, operation_id, transport, 'b' * 40))
+            self.clock[0] += timedelta(seconds=1)
+            operation_id = prep.retry_qualification(self.store, operation_id, transport, 'b' * 40)
+            prep.execute_qualification(self.data, operation_id, transport)
+        self.assertEqual(5, len(transport.calls))
+        self.assertEqual(5, json.loads(self.operation(operation_id)['resources'][2])['attempt'])
+        qualification, page = self.page()
+        self.assertEqual(('BLOCKED', 'provider'), (qualification['status'], qualification['cause']))
+        self.assertIn('Vérification impossible pour le moment chez le fournisseur. L’exemple n’est pas en cause.', page)
+        self.assertNotIn('la réponse de référence ou les contrôles ne sont pas assez établis', page)
+        self.assert_no_manual_retry(page, operation_id, transport)
+        self.assertIsNone(self.delay(operation_id))
+        self.clock[0] += timedelta(days=1)
+        self.assertIsNone(prep.retry_qualification(self.store, operation_id, transport, 'b' * 40))
+        self.assertEqual(5, len(transport.calls))
+
+    def test_retry_after_plus_long_que_le_delai_est_respecte(self):
+        transport, operation_id = self.scripted([(429, {'Retry-After': '300'})])
+        self.assertEqual(300, self.delay(operation_id))
+        self.clock[0] += timedelta(seconds=299)
+        self.assertIsNone(prep.retry_qualification(self.store, operation_id, transport, 'b' * 40))
+        self.clock[0] += timedelta(seconds=1)
+        self.assertIsNotNone(prep.retry_qualification(self.store, operation_id, transport, 'b' * 40))
+
+    def test_connexion_impossible_relancee_sans_cout(self):
+        transport, operation_id = self.scripted([assistant.NotSent('Connexion à OpenRouter impossible')])
+        self.assert_not_sent(operation_id)
+        self.assertEqual('CONNECTION_FAILED', self.operation(operation_id)['receipt']['observed_configuration']['incident'])
+        qualification, page = self.page()
+        self.assertIn('Impossible de joindre OpenRouter, rien n’a été envoyé ni facturé', page)
+        self.assert_no_manual_retry(page, operation_id, transport)
+        self.assertEqual(30, self.delay(operation_id))
+        self.clock[0] += timedelta(seconds=30)
+        second = prep.retry_qualification(self.store, operation_id, transport, 'b' * 40)
+        prep.execute_qualification(self.data, second, transport)
+        self.assertEqual('QUALIFIED', prep.view(self.store, self.session, 'dossier')['qualification']['status'])
+
+    def test_aucune_relance_apres_effet_ambigu(self):
+        transport, operation_id = self.scripted([RuntimeError('coupure après envoi')])
+        self.assertEqual('AMBIGUOUS', self.operation(operation_id)['state'])
+        self.assertIsNone(self.delay(operation_id))
+        self.clock[0] += timedelta(hours=1)
+        self.assertIsNone(prep.retry_qualification(self.store, operation_id, transport, 'b' * 40))
+        self.assertEqual((operation_id, False), self.revalidate(transport)[1:])
+        self.assertEqual(1, len(transport.calls))
+
+    def test_cle_refusee_ou_credit_epuise_sans_relance(self):
+        for status, word in ((401, 'clé'), (402, 'crédit')):
+            with self.subTest(status=status):
+                self.setUp()
+                transport, operation_id = self.scripted([status])
+                qualification, page = self.page()
+                self.assertEqual(('BLOCKED', 'key'), (qualification['status'], qualification['cause']))
+                self.assertIn(word, qualification['summary'])
+                self.assert_no_manual_retry(page, operation_id, transport)
+                self.assertIsNone(self.delay(operation_id))
+
+    def retry_context(self, transport):
+        timers = {}
+        return (transport, None, None, 'b' * 40, timers), timers
+
+    def test_service_programme_la_relance_sans_action_de_l_utilisateur(self):
+        transport, operation_id = self.scripted([503], execute=False)
+        with patch.object(service.threading, 'Timer') as timer:
+            retry, timers = self.retry_context(transport)
+            service._qualification_worker(self.data, 'dossier', operation_id, transport, retry)
+            self.assertEqual(30, timer.call_args.args[0])
+            timer.return_value.start.assert_called_once()
+            self.assertEqual({operation_id: timer.return_value}, timers)
+            self.clock[0] += timedelta(seconds=30)
+            function, arguments = timer.call_args.args[1], timer.call_args.kwargs['args']
+            function(*arguments)
+        self.assertEqual('QUALIFIED', prep.view(self.store, self.session, 'dossier')['qualification']['status'])
+        self.assertEqual(2, len(transport.calls))
+        self.assertEqual({}, timers)
+
+    def test_redemarrage_reprogramme_les_relances_dues(self):
+        from benchmark import runtime
+        transport, first = self.scripted([503])
+        # Redémarrage : le minuteur en mémoire est perdu, le démarrage le reprogramme
+        with patch.object(service.threading, 'Timer') as timer:
+            retry, timers = self.retry_context(transport)
+            service._resume_qualification_retries(self.store, self.data, retry)
+            service._resume_qualification_retries(self.store, self.data, retry, session_id=self.session)
+            self.assertEqual(1, timer.call_count)
+            self.assertEqual(30, timer.call_args.args[0])
+        # Relance créée puis processus arrêté avant envoi : close sans coût, elle reprend sans consommer de tentative
+        self.clock[0] += timedelta(seconds=30)
+        second = prep.retry_qualification(self.store, first, transport, 'b' * 40)
+        runtime.stop(self.data, self.store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.assert_not_sent(second)
+        qualification, page = self.page()
+        self.assertEqual('PENDING', qualification['status'])
+        self.assertNotIn('Exemple à revoir', page)
+        self.clock[0] += timedelta(days=1)
+        with patch.object(service.threading, 'Timer') as timer:
+            retry, timers = self.retry_context(transport)
+            service._resume_qualification_retries(self.store, self.data, retry)
+            self.assertEqual(0, timer.call_args.args[0])
+            timer.call_args.args[1](*timer.call_args.kwargs['args'])
+        third = prep._latest_qualification(self.store, self.store._connection, 'dossier', self.preview['revision'])
+        self.assertEqual({'retry_of': second, 'attempt': 2}, json.loads(third['resources'][2]))
+        self.assertEqual('QUALIFIED', prep.view(self.store, self.session, 'dossier')['qualification']['status'])
+        self.assertEqual(2, len(transport.calls))
 
 
 if __name__ == '__main__':

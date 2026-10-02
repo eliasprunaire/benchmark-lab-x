@@ -130,7 +130,6 @@ class ModelProbeTests(unittest.TestCase):
         for index, changes in enumerate((
                 {'choices': [{'finish_reason': 'stop', 'message': {'content': ''}}]},
                 {'choices': [{'finish_reason': 'stop', 'message': {'content': 'No', 'refusal': 'No'}}]},
-                {'choices': [{'finish_reason': 'length', 'message': {'content': 'OK'}}]},
                 {'choices': [{'finish_reason': 'stop', 'message': {'content': 'I cannot comply.'}}]},
                 {'model': 'outside/other'})):
             operation_id, key = self.submit(action='failure-' + str(index))
@@ -138,7 +137,7 @@ class ModelProbeTests(unittest.TestCase):
             self.assertEqual('UNCONFIRMED', model_probes.view(self.store, self.session, 'fixture')[0]['status'])
             self.assertNotIn(SLUG, {m['id'] for m in model_probes.selection(
                 self.store, self.session, 'fixture')['models']})
-        self.assertEqual(5, len(self.calls))
+        self.assertEqual(4, len(self.calls))
 
     def test_ancien_budget_ignore(self):
         budget_id = provider_access.preparation_budget_id(self.session)
@@ -356,6 +355,50 @@ class ModelProbeTests(unittest.TestCase):
             checks = campaigns._requester_checks(self.store, self.store._connection, campaign, self.session, {})
             self.assertFalse(next(c['ok'] for c in checks if c['key'] == 'configurations_available'))
         self.assertEqual(1, len(self.calls))
+
+    def test_raisonnement_obligatoire_plafond_suffisant_et_troncature_distincte(self):
+        self.summary['reasoning'] = {'supported_efforts': ['low', 'high'], 'mandatory': True}
+        operation_id, key = self.submit()
+        self.respond(operation_id, key, choices=[{'finish_reason': 'length', 'message': {'content': ''}}])
+        self.assertEqual(model_probes.MANDATORY_REASONING_OUTPUT_TOKENS, self.calls[0][1]['max_tokens'])
+        self.assertGreaterEqual(self.calls[0][1]['max_tokens'], 1024)
+        record = model_probes.view(self.store, self.session, 'fixture')[0]
+        self.assertEqual('TRUNCATED', record['status'])
+        self.assertNotIn('Aucune réponse complète vérifiable', record['detail'])
+        # Aucun second appel automatique : la vérification n'est facturée qu'une fois
+        self.assertEqual(1, len(self.calls))
+        self.assertEqual((operation_id, None), self.submit())
+        self.assertEqual(1, len(self.calls))
+
+    def test_sans_raisonnement_obligatoire_le_plafond_reste_court(self):
+        operation_id, key = self.submit()
+        self.respond(operation_id, key)
+        self.assertEqual(model_probes.MAX_OUTPUT_TOKENS, self.calls[0][1]['max_tokens'])
+
+    def test_connexion_impossible_close_sans_cout_et_permet_une_autre_verification(self):
+        from benchmark.transports.openrouter import NotSent
+        operation_id, key = self.submit()
+        with patch.object(model_probes, 'post', side_effect=NotSent('Connexion à OpenRouter impossible')):
+            model_probes.execute(self.data, operation_id, key)
+        record = model_probes.view(self.store, self.session, 'fixture')[0]
+        self.assertEqual(('NOT_SENT', '0'), (record['status'], record['cost']['amount']))
+        self.assertIn('Impossible de joindre OpenRouter, rien n’a été envoyé ni facturé', record['detail'])
+        self.assertFalse(any(o['state'] == 'AMBIGUOUS' for o in self.store.inspect_operations()))
+        second, key = self.submit(action='retry')
+        self.assertNotEqual(operation_id, second)
+        self.respond(second, key)
+        self.assertEqual('RESPONDED', model_probes.view(self.store, self.session, 'fixture')[0]['status'])
+
+    def test_cle_refusee_pendant_la_verification_revérifie_la_cle(self):
+        operation_id, key = self.submit()
+        self.access.verify_result = (401, b'{"error":{"code":401}}')
+        with patch.object(provider_access, 'OpenRouterAccess', return_value=self.access):
+            model_probes.execute(self.data, operation_id, key,
+                                 lambda *a, **kw: (401, {}, b'{"error":{"code":401}}', True, '2026-09-17T20:00:00Z', 0))
+        record = model_probes.view(self.store, self.session, 'fixture')[0]
+        self.assertEqual('UNCONFIRMED', record['status'])
+        self.assertIn('refusé votre clé', record['detail'])
+        self.assertEqual('invalid', provider_access.status_only(self.store, self.session)['status'])
 
 
 if __name__ == '__main__':

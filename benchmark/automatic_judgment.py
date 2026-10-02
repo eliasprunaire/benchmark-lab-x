@@ -245,7 +245,10 @@ def status(store, connection, campaign_id, snapshot=None):
                                 f'{"n’ont" if missing > 1 else "n’a"} pas donné de réponse exploitable : '
                                 f'{"ils ne sont pas évalués" if missing > 1 else "il n’est pas évalué"}.')
     elif snapshot['stop_reason'] == 'JUDGMENT_STOPPED':
-        result.update(status='BLOCKED', reason='Évaluation interrompue. Les réponses sont conservées ; aucun appel ne sera relancé automatiquement.')
+        unreachable = any(storage.not_sent(o) and (o['receipt']['observed_configuration'] or {}).get('incident')
+                          == 'CONNECTION_FAILED' for o in ops)
+        result.update(status='BLOCKED', reason=(p.NOT_SENT_TEXT + ' ' if unreachable else '') + 'Évaluation interrompue. '
+                      'Les réponses sont conservées ; aucun appel ne sera relancé automatiquement.')
     elif unusable or any(o['state'] == 'AMBIGUOUS' for o in ops):
         result.update(status='BLOCKED', reason='L’évaluation n’a pas fourni de preuves exploitables. Les réponses et reçus sont conservés.')
     elif ops:

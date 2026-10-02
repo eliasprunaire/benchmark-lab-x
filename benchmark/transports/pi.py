@@ -248,7 +248,7 @@ class PiOpenRouter:
         if redacted:
             raw, document = b'[REDACTED_CREDENTIAL]', None
         data = document if type(document) is dict else {}
-        output, incident = None, 'PROVIDER_RESPONSE_INCOMPLETE'
+        output, incident = None, http.incident_for(status) or 'PROVIDER_RESPONSE_INCOMPLETE'
         try:
             choices = data['choices']
             if type(choices) is list and len(choices) == 1:

@@ -20,6 +20,7 @@ from hashlib import sha256
 from http.client import HTTPException, HTTPSConnection, IncompleteRead
 import hmac
 import json
+import logging
 import re
 import secrets
 import socket
@@ -520,6 +521,20 @@ def _verify(store, session_id, transport, key, now):
         else:
             connection.execute('UPDATE s2_provider_access SET checked_at=? WHERE session_id=?',
                                (observed.isoformat(), session_id))
+
+
+def recheck(store, session_id, key, incident, transport=None):
+    """Clé refusée (401) ou crédit épuisé (402) par OpenRouter : revérifier tout de suite
+
+    L'état « connectée » et le solde suivent sans attendre le prochain intervalle. Un échec ici
+    ne change rien au reçu déjà enregistré
+    """
+    if session_id is None or key is None or incident not in ('KEY_REJECTED', 'CREDIT_EXHAUSTED'):
+        return
+    try:
+        _verify(store, session_id, transport or OpenRouterAccess(), key, _now())
+    except Exception as error:
+        logging.getLogger(__name__).warning('ACCESS_RECHECK_FAILED error=%s', type(error).__name__)
 
 
 def _row_view(row, reason=None):

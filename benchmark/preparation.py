@@ -2,9 +2,11 @@
 from contextlib import closing
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from hashlib import sha256
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -16,6 +18,7 @@ from .storage import (Store, SchemaError, IntegrityError, ConflictError, BudgetE
                       _transaction, _strict_json as encode, _fields, _text,
                       _identity, _money, _sum_money, _unique_object, _payload_json, locked, retry_locked)
 from .validation import identifier
+from .transports.openrouter import INCIDENT_TEXT, NOT_SENT_TEXT, NotSent
 
 
 REQUEST_MIN = 40
@@ -30,6 +33,15 @@ OUT_OF_SCOPE_CATEGORIES = ('math', 'coding', 'other')
 _SOURCE_ACCEPTED = {}
 # Registre de module partagé par tous les fils de travail de l'exécuteur
 _SOURCE_GUARD = threading.Lock()
+# Vérification de l'exemple : relance automatique, sans bouton, après un incident fournisseur reçu ou une
+# connexion impossible, au plus cinq tentatives par version pour borner le coût ; jamais après un effet
+# ambigu, une clé refusée ou un crédit épuisé. Attente avant chaque nouvelle tentative, allongée par un
+# Retry-After plus long
+QUALIFICATION_ATTEMPTS = 5
+QUALIFICATION_RETRY_SECONDS = (30, 120, 600, 1800)
+# NOT_SENT : relance programmée close avant envoi par un redémarrage, elle n'a consommé aucune tentative
+_RETRIED_INCIDENTS = ('RATE_LIMITED', 'PROVIDER_ERROR', 'CONNECTION_FAILED', 'NOT_SENT')
+_KEY_INCIDENTS = ('KEY_REJECTED', 'CREDIT_EXHAUSTED')
 _CHECK_CODES = frozenset({
     'selection_current', 'example_validated', 'example_qualified', 'configurations_available',
     'access_connected', 'estimate_available',
@@ -208,6 +220,26 @@ def _not_sent(store, operation_id):
         return False
 
 
+def _interrupted(store, operation_id, error, reason):
+    """Arrêt après le passage en émission possible
+
+    Seule une connexion impossible prouve que rien n'est parti : l'opération est close sans coût.
+    Toute autre erreur laisse des effets inconnus, jamais rejoués
+    """
+    if isinstance(error, NotSent) and retry_locked(
+            lambda: store.close_not_sent(operation_id, unreachable_at=_now().isoformat())):
+        return
+    retry_locked(lambda: store.mark_ambiguous(operation_id, reason))
+
+
+def _recheck_key(store, transport, response):
+    """401 ou 402 reçus : la clé de la session est revérifiée sans attendre"""
+    from .provider_access import recheck
+    observed = response['receipt'].get('observed_configuration')
+    recheck(store, getattr(transport, '_session_id', None), getattr(transport, '_api_key', None),
+            observed.get('incident') if type(observed) is dict else None)
+
+
 
 def session(store, token, *, create=False):
     connection = connection_for(store)
@@ -337,6 +369,84 @@ def _package_changes(connection, dossier_id, revision, package):
     return changes, piece_changes
 
 
+def _qualification_incident(operation):
+    """Incident fournisseur d'une vérification close sans résultat, ou None"""
+    if operation['state'] != 'RECEIVED':
+        return None
+    observed = operation['receipt']['observed_configuration']
+    incident = observed.get('incident') if type(observed) is dict else None
+    if operation['receipt']['result'] == {'status': 'NOT_SENT'}:
+        if incident == 'CONNECTION_FAILED':
+            return incident
+        return 'NOT_SENT' if len(operation['resources']) > 2 else None
+    if operation['receipt']['result'] is None and incident in _RETRIED_INCIDENTS + _KEY_INCIDENTS:
+        return incident
+    return None
+
+
+def _qualification_attempt(operation):
+    """Rang dans la série automatique, lu dans le lien conservé avec les ressources de l'opération"""
+    return json.loads(operation['resources'][2])['attempt'] if len(operation['resources']) > 2 else 1
+
+
+def _retry_after(value, received):
+    if type(value) is not str:
+        return 0
+    if value.isdigit():
+        return int(value)
+    try:
+        return max(0, (parsedate_to_datetime(value) - received).total_seconds())
+    except (TypeError, ValueError):
+        return 0
+
+
+def _retry_due(operation):
+    """Échéance de la relance automatique, ou None quand aucune n'est permise"""
+    incident = _qualification_incident(operation)
+    if incident == 'NOT_SENT':
+        return datetime.fromisoformat(operation['created_at'])
+    attempt = _qualification_attempt(operation)
+    if incident not in _RETRIED_INCIDENTS or attempt >= QUALIFICATION_ATTEMPTS:
+        return None
+    observed = operation['receipt']['observed_configuration'] or {}
+    http = observed.get('http')
+    http = http if isinstance(http, dict) else {}
+    failed_at = datetime.fromisoformat(observed['observed_at'] if incident == 'CONNECTION_FAILED'
+                                       else http['received_at'])
+    headers = http.get('response_headers')
+    headers = headers if isinstance(headers, dict) else {}
+    wait = max(QUALIFICATION_RETRY_SECONDS[attempt - 1], _retry_after(headers.get('Retry-After'), failed_at))
+    return failed_at + timedelta(seconds=wait)
+
+
+def _duration(seconds):
+    return f'{seconds} s' if seconds < 60 else f'{math.ceil(seconds / 60)} min'
+
+
+def _provider_qualification(operation, incident):
+    """Vérification arrêtée chez le fournisseur : l'exemple n'est jamais mis en cause"""
+    reason = (NOT_SENT_TEXT if incident == 'CONNECTION_FAILED'
+              else 'Tentative interrompue avant envoi, sans coût.' if incident == 'NOT_SENT' else INCIDENT_TEXT[incident])
+    due, retry_in = _retry_due(operation), None
+    if incident in _KEY_INCIDENTS:
+        status, cause = 'BLOCKED', 'key'
+        summary = (reason + ' La vérification de l’exemple n’a pas eu lieu. Une fois votre clé ou son crédit '
+                   'corrigés, une modification de l’exemple lancera une nouvelle vérification.')
+    elif due is not None:
+        status, cause = 'PENDING', 'provider'
+        retry_in = max(0, math.ceil((due - _now()).total_seconds()))
+        summary = reason + (' Nouvelle tentative automatique dans ' + _duration(retry_in) + '.' if retry_in
+                            else ' Nouvelle tentative automatique dès que possible.')
+    else:
+        status, cause = 'BLOCKED', 'provider'
+        summary = 'Vérification impossible pour le moment chez le fournisseur. L’exemple n’est pas en cause.'
+    cost = operation['observed_cost']['amount'] if operation['observed_cost']['status'] == 'KNOWN' else None
+    return dict(operation_id=operation['operation_id'], qualified=False, findings=[], summary=summary,
+                model=operation['requested_configuration'].get('model'), cost_usd=cost,
+                created_at=operation['created_at'], status=status, qualification_status=status,
+                approval_status='PENDING', cause=cause, retry_in=retry_in)
+
+
 def _automatic_qualification(store, connection, dossier_id, revision):
     validated = connection.execute(
         'SELECT 1 FROM s2_validations v JOIN s2_revisions r USING(dossier_id,revision) '
@@ -355,6 +465,9 @@ def _automatic_qualification(store, connection, dossier_id, revision):
             return None
         if validated is None:
             raise IntegrityError('Qualification sans validation du besoin')
+        incident = _qualification_incident(operation)
+        if incident is not None:
+            return _provider_qualification(operation, incident)
         blocked_intent = (operation['state'] == 'INTENT_RECORDED'
                           and os.path.lexists(store._root / 'restore.json'))
         failed = operation['state'] in ('AMBIGUOUS', 'RECEIVED') or blocked_intent
@@ -469,6 +582,14 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
                 'observed_at': reconciliation['proof']['source']['observed_at']}
         # Historic views are stable; only the current view projects an unfinished action
         if revision == current:
+            last = connection.execute('SELECT o.operation_id FROM s2_actions a JOIN operations o USING(operation_id) '
+                                      'WHERE a.dossier_id=? AND a.input_revision=? ORDER BY o.created_at DESC, o.rowid DESC '
+                                      'LIMIT 1', (dossier_id, revision)).fetchone()
+            if last is not None:
+                operation = store._operations(connection, operation_ids={last[0]})[0]
+                observed = (operation['receipt'] or {}).get('observed_configuration')
+                if type(observed) is dict and observed.get('incident') == 'CONNECTION_FAILED':
+                    result['notice'] = NOT_SENT_TEXT + ' Vous pouvez renvoyer votre message.'
             pending = connection.execute('SELECT o.state FROM s2_actions a JOIN operations o USING(operation_id) '
                                          'WHERE a.dossier_id=? AND a.input_revision=? AND o.state!=?',
                                          (dossier_id, revision, 'RECEIVED')).fetchall()
@@ -714,35 +835,113 @@ def validate_and_qualify(store, session_id, dossier_id, body, source, transport)
     with _transaction(connection, write=True):
         result = _validate(store, connection, session_id, dossier_id, body)
         revision = result['revision']
-        existing = connection.execute(
-            "SELECT operation_id,state,receipt_json FROM operations WHERE dossier_id=? AND revision=? "
-            "AND phase='qualification' ORDER BY created_at DESC, rowid DESC LIMIT 1",
-            (dossier_id, revision)).fetchone()
-        # Une qualification close sans envoi se relance ; toute autre reste unique pour sa version
-        if existing and not (existing[1] == 'RECEIVED' and json.loads(existing[2])['result'] == {'status': 'NOT_SENT'}):
-            return result, existing[0], False
-        authority = admission(store, connection, transport=transport)
-        if authority is None or os.path.lexists(store._root / 'restore.json'):
-            raise Denied('ADMISSION_CLOSED')
-        if _pending_preparations(connection, session_id):
-            raise Denied('PREPARATION_IN_PROGRESS')
-        reserve = str(max(_money(authority['reserve_amount']),
-                          _money(configuration.get('reserve_usd', authority['reserve_amount']))))
-        request = _qualification_input(store, connection, dossier_id, revision)
-        operation_id = secrets.token_hex(16)
-        operation = dict(operation_id=operation_id, phase='qualification', dossier_id=dossier_id,
-                         revision=revision, authority=authority['authority_id'], engine_version=source,
-                         requested_configuration=configuration, resources=[])
-        from .outgoing import FORMAT
-        closed = dict(outgoing_format=FORMAT, outgoing=request)
-        wire = transport.prepare(deepcopy(operation), deepcopy(closed))
-        _text(wire, 'qualification préparée')
-        operation['resources'] = [encode(request), wire]
-        budget = store._budget(connection, authority['budget_id'], store._operations(connection))
-        if budget['currency'] != 'USD':
-            raise BudgetError('Enveloppe USD de préparation requise')
-        store._reserve_intent(connection, operation, authority['budget_id'], reserve)
-        return result, operation_id, True
+        existing = _latest_qualification(store, connection, dossier_id, revision)
+        # Close sans envoi hors série automatique, elle se relance ; toute autre reste unique pour sa version
+        if existing and not (existing['state'] == 'RECEIVED' and existing['receipt']['result'] == {'status': 'NOT_SENT'}
+                             and _qualification_incident(existing) is None):
+            return result, existing['operation_id'], False
+        return result, _reserve_qualification(store, connection, session_id, dossier_id, revision,
+                                              source, transport, configuration), True
+
+
+def _latest_qualification(store, connection, dossier_id, revision):
+    row = connection.execute(
+        "SELECT operation_id FROM operations WHERE dossier_id=? AND revision=? "
+        "AND phase='qualification' ORDER BY created_at DESC, rowid DESC LIMIT 1", (dossier_id, revision)).fetchone()
+    return None if row is None else store._operations(connection, operation_ids={row[0]})[0]
+
+
+def _reserve_qualification(store, connection, session_id, dossier_id, revision, source, transport,
+                           configuration, link=None):
+    """Intention de vérification réservée ; `link` relie une relance automatique à la tentative précédente"""
+    authority = admission(store, connection, transport=transport)
+    if authority is None or os.path.lexists(store._root / 'restore.json'):
+        raise Denied('ADMISSION_CLOSED')
+    if _pending_preparations(connection, session_id):
+        raise Denied('PREPARATION_IN_PROGRESS')
+    reserve = str(max(_money(authority['reserve_amount']),
+                      _money(configuration.get('reserve_usd', authority['reserve_amount']))))
+    request = _qualification_input(store, connection, dossier_id, revision)
+    operation_id = secrets.token_hex(16)
+    operation = dict(operation_id=operation_id, phase='qualification', dossier_id=dossier_id,
+                     revision=revision, authority=authority['authority_id'], engine_version=source,
+                     requested_configuration=configuration, resources=[])
+    from .outgoing import FORMAT
+    closed = dict(outgoing_format=FORMAT, outgoing=request)
+    wire = transport.prepare(deepcopy(operation), deepcopy(closed))
+    _text(wire, 'qualification préparée')
+    operation['resources'] = [encode(request), wire] + ([link] if link is not None else [])
+    budget = store._budget(connection, authority['budget_id'], store._operations(connection))
+    if budget['currency'] != 'USD':
+        raise BudgetError('Enveloppe USD de préparation requise')
+    store._reserve_intent(connection, operation, authority['budget_id'], reserve)
+    return operation_id
+
+
+def _retryable(store, connection, operation_id):
+    """La vérification, si elle est encore la dernière de la version courante de son exemple"""
+    operations = store._operations(connection, operation_ids={operation_id})
+    if not operations or operations[0]['phase'] != 'qualification':
+        return None
+    operation = operations[0]
+    latest = _latest_qualification(store, connection, operation['dossier_id'], operation['revision'])
+    current = connection.execute('SELECT current_revision FROM s2_dossiers WHERE dossier_id=?',
+                                 (operation['dossier_id'],)).fetchone()
+    if latest is None or latest['operation_id'] != operation_id or current is None or current[0] != operation['revision']:
+        return None
+    return operation
+
+
+def due_qualification_retries(store, *, session_id=None, dossier_id=None):
+    """Relances automatiques à programmer : (opération, cas, session, secondes avant l'échéance)"""
+    connection = connection_for(store)
+    result = []
+    with _transaction(connection):
+        if not connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s2_dossiers'").fetchone():
+            return result
+        rows = connection.execute(
+            "SELECT o.operation_id, d.dossier_id, d.session_id FROM operations o JOIN s2_dossiers d "
+            "ON d.dossier_id=o.dossier_id AND d.current_revision=o.revision WHERE o.phase='qualification' "
+            "AND o.state='RECEIVED' AND (? IS NULL OR d.session_id=?) AND (? IS NULL OR d.dossier_id=?)",
+            (session_id, session_id, dossier_id, dossier_id)).fetchall()
+        for operation_id, dossier, session in rows:
+            operation = _retryable(store, connection, operation_id)
+            due = None if operation is None else _retry_due(operation)
+            if due is not None:
+                result.append((operation_id, dossier, session, max(0, math.ceil((due - _now()).total_seconds()))))
+    return result
+
+
+def retry_qualification(store, operation_id, transport, source):
+    """Tentative suivante, nouvelle opération payante liée à `operation_id`, jamais un rejeu
+
+    Rend son identifiant, ou None si rien n'est dû : échéance future, série épuisée, effet ambigu,
+    tentative déjà relancée, exemple modifié, clé retirée ou autre préparation en cours
+    """
+    if transport is None:
+        return None
+    configuration = (transport.quote() if callable(getattr(transport, 'quote', None))
+                     else transport.configuration())
+    connection = connection_for(store)
+    try:
+        with _transaction(connection, write=True):
+            operation = _retryable(store, connection, operation_id)
+            if operation is None:
+                return None
+            due = _retry_due(operation)
+            if due is None or _now() < due:
+                return None
+            session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
+                                            (operation['dossier_id'],)).fetchone()[0]
+            # Une tentative close avant envoi n'a rien consommé : la suivante garde son rang
+            unsent = _qualification_incident(operation) == 'NOT_SENT'
+            link = encode({'retry_of': operation_id, 'attempt': _qualification_attempt(operation) + (0 if unsent else 1)})
+            return _reserve_qualification(store, connection, session_id, operation['dossier_id'],
+                                          operation['revision'], source, transport, configuration, link)
+    except (Denied, BudgetError, ConflictError) as error:
+        logging.getLogger(__name__).warning('QUALIFICATION_RETRY_SKIPPED operation=%s error=%s',
+                                            operation_id, type(error).__name__)
+        return None
 
 
 def _qualification_result(result):
@@ -799,7 +998,7 @@ def execute_qualification(data, operation_id, transport):
                 from .outgoing import FORMAT
                 closed = dict(outgoing_format=FORMAT, outgoing=request)
                 wire = transport.prepare(deepcopy(operation), deepcopy(closed))
-                if len(operation['resources']) != 2 or wire != operation['resources'][1]:
+                if len(operation['resources']) not in (2, 3) or wire != operation['resources'][1]:
                     raise ConflictError('Contenu de qualification modifié depuis la réservation')
                 budget = store._budget(connection, operation['budget_id'], store._operations(connection))
                 if (budget['currency'] != 'USD' or store._blocking_costs(
@@ -834,11 +1033,12 @@ def execute_qualification(data, operation_id, transport):
             retry_locked(persist)
             logging.getLogger(__name__).info('QUALIFICATION_RECEIVED operation=%s usable=%s qualified=%s cost=%s',
                 operation_id, result is not None, None if result is None else result['qualified'], response['cost']['status'])
+            _recheck_key(store, transport, response)
         except Exception as error:
             logging.getLogger(__name__).error('QUALIFICATION_STOPPED operation=%s emitted=%s error=%s',
                                               operation_id, emitted, type(error).__name__)
             if emitted:
-                retry_locked(lambda: store.mark_ambiguous(operation_id, 'QUALIFICATION_RESULT_NOT_VERIFIED'))
+                _interrupted(store, operation_id, error, 'QUALIFICATION_RESULT_NOT_VERIFIED')
         finally:
             # Par identifiant : un refus avant chargement de l'opération ne laisse pas d'intention ouverte
             if not emitted and _not_sent(store, operation_id):
@@ -903,12 +1103,13 @@ def execute(data, operation_id, transport):
                 retry_locked(lambda: _suspend(store, connection, operation, operation_id, request, response))
                 logging.getLogger(__name__).warning('PREPARATION_RECEIVED operation=%s usable=False error=%s cost=%s',
                     operation_id, type(error).__name__, response['cost']['status'])
+            _recheck_key(store, transport, response)
         except Exception as error:
             # Never log request/response/exception text, which may contain private data
             logging.getLogger(__name__).error('PREPARATION_STOPPED operation=%s emitted=%s error=%s',
                                               operation_id, emitted, type(error).__name__)
             if emitted:
-                retry_locked(lambda: store.mark_ambiguous(operation_id, 'PREPARATION_RESULT_NOT_VERIFIED'))
+                _interrupted(store, operation_id, error, 'PREPARATION_RESULT_NOT_VERIFIED')
         finally:
             # Par identifiant : un refus avant chargement de l'opération ne laisse pas d'intention ouverte
             if not emitted and _not_sent(store, operation_id):
@@ -932,10 +1133,13 @@ def _suspend(store, connection, operation, operation_id, request, response):
             raise IntegrityError('Compteur de confirmation de périmètre invalide')
         store._record_receipt(connection, operation_id, response['receipt'], response['cost'])
         store.save_dossier(dossier_id, revision, request['payload'])
+        observed = response['receipt'].get('observed_configuration')
+        reason = INCIDENT_TEXT.get((observed.get('incident') if type(observed) is dict else None) or '')
         connection.execute('INSERT INTO s2_revisions VALUES (?,?,?,?,NULL,NULL,?,?)',
                            (dossier_id, revision, 'suspended',
-                            'Résultat reçu non utilisable : préparation suspendue. '
-                            'Reçu et coût conservés ; aucune reprise automatique.',
+                            (reason + ' Préparation suspendue. ' if reason else
+                             'Résultat reçu non utilisable : préparation suspendue. ')
+                            + 'Reçu et coût conservés ; aucune reprise automatique.',
                             encode([]), encode({'result_verified': False,
                                                 'scope_confirmation_count': scope_count})))
         connection.execute('UPDATE s2_dossiers SET current_revision=? WHERE dossier_id=?',

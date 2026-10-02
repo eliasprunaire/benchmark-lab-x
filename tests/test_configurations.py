@@ -29,7 +29,8 @@ def model(model_id, maker, efforts=None, prompt='0.000002', completion='0.00001'
     if efforts is not None:
         value['reasoning'] = {'supported_efforts': efforts}
     return value, {'id': model_id, 'endpoints': [
-        {'model_id': model_id, 'tag': maker, 'status': status}]}
+        {'model_id': model_id, 'tag': maker, 'status': status,
+         'supported_parameters': ['max_tokens', 'reasoning']}]}
 
 
 class ConfigurationsTests(unittest.TestCase):

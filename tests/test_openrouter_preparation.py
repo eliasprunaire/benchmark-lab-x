@@ -1350,6 +1350,77 @@ class OpenRouterPreparationTests(unittest.TestCase):
                     self.http.request.assert_not_called()
         self.assertFalse(hasattr(assistant.OpenRouterPreparation(KEY), '_profile_sha256'))
 
+    def test_connexion_impossible_avant_envoi_close_sans_cout_et_session_utilisable(self):
+        import ssl
+        failures = (socket.gaierror(8, 'nodename nor servname provided'),
+                    ConnectionRefusedError(61, 'Connection refused'),
+                    ssl.SSLCertVerificationError(1, 'certificate verify failed'))
+        for index, error in enumerate(failures):
+            with self.subTest(error=type(error).__name__):
+                self.http.reset_mock()
+                self.http.connect.side_effect = error
+                fields = (dict(action_id='create', request=NEED) if index == 0 else
+                          dict(action_id='retry-' + str(index), revision=1, kind='clarify', message=CLARIFICATION))
+                operation, view = self.execute(**fields)
+                self.assertEqual(('RECEIVED', {'status': 'NOT_SENT'}, 'KNOWN', '0'),
+                                 (operation['state'], operation['receipt']['result'],
+                                  operation['observed_cost']['status'], operation['observed_cost']['amount']))
+                self.assertEqual('CONNECTION_FAILED', operation['receipt']['observed_configuration']['incident'])
+                self.http.request.assert_not_called()
+                self.assertEqual('open', prep.availability(self.store, self.transport, self.session)['reason'])
+                self.assertIn('Impossible de joindre OpenRouter, rien n’a été envoyé ni facturé', view['notice'])
+        self.assertFalse(any(o['state'] == 'AMBIGUOUS' for o in self.store.inspect_operations()))
+        self.http.connect.side_effect = None
+        operation, view = self.execute(action_id='after', revision=1, kind='clarify', message=CLARIFICATION)
+        self.assertEqual('RECEIVED', operation['state'])
+        self.assertNotIn('notice', view)
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
+
+    def test_erreur_apres_le_debut_de_l_envoi_reste_ambigue_sans_relance(self):
+        self.http.request.side_effect = ConnectionResetError(54, 'Connection reset by peer')
+        operation, view = self.execute()
+        self.assertEqual('AMBIGUOUS', operation['state'])
+        self.assertEqual((1, 1), (self.http.connect.call_count, self.http.request.call_count))
+        self.assertEqual('interrupted', prep.availability(self.store, self.transport, self.session)['reason'])
+
+    def test_statuts_http_distingues_avec_message_et_retry_after(self):
+        response = self.http.getresponse.return_value
+        cases = ((401, b'{"error":{"code":401}}', 'KEY_REJECTED', 'refusé votre clé'),
+                 (402, b'{"error":{"code":402}}', 'CREDIT_EXHAUSTED', 'Crédit OpenRouter épuisé'),
+                 (429, b'{"error":{"code":429}}', 'RATE_LIMITED', 'limite temporairement'),
+                 (503, b'{"error":{"code":503}}', 'PROVIDER_ERROR', 'Incident chez OpenRouter'),
+                 (200, b'<html>Bad gateway</html>', 'PROVIDER_ERROR', 'Incident chez OpenRouter'),
+                 (400, b'{"error":{"code":400}}', 'UNUSABLE_RESPONSE', 'non utilisable'))
+        response.getheader.side_effect = {'Retry-After': '120'}.get
+        for index, (status, raw, incident, message) in enumerate(cases):
+            with self.subTest(status=status):
+                self.http.reset_mock()
+                response.status, response.read.return_value = status, raw
+                fields = (dict(action_id='create', request=NEED) if index == 0 else
+                          dict(action_id='status-' + str(index), revision=index + 1, kind='clarify', message=CLARIFICATION))
+                operation, view = self.execute(**fields)
+                observed = operation['receipt']['observed_configuration']
+                self.assertEqual(('RECEIVED', incident), (operation['state'], observed['incident']))
+                self.assertEqual('120', observed['http']['response_headers']['Retry-After'])
+                self.assertIn(message, view['explanation'])
+                self.assertEqual(1, self.http.request.call_count)
+
+    def test_cle_refusee_ou_credit_epuise_revérifie_la_cle(self):
+        from benchmark import provider_access
+        from tests.test_provider_access import AccessTransport
+        bound, secret, _ = self.personal_transport()
+        response = self.http.getresponse.return_value
+        response.status, response.read.return_value = 401, b'{"error":{"code":401}}'
+        refused = AccessTransport()
+        refused.verify_result = (401, b'{"error":{"code":401}}')
+        with patch.object(provider_access, 'OpenRouterAccess', return_value=refused):
+            operation, _ = prep.submit(self.store, self.session, 'personal',
+                                       dict(action_id='create', request=NEED), 'a' * 40, bound)
+            prep.execute(self.data, operation, bound)
+        self.assertEqual(1, len(refused.verifications))
+        state = provider_access.status_only(self.store, self.session)
+        self.assertEqual(('invalid', 'KEY_REJECTED'), (state['status'], state.get('reason')))
+
 
 if __name__ == '__main__':
     unittest.main()
