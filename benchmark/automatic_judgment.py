@@ -88,10 +88,22 @@ def admission(store, connection):
     return 'requester'
 
 
+def family(connection, campaign_id):
+    """Campagne source et ses reprises techniques : l'utilisateur lit une seule comparaison"""
+    return [campaign_id] + c._recovery_descendants(connection, campaign_id)
+
+
 def operations(store, connection, campaign_id):
     ids = {row[0] for row in connection.execute('SELECT operation_id FROM operations WHERE engine_version=?', (FORMAT,))}
+    campaigns = set(family(connection, campaign_id))
     return [op for op in store._operations(connection, operation_ids=ids)
-            if json.loads(op['resources'][0])['request']['campaign_id'] == campaign_id]
+            if json.loads(op['resources'][0])['request']['campaign_id'] in campaigns]
+
+
+def _attempts(store, connection, campaign_id):
+    """Tentatives de la campagne et de ses reprises, chacune avec l'identifiant de sa campagne"""
+    return [(cid, attempt) for cid in family(connection, campaign_id)
+            for attempt in c._inspect(store, connection, cid)['attempts']]
 
 
 def guard_budget(store, connection, budget_id, *, campaign_id=None):
@@ -253,19 +265,19 @@ def _plan(store, connection, session_id, dossier_id, campaign_id, transport):
             return []
     config, _ = preflight(store, session_id, dossier_id, campaign_id, transport,
                           count=None if due is None else len(due))
-    snapshot = c._inspect(store, connection, campaign_id)
-    if not snapshot['attempts'] or any(a['state'] != 'RECEIVED' for a in snapshot['attempts']):
+    attempts = _attempts(store, connection, campaign_id)
+    if not attempts or any(a['state'] != 'RECEIVED' for _, a in attempts):
         raise ConflictError('Réponses candidates à rapprocher avant l’évaluation')
     plan = []
-    for attempt in snapshot['attempts']:
+    for cid, attempt in attempts:
         # Sortie absente, vide ou blanche : rien à juger, aucun appel payant
         if not c.answered(attempt) or due is not None and attempt['operation_id'] not in due:
             continue
         previous, length, _ = due[attempt['operation_id']] if due is not None else (None, 0, None)
-        ctx = context(store, connection, campaign_id, attempt['operation_id'])
+        ctx = context(store, connection, cid, attempt['operation_id'])
         content = e._review_content(store, ctx)
-        request = dict(operation_id=_operation_id(campaign_id, attempt['operation_id'], length + 1),
-            campaign_id=campaign_id, attempt_id=attempt['operation_id'],
+        request = dict(operation_id=_operation_id(cid, attempt['operation_id'], length + 1),
+            campaign_id=cid, attempt_id=attempt['operation_id'],
             review_sha256=digest(content), previous_evaluation_id=None,
             authority=authority(connection, ctx), budget_id=provider_access.preparation_budget_id(session_id),
             reserve_amount=config['reserve_usd'], requested_configuration=config)
@@ -328,8 +340,9 @@ def status(store, connection, campaign_id, snapshot=None):
     ops = operations(store, connection, campaign_id)
     # Seule la dernière opération de chaque série compte : un jugement relancé reste un seul jugement
     latest = [op for op, _ in _latest(ops).values()]
-    # Un jugement est réservé par réponse à évaluer, une fois toutes les réponses reçues
-    total = len(latest) if ops else sum(c.answered(a) for a in snapshot['attempts'])
+    # Un jugement est réservé par réponse à évaluer, une fois toutes les réponses reçues, reprises comprises
+    attempts = [a for _, a in _attempts(store, connection, campaign_id)]
+    total = len(latest) if ops else sum(c.answered(a) for a in attempts)
     cells = len(snapshot['manifest']['plan'])
     completed, unusable = _completed(store, connection, latest)
     result = dict(status='NOT_STARTED', total=total, cells=cells, completed=completed, reason=None, can_start=False)
@@ -368,17 +381,25 @@ def status(store, connection, campaign_id, snapshot=None):
     elif ops:
         # Jugements restants clos sans envoi, ou campagne arrêtée depuis leur réservation (`judgment.execute`
         # les refuse alors avant émission) : seule une vraie interruption arrive ici
+        # Chaque jugement se compare à sa propre campagne, source ou reprise
+        current = {}
+        for o in ops:
+            if o['state'] != 'RECEIVED':
+                saved = json.loads(o['resources'][0])
+                cid = saved['request']['campaign_id']
+                current.setdefault(cid, snapshot if cid == campaign_id else c._inspect(store, connection, cid))
         if all(o['state'] == 'RECEIVED' for o in ops) or any(
-                snapshot[key] != json.loads(o['resources'][0])['context']['campaign'][key]
+                current[json.loads(o['resources'][0])['request']['campaign_id']][key]
+                != json.loads(o['resources'][0])['context']['campaign'][key]
                 for o in ops if o['state'] != 'RECEIVED' for key in ('admission', 'stop_reason', 'restore_pending')):
             result.update(status='BLOCKED', reason='Évaluation interrompue. Aucun appel ne sera relancé automatiquement.')
         else:
             result['status'] = 'RUNNING'
-    elif snapshot['attempts'] and all(a['state'] == 'RECEIVED' for a in snapshot['attempts']):
+    elif attempts and all(a['state'] == 'RECEIVED' for a in attempts):
         result['can_start'] = total > 0
         if not result['can_start']:
             result.update(status='BLOCKED', reason='Aucune réponse exploitable à évaluer.')
-    elif snapshot['attempts']:
+    elif attempts:
         result['status'] = 'WAITING'
     return result
 

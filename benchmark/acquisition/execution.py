@@ -231,8 +231,8 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
                                        ('ACQUISITION_RECEIPT_NOT_VERIFIED', c._now(), snapshot['manifest']['campaign_id']))
             storage.retry_locked(unverified)
     if received:
-        continue_preauthorized(data, attempt_id, transport,
-                               transport_factory=transport_factory)
+        continue_preauthorized(data, attempt_id, transport, transport_factory=transport_factory,
+                               access_secret=access_secret, access_transport=access_transport)
 
 
 def _derive_authority(owner_record, snapshot, operation_id, reserve_amount, budget_id):
@@ -322,8 +322,12 @@ def _next_preauthorized_attempt(store, operation_id, *, allow_official=False):
         return None
 
 
-def continue_preauthorized(data, operation_id, transport=None, *, transport_factory=None):
-    """Create, admit, reserve and execute the next frozen recovery, or stop"""
+def continue_preauthorized(data, operation_id, transport=None, *, transport_factory=None,
+                           access_secret=None, access_transport=None):
+    """Create, admit, reserve and execute the next frozen recovery, or stop
+
+    Une campagne financée par le demandeur reprend avec sa clé, comme la tentative source
+    """
     try:
         with closing(Store(data)) as store:
             nxt = _next_preauthorized_attempt(store, operation_id,
@@ -331,8 +335,9 @@ def continue_preauthorized(data, operation_id, transport=None, *, transport_fact
         if nxt is None:
             return
         if transport_factory is None:
-            execute(data, nxt, transport)
+            execute(data, nxt, transport, access_secret=access_secret, access_transport=access_transport)
         else:
-            execute(data, nxt, transport_factory=transport_factory)
+            execute(data, nxt, transport_factory=transport_factory,
+                    access_secret=access_secret, access_transport=access_transport)
     except (ValueError, KeyError, ConflictError, BudgetError, IntegrityError):
         return

@@ -918,6 +918,89 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn(('Non vérifiable', echeances), states)
         self.assertIn(explication, text)
 
+    def test_reponse_coupee_reprise_au_plus_deux_fois(self):
+        """Décision d'Ayo du 2026-10-02 : un modèle arrêté pour longueur est repris au plus deux fois
+
+        Modes d'échec couverts :
+        1. la reprise ne part pas, faute de clé du demandeur transmise ;
+        2. un modèle est repris plus de deux fois, ou un modèle complet est repris ;
+        3. la limite relevée change la demande d'un autre modèle ;
+        4. la réponse reprise n'est pas jugée, ou s'affiche sans dire qu'elle est une reprise ;
+        5. une chaîne de reprises sans réponse affiche une ligne par essai au lieu d'une seule ;
+        6. le récapitulatif avant lancement tait les reprises possibles ;
+        7. un conseil est donné alors que la comparaison compte une reprise
+        """
+        from base64 import b64encode
+        from hashlib import sha256
+        from benchmark import automatic_judgment as auto
+        judge = self.juge_factice()
+        with closing(storage.Store(self.data)) as store:
+            # Relevé complet : routes avec limites et tarifs, dont un tarif additionnel nul
+            fetched_at, raw = store._connection.execute('SELECT fetched_at, raw_json FROM s2_model_catalogue').fetchone()
+            document = json.loads(raw)
+            for detail in document['endpoints'].values():
+                for endpoint in detail['endpoints']:
+                    endpoint.update(max_completion_tokens=32768, context_length=64000,
+                                    pricing={'prompt': '0.000002', 'completion': '0.00001', 'request': '0'})
+            store._connection.execute('UPDATE s2_model_catalogue SET raw_json=? WHERE fetched_at=?',
+                                      (storage._strict_json(document), fetched_at))
+        dossier = self.exemple_qualifie()
+        page, _, _ = self.request(dossier + '/configurations')
+        page = self.submit(page, '/configurations', {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
+            'tier': 'low'})
+        self.assertIn('arrêté par la limite de longueur est relancé au plus deux fois', page.visible)
+        self.submit(page, '/start', {})
+        attempts = self.starts.get_nowait()['candidate_attempts']
+        envois = []
+
+        def coupee(value, content, limit):
+            body = storage._strict_json({'choices': [{'finish_reason': 'length', 'message': {
+                'role': 'assistant', 'content': content}}], 'usage': {'prompt_tokens': 120, 'completion_tokens': limit}}).encode()
+            value['receipt']['observed_configuration']['http'] = dict(
+                status=200, complete=True, credential_redacted=False,
+                body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest())
+            value['receipt']['result'].update(output=content, incident='PROVIDER_RESPONSE_INCOMPLETE')
+
+        def candidat(operation, request):
+            value = self.candidate(operation, request)
+            config = request['requested_configuration']
+            limit = config['parameters']['max_tokens']
+            envois.append((config['model'], limit))
+            if config['model'] == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+                if limit == 4096:
+                    # Tout le budget part en raisonnement, sans texte
+                    coupee(value, None, limit)
+            elif config['model'] == 'mistralai/mistral-small-2603':
+                # Coupé à chaque limite, avec une sortie qui progresse
+                coupee(value, 'Action : relire' + ' | suite' * (limit // 1024), limit)
+            return value
+        execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096),
+                          ('deepseek/deepseek-v4.1-flash', 8192), ('mistralai/mistral-small-2603', 4096),
+                          ('mistralai/mistral-small-2603', 8192), ('mistralai/mistral-small-2603', 16384)], envois)
+        page, _, _ = self.request(dossier)
+        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        self.submit(page, '/evaluate', {})
+        auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
+        # Modèle A et la reprise de Modèle B ; les réponses coupées de Modèle C ne partent jamais au juge
+        self.assertEqual(2, judge.request.call_count)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        results, _, raw = self.request(comparison)
+        self.examine(results, comparison, 'résultats avec reprises', None)
+        html = raw.decode()
+        rows = html.split('<tbody>')[1].split('</tbody>')[0]
+        self.assertEqual(2, rows.count('<tr id="attempt-'))
+        reprise = next(chunk for chunk in rows.split('<tr id="attempt-')[1:] if '<strong>Modèle B</strong>' in chunk)
+        self.assertIn('Reprise après arrêt pour longueur : limite de sortie de 8192 jetons', reprise)
+        self.assertNotIn('Aucune réponse exploitable pour Modèle B', html)
+        self.assertEqual(1, html.count('Aucune réponse exploitable pour Modèle C'))
+        self.assertIn('Aucune réponse exploitable pour Modèle C (arrêt pour longueur, plafond demandé : '
+                      '16384 jetons de sortie ; 2 reprises).', html)
+        self.assertNotIn('Notre conseil', html)
+        self.assertNotIn('rien n’est relancé automatiquement', html)
+
     def niveaux_envoyes(self, campaign_id):
         with closing(storage.Store(self.data)) as store:
             return [(c['model'], c['effort'], c.get('effort_requested'), c.get('effort_choice'))

@@ -619,11 +619,13 @@ def projection(store, connection, dossier_id, campaign_id):
     """Private owner projection, without broad access to the judge piece role"""
     from . import automatic_judgment as auto
     records = []
+    # Les reprises techniques d'une campagne se lisent avec elle (RULES.md §9)
+    family = set(auto.family(connection, campaign_id))
     for record in _records(store, connection, campaign_id=campaign_id) + auto.records(store, connection, campaign_id):
-        if record['campaign_id'] != campaign_id:
+        if record['campaign_id'] not in family:
             continue
         automatic = record['engine_version'] == auto.FORMAT
-        qualification = (auto.context(store, connection, campaign_id, record['attempt_id'])['qualification'] if automatic
+        qualification = (auto.context(store, connection, record['campaign_id'], record['attempt_id'])['qualification'] if automatic
                          else q._inspect(store, connection, record['contract_sha256']))
         contract = qualification['contract']
         if contract['dossier_id'] != dossier_id:

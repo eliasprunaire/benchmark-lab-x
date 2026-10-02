@@ -418,9 +418,12 @@ def render_comparison(value):
         configuration = panel.get(item.get('configuration_id'))
         if item['state'] != 'NO_USABLE_RESPONSE' or configuration is None:
             return item['next_action']
+        count = item.get('recoveries', 0)
+        details = ([item['cause']] if item.get('cause') else []) + (
+            [str(count) + (' reprises' if count > 1 else ' reprise')] if count else [])
         return ('Aucune réponse exploitable pour ' + model_name(configuration, names)
                 + (' · ' + effort_label(configuration) if sum(c['model'] == configuration['model'] for c in panel.values()) > 1 else '')
-                + (' (' + item['cause'] + ')' if item.get('cause') else '')
+                + (' (' + ' ; '.join(details) + ')' if details else '')
                 + '. Ce modèle n’est pas évalué et n’entre pas dans la comparaison.')
     pending_reasons = list(dict.fromkeys(pending_reason(item) for item in value.get('pending_attempts', [])))
     if pending_reasons:
@@ -524,7 +527,11 @@ def render_comparison(value):
         for row in rows:
             content += '<tr id="attempt-' + text(row['attempt_id']) + '"' + ('' if row['verdict'] == 'SATISFAIT' else ' class="out"') + ' tabindex="-1"><th scope="row">'
             content += '<strong>' + text(model_name(row['requested_configuration'], names)) + '</strong>'
-            content += '<p class="hint">' + text(effort_label(row['requested_configuration'])) + '</p></th>'
+            content += '<p class="hint">' + text(effort_label(row['requested_configuration'])) + '</p>'
+            if row.get('recovery_limit'):
+                content += '<p class="hint">' + text('Reprise après arrêt pour longueur : limite de sortie de '
+                                                     + str(row['recovery_limit']) + ' jetons') + '</p>'
+            content += '</th>'
             # Les critères qui fondent le verdict, entiers ; l'explication du juge reste dans le détail
             reason = ('Toutes les exigences sont respectées.' if row['verdict'] == 'SATISFAIT' else
                       _failure_reason(row) if row['verdict'] == 'NE SATISFAIT PAS' else 'Le verdict n’est pas encore disponible.')
@@ -753,6 +760,13 @@ def render_campaign_launch_requester(value, csrf):
                 '<table class="compact"><thead><tr><th scope="col">Modèle</th><th scope="col">Niveau de raisonnement</th>'
                 '<th scope="col">Coût estimé</th></tr></thead><tbody>' + rows + '</tbody></table></div>')
     content += '<p>Tous les appels passent par votre clé OpenRouter. Son plafond est la seule limite de dépense. Les montants affichés ici sont une prévision et une réservation, pas des dépenses facturées.</p>'
+    if value.get('recovery_limits'):
+        # Reprises préautorisées par ce lancement (RULES.md §9) : leur coût reste distinct de la prévision
+        content += '<p>' + text(
+            'Un modèle arrêté par la limite de longueur est relancé au plus deux fois, avec '
+            + ' puis '.join(str(limit) for limit in value['recovery_limits']) + ' jetons de sortie ; '
+            'chaque reprise apparaît sur sa propre ligne. Coût estimé si tous les modèles étaient repris deux fois : '
+            + usd(value.get('recovery_estimate_usd'), 'non estimable') + '.') + '</p>'
     content += section('Ce qui sera testé', '<p>' + text(value['criteria']['result_expected']) + '</p>' +
         '<p>Chaque modèle reçoit la même consigne et les mêmes pièces. Le verdict vaudra pour cet exemple et pour chaque modèle tel qu’il est réglé ici, sans conclure sur le modèle en général.</p>' +
         '<details><summary>Détail des critères et des réglages</summary>' + readable_fields(

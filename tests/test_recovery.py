@@ -605,11 +605,11 @@ class Recovery(unittest.TestCase):
         cid=self.granted('prepared-then-stop')
         c.reserve(self.store,cid,'x','first')
         real_execute=execution.execute
-        def execute_child_after_source_stop(data,oid,transport=None):
+        def execute_child_after_source_stop(data,oid,transport=None,**access):
             if oid!='first':
                 with closing(storage.Store(self.data)) as other:
                     c.stop(other,cid)
-            return real_execute(data,oid,transport)
+            return real_execute(data,oid,transport,**access)
         transport,calls=self.sequence(dict(finish='length',output='partial'),
                                       dict(finish='stop',output='Complete'))
         try:

@@ -630,7 +630,8 @@ def _campaign_worker(data, start, candidate_transport, factory, secret, access_t
                 return
             ids = auto.reserve_campaign(store, start['session_id'], start['dossier_id'],
                                         start['judgment_campaign'], judge)
-            if not ids and not any(campaigns.answered(a) for a in snapshot['attempts']):
+            # Une reprise réussie compte comme réponse à évaluer
+            if not ids and not any(campaigns.answered(a) for _, a in auto._attempts(store, store._connection, start['judgment_campaign'])):
                 campaigns.stop(store, start['judgment_campaign'], reason='JUDGMENT_STOPPED')
         _judgment_worker(data, start['dossier_id'], ids, judge, retry)
     except Exception as error:
