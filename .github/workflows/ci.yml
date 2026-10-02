@@ -14,6 +14,11 @@ jobs:
   tests:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # Les exécutions vertes durent de 8 à 18 min : un blocage s'arrête bien avant les 6 h par défaut
+    timeout-minutes: 45
+    env:
+      # Pile Python de tous les fils sur un arrêt fatal, dans le journal de l'étape
+      PYTHONFAULTHANDLER: "1"
     steps:
       - name: Récupérer le dépôt
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

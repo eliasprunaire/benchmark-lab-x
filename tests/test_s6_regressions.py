@@ -24,6 +24,7 @@ from benchmark_web.server import serve_web
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, granted, specification
 from tests.test_s4_regressions import inputs, manifest, response
 from tests.test_s5_regressions import RESPONSIBLE, EVALUATION_AUTHORITY, findings
+from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 # Empreintes de la page S6, identités et horodatages ramenés à une forme fixe
 # Un changement d'octets de présentation sans incrément de PRESENTATION_VERSION échoue

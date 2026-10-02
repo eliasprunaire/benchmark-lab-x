@@ -444,17 +444,17 @@ class PrivacyTests(unittest.TestCase):
         errors = []
         for _ in range(20):
             (self.data / MAINTENANCE_GATE).unlink(missing_ok=True)
-            start = threading.Barrier(64)
+            start = threading.Barrier(64, timeout=10)
 
             def take():
-                start.wait()
                 try:
+                    start.wait()
                     with maintenance_gate(self.store):
                         pass
-                except OSError as error:
+                except (OSError, threading.BrokenBarrierError) as error:
                     errors.append(type(error).__name__)
 
-            threads = [threading.Thread(target=take) for _ in range(64)]
+            threads = [threading.Thread(target=take, daemon=True) for _ in range(64)]
             for thread in threads:
                 thread.start()
             for thread in threads:

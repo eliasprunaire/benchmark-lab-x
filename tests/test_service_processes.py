@@ -32,6 +32,7 @@ from benchmark.storage import BudgetError, ConflictError, IntegrityError, Store,
 from benchmark_web.server import _source_fingerprint, serve_web
 from tests.test_storage import PAYLOAD, operation
 from tests import test_model_catalogue as catalogue_fixture
+from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 
 def catalogue_executor(data, sock, fetching, release, completed):
@@ -172,6 +173,9 @@ def service_lance(data, source='a' * 40):
             if child.is_alive():
                 child.terminate()
             child.join(5)
+            if child.is_alive():
+                child.kill()
+                child.join()
 
 
 class ServiceProcessesTests(unittest.TestCase):
@@ -221,6 +225,9 @@ class ServiceProcessesTests(unittest.TestCase):
                     if web.is_alive():
                         web.terminate()
                     web.join(5)
+                    if web.is_alive():
+                        web.kill()
+                        web.join()
 
     def test_catalogue_outage_waits_before_retry_and_stops_between_requests(self):
         from benchmark import model_catalogue
@@ -402,6 +409,9 @@ class ServiceProcessesTests(unittest.TestCase):
                     if child.is_alive():
                         child.terminate()
                     child.join(5)
+                    if child.is_alive():
+                        child.kill()
+                        child.join()
 
     def test_web_source_fingerprint_precedence_and_invalid_bucket(self):
         salt = b's' * 32
@@ -708,6 +718,9 @@ class ServiceProcessesTests(unittest.TestCase):
             finally:
                 child.terminate()
                 child.join(5)
+                if child.is_alive():
+                    child.kill()
+                    child.join()
 
     def test_health_restart_and_private_boundary(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -728,7 +741,7 @@ class ServiceProcessesTests(unittest.TestCase):
             command = [sys.executable, '-B', '-m', 'benchmark.runtime']
             children = []
             try:
-                executor = subprocess.Popen(command + ['executor', '--data', str(data), '--socket', str(sock)], cwd=root)
+                executor = subprocess.Popen(command + ['executor', '--data', str(data), '--socket', str(sock)], cwd=root, start_new_session=True)
                 children.append(executor)
                 deadline = time.monotonic() + 5
                 while True:
@@ -745,7 +758,7 @@ class ServiceProcessesTests(unittest.TestCase):
                     probe.bind(('127.0.0.1', 0))
                     port = probe.getsockname()[1]
                 web = subprocess.Popen(command + ['web', '--public', str(public), '--socket', str(sock), '--port', str(port),
-                                                  '--readyz-client', '127.0.0.1'], cwd=root)
+                                                  '--readyz-client', '127.0.0.1'], cwd=root, start_new_session=True)
                 children.append(web)
                 base = f'http://127.0.0.1:{port}'
                 deadline = time.monotonic() + 5
@@ -802,7 +815,7 @@ class ServiceProcessesTests(unittest.TestCase):
                 with urlopen(base + '/healthz', timeout=2) as response:
                     self.assertEqual('ok', json.load(response)['web'])
                 self.assertEqual(home, check_home())
-                restarted = subprocess.Popen(command + ['executor', '--data', str(data), '--socket', str(sock)], cwd=root)
+                restarted = subprocess.Popen(command + ['executor', '--data', str(data), '--socket', str(sock)], cwd=root, start_new_session=True)
                 children.append(restarted)
                 deadline = time.monotonic() + 5
                 while True:
@@ -819,7 +832,11 @@ class ServiceProcessesTests(unittest.TestCase):
                 for child in children:
                     if child.poll() is None:
                         child.terminate()
-                        child.wait(timeout=5)
+                        try:
+                            child.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            os.killpg(os.getpgid(child.pid), signal.SIGKILL)
+                            child.wait()
 
     def test_readyz_avec_pieces_reste_du_meme_ordre_que_healthz(self):
         """`/readyz` reste du même ordre de grandeur que `/healthz` sur un stockage qui contient une pièce
@@ -989,6 +1006,16 @@ def _loaded_stack(workers=None):
         initialize_storage(data)
         with closing(Store(data)) as store:
             _, _, token = preparation.session(store, None, create=True)
+            # Relevé frais : le cache de 24 h de l'exécuteur évite tout appel à OpenRouter
+            from benchmark import model_catalogue
+            from datetime import datetime, timezone
+            from tests.test_configurations import model
+            rows = [model('openai/gpt-5.6-sol', 'openai', ['high']),
+                    model('deepseek/deepseek-v4.1-flash', 'deepseek', [])]
+            document = {'models': [row[0] for row in rows], 'endpoints': {row[0]['id']: row[1] for row in rows}}
+            store._connection.execute(model_catalogue.TABLE_SQL)
+            store._connection.execute('INSERT INTO s2_model_catalogue VALUES (?,?)',
+                                      (datetime.now(timezone.utc).isoformat(), _strict_json(document)))
         # Chemin de socket court : AF_UNIX échoue au-delà d'une centaine d'octets
         socket_root = Path(tempfile.mkdtemp())
         sock = socket_root / 'x.sock'

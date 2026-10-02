@@ -19,6 +19,7 @@ from benchmark.acquisition import campaigns as c
 from benchmark import preparation as prep, qualification as q, runtime, storage
 from benchmark_web import views
 from tests.test_s3_regressions import ACTOR, AUTHORITY, check, fixture, granted, specification
+from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 
 def independent_acquisition(data, entered, release):

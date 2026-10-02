@@ -20,6 +20,7 @@ from benchmark_web.server import serve_web
 from tests.test_s4_regressions import inputs, manifest, response
 from tests.test_s5_regressions import EVALUATION_AUTHORITY, RESPONSIBLE, findings
 from tests.test_s6_regressions import Markup, build
+from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 
 class S10ProofTests(unittest.TestCase):

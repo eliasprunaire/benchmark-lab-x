@@ -15,6 +15,7 @@ import unittest
 from benchmark.storage import BudgetError, ConflictError, IntegrityError, SchemaError, Store, initialize
 from benchmark.runtime import backup, restore, verify_backup, status, stop, verify
 from tests.test_storage import PAYLOAD, operation, receipt, cost
+from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 
 class ServiceStorageTests(unittest.TestCase):

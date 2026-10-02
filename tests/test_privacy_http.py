@@ -26,6 +26,7 @@ from benchmark import preparation, privacy, provider_access, service, storage
 from benchmark_web.server import serve_web
 from tests.test_privacy import initialize, NOW, SECRET
 from tests.test_s2_review_regressions import Authorized, response_for
+from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 SOURCE = 'a' * 40
 PUBLIC_ORIGIN = 'https://bench-x.example'
