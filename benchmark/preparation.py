@@ -16,7 +16,8 @@ import unicodedata
 
 from .storage import (Store, SchemaError, IntegrityError, ConflictError, BudgetError,
                       _transaction, _strict_json as encode, _fields, _text,
-                      _identity, _money, _sum_money, _unique_object, _payload_json, locked, retry_locked)
+                      _identity, _money, _sum_money, _unique_object, _payload_json, locked, retry_locked,
+                      ambiguous_expired, AMBIGUOUS_EXPIRED_TEXT)
 from .validation import identifier
 from .transports.openrouter import INCIDENT_TEXT, NOT_SENT_TEXT, NotSent
 
@@ -496,6 +497,7 @@ def _automatic_qualification(store, connection, dossier_id, revision):
         return dict(operation_id=operation['operation_id'], qualified=False, findings=[],
                     summary=('Qualification arrêtée sans émission ni coût'
                              if operation['state'] == 'RECEIVED' and operation['receipt']['result'] == {'status': 'NOT_SENT'}
+                             else AMBIGUOUS_EXPIRED_TEXT if ambiguous_expired(operation)
                              else 'Résultat de qualification reçu non utilisable' if operation['state'] == 'RECEIVED'
                              else 'Effets de qualification inconnus' if operation['state'] == 'AMBIGUOUS'
                              else 'Qualification suspendue : intention conservée sans émission ni reprise automatique' if blocked_intent
@@ -615,6 +617,8 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
                     result.update(stage='waiting', explanation=result['notice'], validation=None)
                 elif type(observed) is dict and observed.get('incident') == 'CONNECTION_FAILED':
                     result['notice'] = NOT_SENT_TEXT + ' Vous pouvez renvoyer votre message.'
+                elif ambiguous_expired(operation):
+                    result['notice'] = AMBIGUOUS_EXPIRED_TEXT
             pending = connection.execute('SELECT o.state FROM s2_actions a JOIN operations o USING(operation_id) '
                                          'WHERE a.dossier_id=? AND a.input_revision=? AND o.state!=?',
                                          (dossier_id, revision, 'RECEIVED')).fetchall()

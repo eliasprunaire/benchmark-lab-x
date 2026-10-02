@@ -212,7 +212,7 @@ Les choix techniques relèvent de l'ARD. Le backlog et son avancement relèvent 
 | Une saisie contient une information sensible | traitement selon la politique approuvée avant ouverture, sans promesse d’anonymisation parfaite ni publication implicite |
 | L’utilisateur valide une référence fausse ou insuffisante | la confirmation du besoin ne remplace pas la qualification ; le contrat ne peut pas être approuvé en l’état |
 | Préparateur, juge et candidat partagent un modèle ou fournisseur | lien, ressources exposées, contrôles et limites de jugement visibles |
-| Le budget de préparation est épuisé ou un appel reste ambigu | arrêt et coûts connus conservés, sans relance implicite |
+| Le budget de préparation est épuisé ou un appel reste ambigu | arrêt et coûts connus conservés, sans relance implicite ; un appel ambigu est clos automatiquement après quinze minutes, coût inconnu et réserve conservés, sans intervention de l’équipe |
 | Un critère change avant lancement ou après gel | nouvelle qualification et validations affectées ; nouvelle version après gel, sans réécriture des anciens résultats |
 | Une tâche possède plusieurs versions et campagnes | le lecteur choisit une campagne, retrouve sa tâche et distingue les différences qui bornent la comparaison |
 | Le lecteur arrive directement sur une campagne | un contexte bref précède la conclusion et le tableau ; l’aide, la méthode et les sorties par configuration sont accessibles, avec retour à la synthèse |

@@ -76,7 +76,8 @@ def _envelope(store, connection, request, operation_id=None):
         cost = store._effective_cost(connection, op)
         if source['campaign_id'] == request['campaign_id'] and (
                 op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS')
-                or cost is not None and cost['status'] == 'UNKNOWN' and not storage.provider_incident(op)):
+                or cost is not None and cost['status'] == 'UNKNOWN' and not storage.provider_incident(op)
+                and not storage.ambiguous_expired(op)):
             raise BudgetError('Jugement dépendant non résolu, même avec une autre enveloppe')
 
 
@@ -304,6 +305,8 @@ def diagnostic(store, connection, operation, ctx):
                     reason='Jugement sans reçu ; vérifier les effets avant tout nouvel appel')
     if storage.not_sent(operation):
         return dict(state='NOT_SENT', reason='Jugement clos avant envoi : aucun appel ni coût')
+    if storage.ambiguous_expired(operation):
+        return dict(state=storage.AMBIGUOUS_EXPIRED, reason=storage.AMBIGUOUS_EXPIRED_TEXT)
     proposal = _retained_proposal(store, connection, operation, ctx, recover_metadata=True)
     if proposal and proposal.get('evidence_binding', {}).get('recovered_from_receipt'):
         return dict(state='EVALUATED_METADATA_CORRECTED',
@@ -354,7 +357,7 @@ def evaluation_judgment(store, connection, value, ctx, operation, result):
 
 def _retained_proposal(store, connection, operation, ctx, *, recover_metadata=False):
     receipt = operation['receipt']
-    if receipt is None or storage.not_sent(operation):
+    if receipt is None or storage.not_sent(operation) or storage.ambiguous_expired(operation):
         return None
     wire = operation['resources'][1]
     observed = receipt['observed_configuration']

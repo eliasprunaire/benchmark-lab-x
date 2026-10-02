@@ -13,7 +13,7 @@ import hashlib
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, localcontext, MAX_EMAX, MIN_EMIN
 from functools import cache, lru_cache
 import json
@@ -148,6 +148,21 @@ def provider_incident(operation):
         return False
     observed = receipt['observed_configuration']
     return type(observed) is dict and observed.get('incident') in ('RATE_LIMITED', 'PROVIDER_ERROR')
+
+
+# Au-delà, aucune réponse ne peut plus arriver sur la connexion de l'appel : l'effet inconnu est clos, jamais rejoué
+AMBIGUITY_DELAY = timedelta(minutes=15)
+AMBIGUOUS_EXPIRED = 'AMBIGUOUS_EXPIRED'
+AMBIGUOUS_EXPIRED_TEXT = 'Nous ne savons pas si le modèle a répondu ; l’opération a été close. Vous pouvez continuer.'
+
+
+def ambiguous_expired(operation):
+    """Opération aux effets inconnus close après `AMBIGUITY_DELAY` : coût INCONNU, réserve comptée, jamais relancée"""
+    receipt = operation['receipt']
+    if operation['state'] != 'RECEIVED' or receipt is None:
+        return False
+    observed = receipt['observed_configuration']
+    return type(observed) is dict and observed.get('incident') == AMBIGUOUS_EXPIRED
 
 
 def locked(error):
@@ -1060,7 +1075,7 @@ class Store:
                 and not (phase in ('preparation', 'correction', 'qualification')
                          and row['phase'] in ('preparation', 'correction', 'qualification')
                          and row['state'] == 'RECEIVED')
-                and not provider_incident(row)]
+                and not provider_incident(row) and not ambiguous_expired(row)]
 
     def inspect_budget(self, budget_id: str) -> dict:
         _text(budget_id, 'budget_id')
@@ -1164,6 +1179,56 @@ class Store:
                      source='Contrôle local : transport non engagé' if unreachable_at is None
                      else 'Connexion au fournisseur impossible : requête non envoyée'))
         return True
+
+    def close_expired_ambiguous(self, now: datetime) -> list[str]:
+        """Clore chaque opération ambiguë depuis `AMBIGUITY_DELAY` : reçu `AMBIGUOUS_EXPIRED`, coût INCONNU
+
+        Rien n'est rejoué et la réserve reste comptée ; seule la session cesse d'attendre. L'échéance part de
+        la date de l'intention, antérieure de quelques secondes à l'envoi. L'état est relu sous BEGIN
+        IMMEDIATE : deux clôtures concurrentes ne se partagent qu'une fois chaque opération. Une base
+        restaurée ne prouve pas que l'attente a eu lieu : rien n'y est clos. Une émission possible n'est
+        jamais touchée ici : un fil de ce processus peut encore recevoir sa réponse, et le démarrage suivant
+        la passe en ambigu
+        """
+        if os.path.lexists(self._root / 'restore.json'):
+            return []
+        connection = self._s1_connection()
+        # Lecture légère d'abord : le verrou d'écriture n'est pris que s'il reste une échéance atteinte
+        due = [operation_id for operation_id, created_at in connection.execute(
+            "SELECT operation_id, created_at FROM operations WHERE state='AMBIGUOUS'")
+            if datetime.fromisoformat(created_at) + AMBIGUITY_DELAY <= now]
+        if not due:
+            return []
+        closed = []
+        with _transaction(connection, write=True):
+            for operation in self._operations(connection, operation_ids=due):
+                if (operation['state'] == 'AMBIGUOUS'
+                        and datetime.fromisoformat(operation['created_at']) + AMBIGUITY_DELAY <= now):
+                    self._close_ambiguous(connection, operation, now)
+                    closed.append(operation['operation_id'])
+        return closed
+
+    def _close_ambiguous(self, connection, operation, now):
+        operation_id = operation['operation_id']
+        currency = connection.execute('SELECT b.currency FROM reservations r JOIN budgets b USING(budget_id) '
+                                      'WHERE r.operation_id=?', (operation_id,)).fetchone()[0]
+        campaign = (connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_attempts'").fetchone()
+                    and connection.execute('SELECT 1 FROM s4_attempts WHERE operation_id=?', (operation_id,)).fetchone())
+        from .model_probes import ENGINE as probe_engine
+        # Forme du résultat attendue par chaque lecteur : tentative candidate, vérification de modèle, ou aucun
+        result = (dict(output=None, incident=AMBIGUOUS_EXPIRED, emission='UNKNOWN') if campaign
+                  else dict(status=AMBIGUOUS_EXPIRED) if operation['engine_version'] == probe_engine else None)
+        receipt = dict(receipt_id='ambiguous-expired-' + operation_id, resources_seen=[],
+                       observed_configuration=dict(incident=AMBIGUOUS_EXPIRED, observed_at=now.isoformat(),
+                                                   reason=operation['ambiguity_reason']),
+                       result=result)
+        cost = dict(status='UNKNOWN', amount=None, currency=currency,
+                    source='Appel sans réponse connue après 15 minutes : coût inconnu, réserve conservée')
+        self._record_receipt(connection, operation_id, receipt, cost)
+        if campaign:
+            from .validation import digest
+            connection.execute('INSERT INTO s4_results VALUES (?,?,?,?,?)',
+                               (operation_id, None, digest(receipt), digest(cost), now.isoformat()))
 
     def mark_ambiguous(self, operation_id: str, reason: str) -> None:
         _text(operation_id, 'operation_id')
