@@ -285,7 +285,8 @@ class ServiceStorageTests(unittest.TestCase):
             piece.symlink_to(root / 'original')
             with self.assertRaises(IntegrityError):
                 store.read_piece('piece')
-            with sqlite3.connect(root / "metadata.sqlite3") as tamper:
+            # `with connect()` valide la transaction sans fermer : closing() ferme la connexion
+            with closing(sqlite3.connect(root / "metadata.sqlite3")) as tamper, tamper:
                 tamper.execute("UPDATE pieces SET relative_path='../original' WHERE piece_id='piece'")
             with self.assertRaises(IntegrityError):
                 store.read_piece('piece')
