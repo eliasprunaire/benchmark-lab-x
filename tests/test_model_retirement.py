@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from benchmark import storage, preparation, model_catalog
+from benchmark import storage, model_catalog
 from benchmark.transports import prices as openrouter_prices
 from benchmark_web import views
 from tests.test_storage import operation, PAYLOAD

@@ -1,4 +1,3 @@
-from contextlib import closing
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
