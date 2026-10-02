@@ -304,6 +304,41 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertEqual(consent['contribution']['expires_at'], metadata['expires_at'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
+    def test_archive_compares_each_campaign_once_and_keeps_only_the_previous_version(self):
+        self.prepare('arch')
+        self.qualify('arch')
+        first = archive.archive_manifest(self.store, self.sid, 'arch')
+        cid, attempts, _ = self.campaign('arch')
+        # Vue des modèles : une seule vérification de la base pour toute la lecture
+        checks = []
+        self.store._connection.set_trace_callback(lambda sql: checks.append(sql) if 'quick_check' in sql else None)
+        campaigns.configurations_view(self.store, self.sid, 'arch')
+        self.store._connection.set_trace_callback(None)
+        self.assertEqual(1, len(checks))
+        service._retention_worker(self.data, 'arch', self.acquire, attempts)
+        second = archive.archive_manifest(self.store, self.sid, 'arch')
+        self.stage = 'judgment'
+        # L'évaluation contrôle les objets qu'elle touche, jamais l'audit complet du stockage
+        with patch.object(storage.Store, 'verify_storage', autospec=True,
+                          side_effect=storage.Store.verify_storage) as audits:
+            ids = auto.reserve_campaign(self.store, self.sid, 'arch', cid, self.judge)
+            service._retention_worker(self.data, 'arch', auto.execute_campaign, self.data, ids, self.judge)
+        self.assertEqual((2, 0), (len(ids), audits.call_count))
+        self.assertEqual('COMPLETE', auto.status(self.store, self.store._connection, cid)['status'])
+        # Une comparaison calculée par campagne, quel que soit le nombre de modèles
+        with patch.object(restitution, '_comparison', wraps=restitution._comparison) as computed:
+            third = archive.archive_manifest(self.store, self.sid, 'arch')
+        self.assertEqual(1, computed.call_count)
+        self.assertEqual(2, len(self.record('arch', third)['campaigns'][0]['models']))
+        # La version précédente reste téléchargeable ; les plus anciennes sont retirées
+        kept = {row[0] for row in self.store._connection.execute(
+            'SELECT snapshot_id FROM s7_archives WHERE dossier_id=?', ('arch',))}
+        self.assertEqual({second['snapshot_id'], third['snapshot_id']}, kept)
+        self.assertEqual(2, len(self.record('arch', second)['campaigns'][0]['models']))
+        with self.assertRaises(prep.Denied):
+            archive.archive_item(self.store, self.sid, 'arch', first['snapshot_id'], 0)
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
+
     def unknown_cost_survives_purge(self, phase):
         self.prepare('erase')
         self.qualify('erase')

@@ -9,9 +9,11 @@ garde le seul budget local : la santé ne doit pas attendre derrière un échang
 
 Limites assumées. L'exécuteur traite plusieurs requêtes à la fois, mais sa concurrence est
 bornée : `EXECUTOR_WORKERS` fils de travail, chacun avec son propre `Store` ouvert une seule fois
-au démarrage. Quand tous travaillent, la connexion suivante est fermée aussitôt plutôt que mise en
-attente derrière `RELAY_BUDGET_SECONDS` ; `executor_health` peut alors échouer et `/readyz`
-répondre 503. Les écritures restent sérialisées par SQLite : une écriture concurrente attend le
+au démarrage, plus un fil réservé. Quand tous travaillent, ce fil réservé répond à `executor_health`
+et refuse toute autre requête en 503 `SATURATED` ; s'il est lui aussi occupé, la connexion est
+fermée aussitôt plutôt que mise en attente derrière `RELAY_BUDGET_SECONDS`. Une vue de lecture
+(GET) est interrompue par SQLite au-delà de `READ_BUDGET_SECONDS` : transaction annulée, 503
+`READ_TIMEOUT`. Les écritures restent sérialisées par SQLite : une écriture concurrente attend le
 délai d'occupation de 5 secondes, puis échoue en `SQLITE_BUSY` plutôt que d'attendre davantage, et
 la frontière la rend en 500. `preparation.submit` construit le corps sortant dans sa transaction
 d'écriture (`transport.prepare`, local, sans réseau) ; l'appel fournisseur part ensuite dans
@@ -40,7 +42,7 @@ typés. Le web n'a donc plus à se défendre champ par champ, et une réponse ho
 une indisponibilité annoncée plutôt qu'un corps nul ou une page rompue.
 """
 from copy import copy
-from contextlib import ExitStack, closing
+from contextlib import ExitStack, closing, contextmanager
 from concurrent.futures import Future
 from http.client import HTTPException
 import fcntl
@@ -89,6 +91,16 @@ CONFLICT_MESSAGE = ('Cette action n’a pas été faite : la page n’était plu
 INTERNAL_MESSAGE = ('Une erreur interne s’est produite. Votre action a peut-être été enregistrée : '
                     'ouvrez votre cas d’usage avant de renvoyer quoi que ce soit.')
 PROTOCOL_MESSAGE = 'Réponse d’exécuteur illisible'
+# Une vue de lecture ne tient jamais la base au-delà de ce budget : SQLite l'interrompt, sa transaction
+# est annulée et son verrou rendu, sans attendre le client web qui a peut-être déjà abandonné
+READ_BUDGET_SECONDS = 20
+READ_TIMEOUT_RESULT = {'status': 503, 'value': {
+    'error': 'Cette page a demandé trop de temps et son affichage a été interrompu. Réessayez dans un instant.',
+    'error_code': 'READ_TIMEOUT', 'unavailable': True}}
+# Place réservée à la santé quand tous les fils travaillent : une requête ordinaire y est refusée sans être traitée
+SATURATED_RESULT = {'status': 503, 'value': {
+    'error': 'Bench-X reçoit trop de demandes en ce moment. Votre action n’a pas été traitée. Réessayez dans un instant.',
+    'error_code': 'SATURATED', 'unavailable': True}}
 MAINTENANCE_RESULT = {'status': 503, 'value': {
     'error': 'Bench-X est en maintenance. Votre action n’a pas été traitée et rien n’a été modifié. '
              'Réessayez dans quelques minutes.', 'error_code': 'MAINTENANCE', 'unavailable': True}}
@@ -107,7 +119,8 @@ def executor_workers():
 class BoundedUnixServer(socketserver.UnixStreamServer):
     """Concurrence bornée : la boucle d'acceptation confie la connexion à un fil libre
 
-    Le nombre de fils borne le travail simultané. Quand tous travaillent, la connexion est fermée
+    Le nombre de fils borne le travail simultané. Quand tous travaillent, un fil réservé prend la
+    connexion : il répond à la santé et refuse le reste. S'il est occupé, la connexion est fermée
     sans réponse : le relais le lit comme une indisponibilité de transport et rend 503 tout de
     suite, au lieu d'attendre le budget de relais. `run` reste inchangée, donc le serveur web garde
     exactement la boucle d'aujourd'hui
@@ -118,13 +131,18 @@ class BoundedUnixServer(socketserver.UnixStreamServer):
         # Avant le bind : un échec y appelle `server_close`, qui doit laisser remonter l'erreur d'origine
         self._stopped = False
         self._workers = []
+        # Un fil de plus, réservé : la santé répond même quand tous les autres travaillent
+        self._spare_jobs = queue.SimpleQueue()
+        self._spare = threading.Semaphore(1)
         super().__init__(socket_path, handler)
         self._jobs = queue.SimpleQueue()
         self._free = threading.Semaphore(workers)
         self._opened = queue.SimpleQueue()
         # Démons : une jointure bornée honore la requête en cours sans retenir le processus à jamais
-        self._workers = [threading.Thread(target=self._work, args=(data,), name=f'executor-{index}',
+        self._workers = [threading.Thread(target=self._work, args=(data, self._jobs, self._free), name=f'executor-{index}',
                                           daemon=True) for index in range(workers)]
+        self._workers.append(threading.Thread(target=self._work, args=(data, self._spare_jobs, self._spare, True),
+                                              name='executor-health', daemon=True))
         try:
             for worker in self._workers:
                 worker.start()
@@ -138,7 +156,7 @@ class BoundedUnixServer(socketserver.UnixStreamServer):
             self.server_close()
             raise
 
-    def _work(self, data):
+    def _work(self, data, jobs, free, spare=False):
         try:
             store = Store(data)
         except BaseException as error:
@@ -147,11 +165,12 @@ class BoundedUnixServer(socketserver.UnixStreamServer):
         # Une place perdue ne doit pas promettre une capacité absente au reste de la boucle
         with closing(store):
             _worker_store.store = store
+            _worker_store.spare = spare
             self._opened.put(None)
             while True:
                 # Un fil qui disparaît laisserait sa place au sémaphore : la boucle survit à tout
                 try:
-                    job = self._jobs.get()
+                    job = jobs.get()
                     if job is None:
                         return
                     try:
@@ -161,17 +180,19 @@ class BoundedUnixServer(socketserver.UnixStreamServer):
                             self.handle_error(*job)
                     finally:
                         self.shutdown_request(job[0])
-                        self._free.release()
+                        free.release()
                 except Exception as error:
                     logging.getLogger(__name__).error('EXECUTOR_WORKER_RECOVERED %s',
                                                       type(error).__name__)
 
     def process_request(self, request, client_address):
-        if not self._free.acquire(blocking=False):
+        if self._free.acquire(blocking=False):
+            self._jobs.put((request, client_address))
+        elif self._spare.acquire(blocking=False):
+            self._spare_jobs.put((request, client_address))
+        else:
             # Capacité saturée : fermeture immédiate, jamais une attente derrière le budget de relais
             self.shutdown_request(request)
-            return
-        self._jobs.put((request, client_address))
 
     def stop_workers(self):
         """Arrêt propre : la requête en cours se termine dans son budget, puis chaque Store est fermé
@@ -185,6 +206,7 @@ class BoundedUnixServer(socketserver.UnixStreamServer):
         self._stopped = True
         for _ in self._workers:
             self._jobs.put(None)
+        self._spare_jobs.put(None)
         deadline = time.monotonic() + RELAY_BUDGET_SECONDS
         for worker in self._workers:
             if worker.ident is None:
@@ -194,9 +216,10 @@ class BoundedUnixServer(socketserver.UnixStreamServer):
                 logging.getLogger(__name__).error('EXECUTOR_WORKER_STUCK %s', worker.name)
 
     def server_close(self):
-        # Filet : un abandon avant la boucle passe par ici, sinon `serve_executor` a déjà arrêté
-        self.stop_workers()
+        # L'écoute ferme d'abord : pendant l'attente des fils, une connexion est refusée tout de suite
+        # au lieu d'attendre dans la file un traitement qui n'aura jamais lieu
         super().server_close()
+        self.stop_workers()
 
 
 def release_metadata():
@@ -289,7 +312,16 @@ def denied_response(error):
     if error.code == 'NOT_FOUND':
         return {'status': 404, 'value': {'error': 'Cette page n’existe pas ou ne vous est pas accessible.', 'error_code': 'NOT_FOUND'}}
     if not error.code:
-        return {'status': 403, 'value': {'error': generic}}
+        # Refus formulé en phrase : le motif reste interne, le code est stable pour les pages
+        return {'status': 403, 'value': {'error': generic, 'error_code': 'DENIED'}}
+    unavailable = {
+        'ACCESS_UNAVAILABLE': 'L’accès aux clés OpenRouter est indisponible sur le serveur pour le moment. '
+                              'Aucun appel n’a été lancé. Réessayez plus tard ; si cela continue, contactez l’équipe Bench-X.',
+        'PRIVACY_MIGRATION_PENDING': 'Bench-X termine une mise à jour de ses données. Réessayez dans quelques minutes.',
+    }
+    if error.code in unavailable:
+        return {'status': 503, 'value': {'error': unavailable[error.code], 'error_code': error.code,
+                                         'unavailable': True}}
     messages = {
         'SESSION_EXPIRED': 'Votre session a expiré. Les copies gardées dans ce navigateur restent consultables dans Mes données.',
         'RESTORE_PENDING': 'Service fermé pour le moment : l’équipe Bench-X doit vérifier une restauration. Réessayez plus tard.',
@@ -392,12 +424,41 @@ def executor_result(raw, health, handle):
         return {'status': 400, 'value': {'error': BAD_REQUEST_MESSAGE}}
     started = time.monotonic()
     result = _handled(message, handle)
-    route = _logged_route(message)
-    if '/campaigns/' in route or route.endswith('/configurations'):
-        # Durée de chaque vue de campagne : un affichage lent se voit avant qu'il bloque la base
-        logging.getLogger(__name__).info('EXECUTOR_TIMING %s %s %d ms', route, result['status'],
-                                         round(1000 * (time.monotonic() - started)))
+    # Durée de chaque requête, route sans identifiant : un affichage lent se voit avant qu'il bloque la base
+    logging.getLogger(__name__).info('EXECUTOR_TIMING %s %s %d ms', _logged_route(message), result['status'],
+                                     round(1000 * (time.monotonic() - started)))
     return result
+
+
+class ReadTimeout(Exception):
+    """Vue de lecture interrompue par son budget ; sa transaction est déjà annulée"""
+
+
+@contextmanager
+def bounded_read(connection, seconds):
+    """SQLite interrompt toute instruction de la vue passé `seconds` ; la vue échoue alors en ReadTimeout
+
+    Le contrôle a lieu entre deux instructions SQL : un calcul Python seul n'est pas interrompu
+    """
+    deadline = time.monotonic() + seconds
+    expired = False
+
+    def check():
+        nonlocal expired
+        expired = time.monotonic() > deadline
+        return expired
+
+    connection.set_progress_handler(check, 1000)
+    try:
+        yield
+    except Exception as error:
+        if expired:
+            raise ReadTimeout() from error
+        raise
+    finally:
+        connection.set_progress_handler(None, 0)
+        if expired and connection.in_transaction:
+            connection.execute('ROLLBACK')
 
 
 def _handled(message, handle):
@@ -406,6 +467,9 @@ def _handled(message, handle):
         return handle(message)
     except preparation.Denied as error:
         return denied_response(error)
+    except ReadTimeout:
+        logging.getLogger(__name__).warning('EXECUTOR_READ_INTERRUPTED %s', _logged_route(message))
+        return READ_TIMEOUT_RESULT
     except Gone:
         return {'status': 410, 'value': {'error': 'Ce cas d’usage n’est plus disponible sur le serveur. Vos copies gardées dans ce navigateur restent dans Mes données.', 'error_code': 'DOSSIER_EXPIRED'}}
     except (ConflictError, BudgetError):
@@ -491,8 +555,10 @@ def personal_dispatch(store, message, source, *, transport=None, qualification_t
                                          assistant_configured=transport is not None)
         if code < 400 and value.get('kind') not in ('session_bootstrap', 'privacy_data', 'contributions'):
             try:
-                session_id, _, _ = preparation.session(store, cookie or message['token'])
+                session_id, csrf, _ = preparation.session(store, cookie or message['token'])
                 value['personal_access'] = provider_access.status_only(store, session_id)
+                # Le jeton du formulaire, que la page lisait par un second relais `GET /preparation`
+                value['csrf_token'] = csrf
             except preparation.Denied:
                 pass
             except (sqlite3.Error, SchemaError) as error:
@@ -634,6 +700,9 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
 
             def handle_message(message):
                 from .runtime import maintenance_gate, worker_lock
+                if _worker_store.spare:
+                    # Place réservée à la santé : une requête ordinaire n'y est jamais traitée
+                    return SATURATED_RESULT
                 worker = _worker_store.store
                 with ExitStack() as held:
                     try:
@@ -642,7 +711,10 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     except BlockingIOError:
                         # Refus avant tout acheminement : rien n'a été écrit pour cette requête
                         return MAINTENANCE_RESULT
-                    return handle_locked(worker, message)
+                    if message['method'] != 'GET':
+                        return handle_locked(worker, message)
+                    with bounded_read(worker._connection, READ_BUDGET_SECONDS):
+                        return handle_locked(worker, message)
 
             def handle_locked(store, message):
                 from . import preparation
@@ -733,7 +805,7 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     run(server)
                 finally:
                     stopping.set()
-                    server.stop_workers()
+                    server.server_close()
                     if catalogue_worker is not None:
                         # `fetch_unless_stopping` empêche d'écrire un relevé récupéré après `stopping` ; le budget
                         # local couvre une écriture déjà lancée, qui tient dans une transaction : interrompue, SQLite

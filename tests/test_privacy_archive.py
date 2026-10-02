@@ -404,7 +404,7 @@ class PrivacyArchiveTests(unittest.TestCase):
 
     def test_fictional_organizations_and_fixed_model_names_are_not_personal_data(self):
         original = p.view
-        original_comparison = archive.restitution.comparison
+        original_comparison = archive.restitution._comparison
 
         def fictional(*args, **kwargs):
             value = original(*args, **kwargs)
@@ -418,7 +418,7 @@ class PrivacyArchiveTests(unittest.TestCase):
                 value['rows'][0]['requested_configuration']['model'] = 'Claude Fable'
             return value
 
-        with patch.object(p, 'view', side_effect=fictional), patch.object(archive.restitution, 'comparison', side_effect=named):
+        with patch.object(p, 'view', side_effect=fictional), patch.object(archive.restitution, '_comparison', side_effect=named):
             archive.change_contribution(self.store, self.session_token, 'fixture', self.consent(), now=self.now)
         raw = self.connection.execute('SELECT payload_json FROM s7_contributions').fetchone()[0]
         self.assertIn('Atelier Brumélis', raw)

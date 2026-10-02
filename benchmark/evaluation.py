@@ -72,9 +72,9 @@ def schema_objects():
 
 def initialize(data):
     """Explicitly extend an intact S4 database; never initialize on inspection"""
-    from .runtime import worker_lock
+    from .runtime import verify, worker_lock
     with closing(storage.Store(data)) as store, worker_lock(store):
-        c._intact(store)
+        verify(store)
         connection = store._connection_checked()
         with _transaction(connection, write=True):
             layout = storage._check_schema(connection)

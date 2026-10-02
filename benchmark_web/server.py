@@ -421,10 +421,14 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                         headers['Location'] = self.path.removesuffix('/custom-models') + '/configurations#custom-models'
                     else:
                         # « Continuer » mène au récapitulatif de la sélection que l'exécuteur vient de créer
-                        campaign_id = result['value']['current_campaign_id']
-                        if not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', str(campaign_id)):
+                        campaign_id = result['value'].get('current_campaign_id')
+                        if campaign_id is None:
+                            # Aucune sélection prête : retour au choix des modèles, qui montre l'état
+                            headers['Location'] = self.path
+                        elif type(campaign_id) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', campaign_id):
                             raise ValueError('Sélection de retour invalide')
-                        headers['Location'] = self.path.removesuffix('/configurations') + '/campaigns/' + campaign_id + '/conditions'
+                        else:
+                            headers['Location'] = self.path.removesuffix('/configurations') + '/campaigns/' + campaign_id + '/conditions'
                     self.respond(303, b'', 'text/html; charset=utf-8', headers)
                     return
                 if self.command == 'POST' and self.path.endswith(('/start', '/evaluate')) and result['status'] < 400 and not wants_json:
@@ -440,12 +444,18 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     csrf = body.get('csrf_token', '') if type(body) is dict else ''
                     view_path = self.path
                     if result['status'] < 400 and result['value'].get('kind') not in ('privacy_data', 'session_bootstrap', 'contributions'):
-                        home = preparation_request(socket_path, 'GET', '/preparation', token)
-                        csrf = home['value']['csrf_token']
+                        if 'csrf_token' in result['value'] and ('operation_id' not in result['value']
+                                                                or 'availability' in result['value']):
+                            # Jeton joint par l'exécuteur, disponibilité déjà calculée comme pour l'accueil :
+                            # pas de second relais
+                            csrf = result['value']['csrf_token']
+                        else:
+                            home = preparation_request(socket_path, 'GET', '/preparation', token)
+                            csrf = home['value']['csrf_token']
+                            if 'operation_id' in result['value']:
+                                result['value']['availability'] = home['value']['availability']
                         if self.path == '/preparation/access':
                             result['value']['kind'] = 'access'
-                        if 'operation_id' in result['value']:
-                            result['value']['availability'] = home['value']['availability']
                     elif self.command == 'POST' and type(body) is dict:
                         result['value']['form'] = {key: value for key, value in body.items()
                                                    if key not in ('csrf_token', 'source_sha256', 'website', 'key')}
@@ -472,7 +482,12 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                              'application/json' if wants_json else 'text/html; charset=utf-8')
             except OSError:
                 read_only = self.command in ('GET', 'HEAD')
-                value = {'error': 'Bench-X est momentanément indisponible. Cette page ne peut pas s’afficher, '
+                # L'archive s'enregistre à sa première demande : après un délai, rien ne prouve le contraire
+                writing_read = urlsplit(self.path).path.endswith('/archive')
+                value = {'error': 'Bench-X est momentanément indisponible. Cette page ne peut pas s’afficher. '
+                         'Réessayez dans un instant.'
+                         if read_only and writing_read else
+                         'Bench-X est momentanément indisponible. Cette page ne peut pas s’afficher, '
                          'mais rien n’a été modifié. Réessayez dans un instant.'
                          if read_only else
                          'Bench-X est momentanément indisponible et ne peut pas confirmer votre envoi. '
