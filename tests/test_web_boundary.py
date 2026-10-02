@@ -11,6 +11,7 @@ from benchmark.acquisition import campaigns
 from benchmark import preparation, restitution
 from benchmark_web import views
 from tests.test_s6_regressions import build
+from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / 'benchmark'

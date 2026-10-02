@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from benchmark import preparation as prep, service, storage
 from benchmark_web.server import serve_web
+from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 
 def response_for(operation, *, unknown=False):

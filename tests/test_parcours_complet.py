@@ -27,6 +27,7 @@ from tests.test_openrouter_qualification import QualificationTransport
 from tests.test_provider_access import AccessTransport, KEY, SECRET
 from tests.test_s2_review_regressions import SessionAssistant, response_for
 from tests.test_s4_regressions import response
+from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 
 class Page(HTMLParser):
@@ -123,6 +124,9 @@ class ParcoursComplet(unittest.TestCase):
         test = self
 
         class Executor(socketserver.StreamRequestHandler):
+            # Lecture bornée : `executor.shutdown()` attend la fin du gestionnaire en cours
+            timeout = 10
+
             def handle(self):
                 message = json.loads(self.rfile.readline(), object_pairs_hook=storage._unique_object)
                 with closing(storage.Store(test.data)) as store:

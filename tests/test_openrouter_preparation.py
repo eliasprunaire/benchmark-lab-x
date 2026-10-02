@@ -22,6 +22,7 @@ from benchmark_web import views
 from benchmark_web.server import serve_web
 from benchmark.transports import openrouter as assistant
 from tests.test_s2_review_regressions import Authorized
+from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 
 PROFILE = assistant.load_profile(assistant.ASSISTANT)
