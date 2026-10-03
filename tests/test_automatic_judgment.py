@@ -592,7 +592,8 @@ class AutomaticJudgmentRetries(unittest.TestCase):
     def setUp(self):
         AutomaticJudgment.setUp(self)
         from datetime import datetime, timezone
-        self.now = [datetime.now(timezone.utc).replace(microsecond=0)]
+        # Origine fixe et passée : une date écrite avec l'horloge réelle au lieu de `_now` se voit
+        self.now = [datetime(2026, 10, 2, 12, tzinfo=timezone.utc)]
         now = self.now
 
         class Clock(datetime):
