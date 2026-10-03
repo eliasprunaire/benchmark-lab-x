@@ -295,9 +295,13 @@ def render_evaluations(evaluations, dossier_url):
         if previous:
             content += '<details><summary>Évaluation précédente</summary><p>Cette évaluation corrige <a href="#evaluation-' + text(previous) + '">' + text(previous) + '</a>.</p></details>'
         content += '<ul>'
+        spec = record['qualification']['contract']['specification']
         for finding in record['findings']:
-            content += '<li>' + text(finding['finding'])
-            content += '<details><summary>Détail technique du contrôle</summary><p>' + text(finding['criterion_id'] + ' / ' + finding['control_id'])
+            content += '<li>' + text(_readable(record, finding['finding']))
+            # Le critère et, pour une obligation composée, son élément ; un identifiant de contrôle reste interne
+            criterion = next(c for c in spec['obligations'] + spec['eliminatory_errors'] if c['id'] == finding['criterion_id'])
+            element = next((e['description'] for e in criterion.get('elements', []) if e['id'] == finding['control_id']), None)
+            content += '<details><summary>Détail technique du contrôle</summary><p>' + text(criterion['description'] + (' : ' + element if element else ''))
             content += ' : ' + text(finding['status']) + ', attribution ' + text(finding['attribution'])
             content += '</p></details>'
             for proof in finding['evidence']:

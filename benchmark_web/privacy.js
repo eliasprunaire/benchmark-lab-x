@@ -8,12 +8,14 @@ const shape = (value, fields) => value && typeof value === 'object' && !Array.is
   && Object.entries(fields).every(([key, check]) => Object.hasOwn(value, key) && check(value[key]));
 const arrayOf = check => value => Array.isArray(value) && value.every(check);
 const piece = value => shape(value, {name: string, text: string});
+// Une obligation composée garde ses éléments séparés, sans séparateur à interpréter
+const criterion = value => string(value) || shape(value, {description: string, elements: strings});
 function validRecord(value) {
   return shape(value, {
     format: v => v === 'bench-x/history/v1', dossier_id: string, content_version: integer,
     need: string, messages: strings,
     revisions: arrayOf(v => shape(v, {number: integer, instruction: string, deliverables: strings,
-      criteria: strings, pieces: arrayOf(piece), qualification: string})),
+      criteria: arrayOf(criterion), pieces: arrayOf(piece), qualification: string})),
     campaigns: arrayOf(v => shape(v, {id: string, models: arrayOf(m => shape(m, {
       name: string, verdict: v => v === null || string(v),
       cost: c => shape(c, {amount: a => a === null || string(a), currency: string}),
@@ -217,7 +219,14 @@ function renderRecord(record, parent) {
     for (const [label, items] of [['Livrables', revision.deliverables], ['Critères', revision.criteria]]) {
       group.append(node('h3', label));
       const list = node('ul');
-      items.forEach(item => list.append(node('li', item)));
+      for (const item of items) {
+        if (string(item)) { list.append(node('li', item)); continue; }
+        const elements = node('ul');
+        item.elements.forEach(element => elements.append(node('li', element)));
+        const entry = node('li', item.description);
+        entry.append(elements);
+        list.append(entry);
+      }
       group.append(list);
     }
     pieces('Pièces', revision.pieces, group);

@@ -26,21 +26,27 @@ def texts(values):
     return [text(value) for value in values]
 
 
+# Chaque élément est un contrôle du juge : la borne garde la vue de revue et la réponse du juge finies
+ELEMENT_LIMIT = 5
+
+
+def elements(values):
+    """Éléments d'une obligation composée : de deux à ELEMENT_LIMIT textes distincts"""
+    values = texts(values)
+    if len(values) < 2 or len(set(values)) != len(values):
+        raise ValueError('Au moins deux éléments distincts requis')
+    if len(values) > ELEMENT_LIMIT:
+        raise ValueError('ELEMENT_LIMIT')
+    return values
+
+
 def obligation(value):
     """Texte, ou obligation composée : chaque élément se juge seul, sous la même obligation"""
     if type(value) is str:
         return value
     if type(value) is not dict or set(value) != {'description', 'elements'}:
         raise ValueError('Obligation fermée requise')
-    elements = texts(value['elements'])
-    if len(elements) < 2 or len(set(elements)) != len(elements):
-        raise ValueError('Au moins deux éléments distincts requis')
-    return {'description': text(value['description']), 'elements': elements}
-
-
-def obligation_text(value):
-    """Une obligation en un seul texte, pour les lectures qui n'attendent que des chaînes"""
-    return value if type(value) is str else value['description'] + ' : ' + ' ; '.join(value['elements'])
+    return {'description': text(value['description']), 'elements': elements(value['elements'])}
 
 
 def criteria(value):

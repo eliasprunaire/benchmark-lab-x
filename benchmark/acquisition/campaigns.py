@@ -290,7 +290,7 @@ def _manifest(value, contract, *, require_data_collection=False):
 
 
 def _comparison_specification(spec):
-    from ..outgoing import criteria
+    from ..outgoing import criteria, elements
     _fields(spec, ('result_expected', 'obligations', 'eliminatory_errors',
                    'secondary_criteria', 'limits', 'cost_basis'), 'Spécification de comparaison')
     _text(spec['result_expected'], 'Résultat attendu')
@@ -306,11 +306,12 @@ def _comparison_specification(spec):
             keys = ('id', 'label', 'scale', 'favorable') if kind == 'secondary_criteria' else ('id', 'description')
             if kind == 'obligations' and type(entry) is dict and 'elements' in entry:
                 keys += ('elements',)
-                if type(entry['elements']) is not list or len(entry['elements']) < 2:
-                    raise ValueError('Au moins deux éléments requis')
+                if type(entry['elements']) is not list:
+                    raise ValueError('Liste d’éléments requise')
                 for element in entry['elements']:
                     _fields(element, ('id', 'description'), 'Élément de critère')
                     _text(element['description'], 'Description de l’élément')
+                elements([element['description'] for element in entry['elements']])
             _fields(entry, keys, 'Critère de comparaison')
             for item in [entry] + entry.get('elements', []):
                 identifier(item['id'])

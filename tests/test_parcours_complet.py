@@ -928,6 +928,14 @@ class ParcoursComplet(unittest.TestCase):
 
     def exemple_qualifie(self):
         """Clé, exemple sans question, validation et vérification : le cas est prêt à comparer"""
+        dossier, page = self.exemple()
+        self.assertIn('Cet exemple correspond-il bien à votre travail ?', page.visible)
+        self.submit(page, '/validation', {})
+        prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+        return dossier
+
+    def exemple(self):
+        """Clé et exemple préparé sans question : le dossier et sa page, avant validation"""
         page, _, _ = self.request('/')
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
@@ -939,10 +947,7 @@ class ParcoursComplet(unittest.TestCase):
         dossier = page.link('Actualiser')
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
-        self.assertIn('Cet exemple correspond-il bien à votre travail ?', page.visible)
-        self.submit(page, '/validation', {})
-        prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
-        return dossier
+        return dossier, page
 
     def juge_factice(self, constat=None, mesure=None):
         """Juge OpenRouter réel sur une connexion HTTP simulée : chaque réponse évaluée ne satisfait pas une obligation
@@ -1145,12 +1150,14 @@ class ParcoursComplet(unittest.TestCase):
         5. le détail ne montre pas l'état de chaque élément, ou compte les éléments comme des exigences ;
         6. le filtre « Respectée » retient une réponse dont un élément est en défaut ;
         7. un identifiant d'élément apparaît au lecteur ;
-        8. l'historique privé reçoit un objet au lieu d'un texte ;
-        9. une obligation simple change de contrôle à côté d'une obligation composée
+        8. l'historique privé aplatit l'obligation en un texte dont les séparateurs se confondent avec ceux des
+           descriptions ;
+        9. une obligation simple change de contrôle à côté d'une obligation composée ;
+        10. un élément qui cite un coût rend l'obligation entière non vérifiable (contrôle local supposé)
         """
         from benchmark import automatic_judgment as auto, privacy_archive
         composee = 'Lister chaque action avec son échéance'
-        forme = 'Une ligne par action au format « Action : … | Responsable : … »'
+        forme = 'Une ligne par action et son coût, au format « Action : … | Responsable : … »'
         echeance = 'L’échéance de chaque action reprise des notes'
         simple = 'Nommer le responsable de chaque action'
         self.criteria = {'eliminatory': ['Inventer une décision absente du compte rendu'],
@@ -1209,7 +1216,21 @@ class ParcoursComplet(unittest.TestCase):
         with closing(storage.Store(self.data)) as store:
             session = store._connection.execute('SELECT session_id FROM s2_dossiers').fetchone()[0]
             view = prep.view(store, session, dossier.rsplit('/', 1)[1])
-        self.assertIn(composee + ' : ' + forme + ' ; ' + echeance, privacy_archive._revision(view)['criteria'])
+        revision = privacy_archive._revision(view)
+        privacy_archive._check_revision(revision)
+        self.assertIn({'description': composee, 'elements': [forme, echeance]}, revision['criteria'])
+        self.assertIn(simple, revision['criteria'])
+
+    def test_obligation_composee_au_dela_du_plafond_refusee(self):
+        """Une obligation de plus de cinq éléments n'entre pas dans l'exemple : aucun juge sans borne"""
+        from benchmark import outgoing
+        self.criteria = {'eliminatory': [], 'quality': [], 'obligations': [
+            {'description': 'Lister les actions', 'elements': [f'Élément {i}' for i in range(1, outgoing.ELEMENT_LIMIT + 2)]}]}
+        dossier, page = self.exemple()
+        self.assertIn('Résultat reçu non utilisable', page.visible)
+        self.assertNotIn('Cet exemple correspond-il bien à votre travail ?', page.visible)
+        self.criteria['obligations'][0]['elements'].pop()
+        self.assertEqual(outgoing.ELEMENT_LIMIT, len(outgoing.criteria(self.criteria)['obligations'][0]['elements']))
 
     # Formes relevées sur OpenRouter le 2026-10-02 (valeurs inventées)
     TARIFS_PUBLIES = {
