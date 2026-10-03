@@ -239,14 +239,18 @@ def render_custom_models(value, csrf, dossier_url):
     return content + '</div></details><script>' + CUSTOM_MODELS_SCRIPT + '</script>'
 
 
-def _readable_reason(record):
-    """Motif du juge avec les identifiants de critères remplacés par leurs descriptions"""
+def _readable(record, value):
+    """Texte du juge avec les identifiants de critères et d'éléments remplacés par leurs descriptions"""
     spec = record['qualification']['contract']['specification']
-    labels = {item['id']: item['description'] for item in spec['obligations'] + spec['eliminatory_errors']}
+    labels = {item['id']: item['description'] for criterion in spec['obligations'] + spec['eliminatory_errors']
+              for item in [criterion] + criterion.get('elements', [])}
     if not labels:
-        return record['reason']
-    return re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)',
-                  lambda match: labels[match[0]], record['reason'])
+        return value
+    return re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)', lambda match: labels[match[0]], value)
+
+
+def _readable_reason(record):
+    return _readable(record, record['reason'])
 
 
 def _failure_reason(record):
@@ -898,26 +902,24 @@ def _criteria_list(record, criteria, kind):
     content = '<ul class="checks">'
     for criterion in criteria:
         elements = criterion.get('elements', [])
+        # Une obligation composée montre l'état et les constats de chacun de ses éléments
+        nested = '<ul class="checks">' + ''.join(
+            _check(record, kind, found.get((criterion['id'], e['id']), 'INDETERMINE'), e['description'],
+                   [f for f in record['findings'] if (f['criterion_id'], f['control_id']) == (criterion['id'], e['id'])])
+            for e in elements) + '</ul>' if elements else ''
         content += _check(record, kind, criterion_state(found, criterion['id']), criterion['description'],
-                          [] if elements else [f for f in record['findings'] if f['criterion_id'] == criterion['id']])
-        if elements:
-            # Une obligation composée montre l'état et les constats de chacun de ses éléments
-            content += '<ul class="checks">' + ''.join(
-                _check(record, kind, found.get((criterion['id'], e['id']), 'INDETERMINE'), e['description'],
-                       [f for f in record['findings'] if (f['criterion_id'], f['control_id']) == (criterion['id'], e['id'])]) + '</li>'
-                for e in elements) + '</ul>'
-        content += '</li>'
+                          [] if elements else [f for f in record['findings'] if f['criterion_id'] == criterion['id']], nested)
     return content + '</ul>'
 
 
-def _check(record, kind, state, description, findings):
-    """Début d'une ligne d'état et de ses constats ; l'appelant la ferme"""
+def _check(record, kind, state, description, findings, nested=''):
+    """Ligne d'état, ses constats, puis `nested` : les éléments d'une obligation composée"""
     tone, name, label = CRITERION_STATES[kind][state]
     content = '<li><span class="badge ' + tone + '">' + icon(name) + label + '</span><span>' + text(description) + '</span>'
     if findings:
         content += '<details><summary>Constats et extraits</summary><ul>'
         for finding in findings:
-            content += '<li>' + text(finding['finding'])
+            content += '<li>' + text(_readable(record, finding['finding']))
             if finding['attribution'] not in ('candidate', 'evidence'):
                 content += (' <span class="hint">(ce constat provient de la référence d’évaluation et non de la réponse du modèle)</span>'
                             if finding['attribution'] == 'reference' else
@@ -930,7 +932,7 @@ def _check(record, kind, state, description, findings):
                 content += '<p><a href="' + text(target) + '">Ouvrir la pièce</a></p></details>'
             content += '</li>'
         content += '</ul></details>'
-    return content
+    return content + nested + '</li>'
 
 
 def render_result(record, names=None):

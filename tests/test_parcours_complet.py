@@ -1156,7 +1156,8 @@ class ParcoursComplet(unittest.TestCase):
         self.criteria = {'eliminatory': ['Inventer une décision absente du compte rendu'],
                          'obligations': [{'description': composee, 'elements': [forme, echeance]}, simple],
                          'quality': []}
-        defaut = 'Échéance du 12 mars inventée : absente des notes'
+        # Le juge reçoit les identifiants d'éléments et peut les citer : le lecteur lit la description
+        defaut = 'O1_2 non respecté : 12 mars inventé, absent des notes'
 
         def constat(cible):
             if cible['description'] == echeance:
@@ -1203,7 +1204,8 @@ class ParcoursComplet(unittest.TestCase):
         states = re.findall(r'>([^<>]+)</span><span>([^<]+)</span>', text)
         for state in (('Non respectée', composee), ('Respectée', forme), ('Non respectée', echeance), ('Respectée', simple)):
             self.assertIn(state, states)
-        self.assertIn(defaut, text)
+        self.assertIn(echeance + ' non respecté : 12 mars inventé, absent des notes', text)
+        self.assertNotIn('O1_', text)
         with closing(storage.Store(self.data)) as store:
             session = store._connection.execute('SELECT session_id FROM s2_dossiers').fetchone()[0]
             view = prep.view(store, session, dossier.rsplit('/', 1)[1])
