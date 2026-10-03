@@ -275,22 +275,31 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                                     if a['operation_id'] in held]
     visible = [a for a in every if a['operation_id'] not in superseded]
 
-    def recoveries(attempt_id):
-        count = 0
-        while attempt_id in parents:
-            attempt_id, count = parents[attempt_id], count + 1
-        return count
+    def chain(attempt_id):
+        """Essais de la chaîne de reprises, de l'origine à `attempt_id`"""
+        ids = [attempt_id]
+        while ids[-1] in parents:
+            ids.append(parents[ids[-1]])
+        return ids[::-1]
     causes = {}
     latest = {record['attempt_id']: record for record in records}
     concerned = {a['operation_id'] for a in visible
                  if a['state'] == 'RECEIVED' and not a['answered'] and a['operation_id'] not in latest}
-    if concerned:
-        causes = {a['operation_id']: _response_cause(a)
-                  for s in [c._inspect(store, connection, campaign_id)] + snapshots
-                  for a in s['attempts'] if a['operation_id'] in concerned}
+    # Réponse inexploitable ou reprise jugée : chaque essai de sa chaîne, de l'origine à la dernière
+    # reprise, garde le motif et la consommation que son reçu a transmis, sans appel ni écriture
+    explained = concerned | {attempt_id for attempt_id in latest if attempt_id in parents}
+    observations = {}
+    if explained:
+        from .acquisition import recovery
+        attempts_by_id = {a['operation_id']: a for s in [c._inspect(store, connection, campaign_id)] + snapshots
+                          for a in s['attempts']}
+        causes = {attempt_id: _response_cause(attempts_by_id[attempt_id]) for attempt_id in concerned}
+        observations = {attempt_id: [recovery.transmitted(attempts_by_id[a]['operation']['receipt']) for a in chain(attempt_id)]
+                        for attempt_id in explained}
     pending: list[dict] = [dict(attempt_id=a['operation_id'], verdict=None,
                     state='REVIEW_REQUIRED' if a['state'] == 'RECEIVED' and a['incident'] is None else 'EXECUTION_REQUIRED',
-                    next_action='Cette réponse doit être relue et son évaluation terminée avant de conclure.')
+                    next_action='Cette réponse doit être relue et son évaluation terminée avant de conclure.',
+                    **({'observations': observations[a['operation_id']]} if a['operation_id'] in observations else {}))
                for a in visible if a['operation_id'] not in latest]
     if pending and connection.execute('SELECT 1 FROM s2_comparison_contracts WHERE contract_sha256=?',
                           (campaign['contract_sha256'],)).fetchone():
@@ -306,7 +315,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 cell = next(c for c in campaign['cells'] if c['cell_id'] == attempts[attempt['attempt_id']]['cell_id'])
                 attempt.update(state='NO_USABLE_RESPONSE', next_action=NO_USABLE_RESPONSE,
                                configuration_id=cell['configuration_id'], cause=causes.get(attempt['attempt_id']),
-                               recoveries=recoveries(attempt['attempt_id']))
+                               recoveries=len(chain(attempt['attempt_id'])) - 1)
             elif attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='EVALUATION_' + progress_status,
                     next_action=progress_reason or 'Réponse reçue. Son évaluation automatique n’est pas terminée.')
@@ -322,6 +331,8 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         # Une reprise est une configuration distincte, dite sur sa ligne (RULES.md §5)
         row['recovery_limit'] = (record['requested_configuration']['parameters']['max_tokens']
                                  if record['attempt_id'] in parents else None)
+        if record['attempt_id'] in observations:
+            row['observations'] = observations[record['attempt_id']]
         attempt = next(a for a in visible if a['operation_id'] == record['attempt_id'])
         incompatible = ('Impossible de confirmer que la réponse vient du modèle demandé' if record['attribution_incident'] else
                         'Un problème technique empêche de rattacher la réponse au modèle' if record['incident'] == 'HARNESS_ERROR' else
