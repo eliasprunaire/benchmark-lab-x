@@ -30,7 +30,42 @@ def findings(ctx, resources):
                     disagreements=[], professional_review='ABSENTE'), limits=['Test logiciel fictif'])
 
 
+def composite(reference):
+    """O1 réunit un format et une échéance : un contrôle chacun, sous une seule obligation"""
+    spec = specification(reference)
+    spec['obligations'][0].update(description='Actions listées avec leur échéance exacte', control_ids=['format', 'deadline'])
+    spec['method']['control_ids'] = ['format', 'deadline', 'defect']
+    return spec
+
+
+def composite_check(contract, resources):
+    review = check(contract, resources)
+    source = review['checks'].pop(0)
+    review['checks'][:0] = [dict(source, control_id='format'), dict(source, control_id='deadline')]
+    return review
+
+
+def judged(*rows):
+    """Constats simulés `(critère, contrôle, état, constat)` prouvés sur la sortie ; un contrôle absent reste sans constat"""
+    def callback(ctx, resources):
+        report = findings(ctx, resources)
+        output = ctx['attempt']['output_piece_id']
+        proof = [p for p in report['findings'][0]['evidence'] if p['piece_id'] == output]
+        report['findings'] = [dict(criterion_id=cid, control_id=control, status=status, attribution='candidate',
+                                   finding=text, evidence=[] if status == 'INDETERMINE' else proof)
+                              for cid, control, status, text in rows]
+        return report
+    return callback
+
+
 class S5Regressions(unittest.TestCase):
+    # Résolus à l'appel : test_s14_judgment remplace `specification` dans ce module
+    def spec(self, reference):
+        return specification(reference)
+
+    def qualify_check(self, contract, resources):
+        return check(contract, resources)
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(prefix='s5-reg-')
         self.addCleanup(tmp.cleanup)
@@ -40,8 +75,8 @@ class S5Regressions(unittest.TestCase):
         q.initialize(self.data)
         self.store = storage.Store(self.data)
         self.addCleanup(self.store.close)
-        candidate = q.draft(self.store, 'fixture', self.view['revision'], specification(self.reference))
-        qualified = q.qualify(self.store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
+        candidate = q.draft(self.store, 'fixture', self.view['revision'], self.spec(self.reference))
+        qualified = q.qualify(self.store, candidate['contract_sha256'], reviewer=ACTOR, check=self.qualify_check)
         q.approve(self.store, candidate['contract_sha256'], qualified['qualification_id'], actor=ACTOR, authority=AUTHORITY)
         c.initialize(self.data)
         self.store.create_budget('local-comparison', '40', 'TEST')
@@ -273,6 +308,65 @@ class S5Regressions(unittest.TestCase):
         self.assertEqual('INCONNU', second['judgment']['observed_configuration']['effort'])
         self.assertEqual('4', second['judgment']['cost']['amount'])
         self.assertEqual(first, e.inspect(self.store, first['evaluation_id']))
+
+
+class CompositeObligation(unittest.TestCase):
+    """Une obligation composée se juge contrôle par contrôle : un format respecté ne masque pas une échéance inventée"""
+    spec, qualify_check = staticmethod(composite), staticmethod(composite_check)
+    setUp, acquire, evaluate = S5Regressions.setUp, S5Regressions.acquire, S5Regressions.evaluate
+    ERROR = ('E1', 'defect', 'PASS', 'Aucune action omise')
+
+    def test_format_respected_but_invented_deadline_is_a_justified_failure(self):
+        self.acquire()
+        record = self.evaluate(judged(('O1', 'format', 'PASS', 'Actions listées au format attendu'),
+                                      ('O1', 'deadline', 'FAIL', 'Échéance inventée, absente des notes'), self.ERROR))
+        self.assertEqual('NE SATISFAIT PAS', record['verdict'])
+        self.assertEqual('O1 : Échéance inventée, absente des notes', record['reason'])
+        self.assertEqual({'format': 'PASS', 'deadline': 'FAIL'},
+                         {f['control_id']: f['status'] for f in record['findings'] if f['criterion_id'] == 'O1'})
+        self.assertEqual(['deadline'], [f['control_id'] for f in e.defects(record['findings'], record['output_piece_id'])])
+        # Ni critère secondaire ni score : les sous-constats restent rattachés à O1
+        self.assertEqual([], record['measures'])
+        self.assertEqual({'O1', 'E1'}, {f['criterion_id'] for f in record['findings']})
+        self.assertEqual(record, e.inspect(self.store, record['evaluation_id']))
+
+    def test_unproven_sub_requirement_prevents_overall_satisfaction(self):
+        self.acquire()
+        record = self.evaluate(judged(('O1', 'format', 'PASS', 'Actions listées au format attendu'),
+                                      ('O1', 'deadline', 'INDETERMINE', 'Échéance non vérifiable'), self.ERROR))
+        self.assertEqual('INDETERMINE', record['verdict'])
+        self.assertIn('O1', record['reason'])
+        omitted = self.evaluate(judged(('O1', 'format', 'PASS', 'Actions listées au format attendu'), self.ERROR),
+                                previous_evaluation_id=record['evaluation_id'])
+        self.assertEqual('INDETERMINE', omitted['verdict'])
+        self.assertEqual(('INDETERMINE', 'Contrôle prévu sans constat conservé'),
+                         next((f['status'], f['finding']) for f in omitted['findings'] if f['control_id'] == 'deadline'))
+
+    def test_established_violation_stands_when_another_sub_requirement_is_unverifiable(self):
+        self.acquire()
+        record = self.evaluate(judged(('O1', 'format', 'INDETERMINE', 'Format non vérifiable'),
+                                      ('O1', 'deadline', 'FAIL', 'Échéance inventée, absente des notes'), self.ERROR))
+        self.assertEqual('NE SATISFAIT PAS', record['verdict'])
+
+    def test_sub_finding_outside_declared_controls_is_refused(self):
+        self.acquire()
+        for row in (('O1', 'extra', 'PASS', 'Exigence ajoutée par le juge'),
+                    ('E1', 'deadline', 'PASS', 'Contrôle rattaché à un autre critère')):
+            with self.subTest(row=row[:2]), self.assertRaisesRegex(ValueError, 'Critère ou contrôle non déclaré'):
+                self.evaluate(judged(('O1', 'format', 'PASS', 'Actions listées au format attendu'), row, self.ERROR))
+        self.assertEqual(0, self.store._connection.execute('SELECT count(*) FROM s5_evaluations').fetchone()[0])
+
+    def test_owner_page_names_criteria_instead_of_raw_identifiers(self):
+        from benchmark_web.campaign_views import render_evaluations
+        self.acquire()
+        self.evaluate(judged(('O1', 'format', 'PASS', 'Actions listées comme demandé'),
+                             ('O1', 'deadline', 'FAIL', 'Contrôle O1 : échéance inventée'), self.ERROR))
+        page = render_evaluations(prep.view(self.store, self.session, 'fixture')['campaigns'][0]['evaluations'], '/d')
+        # Motif et constats ; les dépliants de provenance gardent volontairement l'enregistrement complet
+        findings = page.split('Pièces utilisées pour cette évaluation')[0]
+        self.assertIn('Actions listées avec leur échéance exacte : échéance inventée', findings)
+        for raw in ('O1', 'E1', 'format', 'deadline', 'defect'):
+            self.assertNotRegex(findings, r'(?<![\w-])' + raw + r'(?![\w-])')
 
 
 if __name__ == '__main__':

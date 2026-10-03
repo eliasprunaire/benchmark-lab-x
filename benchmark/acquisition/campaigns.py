@@ -290,7 +290,7 @@ def _manifest(value, contract, *, require_data_collection=False):
 
 
 def _comparison_specification(spec):
-    from ..outgoing import criteria
+    from ..outgoing import criteria, elements
     _fields(spec, ('result_expected', 'obligations', 'eliminatory_errors',
                    'secondary_criteria', 'limits', 'cost_basis'), 'Spécification de comparaison')
     _text(spec['result_expected'], 'Résultat attendu')
@@ -304,11 +304,20 @@ def _comparison_specification(spec):
             raise ValueError('QUALITY_LIMIT')
         for entry in entries:
             keys = ('id', 'label', 'scale', 'favorable') if kind == 'secondary_criteria' else ('id', 'description')
+            if kind == 'obligations' and type(entry) is dict and 'elements' in entry:
+                keys += ('elements',)
+                if type(entry['elements']) is not list:
+                    raise ValueError('Liste d’éléments requise')
+                for element in entry['elements']:
+                    _fields(element, ('id', 'description'), 'Élément de critère')
+                    _text(element['description'], 'Description de l’élément')
+                elements([element['description'] for element in entry['elements']])
             _fields(entry, keys, 'Critère de comparaison')
-            identifier(entry['id'])
-            if entry['id'] in ids:
-                raise ValueError('Identifiant de critère répété')
-            ids.add(entry['id'])
+            for item in [entry] + entry.get('elements', []):
+                identifier(item['id'])
+                if item['id'] in ids:
+                    raise ValueError('Identifiant de critère répété')
+                ids.add(item['id'])
             if kind == 'secondary_criteria':
                 criteria({'eliminatory': [], 'obligations': [],
                           'quality': [{key: entry[key] for key in ('label', 'scale', 'favorable')}]})
@@ -322,8 +331,15 @@ def _comparison_specification(spec):
 def _comparison_spec(package):
     from ..outgoing import criteria
     grouped = criteria(package['criteria'])
+
+    def obligation(i, value):
+        # `O1_1` et non `O1-1` : le remplacement des identifiants par leur description ne doit pas capturer `O1`
+        if type(value) is str:
+            return dict(id=f'O{i}', description=value)
+        return dict(id=f'O{i}', description=value['description'],
+                    elements=[dict(id=f'O{i}_{j}', description=e) for j, e in enumerate(value['elements'], 1)])
     return dict(result_expected=package['instruction'],
-                obligations=[dict(id=f'O{i}', description=text) for i, text in enumerate(grouped['obligations'], 1)],
+                obligations=[obligation(i, value) for i, value in enumerate(grouped['obligations'], 1)],
                 eliminatory_errors=[dict(id=f'E{i}', description=text) for i, text in enumerate(grouped['eliminatory'], 1)],
                 secondary_criteria=[dict(id=f'Q{i}', **item) for i, item in enumerate(grouped['quality'], 1)],
                 limits=deepcopy(package['acceptable_ambiguities']), cost_basis=deepcopy(COMPARISON_COST_BASIS))

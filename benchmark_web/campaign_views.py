@@ -15,7 +15,7 @@ import secrets
 from benchmark.storage import _strict_json as encode
 from benchmark.preparation import NOT_SENT_TEXT
 from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
-from benchmark.evaluation import defects
+from benchmark.evaluation import criterion_state, states
 
 from .fragments import (VERDICT_BADGES, valeur_mesure, access_summary, badge, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
                         personal_key_form, readable_fields, section, state_block, text)
@@ -239,30 +239,35 @@ def render_custom_models(value, csrf, dossier_url):
     return content + '</div></details><script>' + CUSTOM_MODELS_SCRIPT + '</script>'
 
 
-def _readable_reason(record):
-    """Motif du juge avec les identifiants de critères remplacés par leurs descriptions"""
+def _readable(record, value):
+    """Texte du juge avec les identifiants de critères et d'éléments remplacés par leurs descriptions"""
     spec = record['qualification']['contract']['specification']
-    labels = {item['id']: item['description'] for item in spec['obligations'] + spec['eliminatory_errors']}
+    labels = {item['id']: item['description'] for criterion in spec['obligations'] + spec['eliminatory_errors']
+              for item in [criterion] + criterion.get('elements', [])}
     if not labels:
-        return record['reason']
-    return re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)',
-                  lambda match: labels[match[0]], record['reason'])
+        return value
+    return re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)', lambda match: labels[match[0]], value)
 
 
-def _failed(record):
-    """Identifiants des critères qui fondent NE SATISFAIT PAS, par la règle même du verdict"""
-    if record['verdict'] != 'NE SATISFAIT PAS':
-        return set()
-    return {f['criterion_id'] for f in defects(record['findings'], record['output_piece_id'])}
+def _readable_reason(record):
+    return _readable(record, record['reason'])
 
 
 def _failure_reason(record):
-    """Motif court d'un NE SATISFAIT PAS : les critères en défaut, entiers, éliminatoires d'abord"""
-    spec, failed = record['qualification']['contract']['specification'], _failed(record)
+    """Motif court d'un NE SATISFAIT PAS : les critères en défaut, entiers, éliminatoires d'abord
+
+    Une obligation composée nomme entre parenthèses ses éléments en défaut
+    """
+    spec = record['qualification']['contract']['specification']
+    failed = {key for key, state in _states(record).items() if state == 'FAIL'}
+
+    def label(c):
+        elements = [e['description'] for e in c.get('elements', []) if (c['id'], e['id']) in failed]
+        return c['description'] + (' (' + ' ; '.join(elements) + ')' if elements else '')
     parts = []
     for criteria, one, many in ((spec['eliminatory_errors'], 'Erreur éliminatoire', 'Erreurs éliminatoires'),
                                 (spec['obligations'], 'Exigence non respectée', 'Exigences non respectées')):
-        named = [c['description'] for c in criteria if c['id'] in failed]
+        named = [label(c) for c in criteria if any(cid == c['id'] for cid, _ in failed)]
         if named:
             parts.append((many if len(named) > 1 else one) + ' : ' + ' ; '.join(named) + '.')
     return ' '.join(parts) or _readable_reason(record)
@@ -290,9 +295,13 @@ def render_evaluations(evaluations, dossier_url):
         if previous:
             content += '<details><summary>Évaluation précédente</summary><p>Cette évaluation corrige <a href="#evaluation-' + text(previous) + '">' + text(previous) + '</a>.</p></details>'
         content += '<ul>'
+        spec = record['qualification']['contract']['specification']
         for finding in record['findings']:
-            content += '<li>' + text(finding['finding'])
-            content += '<details><summary>Détail technique du contrôle</summary><p>' + text(finding['criterion_id'] + ' / ' + finding['control_id'])
+            content += '<li>' + text(_readable(record, finding['finding']))
+            # Le critère et, pour une obligation composée, son élément ; un identifiant de contrôle reste interne
+            criterion = next(c for c in spec['obligations'] + spec['eliminatory_errors'] if c['id'] == finding['criterion_id'])
+            element = next((e['description'] for e in criterion.get('elements', []) if e['id'] == finding['control_id']), None)
+            content += '<details><summary>Détail technique du contrôle</summary><p>' + text(criterion['description'] + (' : ' + element if element else ''))
             content += ' : ' + text(finding['status']) + ', attribution ' + text(finding['attribution'])
             content += '</p></details>'
             for proof in finding['evidence']:
@@ -879,10 +888,8 @@ def _plural(count, label, *, number=True):
     return (str(count) + ' ' if number else '') + words
 
 
-def _criterion_state(findings, failed):
-    """Tous les contrôles PASS ; sinon FAIL si le critère fonde le verdict ; sinon non conclu"""
-    statuses = {finding['status'] for finding in findings}
-    return 'PASS' if statuses == {'PASS'} else 'FAIL' if failed else 'INDETERMINE'
+def _states(record):
+    return states(record['findings'], record['output_piece_id'], record['verdict'])
 
 
 def _proof_anchor(record, piece_id):
@@ -895,30 +902,41 @@ def _proof_anchor(record, piece_id):
 
 
 def _criteria_list(record, criteria, kind):
+    found = _states(record)
     content = '<ul class="checks">'
-    failed = _failed(record)
     for criterion in criteria:
-        findings = [f for f in record['findings'] if f['criterion_id'] == criterion['id']]
-        tone, name, label = CRITERION_STATES[kind][_criterion_state(findings, criterion['id'] in failed)]
-        content += '<li><span class="badge ' + tone + '">' + icon(name) + label + '</span><span>' + text(criterion['description']) + '</span>'
-        if findings:
-            content += '<details><summary>Constats et extraits</summary><ul>'
-            for finding in findings:
-                content += '<li>' + text(finding['finding'])
-                if finding['attribution'] not in ('candidate', 'evidence'):
-                    content += (' <span class="hint">(ce constat provient de la référence d’évaluation et non de la réponse du modèle)</span>'
-                                if finding['attribution'] == 'reference' else
-                                ' <span class="hint">(attribué à : ' + text(finding['attribution']) + ')</span>')
-                for proof in finding['evidence']:
-                    link, target = _proof_anchor(record, proof['piece_id'])
-                    if link is None:
-                        continue
-                    content += '<details><summary>Extrait de ' + text('la réponse du modèle' if link['piece_id'] == record['output_piece_id'] else link['name']) + '</summary><pre>' + text(proof['passage']) + '</pre>'
-                    content += '<p><a href="' + text(target) + '">Ouvrir la pièce</a></p></details>'
-                content += '</li>'
-            content += '</ul></details>'
-        content += '</li>'
+        elements = criterion.get('elements', [])
+        # Une obligation composée montre l'état et les constats de chacun de ses éléments
+        nested = '<ul class="checks">' + ''.join(
+            _check(record, kind, found.get((criterion['id'], e['id']), 'INDETERMINE'), e['description'],
+                   [f for f in record['findings'] if (f['criterion_id'], f['control_id']) == (criterion['id'], e['id'])])
+            for e in elements) + '</ul>' if elements else ''
+        content += _check(record, kind, criterion_state(found, criterion['id']), criterion['description'],
+                          [] if elements else [f for f in record['findings'] if f['criterion_id'] == criterion['id']], nested)
     return content + '</ul>'
+
+
+def _check(record, kind, state, description, findings, nested=''):
+    """Ligne d'état, ses constats, puis `nested` : les éléments d'une obligation composée"""
+    tone, name, label = CRITERION_STATES[kind][state]
+    content = '<li><span class="badge ' + tone + '">' + icon(name) + label + '</span><span>' + text(description) + '</span>'
+    if findings:
+        content += '<details><summary>Constats et extraits</summary><ul>'
+        for finding in findings:
+            content += '<li>' + text(_readable(record, finding['finding']))
+            if finding['attribution'] not in ('candidate', 'evidence'):
+                content += (' <span class="hint">(ce constat provient de la référence d’évaluation et non de la réponse du modèle)</span>'
+                            if finding['attribution'] == 'reference' else
+                            ' <span class="hint">(attribué à : ' + text(finding['attribution']) + ')</span>')
+            for proof in finding['evidence']:
+                link, target = _proof_anchor(record, proof['piece_id'])
+                if link is None:
+                    continue
+                content += '<details><summary>Extrait de ' + text('la réponse du modèle' if link['piece_id'] == record['output_piece_id'] else link['name']) + '</summary><pre>' + text(proof['passage']) + '</pre>'
+                content += '<p><a href="' + text(target) + '">Ouvrir la pièce</a></p></details>'
+            content += '</li>'
+        content += '</ul></details>'
+    return content + nested + '</li>'
 
 
 def render_result(record, names=None):
@@ -960,12 +978,9 @@ def render_result(record, names=None):
         content += '<p>Aucune réponse n’a été enregistrée pour ce modèle.</p>'
     # Pourquoi ce verdict
     content += '<h3>Pourquoi ce verdict</h3>'
-    failed = _failed(record)
-    states = {criterion['id']: _criterion_state([f for f in record['findings'] if f['criterion_id'] == criterion['id']],
-                                                criterion['id'] in failed)
-              for criterion in spec['obligations'] + spec['eliminatory_errors']}
-    obligations = [states[c['id']] for c in spec['obligations']]
-    eliminatory = [states[c['id']] for c in spec['eliminatory_errors']]
+    found = _states(record)
+    obligations = [criterion_state(found, c['id']) for c in spec['obligations']]
+    eliminatory = [criterion_state(found, c['id']) for c in spec['eliminatory_errors']]
     summary = [_plural(obligations.count('PASS'), 'exigence') + ' sur ' + str(len(obligations)) + ' ' + _plural(obligations.count('PASS'), 'respectée', number=False)]
     if obligations.count('FAIL'):
         summary.append(_plural(obligations.count('FAIL'), 'non respectée'))

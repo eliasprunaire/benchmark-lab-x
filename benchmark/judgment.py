@@ -111,7 +111,9 @@ def _reserve(store, connection, request, transport, *, automatic=False, prepared
         saved['engine_source_sha256'] = sha256(Path(auto.__file__).read_bytes() + Path(e.__file__).read_bytes()
                                              + Path(__file__).read_bytes()).hexdigest()
     operation['resources'] = [encode(saved), wire] + ([link] if automatic and link is not None else [])
-    store._reserve_intent(connection, operation, request['budget_id'], request['reserve_amount'])
+    # Même horloge que `_retry_due` : l'échéance d'une relance close avant envoi est sa date de création
+    from .preparation import _now
+    store._reserve_intent(connection, operation, request['budget_id'], request['reserve_amount'], created_at=_now())
 
 
 def _bound(store, connection, operation, *, latest=False):

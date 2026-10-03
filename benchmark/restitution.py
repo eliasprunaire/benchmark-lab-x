@@ -302,7 +302,8 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
             continue
         if 'obligation' in query:
             cid, status = query['obligation'].split(':')
-            if not any(f['criterion_id'] == cid and f['status'] == status for f in row['findings']):
+            # Même lecture que le détail : un élément en défaut empêche « Respectée »
+            if e.criterion_state(e.states(row['findings'], row['output_piece_id'], row['verdict']), cid) != status:
                 continue
         selected.append(row)
     ordered = []

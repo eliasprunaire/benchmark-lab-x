@@ -980,7 +980,8 @@ def _reserve_qualification(store, connection, session_id, dossier_id, revision, 
     budget = store._budget(connection, authority['budget_id'], store._operations(connection))
     if budget['currency'] != 'USD':
         raise BudgetError('Enveloppe USD de préparation requise')
-    store._reserve_intent(connection, operation, authority['budget_id'], reserve)
+    # Même horloge que `_retry_due` : l'échéance d'une relance close avant envoi est sa date de création
+    store._reserve_intent(connection, operation, authority['budget_id'], reserve, created_at=_now())
     return operation_id
 
 

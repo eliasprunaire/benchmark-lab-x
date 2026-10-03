@@ -256,6 +256,7 @@ body:has(dialog[open]) { overflow: hidden; }
 .checks > li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .3rem .7rem; align-items: start; }
 .checks > li .badge { margin-top: .1rem; }
 .checks > li > details { grid-column: 1 / -1; margin: .2rem 0 0; }
+.checks > li > .checks { grid-column: 1 / -1; margin: .1rem 0 0; padding-left: 1rem; border-left: 1px solid var(--line); }
 
 /* Pied de page */
 footer.site { margin-top: 3.5rem; border-top: 1px solid var(--line-2); padding: 1.8rem 0 1.4rem; color: var(--muted); font-size: .88rem; }

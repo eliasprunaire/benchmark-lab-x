@@ -365,6 +365,26 @@ def defects(findings, output):
             and any(e['piece_id'] == output for e in f['evidence'])]
 
 
+def states(findings, output, verdict):
+    """État lu de chaque contrôle `(critère, contrôle)` : PASS si tous ses constats le sont, FAIL s'il fonde
+    le « NE SATISFAIT PAS » enregistré, sinon INDETERMINE ; affichage et filtres partagent cette lecture,
+    sans toucher au verdict
+    """
+    failed = ({(f['criterion_id'], f['control_id']) for f in defects(findings, output)}
+              if verdict == 'NE SATISFAIT PAS' else set())
+    grouped = {}
+    for finding in findings:
+        grouped.setdefault((finding['criterion_id'], finding['control_id']), set()).add(finding['status'])
+    return {key: 'PASS' if found == {'PASS'} else 'FAIL' if key in failed else 'INDETERMINE'
+            for key, found in grouped.items()}
+
+
+def criterion_state(states, criterion_id):
+    """Un critère n'est respecté que si chacun de ses contrôles l'est ; un contrôle en défaut suffit à l'écarter"""
+    found = {state for (cid, _), state in states.items() if cid == criterion_id}
+    return 'PASS' if found == {'PASS'} else 'FAIL' if 'FAIL' in found else 'INDETERMINE'
+
+
 def _verdict(ctx, findings, judgment):
     attempt = ctx['attempt']
     receipt = attempt['operation']['receipt']
@@ -729,7 +749,8 @@ def _review_content(store, ctx):
                   pieces=task_pieces),
         result_expected=spec['result_expected'],
         obligations=[dict(id=x['id'], description=x['description'], tolerance=x['tolerance'],
-                          control_ids=list(x['control_ids'])) for x in spec['obligations']],
+                          control_ids=list(x['control_ids']), **({'elements': deepcopy(x['elements'])} if 'elements' in x else {}))
+                     for x in spec['obligations']],
         eliminatory_errors=[dict(id=x['id'], description=x['description'],
                                  control_ids=list(x['control_ids'])) for x in spec['eliminatory_errors']],
         method=dict(id=method['id'], version=method['version'], control_ids=list(method['control_ids']),

@@ -468,6 +468,27 @@ test('structured costs and nullable answers stay readable and retain unknown val
   } finally {await context.close();}
 });
 
+test('a composite obligation keeps its elements apart, whatever punctuation they contain', async () => {
+  const composite = {description: 'Lister : les actions ; avec échéance', elements: ['Forme ; une ligne', 'Échéance : <b>exacte</b>']};
+  fixture(1, undefined, {revisions: [{...fresh().revisions[0], criteria: ['Exactitude', composite]}]});
+  const context = await browser.newContext({acceptDownloads: true});
+  try {
+    const page = await pageFor(context);
+    await page.evaluate(() => historyStore.archive('d1', 1));
+    await page.setContent('<main data-privacy-history><p data-privacy-status></p><button data-privacy-action="clear">Effacer</button><button data-privacy-action="enable">Réactiver</button><div data-privacy-list></div></main>');
+    await page.evaluate(() => privacy.mountPrivacy());
+    const item = page.locator('[data-privacy-list] li', {hasText: composite.description}).first();
+    assert.deepEqual(await item.locator('li').allTextContents(), composite.elements);
+    assert.equal(await page.locator('[data-privacy-list] b').count(), 0);
+    assert.equal((await page.locator('[data-privacy-list]').textContent()).includes('[object Object]'), false);
+    assert.deepEqual(await page.evaluate(() => historyStore.get('d1')), record);
+    await page.locator('[data-privacy-list] > details > summary').first().click();
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', {name: 'Télécharger ce cas (JSON)'}).click();
+    assert.deepEqual(JSON.parse(readFileSync(await (await download).path(), 'utf8')), record);
+  } finally {await context.close();}
+});
+
 test('case deletion tombstones locally before POST and retains explicit failure without resurrection', async () => {
   fixture();
   const context = await browser.newContext();

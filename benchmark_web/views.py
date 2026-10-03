@@ -547,8 +547,13 @@ def render(value, csrf, path='/preparation', *, error=False):
                                      ('quality', 'sec', 'Qualité')):
                 items = criteria[key]
                 if items:
-                    labels = (item['label'] for item in items) if key == 'quality' else items
-                    groups += '<div class="grp ' + tone + '"><h3>' + group_title + '</h3>' + listing(labels) + '</div>'
+                    if key == 'obligations':
+                        # Une obligation composée montre ses éléments, jugés chacun séparément
+                        body = '<ul>' + ''.join('<li>' + (text(item) if type(item) is str else text(item['description'])
+                                                + listing(item['elements'])) + '</li>' for item in items) + '</ul>'
+                    else:
+                        body = listing(item['label'] for item in items) if key == 'quality' else listing(items)
+                    groups += '<div class="grp ' + tone + '"><h3>' + group_title + '</h3>' + body + '</div>'
             groups = '<div class="crit">' + groups + '</div><p class="rule"><span>Règle</span><span>' \
                      + text(value['criteria_rule']) + '</span></p>'
             content += section('Critères de réussite', groups) + '</div>'

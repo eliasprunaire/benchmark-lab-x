@@ -130,7 +130,9 @@ def _revision(view):
                     + [item['label'] for item in criteria['quality']])
     return dict(number=view['revision'], instruction='' if package is None else _text(package['instruction']),
         deliverables=[] if package is None else [_text(x) for x in package['deliverables']],
-        criteria=[_text(x) for x in criteria],
+        # Une obligation composée garde sa structure : aucun séparateur ne se confond avec son texte
+        criteria=[_text(x) if type(x) is str else dict(description=_text(x['description']),
+                  elements=[_text(e) for e in x['elements']]) for x in criteria],
         pieces=[] if package is None else [dict(name=_text(piece['name']),
             text=_text(view['example_contents'][piece['id']])) for piece in package['pieces']],
         qualification=_qualification(view['qualification']))
@@ -584,7 +586,13 @@ def _check_revision(value):
     _positive(value['number'])
     _texts([value['instruction'], value['qualification']])
     _texts(value['deliverables'])
-    _texts(value['criteria'])
+    if type(value['criteria']) is not list:
+        raise ValueError('Critères requis')
+    for criterion in value['criteria']:
+        if type(criterion) is dict and set(criterion) == {'description', 'elements'} and type(criterion['elements']) is list:
+            _texts([criterion['description'], *criterion['elements']])
+        else:
+            _texts([criterion])
     _pieces(value['pieces'])
 
 

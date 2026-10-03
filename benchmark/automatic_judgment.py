@@ -59,15 +59,16 @@ def _campaign_context(store, connection, campaign_id):
         raise IntegrityError('Référence qualifiée requise')
     # Adapt the frozen web criteria; neither the contract nor its qualification is rewritten
     spec = contract['specification']
+    # Une obligation composée a un contrôle par élément ; sans élément, contexte inchangé octet pour octet
     for criterion in spec['obligations'] + spec['eliminatory_errors']:
-        criterion['control_ids'] = [criterion['id']]
+        criterion['control_ids'] = [x['id'] for x in criterion.get('elements', [])] or [criterion['id']]
     for criterion in spec['obligations']:
         criterion['tolerance'] = 'Selon le critère et les ambiguïtés acceptables déclarées'
     for criterion in spec['secondary_criteria']:
         criterion.update(measure=criterion['label'], proof='Passages de la sortie cités exactement',
                          unit='descriptif', aggregation='Aucune agrégation')
     spec['method'] = dict(id=FORMAT, version='1',
-        control_ids=[x['id'] for x in spec['obligations'] + spec['eliminatory_errors']],
+        control_ids=[k for x in spec['obligations'] + spec['eliminatory_errors'] for k in x['control_ids']],
         expected_evidence='Citations exactes de la sortie et des pièces ; absence de preuve : INDETERMINE',
         responsible_role='Évaluation automatique Bench-X')
     spec['aggregation'] = 'Aucune moyenne ; obligations et erreurs éliminatoires par tentative'

@@ -181,6 +181,7 @@ class ParcoursComplet(unittest.TestCase):
         self.cookies = SimpleCookie()
         self.preparation_stage = 'clarification'
         self.criteria = None
+        self.judged = []
 
     def prepare(self, operation, request):
         self.calls.append(('préparation', operation['operation_id']))
@@ -927,6 +928,14 @@ class ParcoursComplet(unittest.TestCase):
 
     def exemple_qualifie(self):
         """Clé, exemple sans question, validation et vérification : le cas est prêt à comparer"""
+        dossier, page = self.exemple()
+        self.assertIn('Cet exemple correspond-il bien à votre travail ?', page.visible)
+        self.submit(page, '/validation', {})
+        prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+        return dossier
+
+    def exemple(self):
+        """Clé et exemple préparé sans question : le dossier et sa page, avant validation"""
         page, _, _ = self.request('/')
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
@@ -938,15 +947,13 @@ class ParcoursComplet(unittest.TestCase):
         dossier = page.link('Actualiser')
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
-        self.assertIn('Cet exemple correspond-il bien à votre travail ?', page.visible)
-        self.submit(page, '/validation', {})
-        prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
-        return dossier
+        return dossier, page
 
     def juge_factice(self, constat=None, mesure=None):
         """Juge OpenRouter réel sur une connexion HTTP simulée : chaque réponse évaluée ne satisfait pas une obligation
 
-        `constat(critère)` remplace ce FAIL uniforme par (statut, attribution, texte du constat) ;
+        `constat(critère)` remplace ce FAIL uniforme par (statut, attribution, texte du constat) ; pour une
+        obligation composée, il reçoit l'élément que vise le contrôle ;
         `mesure` est la valeur rendue pour chaque critère de qualité, sinon aucun n'est mesuré
         """
         from unittest.mock import Mock
@@ -962,9 +969,13 @@ class ParcoursComplet(unittest.TestCase):
 
         def answer(method, path, *, body, headers):
             content = json.loads(json.loads(body)['messages'][1]['content'])
+            self.judged.append(content)
             output = content['output']
             proof = {'piece_id': output['piece_id'], 'sha256': output['sha256'], 'passage': output['content']}
-            findings = [dict(zip(('status', 'attribution', 'finding'), constat(x) if constat else
+
+            def cible(x, k):
+                return next((e for e in x.get('elements', []) if e['id'] == k), x)
+            findings = [dict(zip(('status', 'attribution', 'finding'), constat(cible(x, k)) if constat else
                                  ('FAIL', 'candidate', 'Obligation non satisfaite')),
                              criterion_id=x['id'], control_id=k, evidence=[proof])
                         for x in content['obligations'] + content['eliminatory_errors'] for k in x['control_ids']]
@@ -1127,6 +1138,99 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn(('Non respectée', tableau), states)
         self.assertIn(('Non vérifiable', echeances), states)
         self.assertIn(explication, text)
+
+    def test_obligation_composee_jugee_element_par_element(self):
+        """Une obligation composée déclarée par la préparation se juge élément par élément
+
+        Modes d'échec couverts :
+        1. l'aperçu montre un objet brut au lieu de l'obligation et de ses éléments ;
+        2. le juge ne reçoit qu'un contrôle pour l'obligation composée, ou sans la description des éléments ;
+        3. un format respecté et une échéance inventée donnent autre chose que « Ne satisfait pas » ;
+        4. le motif nomme l'obligation sans l'élément en défaut ;
+        5. le détail ne montre pas l'état de chaque élément, ou compte les éléments comme des exigences ;
+        6. le filtre « Respectée » retient une réponse dont un élément est en défaut ;
+        7. un identifiant d'élément apparaît au lecteur ;
+        8. l'historique privé aplatit l'obligation en un texte dont les séparateurs se confondent avec ceux des
+           descriptions ;
+        9. une obligation simple change de contrôle à côté d'une obligation composée ;
+        10. un élément qui cite un coût rend l'obligation entière non vérifiable (contrôle local supposé)
+        """
+        from benchmark import automatic_judgment as auto, privacy_archive
+        composee = 'Lister chaque action avec son échéance'
+        forme = 'Une ligne par action et son coût, au format « Action : … | Responsable : … »'
+        echeance = 'L’échéance de chaque action reprise des notes'
+        simple = 'Nommer le responsable de chaque action'
+        self.criteria = {'eliminatory': ['Inventer une décision absente du compte rendu'],
+                         'obligations': [{'description': composee, 'elements': [forme, echeance]}, simple],
+                         'quality': []}
+        # Le juge reçoit les identifiants d'éléments et peut les citer : le lecteur lit la description
+        defaut = 'O1_2 non respecté : 12 mars inventé, absent des notes'
+
+        def constat(cible):
+            if cible['description'] == echeance:
+                return 'FAIL', 'candidate', defaut
+            return 'PASS', 'candidate', 'Respecté dans la réponse'
+        judge = self.juge_factice(constat)
+        dossier = self.exemple_qualifie()
+        page, _, _ = self.request(dossier)
+        for value in (composee, forme, echeance):
+            self.assertIn(value, page.visible)
+        self.assertNotIn("'elements'", page.visible)
+        page, _, _ = self.request(dossier + '/configurations')
+        page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+                                                     'tier': 'low'})
+        self.submit(page, '/start', {})
+        execution.execute_launch(self.data, self.starts.get_nowait()['candidate_attempts'], self.candidate,
+                                 access_secret=SECRET, access_transport=self.access)
+        page, _, _ = self.request(dossier)
+        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        self.submit(page, '/evaluate', {})
+        auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
+        self.assertEqual(2, judge.request.call_count)
+        obligations = self.judged[0]['obligations']
+        self.assertEqual([['O1_1', 'O1_2'], ['O2']], [x['control_ids'] for x in obligations])
+        self.assertEqual([dict(id='O1_1', description=forme), dict(id='O1_2', description=echeance)],
+                         obligations[0]['elements'])
+        self.assertNotIn('elements', obligations[1])
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        results, _, raw = self.request(comparison)
+        self.examine(results, comparison, 'obligation composée', None)
+        self.assertNotIn('O1_', results.visible)
+        cellule = next(chunk for chunk in raw.decode().split('<tr id="attempt-')[1:]
+                       if '<strong>Modèle A</strong>' in chunk).split('</tr>')[0]
+        self.assertIn('Exigence non respectée : ' + composee + ' (' + echeance + ').', cellule)
+
+        def modeles(page):
+            return [n['text'] for n in page.nodes if n['tag'] == 'strong']
+        self.assertNotIn('Modèle A', modeles(self.request(comparison + '?obligation=O1%3APASS')[0]))
+        self.assertIn('Modèle A', modeles(self.request(comparison + '?obligation=O1%3AFAIL')[0]))
+        detail, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
+        text = raw.decode()
+        self.assertNotIn('O1_', detail.visible)
+        self.assertIn('1 exigence sur 2 respectée, 1 non respectée.', text)
+        states = re.findall(r'>([^<>]+)</span><span>([^<]+)</span>', text)
+        for state in (('Non respectée', composee), ('Respectée', forme), ('Non respectée', echeance), ('Respectée', simple)):
+            self.assertIn(state, states)
+        self.assertIn(echeance + ' non respecté : 12 mars inventé, absent des notes', text)
+        self.assertNotIn('O1_', text)
+        with closing(storage.Store(self.data)) as store:
+            session = store._connection.execute('SELECT session_id FROM s2_dossiers').fetchone()[0]
+            view = prep.view(store, session, dossier.rsplit('/', 1)[1])
+        revision = privacy_archive._revision(view)
+        privacy_archive._check_revision(revision)
+        self.assertIn({'description': composee, 'elements': [forme, echeance]}, revision['criteria'])
+        self.assertIn(simple, revision['criteria'])
+
+    def test_obligation_composee_au_dela_du_plafond_refusee(self):
+        """Une obligation de plus de cinq éléments n'entre pas dans l'exemple : aucun juge sans borne"""
+        from benchmark import outgoing
+        self.criteria = {'eliminatory': [], 'quality': [], 'obligations': [
+            {'description': 'Lister les actions', 'elements': [f'Élément {i}' for i in range(1, outgoing.ELEMENT_LIMIT + 2)]}]}
+        dossier, page = self.exemple()
+        self.assertIn('Résultat reçu non utilisable', page.visible)
+        self.assertNotIn('Cet exemple correspond-il bien à votre travail ?', page.visible)
+        self.criteria['obligations'][0]['elements'].pop()
+        self.assertEqual(outgoing.ELEMENT_LIMIT, len(outgoing.criteria(self.criteria)['obligations'][0]['elements']))
 
     # Formes relevées sur OpenRouter le 2026-10-02 (valeurs inventées)
     TARIFS_PUBLIES = {
