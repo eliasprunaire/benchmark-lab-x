@@ -342,7 +342,7 @@ class AutomaticJudgment(unittest.TestCase):
         self.assertIsNone(value['recommendation'])
         self.assertEqual('INCOMPLETE', value['economic_status'])
         results = views.render(value, 'csrf').decode()
-        self.assertIn('Aucune réponse exploitable pour deepseek/deepseek-v4.1-flash.', results)
+        self.assertIn('Aucune réponse exploitable pour deepseek/deepseek-v4.1-flash (cause non établie par le reçu).', results)
         self.assertNotIn('doit être relue', results)
         self.assertNotIn('les essais se sont arrêtés avant la fin', results)
 

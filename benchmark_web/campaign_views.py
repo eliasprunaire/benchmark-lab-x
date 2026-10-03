@@ -495,15 +495,17 @@ def render_comparison(value):
         if item['state'] != 'NO_USABLE_RESPONSE' or configuration is None:
             return item['next_action']
         count = item.get('recoveries', 0)
-        details = ([item['cause']] if item.get('cause') else []) + (
+        # Une cause que le reçu n'établit pas est dite inconnue, jamais devinée
+        details = [item.get('cause') or 'cause non établie par le reçu'] + (
             [str(count) + (' reprises' if count > 1 else ' reprise')] if count else [])
         return ('Aucune réponse exploitable pour ' + model_name(configuration, names)
                 + (' · ' + effort_label(configuration) if sum(c['model'] == configuration['model'] for c in panel.values()) > 1 else '')
-                + (' (' + ' ; '.join(details) + ')' if details else '')
+                + ' (' + ' ; '.join(details) + ')'
                 + '. Ce modèle n’est pas évalué et n’entre pas dans la comparaison.')
-    pending_reasons = list(dict.fromkeys(pending_reason(item) for item in value.get('pending_attempts', [])))
+    pending_reasons = list(dict.fromkeys('<li>' + text(pending_reason(item)) + receipt_observations(item) + '</li>'
+                                         for item in value.get('pending_attempts', [])))
     if pending_reasons:
-        content += listing(pending_reasons)
+        content += '<ul>' + ''.join(pending_reasons) + '</ul>'
     # Un modèle sans réponse exploitable est terminé : il ne fait pas dire que les essais se sont arrêtés
     open_pending = [item for item in value.get('pending_attempts', []) if item['state'] != 'NO_USABLE_RESPONSE']
     coverage = value['coverage']
@@ -607,6 +609,7 @@ def render_comparison(value):
             if row.get('recovery_limit'):
                 content += '<p class="hint">' + text('Reprise après arrêt pour longueur : limite de sortie de '
                                                      + str(row['recovery_limit']) + ' jetons') + '</p>'
+            content += receipt_observations(row)
             content += '</th>'
             # Les critères qui fondent le verdict, entiers ; l'explication du juge reste dans le détail
             reason = ('Toutes les exigences sont respectées.' if row['verdict'] == 'SATISFAIT' else
@@ -941,6 +944,29 @@ def render_campaign_launch_operator(value, csrf):
     return content
 
 
+def receipt_observations(item):
+    """Motif et consommation transmis par essai, de l'origine à la dernière reprise ; une absence reste inconnue"""
+    lines = []
+    for number, observed in enumerate(item.get('observations', [])):
+        usage = observed['usage']
+        lines.append(('Essai d’origine' if number == 0 else 'Reprise ' + str(number))
+                     + ' · motif de fin transmis : ' + (observed['finish_reason'] or 'inconnu')
+                     + (' (précision transmise : ' + observed['finish_detail'] + ')' if observed['finish_detail'] else '')
+                     + ' · consommation transmise : ' + (', '.join(
+                         key + ' ' + ('inconnue' if amount is None else str(amount) if type(amount) in (int, str) else encode(amount))
+                         for key, amount in _dotted_pairs(usage)) if usage else 'inconnue'))
+    return '<details><summary>Observations techniques du reçu</summary>' + listing(lines) + '</details>' if lines else ''
+
+
+def _dotted_pairs(value, prefix=''):
+    """Paires `chemin.clé`, valeur d'un objet imbriqué, dans l'ordre transmis"""
+    for key, item in value.items():
+        if type(item) is dict and item:
+            yield from _dotted_pairs(item, prefix + key + '.')
+        else:
+            yield prefix + key, item
+
+
 PREVIEW_LENGTH = 200
 
 CRITERION_STATES = {
@@ -1124,7 +1150,7 @@ def render_campaign_records(campaigns, url):
         task = campaign['task']
         content += '<article><h3>Comparaison ' + text(campaign['campaign_id']) + '</h3>'
         if campaign.get('recovery_of'):
-            content += '<p>Reprise de la comparaison ' + text(campaign['recovery_of']) + ' après un problème technique. Les réponses et coûts déjà enregistrés sont conservés.</p>'
+            content += '<p>Reprise de l’essai ' + text(campaign['recovery_of']) + ' après un problème technique. Les réponses et coûts déjà enregistrés sont conservés.</p>'
         if 'evaluations' in campaign:
             content += '<p><a href="' + text(url) + '/campaigns/' + text(campaign['campaign_id']) + '">Voir les résultats de cette comparaison</a></p>'
         content += '<p>Exemple validé ' + text(task['version']) + ', version ' + text(task['revision']) + '.</p>'

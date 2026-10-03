@@ -1061,9 +1061,11 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(absent, page.visible)
         self.assertEqual(comparison, page.link('Voir les résultats'))
         self.assertEqual(('5Résultats', comparison), self.etape(page))
-        results, _, _ = self.request(comparison)
+        results, _, raw = self.request(comparison)
         self.examine(results, comparison, 'résultats partiels', None)
-        self.assertIn('Aucune réponse exploitable pour Modèle B.', results.visible)
+        self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu).', results.visible)
+        # Issue #442 : un reçu sans corps HTTP ne fait inventer ni motif ni consommation
+        self.assertIn('Essai d’origine · motif de fin transmis : inconnu · consommation transmise : inconnue', raw.decode())
         self.assertNotIn('doit être relue', results.visible)
         self.assertNotIn('les essais se sont arrêtés avant la fin', results.visible)
         followup, _, _ = self.request(recap)
@@ -1112,10 +1114,10 @@ class ParcoursComplet(unittest.TestCase):
         self.submit(page, '/start', {})
         attempts = self.starts.get_nowait()['candidate_attempts']
 
-        def coupee(value, content, choices=None):
+        def coupee(value, content, choices=None, usage=None):
             """Reçu OpenRouter terminé par la limite de sortie, comme le transport Pi le conserve"""
             body = storage._strict_json({'choices': choices or [{'finish_reason': 'length', 'message': {
-                'role': 'assistant', 'content': content}}]}).encode()
+                'role': 'assistant', 'content': content}}]} | ({'usage': usage} if usage else {})).encode()
             value['receipt']['observed_configuration']['http'] = dict(
                 status=200, complete=True, credential_redacted=False,
                 body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest())
@@ -1126,7 +1128,7 @@ class ParcoursComplet(unittest.TestCase):
             model = request['requested_configuration']['model']
             if model == 'deepseek/deepseek-v4.1-flash':
                 # Reçu complet mais de structure inattendue : aucune cause n'est avancée, la page reste lisible
-                coupee(value, None, [None])
+                coupee(value, None, [None], {'prompt_tokens': 30, 'completion_tokens': 12})
                 value['cost'].update(status='KNOWN', amount='0.05')
             elif model == 'mistralai/mistral-small-2603':
                 coupee(value, 'Action : relire | Responsable : Camille')
@@ -1155,7 +1157,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('<strong>Modèle C</strong>', html.split('<table')[1])
         self.assertIn('Aucune réponse exploitable pour Modèle C (arrêt pour longueur, '
                       'plafond demandé : 4096 jetons de sortie). Ce modèle', html)
-        self.assertIn('Aucune réponse exploitable pour Modèle B. Ce modèle', html)
+        self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu). Ce modèle', html)
+        # Issue #442 : un choix mal formé n'efface pas la consommation que le corps intact transmet
+        self.assertIn('Essai d’origine · motif de fin transmis : inconnu · consommation transmise : '
+                      'completion_tokens 12, prompt_tokens 30', html)
         _, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
         text = raw.decode()
         self.assertIn('0 exigence sur 2 respectée, 1 non respectée, 1 non vérifiable. 1 erreur éliminatoire relevée.', text)
@@ -1391,6 +1396,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, rows.count('<tr id="attempt-'))
         reprise = next(chunk for chunk in rows.split('<tr id="attempt-')[1:] if '<strong>Modèle B</strong>' in chunk)
         self.assertIn('Reprise après arrêt pour longueur : limite de sortie de 8192 jetons', reprise)
+        # Issue #442 : la reprise réussie garde consultables les observations de l'essai coupé
+        self.assertIn('Essai d’origine · motif de fin transmis : length · consommation transmise : '
+                      'completion_tokens 4096, prompt_tokens 120', reprise)
+        self.assertIn('Reprise 1 · motif de fin transmis : inconnu · consommation transmise : inconnue', reprise)
         self.assertNotIn('Aucune réponse exploitable pour Modèle B', html)
         self.assertEqual(1, html.count('Aucune réponse exploitable pour Modèle C'))
         self.assertIn('Aucune réponse exploitable pour Modèle C (arrêt pour longueur, plafond demandé : '
@@ -1668,6 +1677,72 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('À reprendre : 1', html)
         self.assertIn('Satisfait : 2', html)
         self.assertNotIn('Notre conseil', html)
+
+    def test_sortie_vide_ou_coupee_expliquee_par_le_recu(self):
+        """Issue #442 : une sortie vide ou coupée s'explique par ce que le reçu atteste, rien de plus
+
+        Modes d'échec couverts :
+        1. une sortie vide sans motif de fin devient « arrêt pour longueur » ou « raisonnement épuisé »
+           parce que la consommation montre des jetons de raisonnement ;
+        2. une cause que le reçu n'établit pas est tue au lieu d'être dite inconnue ;
+        3. le motif de fin et la consommation transmis ne sont consultables nulle part, ou une valeur
+           absente du reçu reçoit une valeur par défaut ;
+        4. une reprise perd le lien avec son essai d'origine, ou seule la dernière tentative est détaillée ;
+        5. une réponse coupée part au juge ou reçoit un verdict « Ne satisfait pas » ;
+        6. consulter les résultats ou le dossier relance un appel candidat
+        """
+        from base64 import b64encode
+        from hashlib import sha256
+        judge = self.juge_factice()
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+                # Sortie vide, aucun motif de fin ; la consommation montre du raisonnement sans le prouver épuisé
+                body = storage._strict_json({'choices': [{'message': {'role': 'assistant', 'content': ''}}], 'usage': {
+                    'prompt_tokens': 120, 'completion_tokens': limit,
+                    'completion_tokens_details': {'reasoning_tokens': limit}}}).encode()
+                value['receipt']['observed_configuration']['http'] = dict(
+                    status=200, complete=True, credential_redacted=False,
+                    body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest())
+                value['receipt']['result'].update(output='', incident='PROVIDER_RESPONSE_INCOMPLETE')
+            elif model == 'mistralai/mistral-small-2603':
+                self.coupee(value, 'Action : relire' + ' | suite' * (limit // 1024), limit)
+        dossier, _, envois, _ = self.lancer_avec_reprises(list(self.MAJORANTS), comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096),
+                          ('mistralai/mistral-small-2603', 4096), ('mistralai/mistral-small-2603', 8192),
+                          ('mistralai/mistral-small-2603', 16384)], envois)
+        html = self.evaluer(dossier)
+        self.assertEqual(1, judge.request.call_count)
+        rows = html.split('<tbody>')[1].split('</tbody>')[0]
+        self.assertNotIn('<strong>Modèle B</strong>', rows)
+        self.assertNotIn('<strong>Modèle C</strong>', rows)
+        ligne_b = next(li for li in html.split('<li>') if li.startswith('Aucune réponse exploitable pour Modèle B'))
+        self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu). Ce modèle', ligne_b)
+        self.assertNotIn('longueur', ligne_b)
+        self.assertNotIn('épuisé', html)
+        # Clés dans l'ordre du corps conservé
+        self.assertIn('Essai d’origine · motif de fin transmis : inconnu · consommation transmise : completion_tokens 4096, '
+                      'completion_tokens_details.reasoning_tokens 4096, prompt_tokens 120', html)
+        self.assertIn('Aucune réponse exploitable pour Modèle C (arrêt pour longueur, plafond demandé : '
+                      '16384 jetons de sortie ; 2 reprises).', html)
+        for numero, (essai, limite) in enumerate((('Essai d’origine', 4096), ('Reprise 1', 8192), ('Reprise 2', 16384))):
+            self.assertIn(essai + ' · motif de fin transmis : length · consommation transmise : completion_tokens '
+                          + str(limite) + ', prompt_tokens 120', html, numero)
+        # Lire les résultats et le dossier n'envoie rien à aucun modèle
+        appels = list(self.calls)
+        self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1')
+        self.request(dossier)
+        self.assertEqual(appels, self.calls)
+        self.assertEqual(1, judge.request.call_count)
+        artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
+        if artefacts:
+            Path(artefacts).mkdir(parents=True, exist_ok=True)
+            Path(artefacts, 'sortie-vide-ou-coupee.json').write_text(json.dumps(
+                {'envois': envois, 'jugements': judge.request.call_count, 'appels_apres_consultation': len(self.calls) - len(appels),
+                 'lignes': [re.sub(r'<[^>]+>', ' ', li).split('  ')[0].strip() for li in html.split('<li>')
+                            if li.startswith(('Aucune réponse exploitable', 'Essai d’origine', 'Reprise '))]},
+                ensure_ascii=False, indent=2) + '\n')
 
     def test_reprise_refusee_ne_bloque_pas_la_comparaison(self):
         """Une reprise refusée avant envoi (clé révoquée, par exemple) ne reste pas en attente

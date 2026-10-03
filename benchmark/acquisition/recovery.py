@@ -80,6 +80,39 @@ def observation(attempt) -> dict:
                 receipt_sha256=value_digest(receipt), received_at=http.get('received_at'))
 
 
+def transmitted(receipt) -> dict:
+    """Motifs de fin et consommation tels que le transport les a écrits dans le corps HTTP conservé
+
+    Lecture seule, indépendante de l'attribution et de l'admissibilité à une reprise ; une valeur
+    absente, ou un corps incomplet, expurgé ou altéré, reste None
+    """
+    unknown = dict(finish_reason=None, finish_detail=None, usage=None)
+    observed = receipt.get('observed_configuration') if type(receipt) is dict else None
+    http = observed.get('http') if type(observed) is dict else None
+    if type(observed) is not dict or type(http) is not dict or not http.get('complete') or http.get('credential_redacted'):
+        return unknown
+    try:
+        raw = b64decode(http.get('body_base64', ''), validate=True)
+        data = json.loads(raw) if sha256(raw).hexdigest() == http.get('body_sha256') else None
+    except (ValueError, TypeError):
+        return unknown
+    if type(data) is not dict:
+        return unknown
+    if observed.get('channel_id') == 'https://api.anthropic.com/v1/messages':
+        native, detail = data.get('stop_reason'), None
+    elif str(observed.get('channel_id', '')).endswith('/responses'):
+        incomplete = data.get('incomplete_details')
+        native, detail = data.get('status'), incomplete.get('reason') if type(incomplete) is dict else None
+    else:
+        choices = data.get('choices')
+        choice = choices[0] if type(choices) is list and len(choices) == 1 and type(choices[0]) is dict else {}
+        native, detail = choice.get('finish_reason'), choice.get('native_finish_reason')
+    usage = data.get('usage')
+    return dict(finish_reason=native if type(native) is str else None,
+                finish_detail=detail if type(detail) is str else None,
+                usage=usage if type(usage) is dict and usage else None)
+
+
 def routing_error(operation):
     """A complete HTTP error may omit model identity without contradicting it"""
     if operation['receipt'] is None:
