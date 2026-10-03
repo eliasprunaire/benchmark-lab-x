@@ -852,7 +852,10 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, recap, 'prêt à lancer', 'Lancer le benchmark')
         start = page.form('/start')
         notes, reserve = self.bloquer_par_contrat_operateur(dossier)
-        affiche = '« Action présente » non prouvée : la pièce (identifiant masqué) ne montre aucune action'
+        # Identifiants de critère, de pièce et de contrôle masqués ; « source » employé comme mot reste intact
+        affiche = ('Contrôle « Action présente » en échec : « Action présente » non prouvée, la pièce (identifiant masqué) '
+                   'ne montre aucune action ; contrôles « Action omise » et « Action présente » à revoir. '
+                   'La source des notes reste lisible.')
         page, _, raw = self.request(dossier)
         # Comparaison préparée mais pas lancée : l'encadré dit que l'exemple est à revoir, sans proposer de lancer
         self.examine(page, dossier, 'dossier bloqué par le contrat opérateur', None)
@@ -894,7 +897,9 @@ class ParcoursComplet(unittest.TestCase):
 
             def bloque(contract, resources):
                 review = check(contract, resources)
-                review['checks'][0].update(status='FAIL', finding=f'O1 non prouvée : la pièce {notes} ne montre aucune action')
+                review['checks'][0].update(status='FAIL', finding=(
+                    f'Contrôle source en échec : O1 non prouvée, la pièce {notes} ne montre aucune action ; '
+                    'contrôles `defect` et source à revoir. La source des notes reste lisible.'))
                 return review
             self.assertEqual('BLOCKED', qualification.qualify(
                 store, candidate['contract_sha256'], reviewer=ACTOR, check=bloque)['status'])

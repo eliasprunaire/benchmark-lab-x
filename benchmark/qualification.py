@@ -464,20 +464,33 @@ def projection(store, connection, dossier_id, revision, *, eligible):
 def refusal_findings(store, connection, contract_sha256):
     """Texte des contrôles non réussis de la dernière qualification, identifiants internes masqués
 
-    Un identifiant de critère devient sa description, une empreinte ou un identifiant de pièce est masqué ;
-    preuves, limites et désaccords restent privés
+    Un identifiant de critère devient sa description, une empreinte ou un identifiant de pièce est masqué.
+    Un identifiant de contrôle devient la description des critères qu'il vérifie, seulement là où il sert
+    d'identifiant (après « contrôle », ou entre guillemets ou backticks) : « la source des notes » reste
+    intact. Preuves, limites et désaccords restent privés
     """
     try:
         snapshot = _inspect(store, connection, contract_sha256)
     except (ValueError, KeyError):
         return []
     spec, receipts = snapshot['contract']['specification'], snapshot['qualifications']
-    names = {row['id']: row['description'] for key in ('obligations', 'eliminatory_errors') for row in spec[key]}
+    criteria = [row for key in ('obligations', 'eliminatory_errors') for row in spec[key]]
+    names = {row['id']: row['description'] for row in criteria}
     names.update((row['id'], row['measure']) for row in spec['secondary_criteria'])
     criterion = re.compile(r'\b(?:' + '|'.join(map(re.escape, sorted(names, key=len, reverse=True))) + r')\b')
+    controls = {control: ', '.join('« ' + row['description'] + ' »' for row in criteria if control in row['control_ids'])
+                or '(identifiant masqué)' for control in spec['method']['control_ids']}
+    alternatives = '|'.join(map(re.escape, sorted(controls, key=len, reverse=True)))
+    # Un identifiant seul, éventuellement entre backticks, guillemets droits ou français
+    control = rf'(?:`|«\s?|")?(?<![\w-])({alternatives})(?![\w-])(?:`|\s?»|")?'
+    listed = re.compile(rf'\b(?:[Cc]ontrôles?|[Cc]ontrols?)\s*:?\s*{control}(?:\s*(?:,|\bet\b|\band\b)\s*{control})*')
+    quoted = re.compile(rf'`({alternatives})`|«\s?({alternatives})\s?»|"({alternatives})"')
 
     def masked(value):
         value = re.sub(r'\b[0-9a-f]{32,64}\b', '(identifiant masqué)', value)
+        if controls:
+            value = listed.sub(lambda match: re.sub(control, lambda inner: controls[inner.group(1)], match.group()), value)
+            value = quoted.sub(lambda match: controls[next(group for group in match.groups() if group)], value)
         return criterion.sub(lambda match: '« ' + names[match.group()] + ' »', value) if names else value
     return [{'text': masked(row['finding'])} for row in (receipts[-1]['checks'] if receipts else [])
             if row['status'] != 'PASS']
