@@ -455,8 +455,8 @@ def render_expenses(expenses, names):
                 details.append('montant réservé : ' + montant_lisible(item['reserved']) + ' ' + item['reserved_unit'])
             if item['estimate'] is not None:
                 details.append('estimation indicative : ' + montant_lisible(item['estimate']) + ' USD')
-            content += '<li><strong>' + text(model_name({'model': item['model']}, names) if item['model'] else 'Modèle non renseigné')
-            content += '</strong> : ' + text(amount) + '<details><summary>Source et référence</summary><p>'
+            content += '<li>' + text((model_name({'model': item['model']}, names) if item['model'] else 'Modèle non renseigné')
+                                     + ' : ' + amount) + '<details><summary>Source et référence</summary><p>'
             content += text(' · '.join(details)) + ' · réf. <code>' + text(item['operation_id'][-8:]) + '</code></p></details></li>'
         content += '</ul>'
     return content + '</details>'

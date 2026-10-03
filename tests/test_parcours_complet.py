@@ -1703,7 +1703,7 @@ class ParcoursComplet(unittest.TestCase):
         # Issue #441 : la reprise refusée ne partira jamais, elle ne laisse aucune dépense en suspens
         texte, phases = self.depenses(html)
         self.assertIn('Coût complet connu', texte)
-        self.assertEqual(1, sum('<strong>Modèle B</strong> : aucune dépense' in ligne and 'reprise arrêtée avant envoi' in ligne
+        self.assertEqual(1, sum('Modèle B : aucune dépense' in ligne and 'reprise arrêtée avant envoi' in ligne
                                 for ligne in phases['Autres envois aux modèles']))
 
     def test_cout_complet_inconnu_tant_qu_un_envoi_attend(self):

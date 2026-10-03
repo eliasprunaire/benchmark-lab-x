@@ -246,7 +246,7 @@ class CustomNeedEngineTests(unittest.TestCase):
                     prep.execute_qualification(data, validated[3]['qualification_operation'], qualification_transport)
                 self.assertIn('emitted=False', logs.output[0])
                 # Contrôle clos sans envoi, coût connu en USD : montant visible, ni additionné ni doublé de sa réserve
-                self.assertIn('<strong>qualification/fictive</strong> : 0 USD · autre unité, non additionné', controle())
+                self.assertIn('qualification/fictive : 0 USD · autre unité, non additionné', controle())
                 self.assertNotIn('montant réservé', controle())
                 self.assertTrue(runtime.verify(store)['integrity_ok'])
                 network.assert_not_called()
