@@ -1744,6 +1744,43 @@ class ParcoursComplet(unittest.TestCase):
                             if li.startswith(('Aucune réponse exploitable', 'Essai d’origine', 'Reprise '))]},
                 ensure_ascii=False, indent=2) + '\n')
 
+    def test_attribution_contradictoire_garde_ses_observations(self):
+        """Issue #442 : un reçu d'une autre identité garde son motif et sa consommation, sans cause devinée
+
+        Modes d'échec couverts :
+        1. l'identité contredite efface le motif et la consommation que le corps intact transmet ;
+        2. une cause est avancée alors que le reçu n'est pas attribuable au modèle demandé ;
+        3. la réponse d'une autre identité part au juge ou entre dans le tableau ;
+        4. l'arrêt de la campagne empêche d'évaluer les réponses déjà reçues
+        """
+        from base64 import b64encode
+        from hashlib import sha256
+        judge = self.juge_factice()
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+            elif model == 'mistralai/mistral-small-2603':
+                # Le fournisseur répond complètement, mais sous une autre identité que celle demandée
+                body = storage._strict_json({'model': 'autre/modele', 'choices': [{'finish_reason': 'stop', 'message': {
+                    'role': 'assistant', 'content': 'Action : relire'}}],
+                    'usage': {'prompt_tokens': 120, 'completion_tokens': 40}}).encode()
+                observed = value['receipt']['observed_configuration']
+                observed.update(revision='autre/modele', http=dict(
+                    status=200, complete=True, credential_redacted=False,
+                    body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest()))
+                value['receipt']['result'].update(output='Action : relire', incident='MODEL_IDENTITY_MISMATCH')
+        dossier, _, envois, _ = self.lancer_avec_reprises(list(self.MAJORANTS), comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096),
+                          ('mistralai/mistral-small-2603', 4096)], envois)
+        html = self.evaluer(dossier)
+        self.assertEqual(2, judge.request.call_count)
+        rows = html.split('<tbody>')[1].split('</tbody>')[0]
+        self.assertNotIn('<strong>Modèle C</strong>', rows)
+        self.assertIn('Aucune réponse exploitable pour Modèle C (cause non établie par le reçu). Ce modèle', html)
+        self.assertIn('Essai d’origine · motif de fin transmis : stop · consommation transmise : '
+                      'completion_tokens 40, prompt_tokens 120', html)
+
     def test_reprise_refusee_ne_bloque_pas_la_comparaison(self):
         """Une reprise refusée avant envoi (clé révoquée, par exemple) ne reste pas en attente
 
