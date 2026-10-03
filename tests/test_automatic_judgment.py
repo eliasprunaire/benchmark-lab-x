@@ -80,6 +80,21 @@ class AutomaticJudgment(unittest.TestCase):
         auto.execute_campaign(self.data, ids, self.transport)
         self.assertEqual(2, self.http.request.call_count)
 
+    def test_public_contract_keeps_one_control_per_criterion_for_recorded_judgments(self):
+        # Le contexte adapté est revérifié octet pour octet à chaque relecture d'un jugement enregistré :
+        # changer l'adaptation d'un contrat existant rendrait ses verdicts illisibles
+        from benchmark import automatic_judgment as auto
+        self.acquire()
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        auto.execute_campaign(self.data, ids, self.transport)
+        for call in self.http.request.call_args_list:
+            content = json.loads(json.loads(call.kwargs['body'])['messages'][1]['content'])
+            criteria = content['obligations'] + content['eliminatory_errors']
+            self.assertEqual([[x['id']] for x in criteria], [x['control_ids'] for x in criteria])
+            self.assertEqual(auto.FORMAT, content['method']['id'])
+        with self.store.read_snapshot() as connection:
+            self.assertEqual(2, len(auto.records(self.store, connection, self.cid)))
+
     def dispatch(self, method, suffix, body=None):
         with patch.object(preparation, 'session', return_value=(self.sid, 'csrf', 'token')):
             return web_api.dispatch(self.store, method,
