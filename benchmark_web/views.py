@@ -629,8 +629,10 @@ def render(value, csrf, path='/preparation', *, error=False):
                                    + listing(finding['text'] for finding in qualification.get('findings', [])))
             else:
                 content += '<details><summary>Vérification de l’exemple</summary>'
-                content += section('Vérification', '<p>' + text(labels.get(
-                    qualification.get('qualification_status'), 'En attente')) + '</p>')
+                # Contrat opérateur bloqué : ses constats remplacent le libellé générique, comme sur une page de refus
+                content += section('Vérification', ('<p>Bloquée. Ce que la vérification de l’exemple a relevé :</p>' + listing(
+                    finding['text'] for finding in qualification['findings'])) if qualification.get('findings')
+                    else '<p>' + text(labels.get(qualification.get('qualification_status'), 'En attente')) + '</p>')
             content += '</details>'
         if value.get('campaigns'):
             content += render_campaign_records(value['campaigns'], url)

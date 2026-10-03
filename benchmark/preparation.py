@@ -636,10 +636,11 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
                                        (dossier_id, revision)).fetchone()
                     if connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s3_control'").fetchone() else None)
         if contract:
-            from .qualification import projection
-            result['qualification'] = projection(store, connection, dossier_id, revision,
-                                                  eligible=result['validation'] is not None)
-            result['qualified'] = result['qualification']['status'] in ('QUALIFIED', 'APPROVED')
+            from .qualification import projection, refusal_findings
+            state = projection(store, connection, dossier_id, revision, eligible=result['validation'] is not None)
+            result['qualified'] = state['status'] in ('QUALIFIED', 'APPROVED')
+            result['qualification'] = {**state, 'findings': refusal_findings(store, connection, state['contract_sha256'])
+                                       if state['qualification_status'] == 'BLOCKED' and state['contract_sha256'] else []}
         else:
             result['qualification'] = _automatic_qualification(store, connection, dossier_id, revision)
             if result['qualification'] is None:

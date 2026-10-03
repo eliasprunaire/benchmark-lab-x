@@ -835,12 +835,13 @@ class ParcoursComplet(unittest.TestCase):
                 ensure_ascii=False, indent=2) + '\n')
 
     def test_contrat_operateur_bloque_montre_ses_constats_au_demandeur(self):
-        """Un contrat opérateur bloqué après la préparation de la comparaison : le refus nomme ce qui bloque
+        """Un contrat opérateur bloqué après la préparation de la comparaison : le dossier et le refus nomment ce qui bloque
 
         Modes d'échec couverts :
-        1. la page de refus ne dit pas pourquoi l'exemple n'est plus prêt ;
+        1. la page du dossier ou de refus ne dit pas pourquoi l'exemple n'est plus prêt ;
         2. un contrôle réussi est présenté comme un motif ;
-        3. la preuve d'un contrôle, qui cite la référence de jugement, s'affiche chez le demandeur
+        3. la preuve d'un contrôle, qui cite la référence de jugement, s'affiche chez le demandeur ;
+        4. un identifiant interne (critère, pièce) cité par l'opérateur s'affiche tel quel
         """
         dossier = self.exemple_qualifie()
         page, _, _ = self.request(dossier + '/configurations')
@@ -850,12 +851,16 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'prêt à lancer', 'Lancer le benchmark')
         start = page.form('/start')
-        motif = 'Aucun passage des notes ne prouve l’obligation sur les actions'
         with closing(storage.Store(self.data)) as store:
             dossier_id = dossier.rsplit('/', 1)[1]
             revision, reference = store._connection.execute(
                 "SELECT revision, piece_id FROM pieces WHERE dossier_id=? AND role='judge' "
                 'ORDER BY revision DESC LIMIT 1', (dossier_id,)).fetchone()
+            notes = store._connection.execute(
+                "SELECT piece_id FROM pieces WHERE dossier_id=? AND revision=? AND role='candidate'",
+                (dossier_id, revision)).fetchone()[0]
+            motif = f'O1 non prouvée : la pièce {notes} ne montre aucune action'
+            affiche = '« Action présente » non prouvée : la pièce (identifiant masqué) ne montre aucune action'
             reserve = store.read_piece(reference).decode()
             candidate = qualification.draft(store, dossier_id, revision, specification(reference))
 
@@ -865,6 +870,15 @@ class ParcoursComplet(unittest.TestCase):
                 return review
             self.assertEqual('BLOCKED', qualification.qualify(
                 store, candidate['contract_sha256'], reviewer=ACTOR, check=bloque)['status'])
+        page, _, raw = self.request(dossier)
+        self.examine(page, dossier, 'dossier bloqué par le contrat opérateur', 'Vérifier puis lancer la comparaison')
+        verification = next(n['text'] for n in page.nodes if n['tag'] == 'details'
+                            and 'Vérification de l’exemple' in n['text'])
+        self.assertIn('Ce que la vérification de l’exemple a relevé', verification)
+        self.assertIn(affiche, verification)
+        self.assertNotIn('ne sont pas assez établis', verification)
+        for absent in (notes, 'Omission témoin repérée', reserve):
+            self.assertNotIn(absent, raw.decode())
         for path, fields in ((recap, None), (dossier + '/configurations', None),
                              (start['action'], start['fields'])):
             with self.subTest(route=path):
@@ -872,11 +886,12 @@ class ParcoursComplet(unittest.TestCase):
                 self.examine(page, path, 'exemple bloqué par le contrat opérateur', 'Retrouver mes cas d’usage')
                 self.assertIn('Terminez l’étape précédente avant de poursuivre.', page.visible)
                 self.assertIn('Ce que la vérification de l’exemple a relevé', page.visible)
-                self.assertIn(motif, page.visible)
+                self.assertIn(affiche, page.visible)
+                self.assertNotIn(notes, raw.decode())
                 self.assertNotIn('Omission témoin repérée', raw.decode())
                 self.assertNotIn(reserve, raw.decode())
         _, _, raw = self.request(recap, status=403, json_response=True)
-        self.assertEqual([{'text': motif}], json.loads(raw)['findings'])
+        self.assertEqual([{'text': affiche}], json.loads(raw)['findings'])
 
     @staticmethod
     def etape(page):

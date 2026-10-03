@@ -9,6 +9,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import json
 import os
+import re
 import secrets
 
 from . import storage
@@ -457,10 +458,22 @@ def projection(store, connection, dossier_id, revision, *, eligible):
 
 
 def refusal_findings(store, connection, contract_sha256):
-    """Texte des contrôles non réussis de la dernière qualification ; preuves, limites et désaccords restent privés"""
+    """Texte des contrôles non réussis de la dernière qualification, identifiants internes masqués
+
+    Un identifiant de critère devient sa description, une empreinte ou un identifiant de pièce est masqué ;
+    preuves, limites et désaccords restent privés
+    """
     try:
-        receipts = _inspect(store, connection, contract_sha256)['qualifications']
+        snapshot = _inspect(store, connection, contract_sha256)
     except (ValueError, KeyError):
         return []
-    return [{'text': row['finding']} for row in (receipts[-1]['checks'] if receipts else [])
+    spec, receipts = snapshot['contract']['specification'], snapshot['qualifications']
+    names = {row['id']: row['description'] for key in ('obligations', 'eliminatory_errors') for row in spec[key]}
+    names.update((row['id'], row['measure']) for row in spec['secondary_criteria'])
+    criterion = re.compile(r'\b(?:' + '|'.join(map(re.escape, sorted(names, key=len, reverse=True))) + r')\b')
+
+    def masked(value):
+        value = re.sub(r'\b[0-9a-f]{32,64}\b', '(identifiant masqué)', value)
+        return criterion.sub(lambda match: '« ' + names[match.group()] + ' »', value) if names else value
+    return [{'text': masked(row['finding'])} for row in (receipts[-1]['checks'] if receipts else [])
             if row['status'] != 'PASS']

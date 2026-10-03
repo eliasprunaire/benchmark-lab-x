@@ -424,10 +424,11 @@ class OpenRouterQualificationTests(unittest.TestCase):
             connection.return_value.execute.return_value.fetchone.return_value = (1,)
             with self.assertRaises(prep.Denied) as refused:
                 web_api.dispatch(self.store, 'GET', path, self.token, None, 'b' * 40, True)
-        self.assertEqual(('NOT_QUALIFIED', [{'text': motif}]),
+        affiche = 'Obligation « Action présente » : aucun passage des notes ne la prouve'
+        self.assertEqual(('NOT_QUALIFIED', [{'text': affiche}]),
                          (refused.exception.code, refused.exception.findings))
         sortie = storage._strict_json(service.denied_response(refused.exception))
-        self.assertIn(motif, sortie)
+        self.assertIn(affiche, sortie)
         self.assertNotIn(self.store.read_piece(reference).decode(), sortie)
         self.assertNotIn('Omission témoin repérée', sortie)
 
