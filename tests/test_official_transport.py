@@ -307,6 +307,38 @@ class OfficialTransportTests(unittest.TestCase):
         self.assertEqual('PROVIDER_RESPONSE_INCOMPLETE', attempt['operation']['receipt']['result']['incident'])
         self.assertEqual('LENGTH', recovery.observation(attempt)['kind'])
 
+    def test_native_finish_reasons_reach_the_results_page(self):
+        """Issue #442 : un reçu Anthropic ou Responses coupé montre ses motifs natifs sur la page de résultats
+
+        Modes d'échec couverts :
+        1. le motif natif (`stop_reason`, `status`) est lu au format OpenRouter et s'affiche inconnu ;
+        2. la précision Responses (`incomplete_details.reason`) est perdue ou prise pour le motif ;
+        3. la consommation native (`input_tokens`, `output_tokens`) est perdue ou renommée ;
+        4. la normalisation interne (`length`) remplace la valeur transmise
+        """
+        from benchmark import restitution
+        from benchmark_web import views
+        cases = (
+            ('anthropic', dict(stop_reason='max_tokens', usage=dict(input_tokens=11, output_tokens=64))),
+            ('openai', dict(status='incomplete', incomplete_details=dict(reason='max_output_tokens'), usage=dict(
+                input_tokens=12, output_tokens=64, output_tokens_details=dict(reasoning_tokens=64)))))
+        expected = {
+            'anthropic': 'Essai d’origine · motif de fin transmis : max_tokens · consommation transmise : '
+                         'input_tokens 11, output_tokens 64',
+            'openai': 'Essai d’origine · motif de fin transmis : incomplete (précision transmise : max_output_tokens) · '
+                      'consommation transmise : input_tokens 12, output_tokens 64, output_tokens_details.reasoning_tokens 64'}
+        for kind, body in cases:
+            with self.subTest(kind=kind):
+                transport, cid, oid = self.prepare(kind)
+                with patch.object(native, 'HTTPSConnection', return_value=self.response(kind, **body)):
+                    execution.execute(self.h.data, oid, transport)
+                attempt = c.inspect(self.h.store, cid)['attempts'][0]
+                self.assertEqual('PROVIDER_RESPONSE_INCOMPLETE', attempt['operation']['receipt']['result']['incident'])
+                value = restitution.comparison(self.h.store, self.h.session, 'fixture', cid)
+                page = views.render(value, 'csrf').decode()
+                self.assertIn(expected[kind], page)
+                self.assertNotIn('motif de fin transmis : length', page)
+
     def test_length_requires_proven_exhaustion_before_official_admission(self):
         with self.assertRaisesRegex(ValueError, 'à résoudre'):
             self.prepare('deepseek', finish='length')
