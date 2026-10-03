@@ -1515,7 +1515,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('dépense inconnue', inconnue)
         self.assertIn('montant réservé : ' + montant_lisible(reserve) + ' USD', inconnue)
 
-    SORTIE_C ='Action : relire | Responsable : Camille'
+    SORTIE_C = 'Action : relire | Responsable : Camille'
     # Formulations de promesse, pas les mots seuls : « la fiabilité générale n'est pas garantie » reste permis
     PROMESSE = r'(?i)meilleur (modèle|rapport qualité)|plus fiable|fiable en général|fiabilité (assurée|garantie)|garantit (la|une) (fiabilité|réussite)'
 
@@ -1698,6 +1698,26 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Aucune réponse exploitable pour Modèle B (arrêt pour longueur, plafond demandé : 4096 '
                       'jetons de sortie).', html)
         self.assertEqual(1, html.count('Aucune réponse exploitable pour Modèle B'))
+        # Issue #441 : la reprise refusée ne partira jamais, elle ne laisse aucune dépense en suspens
+        texte, phases = self.depenses(html)
+        self.assertIn('Coût complet connu', texte)
+        self.assertEqual(1, sum('aucune dépense · reprise arrêtée avant envoi' in ligne
+                                for ligne in phases['Autres envois aux modèles']))
+
+    def test_cout_complet_inconnu_tant_qu_un_envoi_attend(self):
+        """Issue #441 : un envoi réservé mais pas encore parti peut encore coûter
+
+        Mode d'échec : la page affichée entre le lancement et l'exécution annonce un coût complet
+        connu alors que les réponses des modèles restent à payer
+        """
+        with patch.object(execution, 'execute_launch'):
+            dossier, _, envois, _ = self.lancer_avec_reprises(['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'], None)
+        self.assertEqual([], envois)
+        _, _, raw = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1')
+        texte, phases = self.depenses(raw.decode())
+        self.assertIn('Coût complet inconnu · sous-total connu', texte)
+        self.assertIn('pas encore envoyé', phases['Autres envois aux modèles'][0])
+        self.assertIn('montant réservé', phases['Autres envois aux modèles'][0])
 
     def niveaux_envoyes(self, campaign_id):
         with closing(storage.Store(self.data)) as store:

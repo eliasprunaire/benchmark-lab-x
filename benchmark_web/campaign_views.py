@@ -406,7 +406,7 @@ EXPENSE_GROUPS = {
     'qualification': ('Contrôle de l’exemple', 'Pour information, hors conseil. '
                       'Il sert aussi aux autres comparaisons de cet exemple.'),
 }
-EXPENSE_STATES = {'NOT_SENT': 'non envoyé', 'PROVIDER_INCIDENT': 'incident du fournisseur, relancé automatiquement',
+EXPENSE_STATES = {'NOT_SENT': 'non envoyé', 'STOPPED': 'reprise arrêtée avant envoi', 'PROVIDER_INCIDENT': 'incident du fournisseur, relancé automatiquement',
                   'AMBIGUOUS_EXPIRED': 'réponse incertaine, close sans relance', 'INTENT_RECORDED': 'pas encore envoyé',
                   'EMISSION_POSSIBLE': 'envoi en cours', 'AMBIGUOUS': 'réponse incertaine, en attente'}
 
@@ -437,10 +437,10 @@ def render_expenses(expenses, names):
                 if not item['counted']:
                     line += ' · autre unité, non additionné'
             else:
-                line += 'aucune dépense' if item['state'] == 'INTENT_RECORDED' else 'dépense inconnue'
+                line += {'STOPPED': 'aucune dépense', 'INTENT_RECORDED': 'dépense à venir'}.get(item['state'], 'dépense inconnue')
             if item['state'] in EXPENSE_STATES:
                 line += ' · ' + EXPENSE_STATES[item['state']]
-            if item['recovery']:
+            if item['recovery'] and item['state'] != 'STOPPED':
                 line += ' · reprise après arrêt pour longueur'
             if item['reserved'] is not None:
                 line += ' · montant réservé : ' + montant_lisible(item['reserved']) + ' ' + expenses['unit']

@@ -175,11 +175,12 @@ def _expense_state(operation):
     return operation['state']
 
 
-def _expenses(store, connection, dossier_id, revision, family, compared, unit):
+def _expenses(store, connection, dossier_id, revision, family, compared, held, unit):
     """Chaque opération de la comparaison une seule fois, rangée dans sa phase (RULES.md §8, dépense visible)
 
     Seul `compared` porte le coût observé du tableau et du conseil ; les autres groupes informent du coût
-    complet. La préparation compte jusqu'à la version du contrat, les sondes de modèles à cette version
+    complet. La préparation compte jusqu'à la version du contrat, les sondes de modèles à cette version.
+    `held` : tentatives qui ont eu ou auront lieu ; une reprise arrêtée avant tout envoi n'en fait pas partie
     """
     from . import model_probes
     attempts = dict(connection.execute(
@@ -205,14 +206,15 @@ def _expenses(store, connection, dossier_id, revision, family, compared, unit):
             key = 'qualification'
         else:
             continue
+        state = 'STOPPED' if op['operation_id'] in attempts and op['operation_id'] not in held else _expense_state(op)
         cost = store._effective_cost(connection, op)
         known = cost is not None and cost['status'] == 'KNOWN' and cost['currency'] == unit
         observed = (op['receipt'] or {}).get('observed_configuration') or {}
         groups[key].append(dict(
             operation_id=op['operation_id'], model=op['requested_configuration'].get('model'),
-            created_at=op['created_at'], state=_expense_state(op), cost=cost, counted=known,
-            # Rien n'est parti : aucune dépense, seule la réserve reste tenue
-            complete=known or op['state'] == 'INTENT_RECORDED',
+            created_at=op['created_at'], state=state, cost=cost, counted=known,
+            # Une intention en attente peut encore partir ; seule la reprise arrêtée ne coûtera jamais rien
+            complete=known or state == 'STOPPED',
             reserved=None if known else op['reserved_amount'],
             estimate=(observed.get('indicative_cost') or {}).get('token_subtotal_usd'),
             recovery=attempts.get(op['operation_id'], family[0]) != family[0]))
@@ -392,7 +394,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 # Décision d'Ayo : pas de conseil sur une comparaison qui compte une reprise (une tentative par configuration)
                 recommendation=None if descendants else _recommendation(rows, columns, len(campaign['cases']), coverage, pending),
                 expenses=_expenses(store, connection, dossier_id, contract['revision'], [campaign_id] + descendants,
-                                   {r['attempt_id'] for r in rows}, basis['unit']),
+                                   {r['attempt_id'] for r in rows}, held, basis['unit']),
                 cases=campaign['cases'], panel=campaign['panel'], conditions=campaign['conditions'],
                 obligations=spec['obligations'], cost_basis=basis, cells=campaign['cells'],
                 campaign_state=campaign['state'], history=records, href=base, pending_attempts=pending,
