@@ -432,7 +432,11 @@ def verify_qualification(store, connection):
 
 
 def projection(store, connection, dossier_id, revision, *, eligible):
-    """Only statuses and the contract identity cross the requester boundary"""
+    """Statuts et identité du contrat pour le demandeur
+
+    Les constats d'un blocage lui parviennent à part, par `refusal_findings` : texte seul, identifiants internes
+    masqués ; preuves, limites et désaccords ne franchissent jamais cette frontière
+    """
     result = dict(status='PENDING', contract_sha256=None, qualification_status='PENDING',
                   approval_status='PENDING')
     if not connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s3_control'").fetchone():
