@@ -34,14 +34,25 @@ def qualify_fixture(data, store, session, dossier_id, preview):
     return operation_id
 
 
+def default_witnesses(request):
+    """Un défaut ciblé sur le premier contrôle du paquet, quand le test n'en décrit aucun"""
+    control = request['outgoing']['controls'][0]['id']
+    return [{'kind': 'defect', 'output': 'Réponse témoin sans le contenu attendu.',
+             'expected': [{'control_id': control, 'status': 'FAIL'}],
+             'justification': 'La référence attend ce contenu : son absence est le défaut ciblé.'}]
+
+
 class QualificationTransport:
     # Autorité de la session à laquelle l'exécuteur lie l'assistant ; None : session sans clé
     granted = dict(authority_id='TEST_ONLY_S17', budget_id='preparation',
                    reserve_amount='1', requested_configuration={'model': 'preparation/fictive'})
+    # Un résultat sans témoins en reçoit un par défaut ; False : rendu tel quel
+    auto_witnesses = True
 
     def __init__(self, result):
         self.result = result
         self.calls = []
+        self.last = None
 
     def authority(self):
         return deepcopy(self.granted)
@@ -49,17 +60,66 @@ class QualificationTransport:
     def configuration(self):
         return {'model': 'qualification/fictive', 'revision': 'qualification/fictive-v1'}
 
+    def controller(self):
+        if not hasattr(self, '_controller'):
+            self._controller = WitnessControl(self)
+        return self._controller
+
     def prepare(self, operation, request):
         return storage._strict_json({'operation': operation['operation_id'], 'request': request})
 
     def __call__(self, operation, request):
         self.calls.append((deepcopy(operation), deepcopy(request)))
+        result = deepcopy(self.result)
+        if self.auto_witnesses and type(result) is dict and 'qualified' in result and 'witnesses' not in result:
+            result['witnesses'] = default_witnesses(request)
+        self.last = result
         return {'receipt': {'receipt_id': 'qualification-' + operation['operation_id'],
                             'observed_configuration': {'model': 'qualification/fictive-v1'},
                             'resources_seen': [operation['conserved_wire']],
-                            'result': deepcopy(self.result)},
+                            'result': deepcopy(result)},
                 'cost': {'status': 'KNOWN', 'amount': '0.15', 'currency': 'USD',
                          'source': 'Reçu synthétique S17'}}
+
+
+class WitnessControl:
+    """Juge factice des témoins : il décide ce que l'attendu prévoit, sauf décision imposée par type de témoin
+
+    `decisions[kind][control_id]` vaut (statut, passage cité) ; un passage absent de la réponse témoin
+    n'est pas une preuve exploitable
+    """
+    def __init__(self, qualification, reserve='0.5'):
+        self.qualification, self.reserve = qualification, reserve
+        self.decisions = {}
+        self.calls = []
+
+    def authority(self):
+        return dict(deepcopy(self.qualification.granted), reserve_amount=self.reserve)
+
+    def configuration(self):
+        return {'model': 'juge/fictif', 'revision': 'juge/fictif-v1'}
+
+    def prepare(self, operation, request):
+        return storage._strict_json({'operation': operation['operation_id'], 'request': request})
+
+    def __call__(self, operation, request):
+        self.calls.append((deepcopy(operation), deepcopy(request)))
+        review = request['outgoing']
+        output = review['output']
+        witness = next(w for w in self.qualification.last['witnesses'] if w['output'] == output['content'])
+        expected = {row['control_id']: row['status'] for row in witness['expected']}
+        forced = self.decisions.get(witness['kind'], {})
+        findings = [dict(criterion_id=criterion['id'], control_id=control, status=status, attribution='candidate',
+                         finding='Constat du juge factice', evidence=[dict(piece_id=output['piece_id'], passage=passage)])
+                    for criterion in review['obligations'] + review['eliminatory_errors']
+                    for control in criterion['control_ids']
+                    for status, passage in [forced.get(control, (expected.get(control, 'PASS'), output['content']))]]
+        return {'receipt': {'receipt_id': 'temoin-' + operation['operation_id'],
+                            'observed_configuration': {'model': 'juge/fictif-v1'},
+                            'resources_seen': [operation['conserved_wire']],
+                            'result': dict(findings=findings, measures=[], limits=[], proposed_verdict='INDETERMINE')},
+                'cost': {'status': 'KNOWN', 'amount': '0.05', 'currency': 'USD',
+                         'source': 'Reçu synthétique de témoin'}}
 
 
 class ScriptedQualification(QualificationTransport):
@@ -318,10 +378,13 @@ class OpenRouterQualificationTests(unittest.TestCase):
             raise storage.IntegrityError('Écriture interrompue')
         with patch.object(campaigns, '_record_comparison_contract', side_effect=interrupted):
             prep.execute_qualification(self.data, operation_id, transport)
-        for table in ('s2_qualifications', 's2_comparison_contracts'):
-            self.assertEqual(0, self.store._connection.execute('SELECT count(*) FROM ' + table).fetchone()[0])
-        operation = next(row for row in self.store.inspect_operations() if row['operation_id'] == operation_id)
-        self.assertEqual('AMBIGUOUS', operation['state'])
+        # Le contrat suit le reçu du dernier témoin confirmé : l'un ne s'écrit jamais sans l'autre
+        self.assertEqual(0, self.store._connection.execute('SELECT count(*) FROM s2_comparison_contracts').fetchone()[0])
+        states = {row['operation_id']: row['state'] for row in self.store.inspect_operations()
+                  if row['phase'] == 'qualification'}
+        self.assertEqual('RECEIVED', states.pop(operation_id))
+        self.assertEqual(['AMBIGUOUS'], list(states.values()))
+        self.assertFalse(prep.view(self.store, self.session, 'dossier')['qualified'])
 
     def test_anciennes_bases_refusees_avec_le_message_de_recreation(self):
         qualification.initialize(self.data)
@@ -358,7 +421,7 @@ class OpenRouterQualificationTests(unittest.TestCase):
                          if row['operation_id'] == operation_id)
         content = json.loads(operation['resources'][0])
         self.assertEqual({'instruction', 'deliverables', 'criteria', 'acceptable_ambiguities',
-                          'candidate_pieces', 'judgment_reference', 'reformulated_need', 'clarifications'},
+                          'candidate_pieces', 'judgment_reference', 'reformulated_need', 'clarifications', 'controls'},
                          set(content))
         self.assertNotIn(KEY, storage._strict_json(content))
         self.assertNotIn(str(self.data), storage._strict_json(content))

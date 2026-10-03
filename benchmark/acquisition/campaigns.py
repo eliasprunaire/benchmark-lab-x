@@ -396,7 +396,8 @@ def _comparison_contract(store, connection, fingerprint):
     if (not isinstance(model, str) or encode(authority) != row[4]
             or authority != dict(authority_id='assistant:' + model,
                                  operation_id=qualified['operation_id'], receipt_sha256=value_digest(operation['receipt']))
-            or result != {key: qualified[key] for key in ('qualified', 'findings', 'summary')}):
+            # Les témoins restent dans le reçu ; leur confirmation est déjà lue dans `qualified`
+            or any(result[key] != qualified[key] for key in ('qualified', 'findings', 'summary'))):
         raise IntegrityError('Autorité ou reçu du contrat de comparaison divergent')
     q._validated(connection, contract)
     return contract

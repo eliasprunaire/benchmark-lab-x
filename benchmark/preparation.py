@@ -43,6 +43,10 @@ RETRY_SECONDS = (30, 120, 600, 1800)
 # NOT_SENT : relance programmée close avant envoi par un redémarrage, elle n'a consommé aucune tentative
 _RETRIED_INCIDENTS = ('RATE_LIMITED', 'PROVIDER_ERROR', 'CONNECTION_FAILED', 'NOT_SENT')
 _KEY_INCIDENTS = ('KEY_REJECTED', 'CREDIT_EXHAUSTED')
+# Témoins de la vérification : chacun est jugé par le contrôle des campagnes, sous l'autorité de préparation ;
+# la borne fixe la réserve annoncée avant la validation
+WITNESS_FORMAT = 'benchmark-lab-x/qualification-witness/v1'
+WITNESS_LIMIT = 4
 _CHECK_CODES = frozenset({
     'selection_current', 'example_validated', 'example_qualified', 'configurations_available',
     'access_connected', 'estimate_available',
@@ -480,7 +484,8 @@ def _automatic_qualification(store, connection, dossier_id, revision):
         # La plus récente : une qualification close sans envoi peut avoir été relancée
         operation = max((item for item in store._operations(connection)
                          if (item['dossier_id'], item['revision'], item['phase']) ==
-                            (dossier_id, revision, 'qualification')), key=lambda item: item['created_at'], default=None)
+                            (dossier_id, revision, 'qualification') and item['engine_version'] != WITNESS_FORMAT),
+                        key=lambda item: item['created_at'], default=None)
         if operation is None:
             return None
         if validated is None:
@@ -519,9 +524,105 @@ def _automatic_qualification(store, connection, dossier_id, revision):
     if cost != expected_cost:
         raise IntegrityError('Coût de qualification divergent')
     status = 'QUALIFIED' if result['qualified'] else 'BLOCKED'
-    return dict(operation_id=operation_id, qualified=result['qualified'], findings=findings,
-                summary=summary, model=model, cost_usd=cost, created_at=created,
-                status=status, qualification_status=status, approval_status='PENDING')
+    # Sans témoins : vérification antérieure aux contrôles par témoins, gardée telle quelle, jamais requalifiée
+    answer, witnesses, cause = operation['receipt']['result'], None, None
+    if type(answer) is dict and 'witnesses' in answer:
+        witnesses = _witness_controls(store, connection, operation, _qualification_result(deepcopy(answer))['witnesses'],
+                                      ran=result['qualified'])
+        if result['qualified']:
+            status, summary, cause = _witness_verdict(witnesses, summary)
+    value = dict(operation_id=operation_id, qualified=status == 'QUALIFIED', findings=findings,
+                 summary=summary, model=model, cost_usd=cost, created_at=created,
+                 status=status, qualification_status=status, approval_status='PENDING', witnesses=witnesses)
+    if cause is not None:
+        value['cause'] = cause
+    return value
+
+
+def _witness_binding(operation):
+    if operation['phase'] != 'qualification' or len(operation['resources']) != 2:
+        raise IntegrityError('Contrôle de témoin hors vérification')
+    binding = json.loads(operation['resources'][0], object_pairs_hook=_unique_object)
+    _fields(binding, ('witness_of', 'witness', 'package_sha256', 'output_sha256', 'review'), 'contrôle de témoin')
+    return binding
+
+
+def _witness_controls(store, connection, operation, witnesses, *, ran):
+    """Chaque témoin, son attente justifiée et ce que le contrôle en a décidé sur les octets de cette version
+
+    Un contrôle ne compte que lié à ce témoin exact, à cette vérification et au paquet de cette version.
+    `ran` faux : un constat bloquant a arrêté la vérification avant tout contrôle
+    """
+    dossier_id, revision = operation['dossier_id'], operation['revision']
+    raw, package_sha256 = connection.execute('SELECT package_json,package_sha256 FROM s2_revisions '
+                                             'WHERE dossier_id=? AND revision=?', (dossier_id, revision)).fetchone()
+    controls = {row['id']: row for row in _controls(json.loads(raw, object_pairs_hook=_unique_object))}
+    found = {}
+    for item in store._operations(connection) if ran else []:
+        if item['engine_version'] == WITNESS_FORMAT:
+            binding = _witness_binding(item)
+            if binding['witness_of'] == operation['operation_id']:
+                if binding['witness'] in found:
+                    raise IntegrityError('Contrôle de témoin répété')
+                found[binding['witness']] = item, binding
+    rows = []
+    for index, witness in enumerate(witnesses):
+        if not {row['control_id'] for row in witness['expected']} <= set(controls):
+            raise IntegrityError('Attente de témoin hors des contrôles du paquet')
+        state, decided, model, cost = 'NOT_RUN', {}, None, None
+        if index in found:
+            item, binding = found[index]
+            model, cost = item['requested_configuration'].get('model'), store._effective_cost(connection, item)
+            if ((item['dossier_id'], item['revision'], binding['package_sha256']) != (dossier_id, revision, package_sha256)
+                    or binding['output_sha256'] != sha256(witness['output'].encode('utf-8')).hexdigest()):
+                state = 'STALE'
+            elif item['state'] in ('INTENT_RECORDED', 'EMISSION_POSSIBLE'):
+                state = 'PENDING'
+            # Close avant envoi ou sans réponse exploitable : le contrôle n'a pas eu lieu
+            elif (item['state'] == 'RECEIVED' and type(item['receipt']['result']) is dict
+                  and item['receipt']['result'] != {'status': 'NOT_SENT'}):
+                decided = _witness_decisions(item['receipt']['result'], binding['review']['output'])
+                checks = ['CONFIRMED' if (status, True) == (row['status'], proven) else 'CONTRADICTED' if proven
+                          else 'UNPROVEN' for row in witness['expected']
+                          for status, proven in [decided.get(row['control_id'], (None, False))]]
+                state = next((s for s in ('CONTRADICTED', 'UNPROVEN') if s in checks), 'CONFIRMED')
+        rows.append(dict(kind=witness['kind'], output=witness['output'], justification=witness['justification'],
+                         state=state, revision=revision, model=model, cost=cost, expected=[dict(
+                             description=controls[row['control_id']]['description'],
+                             eliminatory=controls[row['control_id']]['eliminatory'], expected=row['status'],
+                             decided=decided.get(row['control_id'], (None, False))[0],
+                             proven=decided.get(row['control_id'], (None, False))[1]) for row in witness['expected']]))
+    return rows
+
+
+def _witness_decisions(answer, output):
+    """Décision du juge par contrôle, prouvée seulement si elle cite un passage exact de la réponse témoin"""
+    decided = {}
+    findings = answer.get('findings')
+    for finding in findings if type(findings) is list else []:
+        if type(finding) is not dict or type(finding.get('control_id')) is not str:
+            continue
+        evidence = finding['evidence'] if type(finding.get('evidence')) is list else []
+        proven = finding.get('status') in ('PASS', 'FAIL') and any(
+            type(proof) is dict and proof.get('piece_id') == output['piece_id'] and type(proof.get('passage')) is str
+            and proof['passage'].strip() != '' and proof['passage'] in output['content'] for proof in evidence)
+        # Deux décisions sur un même contrôle se contredisent : aucune ne prouve
+        decided[finding['control_id']] = (None, False) if finding['control_id'] in decided else (finding.get('status'), proven)
+    return decided
+
+
+def _witness_verdict(witnesses, summary):
+    """Seule une décision prouvée et conforme sur chaque témoin qualifie la version"""
+    states = {row['state'] for row in witnesses}
+    if states == {'CONFIRMED'}:
+        return 'QUALIFIED', summary, None
+    if states & {'CONTRADICTED', 'UNPROVEN', 'STALE'}:
+        return 'BLOCKED', ('Le contrôle n’a pas décidé un témoin comme attendu, preuve à l’appui, sur cette version. '
+                           'La référence ou les critères de l’exemple sont à revoir.'), None
+    if 'PENDING' in states:
+        return 'PENDING', 'Contrôle des témoins en cours.', None
+    return 'BLOCKED', ('Le contrôle d’un témoin n’a pas pu avoir lieu ; l’exemple n’est pas en cause. '
+                       'Une modification de l’exemple relancera la vérification.'), 'provider'
 
 
 def require_qualification(store, connection, dossier_id, revision):
@@ -928,7 +1029,17 @@ def _qualification_input(store, connection, dossier_id, revision):
                 criteria=criteria(package['criteria']),
                 acceptable_ambiguities=package['acceptable_ambiguities'], candidate_pieces=candidates,
                 judgment_reference=references, reformulated_need=payload['reformulation'],
-                clarifications=payload['clarifications'])
+                clarifications=payload['clarifications'],
+                controls=[{key: row[key] for key in ('id', 'description')} for row in _controls(package)])
+
+
+def _controls(package):
+    """Contrôles du juge sur ce paquet, comme `automatic_judgment.review_specification` les nomme"""
+    from .acquisition.campaigns import _comparison_spec
+    spec = cast(dict[str, list[dict[str, Any]]], _comparison_spec(package))
+    return [dict(id=row['id'], description=row['description'], eliminatory=kind == 'eliminatory_errors')
+            for kind in ('obligations', 'eliminatory_errors') for criterion in spec[kind]
+            for row in criterion.get('elements', []) or [criterion]]
 
 
 def validate_and_qualify(store, session_id, dossier_id, body, source, transport):
@@ -952,8 +1063,9 @@ def validate_and_qualify(store, session_id, dossier_id, body, source, transport)
 
 def _latest_qualification(store, connection, dossier_id, revision):
     row = connection.execute(
-        "SELECT operation_id FROM operations WHERE dossier_id=? AND revision=? "
-        "AND phase='qualification' ORDER BY created_at DESC, rowid DESC LIMIT 1", (dossier_id, revision)).fetchone()
+        "SELECT operation_id FROM operations WHERE dossier_id=? AND revision=? AND phase='qualification' "
+        "AND engine_version!=? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        (dossier_id, revision, WITNESS_FORMAT)).fetchone()
     return None if row is None else store._operations(connection, operation_ids={row[0]})[0]
 
 
@@ -965,8 +1077,7 @@ def _reserve_qualification(store, connection, session_id, dossier_id, revision, 
         raise Denied('ADMISSION_CLOSED')
     if _pending_preparations(connection, session_id):
         raise Denied('PREPARATION_IN_PROGRESS')
-    reserve = str(max(_money(authority['reserve_amount']),
-                      _money(configuration.get('reserve_usd', authority['reserve_amount']))))
+    reserve = _reserve_amount(authority, configuration)
     request = _qualification_input(store, connection, dossier_id, revision)
     operation_id = secrets.token_hex(16)
     operation = dict(operation_id=operation_id, phase='qualification', dossier_id=dossier_id,
@@ -1050,7 +1161,9 @@ def retry_qualification(store, operation_id, transport, source):
 
 
 def _qualification_result(result):
-    _fields(result, ('qualified', 'findings', 'summary'), 'qualification automatisée')
+    # `witnesses` absent : reçu antérieur aux contrôles par témoins, lisible tel quel
+    _fields(result, ('qualified', 'findings', 'summary') + (('witnesses',) if type(result) is dict and 'witnesses' in result
+                                                            else ()), 'qualification automatisée')
     if type(result['qualified']) is not bool or type(result['findings']) is not list:
         raise ValueError('Qualification automatisée invalide')
     _text(result['summary'], 'summary')
@@ -1065,7 +1178,38 @@ def _qualification_result(result):
             raise ValueError('Texte de constat requis')
     if result['qualified'] != all(row['severity'] != 'blocking' for row in result['findings']):
         raise ValueError('Verdict de qualification divergent')
+    if 'witnesses' in result:
+        _witnesses(result['witnesses'])
     return result
+
+
+def _witnesses(witnesses):
+    """Réponses inventées et attente justifiée de chaque contrôle visé ; au moins un défaut ciblé"""
+    if type(witnesses) is not list or not 1 <= len(witnesses) <= WITNESS_LIMIT:
+        raise ValueError('De un à quatre témoins requis')
+    for witness in witnesses:
+        _fields(witness, ('kind', 'output', 'expected', 'justification'), 'témoin de qualification')
+        if witness['kind'] not in ('alternative', 'defect'):
+            raise ValueError('Témoin inconnu')
+        for key in ('output', 'justification'):
+            _text(witness[key], key)
+            if not witness[key].strip():
+                raise ValueError('Témoin incomplet')
+        expected = witness['expected']
+        if type(expected) is not list or not expected:
+            raise ValueError('Attente de témoin requise')
+        for row in expected:
+            _fields(row, ('control_id', 'status'), 'attente de témoin')
+            _text(row['control_id'], 'control_id')
+            if row['status'] not in ('PASS', 'FAIL'):
+                raise ValueError('Attente de témoin inconnue')
+        statuses = [row['status'] for row in expected]
+        if len({row['control_id'] for row in expected}) != len(expected) or (
+                {'FAIL'} & set(statuses) if witness['kind'] == 'alternative' else 'FAIL' not in statuses):
+            raise ValueError('Attente contraire au témoin')
+    if len({witness['output'] for witness in witnesses}) != len(witnesses) or all(
+            witness['kind'] != 'defect' for witness in witnesses):
+        raise ValueError('Témoins distincts et défaut ciblé requis')
 
 
 def execute_qualification(data, operation_id, transport):
@@ -1074,6 +1218,7 @@ def execute_qualification(data, operation_id, transport):
         connection = connection_for(store)
         emitted = False
         operation = None
+        witnesses, controller = [], None
         try:
             if store.verify_task():
                 logging.getLogger(__name__).error('QUALIFICATION_STORAGE_UNVERIFIED operation=%s', operation_id)
@@ -1086,11 +1231,8 @@ def execute_qualification(data, operation_id, transport):
                 authority = admission(store, connection, transport=transport)
                 if callable(getattr(transport, 'authorized', None)) and not transport.authorized(store):
                     return
-                configured = (transport.quote() if callable(getattr(transport, 'quote', None))
-                              else transport.configuration()) if transport is not None else {}
-                reserve = (str(max(_money(authority['reserve_amount']),
-                                   _money(configured.get('reserve_usd', authority['reserve_amount']))))
-                           if authority is not None else None)
+                configured = _configured(transport) if transport is not None else {}
+                reserve = _reserve_amount(authority, configured) if authority is not None else None
                 if (transport is None or authority is None or operation['phase'] != 'qualification'
                         or os.path.lexists(store._root / 'restore.json')
                         or (operation['authority'], operation['budget_id'], operation['reserved_amount']) !=
@@ -1119,10 +1261,17 @@ def execute_qualification(data, operation_id, transport):
             result = response['receipt']['result']
             try:
                 result = _qualification_result(result)
+                # Une vérification se prouve par ses témoins, attendus sur les contrôles de ce paquet
+                if 'witnesses' not in result or not {row['control_id'] for witness in result['witnesses']
+                                                     for row in witness['expected']} <= {c['id'] for c in request['controls']}:
+                    raise ValueError('Témoins requis sur les contrôles du paquet')
             except (ValueError, TypeError, KeyError):
                 result = None
+            controller = (transport.controller() if result is not None and result['qualified']
+                          and callable(getattr(transport, 'controller', None)) else None)
 
             def persist():
+                witnesses.clear()
                 with _transaction(connection, write=True):
                     store._record_receipt(connection, operation_id, response['receipt'], response['cost'])
                     if result is not None:
@@ -1131,13 +1280,14 @@ def execute_qualification(data, operation_id, transport):
                             (operation['dossier_id'], operation['revision'], operation_id, int(result['qualified']),
                              encode(result['findings']), result['summary'], operation['requested_configuration']['model'],
                              cost, datetime.now(timezone.utc).isoformat()))
-                        if result['qualified']:
-                            from .acquisition.campaigns import _record_comparison_contract
-                            _record_comparison_contract(store, connection, operation)
+                        # Le contrat de comparaison attend la confirmation des témoins
+                        if controller is not None:
+                            witnesses.extend(_reserve_witnesses(store, connection, operation, result['witnesses'], controller))
             # La réponse reste en mémoire : seule l'écriture locale est retentée, jamais l'appel
             retry_locked(persist)
-            logging.getLogger(__name__).info('QUALIFICATION_RECEIVED operation=%s usable=%s qualified=%s cost=%s',
-                operation_id, result is not None, None if result is None else result['qualified'], response['cost']['status'])
+            logging.getLogger(__name__).info('QUALIFICATION_RECEIVED operation=%s usable=%s qualified=%s cost=%s witnesses=%s',
+                operation_id, result is not None, None if result is None else result['qualified'], response['cost']['status'],
+                len(witnesses))
             _recheck_key(store, transport, response)
         except Exception as error:
             logging.getLogger(__name__).error('QUALIFICATION_STOPPED operation=%s emitted=%s error=%s',
@@ -1148,6 +1298,148 @@ def execute_qualification(data, operation_id, transport):
             # Par identifiant : un refus avant chargement de l'opération ne laisse pas d'intention ouverte
             if not emitted and _not_sent(store, operation_id):
                 logging.getLogger(__name__).warning('QUALIFICATION_BLOCKED operation=%s', operation_id)
+        # Chaque contrôle garde son propre cycle d'intention et de reçu, hors de celui de la vérification
+        for witness_id in witnesses:
+            _execute_witness(store, connection, witness_id, controller)
+
+
+def _configured(transport):
+    return transport.quote() if callable(getattr(transport, 'quote', None)) else transport.configuration()
+
+
+def _reserve_amount(authority, configuration):
+    return str(max(_money(authority['reserve_amount']),
+                   _money(configuration.get('reserve_usd', authority['reserve_amount']))))
+
+
+def qualification_estimate(store, transport):
+    """Réserves annoncées avant la validation : la vérification de l'exemple, puis chaque témoin contrôlé"""
+    if transport is None or not callable(getattr(transport, 'controller', None)):
+        return None
+    controller = transport.controller()
+    check, control = admission(store, transport=transport), admission(store, transport=controller)
+    if check is None or control is None:
+        return None
+    return dict(check_usd=_reserve_amount(check, _configured(transport)),
+                witness_usd=_reserve_amount(control, _configured(controller)), witness_limit=WITNESS_LIMIT)
+
+
+def _witness_review(store, connection, operation, witness, index):
+    """Vue fermée du juge des campagnes, appliquée au témoin à la place d'une réponse candidate"""
+    from . import automatic_judgment, evaluation
+    from .acquisition.campaigns import _comparison_spec
+    dossier_id, revision = operation['dossier_id'], operation['revision']
+    raw, package_sha256 = connection.execute('SELECT package_json,package_sha256 FROM s2_revisions '
+                                             'WHERE dossier_id=? AND revision=?', (dossier_id, revision)).fetchone()
+    package = json.loads(raw, object_pairs_hook=_unique_object)
+    package_check(store, dossier_id, revision, package, package_sha256)
+    task = [evaluation._review_piece(p['id'], p['name'], store.read_piece(p['id'])) for p in package['pieces']]
+    references = [evaluation._review_piece(piece_id, name, store.read_piece(piece_id))
+                  for piece_id, name in connection.execute(
+                      "SELECT piece_id,name FROM pieces WHERE dossier_id=? AND revision=? AND role='judge' "
+                      "ORDER BY piece_id", (dossier_id, revision))]
+    name = f'temoin-{index + 1}'
+    output = evaluation._review_piece(name, name + '.txt', witness['output'].encode('utf-8'))
+    review = evaluation.review_view(package, automatic_judgment.review_specification(_comparison_spec(package)),
+                                    task, references, output)
+    return dict(witness_of=operation['operation_id'], witness=index, package_sha256=package_sha256,
+                output_sha256=output['sha256'], review=review)
+
+
+def _reserve_witnesses(store, connection, operation, witnesses, controller):
+    """Une intention par témoin, réservée avec le reçu de la vérification, ou aucune
+
+    Sans réserve possible, la vérification reste lisible et dit que le contrôle n'a pas eu lieu
+    """
+    connection.execute('SAVEPOINT temoins')
+    try:
+        authority = admission(store, connection, transport=controller)
+        if authority is None or os.path.lexists(store._root / 'restore.json'):
+            raise Denied('ADMISSION_CLOSED')
+        configuration = _configured(controller)
+        reserve = _reserve_amount(authority, configuration)
+        if store._budget(connection, authority['budget_id'], store._operations(connection))['currency'] != 'USD':
+            raise BudgetError('Enveloppe USD de préparation requise')
+        from .outgoing import FORMAT
+        ids = []
+        for index, witness in enumerate(witnesses):
+            control = dict(operation_id=secrets.token_hex(16), phase='qualification', dossier_id=operation['dossier_id'],
+                           revision=operation['revision'], authority=authority['authority_id'],
+                           engine_version=WITNESS_FORMAT, requested_configuration=configuration, resources=[])
+            binding = _witness_review(store, connection, operation, witness, index)
+            wire = controller.prepare(deepcopy(control), dict(outgoing_format=FORMAT, outgoing=binding['review']))
+            _text(wire, 'contrôle de témoin préparé')
+            control['resources'] = [encode(binding), wire]
+            store._reserve_intent(connection, control, authority['budget_id'], reserve, created_at=_now())
+            ids.append(control['operation_id'])
+        connection.execute('RELEASE temoins')
+        return ids
+    # Toute erreur, suppression demandée comprise : le reçu payé de la vérification s'écrit quand même
+    except Exception as error:
+        connection.execute('ROLLBACK TO temoins')
+        connection.execute('RELEASE temoins')
+        logging.getLogger(__name__).warning('QUALIFICATION_WITNESSES_NOT_RESERVED operation=%s error=%s',
+                                            operation['operation_id'], type(error).__name__)
+        return []
+
+
+def _execute_witness(store, connection, operation_id, controller):
+    """Émettre un contrôle de témoin réservé : intention, émission possible puis reçu, comme la vérification"""
+    emitted = False
+    try:
+        with _transaction(connection, write=True):
+            operation = store._operation_for_update(connection, operation_id, ('INTENT_RECORDED',))
+            authority = admission(store, connection, transport=controller)
+            if callable(getattr(controller, 'authorized', None)) and not controller.authorized(store):
+                return
+            configured = _configured(controller)
+            if (authority is None or os.path.lexists(store._root / 'restore.json')
+                    or (operation['authority'], operation['budget_id'], operation['reserved_amount']) !=
+                       (authority['authority_id'], authority['budget_id'], _reserve_amount(authority, configured))
+                    or operation['requested_configuration'] != configured):
+                return
+            from .outgoing import FORMAT
+            closed = dict(outgoing_format=FORMAT, outgoing=_witness_binding(operation)['review'])
+            wire = controller.prepare(deepcopy(operation), deepcopy(closed))
+            if wire != operation['resources'][1]:
+                raise ConflictError('Contrôle de témoin modifié depuis la réservation')
+            budget = store._budget(connection, operation['budget_id'], store._operations(connection))
+            if budget['currency'] != 'USD' or store._blocking_costs(store._operations(connection), budget, 'qualification'):
+                return
+            connection.execute("UPDATE operations SET state='EMISSION_POSSIBLE' WHERE operation_id=?", (operation_id,))
+        emitted = True
+        operation.update(state='EMISSION_POSSIBLE', conserved_wire=wire)
+        logging.getLogger(__name__).info('QUALIFICATION_WITNESS_EMITTING operation=%s', operation_id)
+        response = controller(deepcopy(operation), deepcopy(closed))
+        _fields(response, ('receipt', 'cost'), 'réponse de contrôle de témoin')
+
+        def persist():
+            with _transaction(connection, write=True):
+                store._record_receipt(connection, operation_id, response['receipt'], response['cost'])
+                _record_qualified_contract(store, connection, operation)
+        retry_locked(persist)
+        _recheck_key(store, controller, response)
+    except Exception as error:
+        logging.getLogger(__name__).error('QUALIFICATION_WITNESS_STOPPED operation=%s emitted=%s error=%s',
+                                          operation_id, emitted, type(error).__name__)
+        if emitted:
+            _interrupted(store, operation_id, error, 'QUALIFICATION_WITNESS_RESULT_NOT_VERIFIED')
+    finally:
+        if not emitted and _not_sent(store, operation_id):
+            logging.getLogger(__name__).warning('QUALIFICATION_WITNESS_BLOCKED operation=%s', operation_id)
+
+
+def _record_qualified_contract(store, connection, witness_operation):
+    """Contrat de comparaison enregistré quand le dernier témoin confirme la vérification de sa version"""
+    dossier_id, revision = witness_operation['dossier_id'], witness_operation['revision']
+    if connection.execute('SELECT 1 FROM s2_comparison_contracts WHERE dossier_id=? AND revision=?',
+                          (dossier_id, revision)).fetchone():
+        return
+    state = _automatic_qualification(store, connection, dossier_id, revision)
+    if state is not None and state['qualified'] and state['operation_id'] == _witness_binding(witness_operation)['witness_of']:
+        from .acquisition.campaigns import _record_comparison_contract
+        _record_comparison_contract(store, connection, store._operation_for_update(
+            connection, state['operation_id'], ('RECEIVED',)))
 
 
 def execute(data, operation_id, transport):

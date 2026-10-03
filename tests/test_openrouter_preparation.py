@@ -246,11 +246,22 @@ class OpenRouterPreparationTests(unittest.TestCase):
         model = qualifier._profile['model']
         route = {'requested': model, 'strategy': 'direct', 'attempt': 1,
                  'endpoints': {'available': [{'provider': 'Anthropic', 'model': model, 'selected': True}]}}
-        self.http.getresponse.return_value.read.return_value = http_body(
-            {'qualified': True, 'findings': [], 'summary': 'Paquet cohérent'}, model=model, openrouter_metadata=route)
+        # Le témoin est jugé sous la même clé personnelle, avec le profil de l'évaluation automatique
+        qualifier._control_quote = assistant.configuration(estimate_for(qualifier._control_profile), qualifier._control_profile)
+        witness = {'kind': 'defect', 'output': 'Relevé vide.', 'expected': [{'control_id': 'O1', 'status': 'FAIL'}],
+                   'justification': 'La référence attend le relevé des notes : un relevé vide est le défaut ciblé.'}
+        judged = {'findings': [{'criterion_id': 'O1', 'control_id': 'O1', 'status': 'FAIL', 'attribution': 'candidate',
+                                'finding': 'Aucun élément relevé',
+                                'evidence': [{'piece_id': 'temoin-1', 'passage': 'Relevé vide.'}]}],
+                  'measures': [], 'limits': [], 'proposed_verdict': 'NE SATISFAIT PAS'}
+        self.http.getresponse.return_value.read.side_effect = [
+            http_body({'qualified': True, 'findings': [], 'summary': 'Paquet cohérent', 'witnesses': [witness]},
+                      model=model, openrouter_metadata=route),
+            http_body(judged, model=model, openrouter_metadata=route)]
         prep.execute_qualification(self.data, operation, qualifier)
         self.assertTrue(prep.view(self.store, self.session, 'personal')['qualified'])
-        self.assertEqual('Bearer ' + key, self.http.request.call_args.kwargs['headers']['Authorization'])
+        self.assertEqual(['Bearer ' + key] * 2, [call.kwargs['headers']['Authorization']
+                                                 for call in self.http.request.call_args_list[-2:]])
         self.assertEqual('0', self.store.inspect_budget('fixture')['spent'])
         from benchmark import provider_access
         from tests.test_provider_access import AccessTransport

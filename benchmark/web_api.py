@@ -369,6 +369,11 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                 raise p.Denied('Campagne inaccessible pour cette révision')
             result['dossier_href'] = path + '?campaign=' + campaign_reference
         result['availability'] = p.availability(store, transport, session_id)
+        # Annoncée avant la validation, seul geste qui consomme la vérification et ses témoins
+        estimate = (p.qualification_estimate(store, qualification_transport)
+                    if result['package'] is not None and result['validation'] is None else None)
+        if estimate is not None:
+            result['qualification_estimate'] = estimate
         # The CSRF token travels independently in HTML rendering through the web's session query
         return 200, result, None, None
     if method == 'POST' and action == 'messages':

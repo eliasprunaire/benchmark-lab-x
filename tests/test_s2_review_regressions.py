@@ -80,6 +80,14 @@ class SessionAssistant:
 
     configuration = quote
 
+    def controller(self):
+        """Juge des témoins lié à la même session, sous sa propre réserve"""
+        control = self._call.controller()
+        bound = SessionAssistant(control, control.configuration(), control.reserve)
+        bound._api_key, bound._session_id = self._api_key, self._session_id
+        bound.preparation_budget_id = self.preparation_budget_id
+        return bound
+
     def __call__(self, operation, request):
         return self._call(operation, request)
 

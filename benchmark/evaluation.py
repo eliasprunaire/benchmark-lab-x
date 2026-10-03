@@ -730,10 +730,8 @@ def _review_piece(piece_id, name, raw):
 
 
 def _review_content(store, ctx):
-    from . import outgoing
     resources = _resources(store, ctx)
     contract = ctx['qualification']['contract']
-    spec = contract['specification']
     package = contract['package']
     task_pieces = [_review_piece(p['id'], p['name'], resources[p['id']]) for p in package['pieces']]
     references = [_review_piece(p['id'], p['name'], resources[p['id']]) for p in contract['reference_pieces']]
@@ -742,6 +740,12 @@ def _review_content(store, ctx):
     if output_id is not None:
         meta = store.get_piece(output_id)
         output = _review_piece(output_id, meta['name'], resources[output_id])
+    return review_view(package, contract['specification'], task_pieces, references, output)
+
+
+def review_view(package, spec, task_pieces, references, output):
+    """Vue fermée du juge : la même pour une réponse candidate et pour un témoin de qualification"""
+    from . import outgoing
     method = spec['method']
     content = outgoing.closed_review(dict(
         task=dict(instruction=package['instruction'], deliverables=list(package['deliverables']),

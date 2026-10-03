@@ -57,8 +57,16 @@ def _campaign_context(store, connection, campaign_id):
         contract['reference_pieces'].append(dict(id=matches[0]['piece_id'], name=reference['name']))
     if not references:
         raise IntegrityError('Référence qualifiée requise')
-    # Adapt the frozen web criteria; neither the contract nor its qualification is rewritten
-    spec = contract['specification']
+    contract['specification'] = review_specification(contract['specification'])
+    return campaign, contract, operation['operation_id']
+
+
+def review_specification(spec):
+    """Critères web figés adaptés au juge, pour une réponse candidate comme pour un témoin de qualification
+
+    Ni le contrat ni sa qualification ne sont réécrits : le juge reçoit une copie
+    """
+    spec = deepcopy(spec)
     # Une obligation composée a un contrôle par élément ; sans élément, contexte inchangé octet pour octet
     for criterion in spec['obligations'] + spec['eliminatory_errors']:
         criterion['control_ids'] = [x['id'] for x in criterion.get('elements', [])] or [criterion['id']]
@@ -73,7 +81,7 @@ def _campaign_context(store, connection, campaign_id):
         responsible_role='Évaluation automatique Bench-X')
     spec['aggregation'] = 'Aucune moyenne ; obligations et erreurs éliminatoires par tentative'
     spec['local_criterion_ids'] = []
-    return campaign, contract, operation['operation_id']
+    return spec
 
 
 def authority(connection, ctx):
