@@ -126,7 +126,8 @@ def _revision(view):
     package = view['package']
     criteria = [] if package is None else package['criteria']
     if isinstance(criteria, dict):
-        criteria = (criteria['eliminatory'] + criteria['obligations']
+        from .outgoing import obligation_text
+        criteria = (criteria['eliminatory'] + [obligation_text(x) for x in criteria['obligations']]
                     + [item['label'] for item in criteria['quality']])
     return dict(number=view['revision'], instruction='' if package is None else _text(package['instruction']),
         deliverables=[] if package is None else [_text(x) for x in package['deliverables']],

@@ -26,6 +26,23 @@ def texts(values):
     return [text(value) for value in values]
 
 
+def obligation(value):
+    """Texte, ou obligation composée : chaque élément se juge seul, sous la même obligation"""
+    if type(value) is str:
+        return value
+    if type(value) is not dict or set(value) != {'description', 'elements'}:
+        raise ValueError('Obligation fermée requise')
+    elements = texts(value['elements'])
+    if len(elements) < 2 or len(set(elements)) != len(elements):
+        raise ValueError('Au moins deux éléments distincts requis')
+    return {'description': text(value['description']), 'elements': elements}
+
+
+def obligation_text(value):
+    """Une obligation en un seul texte, pour les lectures qui n'attendent que des chaînes"""
+    return value if type(value) is str else value['description'] + ' : ' + ' ; '.join(value['elements'])
+
+
 def criteria(value):
     if type(value) is list:
         return {'eliminatory': [], 'obligations': texts(value), 'quality': []}
@@ -44,7 +61,9 @@ def criteria(value):
             raise ValueError('Critère de qualité fermé requis')
         checked.append({'label': text(item['label']), 'scale': list(item['scale']),
                         'favorable': item['favorable']})
-    return {'eliminatory': texts(value['eliminatory']), 'obligations': texts(value['obligations']),
+    if type(value['obligations']) is not list:
+        raise ValueError('Liste d’obligations requise')
+    return {'eliminatory': texts(value['eliminatory']), 'obligations': [obligation(x) for x in value['obligations']],
             'quality': checked}
 
 
@@ -200,10 +219,17 @@ def closed_review(content):
         raise ValueError('Vue de revue fermée requise')
     obligations = []
     for item in content['obligations']:
-        if type(item) is not dict or set(item) != {'id', 'description', 'tolerance', 'control_ids'}:
+        keys = {'id', 'description', 'tolerance', 'control_ids'}
+        if type(item) is not dict or set(item) not in (keys, keys | {'elements'}):
             raise ValueError('Obligation de revue fermée requise')
         obligations.append(dict(id=text(item['id']), description=text(item['description']),
                                 tolerance=text(item['tolerance']), control_ids=texts(item['control_ids'])))
+        if 'elements' in item:
+            if type(item['elements']) is not list or any(type(e) is not dict or set(e) != {'id', 'description'}
+                                                         for e in item['elements']):
+                raise ValueError('Élément d’obligation de revue fermé requis')
+            obligations[-1]['elements'] = [dict(id=text(e['id']), description=text(e['description']))
+                                           for e in item['elements']]
     errors = []
     for item in content['eliminatory_errors']:
         if type(item) is not dict or set(item) != {'id', 'description', 'control_ids'}:
