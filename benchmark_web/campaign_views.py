@@ -395,6 +395,62 @@ def short_label(value, words=9):
     return value if len(parts) <= words else ' '.join(parts[:words]) + '…'
 
 
+EXPENSE_GROUPS = {
+    'compared': ('Réponses comparées', 'Leur coût est le coût observé du tableau ; lui seul sert au conseil.'),
+    'other_attempts': ('Autres envois aux modèles', 'Réponses remplacées par une reprise, inexploitables ou non envoyées. '
+                       'Pour information, hors conseil.'),
+    'judgment': ('Évaluation des réponses', 'Pour information, hors conseil.'),
+    'probes': ('Vérification des modèles choisis', 'Pour information, hors conseil.'),
+    'preparation': ('Préparation de l’exemple', 'Pour information, hors conseil. '
+                    'Elle sert aussi aux autres comparaisons de cet exemple.'),
+    'qualification': ('Contrôle de l’exemple', 'Pour information, hors conseil. '
+                      'Il sert aussi aux autres comparaisons de cet exemple.'),
+}
+EXPENSE_STATES = {'NOT_SENT': 'non envoyé', 'PROVIDER_INCIDENT': 'incident du fournisseur, relancé automatiquement',
+                  'AMBIGUOUS_EXPIRED': 'réponse incertaine, close sans relance', 'INTENT_RECORDED': 'pas encore envoyé',
+                  'EMISSION_POSSIBLE': 'envoi en cours', 'AMBIGUOUS': 'réponse incertaine, en attente'}
+
+
+def render_expenses(expenses, names):
+    """Ce que la comparaison a coûté, phase par phase ; réserves et estimations restent à part"""
+    if not expenses:
+        return ''
+    known = montant_lisible(expenses['known']) + ' ' + expenses['unit']
+    content = '<details id="expenses"><summary>' + text(
+        ('Coût complet connu : ' if expenses['complete'] else 'Coût complet inconnu · sous-total connu : ') + known) + '</summary>'
+    if not expenses['complete']:
+        content += '<p>Au moins une dépense manque : le sous-total ne donne que la somme des dépenses connues, pas le coût complet.</p>'
+    content += ('<p>Chaque envoi est compté une fois : réponses des modèles et leurs reprises, évaluation, '
+                'préparation et contrôle de l’exemple jusqu’à cette version. Les montants réservés et estimés '
+                'sont indiqués à part et ne s’ajoutent pas.</p>')
+    for group in expenses['groups']:
+        title, note = EXPENSE_GROUPS[group['key']]
+        subtotal = montant_lisible(group['known']) + ' ' + expenses['unit']
+        content += '<h3>' + text(title + ' : ' + (subtotal if group['complete'] else 'inconnu, sous-total connu ' + subtotal)) + '</h3>'
+        content += '<p class="hint">' + text(note) + '</p><ul>'
+        for item in group['operations']:
+            cost = item['cost']
+            line = (model_name({'model': item['model']}, names) if item['model'] else 'Modèle non renseigné')
+            line += ' · ' + date_lisible_utc(item['created_at']) + ' : '
+            if cost is not None and cost['status'] == 'KNOWN':
+                line += montant_lisible(cost['amount']) + ' ' + cost['currency'] + ' (source : ' + cost['source'] + ')'
+                if not item['counted']:
+                    line += ' · autre unité, non additionné'
+            else:
+                line += 'aucune dépense' if item['state'] == 'INTENT_RECORDED' else 'dépense inconnue'
+            if item['state'] in EXPENSE_STATES:
+                line += ' · ' + EXPENSE_STATES[item['state']]
+            if item['recovery']:
+                line += ' · reprise après arrêt pour longueur'
+            if item['reserved'] is not None:
+                line += ' · montant réservé : ' + montant_lisible(item['reserved']) + ' ' + expenses['unit']
+            if item['estimate'] is not None:
+                line += ' · estimation indicative : ' + montant_lisible(item['estimate']) + ' USD'
+            content += '<li>' + text(line) + '</li>'
+        content += '</ul>'
+    return content + '</details>'
+
+
 def render_comparison(value):
     base, query = value['href'], value['filter_scope']
     names = value.get('model_names', {})
@@ -453,7 +509,7 @@ def render_comparison(value):
                                                           'du ' + jour_lisible(dates[0]) + ' au ' + jour_lisible(dates[-1])) + '.</p>'
     content += '</div>'
     if not value['population']:
-        return content
+        return content + render_expenses(value.get('expenses'), names)
     choice = value.get('recommendation')
     if choice:
         content += '<aside class="economic-choice" aria-labelledby="economic-choice-title">'
@@ -563,7 +619,8 @@ def render_comparison(value):
             content += '<td><a class="text-link" data-result href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
         content += '</tbody></table></div>'
     conditions = value['conditions']
-    content += '</section><details id="method"><summary>Comment lire ces résultats</summary>'
+    content += '</section>' + render_expenses(value.get('expenses'), names)
+    content += '<details id="method"><summary>Comment lire ces résultats</summary>'
     content += '<ul><li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
     content += '<li><strong>Ne satisfait pas</strong> : une exigence n’est pas respectée ou une erreur éliminatoire a été relevée ; la réponse n’est pas utilisable, quel que soit son coût.</li>'
     content += '<li><strong>À reprendre</strong> : la preuve ne permet pas encore de conclure ; ce n’est pas un échec du modèle.</li>'

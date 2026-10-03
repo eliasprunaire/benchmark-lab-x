@@ -1422,7 +1422,100 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Aucune réponse exploitable', html)
         self.assertNotIn('Notre conseil', html)
 
-    SORTIE_C = 'Action : relire | Responsable : Camille'
+    def depenses(self, html):
+        """Récapitulatif des dépenses de la comparaison : texte entier et lignes de chaque phase"""
+        bloc = html.split('<details id="expenses">')[1].split('</details>')[0]
+        phases = {titre.split(' : ')[0]: re.findall(r'<li>(.*?)</li>', corps, re.S)
+                  for titre, corps in re.findall(r'<h3>(.*?)</h3>(.*?)(?=<h3>|$)', bloc, re.S)}
+        return Page(('<details>' + bloc + '</details>').encode()).nodes[0]['text'], phases
+
+    def operations_du_dossier(self):
+        """Oracle : une seule comparaison sur un seul dossier, toutes ses opérations lui reviennent"""
+        from decimal import Decimal
+        with closing(storage.Store(self.data)) as store:
+            operations = store.inspect_operations()
+        self.assertEqual(1, len({op['dossier_id'] for op in operations}))
+        connus = [Decimal(op['observed_cost']['amount']) for op in operations
+                  if op['observed_cost'] and op['observed_cost']['status'] == 'KNOWN']
+        return operations, sum(connus, Decimal(0))
+
+    def test_cout_complet_relie_chaque_operation_une_seule_fois(self):
+        """Issue #441 : le lecteur voit ce que la comparaison a coûté, phase par phase
+
+        Modes d'échec couverts :
+        1. une phase (préparation, contrôle de l'exemple, évaluation) manque au récapitulatif ;
+        2. une tentative remplacée par une reprise est masquée, ou comptée deux fois ;
+        3. le total additionne des montants réservés ou estimés aux dépenses observées ;
+        4. les envois hors du tableau sont présentés comme base du conseil ;
+        5. le coût observé de chaque réponse change de base dans le tableau
+        """
+        from benchmark_web.fragments import montant_lisible
+        self.juge_factice()
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+                if limit == 4096:
+                    self.coupee(value, None, limit)
+            elif model == 'mistralai/mistral-small-2603':
+                self.coupee(value, 'Action : relire' + ' | suite' * (limit // 1024), limit)
+        dossier, _, envois, _ = self.lancer_avec_reprises(list(self.MAJORANTS), comportement)
+        html = self.evaluer(dossier)
+        operations, total = self.operations_du_dossier()
+        self.assertTrue(all(op['observed_cost']['status'] == 'KNOWN' for op in operations))
+        texte, phases = self.depenses(html)
+        self.assertIn('Coût complet connu : ' + montant_lisible(str(total)) + ' USD', texte)
+        self.assertNotIn('sous-total', texte)
+        # Chaque opération du dossier une seule fois, rangée dans sa phase
+        self.assertEqual(len(operations), sum(len(lignes) for lignes in phases.values()))
+        par_phase = {}
+        for op in operations:
+            par_phase[op['phase']] = par_phase.get(op['phase'], 0) + 1
+        self.assertEqual(len(envois), par_phase['acquisition'])
+        self.assertEqual(2, len(phases['Réponses comparées']))
+        self.assertEqual(len(envois) - 2, len(phases['Autres envois aux modèles']))
+        self.assertEqual(2, par_phase['judgment'])
+        self.assertEqual(2, len(phases['Évaluation des réponses']))
+        self.assertEqual(par_phase['preparation'] + par_phase.get('correction', 0),
+                         len(phases['Préparation de l’exemple']) + len(phases.get('Vérification des modèles choisis', [])))
+        self.assertEqual(par_phase['qualification'], len(phases['Contrôle de l’exemple']))
+        # Trois reprises : celle de Modèle B est comparée, les deux de Modèle C restent visibles à part
+        self.assertEqual([1, 2], [sum('reprise' in ligne for ligne in phases[nom])
+                                  for nom in ('Réponses comparées', 'Autres envois aux modèles')])
+        # Seules les réponses du tableau portent la base du conseil
+        self.assertIn('Leur coût est le coût observé du tableau', texte)
+        self.assertEqual(len(phases) - 1, texte.count('Pour information, hors conseil'))
+        self.assertNotRegex(texte, r'(?i)par mois|heure de travail|plafond|traceur')
+        # Le tableau garde le coût de chaque réponse, sans les autres phases
+        lignes = html.split('<tbody>')[1].split('</tbody>')[0]
+        self.assertEqual(['0,05 USD', '0,10 USD'], sorted(re.findall(r'<span class="source-value">(.*?)</span>', lignes)))
+
+    def test_cout_complet_inconnu_annonce_un_sous_total(self):
+        """Issue #441 : une dépense nécessaire manque, le total reste inconnu
+
+        Modes d'échec : le sous-total des montants connus est annoncé comme coût complet, la dépense
+        manquante est comptée zéro ou remplacée par sa réserve, ou disparaît du récapitulatif
+        """
+        from benchmark_web.fragments import montant_lisible
+
+        def comportement(value, model):
+            if model == 'mistralai/mistral-small-2603':
+                value['cost'].update(status='UNKNOWN', amount=None)
+        _, html = self.comparer(['Clarté du tableau'],
+                                lambda critere, sortie: 'acceptable' if sortie == self.SORTIE_C else 'excellent',
+                                comportement=comportement)
+        operations, connu = self.operations_du_dossier()
+        texte, phases = self.depenses(html)
+        self.assertIn('Coût complet inconnu · sous-total connu : ' + montant_lisible(str(connu)) + ' USD', texte)
+        self.assertNotIn('Coût complet connu', texte)
+        self.assertIn('le sous-total ne donne que la somme des dépenses connues', texte)
+        self.assertEqual(len(operations), sum(len(lignes) for lignes in phases.values()))
+        inconnue = next(ligne for ligne in phases['Réponses comparées'] if 'Modèle C' in ligne)
+        reserve = next(op['reserved_amount'] for op in operations if op['observed_cost']['status'] == 'UNKNOWN')
+        self.assertIn('dépense inconnue', inconnue)
+        self.assertIn('montant réservé : ' + montant_lisible(reserve) + ' USD', inconnue)
+
+    SORTIE_C ='Action : relire | Responsable : Camille'
     # Formulations de promesse, pas les mots seuls : « la fiabilité générale n'est pas garantie » reste permis
     PROMESSE = r'(?i)meilleur (modèle|rapport qualité)|plus fiable|fiable en général|fiabilité (assurée|garantie)|garantit (la|une) (fiabilité|réussite)'
 
@@ -1508,6 +1601,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Modèle C', conseil.visible)
         self.assertIn('Les 2 réponses qui satisfont l’exemple ont la même qualité observée. Nous retenons la moins coûteuse.',
                       conseil.visible)
+        # Issue #441 : le coût complet s'affiche à côté du conseil sans changer sa base
+        self.assertIn('Coûtobservé0,10USD', conseil.visible.replace(' ', ''))
+        self.assertIn('Coût complet connu', self.depenses(html)[0])
 
     def test_pas_de_conseil_avec_une_reponse_absente(self):
         """Deux réponses satisfaisantes départageables ; la troisième n'a pas de réponse exploitable"""
