@@ -406,23 +406,32 @@ EXPENSE_GROUPS = {
     'qualification': ('Contrôle de l’exemple', 'Pour information, hors conseil. '
                       'Il sert aussi aux autres comparaisons de cet exemple.'),
 }
-EXPENSE_STATES = {'NOT_SENT': 'non envoyé', 'STOPPED': 'reprise arrêtée avant envoi', 'PROVIDER_INCIDENT': 'incident du fournisseur, relancé automatiquement',
-                  'AMBIGUOUS_EXPIRED': 'réponse incertaine, close sans relance', 'INTENT_RECORDED': 'pas encore envoyé',
-                  'EMISSION_POSSIBLE': 'envoi en cours', 'AMBIGUOUS': 'réponse incertaine, en attente'}
+EXPENSE_STATES = {'NOT_SENT': 'non envoyé', 'STOPPED': 'reprise arrêtée avant envoi',
+                  'PROVIDER_INCIDENT': 'incident du fournisseur', 'AMBIGUOUS_EXPIRED': 'réponse incertaine, close sans relance',
+                  'INTENT_RECORDED': 'pas encore envoyé', 'EMISSION_POSSIBLE': 'envoi en cours',
+                  'AMBIGUOUS': 'réponse incertaine, en attente'}
 
 
 def render_expenses(expenses, names):
-    """Ce que la comparaison a coûté, phase par phase ; réserves et estimations restent à part"""
+    """Ce que la comparaison a coûté, phase par phase ; réserves et estimations restent à part
+
+    Chaque ligne donne le modèle et le montant ; provenance, état et référence courte de l'opération
+    restent dans son détail
+    """
     if not expenses:
         return ''
     known = montant_lisible(expenses['known']) + ' ' + expenses['unit']
     content = '<details id="expenses"><summary>' + text(
         ('Coût complet connu : ' if expenses['complete'] else 'Coût complet inconnu · sous-total connu : ') + known) + '</summary>'
     if not expenses['complete']:
-        content += '<p>Au moins une dépense manque : le sous-total ne donne que la somme des dépenses connues, pas le coût complet.</p>'
+        content += '<p>Au moins une dépense manque : le sous-total ne donne que la somme des dépenses connues, pas le coût complet.'
+        awaiting = expenses.get('awaiting_judgment', 0)
+        if awaiting:
+            content += text(' L’évaluation de ' + _plural(awaiting, 'réponse') + ' est à venir : son coût n’est pas encore connu.')
+        content += '</p>'
     content += ('<p>Chaque envoi est compté une fois : réponses des modèles et leurs reprises, évaluation, '
-                'préparation et contrôle de l’exemple jusqu’à cette version. Les montants réservés et estimés '
-                'sont indiqués à part et ne s’ajoutent pas.</p>')
+                'vérification des modèles retenus, préparation et contrôle de l’exemple jusqu’à cette version. '
+                'Les montants réservés et estimés sont indiqués à part et ne s’ajoutent pas.</p>')
     for group in expenses['groups']:
         title, note = EXPENSE_GROUPS[group['key']]
         subtotal = montant_lisible(group['known']) + ' ' + expenses['unit']
@@ -430,23 +439,25 @@ def render_expenses(expenses, names):
         content += '<p class="hint">' + text(note) + '</p><ul>'
         for item in group['operations']:
             cost = item['cost']
-            line = (model_name({'model': item['model']}, names) if item['model'] else 'Modèle non renseigné')
-            line += ' · ' + date_lisible_utc(item['created_at']) + ' : '
             if cost is not None and cost['status'] == 'KNOWN':
-                line += montant_lisible(cost['amount']) + ' ' + cost['currency'] + ' (source : ' + cost['source'] + ')'
-                if not item['counted']:
-                    line += ' · autre unité, non additionné'
+                amount = montant_lisible(cost['amount']) + ' ' + cost['currency']
+                amount += '' if item['counted'] else ' · autre unité, non additionné'
             else:
-                line += {'STOPPED': 'aucune dépense', 'INTENT_RECORDED': 'dépense à venir'}.get(item['state'], 'dépense inconnue')
+                amount = {'STOPPED': 'aucune dépense', 'INTENT_RECORDED': 'dépense à venir'}.get(item['state'], 'dépense inconnue')
+            details = [date_lisible_utc(item['created_at'])]
+            if cost is not None:
+                details.append('source : ' + cost['source'])
             if item['state'] in EXPENSE_STATES:
-                line += ' · ' + EXPENSE_STATES[item['state']]
+                details.append(EXPENSE_STATES[item['state']])
             if item['recovery'] and item['state'] != 'STOPPED':
-                line += ' · reprise après arrêt pour longueur'
+                details.append('reprise après arrêt pour longueur')
             if item['reserved'] is not None:
-                line += ' · montant réservé : ' + montant_lisible(item['reserved']) + ' ' + expenses['unit']
+                details.append('montant réservé : ' + montant_lisible(item['reserved']) + ' ' + item['reserved_unit'])
             if item['estimate'] is not None:
-                line += ' · estimation indicative : ' + montant_lisible(item['estimate']) + ' USD'
-            content += '<li>' + text(line) + '</li>'
+                details.append('estimation indicative : ' + montant_lisible(item['estimate']) + ' USD')
+            content += '<li><strong>' + text(model_name({'model': item['model']}, names) if item['model'] else 'Modèle non renseigné')
+            content += '</strong> : ' + text(amount) + '<details><summary>Source et référence</summary><p>'
+            content += text(' · '.join(details)) + ' · réf. <code>' + text(item['operation_id'][-8:]) + '</code></p></details></li>'
         content += '</ul>'
     return content + '</details>'
 

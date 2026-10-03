@@ -175,17 +175,19 @@ def _expense_state(operation):
     return operation['state']
 
 
-def _expenses(store, connection, dossier_id, revision, family, compared, held, unit):
+def _expenses(store, connection, dossier_id, revision, family, compared, held, probes, awaiting, unit):
     """Chaque opération de la comparaison une seule fois, rangée dans sa phase (RULES.md §8, dépense visible)
 
     Seul `compared` porte le coût observé du tableau et du conseil ; les autres groupes informent du coût
-    complet. La préparation compte jusqu'à la version du contrat, les sondes de modèles à cette version.
-    `held` : tentatives qui ont eu ou auront lieu ; une reprise arrêtée avant tout envoi n'en fait pas partie
+    complet. La préparation compte jusqu'à la version du contrat ; une vérification de modèle compte si le
+    panel l'a retenue, quelle que soit sa version. `held` : tentatives qui ont eu ou auront lieu, sans la
+    reprise arrêtée avant tout envoi. `awaiting` : réponses dont l'évaluation reste à venir, donc à payer
     """
     from . import model_probes
     attempts = dict(connection.execute(
         f'SELECT operation_id, campaign_id FROM s4_attempts WHERE campaign_id IN ({",".join("?" * len(family))})',
         family).fetchall())
+    currencies = dict(connection.execute('SELECT budget_id, currency FROM budgets').fetchall())
     groups = {key: [] for key in EXPENSE_GROUPS}
     for op in sorted(store._operations(connection), key=lambda op: op['created_at']):
         if op['dossier_id'] != dossier_id:
@@ -196,10 +198,10 @@ def _expenses(store, connection, dossier_id, revision, family, compared, held, u
             if json.loads(op['resources'][0])['request']['campaign_id'] not in family:
                 continue
             key = 'judgment'
-        elif op['engine_version'] == model_probes.ENGINE:
-            if op['revision'] != revision:
-                continue
+        elif op['operation_id'] in probes:
             key = 'probes'
+        elif op['engine_version'] == model_probes.ENGINE:
+            continue
         elif op['phase'] in ('preparation', 'correction') and op['revision'] < revision:
             key = 'preparation'
         elif op['phase'] == 'qualification' and op['revision'] <= revision:
@@ -208,22 +210,25 @@ def _expenses(store, connection, dossier_id, revision, family, compared, held, u
             continue
         state = 'STOPPED' if op['operation_id'] in attempts and op['operation_id'] not in held else _expense_state(op)
         cost = store._effective_cost(connection, op)
-        known = cost is not None and cost['status'] == 'KNOWN' and cost['currency'] == unit
+        known = cost is not None and cost['status'] == 'KNOWN'
+        counted = known and cost is not None and cost['currency'] == unit
         observed = (op['receipt'] or {}).get('observed_configuration') or {}
         groups[key].append(dict(
             operation_id=op['operation_id'], model=op['requested_configuration'].get('model'),
-            created_at=op['created_at'], state=state, cost=cost, counted=known,
+            created_at=op['created_at'], state=state, cost=cost, counted=counted,
             # Une intention en attente peut encore partir ; seule la reprise arrêtée ne coûtera jamais rien
-            complete=known or state == 'STOPPED',
-            reserved=None if known else op['reserved_amount'],
+            complete=counted or state == 'STOPPED',
+            # Un coût connu libère sa réserve, même dans une autre unité que la base
+            reserved=None if known else op['reserved_amount'], reserved_unit=currencies[op['budget_id']],
             estimate=(observed.get('indicative_cost') or {}).get('token_subtotal_usd'),
             recovery=attempts.get(op['operation_id'], family[0]) != family[0]))
 
     def total(items):
         return format(storage._sum_money(storage._money(i['cost']['amount']) for i in items if i['counted']), 'f')
     every = [item for items in groups.values() for item in items]
-    return dict(unit=unit, known=total(every), complete=all(i['complete'] for i in every),
-                groups=[dict(key=key, in_basis=key == 'compared', known=total(items),
+    return dict(unit=unit, known=total(every), awaiting_judgment=awaiting,
+                complete=not awaiting and all(i['complete'] for i in every),
+                groups=[dict(key=key, known=total(items),
                              complete=all(i['complete'] for i in items), operations=items)
                         for key, items in groups.items() if items])
 
@@ -394,7 +399,11 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 # Décision d'Ayo : pas de conseil sur une comparaison qui compte une reprise (une tentative par configuration)
                 recommendation=None if descendants else _recommendation(rows, columns, len(campaign['cases']), coverage, pending),
                 expenses=_expenses(store, connection, dossier_id, contract['revision'], [campaign_id] + descendants,
-                                   {r['attempt_id'] for r in rows}, held, basis['unit']),
+                                   {r['attempt_id'] for r in rows}, held,
+                                   {cfg['estimate']['probe_operation_id'] for cfg in campaign['panel']
+                                    if 'probe_operation_id' in cfg.get('estimate', {})},
+                                   sum(a.get('state') in ('REVIEW_REQUIRED', 'EVALUATION_NOT_STARTED', 'EVALUATION_RUNNING')
+                                       for a in pending), basis['unit']),
                 cases=campaign['cases'], panel=campaign['panel'], conditions=campaign['conditions'],
                 obligations=spec['obligations'], cost_basis=basis, cells=campaign['cells'],
                 campaign_state=campaign['state'], history=records, href=base, pending_attempts=pending,

@@ -191,12 +191,13 @@ class CustomNeedEngineTests(unittest.TestCase):
                 self.assertEqual('preview', preview['stage'])
                 validation_body = prep.binding('custom-need', preview['revision'], preview['package_sha256'])
                 validation_body['csrf_token'] = home['csrf_token']
-                self.assertEqual(202, web_api.dispatch(store, 'POST',
-                    '/preparation/dossiers/custom-need/validation', token,
-                    validation_body, 'a' * 40, granted(), qualification_transport=Authorized(
-                        QualificationTransport({'qualified': True, 'findings': [], 'summary': 'OK'}),
-                        authority_id='TEST_ONLY_CUSTOM_QUALIFICATION', budget_id='custom-qualification-budget',
-                        reserve_amount='1', requested_configuration={'model': 'qualification/fictive'}))[0])
+                qualification_transport = Authorized(
+                    QualificationTransport({'qualified': True, 'findings': [], 'summary': 'OK'}),
+                    authority_id='TEST_ONLY_CUSTOM_QUALIFICATION', budget_id='custom-qualification-budget',
+                    reserve_amount='1', requested_configuration={'model': 'qualification/fictive'})
+                validated = web_api.dispatch(store, 'POST', '/preparation/dossiers/custom-need/validation', token,
+                                             validation_body, 'a' * 40, granted(), qualification_transport=qualification_transport)
+                self.assertEqual(202, validated[0])
 
                 q.initialize(data)
                 reference = store._connection.execute(
@@ -229,6 +230,24 @@ class CustomNeedEngineTests(unittest.TestCase):
                 execution.execute(data, 'custom-need-attempt', acquisition)
                 attempt = c.inspect(store, 'custom-need-local')['attempts'][0]
                 self.assertEqual('RECEIVED', attempt['state'])
+                # Issue #441 : la base de coût est en TEST, le contrôle de l'exemple a été payé en USD
+                from benchmark import restitution
+                from benchmark_web.campaign_views import render_expenses
+                e.initialize(data)
+
+                def controle():
+                    expenses = render_expenses(restitution.comparison(store, session, 'custom-need', 'custom-need-local')['expenses'], {})
+                    self.assertIn('Coût complet inconnu · sous-total connu : 5 TEST', expenses)
+                    return expenses.split('<h3>Contrôle de l’exemple')[1].split('</ul>')[0]
+                # Contrôle encore en attente : sa réserve garde l'unité de son enveloppe
+                self.assertIn('montant réservé : 1 USD', controle())
+                # Le contrat est déjà figé : le contrôle se clôt sans envoi
+                with self.assertLogs('benchmark.preparation', 'ERROR') as logs:
+                    prep.execute_qualification(data, validated[3]['qualification_operation'], qualification_transport)
+                self.assertIn('emitted=False', logs.output[0])
+                # Contrôle clos sans envoi, coût connu en USD : montant visible, ni additionné ni doublé de sa réserve
+                self.assertIn('<strong>qualification/fictive</strong> : 0 USD · autre unité, non additionné', controle())
+                self.assertNotIn('montant réservé', controle())
                 self.assertTrue(runtime.verify(store)['integrity_ok'])
                 network.assert_not_called()
 
