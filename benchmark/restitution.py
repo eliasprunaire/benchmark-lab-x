@@ -359,7 +359,8 @@ def _detail(store, connection, session_id, dossier_id, value, attempt_id):
                                  record['evaluation_id'], [link['piece_id'] for link in record['proof_links']])
         record['proof_contents'] = {pid: raw.decode('utf-8') for pid, raw in pieces.items()}
     return p.page_view(dict(kind='attempt_detail', campaign_id=campaign_id, task=value['task'],
-                       need=value['need'], model_names=value['model_names'], conclusion=value['conclusion'], history=history,
+                       need=value['need'], model_names=value['model_names'], conclusion=value['conclusion'],
+                       coverage=value['coverage'], history=history,
                        filter_scope=value['filter_scope'], dossier_href=value['dossier_href'], href=value['href'],
                        back_href=value['href'] + ('?' + urlencode(value['filter_scope']) if value['filter_scope'] else '') +
                                  '#attempt-' + attempt_id))
