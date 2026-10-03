@@ -1038,7 +1038,11 @@ def render_attempt_detail(value):
     for record in reversed(history[:-1]):
         content += '<details><summary>Ancienne évaluation, remplacée le ' + text(date_lisible_utc(record['created_at'])) + '</summary>'
         content += render_result(record, names) + '</details>'
-    return content + '</div>'
+    # Hors de `#attempt-detail` : dans la modale, la page des résultats porte déjà cette portée et cette couverture
+    conclusion, coverage = value['conclusion'], value['coverage']
+    content += '</div><p class="note">' + text(conclusion['attribution'] + ' ' + conclusion['limits'][0]) + '</p>'
+    return content + '<p class="hint">Comparaison : réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : ' + text(
+        coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '.</p>'
 
 
 def render_campaign_records(campaigns, url):

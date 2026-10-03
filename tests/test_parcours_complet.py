@@ -21,7 +21,7 @@ from benchmark.acquisition import execution
 from benchmark.acquisition import campaigns
 from benchmark import evaluation, model_catalogue, preparation as prep
 from benchmark import provider_access, qualification, service, storage
-from benchmark_web import server, views
+from benchmark_web import projection, server, views
 from tests.test_configurations import NOW, model
 from tests.test_openrouter_qualification import QualificationTransport
 from tests.test_provider_access import AccessTransport, KEY, SECRET
@@ -135,7 +135,7 @@ class ParcoursComplet(unittest.TestCase):
                         code, value, cookie, start, *bound = service.personal_dispatch(
                             store, message, 'a' * 40, candidate_identity=test.identity,
                             candidate_transport=test.candidate, access_secret=SECRET,
-                            access_transport=test.access, **test.assistants)
+                            access_transport=test.access, presentation=projection, **test.assistants)
                         if start:
                             # Les travaux lancés partent avec les assistants liés à la session, comme dans l'exécuteur
                             test.bound = bound
@@ -919,6 +919,29 @@ class ParcoursComplet(unittest.TestCase):
         # La correction reste proposée depuis la page
         self.assertTrue(page.form('/messages'))
 
+    def test_lancement_refuse_tant_que_l_exemple_n_est_pas_verifie(self):
+        """Exemple validé, vérification pas encore faite : le choix des modèles est refusé, rien ne part"""
+        dossier, page = self.exemple()
+        # L'aperçu de l'exemple annonce son caractère inventé, sans promesse
+        self.assertIn('Exemple inventé', page.visible)
+        self.sans_promesse(page)
+        self.submit(page, '/validation', {})
+        qualification = self.starts.get_nowait()['qualification_operation']
+        page, _, _ = self.request(dossier)
+        self.assertFalse(any(n['tag'] == 'a' and n['text'] == 'Choisir les modèles' for n in page.nodes))
+        _, _, raw = self.request(dossier + '/configurations', status=403)
+        self.assertIn('Terminez l’étape précédente avant de poursuivre.', raw.decode())
+        # La voie qui crée la comparaison refuse aussi, avec un jeton de formulaire valide
+        jeton = next(f['fields']['csrf_token'] for f in page.forms if 'csrf_token' in f['fields'])
+        _, _, raw = self.request(dossier + '/configurations', {'csrf_token': jeton, 'models': ['openai/gpt-5.6-sol',
+                                 'mistralai/mistral-small-2603'], 'tier': 'low'}, status=403)
+        self.assertIn('Terminez l’étape précédente avant de poursuivre.', raw.decode())
+        self.assertTrue(self.starts.empty())
+        self.assertEqual([], [call for call in self.calls if call[0] == 'candidat'])
+        # La vérification terminée ouvre le choix des modèles
+        prep.execute_qualification(self.data, qualification, self.bound[1])
+        self.request(dossier + '/configurations')
+
     @staticmethod
     def etape(page):
         """Étape courante de la barre et cible de l'onglet Résultats (None s'il est désactivé)"""
@@ -954,7 +977,8 @@ class ParcoursComplet(unittest.TestCase):
 
         `constat(critère)` remplace ce FAIL uniforme par (statut, attribution, texte du constat) ; pour une
         obligation composée, il reçoit l'élément que vise le contrôle ;
-        `mesure` est la valeur rendue pour chaque critère de qualité, sinon aucun n'est mesuré
+        `mesure` est la valeur rendue pour chaque critère de qualité, sinon aucun n'est mesuré ;
+        appelable, elle reçoit le critère et la réponse évaluée
         """
         from unittest.mock import Mock
         from benchmark.transports import openrouter
@@ -979,7 +1003,8 @@ class ParcoursComplet(unittest.TestCase):
                                  ('FAIL', 'candidate', 'Obligation non satisfaite')),
                              criterion_id=x['id'], control_id=k, evidence=[proof])
                         for x in content['obligations'] + content['eliminatory_errors'] for k in x['control_ids']]
-            measures = [dict(criterion_id=x['id'], value=mesure, unit=x['unit'], evidence=[proof])
+            measures = [dict(criterion_id=x['id'], value=mesure(x, output['content']) if callable(mesure) else mesure,
+                             unit=x['unit'], evidence=[proof])
                         for x in content['secondary_criteria']] if mesure is not None else []
             result = dict(findings=findings, measures=measures, limits=[], proposed_verdict='SATISFAIT')
             document = dict(id='fixture-judge', model=profile['revision'],
@@ -1395,6 +1420,155 @@ class ParcoursComplet(unittest.TestCase):
         html = self.evaluer(dossier)
         self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
         self.assertNotIn('Aucune réponse exploitable', html)
+        self.assertNotIn('Notre conseil', html)
+
+    SORTIE_C = 'Action : relire | Responsable : Camille'
+    # Formulations de promesse, pas les mots seuls : « la fiabilité générale n'est pas garantie » reste permis
+    PROMESSE = r'(?i)meilleur (modèle|rapport qualité)|plus fiable|fiable en général|fiabilité (assurée|garantie)|garantit (la|une) (fiabilité|réussite)'
+
+    def sans_promesse(self, page):
+        """Tout le texte principal, dépliants compris, sans promesse de meilleur modèle ni de fiabilité générale"""
+        self.assertNotRegex(next(n for n in page.nodes if n['tag'] == 'main')['text'], self.PROMESSE)
+
+    def comparer(self, qualites, mesure, *, constat=None, comportement=None,
+                 models=('openai/gpt-5.6-sol', 'mistralai/mistral-small-2603')):
+        """Comparaison sans reprise de modèles satisfaisants, coûts connus sauf `comportement(valeur, modèle)`
+
+        `mesure(critère, sortie)` rend la valeur du juge pour chaque critère de qualité nommé dans
+        `qualites` ; la réponse de mistral-small se reconnaît à sa sortie `SORTIE_C`
+        """
+        self.criteria = {'eliminatory': [], 'obligations': ['Toutes les actions présentes'], 'quality': [
+            {'label': label, 'scale': ['excellent', 'acceptable', 'faible'], 'favorable': 'excellent'} for label in qualites]}
+        self.juge_factice(constat or (lambda critere: ('PASS', 'candidate', 'Exigence respectée')),
+                          mesure=lambda critere, sortie: mesure(critere['measure'], sortie))
+
+        def reponse(value, model, limit, suivi):
+            if model == 'mistralai/mistral-small-2603':
+                value['receipt']['result']['output'] = self.SORTIE_C
+            if comportement:
+                comportement(value, model)
+        dossier, _, envois, _ = self.lancer_avec_reprises(list(models), reponse)
+        self.assertEqual(len(models), len(envois))
+        return dossier, self.evaluer(dossier)
+
+    def test_conseil_retient_la_qualite_puis_le_cout_sur_toute_la_comparaison(self):
+        """Témoin des abstentions : conditions réunies, le conseil est donné et la page reste située
+
+        Modes d'échec couverts :
+        1. aucun conseil alors que ses conditions sont réunies, ce qui rendrait les abstentions muettes ;
+        2. le coût l'emporte sur une qualité observée meilleure ;
+        3. un filtre d'affichage change le conseil ;
+        4. le détail d'une réponse, ouvert seul, ne dit plus que le verdict porte sur la configuration
+           observée, sur un exemple inventé ;
+        5. le résultat ou le détail promet un meilleur modèle ou une fiabilité générale
+        """
+        from benchmark.restitution import ATTRIBUTION, LIMIT
+
+        def comportement(value, model):
+            # La meilleure qualité coûte plus cher
+            if model == 'openai/gpt-5.6-sol':
+                value['cost'].update(amount='0.30')
+        dossier, html = self.comparer(['Clarté du tableau'],
+                                      lambda critere, sortie: 'acceptable' if sortie == self.SORTIE_C else 'excellent',
+                                      comportement=comportement)
+        conseil = Page(html.split('<aside class="economic-choice"')[1].split('</aside>')[0].encode())
+        self.assertIn('Modèle A', conseil.visible)
+        self.assertIn('Nous retenons d’abord la', conseil.visible)
+        self.assertIn('À qualité égale, le coût observé le plus bas l’emporte.', conseil.visible)
+        self.assertIn('Ce conseil repose sur un seul exemple.', conseil.visible)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        options = re.search(r'name="configuration">(.*?)</select>', html).group(1)
+        filtre = re.findall(r'<option value="([^"]+)">Modèle C', options)[0]
+        filtree, _, raw = self.request(comparison + '?configuration=' + filtre)
+        self.assertIn('1 réponse affichée sur 2', filtree.visible)
+        self.assertEqual(html.split('<aside class="economic-choice"')[1].split('</aside>')[0],
+                         raw.decode().split('<aside class="economic-choice"')[1].split('</aside>')[0])
+        page, _, _ = self.request(filtree.link('Détail et preuves'))
+        self.examine(page, comparison, 'détail ouvert seul', None)
+        self.assertIn('Modèle C', page.visible)
+        self.assertIn(ATTRIBUTION, page.visible)
+        self.assertIn(LIMIT, page.visible)
+        self.assertIn('Comparaison : réponses évaluées : 2 · essais lancés : 2 sur 2.', page.visible)
+        resultats = Page(html.encode())
+        self.assertIn(ATTRIBUTION, next(n for n in resultats.nodes if n['attrs'].get('id') == 'method')['text'])
+        self.assertIn('Réponses évaluées : 2 · essais lancés : 2 sur 2.', resultats.visible)
+        apercu, _, _ = self.request(comparison + '/preview')
+        self.assertIn(ATTRIBUTION, apercu.visible)
+        self.assertIn(LIMIT, apercu.visible)
+        self.assertIn('Réponses évaluées : 2 · essais lancés : 2 sur 2.', apercu.visible)
+        for vue in (resultats, page, apercu):
+            self.sans_promesse(vue)
+
+    def test_conseil_departage_par_le_cout_a_qualite_egale(self):
+        def comportement(value, model):
+            if model == 'openai/gpt-5.6-sol':
+                value['cost'].update(amount='0.30')
+        _, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent', comportement=comportement)
+        conseil = Page(html.split('<aside class="economic-choice"')[1].split('</aside>')[0].encode())
+        self.assertIn('Modèle C', conseil.visible)
+        self.assertIn('Les 2 réponses qui satisfont l’exemple ont la même qualité observée. Nous retenons la moins coûteuse.',
+                      conseil.visible)
+
+    def test_pas_de_conseil_avec_une_reponse_absente(self):
+        """Deux réponses satisfaisantes départageables ; la troisième n'a pas de réponse exploitable"""
+        def comportement(value, model):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['receipt']['result'].update(output=None, incident='PROVIDER_RESPONSE_INCOMPLETE')
+                value['cost'].update(status='KNOWN', amount='0.05')
+        _, html = self.comparer(['Clarté du tableau'],
+                                lambda critere, sortie: 'acceptable' if sortie == self.SORTIE_C else 'excellent',
+                                comportement=comportement,
+                                models=('openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'))
+        self.assertIn('Satisfait : 2', html)
+        self.assertIn('Aucune réponse exploitable pour Modèle B', html)
+        self.assertNotIn('Notre conseil', html)
+
+    def test_pas_de_conseil_a_egalite_finale(self):
+        _, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent')
+        self.assertEqual(2, html.count('<tr id="attempt-'))
+        self.assertNotIn('class="out"', html)
+        self.assertNotIn('Notre conseil', html)
+
+    def test_pas_de_conseil_avec_un_cout_inconnu(self):
+        def comportement(value, model):
+            if model == 'mistralai/mistral-small-2603':
+                value['cost'].update(status='UNKNOWN', amount=None)
+        _, html = self.comparer(['Clarté du tableau'],
+                                lambda critere, sortie: 'acceptable' if sortie == self.SORTIE_C else 'excellent',
+                                comportement=comportement)
+        self.assertNotIn('class="out"', html)
+        self.assertIn('Comparaison des coûts incomplète', html)
+        self.assertNotIn('Notre conseil', html)
+
+    def test_pas_de_conseil_quand_les_qualites_se_croisent(self):
+        def mesure(critere, sortie):
+            return 'excellent' if (critere == 'Clarté du tableau') == (sortie != self.SORTIE_C) else 'acceptable'
+
+        def comportement(value, model):
+            # Coûts distincts : seule l'incomparabilité des qualités empêche le conseil
+            if model == 'openai/gpt-5.6-sol':
+                value['cost'].update(amount='0.30')
+        _, html = self.comparer(['Clarté du tableau', 'Concision'], mesure, comportement=comportement)
+        self.assertNotIn('class="out"', html)
+        self.assertEqual(2, html.count('Excellent'))
+        self.assertNotIn('Notre conseil', html)
+
+    def test_pas_de_conseil_avant_un_jugement_complet(self):
+        """Deux réponses satisfaisantes départageables, la troisième reste à reprendre faute de preuve"""
+        def constat(critere):
+            if self.judged[-1]['output']['content'] == self.SORTIE_C:
+                return 'INDETERMINE', 'evidence', 'Preuve insuffisante'
+            return 'PASS', 'candidate', 'Exigence respectée'
+
+        def comportement(value, model):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+        _, html = self.comparer(['Clarté du tableau'],
+                                lambda critere, sortie: 'excellent' if '<script>' in sortie else 'acceptable',
+                                constat=constat, comportement=comportement,
+                                models=('openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'))
+        self.assertIn('À reprendre : 1', html)
+        self.assertIn('Satisfait : 2', html)
         self.assertNotIn('Notre conseil', html)
 
     def test_reprise_refusee_ne_bloque_pas_la_comparaison(self):
