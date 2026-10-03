@@ -1273,12 +1273,12 @@ class ParcoursComplet(unittest.TestCase):
                  'deepseek/deepseek-v4.1-flash': ('0.000003', '0.000012'),
                  'mistralai/mistral-small-2603': ('0.000004', '0.000018')}
 
-    def lancer_avec_reprises(self, models, comportement):
+    def lancer_avec_reprises(self, models, comportement, qualifier=None):
         """Relevé aux tarifs publiés, lancement public, puis exécution par une fabrique liée à la clé
 
         `comportement(valeur, modèle, limite, suivi)` modifie la réponse factice ; `suivi` est l'adresse
-        du suivi de la comparaison. Renvoie le dossier, le récapitulatif avant lancement, les envois
-        (modèle, limite) et les clés reçues par la fabrique
+        du suivi de la comparaison ; `qualifier()` remplace `exemple_qualifie`. Renvoie le dossier, le
+        récapitulatif avant lancement, les envois (modèle, limite) et les clés reçues par la fabrique
         """
         with closing(storage.Store(self.data)) as store:
             fetched_at, raw = store._connection.execute('SELECT fetched_at, raw_json FROM s2_model_catalogue').fetchone()
@@ -1289,7 +1289,7 @@ class ParcoursComplet(unittest.TestCase):
                         model_id, {'prompt': '0.000002', 'completion': '0.00001', 'request': '0'}))
             store._connection.execute('UPDATE s2_model_catalogue SET raw_json=? WHERE fetched_at=?',
                                       (storage._strict_json(document), fetched_at))
-        dossier = self.exemple_qualifie()
+        dossier = (qualifier or self.exemple_qualifie)()
         suivi = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions'
         page, _, _ = self.request(dossier + '/configurations')
         recap = self.submit(page, '/configurations', {'models': models, 'tier': 'low'})
@@ -1422,6 +1422,101 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Aucune réponse exploitable', html)
         self.assertNotIn('Notre conseil', html)
 
+    def depenses(self, html):
+        """Récapitulatif des dépenses de la comparaison : texte entier et lignes de chaque phase"""
+        bloc = html.split('<details id="expenses">')[1].split('<details id="method">')[0].rsplit('</details>', 1)[0]
+        phases = {titre.split(' : ')[0]: re.findall(r'<li>(.*?)</li>', corps, re.S)
+                  for titre, corps in re.findall(r'<h3>(.*?)</h3>(.*?)(?=<h3>|$)', bloc, re.S)}
+        return Page(('<details>' + bloc + '</details>').encode()).nodes[0]['text'], phases
+
+    def operations_du_dossier(self):
+        """Oracle : une seule comparaison sur un seul dossier, toutes ses opérations lui reviennent"""
+        from decimal import Decimal
+        with closing(storage.Store(self.data)) as store:
+            operations = store.inspect_operations()
+        self.assertEqual(1, len({op['dossier_id'] for op in operations}))
+        connus = [Decimal(op['observed_cost']['amount']) for op in operations
+                  if op['observed_cost'] and op['observed_cost']['status'] == 'KNOWN']
+        return operations, sum(connus, Decimal(0))
+
+    def test_cout_complet_relie_chaque_operation_une_seule_fois(self):
+        """Issue #441 : le lecteur voit ce que la comparaison a coûté, phase par phase
+
+        Modes d'échec couverts :
+        1. une phase (préparation, contrôle de l'exemple, évaluation) manque au récapitulatif ;
+        2. une tentative remplacée par une reprise est masquée, ou comptée deux fois ;
+        3. le total additionne des montants réservés ou estimés aux dépenses observées ;
+        4. les envois hors du tableau sont présentés comme base du conseil ;
+        5. le coût observé de chaque réponse change de base dans le tableau
+        """
+        from benchmark_web.fragments import montant_lisible
+        self.juge_factice()
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+                if limit == 4096:
+                    self.coupee(value, None, limit)
+            elif model == 'mistralai/mistral-small-2603':
+                self.coupee(value, 'Action : relire' + ' | suite' * (limit // 1024), limit)
+        dossier, _, envois, _ = self.lancer_avec_reprises(list(self.MAJORANTS), comportement)
+        html = self.evaluer(dossier)
+        operations, total = self.operations_du_dossier()
+        self.assertTrue(all(op['observed_cost']['status'] == 'KNOWN' for op in operations))
+        texte, phases = self.depenses(html)
+        self.assertIn('Coût complet connu : ' + montant_lisible(str(total)) + ' USD', texte)
+        self.assertNotIn('sous-total', texte)
+        # Chaque opération du dossier une seule fois, rangée dans sa phase et reconnaissable à sa référence
+        self.assertEqual(len(operations), sum(len(lignes) for lignes in phases.values()))
+        self.assertEqual(sorted(op['operation_id'][-8:] for op in operations),
+                         sorted(re.findall(r'réf\. <code>([^<]+)</code>', html)))
+        par_phase = {}
+        for op in operations:
+            par_phase[op['phase']] = par_phase.get(op['phase'], 0) + 1
+        self.assertEqual(len(envois), par_phase['acquisition'])
+        self.assertEqual(2, len(phases['Réponses comparées']))
+        self.assertEqual(len(envois) - 2, len(phases['Autres envois aux modèles']))
+        self.assertEqual(2, par_phase['judgment'])
+        self.assertEqual(2, len(phases['Évaluation des réponses']))
+        self.assertEqual(par_phase['preparation'] + par_phase.get('correction', 0),
+                         len(phases['Préparation de l’exemple']) + len(phases.get('Vérification des modèles choisis', [])))
+        self.assertEqual(par_phase['qualification'], len(phases['Contrôle de l’exemple']))
+        # Trois reprises : celle de Modèle B est comparée, les deux de Modèle C restent visibles à part
+        self.assertEqual([1, 2], [sum('reprise' in ligne for ligne in phases[nom])
+                                  for nom in ('Réponses comparées', 'Autres envois aux modèles')])
+        # Seules les réponses du tableau portent la base du conseil
+        self.assertIn('Leur coût est le coût observé du tableau', texte)
+        self.assertEqual(len(phases) - 1, texte.count('Pour information, hors conseil'))
+        self.assertNotRegex(texte, r'(?i)par mois|heure de travail|plafond|traceur')
+        # Le tableau garde le coût de chaque réponse, sans les autres phases
+        lignes = html.split('<tbody>')[1].split('</tbody>')[0]
+        self.assertEqual(['0,05 USD', '0,10 USD'], sorted(re.findall(r'<span class="source-value">(.*?)</span>', lignes)))
+
+    def test_cout_complet_inconnu_annonce_un_sous_total(self):
+        """Issue #441 : une dépense nécessaire manque, le total reste inconnu
+
+        Modes d'échec : le sous-total des montants connus est annoncé comme coût complet, la dépense
+        manquante est comptée zéro ou remplacée par sa réserve, ou disparaît du récapitulatif
+        """
+        from benchmark_web.fragments import montant_lisible
+
+        def comportement(value, model):
+            if model == 'mistralai/mistral-small-2603':
+                value['cost'].update(status='UNKNOWN', amount=None)
+        _, html = self.comparer(['Clarté du tableau'],
+                                lambda critere, sortie: 'acceptable' if sortie == self.SORTIE_C else 'excellent',
+                                comportement=comportement)
+        operations, connu = self.operations_du_dossier()
+        texte, phases = self.depenses(html)
+        self.assertIn('Coût complet inconnu · sous-total connu : ' + montant_lisible(str(connu)) + ' USD', texte)
+        self.assertNotIn('Coût complet connu', texte)
+        self.assertIn('le sous-total ne donne que la somme des dépenses connues', texte)
+        self.assertEqual(len(operations), sum(len(lignes) for lignes in phases.values()))
+        inconnue = next(ligne for ligne in phases['Réponses comparées'] if 'Modèle C' in ligne)
+        reserve = next(op['reserved_amount'] for op in operations if op['observed_cost']['status'] == 'UNKNOWN')
+        self.assertIn('dépense inconnue', inconnue)
+        self.assertIn('montant réservé : ' + montant_lisible(reserve) + ' USD', inconnue)
+
     SORTIE_C = 'Action : relire | Responsable : Camille'
     # Formulations de promesse, pas les mots seuls : « la fiabilité générale n'est pas garantie » reste permis
     PROMESSE = r'(?i)meilleur (modèle|rapport qualité)|plus fiable|fiable en général|fiabilité (assurée|garantie)|garantit (la|une) (fiabilité|réussite)'
@@ -1508,6 +1603,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Modèle C', conseil.visible)
         self.assertIn('Les 2 réponses qui satisfont l’exemple ont la même qualité observée. Nous retenons la moins coûteuse.',
                       conseil.visible)
+        # Issue #441 : le coût complet s'affiche à côté du conseil sans changer sa base
+        self.assertIn('Coûtobservé0,10USD', conseil.visible.replace(' ', ''))
+        self.assertIn('Coût complet connu', self.depenses(html)[0])
 
     def test_pas_de_conseil_avec_une_reponse_absente(self):
         """Deux réponses satisfaisantes départageables ; la troisième n'a pas de réponse exploitable"""
@@ -1602,6 +1700,98 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Aucune réponse exploitable pour Modèle B (arrêt pour longueur, plafond demandé : 4096 '
                       'jetons de sortie).', html)
         self.assertEqual(1, html.count('Aucune réponse exploitable pour Modèle B'))
+        # Issue #441 : la reprise refusée ne partira jamais, elle ne laisse aucune dépense en suspens
+        texte, phases = self.depenses(html)
+        self.assertIn('Coût complet connu', texte)
+        self.assertEqual(1, sum('Modèle B : aucune dépense' in ligne and 'reprise arrêtée avant envoi' in ligne
+                                for ligne in phases['Autres envois aux modèles']))
+
+    def test_cout_complet_inconnu_tant_qu_un_envoi_attend(self):
+        """Issue #441 : un envoi réservé mais pas encore parti peut encore coûter
+
+        Mode d'échec : la page affichée entre le lancement et l'exécution annonce un coût complet
+        connu alors que les réponses des modèles restent à payer
+        """
+        with patch.object(execution, 'execute_launch'):
+            dossier, _, envois, _ = self.lancer_avec_reprises(['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'], None)
+        self.assertEqual([], envois)
+        _, _, raw = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1')
+        texte, phases = self.depenses(raw.decode())
+        self.assertIn('Coût complet inconnu · sous-total connu', texte)
+        self.assertIn('dépense à venir', phases['Autres envois aux modèles'][0])
+        self.assertIn('pas encore envoyé', phases['Autres envois aux modèles'][0])
+        self.assertIn('montant réservé', phases['Autres envois aux modèles'][0])
+
+    def test_cout_complet_inconnu_avant_l_evaluation(self):
+        """Issue #441 : l'évaluation des réponses reçues reste à payer
+
+        Mode d'échec : toutes les réponses sont arrivées avec un coût connu, l'évaluation n'est pas encore
+        réservée, et le récapitulatif annonce un coût complet connu
+        """
+        dossier, _, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'], lambda *arguments: None)
+        self.assertEqual(2, len(envois))
+        _, _, raw = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1')
+        texte, phases = self.depenses(raw.decode())
+        self.assertNotIn('Évaluation des réponses', phases)
+        self.assertIn('Coût complet inconnu · sous-total connu', texte)
+        self.assertIn('L’évaluation de 2 réponses est à venir : son coût n’est pas encore connu.', texte)
+
+    def sonde(self, dossier, slug, action):
+        """Vérification réelle d'un modèle hors catalogue, réponse simulée au coût connu de 0.0004 USD"""
+        from copy import deepcopy
+        from benchmark import model_probes
+        summary, endpoints = model(slug, 'outside', ['low', 'high'])
+        summary['canonical_slug'] = slug + '-20260917'
+        endpoints['endpoints'][0].update(pricing=summary['pricing'], context_length=64000, max_completion_tokens=8192,
+                                         supported_parameters=['max_tokens', 'reasoning'])
+        documents = {'/api/v1/model/' + slug: summary, '/api/v1/models/' + slug + '/endpoints': endpoints}
+
+        def post(key, wire, **kwargs):
+            body = {'id': 'gen-fixture', 'model': summary['canonical_slug'], 'usage': {'cost': 0.0004},
+                    'choices': [{'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': 'OK'}}]}
+            return 200, {}, json.dumps(body).encode(), True, '2026-09-17T20:00:00Z', 0
+        with closing(storage.Store(self.data)) as store:
+            session = store._connection.execute('SELECT session_id FROM s2_dossiers').fetchone()[0]
+            operation_id, key = model_probes.submit(store, session, dossier.rsplit('/', 1)[1],
+                {'slug': slug, 'action_id': action}, lambda path: {'data': deepcopy(documents[path])}, SECRET, self.access)
+        model_probes.execute(self.data, operation_id, key, post)
+        return operation_id
+
+    def test_cout_complet_compte_la_verification_des_modeles_retenus(self):
+        """Issue #441 : une vérification de modèle compte si la comparaison s'en sert
+
+        Modes d'échec : la vérification d'un modèle retenu, faite avant une correction de l'exemple,
+        disparaît du coût complet ; celle d'un modèle vérifié puis écarté y est comptée
+        """
+        retenu, ecarte = 'outside/new-generalist', 'outside/other-generalist'
+        sondes = {}
+
+        def qualifier():
+            dossier, page = self.exemple()
+            sondes[retenu] = self.sonde(dossier, retenu, 'retenu')
+            self.preparation_stage = 'correction'
+            self.submit(page, '/messages', {'kind': 'correct', 'message': 'Présenter un tableau avec le responsable de chaque action'})
+            prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+            page, _, _ = self.request(dossier)
+            sondes[ecarte] = self.sonde(dossier, ecarte, 'ecarte')
+            self.submit(page, '/validation', {})
+            prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+            return dossier
+        self.juge_factice()
+        dossier, _, envois, _ = self.lancer_avec_reprises([retenu, 'openai/gpt-5.6-sol'], lambda *arguments: None,
+                                                          qualifier=qualifier)
+        self.assertEqual({retenu, 'openai/gpt-5.6-sol'}, {model for model, _ in envois})
+        html = self.evaluer(dossier)
+        operations, _ = self.operations_du_dossier()
+        revisions = {op['operation_id']: op['revision'] for op in operations}
+        self.assertLess(revisions[sondes[retenu]], revisions[sondes[ecarte]])
+        texte, phases = self.depenses(html)
+        self.assertEqual(1, len(phases['Vérification des modèles choisis']))
+        self.assertIn('0,0004 USD', phases['Vérification des modèles choisis'][0])
+        self.assertIn('réf. <code>' + sondes[retenu][-8:], phases['Vérification des modèles choisis'][0])
+        self.assertNotIn(sondes[ecarte][-8:], html)
+        self.assertEqual(len(operations) - 1, sum(len(lignes) for lignes in phases.values()))
 
     def niveaux_envoyes(self, campaign_id):
         with closing(storage.Store(self.data)) as store:

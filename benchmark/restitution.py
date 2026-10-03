@@ -2,12 +2,13 @@
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
+import json
 import re
 from urllib.parse import parse_qsl, urlencode
 
 from .validation import identifier
 from .acquisition import campaigns as c
-from . import evaluation as e, model_catalogue, preparation as p, qualification as q
+from . import evaluation as e, model_catalogue, preparation as p, qualification as q, storage
 from .publications import SCHEMA, PRESENTATION_VERSION, _decode
 from .storage import ConflictError, IntegrityError, _strict_json as encode
 
@@ -159,6 +160,77 @@ def _recommendation(rows, columns, case_count, coverage, pending):
     return dict(configuration=deepcopy(row['requested_configuration']), count=len(eligible),
                 amount=row['cost']['value'], unit=row['cost']['unit'], basis=basis,
                 quality=[deepcopy(column['definition']) for column in quality], detail_href=row['detail_href'])
+
+
+EXPENSE_GROUPS = ('compared', 'other_attempts', 'judgment', 'probes', 'preparation', 'qualification')
+
+
+def _expense_state(operation):
+    if storage.not_sent(operation):
+        return 'NOT_SENT'
+    if storage.provider_incident(operation):
+        return 'PROVIDER_INCIDENT'
+    if storage.ambiguous_expired(operation):
+        return 'AMBIGUOUS_EXPIRED'
+    return operation['state']
+
+
+def _expenses(store, connection, dossier_id, revision, family, compared, held, probes, awaiting, unit):
+    """Chaque opération de la comparaison une seule fois, rangée dans sa phase (RULES.md §8, dépense visible)
+
+    Seul `compared` porte le coût observé du tableau et du conseil ; les autres groupes informent du coût
+    complet. La préparation compte jusqu'à la version du contrat ; une vérification de modèle compte si le
+    panel l'a retenue, quelle que soit sa version. `held` : tentatives qui ont eu ou auront lieu, sans la
+    reprise arrêtée avant tout envoi. `awaiting` : réponses dont l'évaluation reste à venir, donc à payer
+    """
+    from . import model_probes
+    attempts = dict(connection.execute(
+        f'SELECT operation_id, campaign_id FROM s4_attempts WHERE campaign_id IN ({",".join("?" * len(family))})',
+        family).fetchall())
+    currencies = dict(connection.execute('SELECT budget_id, currency FROM budgets').fetchall())
+    groups = {key: [] for key in EXPENSE_GROUPS}
+    for op in sorted(store._operations(connection), key=lambda op: op['created_at']):
+        if op['dossier_id'] != dossier_id:
+            continue
+        if op['operation_id'] in attempts:
+            key = 'compared' if op['operation_id'] in compared else 'other_attempts'
+        elif op['phase'] == 'judgment':
+            if json.loads(op['resources'][0])['request']['campaign_id'] not in family:
+                continue
+            key = 'judgment'
+        elif op['operation_id'] in probes:
+            key = 'probes'
+        elif op['engine_version'] == model_probes.ENGINE:
+            continue
+        elif op['phase'] in ('preparation', 'correction') and op['revision'] < revision:
+            key = 'preparation'
+        elif op['phase'] == 'qualification' and op['revision'] <= revision:
+            key = 'qualification'
+        else:
+            continue
+        state = 'STOPPED' if op['operation_id'] in attempts and op['operation_id'] not in held else _expense_state(op)
+        cost = store._effective_cost(connection, op)
+        known = cost is not None and cost['status'] == 'KNOWN'
+        counted = known and cost is not None and cost['currency'] == unit
+        observed = (op['receipt'] or {}).get('observed_configuration') or {}
+        groups[key].append(dict(
+            operation_id=op['operation_id'], model=op['requested_configuration'].get('model'),
+            created_at=op['created_at'], state=state, cost=cost, counted=counted,
+            # Une intention en attente peut encore partir ; seule la reprise arrêtée ne coûtera jamais rien
+            complete=counted or state == 'STOPPED',
+            # Un coût connu libère sa réserve, même dans une autre unité que la base
+            reserved=None if known else op['reserved_amount'], reserved_unit=currencies[op['budget_id']],
+            estimate=(observed.get('indicative_cost') or {}).get('token_subtotal_usd'),
+            recovery=attempts.get(op['operation_id'], family[0]) != family[0]))
+
+    def total(items):
+        return format(storage._sum_money(storage._money(i['cost']['amount']) for i in items if i['counted']), 'f')
+    every = [item for items in groups.values() for item in items]
+    return dict(unit=unit, known=total(every), awaiting_judgment=awaiting,
+                complete=not awaiting and all(i['complete'] for i in every),
+                groups=[dict(key=key, known=total(items),
+                             complete=all(i['complete'] for i in items), operations=items)
+                        for key, items in groups.items() if items])
 
 
 def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
@@ -326,6 +398,12 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 economic_status='COMPLETE' if complete else 'INCOMPLETE', columns=columns, rows=ordered,
                 # Décision d'Ayo : pas de conseil sur une comparaison qui compte une reprise (une tentative par configuration)
                 recommendation=None if descendants else _recommendation(rows, columns, len(campaign['cases']), coverage, pending),
+                expenses=_expenses(store, connection, dossier_id, contract['revision'], [campaign_id] + descendants,
+                                   {r['attempt_id'] for r in rows}, held,
+                                   {cfg['estimate']['probe_operation_id'] for cfg in campaign['panel']
+                                    if 'probe_operation_id' in cfg.get('estimate', {})},
+                                   sum(a.get('state') in ('REVIEW_REQUIRED', 'EVALUATION_NOT_STARTED', 'EVALUATION_RUNNING')
+                                       for a in pending), basis['unit']),
                 cases=campaign['cases'], panel=campaign['panel'], conditions=campaign['conditions'],
                 obligations=spec['obligations'], cost_basis=basis, cells=campaign['cells'],
                 campaign_state=campaign['state'], history=records, href=base, pending_attempts=pending,
