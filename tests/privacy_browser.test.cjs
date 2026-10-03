@@ -471,7 +471,7 @@ test('structured costs and nullable answers stay readable and retain unknown val
 test('a composite obligation keeps its elements apart, whatever punctuation they contain', async () => {
   const composite = {description: 'Lister : les actions ; avec échéance', elements: ['Forme ; une ligne', 'Échéance : <b>exacte</b>']};
   fixture(1, undefined, {revisions: [{...fresh().revisions[0], criteria: ['Exactitude', composite]}]});
-  const context = await browser.newContext();
+  const context = await browser.newContext({acceptDownloads: true});
   try {
     const page = await pageFor(context);
     await page.evaluate(() => historyStore.archive('d1', 1));
@@ -482,6 +482,10 @@ test('a composite obligation keeps its elements apart, whatever punctuation they
     assert.equal(await page.locator('[data-privacy-list] b').count(), 0);
     assert.equal((await page.locator('[data-privacy-list]').textContent()).includes('[object Object]'), false);
     assert.deepEqual(await page.evaluate(() => historyStore.get('d1')), record);
+    await page.locator('[data-privacy-list] > details > summary').first().click();
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', {name: 'Télécharger ce cas (JSON)'}).click();
+    assert.deepEqual(JSON.parse(readFileSync(await (await download).path(), 'utf8')), record);
   } finally {await context.close();}
 });
 
