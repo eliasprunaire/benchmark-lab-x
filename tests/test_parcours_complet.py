@@ -851,27 +851,14 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'prêt à lancer', 'Lancer le benchmark')
         start = page.form('/start')
-        with closing(storage.Store(self.data)) as store:
-            dossier_id = dossier.rsplit('/', 1)[1]
-            revision, reference = store._connection.execute(
-                "SELECT revision, piece_id FROM pieces WHERE dossier_id=? AND role='judge' "
-                'ORDER BY revision DESC LIMIT 1', (dossier_id,)).fetchone()
-            notes = store._connection.execute(
-                "SELECT piece_id FROM pieces WHERE dossier_id=? AND revision=? AND role='candidate'",
-                (dossier_id, revision)).fetchone()[0]
-            motif = f'O1 non prouvée : la pièce {notes} ne montre aucune action'
-            affiche = '« Action présente » non prouvée : la pièce (identifiant masqué) ne montre aucune action'
-            reserve = store.read_piece(reference).decode()
-            candidate = qualification.draft(store, dossier_id, revision, specification(reference))
-
-            def bloque(contract, resources):
-                review = check(contract, resources)
-                review['checks'][0].update(status='FAIL', finding=motif)
-                return review
-            self.assertEqual('BLOCKED', qualification.qualify(
-                store, candidate['contract_sha256'], reviewer=ACTOR, check=bloque)['status'])
+        notes, reserve = self.bloquer_par_contrat_operateur(dossier)
+        affiche = '« Action présente » non prouvée : la pièce (identifiant masqué) ne montre aucune action'
         page, _, raw = self.request(dossier)
-        self.examine(page, dossier, 'dossier bloqué par le contrat opérateur', 'Vérifier puis lancer la comparaison')
+        # Comparaison préparée mais pas lancée : l'encadré dit que l'exemple est à revoir, sans proposer de lancer
+        self.examine(page, dossier, 'dossier bloqué par le contrat opérateur', None)
+        state = next(n for n in page.nodes if 'state' in n['attrs'].get('class', '').split())
+        self.assertIn('Exemple à revoir avant comparaison', state['text'])
+        self.assertNotIn('Vérifier puis lancer', page.visible)
         verification = next(n['text'] for n in page.nodes if n['tag'] == 'details'
                             and 'Vérification de l’exemple' in n['text'])
         self.assertIn('Ce que la vérification de l’exemple a relevé', verification)
@@ -892,6 +879,39 @@ class ParcoursComplet(unittest.TestCase):
                 self.assertNotIn(reserve, raw.decode())
         _, _, raw = self.request(recap, status=403, json_response=True)
         self.assertEqual([{'text': affiche}], json.loads(raw)['findings'])
+
+    def bloquer_par_contrat_operateur(self, dossier):
+        """Contrat opérateur de la dernière version, bloqué par un contrôle qui cite un critère et une pièce"""
+        with closing(storage.Store(self.data)) as store:
+            dossier_id = dossier.rsplit('/', 1)[1]
+            revision, reference = store._connection.execute(
+                "SELECT revision, piece_id FROM pieces WHERE dossier_id=? AND role='judge' "
+                'ORDER BY revision DESC LIMIT 1', (dossier_id,)).fetchone()
+            notes = store._connection.execute(
+                "SELECT piece_id FROM pieces WHERE dossier_id=? AND revision=? AND role='candidate'",
+                (dossier_id, revision)).fetchone()[0]
+            candidate = qualification.draft(store, dossier_id, revision, specification(reference))
+
+            def bloque(contract, resources):
+                review = check(contract, resources)
+                review['checks'][0].update(status='FAIL', finding=f'O1 non prouvée : la pièce {notes} ne montre aucune action')
+                return review
+            self.assertEqual('BLOCKED', qualification.qualify(
+                store, candidate['contract_sha256'], reviewer=ACTOR, check=bloque)['status'])
+            return notes, store.read_piece(reference).decode()
+
+    def test_contrat_operateur_bloque_avant_toute_comparaison(self):
+        """Sans comparaison préparée, l'encadré ne prétend pas que la vérification n'a pas pu démarrer"""
+        dossier = self.exemple_qualifie()
+        self.bloquer_par_contrat_operateur(dossier)
+        page, _, _ = self.request(dossier)
+        self.examine(page, dossier, 'exemple bloqué sans comparaison', None)
+        state = next(n for n in page.nodes if 'state' in n['attrs'].get('class', '').split())
+        self.assertIn('Exemple à revoir avant comparaison', state['text'])
+        self.assertNotIn('n’a pas pu démarrer', page.visible)
+        self.assertFalse(any(n['tag'] == 'a' and n['text'] == 'Choisir les modèles' for n in page.nodes))
+        # La correction reste proposée depuis la page
+        self.assertTrue(page.form('/messages'))
 
     @staticmethod
     def etape(page):
