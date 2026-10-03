@@ -453,9 +453,16 @@ def render(value, csrf, path='/preparation', *, error=False):
                 tone, heading, next_step = 'wait', 'Vérification de l’exemple en attente', qualification['summary']
             else:
                 tone, heading, next_step = 'wait', 'Vérification de l’exemple en cours', 'Votre validation est enregistrée. L’assistant vérifie que l’exemple est cohérent et que ses critères peuvent être contrôlés.'
+        # Contrat opérateur bloqué avant tout lancement : l'exemple est à revoir, aucune comparaison ne se lance
+        operator_blocked = (value['validation'] and not automatic and qualification.get('qualification_status') == 'BLOCKED'
+                            and not any(c['attempts'] for c in current_campaigns))
+        if operator_blocked:
+            tone, heading, next_step = ('err', 'Exemple à revoir avant comparaison',
+                                        'Le détail de la vérification, plus bas, dit ce qui bloque. '
+                                        'Corrigez l’exemple, puis validez-le de nouveau.')
         actions = ''
         # Une comparaison existe : l'encadré dit son état et mène à elle, jamais à un nouveau choix de modèles
-        if value['validation'] and current_campaigns and not snapshot and not prior_revision:
+        if value['validation'] and current_campaigns and not snapshot and not prior_revision and not operator_blocked:
             tone, heading, next_step, target, label = campaign_status(current_campaigns[-1], url)
             actions = f'<a class="button" href="{text(target)}">{text(label)}</a>'
         elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
