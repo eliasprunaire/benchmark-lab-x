@@ -9,7 +9,7 @@ Les sources canoniques ont des responsabilités distinctes :
 - [PRD](docs/PRD.md) : besoin, utilisateurs et périmètre produit ;
 - [ARD](docs/ARD.md) : objets, frontières et flux ;
 - [Règles](docs/RULES.md) : décisions, preuves, coûts, autorités et versionnement ;
-- [Contexte](CONTEXT.md) : vocabulaire du projet ;
+- [Glossaire](GLOSSARY.md) : vocabulaire du projet ;
 - [Release et livraison](docs/release.md) : automatisation de la publication et du déploiement.
 
 Une Issue ou une pull request ne remplace pas ces documents. Signalez une contradiction au lieu d’inventer une synthèse.
@@ -26,7 +26,7 @@ uv run --with-requirements benchmark/requirements.lock python -m unittest discov
 
 Les dépendances de développement proviennent de `benchmark/requirements-dev.in` et de `benchmark/requirements.lock`. Le runtime autonome utilise `benchmark/requirements-runtime.lock`. N’ajoutez pas une autre source de dépendances sans supprimer la duplication qu’elle remplacerait.
 
-Ne versionnez jamais `.env`, une clé, un jeton, une sortie privée, un reçu contenant des données sensibles ou un fichier local non destiné au dépôt. Ne modifiez pas `AGENTS.md` ou `CONTEXT.md` sans demande explicite couvrant ces fichiers.
+Ne versionnez jamais `.env`, une clé, un jeton, une sortie privée, un reçu contenant des données sensibles ou un fichier local non destiné au dépôt. Ne modifiez pas `AGENTS.md` ou `GLOSSARY.md` sans demande explicite couvrant ces fichiers.
 
 ## Créer une branche
 
