@@ -331,6 +331,7 @@ def render_evaluations(evaluations, dossier_url):
         for label, cost in (('Coût de la réponse du modèle', record['candidate_cost']), ('Coût de l’évaluation', record['judgment']['cost'])):
             content += '<p>' + label + ' : ' + text('inconnu' if cost is None or cost['status'] == 'UNKNOWN' else cost['amount'] + ' ' + cost['currency'])
             content += ' (source : ' + text(cost['source'] if cost else 'INCONNU') + ').</p>'
+        content += '<h6>Étalonnage du juge</h6>' + render_calibration(record['calibration'])
         content += '<p>Limites : ' + text('; '.join(record['limits'])) + '</p>'
         for label, value in (('Méthode et vérification de l’exemple', record['qualification']),
                              ('Déroulé de l’évaluation : consignes, pièces lues, désaccords et arbitrages', record['judgment']),
@@ -1071,6 +1072,38 @@ def _check(record, kind, state, description, findings, nested=''):
     return content + nested + '</li>'
 
 
+CALIBRATION_SENTENCES = {
+    'SANS_ETALONNAGE': 'Aucun étalonnage enregistré pour ce juge et cette méthode.',
+    'NON_APPLICABLE': 'Un étalonnage existe pour une autre version ou un autre juge ; il ne s’applique pas à ce résultat.',
+    'HORS_PERIMETRE': 'Un étalonnage existe pour ce juge et cette méthode, mais son périmètre ne couvre pas ce dossier ; il ne s’applique pas à ce résultat.',
+    'SANS_JUGE_ASSISTE': 'Cette évaluation n’a pas été faite par un juge assisté : aucun étalonnage de juge ne s’applique.',
+    'IDENTITE_ILLISIBLE': 'L’identité du juge de cette évaluation est illisible : aucun étalonnage ne peut lui être rattaché.',
+    'FICHES_ILLISIBLES': 'Les fiches d’étalonnage ne sont pas lisibles : aucune ne peut être rattachée à ce résultat.'}
+
+
+def render_calibration(scope):
+    """Portée de l'étalonnage du juge pour ce résultat : une phrase d'état, jamais un badge ni une certification"""
+    content = '<div class="calibration">'
+    decision = scope['decision']
+    if decision is None:
+        return content + '<p>' + text(CALIBRATION_SENTENCES[scope['state']]) + '</p></div>'
+    dated = 'Décision du ' + jour_lisible(decision['decided_at']) + '.'
+    if scope['state'] == 'QUALIFIEE':
+        content += '<p>Méthode qualifiée pour le périmètre déclaré : ' + text('« ' + decision['perimeter']['description'] + ' »') + '. Ce dossier fait partie de ce périmètre. ' + text(dated)
+        content += ' Cette qualification ne vaut que pour cette version de méthode et ce juge.'
+        content += '</p>'
+    else:
+        content += '<p>Étalonnage examiné : qualification non retenue pour ce juge et cette méthode. ' + text(dated) + '</p>'
+        content += '<p>Périmètre examiné : ' + text(decision['perimeter']['description']) + '</p>'
+    identity = decision['judge_identity']
+    content += '<details><summary>Limites et fiche d’étalonnage</summary>' + listing(decision['limits']) + readable_fields({
+        'Décision': decision['decision_id'], 'Autorité': decision['authority'],
+        'Méthode': identity['method']['id'] + ' ' + identity['method']['version'],
+        'Juge demandé': identity['model'], 'Juge servi': identity['observed'],
+        'Lot': decision['batch']['batch_id']}) + '</details>'
+    return content + '</div>'
+
+
 def render_result(record, names=None):
     """Lecture humaine compacte d'une évaluation : fragment partagé par la page directe et la modale.
 
@@ -1144,6 +1177,7 @@ def render_result(record, names=None):
     limits = list(dict.fromkeys(record['limits']))
     if limits:
         content += '<h3>Limites de ce résultat</h3>' + listing(limits)
+    content += '<h3>Étalonnage du juge</h3>' + render_calibration(record['calibration'])
     # Pièces
     references = {piece['id'] for piece in record['qualification']['contract']['reference_pieces']}
     content += '<details><summary>Pièces de l’exemple</summary><ul>'
