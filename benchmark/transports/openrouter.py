@@ -605,12 +605,24 @@ class OpenRouterQualification(OpenRouterPreparation):
         if profile in (None, QUALIFICATION_ASSISTANT):
             profile = load_profile(str(QUALIFICATION_PROFILE))
         super().__init__(api_key, profile)
+        # Le juge des témoins est celui de l'évaluation automatique (runtime `serve`)
+        self._control_profile = load_profile(str(AUTOMATIC_JUDGMENT_PROFILE))
+        self._control_quote: dict | None = None
 
     def configuration(self):
         return configuration(profile=self._profile)
 
     def content(self, request):
         return request['outgoing']
+
+    def controller(self):
+        """Juge des témoins, sous la clé et l'autorité de cette vérification ; un relevé déjà lu est repris"""
+        bound = OpenRouterWitnessControl(None, self._control_profile)
+        for name in ('_api_key', '_session_id', '_access_secret', 'preparation_budget_id'):
+            setattr(bound, name, getattr(self, name))
+        if self._control_quote is not None:
+            bound._quote = deepcopy(self._control_quote)
+        return bound
 
 
 AUTOMATIC_JUDGMENT_PROFILE = Path(__file__).parent / 'profiles' / 'judgment.profile.json'
@@ -648,3 +660,8 @@ class OpenRouterJudgment(OpenRouterPreparation):
                 or result['proposed_verdict'] not in ('SATISFAIT', 'NE SATISFAIT PAS', 'INDETERMINE')):
             raise ValueError('Proposition inexploitable')
         return result
+
+
+class OpenRouterWitnessControl(OpenRouterJudgment):
+    """Le juge appliqué à un témoin de qualification : phase et réserve de la vérification de l'exemple"""
+    phases = ('qualification',)

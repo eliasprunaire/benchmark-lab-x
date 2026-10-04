@@ -23,6 +23,9 @@ from tests.test_provider_access import AccessTransport, KEY, SECRET
 from tests.test_s4_regressions import response
 
 
+# Alternative valable des témoins de vérification : seul le juge de ce témoin la satisfait
+ALTERNATIVE = 'Actions : toutes reprises des notes.'
+
 class PrivacyCampaignFlow(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
@@ -42,6 +45,7 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.budget = provider_access.preparation_budget_id(self.sid)
         self.preparer = self.bound(openrouter.OpenRouterPreparation)
         self.qualifier = self.bound(openrouter.OpenRouterQualification)
+        self.qualifier._control_profile, self.qualifier._control_quote = self.profile, self.config
         self.judge = self.bound(openrouter.OpenRouterJudgment)
         self.http = Mock()
         self.http.getresponse.return_value.status = 200
@@ -77,15 +81,22 @@ class PrivacyCampaignFlow(unittest.TestCase):
                 'eliminatory': [], 'obligations': ['Toutes les actions présentes'],
                 'quality': [{'label': 'Clarté', 'scale': ['excellent', 'acceptable', 'faible'],
                              'favorable': 'excellent'}]}
-        elif self.stage == 'qualification':
-            answer = dict(qualified=True, findings=[], summary='Exemple synthétique qualifié')
+        elif self.stage == 'qualification' and 'controls' in json.loads(json.loads(body)['messages'][1]['content']):
+            control = json.loads(json.loads(body)['messages'][1]['content'])['controls'][0]['id']
+            answer = dict(qualified=True, findings=[], summary='Exemple synthétique qualifié', witnesses=[dict(
+                kind='alternative', output=ALTERNATIVE, expected=[dict(control_id=control, status='PASS')],
+                justification='La référence accepte toute liste fidèle des actions.'), dict(
+                kind='defect', output='Aucune action relevée.', expected=[dict(control_id=control, status='FAIL')],
+                justification='La référence attend les actions des notes : leur absence est le défaut ciblé.')])
         else:
+            # Juge d'une réponse candidate ou d'un témoin de vérification
             review = json.loads(json.loads(body)['messages'][1]['content'])
             output = review['output']
             proof = {key: output[key] for key in ('piece_id', 'sha256')}
             proof['passage'] = output['content']
             findings = [dict(criterion_id=criterion['id'], control_id=control,
-                status='FAIL', attribution='candidate', finding='Action absente', evidence=[proof])
+                status='PASS' if output['content'] == ALTERNATIVE else 'FAIL', attribution='candidate',
+                finding='Action absente', evidence=[proof])
                 for criterion in review['obligations'] + review['eliminatory_errors']
                 for control in criterion['control_ids']]
             answer = dict(findings=findings, measures=[], limits=[], proposed_verdict='SATISFAIT')

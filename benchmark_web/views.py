@@ -115,6 +115,42 @@ PREPARATION_PROGRESS_SCRIPT = """(() => {
 })();"""
 
 
+WITNESS_KINDS = {'alternative': 'Alternative valable', 'defect': 'Défaut ciblé'}
+WITNESS_STATES = {'CONFIRMED': 'Décision conforme à l’attendu', 'CONTRADICTED': 'Décision contraire à l’attendu',
+                  'UNPROVEN': 'Décision sans preuve exploitable', 'PENDING': 'Contrôle en cours',
+                  'NOT_RUN': 'Contrôle non exécuté', 'STALE': 'Preuve d’une autre version, non retenue'}
+
+
+def render_witnesses(qualification):
+    """Témoins de la vérification, sans identifiant interne : ce que le contrôle a décidé, pas l'exactitude de l'attendu"""
+    if 'witnesses' not in qualification:
+        return ''
+    if qualification['witnesses'] is None:
+        return '<p>Aucun témoin n’a été contrôlé pour cette version : elle a été vérifiée avant les contrôles par témoins.</p>'
+
+    def decision(row, status):
+        if status is None:
+            return 'non décidé'
+        if row['eliminatory']:
+            return {'PASS': 'faute absente', 'FAIL': 'faute présente'}.get(status, 'indéterminé')
+        return {'PASS': 'satisfait', 'FAIL': 'non satisfait'}.get(status, 'indéterminé')
+    content = ('<h3>Témoins contrôlés</h3><p class="hint">Un témoin est une réponse inventée, recevable ou fautive, soumise '
+               'au contrôle qui jugera les modèles. Ce résultat dit ce que le contrôle a décidé sur ce témoin avec cette '
+               'référence ; il ne prouve pas que l’attendu est juste.</p>')
+    for witness in qualification['witnesses']:
+        cost = witness['cost']
+        content += ('<h4>' + text(WITNESS_KINDS[witness['kind']]) + ' : ' + text(WITNESS_STATES[witness['state']]) + '</h4>'
+                    + '<p>Attendu justifié : ' + text(witness['justification']) + '</p>'
+                    + listing(row['description'] + ' : attendu ' + decision(row, row['expected']) + ', décidé '
+                              + decision(row, row['decided']) for row in witness['expected'])
+                    + '<p class="hint">Contrôlé sur la version ' + text(str(witness['revision'])) + ' de l’exemple, avec sa référence'
+                    + ('' if cost is None else ' · coût observé : ' + text(
+                        'inconnu' if cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']))
+                    + '.</p><details><summary>Lire la réponse témoin</summary><div class="example-text">'
+                    + text(witness['output']) + '</div></details>')
+    return content
+
+
 def preparation_pending(value):
     qualification = value.get('qualification', {})
     return (value.get('stage') in ('waiting', 'preview')
@@ -609,6 +645,15 @@ def render(value, csrf, path='/preparation', *, error=False):
                 content += '<p class="note">Cet exemple n’est pas encore validé. Relisez-le, puis validez-le pour passer à la suite.</p>'
             if editable and value['stage'] == 'preview' and value['validation'] is None:
                 content += '<p>En validant, vous confirmez que cet exemple correspond à votre besoin. L’exemple est ensuite vérifié automatiquement, si ce service est disponible : cette vérification est payée avec votre clé OpenRouter. Valider ne lance aucun des modèles à comparer et ne publie rien.</p>'
+                estimate = value.get('qualification_estimate')
+                if estimate:
+                    # Deux réserves distinctes, jamais additionnées (DESIGN.md, récapitulatif avant dépense)
+                    content += ('<p>Estimation avant consommation : une réserve est bloquée sur votre crédit avant chaque appel. '
+                                'Pour la vérification de l’exemple : au plus ' + text(montant_lisible(estimate['check_usd']))
+                                + ' USD réservé. Puis, pour le contrôle de chaque témoin, ' + text(str(estimate['witness_limit']))
+                                + ' au plus : au plus ' + text(montant_lisible(estimate['witness_usd']))
+                                + ' USD réservé par témoin. Un témoin est une réponse inventée, recevable ou fautive, soumise au '
+                                'contrôle qui jugera les modèles. Le coût observé est relevé ensuite sur le justificatif de chaque appel.</p>')
                 content += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
                                 '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
             content += '</section>'
@@ -638,7 +683,8 @@ def render(value, csrf, path='/preparation', *, error=False):
                 content += section('Vérification', '<p>' + text('Vérification impossible pour le moment' if qualification.get('cause')
                                                                  else labels.get(qualification.get('qualification_status'), 'En attente')) + '</p>'
                                    + '<p>' + text(qualification['summary']) + '</p>'
-                                   + listing(finding['text'] for finding in qualification.get('findings', [])))
+                                   + listing(finding['text'] for finding in qualification.get('findings', []))
+                                   + render_witnesses(qualification))
             else:
                 content += '<details><summary>Vérification de l’exemple</summary>'
                 # Contrat opérateur bloqué : ses constats remplacent le libellé générique, comme sur une page de refus

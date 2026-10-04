@@ -246,11 +246,29 @@ class OpenRouterPreparationTests(unittest.TestCase):
         model = qualifier._profile['model']
         route = {'requested': model, 'strategy': 'direct', 'attempt': 1,
                  'endpoints': {'available': [{'provider': 'Anthropic', 'model': model, 'selected': True}]}}
-        self.http.getresponse.return_value.read.return_value = http_body(
-            {'qualified': True, 'findings': [], 'summary': 'Paquet cohérent'}, model=model, openrouter_metadata=route)
+        # Le témoin est jugé sous la même clé personnelle, avec le profil de l'évaluation automatique
+        qualifier._control_quote = assistant.configuration(estimate_for(qualifier._control_profile), qualifier._control_profile)
+        witnesses = [{'kind': 'alternative', 'output': 'Relevé fidèle, autrement ordonné.',
+                      'expected': [{'control_id': 'O1', 'status': 'PASS'}],
+                      'justification': 'La référence accepte les reformulations fidèles.'},
+                     {'kind': 'defect', 'output': 'Relevé vide.', 'expected': [{'control_id': 'O1', 'status': 'FAIL'}],
+                      'justification': 'La référence attend le relevé des notes : un relevé vide est le défaut ciblé.'}]
+
+        def judged(index, status):
+            passage = witnesses[index]['output']
+            return {'findings': [{'criterion_id': 'O1', 'control_id': 'O1', 'status': status, 'attribution': 'candidate',
+                                  'finding': 'Constat du juge',
+                                  'evidence': [{'piece_id': f'temoin-{index + 1}', 'passage': passage}]}],
+                    'measures': [], 'limits': [], 'proposed_verdict': 'INDETERMINE'}
+        self.http.getresponse.return_value.read.side_effect = [
+            http_body({'qualified': True, 'findings': [], 'summary': 'Paquet cohérent', 'witnesses': witnesses},
+                      model=model, openrouter_metadata=route),
+            http_body(judged(0, 'PASS'), model=model, openrouter_metadata=route),
+            http_body(judged(1, 'FAIL'), model=model, openrouter_metadata=route)]
         prep.execute_qualification(self.data, operation, qualifier)
         self.assertTrue(prep.view(self.store, self.session, 'personal')['qualified'])
-        self.assertEqual('Bearer ' + key, self.http.request.call_args.kwargs['headers']['Authorization'])
+        self.assertEqual(['Bearer ' + key] * 3, [call.kwargs['headers']['Authorization']
+                                                 for call in self.http.request.call_args_list[-3:]])
         self.assertEqual('0', self.store.inspect_budget('fixture')['spent'])
         from benchmark import provider_access
         from tests.test_provider_access import AccessTransport
