@@ -113,7 +113,7 @@ _MANIFEST = ('campaign_id', 'version', 'contract_sha256', 'cases', 'panel',
 _MANIFEST_OPTIONAL = ('financial_cost_policy', 'recovery_of', 'official_fallback', 'funding')
 _CONFIGURATION = ('id', 'provider', 'model', 'revision', 'access', 'channel_id',
                   'route', 'parameters', 'effort', 'required_observations')
-_CONFIGURATION_OPTIONAL = ('effort_limit', 'estimate', 'effort_requested', 'effort_choice')
+_CONFIGURATION_OPTIONAL = ('effort_limit', 'estimate', 'effort_requested', 'effort_choice', 'output_bound')
 _AUTHORITY = ('actor', 'authority_id', 'purpose', 'manifest_sha256', 'execution_authority',
               'candidate_authority', 'budget_authority', 'budget_id', 'allowed_cells', 'reserve_amounts')
 _OBSERVED = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters', 'effort',
@@ -248,6 +248,10 @@ def _manifest(value, contract, *, require_data_collection=False):
             raise ValueError('Niveau demandé inconnu')
         if config.get('effort_choice', 'explicit') != 'explicit':
             raise ValueError('Choix de niveau inconnu')
+        # Borne de complétion publiée pour la route ; null reste une capacité inconnue, pas une valeur
+        bound = config.get('output_bound')
+        if bound is not None and (type(bound) is not int or bound <= 0):
+            raise ValueError('Borne de sortie invalide')
         if 'estimate' in config:
             encode(config['estimate'])
         _texts(config['required_observations'], 'required_observations', required=True, unique=True)
@@ -478,10 +482,12 @@ def adapted_effort(levels, wanted):
     return min(usable, key=lambda level: (abs(_EFFORT_ORDER.index(level) - target), -_EFFORT_ORDER.index(level)))
 
 
-def _configuration(model, tier, index, assumptions, fetched_at, chosen=None):
+def _configuration(model, tier, index, assumptions, fetched_at, chosen=None, limit=DEFAULT_MAX_OUTPUT_TOKENS):
     from ..transports import prices as openrouter_prices
+    # L'estimation compte une réponse qui atteint la limite de sortie de cette configuration
+    assumptions = {**assumptions, 'output_tokens': limit}
     parameters = {
-        'max_tokens': DEFAULT_MAX_OUTPUT_TOKENS,
+        'max_tokens': limit,
         'provider': {'only': [model['route']], 'order': [model['route']],
                      'allow_fallbacks': False, 'require_parameters': True,
                      'data_collection': 'deny'},
@@ -512,7 +518,7 @@ def _configuration(model, tier, index, assumptions, fetched_at, chosen=None):
         id=f'configuration-{index}', provider='OpenRouter', model=model['id'], revision=model['id'],
         access='API', channel_id='https://openrouter.ai/api/v1/chat/completions',
         route='OpenRouter pinned endpoint: ' + model['route'], parameters=parameters, effort=effort,
-        required_observations=['revision', 'channel_id'], estimate=estimate)
+        required_observations=['revision', 'channel_id'], estimate=estimate, output_bound=output_bound(model))
     if effort_limit is not None:
         configuration['effort_limit'] = effort_limit
     if effort not in ('off', requested):
@@ -524,11 +530,18 @@ def _configuration(model, tier, index, assumptions, fetched_at, chosen=None):
     return configuration
 
 
+def output_bound(model):
+    """Borne de complétion publiée dans le relevé, ou None quand elle est inconnue"""
+    bound = model.get('max_output_tokens')
+    return bound if type(bound) is int and bound > 0 else None
+
+
 def prepare_configurations(store, session_id, dossier_id, body, candidate_identity):
     from .. import model_probes, outgoing
     from ..transports.pi import system_context
     body = dict(body)
     efforts = body.pop('efforts', {})
+    limits = body.pop('output_limits', {})
     _fields(body, ('models', 'tier'), 'configurations')
     if (type(body['models']) is not list or len(body['models']) < 2
             or len(set(body['models'])) != len(body['models'])
@@ -539,6 +552,9 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
     if (type(efforts) is not dict or not set(efforts) <= set(body['models'])
             or any(level not in _EFFORT_ORDER for level in efforts.values())):
         raise ValueError('Niveaux par modèle invalides')
+    if (type(limits) is not dict or not set(limits) <= set(body['models'])
+            or any(type(limit) is not int or limit <= 0 for limit in limits.values())):
+        raise ValueError('Limites de sortie par modèle invalides')
     if type(candidate_identity) is not dict:
         raise LookupError('CANDIDATE_PI_UNAVAILABLE')
     _intact(store)
@@ -567,8 +583,16 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
                        'input_tokens': (len(candidate_bytes) + BYTES_PER_TOKEN - 1) // BYTES_PER_TOKEN,
                        'output_tokens': DEFAULT_MAX_OUTPUT_TOKENS, 'cached_input_tokens': 0,
                        'requests_per_cell': 1}
-        panel = [_configuration(model, body['tier'], index, assumptions,
-                                catalogue['fetched_at'], efforts.get(model['id']))
+        for model in selected:
+            # Refus plutôt que substitution : la valeur envoyée est celle que le demandeur a vue
+            limit = limits.get(model['id'], DEFAULT_MAX_OUTPUT_TOKENS)
+            bound = output_bound(model)
+            if bound is not None and limit > bound:
+                raise ValueError('Limite de sortie au-delà de la borne publiée')
+            if assumptions['input_tokens'] + limit > model['context_length']:
+                raise ValueError('Limite de sortie au-delà de la fenêtre de contexte')
+        panel = [_configuration(model, body['tier'], index, assumptions, catalogue['fetched_at'],
+                                efforts.get(model['id']), limits.get(model['id'], DEFAULT_MAX_OUTPUT_TOKENS))
                  for index, model in enumerate(selected, 1)]
         count = len(_requester_campaigns(store, connection, dossier_id))
         campaign_id = f'{dossier_id}-c{count + 1}'
@@ -623,6 +647,8 @@ def configurations_view(store, session_id, dossier_id):
                              and item.get('effort_requested', item['effort']) in available_tiers), 'low')
         chosen = {item['model']: item.get('effort_requested', item['effort']) for item in panel
                   if 'effort_choice' in item}
+        declared = {item['model']: item['parameters']['max_tokens'] for item in panel
+                    if item['parameters']['max_tokens'] != DEFAULT_MAX_OUTPUT_TOKENS}
         models = []
         for model in [] if catalogue is None else catalogue['models']:
             if model['excluded'] is not None or model['route'] is None:
@@ -632,7 +658,8 @@ def configurations_view(store, session_id, dossier_id):
             models.append({'id': model['id'], 'name': model['name'] or model['id'],
                            'selected': model['id'] in selected,
                            'not_adjustable': not levels, 'levels': levels,
-                           'chosen': chosen.get(model['id'], '')})
+                           'chosen': chosen.get(model['id'], ''),
+                           'output_bound': output_bound(model), 'output_limit': declared.get(model['id'])})
         if not prepared:
             return page_view({'kind': 'configurations', 'dossier_id': dossier_id,
                               'current_campaign_id': None, 'configurations': [], 'models': models,
@@ -1103,23 +1130,35 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
     return dict(operation_id=attempt_id, execution_id=execution_id, cell_id=cell_id, output_piece_id=None)
 
 
-def _recovery_estimate(store, snapshot):
-    """Coût estimé si chaque modèle repris l'était aux deux paliers, aux tarifs majorants que le lancement fige
+def _recovery_tiers(limit, bound):
+    """Limites des reprises après un arrêt pour longueur : doublement borné, comme `recovery.py`"""
+    tiers = []
+    while len(tiers) < len(LENGTH_RECOVERY_LIMITS) and (following := min(limit * 2, bound)) > limit:
+        tiers.append(following)
+        limit = following
+    return tiers
 
-    L'entrée reste une estimation : ce n'est pas un maximum garanti. Un modèle sans reprise possible ne compte pas. Distinct de la prévision des réponses (RULES.md §8)
+
+def _recovery_plan(store, snapshot):
+    """Limites de reprise par modèle et coût estimé si chaque modèle était repris jusqu'à sa dernière limite
+
+    Tarifs majorants que le lancement fige. L'entrée reste une estimation : ce n'est pas un maximum garanti.
+    Un modèle sans reprise possible ne compte pas. Distinct de la prévision des réponses (RULES.md §8)
     """
     grant = _requester_recovery(store, snapshot['manifest']['panel'])
     if grant is None:
-        return '0'
-    inputs = {configuration['model']: configuration['estimate']['assumptions']['input_tokens']
-              for configuration in snapshot['manifest']['panel']}
-    amounts = []
+        return {}, '0'
+    panel = {configuration['model']: configuration for configuration in snapshot['manifest']['panel']}
+    tiers, amounts = {}, []
     for item in grant['capabilities']:
+        configuration = panel[item['id']]
         for endpoint in item['endpoints']:
-            limits = [min(limit, endpoint['max_completion_tokens']) for limit in LENGTH_RECOVERY_LIMITS]
-            amounts.append(_money(endpoint['pricing']['prompt']) * inputs[item['id']] * len(limits)
+            limits = _recovery_tiers(configuration['parameters']['max_tokens'], endpoint['max_completion_tokens'])
+            tiers.setdefault(item['id'], limits)
+            amounts.append(_money(endpoint['pricing']['prompt'])
+                           * configuration['estimate']['assumptions']['input_tokens'] * len(limits)
                            + _money(endpoint['pricing']['completion']) * sum(limits))
-    return str(_sum_money(amounts))
+    return tiers, str(_sum_money(amounts))
 
 
 # Composants publiés liés à une fonction que la campagne n'envoie jamais : recherche web, image, audio, cache d'une heure
@@ -1286,6 +1325,7 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
             if judgment_error:
                 checks.append(dict(key='judgment_available', ok=False, detail=judgment_error))
             total = _estimate_total(snapshot)
+            recovery_limits, recovery_estimate = _recovery_plan(store, snapshot)
             return page_view(dict(
                 kind='campaign_launch', dossier_id=dossier_id, campaign=projected,
                 criteria=criteria, checks=checks,
@@ -1293,7 +1333,7 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
                 and not snapshot['admissions'] and not snapshot['attempts'],
                 judgment_estimate_usd=judgment_estimate,
                 estimate_total_usd=None if total is None else str(total), access=access,
-                recovery_limits=list(LENGTH_RECOVERY_LIMITS), recovery_estimate_usd=_recovery_estimate(store, snapshot),
+                recovery_limits=recovery_limits, recovery_estimate_usd=recovery_estimate,
                 model_names=model_catalogue.display_names(store)))
         admission = snapshot['admission']
         grant = admission['authority'].get('browser_launch') if admission else None
