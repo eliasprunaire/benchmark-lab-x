@@ -8,5 +8,4 @@ __pycache__/
 .env*
 !.env.example
 /AGENTS.md
-/CONTEXT.md
 /GLOSSARY.md
