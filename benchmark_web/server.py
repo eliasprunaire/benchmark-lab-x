@@ -331,10 +331,11 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                                 del form_body[key]
                             if efforts:
                                 form_body['efforts'] = efforts
-                            # `max_tokens:<slug>` vide garde la limite de sortie par défaut
+                            # `max_tokens:<slug>` vide garde la limite de sortie par défaut ; celui d'un modèle
+                            # décoché reste pré-rempli par la relecture et part avec le formulaire : il est ignoré
                             limits: dict[str, int] = {}
                             for key in [key for key in form_body if key.startswith('max_tokens:')]:
-                                if limit := values[key][0]:
+                                if (limit := values[key][0]) and key.removeprefix('max_tokens:') in values.get('models', []):
                                     if not re.fullmatch('[1-9][0-9]{0,8}', limit):
                                         raise ValueError('Limite de sortie invalide')
                                     limits[key.removeprefix('max_tokens:')] = int(limit)

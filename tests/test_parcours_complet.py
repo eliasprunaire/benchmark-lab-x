@@ -2246,12 +2246,13 @@ class ParcoursComplet(unittest.TestCase):
         3. une demande au-delà de la borne publiée par la route est ramenée en silence à cette borne ;
         4. une borne absente du relevé devient un nombre, ou refuse la demande alors que le contrat
            n'exige pas cette preuve ;
-        5. une valeur nulle, non entière ou visant un modèle non coché est acceptée ;
+        5. une valeur nulle ou non entière est acceptée ;
         6. la limite, sa borne et ses reprises ne sont pas lisibles avant le lancement, ou le
            formulaire ne relit pas la limite déclarée ;
         7. les reprises annoncent 8192 puis 16384 jetons quelle que soit la limite déclarée ;
         8. une nouvelle sélection après résultat réécrit la configuration lancée ;
-        9. le niveau de raisonnement choisi par modèle est perdu
+        9. le niveau de raisonnement choisi par modèle est perdu ;
+        10. décocher un modèle dont la limite est pré-remplie par la relecture refuse tout le formulaire
         """
         from decimal import Decimal
         with closing(storage.Store(self.data)) as store:
@@ -2286,8 +2287,6 @@ class ParcoursComplet(unittest.TestCase):
         for refus in ({'max_tokens:openai/gpt-5.6-sol': '16001'}, {'max_tokens:openai/gpt-5.6-sol': '0'},
                       {'max_tokens:openai/gpt-5.6-sol': '12k'}, {'max_tokens:openai/gpt-5.6-sol': '-5'}):
             self.request(form['action'], form['fields'] | choix | refus, status=400)
-        self.request(form['action'], form['fields'] | choix | {
-            'models': list(bornes)[:2], 'max_tokens:mistralai/mistral-small-2603': '8000'}, status=400)
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s4_campaigns').fetchone()[0])
         recap = self.submit(page, '/configurations', choix | {
@@ -2346,12 +2345,19 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('12000', next(t for t in sections if 'Modèle A' in t))
         self.assertIn('Limite de tokens', next(t for t in sections if 'Modèle A' in t))
         self.assertIn('6000', next(t for t in sections if 'Modèle B' in t))
+        # Modèle A décoché : sa limite pré-remplie part avec le formulaire, comme dans un navigateur, et reste ignorée
+        page, _, _ = self.request(configurations)
+        self.submit(page, '/configurations', valeurs | {'models': list(bornes)[1:], 'tier': 'low'})
+        with closing(storage.Store(self.data)) as store:
+            sans_a = campaigns.inspect(store, prefix + '-c2')['manifest']['panel']
+        self.assertEqual([('deepseek/deepseek-v4.1-flash', 6000), ('mistralai/mistral-small-2603', 4096)],
+                         [(c['model'], c['parameters']['max_tokens']) for c in sans_a])
         # Après résultat, une autre limite ouvre une nouvelle comparaison ; la configuration lancée reste
         page, _, _ = self.request(configurations)
         self.submit(page, '/configurations', choix | {'max_tokens:openai/gpt-5.6-sol': '8000'})
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(panel, campaigns.inspect(store, prefix + '-c1')['manifest']['panel'])
-            suivante = campaigns.inspect(store, prefix + '-c2')['manifest']['panel']
+            suivante = campaigns.inspect(store, prefix + '-c3')['manifest']['panel']
         self.assertEqual([8000, 4096, 4096], [c['parameters']['max_tokens'] for c in suivante])
         self.assertEqual(len(envois), sum(call[0] == 'candidat' for call in self.calls))
 
