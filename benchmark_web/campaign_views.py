@@ -13,7 +13,6 @@ import re
 import secrets
 
 from benchmark.storage import _strict_json as encode
-from benchmark.acquisition.campaigns import DEFAULT_MAX_OUTPUT_TOKENS
 from benchmark.preparation import NOT_SENT_TEXT
 from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
@@ -383,9 +382,7 @@ def effort_label(configuration):
 
 def output_label(configuration, recoveries):
     """Limite de sortie envoyée, borne publiée connue ou non, puis limites des reprises préautorisées"""
-    parameters = configuration.get('parameters', {})
-    # Le canal officiel nomme ce champ `max_output_tokens`
-    limit = parameters.get('max_tokens', parameters.get('max_output_tokens'))
+    limit = configuration.get('parameters', {}).get('max_tokens')
     parts = ['limite non renseignée' if limit is None else str(limit) + ' jetons']
     if 'output_bound' in configuration:
         bound = configuration['output_bound']
@@ -719,16 +716,18 @@ def render_configurations(value, csrf):
                                   '>' + text(labels.get(level, level)) + '</option>' for level in model['levels']) +
                           '</select>')
             tiers += '</details>'
+        default = str(value.get('default_output_tokens', ''))
         limits = ('<details><summary>Ajuster la limite de sortie par modèle</summary><p class="hint">Vide : '
-                  + str(DEFAULT_MAX_OUTPUT_TOKENS) + ' jetons de sortie. Le coût estimé compte une réponse qui atteint '
-                  'cette limite. Une limite au-delà de la borne publiée pour le modèle est refusée, jamais réduite.</p>')
+                  + (default + ' jetons de sortie' if default else 'limite par défaut') + '. Le coût estimé compte une '
+                  'réponse qui atteint cette limite. Une limite au-delà de la borne publiée pour le modèle est refusée, '
+                  'jamais réduite.</p>')
         for index, model in enumerate(value['models'], 1):
             field = 'max-tokens-' + str(index)
             bound = model.get('output_bound')
             limits += ('<label for="' + field + '">' + text(model['name'] + ' · ' + (
                 'borne publiée : ' + str(bound) if bound else 'borne publiée inconnue')) + '</label>'
                 '<input id="' + field + '" form="configurations-form" type="number" inputmode="numeric" min="1" step="1"'
-                + ('' if not bound else ' max="' + str(bound) + '"') + ' placeholder="' + str(DEFAULT_MAX_OUTPUT_TOKENS)
+                + ('' if not bound else ' max="' + str(bound) + '"') + ' placeholder="' + text(default)
                 + '" name="' + text('max_tokens:' + model['id']) + '" value="' + text(str(model.get('output_limit') or '')) + '">')
         limits += '</details>'
         content += ('<form id="configurations-form" method="post" action="' + text(dossier_url + '/configurations') + '">' +

@@ -482,7 +482,7 @@ def adapted_effort(levels, wanted):
     return min(usable, key=lambda level: (abs(_EFFORT_ORDER.index(level) - target), -_EFFORT_ORDER.index(level)))
 
 
-def _configuration(model, tier, index, assumptions, fetched_at, chosen=None, limit=DEFAULT_MAX_OUTPUT_TOKENS):
+def _configuration(model, tier, index, assumptions, fetched_at, chosen, limit):
     from ..transports import prices as openrouter_prices
     # L'estimation compte une réponse qui atteint la limite de sortie de cette configuration
     assumptions = {**assumptions, 'output_tokens': limit}
@@ -581,18 +581,18 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
         candidate_bytes = (system_context(CANDIDATE_SYSTEM_PROMPT) + user_message).encode('utf-8')
         assumptions = {'bytes_per_token': BYTES_PER_TOKEN,
                        'input_tokens': (len(candidate_bytes) + BYTES_PER_TOKEN - 1) // BYTES_PER_TOKEN,
-                       'output_tokens': DEFAULT_MAX_OUTPUT_TOKENS, 'cached_input_tokens': 0,
-                       'requests_per_cell': 1}
+                       'cached_input_tokens': 0, 'requests_per_cell': 1}
+        limits = {model['id']: limits.get(model['id'], DEFAULT_MAX_OUTPUT_TOKENS) for model in selected}
         for model in selected:
             # Refus plutôt que substitution : la valeur envoyée est celle que le demandeur a vue
-            limit = limits.get(model['id'], DEFAULT_MAX_OUTPUT_TOKENS)
+            limit = limits[model['id']]
             bound = output_bound(model)
             if bound is not None and limit > bound:
                 raise ValueError('Limite de sortie au-delà de la borne publiée')
             if assumptions['input_tokens'] + limit > model['context_length']:
                 raise ValueError('Limite de sortie au-delà de la fenêtre de contexte')
         panel = [_configuration(model, body['tier'], index, assumptions, catalogue['fetched_at'],
-                                efforts.get(model['id']), limits.get(model['id'], DEFAULT_MAX_OUTPUT_TOKENS))
+                                efforts.get(model['id']), limits[model['id']])
                  for index, model in enumerate(selected, 1)]
         count = len(_requester_campaigns(store, connection, dossier_id))
         campaign_id = f'{dossier_id}-c{count + 1}'
@@ -662,6 +662,7 @@ def configurations_view(store, session_id, dossier_id):
                            'output_bound': output_bound(model), 'output_limit': declared.get(model['id'])})
         if not prepared:
             return page_view({'kind': 'configurations', 'dossier_id': dossier_id,
+                              'default_output_tokens': DEFAULT_MAX_OUTPUT_TOKENS,
                               'current_campaign_id': None, 'configurations': [], 'models': models,
                               'current_tier': current_tier, 'superseded': [],
                               'available_tiers': available_tiers, 'estimate_total_usd': None,
@@ -675,6 +676,7 @@ def configurations_view(store, session_id, dossier_id):
         first = current['manifest']['panel'][0]['estimate']
         return page_view({
             'kind': 'configurations', 'dossier_id': dossier_id, 'models': models,
+            'default_output_tokens': DEFAULT_MAX_OUTPUT_TOKENS,
             'current_campaign_id': current['manifest']['campaign_id'],
             'configurations': current['manifest']['panel'],
             'current_tier': current_tier,

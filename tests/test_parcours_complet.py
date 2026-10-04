@@ -2340,6 +2340,12 @@ class ParcoursComplet(unittest.TestCase):
                                  access_secret=SECRET, access_transport=self.access)
         self.assertEqual([('openai/gpt-5.6-sol', 12000), ('deepseek/deepseek-v4.1-flash', 6000),
                           ('mistralai/mistral-small-2603', 4096)], envois)
+        # Retrouvable après résultat : les réglages utilisés portent la limite envoyée
+        reglages, _, _ = self.request(dossier + '/campaigns/' + prefix + '-c1/configurations')
+        sections = [n['text'] for n in reglages.nodes if n['tag'] == 'section']
+        self.assertIn('12000', next(t for t in sections if 'Modèle A' in t))
+        self.assertIn('Limite de tokens', next(t for t in sections if 'Modèle A' in t))
+        self.assertIn('6000', next(t for t in sections if 'Modèle B' in t))
         # Après résultat, une autre limite ouvre une nouvelle comparaison ; la configuration lancée reste
         page, _, _ = self.request(configurations)
         self.submit(page, '/configurations', choix | {'max_tokens:openai/gpt-5.6-sol': '8000'})
