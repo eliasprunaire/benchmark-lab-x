@@ -144,7 +144,9 @@ def _decision(decision):
         raise ValueError('Format de décision inconnu')
     identifier(decision['decision_id'])
     _text(decision['decided_at'], 'decided_at')
-    date.fromisoformat(decision['decided_at'])
+    # Date canonique AAAA-MM-JJ : une forme que `fromisoformat` accepte sans être lisible ensuite est refusée
+    if date.fromisoformat(decision['decided_at']).isoformat() != decision['decided_at']:
+        raise ValueError('Date de décision attendue sous la forme AAAA-MM-JJ')
     for key in ('authority', 'perimeter'):
         _text(decision[key], key)
     if decision['status'] not in DECISION_STATUSES:
@@ -159,16 +161,18 @@ def _decision(decision):
     _texts(decision['limits'], 'limits', required=True)
 
 
-def load_decisions(directory=None):
+def load_decisions():
     """Décisions déclarées dans `DECISIONS_DIR`, validées ; une fiche mal formée refuse la lecture"""
-    directory = DECISIONS_DIR if directory is None else directory
     decisions = []
-    for path in sorted(directory.glob('*.json')) if directory.is_dir() else []:
+    for path in sorted(DECISIONS_DIR.glob('*.json')) if DECISIONS_DIR.is_dir() else []:
         decision = json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=_unique_object)
         _decision(decision)
         decisions.append(decision)
     if len({d['decision_id'] for d in decisions}) != len(decisions):
         raise ValueError('Décision répétée')
+    # Aucune règle de remplacement : deux fiches pour la même identité de juge sont ambiguës
+    if len({digest(d['judge_identity']) for d in decisions}) != len(decisions):
+        raise ValueError('Plusieurs décisions pour la même identité de juge')
     return decisions
 
 
@@ -187,11 +191,8 @@ def scope(operation):
         decisions = load_decisions()
     except (ValueError, OSError):
         return dict(state='FICHES_ILLISIBLES', decision=None)
-    # Plusieurs fiches pour la même identité : la plus récente
-    # ponytail: tri par date puis identifiant, une règle de remplacement explicite si les fiches se multiplient
-    same = sorted((d for d in decisions if d['judge_identity'] == identity), key=lambda d: (d['decided_at'], d['decision_id']))
-    if same:
-        decision = same[-1]
+    decision = next((d for d in decisions if d['judge_identity'] == identity), None)
+    if decision is not None:
         return dict(state='QUALIFIEE' if decision['status'] == 'QUALIFIED' else 'NON_QUALIFIEE', decision=decision)
     other = any(d['judge_identity']['method']['id'] == identity['method']['id'] for d in decisions)
     return dict(state='NON_APPLICABLE' if other else 'SANS_ETALONNAGE', decision=None)

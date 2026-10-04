@@ -17,7 +17,7 @@ from benchmark.preparation import NOT_SENT_TEXT
 from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
 
-from .fragments import (MOIS, VERDICT_BADGES, valeur_mesure, access_summary, badge, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
+from .fragments import (VERDICT_BADGES, valeur_mesure, access_summary, badge, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
                         personal_key_form, readable_fields, section, state_block, text)
 
 COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
@@ -1086,11 +1086,11 @@ def render_calibration(scope):
     decision = scope['decision']
     if decision is None:
         return content + '<p>' + text(CALIBRATION_SENTENCES[scope['state']]) + '</p></div>'
-    year, month, day = decision['decided_at'].split('-')
-    dated = 'Décision du ' + str(int(day)) + ' ' + MOIS[int(month) - 1] + ' ' + year + '.'
+    dated = 'Décision du ' + jour_lisible(decision['decided_at']) + '.'
     if scope['state'] == 'QUALIFIEE':
         content += '<p>Méthode qualifiée pour le périmètre déclaré : ' + text('« ' + decision['perimeter'] + ' »') + '. ' + text(dated)
-        content += ' Cette qualification ne vaut que pour cette version de méthode et ce juge.</p>'
+        content += ' Cette qualification ne vaut que pour cette version de méthode et ce juge.'
+        content += ' Le périmètre est celui que la fiche déclare : il n’est pas recoupé avec ce résultat.</p>'
     else:
         content += '<p>Étalonnage examiné : qualification non retenue pour ce juge et cette méthode. ' + text(dated) + '</p>'
         content += '<p>Périmètre examiné : ' + text(decision['perimeter']) + '</p>'

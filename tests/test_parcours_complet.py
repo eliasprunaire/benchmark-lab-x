@@ -2104,7 +2104,8 @@ class ParcoursComplet(unittest.TestCase):
         3. une décision « non qualifiée » se lit comme une qualification ;
         4. la fiche expose des annotations, justifications ou désaccords privés ;
         5. la lecture écrit ou réévalue : une opération ou une évaluation change ;
-        6. une fiche mal formée est acceptée (champ en trop, statut inconnu, limites vides, date invalide) ;
+        6. une fiche mal formée est acceptée (champ en trop, statut inconnu, limites vides, date non canonique) ;
+           deux fiches pour la même identité de juge sont départagées en silence ;
         7. un résultat sans juge assisté ou à identité illisible reçoit une fiche ou casse la page
         """
         from benchmark import automatic_judgment as auto, calibration
@@ -2140,6 +2141,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Méthode qualifiée pour le périmètre déclaré', qualifiee.visible)
         self.assertIn('Exemples fictifs de test uniquement', qualifiee.visible)
         self.assertIn('4 octobre 2026', qualifiee.visible)
+        self.assertIn('il n’est pas recoupé avec ce résultat', qualifiee.visible)
         for autre in (autre_methode, autre_juge):
             page, _ = lire(fiche(judge_identity=autre))
             self.assertIn('Un étalonnage existe pour une autre version ou un autre juge ; il ne s’applique pas à ce résultat.',
@@ -2161,14 +2163,18 @@ class ParcoursComplet(unittest.TestCase):
             with patch.object(calibration, 'DECISIONS_DIR', Path(dossier_fiches)):
                 illisible, _, _ = self.request(detail)
         self.assertIn('Les fiches d’étalonnage ne sont pas lisibles', illisible.visible)
-        # Fiches mal formées : refusées à la lecture, jamais ignorées
-        for mal_formee in (fiche(annotations=[]), fiche(status='QUALIFIEE'), fiche(limits=[]),
-                           fiche(decided_at='4 octobre'), fiche(batch=dict(batch_id='lot', batch_sha256='abc')),
-                           fiche(judge_identity=dict(identite, extra=1)), fiche(format='autre')):
-            with self.subTest(fiche=mal_formee), tempfile.TemporaryDirectory() as dossier_fiches:
-                (Path(dossier_fiches) / 'fiche.json').write_text(json.dumps(mal_formee), encoding='utf-8')
-                with self.assertRaises(ValueError):
-                    calibration.load_decisions(Path(dossier_fiches))
+        # Fiches mal formées ou ambiguës : refusées à la lecture, jamais ignorées ni départagées
+        autre = fiche(decision_id='decision-bis', perimeter='Autre périmètre')
+        for mal_formee in ((fiche(annotations=[]),), (fiche(status='QUALIFIEE'),), (fiche(limits=[]),),
+                           (fiche(decided_at='4 octobre'),), (fiche(decided_at='20261004'),),
+                           (fiche(decided_at='2026-W40-7'),), (fiche(batch=dict(batch_id='lot', batch_sha256='abc')),),
+                           (fiche(judge_identity=dict(identite, extra=1)),), (fiche(format='autre'),),
+                           (fiche(), autre), (fiche(), dict(autre, decision_id='decision-fictive'))):
+            with self.subTest(fiches=mal_formee), tempfile.TemporaryDirectory() as dossier_fiches:
+                for index, valeur in enumerate(mal_formee):
+                    (Path(dossier_fiches) / f'fiche-{index}.json').write_text(json.dumps(valeur), encoding='utf-8')
+                with patch.object(calibration, 'DECISIONS_DIR', Path(dossier_fiches)), self.assertRaises(ValueError):
+                    calibration.load_decisions()
         # Sans juge assisté ou identité illisible : état distinct, aucune fiche appliquée
         with tempfile.TemporaryDirectory() as dossier_fiches:
             (Path(dossier_fiches) / 'fiche.json').write_text(json.dumps(fiche()), encoding='utf-8')
