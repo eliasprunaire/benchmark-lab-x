@@ -17,6 +17,8 @@ from .acquisition.campaigns import _intact
 
 FORMAT = 'benchmark-lab-x/judgment/v1'
 EVIDENCE_BINDING = 'server-evidence/v1'
+# Omission prouvée par la sortie examinée et une pièce candidate (`evaluation.finding_evidence`)
+EVIDENCE_OMISSION_BINDING = 'server-evidence/v2'
 REQUEST_FIELDS = ('operation_id', 'campaign_id', 'attempt_id', 'review_sha256',
                   'previous_evaluation_id', 'authority', 'budget_id', 'reserve_amount',
                   'requested_configuration')
@@ -201,7 +203,10 @@ def _proposal(store, connection, operation, ctx, answer, *, bind_evidence=False)
                                              group=group, item=index, citation=position))
                     proof['sha256'] = fingerprint
     # Validate model findings as data, before assigning server provenance
-    e._report(store, connection, report, ctx, resources)
+    # Omission acceptée seulement d'un juge à qui sa règle a été annoncée : une ancienne réponse se lit comme avant
+    allowed = operation['requested_configuration'].get('evidence_rule') == EVIDENCE_OMISSION_BINDING
+    e._report(store, connection, report, ctx, resources, omission_allowed=allowed)
+    omitted = any(e.omission(f) for f in report['findings'])
     spec = ctx['qualification']['contract']['specification']
     local = local_criteria(spec)
     for finding in report['findings']:
@@ -213,7 +218,9 @@ def _proposal(store, connection, operation, ctx, answer, *, bind_evidence=False)
     report['judgment'].update(mode='assisted', assistance_operation_id=operation['operation_id'])
     result = dict(report=report, proposed_verdict=answer['proposed_verdict'])
     if bind_evidence:
-        result['evidence_binding'] = dict(version=EVIDENCE_BINDING, warnings=warnings)
+        # Version de la règle de preuve suivie par ces constats ; sans omission, celle de toujours
+        result['evidence_binding'] = dict(version=EVIDENCE_OMISSION_BINDING if omitted else EVIDENCE_BINDING,
+                                          warnings=warnings)
     return result
 
 
@@ -243,6 +250,11 @@ def execute(data, operation_id, transport):
                 raise ConflictError('Campagne arrêtée depuis la réservation du jugement')
             _envelope(store, connection, saved['request'], operation_id)
             request = dict(outgoing_format=outgoing.FORMAT, outgoing=saved['content'])
+            if automatic:
+                # Profil exact de la réservation, relu dans ses octets : un déploiement ultérieur ne la bloque pas
+                config = operation['requested_configuration']
+                system = json.loads(operation['resources'][1])['messages'][0]['content']
+                transport = transport.for_configuration(config, _profile(config, system)) or transport
             wire = transport.prepare(deepcopy(operation), deepcopy(request))
             if wire != operation['resources'][1]:
                 raise IntegrityError('Profil ou octets modifiés')

@@ -182,6 +182,7 @@ class ParcoursComplet(unittest.TestCase):
         self.preparation_stage = 'clarification'
         self.criteria = None
         self.judged = []
+        self.judge_systems = []
 
     def prepare(self, operation, request):
         self.calls.append(('préparation', operation['operation_id']))
@@ -1258,18 +1259,20 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         return dossier, page
 
-    def juge_factice(self, constat=None, mesure=None):
+    def juge_factice(self, constat=None, mesure=None, ajuste=None):
         """Juge OpenRouter réel sur une connexion HTTP simulée : chaque réponse évaluée ne satisfait pas une obligation
 
         `constat(critère)` remplace ce FAIL uniforme par (statut, attribution, texte du constat) ; pour une
         obligation composée, il reçoit l'élément que vise le contrôle ;
         `mesure` est la valeur rendue pour chaque critère de qualité, sinon aucun n'est mesuré ;
-        appelable, elle reçoit le critère et la réponse évaluée
+        appelable, elle reçoit le critère et la réponse évaluée ;
+        `ajuste(vue du juge, constats)` réécrit les constats d'une réponse avant l'envoi
         """
         from unittest.mock import Mock
         from benchmark.transports import openrouter
         from tests.test_openrouter_preparation import SYNTHETIC_PROFILE, estimate_for
-        profile = openrouter.load_profile(str(SYNTHETIC_PROFILE))
+        # Règle de preuve du profil réel du juge : omission prouvable
+        profile = openrouter.load_profile(str(SYNTHETIC_PROFILE)) | {'evidence_rule': 'server-evidence/v2'}
         judge = openrouter.OpenRouterJudgment(None, profile)
         judge._quote = openrouter.configuration(estimate_for(profile), profile)
         http = Mock()
@@ -1280,6 +1283,7 @@ class ParcoursComplet(unittest.TestCase):
         def answer(method, path, *, body, headers):
             content = json.loads(json.loads(body)['messages'][1]['content'])
             self.judged.append(content)
+            self.judge_systems.append(json.loads(body)['messages'][0]['content'])
             output = content['output']
             proof = {'piece_id': output['piece_id'], 'sha256': output['sha256'], 'passage': output['content']}
 
@@ -1292,6 +1296,8 @@ class ParcoursComplet(unittest.TestCase):
             measures = [dict(criterion_id=x['id'], value=mesure(x, output['content']) if callable(mesure) else mesure,
                              unit=x['unit'], evidence=[proof])
                         for x in content['secondary_criteria']] if mesure is not None else []
+            if ajuste:
+                findings = ajuste(content, findings)
             result = dict(findings=findings, measures=measures, limits=[], proposed_verdict='SATISFAIT')
             document = dict(id='fixture-judge', model=profile['revision'],
                 choices=[dict(finish_reason='stop', message=dict(role='assistant', content=storage._strict_json(result)))],
@@ -1536,6 +1542,206 @@ class ParcoursComplet(unittest.TestCase):
         privacy_archive._check_revision(revision)
         self.assertIn({'description': composee, 'elements': [forme, echeance]}, revision['criteria'])
         self.assertIn(simple, revision['criteria'])
+
+    def test_omission_prouvee_sans_fausse_citation(self):
+        """Issue #446 : une omission se prouve par la pièce candidate qui porte l'élément, sans citer la sortie à tort
+
+        Modes d'échec couverts :
+        1. un défaut ciblé par omission ne peut pas être confirmé sur son témoin sans fausse citation de la réponse,
+           ou l'est sous un juge à qui la règle n'a pas été annoncée (ancienne réponse relue autrement) ;
+        2. une omission prouvée par la pièce candidate et la sortie examinée ne fonde pas « Ne satisfait pas » ;
+        3. une autre formulation valable de l'élément est rejetée ;
+        4. le détail montre « None » ou un faux extrait de la réponse au lieu de l'absence constatée ;
+        5. le passage de la pièce candidate, l'exigence visible ou le lien vers la réponse examinée disparaissent ;
+        6. la règle d'omission n'est pas nommée par une version distincte, ou change la lecture d'un constat cité
+        """
+        from benchmark import automatic_judgment as auto
+        notes = ('Décision : le budget formation est validé.\n'
+                 'Action : Camille relit le devis avant vendredi.\n')
+        passage = 'Action : Camille relit le devis avant vendredi.'
+        exigence = 'Relever chaque action avec son responsable'
+        criteres = {'eliminatory': ['Ajouter une action absente des notes'], 'obligations': [exigence], 'quality': []}
+        constat = 'L’action de Camille, relire le devis avant vendredi, manque dans la réponse.'
+        alternative = 'Camille : relire le devis, avant vendredi.'
+        omise = 'Décision : budget formation validé.'
+
+        def preparer(operation, request):
+            self.calls.append(('préparation', operation['operation_id']))
+            value = response_for(operation)
+            value['cost'].update(amount='0.10', currency='USD', source='Reçu simulé #446')
+            result = value['receipt']['result']
+            result['explanation'] = 'Cet exemple correspond-il bien à votre travail ?'
+            result['package']['candidate'].update(instruction='Relever les actions à mener dans les notes.',
+                criteria=criteres, deliverables=['Liste des actions'], pieces=[{'name': 'notes.txt', 'content': notes}])
+            result['package']['judgment']['pieces'] = [{'name': 'reference.txt', 'content':
+                'Attendus : l’action de Camille. Toute formulation qui garde la personne et l’action est recevable.'}]
+            return value
+        self.prepare = preparer
+
+        def omission(vue, findings):
+            """Le juge marque la sortie examinée sans la citer et cite le passage des notes qui porte l'élément"""
+            notes_id = next(p['piece_id'] for p in vue['task']['pieces'] if p['name'] == 'notes.txt')
+            return [dict(row, status='FAIL', attribution='candidate', finding=constat, evidence=[
+                        {'piece_id': vue['output']['piece_id'], 'passage': None},
+                        {'piece_id': notes_id, 'passage': passage}]) if row['criterion_id'] == 'O1' else row
+                    for row in findings]
+        # 1. Témoin de défaut par omission, contrôlé avec la même règle que les réponses des modèles
+        temoin = {'kind': 'defect', 'output': omise, 'expected': [{'control_id': 'O1', 'status': 'FAIL'}],
+                  'justification': 'Les notes portent l’action de Camille : son omission est le défaut ciblé.'}
+        self.qualifier.result = {'qualified': True, 'findings': [], 'summary': 'Les actions sont vérifiables',
+                                 'witnesses': [{'kind': 'alternative', 'output': alternative,
+                                                'expected': [{'control_id': 'O1', 'status': 'PASS'},
+                                                             {'control_id': 'E1', 'status': 'PASS'}],
+                                                'justification': 'Toute formulation qui garde la personne et l’action.'},
+                                               temoin]}
+        controle = self.qualifier.controller()
+
+        def temoin_omis(findings):
+            vue = controle.calls[-1][1]['outgoing']
+            return omission(vue, findings) if vue['output']['content'] == omise else findings
+        # Juge à qui la règle d'omission n'est pas annoncée : sa réponse se lit comme avant elle, sans preuve
+        controle.evidence_rule = None
+        controle.script = [temoin_omis, temoin_omis]
+        dossier, page = self.exemple()
+        self.submit(page, '/validation', {})
+        prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+        page, _, _ = self.request(dossier)
+        self.assertIn('Exemple à revoir avant comparaison', page.visible)
+        # Même témoin, même absence, sous la règle annoncée : défaut confirmé
+        controle.evidence_rule = 'server-evidence/v2'
+        controle.script = [temoin_omis, temoin_omis]
+        self.submit(page, '/messages', {'kind': 'correct', 'message': 'Garder les notes telles quelles'})
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        page, _, _ = self.request(dossier)
+        self.submit(page, '/validation', {})
+        prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+        page, _, _ = self.request(dossier)
+        self.assertIn('Exemple vérifié, prêt à comparer', page.visible)
+        verification = next(n['text'] for n in page.nodes if n['tag'] == 'details'
+                            and 'Détail de la vérification de l’exemple' in n['text'])
+        self.assertIn(exigence + ' : attendu non satisfait, décidé non satisfait', verification)
+        # 2 et 3. Deux réponses : une autre formulation valable, une omission
+        page, _, _ = self.request(page.link('Choisir les modèles'))
+        page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+                                                     'tier': 'low'})
+        self.submit(page, '/start', {})
+
+        def candidat(operation, request):
+            value = self.candidate(operation, request)
+            value['receipt']['result']['output'] = (
+                omise if request['requested_configuration']['model'] == 'deepseek/deepseek-v4.1-flash' else alternative)
+            return value
+        execution.execute_launch(self.data, self.starts.get_nowait()['candidate_attempts'], candidat,
+                                 access_secret=SECRET, access_transport=self.access)
+        judge = self.juge_factice(lambda cible: ('PASS', 'candidate', 'Respecté dans la réponse'),
+                                  ajuste=lambda vue, findings: omission(vue, findings)
+                                  if vue['output']['content'] == omise else findings)
+        page, _, _ = self.request(dossier)
+        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        self.submit(page, '/evaluate', {})
+        auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
+        self.assertEqual(2, judge.request.call_count)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        results, _, raw = self.request(comparison)
+        self.examine(results, comparison, 'omission prouvée', None)
+
+        def ligne(nom):
+            return next(chunk for chunk in raw.decode().split('<tr id="attempt-')[1:]
+                        if '<strong>' + nom + '</strong>' in chunk).split('</tr>')[0]
+        self.assertIn('Satisfait', ligne('Modèle A'))
+        self.assertNotIn('Ne satisfait pas', ligne('Modèle A'))
+        self.assertIn('Exigence non respectée : ' + exigence + '.', ligne('Modèle B'))
+        # 4 et 5. Le détail relie l'exigence visible, le passage des notes, la réponse examinée et le constat
+        detail, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', ligne('Modèle B'))[1].replace('&amp;', '&'))
+        text = raw.decode()
+        self.assertIn(('Non respectée', exigence), re.findall(r'>([^<>]+)</span><span>([^<]+)</span>', text))
+        self.assertIn(constat, text)
+        self.assertIn('Extrait de notes.txt</summary><pre>' + passage + '</pre>', text)
+        self.assertIn('Absence constatée dans la réponse du modèle', text)
+        self.assertNotIn('<pre>None</pre>', text)
+        self.assertNotIn('<pre></pre>', text)
+        # 6. Version de la règle portée par l'évaluation qui s'en sert, seulement par elle
+        with closing(storage.Store(self.data)) as store:
+            records = {r['output_sha256']: r for r in auto.records(store, store._connection,
+                                                                   dossier.rsplit('/', 1)[1] + '-c1')}
+        from hashlib import sha256
+        omis, valable = records[sha256(omise.encode()).hexdigest()], records[sha256(alternative.encode()).hexdigest()]
+        self.assertEqual(('NE SATISFAIT PAS', 'SATISFAIT'), (omis['verdict'], valable['verdict']))
+        preuve = next(f for f in omis['findings'] if f['criterion_id'] == 'O1')['evidence']
+        self.assertEqual([None, passage], [p['passage'] for p in preuve])
+        self.assertEqual(omis['output_piece_id'], preuve[0]['piece_id'])
+        self.assertEqual('server-evidence/v2', omis['judgment']['evidence_binding']['version'])
+        self.assertEqual('server-evidence/v1', valable['judgment']['evidence_binding']['version'])
+        artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
+        if artefacts:
+            Path(artefacts).mkdir(parents=True, exist_ok=True)
+            Path(artefacts, 'omission-prouvee.json').write_text(json.dumps(
+                {'verdicts': {'omission': omis['verdict'], 'autre_formulation': valable['verdict']},
+                 'preuve_omission': preuve, 'regle': omis['judgment']['evidence_binding']['version']},
+                ensure_ascii=False, indent=2) + '\n')
+
+    def test_evaluation_terminee_sous_le_profil_autorise_apres_deploiement(self):
+        """Lancement ancien, déploiement (maintenance, quiescence) sous un autre profil du juge, jugement sous le profil autorisé
+
+        Modes d'échec couverts :
+        1. la maintenance du déploiement ferme l'admission et l'évaluation part en silence sous le nouveau profil ;
+        2. un profil autorisé ni courant ni retenu est remplacé en silence par le profil courant ;
+        3. le profil autorisé retenu par le déploiement ne sert pas à réserver l'évaluation ;
+        4. une évaluation déjà réservée ne peut plus partir après un second déploiement sans profil retenu
+        """
+        from contextlib import redirect_stdout
+        from copy import copy
+        from io import StringIO
+        from benchmark import automatic_judgment as auto, runtime
+        from benchmark.transports import openrouter
+        from tests.test_openrouter_preparation import estimate_for
+        self.juge_factice(lambda cible: ('PASS', 'candidate', 'Respecté dans la réponse'))
+        autorise = self.assistants['judgment_transport']._profile
+        dossier = self.exemple_qualifie()
+        page, _, _ = self.request(dossier + '/configurations')
+        page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'],
+                                                     'tier': 'low'})
+        self.submit(page, '/start', {})
+        execution.execute_launch(self.data, self.starts.get_nowait()['candidate_attempts'], self.candidate,
+                                 access_secret=SECRET, access_transport=self.access)
+        campaign_id = dossier.rsplit('/', 1)[1] + '-c1'
+        # Déploiement : les deux actions que le contrôleur appelle sur l'ancienne version, dans cet ordre
+        for action in ('maintenance', 'quiescence'):
+            with redirect_stdout(StringIO()):
+                self.assertEqual(0, runtime.main([action, '--data', str(self.data)]), action)
+        with closing(storage.Store(self.data)) as store:
+            snapshot = campaigns.inspect(store, campaign_id)
+        self.assertEqual((None, 'MAINTENANCE'), (snapshot['admission'], snapshot['stop_reason']))
+        grant = snapshot['admissions'][-1]['authority']['automatic_judgment']['configuration']
+        nouveau = dict(autorise, system=autorise['system'] + ' Consigne d’un déploiement ultérieur.')
+
+        def deploiement(retenus):
+            judge = openrouter.OpenRouterJudgment(None, nouveau, retained=retenus)
+            judge._quote = openrouter.configuration(estimate_for(nouveau), nouveau)
+            self.assistants['judgment_transport'] = judge
+        # 1 et 2. Profil autorisé introuvable après la maintenance : refus explicite, rien n'est réservé ni envoyé
+        deploiement(())
+        page, _, _ = self.request(dossier)
+        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        self.submit(page, '/evaluate', {}, status=409)
+        self.assertTrue(self.starts.empty())
+        self.assertEqual([], self.judge_systems)
+        # 3. Profil autorisé retenu par le déploiement : réservé sous lui, configuration du lancement intacte
+        deploiement([autorise])
+        self.submit(page, '/evaluate', {})
+        ids = self.starts.get_nowait()['judgment_operations']
+        with closing(storage.Store(self.data)) as store:
+            reservees = [op for op in store.inspect_operations() if op['operation_id'] in ids]
+        self.assertEqual(2, len(reservees))
+        self.assertTrue(all(op['requested_configuration'] == grant for op in reservees))
+        # 4. Second déploiement qui retire le profil retenu : l'évaluation réservée part sous ses propres octets
+        juge = copy(self.bound[2])
+        juge._retained = []
+        auto.execute_campaign(self.data, ids, juge)
+        self.assertEqual([autorise['system']] * 2, self.judge_systems)
+        results, _, _ = self.request(dossier + '/campaigns/' + campaign_id)
+        self.examine(results, dossier + '/campaigns/' + campaign_id, 'évaluée sous le profil autorisé', None)
+        self.assertIn('Satisfait', results.visible)
 
     def test_obligation_composee_au_dela_du_plafond_refusee(self):
         """Une obligation de plus de cinq éléments n'entre pas dans l'exemple : aucun juge sans borne"""

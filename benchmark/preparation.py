@@ -612,7 +612,9 @@ def _witness_controls(store, connection, operation, witnesses, *, ran):
             elif (item['state'] == 'RECEIVED' and type(item['receipt']['result']) is dict
                   and item['receipt']['result'] != {'status': 'NOT_SENT'}):
                 try:
-                    decided = _witness_decisions(item['receipt']['result'], binding['review'])
+                    from .judgment import EVIDENCE_OMISSION_BINDING
+                    decided = _witness_decisions(item['receipt']['result'], binding['review'], omission_allowed=(
+                        item['requested_configuration'].get('evidence_rule') == EVIDENCE_OMISSION_BINDING))
                     state = _witness_state(witness, decided)
                 except (ValueError, TypeError, KeyError):
                     # IntegrityError comprise : une citation étrangère ou divergente n'est pas une preuve
@@ -628,11 +630,12 @@ def _witness_controls(store, connection, operation, witnesses, *, ran):
     return rows
 
 
-def _witness_decisions(answer, review):
+def _witness_decisions(answer, review, *, omission_allowed=False):
     """Décision du juge par contrôle, lue comme le verdict des campagnes (`evaluation.defects`)
 
     Chaque constat doit viser un critère et un contrôle déclarés, et chaque citation un passage exact d'une
-    pièce de la revue, empreinte recalculée par le serveur ; sinon la réponse entière est inexploitable.
+    pièce de la revue, empreinte recalculée par le serveur, ou une omission prouvée comme pour une réponse
+    candidate (`evaluation.finding_evidence`) ; sinon la réponse entière est inexploitable.
     FAIL : défaut attribué à la réponse témoin et cité dans elle ; PASS : tous les constats du contrôle le
     disent en citant la réponse témoin ; sinon INDETERMINE
     """
@@ -640,6 +643,7 @@ def _witness_decisions(answer, review):
     pieces = {piece['piece_id']: piece['content'].encode('utf-8')
               for piece in review['task']['pieces'] + review['references'] + [review['output']]}
     output = review['output']['piece_id']
+    sources = {piece['piece_id'] for piece in review['task']['pieces']}
     criteria = {row['id']: row['control_ids'] for row in review['obligations'] + review['eliminatory_errors']}
     _fields(answer, ('findings', 'measures', 'limits', 'proposed_verdict'), 'jugement de témoin')
     if type(answer['findings']) is not list:
@@ -663,8 +667,9 @@ def _witness_decisions(answer, review):
                 raise IntegrityError('Pièce de citation étrangère')
             evidence.append(dict(piece_id=proof['piece_id'], passage=proof['passage'],
                                  sha256=sha256(pieces[proof['piece_id']]).hexdigest()))
-        evaluation._evidence(evidence, pieces, required=finding['status'] != 'INDETERMINE')
-        findings.append(dict(finding, evidence=evidence))
+        finding = dict(finding, evidence=evidence)
+        evaluation.finding_evidence(finding, pieces, output, sources, omission_allowed=omission_allowed)
+        findings.append(finding)
     failed = {(row['criterion_id'], row['control_id']) for row in evaluation.defects(findings, output)}
     decided = {}
     for criterion, controls in criteria.items():

@@ -90,8 +90,11 @@ class WitnessControl:
 
     `decisions[kind][control_id]` vaut (statut, passage cité) ; un passage absent de la réponse témoin
     n'est pas une preuve exploitable. `script` : par appel, None pour la réponse normale, 429 pour un
-    incident reçu, une exception levée après émission, ou une fonction qui réécrit les constats
+    incident reçu, une exception levée après émission, ou une fonction qui réécrit les constats ;
+    `evidence_rule` : règle de preuve annoncée au juge, comme le champ du profil réel
     """
+    evidence_rule = 'server-evidence/v2'
+
     def __init__(self, qualification, reserve='0.5'):
         self.qualification, self.reserve = qualification, reserve
         self.decisions = {}
@@ -102,7 +105,8 @@ class WitnessControl:
         return dict(deepcopy(self.qualification.granted), reserve_amount=self.reserve)
 
     def configuration(self):
-        return {'model': 'juge/fictif', 'revision': 'juge/fictif-v1'}
+        return {'model': 'juge/fictif', 'revision': 'juge/fictif-v1'} | (
+            {'evidence_rule': self.evidence_rule} if self.evidence_rule else {})
 
     def prepare(self, operation, request):
         return storage._strict_json({'operation': operation['operation_id'], 'request': request})
