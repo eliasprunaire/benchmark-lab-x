@@ -2095,6 +2095,88 @@ class ParcoursComplet(unittest.TestCase):
         for vue in (resultats, page, apercu):
             self.sans_promesse(vue)
 
+    def test_portee_de_l_etalonnage_dans_le_detail_d_un_resultat(self):
+        """Issue #450 : le détail d'un résultat dit à quelle identité de juge une fiche d'étalonnage s'applique
+
+        Modes d'échec couverts :
+        1. aucune fiche : le détail promet une qualification ou affiche un badge ;
+        2. une fiche d'une autre version de méthode ou d'un autre juge servi s'applique en silence ;
+        3. une décision « non qualifiée » se lit comme une qualification ;
+        4. la fiche expose des annotations, justifications ou désaccords privés ;
+        5. la lecture écrit ou réévalue : une opération ou une évaluation change ;
+        6. une fiche mal formée est acceptée (champ en trop, statut inconnu, limites vides, date invalide) ;
+        7. un résultat sans juge assisté ou à identité illisible reçoit une fiche ou casse la page
+        """
+        from benchmark import automatic_judgment as auto, calibration
+        dossier, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent')
+        detail = Page(html.encode()).link('Détail et preuves')
+        with closing(storage.Store(self.data)) as store:
+            juges = [op for op in store.inspect_operations() if op['engine_version'] == auto.FORMAT]
+            avant = storage._strict_json(store.inspect_operations())
+        identite = calibration.judge_identity(juges[0])
+
+        def fiche(**changes):
+            return dict(format=calibration.DECISION_FORMAT, decision_id='decision-fictive', decided_at='2026-10-04',
+                        authority='Décision fictive de test', status='QUALIFIED', judge_identity=identite,
+                        batch=dict(batch_id='lot-fictif', batch_sha256='a' * 64),
+                        perimeter='Exemples fictifs de test uniquement',
+                        limits=['Fiche fictive : aucune qualification d’un modèle réel']) | changes
+
+        def lire(*fiches):
+            with tempfile.TemporaryDirectory() as dossier_fiches:
+                for index, valeur in enumerate(fiches):
+                    (Path(dossier_fiches) / f'fiche-{index}.json').write_text(json.dumps(valeur), encoding='utf-8')
+                with patch.object(calibration, 'DECISIONS_DIR', Path(dossier_fiches)):
+                    page, _, brut = self.request(detail)
+            self.sans_promesse(page)
+            return page, brut.decode()
+
+        autre_methode = dict(identite, method=dict(identite['method'], version='autre-version'))
+        autre_juge = dict(identite, observed=dict(identite['observed'], provider='autre-fournisseur'))
+        sans, _ = lire()
+        self.assertIn('Aucun étalonnage enregistré pour ce juge et cette méthode.', sans.visible)
+        self.assertNotRegex(sans.visible, r'(?i)certifi|qualifiée pour')
+        qualifiee, brut = lire(fiche())
+        self.assertIn('Méthode qualifiée pour le périmètre déclaré', qualifiee.visible)
+        self.assertIn('Exemples fictifs de test uniquement', qualifiee.visible)
+        self.assertIn('4 octobre 2026', qualifiee.visible)
+        for autre in (autre_methode, autre_juge):
+            page, _ = lire(fiche(judge_identity=autre))
+            self.assertIn('Un étalonnage existe pour une autre version ou un autre juge ; il ne s’applique pas à ce résultat.',
+                          page.visible)
+            self.assertNotIn('Exemples fictifs de test uniquement', page.visible)
+            self.assertNotIn('Méthode qualifiée', page.visible)
+        refusee, _ = lire(fiche(status='NOT_QUALIFIED'))
+        self.assertIn('Étalonnage examiné : qualification non retenue', refusee.visible)
+        self.assertNotIn('Méthode qualifiée', refusee.visible)
+        bloc = next(n for n in Page(brut.encode()).nodes if n['attrs'].get('class') == 'calibration')['text']
+        self.assertIn('decision-fictive', bloc)
+        self.assertIn('Fiche fictive : aucune qualification d’un modèle réel', bloc)
+        self.assertNotRegex(bloc, r'(?i)annotation|justification|disagreement|désaccord|exemple de sortie')
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(avant, storage._strict_json(store.inspect_operations()))
+        # Une fiche illisible ne casse pas la page et ne s'applique à rien
+        with tempfile.TemporaryDirectory() as dossier_fiches:
+            (Path(dossier_fiches) / 'fiche.json').write_text('{', encoding='utf-8')
+            with patch.object(calibration, 'DECISIONS_DIR', Path(dossier_fiches)):
+                illisible, _, _ = self.request(detail)
+        self.assertIn('Les fiches d’étalonnage ne sont pas lisibles', illisible.visible)
+        # Fiches mal formées : refusées à la lecture, jamais ignorées
+        for mal_formee in (fiche(annotations=[]), fiche(status='QUALIFIEE'), fiche(limits=[]),
+                           fiche(decided_at='4 octobre'), fiche(batch=dict(batch_id='lot', batch_sha256='abc')),
+                           fiche(judge_identity=dict(identite, extra=1)), fiche(format='autre')):
+            with self.subTest(fiche=mal_formee), tempfile.TemporaryDirectory() as dossier_fiches:
+                (Path(dossier_fiches) / 'fiche.json').write_text(json.dumps(mal_formee), encoding='utf-8')
+                with self.assertRaises(ValueError):
+                    calibration.load_decisions(Path(dossier_fiches))
+        # Sans juge assisté ou identité illisible : état distinct, aucune fiche appliquée
+        with tempfile.TemporaryDirectory() as dossier_fiches:
+            (Path(dossier_fiches) / 'fiche.json').write_text(json.dumps(fiche()), encoding='utf-8')
+            with patch.object(calibration, 'DECISIONS_DIR', Path(dossier_fiches)):
+                self.assertEqual('SANS_JUGE_ASSISTE', calibration.scope(None)['state'])
+                self.assertEqual('IDENTITE_ILLISIBLE', calibration.scope(dict(juges[0], resources=['{}']))['state'])
+                self.assertEqual('QUALIFIEE', calibration.scope(juges[0])['state'])
+
     def test_conseil_departage_par_le_cout_a_qualite_egale(self):
         def comportement(value, model):
             if model == 'openai/gpt-5.6-sol':

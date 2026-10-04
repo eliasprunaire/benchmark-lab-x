@@ -662,7 +662,7 @@ def evaluate(store, campaign_id, attempt_id, *, responsible, authority, check, p
 
 def projection(store, connection, dossier_id, campaign_id):
     """Private owner projection, without broad access to the judge piece role"""
-    from . import automatic_judgment as auto
+    from . import automatic_judgment as auto, calibration
     records = []
     # Les reprises techniques d'une campagne se lisent avec elle (RULES.md §9)
     family = set(auto.family(connection, campaign_id))
@@ -685,6 +685,8 @@ def projection(store, connection, dossier_id, campaign_id):
                 'operation_id', 'phase', 'authority', 'engine_version', 'created_at', 'state',
                 'ambiguity_reason', 'budget_id', 'reserved_amount', 'receipt')}
         visible['qualification'] = qualification
+        # Lue à l'affichage, hors de l'enregistrement : `_records` rejoue `_record` et refuserait une clé ajoutée
+        visible['calibration'] = calibration.scope(operation)
         pieces = contract['package']['pieces'] + contract['reference_pieces']
         ids = [p['id'] for p in pieces]
         if record['output_piece_id'] is not None:

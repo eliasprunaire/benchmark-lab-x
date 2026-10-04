@@ -6,11 +6,12 @@ exemples, jamais un seuil ni une garantie
 """
 from datetime import date
 import json
+from pathlib import Path
 from typing import NamedTuple
 
 from . import judgment, preparation, storage
 from .storage import ConflictError, IntegrityError, _fields, _text, _unique_object
-from .validation import digest, identifier
+from .validation import _hash, _texts, digest, identifier
 
 FORMAT = 'benchmark-lab-x/calibration-batch/v1'
 REPORT_FORMAT = 'benchmark-lab-x/calibration-report/v1'
@@ -26,6 +27,12 @@ LIMITS = (
     'L’empreinte du lot réservé ne prouve pas l’antériorité de la séparation ; seule une preuve datée la fonde.',
     'La provenance du juge est déclarée par le lot et non vérifiée ; des reçus simulés ne qualifient pas un modèle réel.',
 )
+DECISION_FORMAT = 'benchmark-lab-x/calibration-decision/v1'
+DECISION_STATUSES = ('QUALIFIED', 'NOT_QUALIFIED')
+# Fiches déclarées par l'opérateur : une décision datée par fichier, aucune écriture par le produit
+DECISIONS_DIR = Path(__file__).resolve().parent / 'calibration_decisions'
+_IDENTITY_KEYS = ('engine_version', 'method', 'profile_id', 'profile_sha256', 'model', 'revision', 'prompt_sha256',
+                  'evidence_rule', 'observed')
 # Reçu de jugement absent ou clos avant tout effet : aucune décision à comparer
 _NO_RECEIPT = ('RECONCILIATION_REQUIRED', 'EXECUTION_REQUIRED', 'NOT_SENT', storage.AMBIGUOUS_EXPIRED)
 
@@ -113,6 +120,83 @@ def _batch(batch):
         raise IntegrityError('Lot réservé divergent de son empreinte déclarée')
 
 
+def _review(operation):
+    return json.loads(operation['resources'][0], object_pairs_hook=_unique_object)['content']
+
+
+def judge_identity(operation, review=None):
+    """Identité d'un juge : version de méthode, configuration demandée et servie ; une fiche ne vaut que pour elle"""
+    review = _review(operation) if review is None else review
+    config = operation['requested_configuration']
+    observed = (operation['receipt'] or {}).get('observed_configuration') or {}
+    # Configuration observée dans l'identité : deux routes réellement servies ne se mélangent pas
+    return dict(engine_version=operation['engine_version'],
+                method=dict(id=review['method']['id'], version=review['method']['version']),
+                **{key: config.get(key) for key in ('profile_id', 'profile_sha256', 'model', 'revision',
+                                                    'prompt_sha256', 'evidence_rule')},
+                observed=dict(model=observed.get('model'), provider=observed.get('provider')))
+
+
+def _decision(decision):
+    _fields(decision, ('format', 'decision_id', 'decided_at', 'authority', 'status', 'judge_identity', 'batch',
+                       'perimeter', 'limits'), 'décision d’étalonnage')
+    if decision['format'] != DECISION_FORMAT:
+        raise ValueError('Format de décision inconnu')
+    identifier(decision['decision_id'])
+    _text(decision['decided_at'], 'decided_at')
+    date.fromisoformat(decision['decided_at'])
+    for key in ('authority', 'perimeter'):
+        _text(decision[key], key)
+    if decision['status'] not in DECISION_STATUSES:
+        raise ValueError('État de décision inconnu')
+    identity = decision['judge_identity']
+    _fields(identity, _IDENTITY_KEYS, 'identité du juge')
+    _fields(identity['method'], ('id', 'version'), 'méthode')
+    _fields(identity['observed'], ('model', 'provider'), 'configuration observée')
+    _fields(decision['batch'], ('batch_id', 'batch_sha256'), 'lot de la décision')
+    identifier(decision['batch']['batch_id'])
+    _hash(decision['batch']['batch_sha256'])
+    _texts(decision['limits'], 'limits', required=True)
+
+
+def load_decisions(directory=None):
+    """Décisions déclarées dans `DECISIONS_DIR`, validées ; une fiche mal formée refuse la lecture"""
+    directory = DECISIONS_DIR if directory is None else directory
+    decisions = []
+    for path in sorted(directory.glob('*.json')) if directory.is_dir() else []:
+        decision = json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=_unique_object)
+        _decision(decision)
+        decisions.append(decision)
+    if len({d['decision_id'] for d in decisions}) != len(decisions):
+        raise ValueError('Décision répétée')
+    return decisions
+
+
+def scope(operation):
+    """Portée de l'étalonnage pour le jugement d'un résultat ; lecture seule, rien n'est écrit ni réévalué
+
+    Une fiche s'applique si et seulement si l'identité du juge est identique : une autre version ne l'hérite pas
+    """
+    if operation is None:
+        return dict(state='SANS_JUGE_ASSISTE', decision=None)
+    try:
+        identity = judge_identity(operation)
+    except (ValueError, KeyError, TypeError, IndexError):
+        return dict(state='IDENTITE_ILLISIBLE', decision=None)
+    try:
+        decisions = load_decisions()
+    except (ValueError, OSError):
+        return dict(state='FICHES_ILLISIBLES', decision=None)
+    # Plusieurs fiches pour la même identité : la plus récente
+    # ponytail: tri par date puis identifiant, une règle de remplacement explicite si les fiches se multiplient
+    same = sorted((d for d in decisions if d['judge_identity'] == identity), key=lambda d: (d['decided_at'], d['decision_id']))
+    if same:
+        decision = same[-1]
+        return dict(state='QUALIFIEE' if decision['status'] == 'QUALIFIED' else 'NON_QUALIFIEE', decision=decision)
+    other = any(d['judge_identity']['method']['id'] == identity['method']['id'] for d in decisions)
+    return dict(state='NON_APPLICABLE' if other else 'SANS_ETALONNAGE', decision=None)
+
+
 def _read(store, item) -> _Read:
     """Décision conservée du juge pour un item ; `_Excluded` si le reçu ne permet pas de comparer"""
     try:
@@ -120,7 +204,7 @@ def _read(store, item) -> _Read:
     except (ValueError, KeyError, ConflictError):
         raise _Excluded('OPERATION_INCONNUE', 'Opération absente ou qui n’est pas un jugement lisible') from None
     operation = view['operation']
-    review = json.loads(operation['resources'][0], object_pairs_hook=_unique_object)['content']
+    review = _review(operation)
     if (operation['dossier_id'] != item['dossier_id'] or review['output'] is None
             or review['output']['sha256'] != item['output_sha256']):
         raise _Excluded('LIAISON_DIVERGENTE', 'Dossier ou sortie du lot distincts de ceux du jugement conservé')
@@ -128,13 +212,7 @@ def _read(store, item) -> _Read:
     if operation['receipt'] is None or state in _NO_RECEIPT:
         raise _Excluded('SANS_RECU', 'Aucune décision conservée : ' + state)
     config = operation['requested_configuration']
-    observed = operation['receipt']['observed_configuration']
-    # Configuration observée dans l'identité : deux routes réellement servies ne se mélangent pas
-    identity = dict(engine_version=operation['engine_version'],
-                    method=dict(id=review['method']['id'], version=review['method']['version']),
-                    **{key: config.get(key) for key in ('profile_id', 'profile_sha256', 'model', 'revision',
-                                                        'prompt_sha256', 'evidence_rule')},
-                    observed=dict(model=observed.get('model'), provider=observed.get('provider')))
+    identity = judge_identity(operation, review)
     criteria = {control: row['id'] for row in review['obligations'] + review['eliminatory_errors']
                 for control in row['control_ids']}
     if len(criteria) != sum(len(row['control_ids']) for row in review['obligations'] + review['eliminatory_errors']):
