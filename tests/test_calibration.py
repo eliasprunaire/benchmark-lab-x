@@ -63,7 +63,7 @@ class CalibrationTests(unittest.TestCase):
     def lot(self, items, **changes):
         batch = dict(format=calibration.FORMAT, batch_id='lot-fictif',
                      judge_provenance=dict(kind='simulated', authority=None),
-                     disagreement_rule=dict(origin=RULE_ORIGIN, treatment='exclude', min_annotators=2),
+                     disagreement_rule=dict(origin=RULE_ORIGIN, treatment='exclude', min_annotators=2, synthetic=True),
                      separation=None, correction=['autre-dossier'], control=items)
         batch.update(changes)
         batch.setdefault('reserved_sha256', digest(batch['control']))
@@ -171,7 +171,7 @@ class CalibrationTests(unittest.TestCase):
             calibration.report(self.h.store, batch)
         items = [self.item('j-disagree', source=('PASS', 'FAIL'))]
         items[0]['arbitrations'] = [dict(control_id='source', arbiter='arbitre-c', status='FAIL', justification='Passage absent')]
-        rule = dict(origin=RULE_ORIGIN, treatment='arbitrated', min_annotators=2)
+        rule = dict(origin=RULE_ORIGIN, treatment='arbitrated', min_annotators=2, synthetic=True)
         report = calibration.report(self.h.store, self.lot(items, disagreement_rule=rule))
         row, = report['disagreements']
         self.assertEqual('ARBITRE', row['outcome'])
@@ -206,11 +206,18 @@ class CalibrationTests(unittest.TestCase):
             batch['control'][0]['annotations'].append(deepcopy(batch['control'][0]['annotations'][0]))
         def test_rule_on_real(batch):
             batch['judge_provenance'] = dict(kind='authorized-real', authority='Décision documentée')
+        def unsaid_synthetic(batch):
+            del batch['disagreement_rule']['synthetic']
+        def vague_synthetic(batch):
+            batch['disagreement_rule']['synthetic'] = 'oui'
+        def null_date(batch):
+            batch['separation'] = dict(source='Registre', dated=None)
         def future(batch):
             batch['format'] = 'benchmark-lab-x/calibration-batch/v2'
         def unjustified(batch):
             batch['control'][0]['annotations'][0]['justification'] = ''
-        for name, change in dict(twice=twice, silent_real=silent_real, test_rule_on_real=test_rule_on_real, unknown_treatment=unknown_treatment, nobody=nobody,
+        for name, change in dict(twice=twice, silent_real=silent_real, test_rule_on_real=test_rule_on_real, unsaid_synthetic=unsaid_synthetic,
+                                 vague_synthetic=vague_synthetic, null_date=null_date, unknown_treatment=unknown_treatment, nobody=nobody,
                                  undated=undated, repeated_author=repeated_author, future=future, unjustified=unjustified).items():
             with self.subTest(name):
                 batch = self.lot([self.item('j-agree')])
@@ -244,6 +251,106 @@ class CalibrationTests(unittest.TestCase):
         self.assertNotEqual(first['judge']['prompt_sha256'], second['judge']['prompt_sha256'])
         self.assertEqual([1, 1], [first['items'], second['items']])
         self.assertEqual([0, 1], [first['totals']['faux_rejet'], second['totals']['faux_rejet']])
+
+    def test_real_batch_needs_a_rule_declared_non_synthetic(self):
+        rule = dict(origin=' TEST_ONLY_SYNTHETIC_RULE', treatment='exclude', min_annotators=2, synthetic=True)
+        real = dict(kind='authorized-real', authority='Décision documentée')
+        with self.assertRaises(ValueError):
+            calibration.report(self.h.store, self.lot([self.item('j-agree')], judge_provenance=real, disagreement_rule=rule))
+        rule.update(origin='Règle décidée', synthetic=False)
+        report = calibration.report(self.h.store, self.lot([self.item('j-agree')], judge_provenance=real, disagreement_rule=rule))
+        self.assertIs(False, report['reference']['disagreement_rule']['synthetic'])
+
+    def test_null_date_answers_hold_from_the_command(self):
+        path = self.h.fixture.home / 'date-nulle.json'
+        previous = os.umask(0o077)
+        self.addCleanup(os.umask, previous)
+        with open(path, 'w', opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
+            json.dump(self.full_lot(separation=dict(source='Registre', dated=None)), stream)
+        with redirect_stdout(io.StringIO()) as output:
+            code = runtime.main(['calibrate-judgment', '--data', str(self.h.data), '--authority', str(path)])
+        self.assertEqual((78, dict(state='HOLD', reason='OPERATION_NOT_VERIFIED')), (code, json.loads(output.getvalue())))
+
+    def test_unusable_receipt_is_never_an_agreement(self):
+        report = calibration.report(self.h.store, self.lot([self.item('j-unusable', source='INDETERMINE')]))
+        o1 = self.requirement(report, 'O1')
+        self.assertEqual((0, 1), (o1['counts']['accord'], o1['counts']['indetermine']))
+        example, = o1['examples']['indetermine']
+        self.assertEqual(('INDETERMINE', 'INDETERMINE'), (example['reference']['status'], example['judge']['status']))
+        self.assertIsNotNone(example['judge']['unusable'])
+        # Abstention commune d'un juge lisible et des annotateurs : accord
+        both = calibration.report(self.h.store, self.lot([self.item('j-indet', source='INDETERMINE')]))
+        self.assertEqual(1, self.requirement(both, 'O1')['counts']['accord'])
+
+    def test_distinct_observed_configurations_are_never_pooled(self):
+        h = self.h
+        h.set_response()
+        h.set_response(openrouter_metadata=dict(requested=h.profile['model'], endpoints=dict(available=[])))
+        h.execute('j-noroute')
+        report = calibration.report(h.store, self.lot([self.item('j-agree'), self.item('j-noroute')]))
+        first, second = report['judges']
+        self.assertEqual(first['judge']['profile_sha256'], second['judge']['profile_sha256'])
+        self.assertEqual({h.profile['routes'][0]['provider_name'], None},
+                         {first['judge']['observed']['provider'], second['judge']['observed']['provider']})
+        self.assertEqual([1, 1], [first['items'], second['items']])
+
+    def test_shared_control_excludes_the_item(self):
+        real = judgment.inspect
+
+        def shared(store, operation_id):
+            view = real(store, operation_id)
+            saved = json.loads(view['operation']['resources'][0])
+            saved['content']['eliminatory_errors'][0]['control_ids'].append('source')
+            view['operation']['resources'][0] = storage._strict_json(saved)
+            return view
+        with patch.object(calibration.judgment, 'inspect', side_effect=shared):
+            report = calibration.report(self.h.store, self.lot([self.item('j-agree')]))
+        self.assertEqual([('j-agree', None, 'CONTROLE_PARTAGE')],
+                         [(row['operation_id'], row['control_id'], row['reason']) for row in report['coverage']['excluded']])
+        self.assertEqual([], report['judges'])
+
+    def test_receipts_without_effect_are_not_compared(self):
+        real = judgment.inspect
+        for state in ('NOT_SENT', storage.AMBIGUOUS_EXPIRED):
+            with self.subTest(state):
+                def closed(store, operation_id):
+                    view = real(store, operation_id)
+                    view['diagnostic'] = dict(state=state, reason='Clos sans effet')
+                    return view
+                with patch.object(calibration.judgment, 'inspect', side_effect=closed):
+                    report = calibration.report(self.h.store, self.lot([self.item('j-agree')]))
+                row, = report['coverage']['excluded']
+                self.assertEqual('SANS_RECU', row['reason'])
+                self.assertIn(state, row['detail'])
+        # Effet ambigu réel : aucun reçu, rien à comparer
+        h = self.h
+        judgment.reserve(h.store, h.request('j-ambigu'), h.transport)
+        h.http.getresponse.side_effect = TimeoutError('délai synthétique')
+        with self.assertLogs('benchmark.judgment', level='ERROR'), self.assertRaises(TimeoutError):
+            judgment.execute(h.data, 'j-ambigu', h.transport)
+        report = calibration.report(h.store, self.lot([self.item('j-ambigu')]))
+        self.assertEqual(['SANS_RECU'], [row['reason'] for row in report['coverage']['excluded']])
+
+    def test_omission_is_read_only_under_the_rule_announced_to_the_judge(self):
+        h = self.h
+        review = evaluation.prepare_review(h.store, 'local-comparison', 'intent-x')['content']
+        source = review['task']['pieces'][0]['piece_id']
+        cited = [p for p in self.proofs if p['piece_id'] == source]
+        for finding in h.answer['findings']:
+            omitted = finding['control_id'] == 'source'
+            finding.update(status='FAIL' if omitted else 'PASS', attribution='candidate', finding='Élément absent de la sortie',
+                           evidence=[dict(piece_id=self.output['piece_id'], passage=None)] + cited if omitted else self.proofs)
+        h.set_response()
+        h.execute('j-omission-sans-regle')
+        h.configure(h.profile | {'evidence_rule': judgment.EVIDENCE_OMISSION_BINDING})
+        h.set_response()
+        h.execute('j-omission')
+        report = calibration.report(h.store, self.lot([self.item('j-omission-sans-regle'), self.item('j-omission')]))
+        by_rule = {group['judge']['evidence_rule']: self.requirement(dict(judges=[group]), 'O1') for group in report['judges']}
+        self.assertEqual(1, by_rule[judgment.EVIDENCE_OMISSION_BINDING]['counts']['faux_rejet'])
+        self.assertIsNone(by_rule[judgment.EVIDENCE_OMISSION_BINDING]['examples']['faux_rejet'][0]['judge']['unusable'])
+        self.assertEqual(1, by_rule[None]['counts']['indetermine'])
+        self.assertIsNotNone(by_rule[None]['examples']['indetermine'][0]['judge']['unusable'])
 
     def test_command_replays_retained_receipts_offline_and_writes_nothing(self):
         path = self.h.fixture.home / 'lot.json'

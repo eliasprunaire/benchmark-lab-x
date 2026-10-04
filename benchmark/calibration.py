@@ -74,15 +74,18 @@ def _batch(batch):
     if provenance['kind'] == 'authorized-real':
         _text(provenance['authority'], 'authority')
     rule = batch['disagreement_rule']
-    _fields(rule, ('origin', 'treatment', 'min_annotators'), 'règle de désaccord')
+    _fields(rule, ('origin', 'treatment', 'min_annotators', 'synthetic'), 'règle de désaccord')
     _text(rule['origin'], 'origin')
-    if provenance['kind'] == 'authorized-real' and rule['origin'].startswith('TEST_ONLY'):
-        raise ValueError('Une règle de test ne décide pas les désaccords d’un lot réel')
+    if type(rule['synthetic']) is not bool:
+        raise ValueError('Nature synthétique de la règle à déclarer')
+    if provenance['kind'] == 'authorized-real' and rule['synthetic']:
+        raise ValueError('Une règle synthétique ne décide pas les désaccords d’un lot réel')
     if rule['treatment'] not in TREATMENTS or type(rule['min_annotators']) is not int or rule['min_annotators'] < 1:
         raise ValueError('Règle de désaccord invalide')
     if batch['separation'] is not None:
         _fields(batch['separation'], ('source', 'dated'), 'preuve de séparation')
-        _text(batch['separation']['source'], 'source')
+        for key in ('source', 'dated'):
+            _text(batch['separation'][key], key)
         date.fromisoformat(batch['separation']['dated'])
     if type(batch['correction']) is not list or type(batch['control']) is not list:
         raise ValueError('Partitions correction et contrôle requises')
@@ -125,10 +128,13 @@ def _read(store, item) -> _Read:
     if operation['receipt'] is None or state in _NO_RECEIPT:
         raise _Excluded('SANS_RECU', 'Aucune décision conservée : ' + state)
     config = operation['requested_configuration']
+    observed = operation['receipt']['observed_configuration']
+    # Configuration observée dans l'identité : deux routes réellement servies ne se mélangent pas
     identity = dict(engine_version=operation['engine_version'],
                     method=dict(id=review['method']['id'], version=review['method']['version']),
                     **{key: config.get(key) for key in ('profile_id', 'profile_sha256', 'model', 'revision',
-                                                        'prompt_sha256', 'evidence_rule')})
+                                                        'prompt_sha256', 'evidence_rule')},
+                    observed=dict(model=observed.get('model'), provider=observed.get('provider')))
     criteria = {control: row['id'] for row in review['obligations'] + review['eliminatory_errors']
                 for control in row['control_ids']}
     if len(criteria) != sum(len(row['control_ids']) for row in review['obligations'] + review['eliminatory_errors']):
@@ -153,22 +159,23 @@ def _read(store, item) -> _Read:
         for control, status in decided.items()})
 
 
-def _reference(item, control, rule):
+def _reference(notes, arbitration, rule):
     """`(état, résolution)` de la référence d'un contrôle, ou `(None, code)` quand elle n’existe pas"""
-    notes = [n for n in item['annotations'] if n['control_id'] == control]
     if not notes:
         return None, 'NON_ANNOTE'
     if len(notes) < rule['min_annotators']:
         return None, 'SOUS_ANNOTE'
     if len({n['status'] for n in notes}) == 1:
         return notes[0]['status'], 'accord'
-    arbitration = next((n for n in item['arbitrations'] if n['control_id'] == control), None)
     if rule['treatment'] == 'arbitrated' and arbitration is not None:
         return arbitration['status'], 'arbitrated'
     return None, 'DESACCORD_NON_ARBITRE'
 
 
-def _category(reference, judged):
+def _category(reference, judged, unusable):
+    """Un reçu inexploitable n'a rien décidé : jamais un accord, même face à une référence indéterminée"""
+    if unusable is not None:
+        return 'indetermine'
     if reference == judged:
         return 'accord'
     if (reference, judged) == ('PASS', 'FAIL'):
@@ -208,13 +215,15 @@ def report(store, batch):
             excluded.append(dict(where, control_id=None, reason='ANNOTATION_HORS_CONTROLES',
                                  detail='Contrôles inconnus du jugement : ' + ', '.join(sorted(unknown))))
             continue
-        item_pairs = 0
+        notes_by_control, item_pairs = {}, 0
+        for n in item['annotations']:
+            notes_by_control.setdefault(n['control_id'], []).append(
+                dict(author=n['author'], status=n['status'], justification=n['justification']))
+        arbitrations = {n['control_id']: dict(author=n['arbiter'], status=n['status'], justification=n['justification'])
+                        for n in item['arbitrations']}
         for control, criterion in read.criteria.items():
-            status, resolution = _reference(item, control, rule)
-            notes = [dict(author=n['author'], status=n['status'], justification=n['justification'])
-                     for n in item['annotations'] if n['control_id'] == control]
-            arbitration = next((dict(author=n['arbiter'], status=n['status'], justification=n['justification'])
-                                for n in item['arbitrations'] if n['control_id'] == control), None)
+            notes, arbitration = notes_by_control.get(control, []), arbitrations.get(control)
+            status, resolution = _reference(notes, arbitration, rule)
             if len({n['status'] for n in notes}) > 1:
                 disagreements.append(dict(where, control_id=control, annotations=notes, arbitration=arbitration,
                                           outcome='ARBITRE' if resolution == 'arbitrated' else 'EXCLU'))
@@ -223,7 +232,7 @@ def report(store, batch):
                                      detail='Référence absente pour ce contrôle'))
                 continue
             judged = read.decided[control]
-            category = _category(status, judged['status'])
+            category = _category(status, judged['status'], judged['unusable'])
             row = group['requirements'][criterion]
             row['measured_pairs'] += 1
             row['arbitrated_pairs'] += resolution == 'arbitrated'
