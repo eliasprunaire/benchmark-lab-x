@@ -380,6 +380,20 @@ def effort_label(configuration):
     return label
 
 
+def output_label(configuration, recoveries):
+    """Limite de sortie envoyée, borne publiée connue ou non, puis limites des reprises préautorisées"""
+    limit = configuration.get('parameters', {}).get('max_tokens')
+    parts = ['limite non renseignée' if limit is None else str(limit) + ' jetons']
+    if 'output_bound' in configuration:
+        bound = configuration['output_bound']
+        parts.append('borne publiée inconnue' if bound is None else 'borne publiée : ' + str(bound))
+    if recoveries:
+        tiers = recoveries.get(configuration['model'], [])
+        parts.append('sans reprise' if not tiers else ('reprise : ' if len(tiers) == 1 else 'reprises : ')
+                     + ' puis '.join(str(limit) for limit in tiers))
+    return ' · '.join(parts)
+
+
 def model_name(configuration, names):
     """Nom commercial du relevé, sinon l'identifiant Openrouter : le même libellé sur chaque écran"""
     return names.get(configuration['model'], configuration['model'])
@@ -702,12 +716,27 @@ def render_configurations(value, csrf):
                                   '>' + text(labels.get(level, level)) + '</option>' for level in model['levels']) +
                           '</select>')
             tiers += '</details>'
+        default = str(value.get('default_output_tokens', ''))
+        limits = ('<details><summary>Ajuster la limite de sortie par modèle</summary><p class="hint">Vide : '
+                  + (default + ' jetons de sortie' if default else 'limite par défaut') + '. Le coût estimé compte une '
+                  'réponse qui atteint cette limite. Une limite au-delà de la borne publiée pour le modèle est refusée, '
+                  'jamais réduite.</p>')
+        for index, model in enumerate(value['models'], 1):
+            field = 'max-tokens-' + str(index)
+            bound = model.get('output_bound')
+            limits += ('<label for="' + field + '">' + text(model['name'] + ' · ' + (
+                'borne publiée : ' + str(bound) if bound else 'borne publiée inconnue')) + '</label>'
+                '<input id="' + field + '" form="configurations-form" type="number" inputmode="numeric" min="1" step="1"'
+                + ('' if not bound else ' max="' + str(bound) + '"') + ' placeholder="' + text(default)
+                + '" name="' + text('max_tokens:' + model['id']) + '" value="' + text(str(model.get('output_limit') or '')) + '">')
+        limits += '</details>'
         content += ('<form id="configurations-form" method="post" action="' + text(dossier_url + '/configurations') + '">' +
                     hidden('csrf_token', csrf) + '<fieldset id="model-choices"><legend>Modèles à comparer</legend>' +
                     choices + '</fieldset></form>')
         content += render_custom_models(value, csrf, dossier_url)
         # Le récapitulatif de la sélection suit l'enregistrement : le serveur y redirige
-        content += ('<fieldset><legend>Raisonnement</legend>' + tiers +
+        content += ('<fieldset><legend>Raisonnement</legend>' + tiers + '</fieldset>'
+                    '<fieldset><legend>Limite de sortie</legend>' + limits +
                     '</fieldset><button form="configurations-form" type="submit">Continuer</button>')
     return content
 
@@ -838,19 +867,22 @@ def render_campaign_launch_requester(value, csrf):
             'frozen_at': campaign['conditions']['frozen_at'], 'confirm': 'yes'},
             '<button type="submit">Lancer le benchmark</button>')
     content += '<p><a href="' + text(dossier_url + '/configurations') + '">Modifier la sélection</a></p>'
+    recoveries = value.get('recovery_limits') or {}
     rows = ''.join('<tr><th scope="row">' + text(model_name(item, names)) + '</th><td>'
                    + text(effort_label(item).removeprefix('Niveau de raisonnement : ')) + '</td><td>'
+                   + text(output_label(item, recoveries)) + '</td><td>'
                    + text(usd(item['estimate']['amount_usd'], 'non estimable')) + '</td></tr>' for item in panel)
     content += ('<div class="table-scroll" role="region" tabindex="0" aria-label="Modèles sélectionnés">'
                 '<table class="compact"><thead><tr><th scope="col">Modèle</th><th scope="col">Niveau de raisonnement</th>'
-                '<th scope="col">Coût estimé</th></tr></thead><tbody>' + rows + '</tbody></table></div>')
+                '<th scope="col">Limite de sortie</th><th scope="col">Coût estimé</th></tr></thead><tbody>'
+                + rows + '</tbody></table></div>')
     content += '<p>Tous les appels passent par votre clé OpenRouter. Son plafond est la seule limite de dépense. Les montants affichés ici sont une prévision et une réservation, pas des dépenses facturées.</p>'
-    if value.get('recovery_limits'):
+    if any(recoveries.values()):
         # Reprises préautorisées par ce lancement (RULES.md §9) : leur coût reste distinct de la prévision
         content += '<p>' + text(
-            'Un modèle arrêté par la limite de longueur est relancé au plus deux fois, avec '
-            + ' puis '.join(str(limit) for limit in value['recovery_limits']) + ' jetons de sortie ; '
-            'chaque reprise apparaît sur sa propre ligne. Coût estimé si tous les modèles étaient repris deux fois : '
+            'Un modèle arrêté par la limite de longueur est relancé au plus deux fois, sa limite de sortie doublée '
+            'à chaque fois dans la limite de sa route, comme l’indique le tableau ; chaque reprise apparaît sur sa '
+            'propre ligne. Coût estimé si chaque modèle était repris jusqu’à sa dernière limite : '
             + usd(value.get('recovery_estimate_usd'), 'non estimable') + '.') + '</p>'
     content += section('Ce qui sera testé', '<p>' + text(value['criteria']['result_expected']) + '</p>' +
         '<p>Chaque modèle reçoit la même consigne et les mêmes pièces. Le verdict vaudra pour cet exemple et pour chaque modèle tel qu’il est réglé ici, sans conclure sur le modèle en général.</p>' +
