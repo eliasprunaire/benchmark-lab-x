@@ -607,7 +607,7 @@ class OpenRouterQualification(OpenRouterPreparation):
         super().__init__(api_key, profile)
         # Le juge des témoins est celui de l'évaluation automatique (runtime `serve`)
         self._control_profile = load_profile(str(AUTOMATIC_JUDGMENT_PROFILE))
-        self._control_quote = None
+        self._control_quote: dict | None = None
 
     def configuration(self):
         return configuration(profile=self._profile)

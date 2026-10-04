@@ -476,6 +476,8 @@ def main(argv=None):
                     judgment_transport = OpenRouterJudgment(None, load_profile(str(AUTOMATIC_JUDGMENT_PROFILE)))
                     for assistant in (transport, qualification_transport, judgment_transport):
                         assistant.quote()
+                    # Juge des témoins : son relevé figé au démarrage, comme les autres
+                    qualification_transport._control_quote = qualification_transport.controller().quote()
                 from functools import partial
                 from .model_catalogue import MAX_RESPONSE_BYTES
                 from .transports.prices import fetch_public

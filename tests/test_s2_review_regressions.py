@@ -277,7 +277,11 @@ class S2ReviewRegressions(unittest.TestCase):
         self.assertIsNotNone(parser.refresh)
         before = self.store._connection.execute('SELECT * FROM s2_validations').fetchall()
         self.assertEqual(1, len(before))
-        operations = len(self.store.inspect_operations())
+        # Le fil de vérification lancé par la validation réserve ses contrôles de témoins en parallèle
+        def requested():
+            return [op['operation_id'] for op in self.store.inspect_operations()
+                    if op['engine_version'] != prep.WITNESS_FORMAT]
+        operations = requested()
         try:
             result = urlopen(Request(base + parser.refresh, headers=headers), timeout=5)
         except HTTPError as error:
@@ -287,7 +291,7 @@ class S2ReviewRegressions(unittest.TestCase):
             self.assertIn('Vous avez validé cet exemple, dans cette version précise.', result.read().decode())
         self.assertEqual('/preparation/dossiers/review-dossier', parser.refresh)
         self.assertEqual(before, self.store._connection.execute('SELECT * FROM s2_validations').fetchall())
-        self.assertEqual(operations, len(self.store.inspect_operations()))
+        self.assertEqual(operations, requested())
 
 
 if __name__ == '__main__':

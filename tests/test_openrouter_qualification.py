@@ -35,10 +35,13 @@ def qualify_fixture(data, store, session, dossier_id, preview):
 
 
 def default_witnesses(request):
-    """Un défaut ciblé sur le premier contrôle du paquet, quand le test n'en décrit aucun"""
-    control = request['outgoing']['controls'][0]['id']
-    return [{'kind': 'defect', 'output': 'Réponse témoin sans le contenu attendu.',
-             'expected': [{'control_id': control, 'status': 'FAIL'}],
+    """Une alternative sur tous les contrôles et un défaut sur le premier, quand le test n'en décrit aucun"""
+    controls = [control['id'] for control in request['outgoing']['controls']]
+    return [{'kind': 'alternative', 'output': 'Réponse témoin recevable, autrement formulée.',
+             'expected': [{'control_id': control, 'status': 'PASS'} for control in controls],
+             'justification': 'La référence accepte toute formulation fidèle aux pièces.'},
+            {'kind': 'defect', 'output': 'Réponse témoin sans le contenu attendu.',
+             'expected': [{'control_id': controls[0], 'status': 'FAIL'}],
              'justification': 'La référence attend ce contenu : son absence est le défaut ciblé.'}]
 
 
@@ -86,11 +89,13 @@ class WitnessControl:
     """Juge factice des témoins : il décide ce que l'attendu prévoit, sauf décision imposée par type de témoin
 
     `decisions[kind][control_id]` vaut (statut, passage cité) ; un passage absent de la réponse témoin
-    n'est pas une preuve exploitable
+    n'est pas une preuve exploitable. `script` : par appel, None pour la réponse normale, 429 pour un
+    incident reçu, une exception levée après émission, ou une fonction qui réécrit les constats
     """
     def __init__(self, qualification, reserve='0.5'):
         self.qualification, self.reserve = qualification, reserve
         self.decisions = {}
+        self.script = []
         self.calls = []
 
     def authority(self):
@@ -104,6 +109,14 @@ class WitnessControl:
 
     def __call__(self, operation, request):
         self.calls.append((deepcopy(operation), deepcopy(request)))
+        step = self.script.pop(0) if self.script else None
+        if isinstance(step, Exception):
+            raise step
+        if step == 429:
+            return {'receipt': {'receipt_id': 'temoin-' + operation['operation_id'], 'resources_seen': [], 'result': None,
+                                'observed_configuration': {'incident': 'RATE_LIMITED', 'http': {
+                                    'status': 429, 'response_headers': {}, 'received_at': prep._now().isoformat()}}},
+                    'cost': {'status': 'UNKNOWN', 'amount': None, 'currency': 'USD', 'source': 'coût INCONNU'}}
         review = request['outgoing']
         output = review['output']
         witness = next(w for w in self.qualification.last['witnesses'] if w['output'] == output['content'])
@@ -114,6 +127,8 @@ class WitnessControl:
                     for criterion in review['obligations'] + review['eliminatory_errors']
                     for control in criterion['control_ids']
                     for status, passage in [forced.get(control, (expected.get(control, 'PASS'), output['content']))]]
+        if callable(step):
+            findings = step(findings)
         return {'receipt': {'receipt_id': 'temoin-' + operation['operation_id'],
                             'observed_configuration': {'model': 'juge/fictif-v1'},
                             'resources_seen': [operation['conserved_wire']],
@@ -383,7 +398,8 @@ class OpenRouterQualificationTests(unittest.TestCase):
         states = {row['operation_id']: row['state'] for row in self.store.inspect_operations()
                   if row['phase'] == 'qualification'}
         self.assertEqual('RECEIVED', states.pop(operation_id))
-        self.assertEqual(['AMBIGUOUS'], list(states.values()))
+        # Le premier témoin est reçu ; l'écriture interrompue est celle du dernier, qui porte le contrat
+        self.assertEqual(['AMBIGUOUS', 'RECEIVED'], sorted(states.values()))
         self.assertFalse(prep.view(self.store, self.session, 'dossier')['qualified'])
 
     def test_anciennes_bases_refusees_avec_le_message_de_recreation(self):

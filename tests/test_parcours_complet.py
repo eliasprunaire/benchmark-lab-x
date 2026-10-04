@@ -1022,6 +1022,105 @@ class ParcoursComplet(unittest.TestCase):
                  'temoins_absents_du_paquet_candidat': all(w['output'] not in brut for w in (alternative, defaut))},
                 ensure_ascii=False, indent=2) + '\n')
 
+    def test_temoins_relances_effet_ambigu_et_preuves_etrangeres(self):
+        """Issue #445, après revue indépendante : ce qui ne doit ni qualifier ni consommer
+
+        Modes d'échec couverts :
+        1. une réponse sans alternative valable qualifie, ou consomme un contrôle ;
+        2. un constat sur un critère étranger, ou citant une pièce étrangère, prouve une décision ;
+        3. après un incident reçu sur un témoin, rien ne relance son contrôle et la version reste bloquée ;
+        4. après un effet ambigu, les témoins suivants partent quand même, ou une relance est programmée
+        """
+        consigne = ['Relever toutes les actions dans les notes']
+
+        def preparer(operation, request):
+            value = self.prepare(operation, request)
+            value['receipt']['result']['package']['candidate']['instruction'] = ' '.join(consigne)
+            return value
+        self.assistants['transport'] = SessionAssistant(preparer, {'model': 'factice'})
+        self.preparation_stage = 'exemple'
+        juge = self.qualifier.controller()
+        page, _, _ = self.request('/')
+        target = page.link('Décrire mon cas')
+        page, _, _ = self.request(target)
+        key_form = page.form('/access/key')
+        self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
+        page, _, _ = self.request(target)
+        page = self.submit(page, '/dossiers', {'request': 'Transformer des notes de réunion en une liste complète des actions à relire'})
+        dossier = page.link('Actualiser')
+        dossier_id = dossier.rsplit('/', 1)[1]
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+
+        def verifier():
+            page, _, _ = self.request(dossier)
+            self.submit(page, '/validation', {})
+            prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+            return self.request(dossier)[0]
+
+        def corriger(ajout):
+            consigne.append(ajout)
+            page, _, _ = self.request(dossier)
+            self.submit(page, '/messages', {'kind': 'correct', 'message': 'Préciser la consigne : ' + ajout})
+            prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+
+        def detail(page):
+            return next(n['text'] for n in page.nodes if n['tag'] == 'details'
+                        and 'Détail de la vérification de l’exemple' in n['text'])
+
+        def retries():
+            with closing(storage.Store(self.data)) as store:
+                return prep.due_qualification_retries(store, dossier_id=dossier_id)
+        # 1. Un défaut seul, sans alternative valable : réponse inexploitable, aucun contrôle consommé
+        self.qualifier.result = {'qualified': True, 'findings': [], 'summary': 'Défaut seul', 'witnesses': [
+            {'kind': 'defect', 'output': 'Aucune action.', 'expected': [{'control_id': 'O1', 'status': 'FAIL'}],
+             'justification': 'La référence attend les actions : leur absence est le défaut ciblé.'}]}
+        page = verifier()
+        self.assertIn('Résultat de qualification reçu non utilisable', page.visible)
+        self.assertEqual([], juge.calls)
+        # 2. Critère étranger sur l'alternative, pièce étrangère sur le défaut : aucune décision prouvée
+        corriger('Une action par ligne.')
+        self.qualifier.result = {'qualified': True, 'findings': [], 'summary': 'Exemple vérifiable'}
+        juge.script = [lambda findings: [dict(row, criterion_id='E9') for row in findings],
+                       lambda findings: [dict(row, evidence=[{'piece_id': 'piece-inventee', 'passage': 'Aucune'}])
+                                         for row in findings]]
+        page = verifier()
+        self.assertIn('Exemple à revoir avant comparaison', page.visible)
+        self.assertEqual(2, detail(page).count('Décision sans preuve exploitable'))
+        self.assertEqual([], retries())
+        # 3. Incident reçu sur l'alternative : relance automatique annoncée, puis qualification sans correction
+        corriger('Garder le responsable de chaque action.')
+        juge.script = [429]
+        page = verifier()
+        self.examine(page, dossier, 'contrôle de témoin en relance', None)
+        self.assertIn('Vérification de l’exemple en attente', page.visible)
+        self.assertIn('Nouvelle tentative automatique', page.visible)
+        due = retries()
+        self.assertEqual(1, len(due))
+        with closing(storage.Store(self.data)) as store:
+            following = prep.retry_qualification(store, due[0][0], self.bound[1], 'a' * 40)
+            link = json.loads(store._operations(store._connection, operation_ids={following})[0]['resources'][2])
+        self.assertEqual({'retry_of': due[0][0], 'attempt': 2}, link)
+        prep.execute_qualification(self.data, following, self.bound[1])
+        page, _, _ = self.request(dossier)
+        self.examine(page, dossier, 'témoins confirmés après relance', 'Choisir les modèles')
+        self.assertEqual(2, detail(page).count('Décision conforme à l’attendu'))
+        self.assertEqual([], retries())
+        # 4. Effet ambigu sur le premier témoin : le second ne part pas, aucune relance n'est programmée
+        corriger('Écrire l’échéance quand elle est connue.')
+        juge.script = [RuntimeError('Réponse perdue après émission')]
+        calls = len(juge.calls)
+        page = verifier()
+        self.assertEqual(calls + 1, len(juge.calls))
+        self.assertIn('Vérification impossible pour le moment', page.visible)
+        self.assertFalse(any(n['tag'] == 'a' and n['text'] == 'Choisir les modèles' for n in page.nodes))
+        self.assertEqual([], retries())
+        with closing(storage.Store(self.data)) as store:
+            states = sorted(op['state'] for op in store._operations(store._connection)
+                            if op['dossier_id'] == dossier_id and op['engine_version'] == prep.WITNESS_FORMAT
+                            and op['revision'] == max(o['revision'] for o in store._operations(store._connection)
+                                                      if o['dossier_id'] == dossier_id))
+        self.assertEqual(['AMBIGUOUS', 'RECEIVED'], states)
+
     def test_contrat_operateur_bloque_montre_ses_constats_au_demandeur(self):
         """Un contrat opérateur bloqué après la préparation de la comparaison : le dossier et le refus nomment ce qui bloque
 
