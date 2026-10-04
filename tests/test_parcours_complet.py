@@ -1680,53 +1680,61 @@ class ParcoursComplet(unittest.TestCase):
                  'preuve_omission': preuve, 'regle': omis['judgment']['evidence_binding']['version']},
                 ensure_ascii=False, indent=2) + '\n')
 
-    def test_evaluation_terminee_sous_le_profil_autorise_apres_redemarrage(self):
-        """Lancement ancien, redémarrage sous un autre profil du juge, jugement sous le profil autorisé
+    def test_evaluation_terminee_sous_le_profil_autorise_apres_deploiement(self):
+        """Lancement ancien, déploiement (maintenance, quiescence) sous un autre profil du juge, jugement sous le profil autorisé
 
         Modes d'échec couverts :
-        1. un profil autorisé ni courant ni retenu est remplacé en silence par le profil courant ;
-        2. le redémarrage sous un nouveau profil refuse l'évaluation d'une comparaison déjà autorisée ;
-        3. l'évaluation part sous le nouveau profil au lieu du profil autorisé ;
-        4. une évaluation déjà réservée ne peut plus partir après un nouveau redémarrage sans profil retenu
+        1. la maintenance du déploiement ferme l'admission et l'évaluation part en silence sous le nouveau profil ;
+        2. un profil autorisé ni courant ni retenu est remplacé en silence par le profil courant ;
+        3. le profil autorisé retenu par le déploiement ne sert pas à réserver l'évaluation ;
+        4. une évaluation déjà réservée ne peut plus partir après un second déploiement sans profil retenu
         """
+        from contextlib import redirect_stdout
         from copy import copy
-        from benchmark import automatic_judgment as auto
+        from io import StringIO
+        from benchmark import automatic_judgment as auto, runtime
         from benchmark.transports import openrouter
         from tests.test_openrouter_preparation import estimate_for
         self.juge_factice(lambda cible: ('PASS', 'candidate', 'Respecté dans la réponse'))
         autorise = self.assistants['judgment_transport']._profile
         dossier = self.exemple_qualifie()
         page, _, _ = self.request(dossier + '/configurations')
-        # Deux réponses au coût connu : l'admission reste ouverte, son autorisation de jugement fait foi
         page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'],
                                                      'tier': 'low'})
         self.submit(page, '/start', {})
         execution.execute_launch(self.data, self.starts.get_nowait()['candidate_attempts'], self.candidate,
                                  access_secret=SECRET, access_transport=self.access)
         campaign_id = dossier.rsplit('/', 1)[1] + '-c1'
+        # Déploiement : les deux actions que le contrôleur appelle sur l'ancienne version, dans cet ordre
+        for action in ('maintenance', 'quiescence'):
+            with redirect_stdout(StringIO()):
+                self.assertEqual(0, runtime.main([action, '--data', str(self.data)]), action)
         with closing(storage.Store(self.data)) as store:
-            grant = campaigns.inspect(store, campaign_id)['admission']['authority']['automatic_judgment']['configuration']
+            snapshot = campaigns.inspect(store, campaign_id)
+        self.assertEqual((None, 'MAINTENANCE'), (snapshot['admission'], snapshot['stop_reason']))
+        grant = snapshot['admissions'][-1]['authority']['automatic_judgment']['configuration']
         nouveau = dict(autorise, system=autorise['system'] + ' Consigne d’un déploiement ultérieur.')
 
-        def redemarrage(retenus):
+        def deploiement(retenus):
             judge = openrouter.OpenRouterJudgment(None, nouveau, retained=retenus)
             judge._quote = openrouter.configuration(estimate_for(nouveau), nouveau)
             self.assistants['judgment_transport'] = judge
-        # 1. Profil autorisé introuvable : refus explicite, rien n'est réservé ni envoyé
-        redemarrage(())
+        # 1 et 2. Profil autorisé introuvable après la maintenance : refus explicite, rien n'est réservé ni envoyé
+        deploiement(())
         page, _, _ = self.request(dossier)
         page, _, _ = self.request(page.link('Lancer l’évaluation'))
         self.submit(page, '/evaluate', {}, status=409)
         self.assertTrue(self.starts.empty())
-        # 2 et 3. Profil autorisé retenu par le déploiement : réservé sous lui, configuration du lancement intacte
-        redemarrage([autorise])
+        self.assertEqual([], self.judge_systems)
+        # 3. Profil autorisé retenu par le déploiement : réservé sous lui, configuration du lancement intacte
+        deploiement([autorise])
         self.submit(page, '/evaluate', {})
         ids = self.starts.get_nowait()['judgment_operations']
         with closing(storage.Store(self.data)) as store:
             reservees = [op for op in store.inspect_operations() if op['operation_id'] in ids]
         self.assertEqual(2, len(reservees))
         self.assertTrue(all(op['requested_configuration'] == grant for op in reservees))
-        # 4. Nouveau redémarrage, profil retenu retiré : l'évaluation réservée part sous ses propres octets
+        # 4. Second déploiement qui retire le profil retenu : l'évaluation réservée part sous ses propres octets
         juge = copy(self.bound[2])
         juge._retained = []
         auto.execute_campaign(self.data, ids, juge)

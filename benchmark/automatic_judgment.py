@@ -201,7 +201,10 @@ def preflight(store, session_id, dossier_id, campaign_id, transport, *, check_ac
             count = len(snapshot['manifest']['plan']) - len(_latest(operations(store, connection, campaign_id)))
         budget_id = provider_access.preparation_budget_id(session_id)
         guard_budget(store, connection, budget_id, campaign_id=campaign_id)
-        grant = (snapshot['admission'] or {}).get('authority', {}).get('automatic_judgment')
+        # La maintenance d'un déploiement ferme l'admission sans retirer son autorisation : l'évaluation reste sous elle
+        authorized = snapshot['admission'] or (snapshot['admissions'][-1] if snapshot['admissions']
+                                               and snapshot['stop_reason'] == 'MAINTENANCE' else None)
+        grant = (authorized or {}).get('authority', {}).get('automatic_judgment')
         if grant:
             # Un déploiement ultérieur garde le profil autorisé au lancement : l'évaluation se termine sous lui
             if (grant != dict(budget_id=budget_id, configuration=grant['configuration'])
