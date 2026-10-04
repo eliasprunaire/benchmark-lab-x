@@ -369,5 +369,100 @@ class CompositeObligation(unittest.TestCase):
             self.assertNotRegex(findings, r'(?<![\w-])' + raw + r'(?![\w-])')
 
 
+def omitted(change=None, **finding):
+    """O1 en défaut par omission : la sortie examinée sans citation, le passage exact des notes candidates
+
+    `change(preuves, ctx, resources)` réécrit les preuves ; `finding` remplace des champs du constat
+    """
+    def callback(ctx, resources):
+        report = findings(ctx, resources)
+        output = ctx['attempt']['output_piece_id']
+        notes = ctx['qualification']['contract']['package']['pieces'][0]['id']
+        evidence = [dict(piece_id=output, sha256=sha256(resources[output]).hexdigest(), passage=None),
+                    dict(piece_id=notes, sha256=sha256(resources[notes]).hexdigest(), passage=resources[notes].decode())]
+        if change:
+            change(evidence, ctx, resources)
+        report['findings'][0].update(dict(status='FAIL', attribution='candidate',
+                                          finding='Action des notes absente de la sortie', evidence=evidence) | finding)
+        return report
+    return callback
+
+
+class OmissionProof(unittest.TestCase):
+    """Issue #446 : une omission se prouve sans fausse citation de la sortie, avec la pièce candidate qui porte l'élément"""
+    spec, qualify_check = S5Regressions.spec, S5Regressions.qualify_check
+    setUp, acquire, evaluate = S5Regressions.setUp, S5Regressions.acquire, S5Regressions.evaluate
+
+    def test_omission_proven_by_candidate_passage_is_a_candidate_defect(self):
+        self.acquire()
+        record = self.evaluate(omitted())
+        self.assertEqual('NE SATISFAIT PAS', record['verdict'])
+        self.assertEqual('O1 : Action des notes absente de la sortie', record['reason'])
+        self.assertEqual(['O1'], [f['criterion_id'] for f in e.defects(record['findings'], record['output_piece_id'])])
+        self.assertIsNone(record['findings'][0]['evidence'][0]['passage'])
+        self.assertEqual(record, e.inspect(self.store, record['evaluation_id']))
+
+    def test_unexploitable_omission_proofs_are_refused(self):
+        self.acquire()
+
+        def reference(evidence, ctx, resources):
+            # La référence cachée seule ne crée pas l'exigence
+            rid = ctx['qualification']['contract']['reference_pieces'][0]['id']
+            evidence[1] = dict(piece_id=rid, sha256=sha256(resources[rid]).hexdigest(), passage=resources[rid].decode())
+
+        def invented(evidence, ctx, resources):
+            evidence[1]['passage'] = 'Action inventée, absente des notes'
+
+        def foreign(evidence, ctx, resources):
+            evidence[1]['piece_id'] = 'piece-inventee'
+
+        def unquoted_source(evidence, ctx, resources):
+            # Une pièce candidate ne s'examine pas sans citation : seule la sortie peut porter l'absence
+            evidence[1]['passage'] = None
+
+        def output_only(evidence, ctx, resources):
+            del evidence[1]
+        cases = dict(reference=omitted(reference), invented=omitted(invented), foreign=omitted(foreign),
+                     unquoted_source=omitted(unquoted_source), output_only=omitted(output_only),
+                     passing=omitted(status='PASS'))
+        for name, callback in cases.items():
+            with self.subTest(name), self.assertRaises(ValueError):
+                self.evaluate(callback)
+        self.assertEqual(0, self.store._connection.execute('SELECT count(*) FROM s5_evaluations').fetchone()[0])
+
+    def test_reference_uncertainty_or_accepted_alternative_is_not_a_candidate_defect(self):
+        self.acquire()
+        uncertain = self.evaluate(omitted(attribution='evidence', finding='Référence ambiguë sur cette action'))
+        self.assertEqual('INDETERMINE', uncertain['verdict'])
+
+        def alternative(ctx, resources):
+            # Un autre constat accepte une autre formulation sur le même contrôle : l'omission n'est pas établie
+            report = omitted()(ctx, resources)
+            report['findings'].append(dict(findings(ctx, resources)['findings'][0], attribution='candidate'))
+            return report
+        self.assertEqual('INDETERMINE', self.evaluate(alternative, previous_evaluation_id=uncertain['evaluation_id'])['verdict'])
+
+    def test_correction_by_omission_keeps_previous_evaluation_without_candidate_call(self):
+        self.acquire()
+        receipts = [(op['operation_id'], op['receipt']) for op in self.store.inspect_operations()]
+        first = self.evaluate(judged(('O1', 'source', 'INDETERMINE', 'Omission non prouvable sans citer la sortie'),
+                                     ('E1', 'defect', 'PASS', 'Aucune action ajoutée')))
+        self.assertEqual('INDETERMINE', first['verdict'])
+        second = self.evaluate(omitted(), previous_evaluation_id=first['evaluation_id'])
+        self.assertEqual('NE SATISFAIT PAS', second['verdict'])
+        self.assertEqual(first['evaluation_id'], second['previous_evaluation_id'])
+        self.assertEqual(first, e.inspect(self.store, first['evaluation_id']))
+        self.assertEqual(receipts, [(op['operation_id'], op['receipt']) for op in self.store.inspect_operations()])
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
+
+    def test_owner_page_shows_the_absence_instead_of_a_quote(self):
+        from benchmark_web.campaign_views import render_evaluations
+        self.acquire()
+        self.evaluate(omitted())
+        page = render_evaluations(prep.view(self.store, self.session, 'fixture')['campaigns'][0]['evaluations'], '/d')
+        self.assertIn('Absence constatée dans la réponse du modèle', page)
+        self.assertNotIn('<pre>None</pre>', page)
+
+
 if __name__ == '__main__':
     unittest.main()

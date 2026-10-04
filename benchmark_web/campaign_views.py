@@ -306,11 +306,9 @@ def render_evaluations(evaluations, dossier_url):
             content += '</p></details>'
             for proof in finding['evidence']:
                 link = next(p for p in record['proof_links'] if p['piece_id'] == proof['piece_id'])
-                content += '<details><summary>Extrait de ' + text(link['name']) + '</summary>'
-                content += '<pre>' + text(proof['passage']) + '</pre>'
                 target = ('#proof-' + eid + '-' + link['piece_id']
                           if link['piece_id'] in record.get('proof_contents', {}) else link['href'])
-                content += '<p><a href="' + text(target) + '">Ouvrir la pièce</a></p></details>'
+                content += _proof(link['name'], proof['passage'], target)
             content += '</li>'
         content += '</ul><p>Pièces utilisées pour cette évaluation :</p><ul>'
         for link in record['proof_links']:
@@ -995,6 +993,14 @@ def _proof_anchor(record, piece_id):
     return link, link['href']
 
 
+def _proof(name, passage, target):
+    """Extrait cité, ou omission : la réponse examinée sans passage (null), jamais un faux extrait"""
+    content = ('<details><summary>Absence constatée dans la réponse du modèle</summary><p>Aucun extrait cité : '
+               'selon le juge, l’élément exigé manque dans cette réponse.</p>' if passage is None else
+               '<details><summary>Extrait de ' + text(name) + '</summary><pre>' + text(passage) + '</pre>')
+    return content + '<p><a href="' + text(target) + '">Ouvrir la pièce</a></p></details>'
+
+
 def _criteria_list(record, criteria, kind):
     found = _states(record)
     content = '<ul class="checks">'
@@ -1026,8 +1032,8 @@ def _check(record, kind, state, description, findings, nested=''):
                 link, target = _proof_anchor(record, proof['piece_id'])
                 if link is None:
                     continue
-                content += '<details><summary>Extrait de ' + text('la réponse du modèle' if link['piece_id'] == record['output_piece_id'] else link['name']) + '</summary><pre>' + text(proof['passage']) + '</pre>'
-                content += '<p><a href="' + text(target) + '">Ouvrir la pièce</a></p></details>'
+                content += _proof('la réponse du modèle' if link['piece_id'] == record['output_piece_id'] else link['name'],
+                                  proof['passage'], target)
             content += '</li>'
         content += '</ul></details>'
     return content + nested + '</li>'

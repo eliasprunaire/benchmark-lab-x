@@ -56,6 +56,7 @@ class AutomaticJudgment(unittest.TestCase):
 
     def answer(self, method, path, *, body, headers):
         content = json.loads(json.loads(body)['messages'][1]['content'])
+        self.review = content
         output = content['output']
         proof = {k: output[k] for k in ('piece_id', 'sha256')}
         proof['passage'] = output['content']
@@ -269,6 +270,31 @@ class AutomaticJudgment(unittest.TestCase):
         auto.execute_campaign(self.data, ids, self.transport)
         self.assertEqual([], restitution.comparison(self.store, self.sid, 'fixture', self.cid)['rows'])
         self.assertEqual('BLOCKED', auto.status(self.store, self.store._connection, self.cid)['status'])
+
+    def test_omission_from_a_judge_without_the_rule_stays_unusable_even_through_recovery(self):
+        """Issue #446 : une réponse d'un juge à qui la règle d'omission n'a pas été annoncée se lit comme avant elle
+
+        Le profil synthétique n'a pas `evidence_rule` ; l'empreinte fausse ouvre la récupération depuis le reçu
+        """
+        from benchmark import automatic_judgment as auto, judgment
+        self.assertNotIn('evidence_rule', self.transport.quote())
+        def omission(document):
+            answer = json.loads(document['choices'][0]['message']['content'])
+            notes = self.review['task']['pieces'][0]
+            answer['findings'][0]['evidence'] = [
+                {'piece_id': self.review['output']['piece_id'], 'passage': None, 'sha256': '0' * 64},
+                {'piece_id': notes['piece_id'], 'passage': notes['content']}]
+            document['choices'][0]['message']['content'] = storage._strict_json(answer)
+        self.response_update = omission
+        self.acquire()
+        ids = auto.reserve_campaign(self.store, self.sid, 'fixture', self.cid, self.transport)
+        auto.execute_campaign(self.data, ids, self.transport)
+        self.assertEqual([], restitution.comparison(self.store, self.sid, 'fixture', self.cid)['rows'])
+        self.assertEqual('BLOCKED', auto.status(self.store, self.store._connection, self.cid)['status'])
+        self.assertEqual([], auto.records(self.store, self.store._connection, self.cid))
+        for operation_id in ids:
+            self.assertEqual('JUDGE_FORMAT_REVIEW_REQUIRED',
+                             judgment.inspect(self.store, operation_id)['diagnostic']['state'])
 
     def test_metadata_recovery_never_accepts_a_foreign_provider(self):
         from benchmark import automatic_judgment as auto

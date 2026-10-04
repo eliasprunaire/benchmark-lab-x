@@ -139,20 +139,41 @@ def _resources(store, ctx):
     return {pid: store.read_piece(pid) for pid in ids}
 
 
-def _evidence(value, resources, *, required=False):
+def _evidence(value, resources, *, required=False, absent_from=None):
+    """`absent_from` : seule pièce, la sortie examinée, qui peut porter un passage null (omission)"""
     if type(value) is not list or (required and not value):
         raise ValueError('Pièces de preuve requises')
     for proof in value:
         _fields(proof, ('piece_id', 'sha256', 'passage'), 'evidence')
         identifier(proof['piece_id'])
         _hash(proof['sha256'])
-        if type(proof['passage']) is not str:
+        absent = proof['passage'] is None and absent_from is not None and proof['piece_id'] == absent_from
+        if type(proof['passage']) is not str and not absent:
             raise ValueError('Passage textuel requis')
         raw = resources.get(proof['piece_id'])
         if (raw is None or sha256(raw).hexdigest() != proof['sha256']
-                or (not proof['passage'] and raw)
-                or proof['passage'].encode('utf-8') not in raw):
+                or not absent and ((not proof['passage'] and raw)
+                                   or proof['passage'].encode('utf-8') not in raw)):
             raise IntegrityError('Preuve étrangère, empreinte ou passage divergent')
+
+
+def finding_evidence(finding, resources, output, sources, *, omission_allowed=True):
+    """Preuves d'un constat : règle commune au verdict des réponses et au contrôle des témoins
+
+    Omission (`server-evidence/v2`) : un FAIL marque la sortie examinée d'un passage null au lieu d'une
+    fausse citation, et cite exactement le passage d'une pièce candidate (`sources`) qui porte l'élément
+    exigé par son critère ; la référence seule ne fonde pas l'exigence. Le serveur vérifie les passages
+    et les pièces, pas la vérité de l'absence : le constat du juge reste lisible et contestable.
+    `omission_allowed` faux : réponse d'un juge à qui la règle n'a pas été annoncée, lue comme avant elle
+    """
+    _evidence(finding['evidence'], resources, required=finding['status'] != 'INDETERMINE',
+              absent_from=output if finding['status'] == 'FAIL' and omission_allowed else None)
+    if omission(finding) and not any(p['piece_id'] in sources and p['passage'] for p in finding['evidence']):
+        raise IntegrityError('Omission sans passage exact d’une pièce candidate')
+
+
+def omission(finding):
+    return any(proof['passage'] is None for proof in finding['evidence'])
 
 
 def _operation_snapshot(old, current):
@@ -274,7 +295,8 @@ def _judgment(store, connection, value, ctx, resources, source_operation=None, r
     return result
 
 
-def _report(store, connection, report, ctx, resources, source_operation=None, responsible=_ACTOR):
+def _report(store, connection, report, ctx, resources, source_operation=None, responsible=_ACTOR, *,
+            omission_allowed=True):
     _fields(report, _REPORT_FIELDS, 'evaluation report')
     encode(report)
     _texts(report['limits'], 'limits')
@@ -283,6 +305,7 @@ def _report(store, connection, report, ctx, resources, source_operation=None, re
     if type(report['findings']) is not list:
         raise ValueError('Constats requis')
     findings = deepcopy(report['findings'])
+    sources = {p['id'] for p in ctx['qualification']['contract']['package']['pieces']}
     for finding in findings:
         _fields(finding, ('criterion_id', 'control_id', 'status', 'attribution', 'finding', 'evidence'), 'finding')
         if (finding['criterion_id'] not in criteria
@@ -292,7 +315,8 @@ def _report(store, connection, report, ctx, resources, source_operation=None, re
             raise ValueError('État de constat inconnu')
         for key in ('attribution', 'finding'):
             c._present(finding[key], key)
-        _evidence(finding['evidence'], resources, required=finding['status'] != 'INDETERMINE')
+        finding_evidence(finding, resources, ctx['attempt']['output_piece_id'], sources,
+                         omission_allowed=omission_allowed)
     pairs = {(f['criterion_id'], f['control_id']) for f in findings}
     for cid, criterion in criteria.items():
         for control in criterion['control_ids']:
@@ -355,7 +379,8 @@ def _configuration_links(store, connection, ctx, judgment):
 def defects(findings, output):
     """Constats qui fondent NE SATISFAIT PAS : FAIL attribué au candidat, prouvé sur sa sortie, sans PASS sur le même contrôle
 
-    Seule définition du défaut : le verdict et son explication affichée la partagent
+    Prouvé sur sa sortie : un passage cité, ou, pour une omission, la sortie examinée liée au passage d'une
+    pièce candidate (`finding_evidence`). Seule définition du défaut : le verdict et son explication affichée la partagent
     """
     grouped = {}
     for finding in findings:

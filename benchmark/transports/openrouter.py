@@ -34,7 +34,9 @@ TIMEOUT_SECONDS = 120
 PROFILE_FIELDS = ('profile_id', 'model', 'revision', 'parameters', 'routes',
                   'required_capabilities', 'system', 'max_request_bytes', 'max_response_bytes',
                   'timeout_seconds')
-OPTIONAL_PROFILE_FIELDS = ('reserve_input_tokens',)
+OPTIONAL_PROFILE_FIELDS = ('reserve_input_tokens', 'evidence_rule')
+# Règle de preuve annoncée au juge : seule une opération sous cette règle peut prouver une omission
+EVIDENCE_RULES = ('server-evidence/v2',)
 PARAMETER_FIELDS = ('temperature', 'top_p', 'reasoning', 'provider', 'max_tokens', 'stream',
                     'response_format')
 REQUIRED_PARAMETERS = ('provider', 'max_tokens', 'stream')
@@ -182,6 +184,10 @@ def _validated_profile(document):
         if type(document['reserve_input_tokens']) is not int or document['reserve_input_tokens'] <= 0:
             raise ValueError('Profil de préparation invalide')
         value['reserve_input_tokens'] = document['reserve_input_tokens']
+    if 'evidence_rule' in document:
+        if document['evidence_rule'] not in EVIDENCE_RULES:
+            raise ValueError('Profil de préparation invalide')
+        value['evidence_rule'] = document['evidence_rule']
     encode(value)
     return json.loads(encode(value), object_pairs_hook=_unique_object)
 
@@ -289,8 +295,9 @@ def configuration(estimate=None, profile=None):
              'profile_id': frozen['profile_id'], 'profile_sha256': profile_digest(frozen),
              'revision': frozen['revision'], 'model_identities': _model_identities(frozen),
              'routes': deepcopy(frozen['routes'])}
-    if 'reserve_input_tokens' in frozen:
-        value['reserve_input_tokens'] = frozen['reserve_input_tokens']
+    for key in OPTIONAL_PROFILE_FIELDS:
+        if key in frozen:
+            value[key] = frozen[key]
     if estimate is not None:
         value['reservation_estimate'] = deepcopy(estimate)
         value['reserve_usd'] = reservation(estimate, frozen)
