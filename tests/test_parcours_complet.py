@@ -2252,7 +2252,9 @@ class ParcoursComplet(unittest.TestCase):
         7. les reprises annoncent 8192 puis 16384 jetons quelle que soit la limite déclarée ;
         8. une nouvelle sélection après résultat réécrit la configuration lancée ;
         9. le niveau de raisonnement choisi par modèle est perdu ;
-        10. décocher un modèle dont la limite est pré-remplie par la relecture refuse tout le formulaire
+        10. décocher un modèle dont la limite est pré-remplie par la relecture refuse tout le formulaire ;
+        11. un refus de limite ne nomme ni le modèle ni sa borne, ou ne ramène pas au choix des modèles,
+            y compris quand le champ vide garde 4096 jetons au-delà d'une route qui publie moins
         """
         from decimal import Decimal
         with closing(storage.Store(self.data)) as store:
@@ -2284,9 +2286,19 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Modèle A · borne publiée : 16000', limites['text'])
         form = page.form('/configurations')
         choix = {'models': list(bornes), 'tier': 'low', 'effort:mistralai/mistral-small-2603': 'none'}
-        for refus in ({'max_tokens:openai/gpt-5.6-sol': '16001'}, {'max_tokens:openai/gpt-5.6-sol': '0'},
-                      {'max_tokens:openai/gpt-5.6-sol': '12k'}, {'max_tokens:openai/gpt-5.6-sol': '-5'}):
+        for refus in ({'max_tokens:openai/gpt-5.6-sol': '0'}, {'max_tokens:openai/gpt-5.6-sol': '12k'},
+                      {'max_tokens:openai/gpt-5.6-sol': '-5'}):
             self.request(form['action'], form['fields'] | choix | refus, status=400)
+        refus, _, _ = self.request(form['action'], form['fields'] | choix | {
+            'max_tokens:openai/gpt-5.6-sol': '16001'}, status=400)
+        self.assertIn('Modèle A : la limite de sortie de 16001 jetons dépasse sa borne publiée : 16000 jetons au plus. '
+                      'Indiquez une limite plus basse dans « Ajuster la limite de sortie par modèle ». '
+                      'Rien n’a été enregistré.', refus.visible)
+        self.assertEqual(configurations, refus.link('Revenir au choix des modèles'))
+        refus, _, _ = self.request(form['action'], form['fields'] | choix | {
+            'max_tokens:deepseek/deepseek-v4.1-flash': '64000'}, status=400)
+        self.assertIn('Modèle B : la limite de sortie de 64000 jetons dépasse ce que sa fenêtre de contexte laisse '
+                      'après cet exemple', refus.visible)
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s4_campaigns').fetchone()[0])
         recap = self.submit(page, '/configurations', choix | {
@@ -2359,6 +2371,18 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual(panel, campaigns.inspect(store, prefix + '-c1')['manifest']['panel'])
             suivante = campaigns.inspect(store, prefix + '-c3')['manifest']['panel']
         self.assertEqual([8000, 4096, 4096], [c['parameters']['max_tokens'] for c in suivante])
+        # Route de Modèle C publiée sous 4096 : le champ vide garde 4096, refusé avec le modèle et sa borne
+        with closing(storage.Store(self.data)) as store:
+            document = json.loads(store._connection.execute('SELECT raw_json FROM s2_model_catalogue').fetchone()[0])
+            document['endpoints']['mistralai/mistral-small-2603']['endpoints'][0]['max_completion_tokens'] = 2048
+            store._connection.execute('UPDATE s2_model_catalogue SET raw_json=?', (storage._strict_json(document),))
+        page, _, _ = self.request(configurations)
+        refus, _, _ = self.request(form['action'], page.form('/configurations')['fields'] | choix, status=400)
+        self.assertIn('Modèle C : la limite de sortie de 4096 jetons dépasse sa borne publiée : 2048 jetons au plus.',
+                      refus.visible)
+        self.submit(page, '/configurations', choix | {'max_tokens:mistralai/mistral-small-2603': '2048'})
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(2048, campaigns.inspect(store, prefix + '-c4')['manifest']['panel'][2]['parameters']['max_tokens'])
         self.assertEqual(len(envois), sum(call[0] == 'candidat' for call in self.calls))
 
     def test_acces_openrouter_factice_et_retours(self):

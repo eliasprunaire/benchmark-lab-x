@@ -583,14 +583,18 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
                        'input_tokens': (len(candidate_bytes) + BYTES_PER_TOKEN - 1) // BYTES_PER_TOKEN,
                        'cached_input_tokens': 0, 'requests_per_cell': 1}
         limits = {model['id']: limits.get(model['id'], DEFAULT_MAX_OUTPUT_TOKENS) for model in selected}
+        from ..preparation import Denied
         for model in selected:
-            # Refus plutôt que substitution : la valeur envoyée est celle que le demandeur a vue
+            # Refus plutôt que substitution : la valeur envoyée est celle que le demandeur a vue, et le refus
+            # nomme le modèle et sa borne pour qu'elle se corrige sur la page des configurations
             limit = limits[model['id']]
             bound = output_bound(model)
-            if bound is not None and limit > bound:
-                raise ValueError('Limite de sortie au-delà de la borne publiée')
-            if assumptions['input_tokens'] + limit > model['context_length']:
-                raise ValueError('Limite de sortie au-delà de la fenêtre de contexte')
+            room = max(model['context_length'] - assumptions['input_tokens'], 0)
+            reason = ('bound' if bound is not None and limit > bound else 'context' if limit > room else None)
+            if reason:
+                raise Denied('OUTPUT_LIMIT_ABOVE_BOUND', findings=[dict(
+                    model=model['name'] or model['id'], limit=limit, reason=reason,
+                    bound=bound if reason == 'bound' else room)])
         panel = [_configuration(model, body['tier'], index, assumptions, catalogue['fetched_at'],
                                 efforts.get(model['id']), limits[model['id']])
                  for index, model in enumerate(selected, 1)]
