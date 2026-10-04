@@ -345,7 +345,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     campaign_actions = ('create-campaign', 'inspect-campaign', 'admit-campaign', 'stop-campaign', 'resume-campaign')
     campaign_actions += ('inspect-attempt-status',)
-    parser.add_argument('action', choices=campaign_actions + ('migrate-privacy', 'privacy-status', 'purge-privacy', 'reconcile-privacy', 'reserve-judgment', 'execute-judgment', 'inspect-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'initialize-qualification', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
+    parser.add_argument('action', choices=campaign_actions + ('migrate-privacy', 'privacy-status', 'purge-privacy', 'reconcile-privacy', 'reserve-judgment', 'execute-judgment', 'inspect-judgment', 'calibrate-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'initialize-qualification', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
     parser.add_argument('--data', type=Path)
     parser.add_argument('--migration-id')
     parser.add_argument('--journal-sha256')
@@ -556,6 +556,12 @@ def main(argv=None):
                             _fields(request, ('operation_id',), args.action)
                             judgment.execute(args.data, request['operation_id'], transport)
                             result = judgment.inspect(store, request['operation_id'])
+                elif args.action == 'calibrate-judgment':
+                    from . import calibration
+                    if args.authority is None:
+                        raise ValueError('Fichier opérateur privé requis')
+                    private_path(args.authority)
+                    result = calibration.report(store, json.loads(args.authority.read_text(), object_pairs_hook=_unique_object))
                 elif args.action in ('initialize-reconciliation', 'reconcile-cost', 'inspect-cost'):
                     with worker_lock(store):
                         verify(store)
