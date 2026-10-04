@@ -356,7 +356,14 @@ def denied_response(error):
     if error.code == 'TEXT_TOO_SHORT' and error.field == 'request':
         from .preparation import REQUEST_MIN
         messages['TEXT_TOO_SHORT'] = f'Ce texte est trop court : décrivez la tâche en {REQUEST_MIN} caractères au moins.'
-    status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG', 'SOURCE_MISSING') else 403
+    if error.code == 'OUTPUT_LIMIT_ABOVE_BOUND':
+        refused = error.findings[0]
+        messages[error.code] = (
+            f"{refused['model']} : la limite de sortie de {refused['limit']} jetons dépasse "
+            + ('sa borne publiée' if refused['reason'] == 'bound' else 'ce que sa fenêtre de contexte laisse après cet exemple')
+            + f" : {refused['bound']} jetons au plus. Indiquez une limite plus basse dans « Ajuster la limite de "
+            "sortie par modèle ». Rien n’a été enregistré.")
+    status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG', 'SOURCE_MISSING', 'OUTPUT_LIMIT_ABOVE_BOUND') else 403
     result = {'status': status, 'value': {'error': messages.get(error.code, generic),
               'error_code': error.code, 'error_field': error.field}}
     if error.findings is not None:

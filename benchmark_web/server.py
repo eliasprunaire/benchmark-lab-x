@@ -319,7 +319,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                         if any(len(v) != 1 and not (configurations and k == 'models')
                                for k, v in values.items()):
                             raise ValueError('Champ répété')
-                        form_body: dict[str, str | list[str] | int | dict[str, str]] = {
+                        form_body: dict[str, str | list[str] | int | dict[str, str] | dict[str, int]] = {
                             k: (v if configurations and k == 'models' else v[0])
                             for k, v in values.items()}
                         if configurations:
@@ -331,6 +331,17 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                                 del form_body[key]
                             if efforts:
                                 form_body['efforts'] = efforts
+                            # `max_tokens:<slug>` vide garde la limite de sortie par défaut ; celui d'un modèle
+                            # décoché reste pré-rempli par la relecture et part avec le formulaire : il est ignoré
+                            limits: dict[str, int] = {}
+                            for key in [key for key in form_body if key.startswith('max_tokens:')]:
+                                if (limit := values[key][0]) and key.removeprefix('max_tokens:') in values.get('models', []):
+                                    if not re.fullmatch('[1-9][0-9]{0,8}', limit):
+                                        raise ValueError('Limite de sortie invalide')
+                                    limits[key.removeprefix('max_tokens:')] = int(limit)
+                                del form_body[key]
+                            if limits:
+                                form_body['output_limits'] = limits
                         if 'revision' in form_body:
                             revision = values['revision'][0]
                             if not re.fullmatch('0|[1-9][0-9]*' if self.path.endswith('/contribution') else '[1-9][0-9]*', revision):

@@ -324,6 +324,9 @@ def model_view(model, detail, excluded_providers):
     # Prix de la route choisie quand le relevé le donne, sinon prix affiché du modèle
     if route is not None and type(route.get('pricing')) is dict:
         pricing = {**pricing, **{key: route['pricing'][key] for key in ('prompt', 'completion') if key in route['pricing']}}
+    # Même règle pour la borne de complétion : celle de la route épinglée prime sur celle du modèle
+    if route is not None and type(route.get('max_completion_tokens')) is int and route['max_completion_tokens'] > 0:
+        max_output = route['max_completion_tokens']
     context_length = model.get('context_length')
     if context_length is not None and (type(context_length) is not int or context_length <= 0):
         raise ValueError('Fenêtre de contexte invalide')
