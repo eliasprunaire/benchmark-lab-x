@@ -202,8 +202,12 @@ def preflight(store, session_id, dossier_id, campaign_id, transport, *, check_ac
         budget_id = provider_access.preparation_budget_id(session_id)
         guard_budget(store, connection, budget_id, campaign_id=campaign_id)
         grant = (snapshot['admission'] or {}).get('authority', {}).get('automatic_judgment')
-        if grant and grant != dict(budget_id=budget_id, configuration=config):
-            raise ConflictError('Profil de jugement différent du lancement autorisé')
+        if grant:
+            # Un déploiement ultérieur garde le profil autorisé au lancement : l'évaluation se termine sous lui
+            if (grant != dict(budget_id=budget_id, configuration=grant['configuration'])
+                    or grant['configuration'] != config and transport.for_configuration(grant['configuration']) is None):
+                raise ConflictError('Profil de jugement différent du lancement autorisé')
+            config = grant['configuration']
         all_operations = store._operations(connection)
         budget = store._budget(connection, budget_id, all_operations)
         total = _money(config['reserve_usd']) * count
@@ -228,7 +232,8 @@ def reserve_campaign(store, session_id, dossier_id, campaign_id, transport):
             if storage.data_version(connection) != version:
                 plan = _plan(store, connection, session_id, dossier_id, campaign_id, transport)
             for request, ctx, content, link in plan:
-                judgment._reserve(store, connection, request, transport, automatic=True,
+                judge = transport.for_configuration(request['requested_configuration']) or transport
+                judgment._reserve(store, connection, request, judge, automatic=True,
                                   prepared=(ctx, content), link=link)
             return [request['operation_id'] for request, _, _, _ in plan]
 

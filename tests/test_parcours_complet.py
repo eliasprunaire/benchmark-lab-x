@@ -182,6 +182,7 @@ class ParcoursComplet(unittest.TestCase):
         self.preparation_stage = 'clarification'
         self.criteria = None
         self.judged = []
+        self.judge_systems = []
 
     def prepare(self, operation, request):
         self.calls.append(('préparation', operation['operation_id']))
@@ -1282,6 +1283,7 @@ class ParcoursComplet(unittest.TestCase):
         def answer(method, path, *, body, headers):
             content = json.loads(json.loads(body)['messages'][1]['content'])
             self.judged.append(content)
+            self.judge_systems.append(json.loads(body)['messages'][0]['content'])
             output = content['output']
             proof = {'piece_id': output['piece_id'], 'sha256': output['sha256'], 'passage': output['content']}
 
@@ -1677,6 +1679,61 @@ class ParcoursComplet(unittest.TestCase):
                 {'verdicts': {'omission': omis['verdict'], 'autre_formulation': valable['verdict']},
                  'preuve_omission': preuve, 'regle': omis['judgment']['evidence_binding']['version']},
                 ensure_ascii=False, indent=2) + '\n')
+
+    def test_evaluation_terminee_sous_le_profil_autorise_apres_redemarrage(self):
+        """Lancement ancien, redémarrage sous un autre profil du juge, jugement sous le profil autorisé
+
+        Modes d'échec couverts :
+        1. un profil autorisé ni courant ni retenu est remplacé en silence par le profil courant ;
+        2. le redémarrage sous un nouveau profil refuse l'évaluation d'une comparaison déjà autorisée ;
+        3. l'évaluation part sous le nouveau profil au lieu du profil autorisé ;
+        4. une évaluation déjà réservée ne peut plus partir après un nouveau redémarrage sans profil retenu
+        """
+        from copy import copy
+        from benchmark import automatic_judgment as auto
+        from benchmark.transports import openrouter
+        from tests.test_openrouter_preparation import estimate_for
+        self.juge_factice(lambda cible: ('PASS', 'candidate', 'Respecté dans la réponse'))
+        autorise = self.assistants['judgment_transport']._profile
+        dossier = self.exemple_qualifie()
+        page, _, _ = self.request(dossier + '/configurations')
+        # Deux réponses au coût connu : l'admission reste ouverte, son autorisation de jugement fait foi
+        page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'],
+                                                     'tier': 'low'})
+        self.submit(page, '/start', {})
+        execution.execute_launch(self.data, self.starts.get_nowait()['candidate_attempts'], self.candidate,
+                                 access_secret=SECRET, access_transport=self.access)
+        campaign_id = dossier.rsplit('/', 1)[1] + '-c1'
+        with closing(storage.Store(self.data)) as store:
+            grant = campaigns.inspect(store, campaign_id)['admission']['authority']['automatic_judgment']['configuration']
+        nouveau = dict(autorise, system=autorise['system'] + ' Consigne d’un déploiement ultérieur.')
+
+        def redemarrage(retenus):
+            judge = openrouter.OpenRouterJudgment(None, nouveau, retained=retenus)
+            judge._quote = openrouter.configuration(estimate_for(nouveau), nouveau)
+            self.assistants['judgment_transport'] = judge
+        # 1. Profil autorisé introuvable : refus explicite, rien n'est réservé ni envoyé
+        redemarrage(())
+        page, _, _ = self.request(dossier)
+        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        self.submit(page, '/evaluate', {}, status=409)
+        self.assertTrue(self.starts.empty())
+        # 2 et 3. Profil autorisé retenu par le déploiement : réservé sous lui, configuration du lancement intacte
+        redemarrage([autorise])
+        self.submit(page, '/evaluate', {})
+        ids = self.starts.get_nowait()['judgment_operations']
+        with closing(storage.Store(self.data)) as store:
+            reservees = [op for op in store.inspect_operations() if op['operation_id'] in ids]
+        self.assertEqual(2, len(reservees))
+        self.assertTrue(all(op['requested_configuration'] == grant for op in reservees))
+        # 4. Nouveau redémarrage, profil retenu retiré : l'évaluation réservée part sous ses propres octets
+        juge = copy(self.bound[2])
+        juge._retained = []
+        auto.execute_campaign(self.data, ids, juge)
+        self.assertEqual([autorise['system']] * 2, self.judge_systems)
+        results, _, _ = self.request(dossier + '/campaigns/' + campaign_id)
+        self.examine(results, dossier + '/campaigns/' + campaign_id, 'évaluée sous le profil autorisé', None)
+        self.assertIn('Satisfait', results.visible)
 
     def test_obligation_composee_au_dela_du_plafond_refusee(self):
         """Une obligation de plus de cinq éléments n'entre pas dans l'exemple : aucun juge sans borne"""

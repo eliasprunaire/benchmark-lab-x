@@ -469,11 +469,13 @@ def main(argv=None):
                         args.pi_package, args.node, key)
                     candidate_factory()
                 if args.preparation_assistant is not None:
-                    from .transports.openrouter import AUTOMATIC_JUDGMENT_PROFILE, OpenRouterJudgment, OpenRouterQualification
+                    from .transports.openrouter import (AUTOMATIC_JUDGMENT_PROFILE, PREVIOUS_JUDGMENT_PROFILE,
+                                                        OpenRouterJudgment, OpenRouterQualification)
                     # Clé de la session seule ; relevés publics lus au démarrage, sans réseau par page
                     transport = OpenRouterPreparation(None, profile)
                     qualification_transport = OpenRouterQualification(None, args.qualification_assistant)
-                    judgment_transport = OpenRouterJudgment(None, load_profile(str(AUTOMATIC_JUDGMENT_PROFILE)))
+                    judgment_transport = OpenRouterJudgment(None, load_profile(str(AUTOMATIC_JUDGMENT_PROFILE)), retained=[
+                        load_profile(str(path)) for path in (PREVIOUS_JUDGMENT_PROFILE,) if path.is_file()])
                     for assistant in (transport, qualification_transport, judgment_transport):
                         assistant.quote()
                     # Juge des témoins : son relevé figé au démarrage, comme les autres

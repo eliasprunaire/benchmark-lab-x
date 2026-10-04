@@ -633,13 +633,35 @@ class OpenRouterQualification(OpenRouterPreparation):
 
 
 AUTOMATIC_JUDGMENT_PROFILE = Path(__file__).parent / 'profiles' / 'judgment.profile.json'
+# Profil du juge précédent, gardé tant qu'une comparaison autorisée sous lui peut encore être évaluée
+PREVIOUS_JUDGMENT_PROFILE = Path(__file__).parent / 'profiles' / 'judgment-previous.profile.json'
 
 
 class OpenRouterJudgment(OpenRouterPreparation):
     phases = ('judgment',)
 
-    def __init__(self, api_key, profile):
+    def __init__(self, api_key, profile, retained=()):
+        """`retained` : profils antérieurs gardés par le déploiement pour terminer les lancements qu'ils ont autorisés"""
         super().__init__(api_key, profile)
+        self._retained = [frozen_profile(item) for item in retained]
+
+    def for_configuration(self, requested, profile=None):
+        """Copie liée au profil exact d'une configuration autorisée, ou None
+
+        Candidats : profil courant, profils retenus, puis `profile` (relu dans les octets d'une opération réservée).
+        Seul compte un profil qui reproduit toute la configuration, empreintes du prompt et du profil comprises
+        """
+        for candidate in [self._profile, *self._retained] + ([profile] if profile is not None else []):
+            try:
+                frozen = frozen_profile(candidate)
+                if configuration(requested.get('reservation_estimate'), frozen) != requested:
+                    continue
+            except (ValueError, KeyError, TypeError):
+                continue
+            bound = copy(self)
+            bound._profile, bound._quote = frozen, deepcopy(requested)
+            return bound
+        return None
 
     def content(self, request):
         return outgoing.closed_review(request['outgoing'])

@@ -250,6 +250,11 @@ def execute(data, operation_id, transport):
                 raise ConflictError('Campagne arrêtée depuis la réservation du jugement')
             _envelope(store, connection, saved['request'], operation_id)
             request = dict(outgoing_format=outgoing.FORMAT, outgoing=saved['content'])
+            if automatic:
+                # Profil exact de la réservation, relu dans ses octets : un déploiement ultérieur ne la bloque pas
+                config = operation['requested_configuration']
+                system = json.loads(operation['resources'][1])['messages'][0]['content']
+                transport = transport.for_configuration(config, _profile(config, system)) or transport
             wire = transport.prepare(deepcopy(operation), deepcopy(request))
             if wire != operation['resources'][1]:
                 raise IntegrityError('Profil ou octets modifiés')
