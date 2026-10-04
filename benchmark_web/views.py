@@ -142,9 +142,7 @@ def render_witnesses(qualification):
         content += ('<h4>' + text(WITNESS_KINDS[witness['kind']]) + ' : ' + text(WITNESS_STATES[witness['state']]) + '</h4>'
                     + '<p>Attendu justifié : ' + text(witness['justification']) + '</p>'
                     + listing(row['description'] + ' : attendu ' + decision(row, row['expected']) + ', décidé '
-                              + decision(row, row['decided'])
-                              + ('' if row['proven'] or row['decided'] is None else ' (sans citation exacte de la réponse témoin)')
-                              for row in witness['expected'])
+                              + decision(row, row['decided']) for row in witness['expected'])
                     + '<p class="hint">Contrôlé sur la version ' + text(str(witness['revision'])) + ' de l’exemple, avec sa référence'
                     + ('' if cost is None else ' · coût observé : ' + text(
                         'inconnu' if cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']))

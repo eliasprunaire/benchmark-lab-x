@@ -1203,14 +1203,14 @@ def _retryable_witness(store, connection, operation):
     Aucune relance quand un témoin est contredit, sans preuve ou aux effets inconnus : la version est déjà bloquée
     """
     binding = _witness_binding(operation)
-    state = _automatic_qualification(store, connection, operation['dossier_id'], operation['revision'])
     latest, _ = _witness_series(store, connection, binding['witness_of'])
     # Série encore en cours : son fil reprogramme les relances dues quand il se termine
-    if any(item['state'] in ('INTENT_RECORDED', 'EMISSION_POSSIBLE') for item in latest.values()):
+    if (latest.get(binding['witness'], {}).get('operation_id') != operation['operation_id']
+            or any(item['state'] in ('INTENT_RECORDED', 'EMISSION_POSSIBLE') for item in latest.values())):
         return None
+    state = _automatic_qualification(store, connection, operation['dossier_id'], operation['revision'])
     if (state is None or state['operation_id'] != binding['witness_of'] or state['status'] != 'PENDING'
-            or state.get('cause') != 'provider'
-            or latest.get(binding['witness'], {}).get('operation_id') != operation['operation_id']):
+            or state.get('cause') != 'provider'):
         return None
     return operation
 
