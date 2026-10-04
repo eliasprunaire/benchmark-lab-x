@@ -1075,6 +1075,7 @@ def _check(record, kind, state, description, findings, nested=''):
 CALIBRATION_SENTENCES = {
     'SANS_ETALONNAGE': 'Aucun étalonnage enregistré pour ce juge et cette méthode.',
     'NON_APPLICABLE': 'Un étalonnage existe pour une autre version ou un autre juge ; il ne s’applique pas à ce résultat.',
+    'HORS_PERIMETRE': 'Un étalonnage existe pour ce juge et cette méthode, mais son périmètre ne couvre pas ce dossier ; il ne s’applique pas à ce résultat.',
     'SANS_JUGE_ASSISTE': 'Cette évaluation n’a pas été faite par un juge assisté : aucun étalonnage de juge ne s’applique.',
     'IDENTITE_ILLISIBLE': 'L’identité du juge de cette évaluation est illisible : aucun étalonnage ne peut lui être rattaché.',
     'FICHES_ILLISIBLES': 'Les fiches d’étalonnage ne sont pas lisibles : aucune ne peut être rattachée à ce résultat.'}
@@ -1088,12 +1089,12 @@ def render_calibration(scope):
         return content + '<p>' + text(CALIBRATION_SENTENCES[scope['state']]) + '</p></div>'
     dated = 'Décision du ' + jour_lisible(decision['decided_at']) + '.'
     if scope['state'] == 'QUALIFIEE':
-        content += '<p>Méthode qualifiée pour le périmètre déclaré : ' + text('« ' + decision['perimeter'] + ' »') + '. ' + text(dated)
+        content += '<p>Méthode qualifiée pour le périmètre déclaré : ' + text('« ' + decision['perimeter']['description'] + ' »') + '. Ce dossier fait partie de ce périmètre. ' + text(dated)
         content += ' Cette qualification ne vaut que pour cette version de méthode et ce juge.'
-        content += ' Le périmètre est celui que la fiche déclare : il n’est pas recoupé avec ce résultat.</p>'
+        content += '</p>'
     else:
         content += '<p>Étalonnage examiné : qualification non retenue pour ce juge et cette méthode. ' + text(dated) + '</p>'
-        content += '<p>Périmètre examiné : ' + text(decision['perimeter']) + '</p>'
+        content += '<p>Périmètre examiné : ' + text(decision['perimeter']['description']) + '</p>'
     identity = decision['judge_identity']
     content += '<details><summary>Limites et fiche d’étalonnage</summary>' + listing(decision['limits']) + readable_fields({
         'Décision': decision['decision_id'], 'Autorité': decision['authority'],

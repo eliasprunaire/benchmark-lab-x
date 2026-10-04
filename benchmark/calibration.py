@@ -147,8 +147,13 @@ def _decision(decision):
     # Date canonique AAAA-MM-JJ : une forme que `fromisoformat` accepte sans être lisible ensuite est refusée
     if date.fromisoformat(decision['decided_at']).isoformat() != decision['decided_at']:
         raise ValueError('Date de décision attendue sous la forme AAAA-MM-JJ')
-    for key in ('authority', 'perimeter'):
-        _text(decision[key], key)
+    _text(decision['authority'], 'authority')
+    perimeter = decision['perimeter']
+    _fields(perimeter, ('description', 'dossier_ids'), 'périmètre')
+    _text(perimeter['description'], 'description')
+    _texts(perimeter['dossier_ids'], 'dossier_ids', required=True, unique=True)
+    for dossier_id in perimeter['dossier_ids']:
+        identifier(dossier_id)
     if decision['status'] not in DECISION_STATUSES:
         raise ValueError('État de décision inconnu')
     identity = decision['judge_identity']
@@ -193,6 +198,9 @@ def scope(operation):
         return dict(state='FICHES_ILLISIBLES', decision=None)
     decision = next((d for d in decisions if d['judge_identity'] == identity), None)
     if decision is not None:
+        # Le périmètre est une liste de dossiers : un autre dossier ne bénéficie pas de la fiche
+        if operation['dossier_id'] not in decision['perimeter']['dossier_ids']:
+            return dict(state='HORS_PERIMETRE', decision=None)
         return dict(state='QUALIFIEE' if decision['status'] == 'QUALIFIED' else 'NON_QUALIFIEE', decision=decision)
     other = any(d['judge_identity']['method']['id'] == identity['method']['id'] for d in decisions)
     return dict(state='NON_APPLICABLE' if other else 'SANS_ETALONNAGE', decision=None)
