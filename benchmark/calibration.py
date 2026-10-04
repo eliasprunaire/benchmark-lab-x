@@ -76,6 +76,8 @@ def _batch(batch):
     rule = batch['disagreement_rule']
     _fields(rule, ('origin', 'treatment', 'min_annotators'), 'règle de désaccord')
     _text(rule['origin'], 'origin')
+    if provenance['kind'] == 'authorized-real' and rule['origin'].startswith('TEST_ONLY'):
+        raise ValueError('Une règle de test ne décide pas les désaccords d’un lot réel')
     if rule['treatment'] not in TREATMENTS or type(rule['min_annotators']) is not int or rule['min_annotators'] < 1:
         raise ValueError('Règle de désaccord invalide')
     if batch['separation'] is not None:
@@ -129,6 +131,8 @@ def _read(store, item) -> _Read:
                                                         'prompt_sha256', 'evidence_rule')})
     criteria = {control: row['id'] for row in review['obligations'] + review['eliminatory_errors']
                 for control in row['control_ids']}
+    if len(criteria) != sum(len(row['control_ids']) for row in review['obligations'] + review['eliminatory_errors']):
+        raise _Excluded('CONTROLE_PARTAGE', 'Un contrôle sert plusieurs critères : lecture par exigence ambiguë')
     proposal = view['proposal']
     unusable = None if proposal is not None else state
     decided, findings = {}, {}
@@ -194,9 +198,8 @@ def report(store, batch):
             continue
         group = groups.setdefault(digest(read.identity), dict(judge=read.identity, items=0, totals=dict.fromkeys(CATEGORIES, 0),
                                                               requirements={}))
-        group['items'] += 1
         for control, criterion in read.criteria.items():
-            row = group['requirements'].setdefault(criterion, dict(criterion_id=criterion, control_ids=[], measured_pairs=0,
+            row = group['requirements'].setdefault(criterion, dict(criterion_id=criterion, control_ids=[], measured_pairs=0, arbitrated_pairs=0,
                 counts=dict.fromkeys(CATEGORIES, 0), examples={name: [] for name in CATEGORIES[1:]}))
             if control not in row['control_ids']:
                 row['control_ids'].append(control)
@@ -205,6 +208,7 @@ def report(store, batch):
             excluded.append(dict(where, control_id=None, reason='ANNOTATION_HORS_CONTROLES',
                                  detail='Contrôles inconnus du jugement : ' + ', '.join(sorted(unknown))))
             continue
+        item_pairs = 0
         for control, criterion in read.criteria.items():
             status, resolution = _reference(item, control, rule)
             notes = [dict(author=n['author'], status=n['status'], justification=n['justification'])
@@ -222,6 +226,9 @@ def report(store, batch):
             category = _category(status, judged['status'])
             row = group['requirements'][criterion]
             row['measured_pairs'] += 1
+            row['arbitrated_pairs'] += resolution == 'arbitrated'
+            item_pairs += 1
+            group['items'] += item_pairs == 1
             row['counts'][category] += 1
             group['totals'][category] += 1
             pairs += 1

@@ -9,7 +9,7 @@ import stat
 import unittest
 from unittest.mock import patch
 
-from benchmark import calibration, evaluation, runtime, storage
+from benchmark import calibration, evaluation, judgment, runtime, storage
 from benchmark.validation import digest
 from tests import test_s14_acceptance as acceptance
 
@@ -34,7 +34,6 @@ class CalibrationTests(unittest.TestCase):
         self.judge('j-disagree')
         self.judge('j-bind')
         self.judge('j-unusable', unusable=True)
-        from benchmark import judgment
         judgment.reserve(h.store, h.request('j-pending'), h.transport)
         self.calls = h.http.request.call_count
         self.operations = deepcopy(h.store.inspect_operations())
@@ -147,9 +146,12 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual('simulated', report['judge_provenance']['kind'])
         self.assertEqual(digest(self.full_lot()['control']), report['separation']['reserved_sha256'])
         self.assertEqual('NON_ETABLIE', report['separation']['anteriority'])
+        def keys(value):
+            if type(value) is dict:
+                return set(value) | {k for child in value.values() for k in keys(child)}
+            return {k for child in value for k in keys(child)} if type(value) is list else set()
+        self.assertFalse({'rate', 'taux', 'percent', 'threshold', 'qualified'} & keys(report))
         text = json.dumps(report, ensure_ascii=False)
-        for forbidden in ('rate', 'taux', 'percent', 'threshold', 'seuil_atteint', 'qualified'):
-            self.assertNotIn(forbidden, set(report) | {key for group in report['judges'] for key in group})
         self.assertIn('ne garantit pas', text)
         self.assertIn('Aucun seuil', text)
         proven = calibration.report(self.h.store, self.full_lot(separation=dict(source='Registre daté des lots', dated='2026-10-01')))
@@ -178,6 +180,7 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual((0, 1), (o1['counts']['accord'], o1['counts']['acceptation_erronee']))
         self.assertEqual('FAIL', o1['examples']['acceptation_erronee'][0]['reference']['status'])
         self.assertEqual('arbitrated', o1['examples']['acceptation_erronee'][0]['reference']['resolution'])
+        self.assertEqual(1, o1['arbitrated_pairs'])
         # Même désaccord sous la règle d'exclusion : aucun arbitrage n'est lu
         items[0]['arbitrations'] = []
         strict = calibration.report(self.h.store, self.lot(items))
@@ -201,11 +204,13 @@ class CalibrationTests(unittest.TestCase):
             batch['separation'] = dict(source='Registre', dated='hier')
         def repeated_author(batch):
             batch['control'][0]['annotations'].append(deepcopy(batch['control'][0]['annotations'][0]))
+        def test_rule_on_real(batch):
+            batch['judge_provenance'] = dict(kind='authorized-real', authority='Décision documentée')
         def future(batch):
             batch['format'] = 'benchmark-lab-x/calibration-batch/v2'
         def unjustified(batch):
             batch['control'][0]['annotations'][0]['justification'] = ''
-        for name, change in dict(twice=twice, silent_real=silent_real, unknown_treatment=unknown_treatment, nobody=nobody,
+        for name, change in dict(twice=twice, silent_real=silent_real, test_rule_on_real=test_rule_on_real, unknown_treatment=unknown_treatment, nobody=nobody,
                                  undated=undated, repeated_author=repeated_author, future=future, unjustified=unjustified).items():
             with self.subTest(name):
                 batch = self.lot([self.item('j-agree')])
@@ -224,6 +229,10 @@ class CalibrationTests(unittest.TestCase):
         reasons = {(row['operation_id'], row['control_id']): row['reason'] for row in report['coverage']['excluded']}
         self.assertEqual({('j-agree', None): 'ANNOTATION_HORS_CONTROLES', ('j-reject', 'defect'): 'NON_ANNOTE'}, reasons)
         self.assertEqual(1, report['coverage']['measured_pairs'])
+        self.assertEqual([1], [group['items'] for group in report['judges']])
+        none = calibration.report(self.h.store, self.lot([stray]))
+        self.assertEqual(0, none['coverage']['measured_items'])
+        self.assertEqual([0], [group['items'] for group in none['judges']])
 
     def test_two_judge_configurations_are_never_pooled(self):
         other = deepcopy(self.h.profile)
