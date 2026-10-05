@@ -14,8 +14,11 @@ from .storage import ConflictError, IntegrityError, _fields, _text, _unique_obje
 from .validation import _hash, _texts, digest, identifier
 
 FORMAT = 'benchmark-lab-x/calibration-batch/v1'
-REPORT_FORMAT = 'benchmark-lab-x/calibration-report/v1'
+REPORT_FORMAT = 'benchmark-lab-x/calibration-report/v2'
 STATUSES = ('PASS', 'FAIL', 'INDETERMINE')
+# Un reçu illisible n'a rien décidé : case propre, jamais confondue avec un INDETERMINE lisible
+JUDGE_STATUSES = STATUSES + ('ILLISIBLE',)
+KINDS = ('obligation', 'eliminatory')
 TREATMENTS = ('exclude', 'arbitrated')
 CATEGORIES = ('accord', 'faux_rejet', 'acceptation_erronee', 'indetermine', 'decision_sur_reference_indeterminee')
 LIMITS = (
@@ -44,7 +47,13 @@ class _Excluded(Exception):
 class _Read(NamedTuple):
     identity: dict
     criteria: dict[str, str]
+    kinds: dict[str, str]
     decided: dict[str, dict]
+
+
+def _table():
+    """Paires mesurées par statut de référence (lignes) et par statut du juge (colonnes), à zéro"""
+    return {ref: dict.fromkeys(JUDGE_STATUSES, 0) for ref in STATUSES}
 
 
 def reserved_sha256(control):
@@ -241,7 +250,11 @@ def _read(store, item) -> _Read:
         proposal, unusable = None, 'PROPOSITION_ILLISIBLE'
     if proposal is None:
         decided = {control: 'INDETERMINE' for control in criteria}
-    return _Read(identity, criteria, {
+    if {row['id'] for row in review['obligations']} & {row['id'] for row in review['eliminatory_errors']}:
+        raise _Excluded('CRITERE_PARTAGE', 'Un critère est à la fois obligation et erreur éliminatoire : type ambigu')
+    kinds = {row['id']: kind for kind, rows in (('obligation', review['obligations']),
+                                                ('eliminatory', review['eliminatory_errors'])) for row in rows}
+    return _Read(identity, criteria, kinds, {
         control: dict(status=status, findings=findings.get(control, []), unusable=unusable)
         for control, status in decided.items()})
 
@@ -290,11 +303,21 @@ def report(store, batch):
         except _Excluded as error:
             excluded.append(dict(where, control_id=None, reason=error.args[0], detail=error.args[1]))
             continue
-        group = groups.setdefault(digest(read.identity), dict(judge=read.identity, items=0, totals=dict.fromkeys(CATEGORIES, 0),
-                                                              requirements={}))
+        group = groups.setdefault(digest(read.identity), dict(
+            judge=read.identity, items=0, totals=dict.fromkeys(CATEGORIES, 0), by_reference=_table(),
+            by_reference_arbitrated=_table(), by_kind={kind: _table() for kind in KINDS}, requirements={}))
+        # Un identifiant n'est unique que dans une spécification : un autre type sous le même identifiant ne s'additionne pas
+        diverging = sorted(c for c in set(read.criteria.values())
+                           if c in group['requirements'] and group['requirements'][c]['kind'] != read.kinds[c])
+        if diverging:
+            excluded.append(dict(where, control_id=None, reason='TYPE_DE_CRITERE_DIVERGENT',
+                                 detail='Type différent de celui lu sous le même identifiant : ' + ', '.join(diverging)))
+            continue
         for control, criterion in read.criteria.items():
-            row = group['requirements'].setdefault(criterion, dict(criterion_id=criterion, control_ids=[], measured_pairs=0, arbitrated_pairs=0,
-                counts=dict.fromkeys(CATEGORIES, 0), examples={name: [] for name in CATEGORIES[1:]}))
+            row = group['requirements'].setdefault(criterion, dict(
+                criterion_id=criterion, kind=read.kinds[criterion], control_ids=[], measured_pairs=0, arbitrated_pairs=0,
+                counts=dict.fromkeys(CATEGORIES, 0), by_reference=_table(), by_reference_arbitrated=_table(),
+                examples={name: [] for name in CATEGORIES[1:]}))
             if control not in row['control_ids']:
                 row['control_ids'].append(control)
         unknown = {n['control_id'] for n in item['annotations'] + item['arbitrations']} - set(read.criteria)
@@ -327,6 +350,12 @@ def report(store, batch):
             group['items'] += item_pairs == 1
             row['counts'][category] += 1
             group['totals'][category] += 1
+            cell = 'ILLISIBLE' if judged['unusable'] is not None else judged['status']
+            for table in (row['by_reference'], group['by_reference'], group['by_kind'][row['kind']]):
+                table[status][cell] += 1
+            if resolution == 'arbitrated':
+                for table in (row['by_reference_arbitrated'], group['by_reference_arbitrated']):
+                    table[status][cell] += 1
             pairs += 1
             measured_items.add(item['operation_id'])
             if category != 'accord':

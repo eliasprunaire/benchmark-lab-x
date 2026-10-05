@@ -352,6 +352,131 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(1, by_rule[None]['counts']['indetermine'])
         self.assertIsNotNone(by_rule[None]['examples']['indetermine'][0]['judge']['unusable'])
 
+    @staticmethod
+    def cells(matrix):
+        """Cases non nulles d'une table `by_reference`, lues en `{(référence, juge): nombre}`"""
+        return {(ref, judged): n for ref, row in matrix.items() for judged, n in row.items() if n}
+
+    def test_denominators_split_measured_pairs_by_reference_and_judge_status(self):
+        report = calibration.report(self.h.store, self.full_lot())
+        group, = report['judges']
+        o1, e1 = self.requirement(report, 'O1'), self.requirement(report, 'E1')
+        self.assertEqual(('obligation', 'eliminatory'), (o1['kind'], e1['kind']))
+        self.assertEqual({('PASS', 'PASS'): 2, ('PASS', 'FAIL'): 1, ('PASS', 'INDETERMINE'): 1, ('PASS', 'ILLISIBLE'): 1},
+                         self.cells(o1['by_reference']))
+        self.assertEqual({('PASS', 'PASS'): 4, ('PASS', 'ILLISIBLE'): 1, ('FAIL', 'PASS'): 1}, self.cells(e1['by_reference']))
+        self.assertEqual({('PASS', 'PASS'): 6, ('PASS', 'FAIL'): 1, ('PASS', 'INDETERMINE'): 1, ('PASS', 'ILLISIBLE'): 2,
+                          ('FAIL', 'PASS'): 1}, self.cells(group['by_reference']))
+        # Total par type : lisible sans recalcul
+        self.assertEqual(self.cells(o1['by_reference']), self.cells(group['by_kind']['obligation']))
+        self.assertEqual(self.cells(e1['by_reference']), self.cells(group['by_kind']['eliminatory']))
+        self.assertEqual({}, self.cells(group['by_reference_arbitrated']))
+
+    def test_denominators_agree_with_the_existing_counts(self):
+        report = calibration.report(self.h.store, self.lot([
+            self.item('j-agree'), self.item('j-reject'), self.item('j-accept', defect='FAIL'),
+            self.item('j-indet', source='INDETERMINE'), self.item('j-disagree', source='INDETERMINE'),
+            self.item('j-unusable', source='INDETERMINE')]))
+        group, = report['judges']
+        for scope in (group, *group['requirements']):
+            table = scope['by_reference']
+            cells = self.cells(table)
+            pairs = scope['totals'] if scope is group else scope['counts']
+            self.assertEqual(sum(cells.values()), sum(pairs.values()))
+            self.assertEqual(cells.get(('PASS', 'FAIL'), 0), pairs['faux_rejet'])
+            self.assertEqual(cells.get(('FAIL', 'PASS'), 0), pairs['acceptation_erronee'])
+            self.assertEqual(table['INDETERMINE']['PASS'] + table['INDETERMINE']['FAIL'],
+                             pairs['decision_sur_reference_indeterminee'])
+            self.assertEqual(sum(table[ref][judged] for ref in ('PASS', 'FAIL') for judged in ('INDETERMINE', 'ILLISIBLE'))
+                             + table['INDETERMINE']['ILLISIBLE'], pairs['indetermine'])
+            self.assertEqual(table['PASS']['PASS'] + table['FAIL']['FAIL'] + table['INDETERMINE']['INDETERMINE'], pairs['accord'])
+        # Abstention commune lisible : case propre, distincte d'un reçu illisible
+        o1 = self.requirement(report, 'O1')['by_reference']
+        self.assertEqual((1, 1), (o1['INDETERMINE']['INDETERMINE'], o1['INDETERMINE']['ILLISIBLE']))
+        self.assertEqual(1, o1['INDETERMINE']['PASS'])
+        self.assertEqual(sum(self.requirement(report, c)['measured_pairs'] for c in ('O1', 'E1')),
+                         sum(self.cells(group['by_reference']).values()))
+
+    def test_arbitrated_pairs_stay_identifiable_inside_the_same_table(self):
+        item = self.item('j-disagree', source=('PASS', 'FAIL'))
+        item['arbitrations'] = [dict(control_id='source', arbiter='arbitre-c', status='FAIL', justification='Passage absent')]
+        rule = dict(origin=RULE_ORIGIN, treatment='arbitrated', min_annotators=2, synthetic=True)
+        report = calibration.report(self.h.store, self.lot([item, self.item('j-agree')], disagreement_rule=rule))
+        group, = report['judges']
+        o1 = self.requirement(report, 'O1')
+        self.assertEqual({('PASS', 'PASS'): 1, ('FAIL', 'PASS'): 1}, self.cells(o1['by_reference']))
+        self.assertEqual({('FAIL', 'PASS'): 1}, self.cells(o1['by_reference_arbitrated']))
+        self.assertEqual(o1['arbitrated_pairs'], sum(self.cells(o1['by_reference_arbitrated']).values()))
+        self.assertEqual({('FAIL', 'PASS'): 1}, self.cells(group['by_reference_arbitrated']))
+
+    def test_denominators_are_zero_not_missing_without_measured_pairs(self):
+        partial = self.item('j-reject')
+        partial['annotations'] = [row for row in partial['annotations'] if row['control_id'] == 'source']
+        report = calibration.report(self.h.store, self.lot([partial]))
+        group, = report['judges']
+        e1 = self.requirement(report, 'E1')
+        self.assertEqual(('eliminatory', 0, {}), (e1['kind'], e1['measured_pairs'], self.cells(e1['by_reference'])))
+        self.assertEqual(set(calibration.STATUSES), set(e1['by_reference']))
+        self.assertTrue(all(set(row) == set(calibration.JUDGE_STATUSES) for row in e1['by_reference'].values()))
+        self.assertEqual({}, self.cells(group['by_kind']['eliminatory']))
+        self.assertEqual({('PASS', 'FAIL'): 1}, self.cells(group['by_kind']['obligation']))
+        # Aucune paire du tout : le groupe existe, ses tables sont à zéro
+        none = calibration.report(self.h.store, self.lot([self.item('j-agree') | dict(annotations=[])]))
+        group, = none['judges']
+        self.assertEqual({}, self.cells(group['by_reference']))
+
+    def test_excluded_items_enter_no_cell(self):
+        report = calibration.report(self.h.store, self.lot([self.item('j-pending'), self.item('j-bind', output='0' * 64)]))
+        self.assertEqual([], report['judges'])
+        self.assertEqual(0, report['coverage']['measured_pairs'])
+        self.assertEqual({'SANS_RECU', 'LIAISON_DIVERGENTE'}, {row['reason'] for row in report['coverage']['excluded']})
+        self.assertEqual('benchmark-lab-x/calibration-report/v2', report['format'])
+
+    def rewritten(self, change):
+        real = judgment.inspect
+
+        def inspect(store, operation_id):
+            view = real(store, operation_id)
+            saved = json.loads(view['operation']['resources'][0])
+            change(operation_id, saved['content'])
+            view['operation']['resources'][0] = storage._strict_json(saved)
+            return view
+        return patch.object(calibration.judgment, 'inspect', side_effect=inspect)
+
+    def test_a_criterion_that_is_both_obligation_and_eliminatory_excludes_the_item(self):
+        def same_id(operation_id, content):
+            content['eliminatory_errors'][0]['id'] = content['obligations'][0]['id']
+        with self.rewritten(same_id):
+            report = calibration.report(self.h.store, self.lot([self.item('j-agree')]))
+        self.assertEqual([('j-agree', None, 'CRITERE_PARTAGE')],
+                         [(row['operation_id'], row['control_id'], row['reason']) for row in report['coverage']['excluded']])
+        self.assertEqual([], report['judges'])
+
+    def test_the_same_identifier_with_another_type_is_never_added_to_the_first(self):
+        def other_type(operation_id, content):
+            if operation_id == 'j-reject':
+                content['obligations'][0]['id'] = 'E1'
+                content['eliminatory_errors'][0]['id'] = 'E9'
+        with self.rewritten(other_type):
+            report = calibration.report(self.h.store, self.lot([self.item('j-agree'), self.item('j-reject')]))
+        self.assertEqual([('j-reject', None, 'TYPE_DE_CRITERE_DIVERGENT')],
+                         [(row['operation_id'], row['control_id'], row['reason']) for row in report['coverage']['excluded']])
+        group, = report['judges']
+        self.assertEqual(1, group['items'])
+        self.assertEqual({('PASS', 'PASS'): 2}, self.cells(group['by_reference']))
+        self.assertEqual({('PASS', 'PASS'): 1}, self.cells(group['by_kind']['obligation']))
+        self.assertEqual({('PASS', 'PASS'): 1}, self.cells(group['by_kind']['eliminatory']))
+
+    def test_two_judge_configurations_keep_their_own_denominators(self):
+        other = deepcopy(self.h.profile)
+        other['system'] += ' autre consigne'
+        self.h.configure(other)
+        self.judge('j-second', source='FAIL')
+        report = calibration.report(self.h.store, self.lot([self.item('j-agree'), self.item('j-second')]))
+        first, second = report['judges']
+        self.assertEqual({('PASS', 'PASS'): 2}, self.cells(first['by_reference']))
+        self.assertEqual({('PASS', 'FAIL'): 1, ('PASS', 'PASS'): 1}, self.cells(second['by_reference']))
+
     def test_command_replays_retained_receipts_offline_and_writes_nothing(self):
         path = self.h.fixture.home / 'lot.json'
         previous = os.umask(0o077)
