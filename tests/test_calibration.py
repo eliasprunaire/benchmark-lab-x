@@ -416,7 +416,7 @@ class CalibrationTests(unittest.TestCase):
         group, = report['judges']
         e1 = self.requirement(report, 'E1')
         self.assertEqual(('eliminatory', 0, {}), (e1['kind'], e1['measured_pairs'], self.cells(e1['by_reference'])))
-        self.assertEqual(set(calibration.REFERENCE_STATUSES), set(e1['by_reference']))
+        self.assertEqual(set(calibration.STATUSES), set(e1['by_reference']))
         self.assertTrue(all(set(row) == set(calibration.JUDGE_STATUSES) for row in e1['by_reference'].values()))
         self.assertEqual({}, self.cells(group['by_kind']['eliminatory']))
         self.assertEqual({('PASS', 'FAIL'): 1}, self.cells(group['by_kind']['obligation']))
@@ -425,13 +425,47 @@ class CalibrationTests(unittest.TestCase):
         group, = none['judges']
         self.assertEqual({}, self.cells(group['by_reference']))
 
-    def test_excluded_items_enter_no_cell_and_no_rate_is_added(self):
-        report = calibration.report(self.h.store, self.full_lot())
+    def test_excluded_items_enter_no_cell(self):
+        report = calibration.report(self.h.store, self.lot([self.item('j-pending'), self.item('j-bind', output='0' * 64)]))
+        self.assertEqual([], report['judges'])
+        self.assertEqual(0, report['coverage']['measured_pairs'])
+        self.assertEqual({'SANS_RECU', 'LIAISON_DIVERGENTE'}, {row['reason'] for row in report['coverage']['excluded']})
+        self.assertEqual('benchmark-lab-x/calibration-report/v2', report['format'])
+
+    def rewritten(self, change):
+        real = judgment.inspect
+
+        def inspect(store, operation_id):
+            view = real(store, operation_id)
+            saved = json.loads(view['operation']['resources'][0])
+            change(operation_id, saved['content'])
+            view['operation']['resources'][0] = storage._strict_json(saved)
+            return view
+        return patch.object(calibration.judgment, 'inspect', side_effect=inspect)
+
+    def test_a_criterion_that_is_both_obligation_and_eliminatory_excludes_the_item(self):
+        def same_id(operation_id, content):
+            content['eliminatory_errors'][0]['id'] = content['obligations'][0]['id']
+        with self.rewritten(same_id):
+            report = calibration.report(self.h.store, self.lot([self.item('j-agree')]))
+        self.assertEqual([('j-agree', None, 'CRITERE_PARTAGE')],
+                         [(row['operation_id'], row['control_id'], row['reason']) for row in report['coverage']['excluded']])
+        self.assertEqual([], report['judges'])
+
+    def test_the_same_identifier_with_another_type_is_never_added_to_the_first(self):
+        def other_type(operation_id, content):
+            if operation_id == 'j-reject':
+                content['obligations'][0]['id'] = 'E1'
+                content['eliminatory_errors'][0]['id'] = 'E9'
+        with self.rewritten(other_type):
+            report = calibration.report(self.h.store, self.lot([self.item('j-agree'), self.item('j-reject')]))
+        self.assertEqual([('j-reject', None, 'TYPE_DE_CRITERE_DIVERGENT')],
+                         [(row['operation_id'], row['control_id'], row['reason']) for row in report['coverage']['excluded']])
         group, = report['judges']
-        self.assertEqual(report['coverage']['measured_pairs'], sum(self.cells(group['by_reference']).values()))
-        text = json.dumps(report, ensure_ascii=False)
-        for forbidden in ('"rate"', '"taux"', 'upper_bound', '"borne'):
-            self.assertNotIn(forbidden, text)
+        self.assertEqual(1, group['items'])
+        self.assertEqual({('PASS', 'PASS'): 2}, self.cells(group['by_reference']))
+        self.assertEqual({('PASS', 'PASS'): 1}, self.cells(group['by_kind']['obligation']))
+        self.assertEqual({('PASS', 'PASS'): 1}, self.cells(group['by_kind']['eliminatory']))
 
     def test_two_judge_configurations_keep_their_own_denominators(self):
         other = deepcopy(self.h.profile)
