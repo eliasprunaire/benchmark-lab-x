@@ -886,7 +886,9 @@ class PreparationVolumeTests(unittest.TestCase):
         return len(statements)
 
     def resume(self):
-        service._resume_retries(self.store, self.data, self.retries(), session_id=self.session)
+        # Aucun minuteur réel : un fil relancerait un dossier après le nettoyage du test
+        with patch.object(service.threading, 'Timer'):
+            service._resume_retries(self.store, self.data, self.retries(), session_id=self.session)
 
     def test_relectures_completes_independantes_du_nombre_de_dossiers(self):
         self.add_dossiers(3)
