@@ -706,12 +706,13 @@ def _resume_retries(store, data, retries, *, session_id=None, dossier_id=None):
     """
     _close_expired_ambiguous(store, data, retries)
     kinds = _retry_kinds()
+    # Un seul snapshot pour les trois natures : le registre des opérations est lu et validé une fois
+    with store.read_snapshot():
+        due = {kind: kinds[kind][0](store, session_id=session_id, dossier_id=dossier_id)
+               for kind, retry in retries.items() if retry[0] is not None}
     for kind, retry in retries.items():
-        profile, _, _, _, timers = retry
-        if profile is None:
-            continue
-        for operation_id, dossier, session, delay in kinds[kind][0](
-                store, session_id=session_id, dossier_id=dossier_id):
+        timers = retry[4]
+        for operation_id, dossier, session, delay in due.get(kind, ()):
             if operation_id in timers:
                 continue
             timer = threading.Timer(delay, _retention_worker, args=(
@@ -733,8 +734,7 @@ def _close_expired_ambiguous(store, data, retries):
     now = preparation._now()
     store.close_expired_ambiguous(now)
     timers = next(iter(retries.values()))[4]
-    expiries = [datetime.fromisoformat(op['created_at']) + AMBIGUITY_DELAY
-                for op in store.inspect_operations() if op['state'] == 'AMBIGUOUS']
+    expiries = [datetime.fromisoformat(created_at) + AMBIGUITY_DELAY for created_at in store.ambiguous_created_at()]
     if expiries and _AMBIGUITY_TIMER not in timers:
         timer = threading.Timer(max(0, (min(expiries) - now).total_seconds()), _retention_worker,
                                 args=(data, None, _expire_ambiguous, data, retries))

@@ -258,9 +258,9 @@ def retry(store, operation_id, transport, source=None):
 
 def due_retries(store, *, session_id=None, dossier_id=None):
     """Relances d'évaluation à programmer : (dernière opération, cas, session, secondes avant l'échéance)"""
-    connection = p.connection_for(store)
+    p.connection_for(store)
     result = []
-    with _transaction(connection):
+    with store.read_snapshot() as connection:
         if not connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_control'").fetchone():
             return result
         rows = connection.execute(

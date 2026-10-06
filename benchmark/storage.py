@@ -892,6 +892,11 @@ class Store:
     def inspect_operations(self) -> list[dict]:
         return self._operations(self._s1_connection())
 
+    def ambiguous_created_at(self) -> list[str]:
+        """Dates d'intention des opérations ambiguës, sans relire ni valider tout le registre"""
+        return [created_at for (created_at,) in self._s1_connection().execute(
+            "SELECT created_at FROM operations WHERE state='AMBIGUOUS'")]
+
     def _reconciliation(self, connection, operation):
         if not connection.execute("SELECT 1 FROM sqlite_schema WHERE name='cost_reconciliations'").fetchone():
             return None
@@ -1267,6 +1272,11 @@ class Store:
         """Check one database snapshot without retaining reads across transactions"""
         # Paths and identities here; schema and data once, inside the snapshot itself
         connection = self._connection_checked(schema=False)
+        if (self._verified_read_changes is not None and connection.in_transaction
+                and connection.total_changes == self._verified_read_changes):
+            # Snapshot déjà ouvert et inchangé : les lectures imbriquées partagent ses vérifications
+            yield connection
+            return
         with _transaction(connection):
             self._schema_checked(connection)
             previous =(self._verified_read_changes, self._verified_operations, self._verified_contexts,
