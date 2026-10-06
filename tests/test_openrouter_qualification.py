@@ -817,5 +817,112 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.assertEqual(2, len(transport.calls))
 
 
+class PreparationVolumeTests(unittest.TestCase):
+    """Un POST de préparation ne relit pas tout le registre des opérations une fois par dossier (#489)"""
+    PADDING = 126_000
+    # Proposition de l'issue #489, à fixer par Ayo : aucune mesure ne la fonde
+    BOUND_SECONDS = 5
+
+    def setUp(self):
+        self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
+        temporary = tempfile.TemporaryDirectory(prefix='volume-preparation-')
+        self.addCleanup(temporary.cleanup)
+        self.data = Path(temporary.name).resolve() / 'private'
+        storage.initialize(self.data)
+        storage.initialize_preparation(self.data)
+        self.store = storage.Store(self.data)
+        self.addCleanup(self.store.close)
+        self.store.create_budget('preparation', '100000', 'USD')
+        self.transport = QualificationTransport({'qualified': True, 'findings': [], 'summary': 'Exemple qualifié'})
+        self.clock = [datetime(2026, 10, 6, 12, tzinfo=timezone.utc)]
+        self.enterContext(patch.object(prep, '_now', side_effect=lambda: self.clock[0]))
+        self.session, _, _ = prep.session(self.store, None, create=True)
+        self.count = 0
+
+    def add_dossiers(self, count):
+        """Une session, comme la production ; par dossier : une préparation, une vérification et deux témoins reçus"""
+        for _ in range(count):
+            self.count += 1
+            name = f'dossier-{self.count}'
+            session = self.session
+            self.clock[0] += prep.SESSION_INTERVAL + timedelta(seconds=1)
+            operation_id, _ = prep.submit(self.store, session, name,
+                {'action_id': 'create', 'request': 'Organiser les actions de cet atelier entièrement inventé'},
+                'a' * 40, Authorized(True, **QualificationTransport.granted))
+            response = response_for({'operation_id': operation_id})
+            response['receipt']['result']['package']['candidate']['criteria'] = {
+                'eliminatory': ['Ne pas inventer une action'],
+                'obligations': ['Toutes les actions présentes', 'Responsables conservés'],
+                'quality': [{'label': 'Clarté', 'scale': ['excellent', 'acceptable', 'faible'],
+                             'favorable': 'excellent'}]}
+            response['cost'].update(amount='0.10', currency='USD')
+            prep.execute(self.data, operation_id, Authorized(lambda *_: response, **QualificationTransport.granted))
+            preview = prep.view(self.store, session, name)
+            _, qualification_id, _ = prep.validate_and_qualify(
+                self.store, session, name, prep.binding(name, preview['revision'], preview['package_sha256']),
+                'b' * 40, self.transport)
+            prep.execute_qualification(self.data, qualification_id, self.transport)
+
+    def pad_receipts(self):
+        """Reçus de la taille mesurée en production (environ 126 Ko), sans changer leur forme"""
+        connection = self.store._connection
+        for operation_id, raw in connection.execute('SELECT operation_id, receipt_json FROM operations').fetchall():
+            receipt = json.loads(raw)
+            receipt['observed_configuration'] = dict(receipt['observed_configuration'] or {}, padding='x' * self.PADDING)
+            connection.execute('UPDATE operations SET receipt_json=? WHERE operation_id=?',
+                               (storage._strict_json(receipt), operation_id))
+
+    def retries(self):
+        return {kind: (self.transport, None, None, 'b' * 40, {}) for kind in ('qualification', 'preparation', 'judgment')}
+
+    def full_reads(self, call):
+        statements = []
+        self.store._connection.set_trace_callback(
+            lambda statement: statements.append(statement) if 'LEFT JOIN reservations r' in statement else None)
+        try:
+            call()
+        finally:
+            self.store._connection.set_trace_callback(None)
+        return len(statements)
+
+    def resume(self):
+        service._resume_retries(self.store, self.data, self.retries(), session_id=self.session)
+
+    def test_relectures_completes_independantes_du_nombre_de_dossiers(self):
+        self.add_dossiers(3)
+        few = self.full_reads(lambda: self.resume())
+        self.add_dossiers(9)
+        many = self.full_reads(lambda: self.resume())
+        self.assertEqual(few, many)
+        self.assertLessEqual(many, 1)
+
+    def test_base_vide_sans_relecture(self):
+        self.assertEqual(0, self.full_reads(self.resume))
+
+    def test_recu_corrompu_reste_refuse(self):
+        self.add_dossiers(2)
+        connection = self.store._connection
+        operation_id = connection.execute("SELECT operation_id FROM operations WHERE state='RECEIVED' LIMIT 1").fetchone()[0]
+        connection.execute('UPDATE operations SET receipt_json=? WHERE operation_id=?', ('{', operation_id))
+        with self.assertRaises(storage.IntegrityError):
+            self.resume()
+
+    def test_duree_a_volume_realiste(self):
+        self.add_dossiers(50)
+        self.pad_receipts()
+        operations = self.store.inspect_operations()
+        self.assertGreaterEqual(len(operations), 150)
+        self.assertGreater(len(storage._strict_json(operations[0]['receipt'])), 100_000)
+        started = time.perf_counter()
+        reads = self.full_reads(lambda: self.resume())
+        seconds = time.perf_counter() - started
+        artifact = os.environ.get('BENCHMARK_VOLUME_ARTIFACT')
+        if artifact:
+            Path(artifact).write_text(json.dumps(dict(
+                dossiers=self.count, operations=len(operations), receipt_bytes=self.PADDING,
+                full_reads=reads, seconds=round(seconds, 3), bound_seconds=self.BOUND_SECONDS), indent=2) + '\n')
+        self.assertLess(seconds, self.BOUND_SECONDS)
+
+
 if __name__ == '__main__':
     unittest.main()

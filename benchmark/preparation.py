@@ -1015,9 +1015,9 @@ def _retryable_preparation(store, connection, operation_id):
 
 def due_preparation_retries(store, *, session_id=None, dossier_id=None):
     """Relances automatiques de préparation et de correction : (opération, cas, session, secondes)"""
-    connection = connection_for(store)
+    connection_for(store)
     result = []
-    with _transaction(connection):
+    with store.read_snapshot() as connection:
         rows = connection.execute(
             "SELECT o.operation_id FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) JOIN operations o "
             "USING(operation_id) WHERE a.input_revision=d.current_revision AND o.state='RECEIVED' "
@@ -1226,9 +1226,9 @@ def _due(operation):
 
 def due_qualification_retries(store, *, session_id=None, dossier_id=None):
     """Relances automatiques à programmer : (opération, cas, session, secondes avant l'échéance)"""
-    connection = connection_for(store)
+    connection_for(store)
     result = []
-    with _transaction(connection):
+    with store.read_snapshot() as connection:
         if not connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s2_dossiers'").fetchone():
             return result
         rows = connection.execute(

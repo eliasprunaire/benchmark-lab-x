@@ -733,8 +733,7 @@ def _close_expired_ambiguous(store, data, retries):
     now = preparation._now()
     store.close_expired_ambiguous(now)
     timers = next(iter(retries.values()))[4]
-    expiries = [datetime.fromisoformat(op['created_at']) + AMBIGUITY_DELAY
-                for op in store.inspect_operations() if op['state'] == 'AMBIGUOUS']
+    expiries = [datetime.fromisoformat(created_at) + AMBIGUITY_DELAY for created_at in store.ambiguous_created_at()]
     if expiries and _AMBIGUITY_TIMER not in timers:
         timer = threading.Timer(max(0, (min(expiries) - now).total_seconds()), _retention_worker,
                                 args=(data, None, _expire_ambiguous, data, retries))
