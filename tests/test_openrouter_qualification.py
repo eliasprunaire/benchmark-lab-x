@@ -898,6 +898,15 @@ class PreparationVolumeTests(unittest.TestCase):
         self.assertEqual(few, many)
         self.assertLessEqual(many, 1)
 
+    def test_relectures_avec_tables_s4_presentes(self):
+        # Les trois natures de relance interrogent le registre, comme en production
+        self.add_dossiers(12)
+        qualification.initialize(self.data)
+        campaigns.initialize(self.data)
+        self.assertEqual(1, self.store._connection.execute(
+            "SELECT count(*) FROM sqlite_schema WHERE name='s4_control'").fetchone()[0])
+        self.assertLessEqual(self.full_reads(self.resume), 1)
+
     def test_base_vide_sans_relecture(self):
         self.assertEqual(0, self.full_reads(self.resume))
 
