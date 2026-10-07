@@ -918,6 +918,34 @@ class PreparationVolumeTests(unittest.TestCase):
         with self.assertRaises(storage.IntegrityError):
             self.resume()
 
+    def test_deux_post_concurrents_aboutissent(self):
+        # Un POST = une écriture puis la passe de relances : avant #490, la lecture longue de l'un
+        # bloquait l'écriture de l'autre au-delà du délai d'attente de SQLite (OperationalError)
+        self.add_dossiers(40)
+        self.pad_receipts()
+        start = threading.Barrier(2)
+        errors = []
+
+        def post(name):
+            try:
+                with closing(storage.Store(self.data)) as store:
+                    start.wait(10)
+                    for turn in range(2):
+                        store.create_budget(f'{name}-{turn}', '1', 'USD')
+                        service._resume_retries(store, self.data, self.retries(), session_id=self.session)
+            except BaseException as error:
+                errors.append(error)
+        threads = [threading.Thread(target=post, args=(name,)) for name in ('a', 'b')]
+        with patch.object(service.threading, 'Timer'):
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(60)
+        self.assertEqual([], errors)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        for budget in ('a-0', 'a-1', 'b-0', 'b-1'):
+            self.assertEqual('1', self.store.inspect_budget(budget)['limit'])
+
     def test_duree_a_volume_realiste(self):
         self.add_dossiers(50)
         self.pad_receipts()
