@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -218,6 +219,13 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.assertEqual(self.preview['revision'], binding['revision'])
         self.assertTrue(start)
         return transport, operation_id
+
+    def test_profil_du_juge_montre_un_critere_distinct_de_son_controle(self):
+        # #492 : l'exemple de format ne doit pas apprendre que `criterion_id` égale toujours `control_id`
+        profile = json.loads((Path(assistant.__file__).parent / 'profiles' / 'judgment.profile.json').read_text())
+        pairs = re.findall(r'"criterion_id":"([^"]+)","control_id":"([^"]+)"', profile['system'])
+        self.assertTrue(pairs)
+        self.assertTrue(any(criterion != control for criterion, control in pairs), pairs)
 
     def test_qualification_quote_is_frozen_before_serving_requests(self):
         from tests.test_openrouter_preparation import estimate_for
@@ -839,7 +847,7 @@ class PreparationVolumeTests(unittest.TestCase):
         self.session, _, _ = prep.session(self.store, None, create=True)
         self.count = 0
 
-    def add_dossiers(self, count):
+    def add_dossiers(self, count, obligations=('Toutes les actions présentes', 'Responsables conservés')):
         """Une session, comme la production ; par dossier : une préparation, une vérification et deux témoins reçus"""
         for _ in range(count):
             self.count += 1
@@ -852,7 +860,7 @@ class PreparationVolumeTests(unittest.TestCase):
             response = response_for({'operation_id': operation_id})
             response['receipt']['result']['package']['candidate']['criteria'] = {
                 'eliminatory': ['Ne pas inventer une action'],
-                'obligations': ['Toutes les actions présentes', 'Responsables conservés'],
+                'obligations': list(obligations),
                 'quality': [{'label': 'Clarté', 'scale': ['excellent', 'acceptable', 'faible'],
                              'favorable': 'excellent'}]}
             response['cost'].update(amount='0.10', currency='USD')
@@ -906,6 +914,21 @@ class PreparationVolumeTests(unittest.TestCase):
         self.assertEqual(1, self.store._connection.execute(
             "SELECT count(*) FROM sqlite_schema WHERE name='s4_control'").fetchone()[0])
         self.assertLessEqual(self.full_reads(self.resume), 1)
+
+    def test_juge_qui_ecrit_le_controle_comme_critere_rend_le_temoin_inexploitable(self):
+        # #492 : pour une obligation composée, un `criterion_id` égal à l'identifiant d'un contrôle d'élément
+        # fait rejeter toute la réponse du juge, qui ne décide alors aucun contrôle du témoin
+        controller = self.transport.controller()
+        controller.script = [lambda findings: [dict(row, criterion_id=row['control_id']) for row in findings]]
+        self.add_dossiers(1, obligations=[{'description': 'Lister les actions', 'elements': ['Forme', 'Échéance']},
+                                          'Responsables conservés'])
+        request = controller.calls[0][1]['outgoing']
+        composed = next(row for row in request['obligations'] if len(row['control_ids']) == 2)
+        self.assertNotIn(composed['id'], composed['control_ids'])
+        witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
+        self.assertEqual('UNPROVEN', witnesses[0]['state'])
+        self.assertTrue(all(row['decided'] is None for row in witnesses[0]['expected']))
+        self.assertEqual('BLOCKED', prep.view(self.store, self.session, 'dossier-1')['qualification']['status'])
 
     def test_base_vide_sans_relecture(self):
         self.assertEqual(0, self.full_reads(self.resume))
