@@ -227,6 +227,12 @@ class OpenRouterQualificationTests(unittest.TestCase):
         self.assertTrue(pairs)
         self.assertTrue(any(criterion != control for criterion, control in pairs), pairs)
 
+    def test_profil_du_juge_interdit_d_entourer_le_passage(self):
+        # #492, règle A : la consigne doit dire que le passage est la citation seule, sans guillemets de bordure
+        profile = json.loads((Path(assistant.__file__).parent / 'profiles' / 'judgment.profile.json').read_text())
+        self.assertIn('sans guillemets', profile['system'])
+        self.assertIn('ne figurent pas dans la pièce', profile['system'])
+
     def test_qualification_quote_is_frozen_before_serving_requests(self):
         from tests.test_openrouter_preparation import estimate_for
         transport = assistant.OpenRouterQualification(KEY)
@@ -925,6 +931,20 @@ class PreparationVolumeTests(unittest.TestCase):
         request = controller.calls[0][1]['outgoing']
         composed = next(row for row in request['obligations'] if len(row['control_ids']) == 2)
         self.assertNotIn(composed['id'], composed['control_ids'])
+        witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
+        self.assertEqual('UNPROVEN', witnesses[0]['state'])
+        self.assertTrue(all(row['decided'] is None for row in witnesses[0]['expected']))
+        self.assertEqual('BLOCKED', prep.view(self.store, self.session, 'dossier-1')['qualification']['status'])
+
+    def test_juge_qui_ajoute_un_guillemet_fermant_absent_de_la_piece_rend_le_temoin_inexploitable(self):
+        # #492, règle A : une citation d'un caractère de trop ferme la réponse entière du juge, comme le 2026-10-09
+        controller = self.transport.controller()
+
+        def closing_quote(findings):
+            return [dict(row, evidence=[dict(proof, passage=proof['passage'] + '\u00bb')
+                                        if proof['passage'] else proof for proof in row['evidence']]) for row in findings]
+        controller.script = [closing_quote]
+        self.add_dossiers(1)
         witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
         self.assertEqual('UNPROVEN', witnesses[0]['state'])
         self.assertTrue(all(row['decided'] is None for row in witnesses[0]['expected']))
