@@ -1038,6 +1038,20 @@ class PreparationVolumeTests(unittest.TestCase):
         self.assertEqual('BLOCKED', qualification['status'])
         self.assertEqual([], prep.due_qualification_retries(self.store, session_id=self.session))
 
+    def test_relance_de_format_impossible_bloque_sans_attente_infinie(self):
+        # #492, piste 3 : clé retirée ou budget insuffisant, la relance ne part jamais ; le dossier ne reste pas en
+        # attente : passé la fenêtre de relance, le contrôle est dit non réalisé et l'exemple n'est pas mis en cause
+        due = self.rejected_witness_retries([True])
+        self.assertEqual(1, len(due))
+        self.assertIsNone(prep.retry_qualification(self.store, due[0][0], None, 'b' * 40))
+        self.assertEqual('PENDING', prep.view(self.store, self.session, 'dossier-1')['qualification']['status'])
+        self.clock[0] += timedelta(hours=1)
+        qualification = prep.view(self.store, self.session, 'dossier-1')['qualification']
+        self.assertEqual(('BLOCKED', 'provider'), (qualification['status'], qualification['cause']))
+        self.assertIn('n’a pas pu avoir lieu', qualification['summary'])
+        self.assertEqual('NOT_RUN', qualification['witnesses'][0]['state'])
+        self.assertEqual([], prep.due_qualification_retries(self.store, session_id=self.session))
+
     def test_base_vide_sans_relecture(self):
         self.assertEqual(0, self.full_reads(self.resume))
 
