@@ -22,6 +22,13 @@ from tests import test_s5_regressions as s5
 from tests.test_s5_regressions import findings
 
 
+def load_tests(loader, tests, pattern):
+    # La CI exécute ce module dans son étape dédiée ; la découverte locale reste complète
+    if pattern is not None and os.environ.get('BENCHMARK_TEST_CI_SPLIT') == '1':
+        return unittest.TestSuite()
+    return tests
+
+
 def pi_installation():
     configured = os.environ.get('BENCHMARK_TEST_PI_PACKAGE')
     executable = shutil.which('pi')
