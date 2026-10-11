@@ -1049,6 +1049,71 @@ class PreparationVolumeTests(unittest.TestCase):
         self.assertEqual('UNPROVEN', qualification['witnesses'][0]['state'])
         self.assertEqual([], prep.due_qualification_retries(self.store, session_id=self.session))
 
+    def witness_operations(self):
+        return [item for item in self.store._operations(self.store._connection) if item['engine_version'] == prep.WITNESS_FORMAT]
+
+    def test_une_seule_reservation_par_relance_de_format(self):
+        # #492, piste 3 : un rejet donne une seule relance, un rappel ne la double pas
+        due = self.rejected_witness_retries([True])
+        self.assertEqual(2, len(self.witness_operations()))
+        self.assertIsNotNone(prep.retry_qualification(self.store, due[0][0], self.transport, 'b' * 40))
+        self.assertIsNone(prep.retry_qualification(self.store, due[0][0], self.transport, 'b' * 40))
+        self.assertEqual(3, len(self.witness_operations()))
+
+    def test_relance_de_format_sans_budget_suffisant_n_est_pas_reservee(self):
+        # #492, piste 3 : réserve de la relance au-dessus du budget disponible : aucune opération, dossier bloqué
+        # après la fenêtre de relance, avec l'exemple hors de cause
+        due = self.rejected_witness_retries([True])
+        with patch.object(prep, '_reserve_amount', return_value='1000000'):
+            self.assertIsNone(prep.retry_qualification(self.store, due[0][0], self.transport, 'b' * 40))
+        self.assertEqual(2, len(self.witness_operations()))
+        self.assertEqual('PENDING', prep.view(self.store, self.session, 'dossier-1')['qualification']['status'])
+        self.clock[0] += timedelta(hours=1)
+        qualification = prep.view(self.store, self.session, 'dossier-1')['qualification']
+        self.assertEqual(('BLOCKED', 'provider'), (qualification['status'], qualification['cause']))
+        self.assertIn('n’a pas pu avoir lieu', qualification['summary'])
+
+    def test_relance_de_format_n_a_pas_lieu_si_l_exemple_a_change(self):
+        # #492, piste 3 : une correction entre le rejet et la relance rend la relance sans objet, sur l'ancienne version
+        due = self.rejected_witness_retries([True])
+        self.clock[0] += prep.SESSION_INTERVAL + timedelta(seconds=1)
+        preview = prep.view(self.store, self.session, 'dossier-1')
+        operation_id, _ = prep.submit(self.store, self.session, 'dossier-1', {
+            'action_id': 'correction', 'revision': preview['revision'], 'kind': 'correct',
+            'message': 'Préciser la consigne'}, 'a' * 40, Authorized(True, **QualificationTransport.granted))
+        response = response_for({'operation_id': operation_id})
+        response['cost'].update(amount='0.10', currency='USD')
+        prep.execute(self.data, operation_id, Authorized(lambda *_: response, **QualificationTransport.granted))
+        self.assertGreater(prep.view(self.store, self.session, 'dossier-1')['revision'], preview['revision'])
+        self.assertIsNone(prep.retry_qualification(self.store, due[0][0], self.transport, 'b' * 40))
+        self.assertEqual(2, len(self.witness_operations()))
+        self.assertEqual([], prep.due_qualification_retries(self.store, session_id=self.session))
+
+    def test_temoin_contredit_et_temoin_rejete_gardent_le_message_a_revoir(self):
+        # #492, critère 4 : un témoin contredit est un verdict sur l'exemple ; avec un témoin rejeté, le dossier reste
+        # à revoir, sans relance du témoin rejeté et sans la cause `judge`
+        controller = self.transport.controller()
+
+        def closing_quote(findings):
+            return [dict(row, evidence=[dict(proof, passage=proof['passage'] + '»')
+                                        if proof['passage'] else proof for proof in row['evidence']]) for row in findings]
+
+        def contradiction(findings):
+            defect = next(row for row in self.transport.last['witnesses'] if row['kind'] == 'defect')
+            if controller.calls[-1][1]['outgoing']['output']['content'] != defect['output']:
+                return findings
+            return [dict(row, status='PASS') if row['control_id'] == defect['expected'][0]['control_id'] else row
+                    for row in findings]
+        controller.script = [closing_quote, contradiction]
+        self.add_dossiers(1)
+        qualification = prep.view(self.store, self.session, 'dossier-1')['qualification']
+        self.assertEqual({'UNPROVEN', 'CONTRADICTED'}, {row['state'] for row in qualification['witnesses']})
+        self.assertEqual('BLOCKED', qualification['status'])
+        self.assertIsNone(qualification.get('cause'))
+        self.assertIn('à revoir', qualification['summary'])
+        self.assertEqual([], prep.due_qualification_retries(self.store, session_id=self.session))
+        self.assertEqual(2, len(self.witness_operations()))
+
     def test_relance_de_format_impossible_bloque_sans_attente_infinie(self):
         # #492, piste 3 : clé retirée ou budget insuffisant, la relance ne part jamais ; le dossier ne reste pas en
         # attente : passé la fenêtre de relance, le contrôle est dit non réalisé et l'exemple n'est pas mis en cause
