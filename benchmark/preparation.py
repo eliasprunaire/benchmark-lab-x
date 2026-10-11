@@ -576,7 +576,7 @@ def _witness_series(store, connection, qualification_id):
     return latest, attempts
 
 
-def _witness_due(operation):
+def _witness_due(operation, needed=None):
     """Échéance de la relance d'un contrôle de témoin, ou None
 
     Incident reçu ou clôture avant envoi, au plus RETRY_ATTEMPTS tentatives ; jamais après un effet ambigu,
@@ -584,7 +584,7 @@ def _witness_due(operation):
     """
     if operation['state'] != 'RECEIVED' or _retry_attempt(operation) >= RETRY_ATTEMPTS:
         return None
-    if _format_rejected(operation):
+    if _format_rejected(operation, needed):
         expired = _now() > datetime.fromisoformat(operation['created_at']) + FORMAT_RETRY_WINDOW
         return _now() if _retry_attempt(operation) < FORMAT_RETRY_ATTEMPTS and not expired else None
     if _provider_incident(operation, unsent=True) == 'NOT_SENT':
@@ -592,7 +592,7 @@ def _witness_due(operation):
     return _retry_due(operation)
 
 
-def _format_rejected(operation):
+def _format_rejected(operation, needed=None):
     """Réponse reçue d'un juge, rejetée en entier par `_witness_decisions` : aucune décision n'en sort"""
     result = operation['receipt']['result']
     if operation['state'] != 'RECEIVED' or type(result) is not dict or result == {'status': 'NOT_SENT'}:
@@ -601,7 +601,7 @@ def _format_rejected(operation):
     from .judgment import EVIDENCE_OMISSION_BINDING
     try:
         _witness_decisions(result, binding['review'], omission_allowed=(
-            operation['requested_configuration'].get('evidence_rule') == EVIDENCE_OMISSION_BINDING))
+            operation['requested_configuration'].get('evidence_rule') == EVIDENCE_OMISSION_BINDING), needed=needed)
     except (ValueError, TypeError, KeyError):
         return True
     return False
@@ -625,6 +625,7 @@ def _witness_controls(store, connection, operation, witnesses, *, ran):
         if not {row['control_id'] for row in witness['expected']} <= set(controls):
             raise IntegrityError('Attente de témoin hors des contrôles du paquet')
         state, decided, model, cost, due, rejected = 'NOT_RUN', {}, None, None, None, False
+        needed = {row['control_id'] for row in witness['expected']}
         if index in found:
             item = found[index]
             binding = _witness_binding(item)
@@ -642,20 +643,21 @@ def _witness_controls(store, connection, operation, witnesses, *, ran):
                 try:
                     from .judgment import EVIDENCE_OMISSION_BINDING
                     decided = _witness_decisions(item['receipt']['result'], binding['review'], omission_allowed=(
-                        item['requested_configuration'].get('evidence_rule') == EVIDENCE_OMISSION_BINDING))
+                        item['requested_configuration'].get('evidence_rule') == EVIDENCE_OMISSION_BINDING),
+                        needed=needed)
                     state = _witness_state(witness, decided)
                 except (ValueError, TypeError, KeyError):
                     # IntegrityError comprise : une citation étrangère ou divergente n'est pas une preuve
                     state, rejected = 'UNPROVEN', True
                     # #492 : un second contrôle est dû tant que le plafond n'est pas atteint
-                    due = None if ambiguous else _witness_due(item)
+                    due = None if ambiguous else _witness_due(item, needed)
                     if due is not None:
                         state = 'PENDING'
                     elif not ambiguous and _retry_attempt(item) < FORMAT_RETRY_ATTEMPTS:
                         # Fenêtre de relance écoulée sans second contrôle : il n'a pas eu lieu
                         state = 'NOT_RUN'
             elif not ambiguous:
-                due = _witness_due(item)
+                due = _witness_due(item, needed)
         rows.append(dict(kind=witness['kind'], output=witness['output'], justification=witness['justification'],
                          state=state, revision=revision, model=model, cost=cost, expected=[dict(
                              description=controls[row['control_id']]['description'],
@@ -671,12 +673,14 @@ def _witness_controls(store, connection, operation, witnesses, *, ran):
     return rows
 
 
-def _witness_decisions(answer, review, *, omission_allowed=False):
+def _witness_decisions(answer, review, *, omission_allowed=False, needed=None):
     """Décision du juge par contrôle, lue comme le verdict des campagnes (`evaluation.defects`)
 
     Chaque constat doit viser un critère et un contrôle déclarés, et chaque citation un passage exact d'une
     pièce de la revue, empreinte recalculée par le serveur, ou une omission prouvée comme pour une réponse
     candidate (`evaluation.finding_evidence`) ; sinon la réponse entière est inexploitable.
+    `needed` : contrôles que le témoin exige. Une citation fausse sur un autre contrôle écarte ce seul constat
+    et laisse le contrôle INDETERMINE ; sur un contrôle exigé, ou sans `needed`, la réponse entière reste rejetée.
     FAIL : défaut attribué à la réponse témoin et cité dans elle ; PASS : tous les constats du contrôle le
     disent en citant la réponse témoin ; sinon INDETERMINE
     """
@@ -689,7 +693,7 @@ def _witness_decisions(answer, review, *, omission_allowed=False):
     _fields(answer, ('findings', 'measures', 'limits', 'proposed_verdict'), 'jugement de témoin')
     if type(answer['findings']) is not list:
         raise ValueError('Constats requis')
-    findings = []
+    findings, discarded = [], set()
     for finding in answer['findings']:
         _fields(finding, ('criterion_id', 'control_id', 'status', 'attribution', 'finding', 'evidence'), 'constat de témoin')
         if finding['criterion_id'] not in criteria:
@@ -705,16 +709,23 @@ def _witness_decisions(answer, review, *, omission_allowed=False):
             _text(finding[key], key)
         if type(finding['evidence']) is not list:
             raise ValueError('Pièces de preuve requises')
-        evidence = []
-        for proof in finding['evidence']:
-            _fields(proof, ('piece_id', 'passage') + (('sha256',) if type(proof) is dict and 'sha256' in proof else ()),
-                    'citation')
-            if proof['piece_id'] not in pieces:
-                raise IntegrityError('Pièce de citation étrangère')
-            evidence.append(dict(piece_id=proof['piece_id'], passage=proof['passage'],
-                                 sha256=sha256(pieces[proof['piece_id']]).hexdigest()))
-        finding = dict(finding, evidence=evidence)
-        evaluation.finding_evidence(finding, pieces, output, sources, omission_allowed=omission_allowed)
+        try:
+            evidence = []
+            for proof in finding['evidence']:
+                _fields(proof, ('piece_id', 'passage') + (('sha256',) if type(proof) is dict and 'sha256' in proof else ()),
+                        'citation')
+                if proof['piece_id'] not in pieces:
+                    raise IntegrityError('Pièce de citation étrangère')
+                evidence.append(dict(piece_id=proof['piece_id'], passage=proof['passage'],
+                                     sha256=sha256(pieces[proof['piece_id']]).hexdigest()))
+            finding = dict(finding, evidence=evidence)
+            evaluation.finding_evidence(finding, pieces, output, sources, omission_allowed=omission_allowed)
+        except ValueError:
+            # #501 : une citation fausse sur un contrôle que le témoin n'exige pas écarte ce seul constat
+            if needed is None or finding['control_id'] in needed:
+                raise
+            discarded.add(finding['control_id'])
+            continue
         findings.append(finding)
     failed = {(row['criterion_id'], row['control_id']) for row in evaluation.defects(findings, output)}
     decided = {}
@@ -724,6 +735,8 @@ def _witness_decisions(answer, review, *, omission_allowed=False):
             decided[control] = ('FAIL' if (criterion, control) in failed else 'PASS' if group and all(
                 row['status'] == 'PASS' and row['attribution'] in ('candidate', 'evidence')
                 and any(proof['piece_id'] == output for proof in row['evidence']) for row in group) else 'INDETERMINE')
+            if control in discarded:
+                decided[control] = 'INDETERMINE'
     return decided
 
 
@@ -1271,8 +1284,13 @@ def _retryable_witness(store, connection, operation):
     return operation
 
 
-def _due(operation):
-    return _witness_due(operation) if operation['engine_version'] == WITNESS_FORMAT else _retry_due(operation)
+def _due(store, connection, operation):
+    if operation['engine_version'] != WITNESS_FORMAT:
+        return _retry_due(operation)
+    binding = _witness_binding(operation)
+    parent = store._operations(connection, operation_ids={binding['witness_of']})[0]
+    witness = _qualification_result(deepcopy(parent['receipt']['result']))['witnesses'][binding['witness']]
+    return _witness_due(operation, {row['control_id'] for row in witness['expected']})
 
 
 def due_qualification_retries(store, *, session_id=None, dossier_id=None):
@@ -1289,7 +1307,7 @@ def due_qualification_retries(store, *, session_id=None, dossier_id=None):
             (session_id, session_id, dossier_id, dossier_id)).fetchall()
         for operation_id, dossier, session in rows:
             operation = _retryable(store, connection, operation_id)
-            due = None if operation is None else _due(operation)
+            due = None if operation is None else _due(store, connection, operation)
             if due is not None:
                 result.append((operation_id, dossier, session, max(0, math.ceil((due - _now()).total_seconds()))))
     return result
@@ -1311,7 +1329,7 @@ def retry_qualification(store, operation_id, transport, source):
             operation = _retryable(store, connection, operation_id)
             if operation is None:
                 return None
-            due = _due(operation)
+            due = _due(store, connection, operation)
             if due is None or _now() < due:
                 return None
             if operation['engine_version'] == WITNESS_FORMAT:
