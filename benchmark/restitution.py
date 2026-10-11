@@ -141,8 +141,16 @@ def _recommendation(rows, columns, case_count, coverage, pending):
     if (len(eligible) < 2 or not quality or any(row['cost']['rank'] is None for row in eligible)
             or any(_metric(row, column)['rank'] is None for row in eligible for column in quality)):
         return None
-    quality_vectors = {row['attempt_id']: tuple(_metric_number(_metric(row, column)) for column in quality)
-                       for row in eligible}
+    quality_vectors = {}
+    for row in eligible:
+        values = []
+        for column in quality:
+            value = _metric_number(_metric(row, column))
+            # Les échelles ordinales sont déjà orientées vers la meilleure qualité
+            if column['favorable'] == 'lower' and not column['definition'].get('scale'):
+                value = value.copy_negate()
+            values.append(value)
+        quality_vectors[row['attempt_id']] = tuple(values)
     frontier = [row for row in eligible if not any(
         all(left >= right for left, right in zip(quality_vectors[other['attempt_id']],
                                                 quality_vectors[row['attempt_id']]))

@@ -2242,7 +2242,8 @@ class ParcoursComplet(unittest.TestCase):
         """Le vrai serveur restitue les preuves sans les modifier
 
         Échecs couverts : conseil avec plusieurs cas, cellule non lancée ou une seule réponse
-        satisfaisante ; consultation qui modifie les observations
+        satisfaisante ; consultation qui modifie les observations ; sens numérique inversé, précision
+        perdue, coût préféré à la qualité, compromis de sens opposés ou égalité départagée arbitrairement
         """
         from copy import deepcopy
         from hashlib import sha256
@@ -2253,64 +2254,87 @@ class ParcoursComplet(unittest.TestCase):
 
         _, view, reference = fixture(self.data)
         with closing(storage.Store(self.data)) as store:
-            spec = specification(reference)
-            spec['secondary_criteria'] = [dict(id='quantity', measure='Quantité fictive', proof='Sortie conservée',
-                unit='éléments', favorable='higher', aggregation=None)]
-            candidate = qualification.draft(store, 'fixture', view['revision'], spec)
-            qualified = qualification.qualify(store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
-            qualification.approve(store, candidate['contract_sha256'], qualified['qualification_id'], actor=ACTOR, authority=AUTHORITY)
             sid, _, token = preparation.session(store, None, create=True)
             for table in ('s2_dossiers', 's2_validations'):
                 store._connection.execute(f'UPDATE {table} SET session_id=? WHERE dossier_id=?', (sid, 'fixture'))
             cookies = SimpleCookie('benchmark_session=' + token)
-            for scenario in ('complete', 'multi-case', 'unstarted', 'pending', 'single-eligible'):
-                with self.subTest(scenario=scenario):
-                    store.create_budget(scenario, '100', 'TEST')
-                    m = manifest(candidate, scenario)
-                    if scenario == 'multi-case':
-                        m['cases'].append(dict(id='other', package_sha256=candidate['contract']['package_sha256']))
-                        m['plan'][1]['case_id'] = 'other'
-                    if scenario in ('unstarted', 'pending'):
-                        m['panel'].append(dict(deepcopy(m['panel'][0]), id='z'))
-                        m['plan'].append(dict(cell_id='z', case_id='notes', configuration_id='z'))
-                        m['attempt_policy']['order'].append('z')
-                    snapshot = campaigns.create(store, m)
-                    cells = ['x', 'y', 'z'] if scenario == 'pending' else ['x', 'y']
-                    authority, evidence = inputs(snapshot, budget=scenario, cells=cells)
-                    authority['reserve_amounts'] = {cell: '7' for cell in cells}
-                    campaigns.admit(store, scenario, authority, evidence)
-                    for cell in cells:
-                        attempt = scenario + '-' + cell
-                        campaigns.reserve(store, scenario, cell, attempt)
-                        execution.execute(self.data, attempt, response)
-                        if cell == 'z':
-                            continue
+            for directions, scenarios in (
+                    (('higher',), ('complete', 'multi-case', 'unstarted', 'pending', 'single-eligible')),
+                    (('lower',), ('complete', 'equal-quality', 'equal-final', 'precise')),
+                    (('higher', 'lower'), ('complete', 'tradeoff'))):
+                spec = specification(reference)
+                spec['secondary_criteria'] = [dict(id=direction, measure='Quantité fictive' if direction == 'higher' else 'Durée fictive',
+                    proof='Sortie conservée', unit='éléments' if direction == 'higher' else 's', favorable=direction, aggregation=None)
+                    for direction in directions]
+                candidate = qualification.draft(store, 'fixture', view['revision'], spec)
+                qualified = qualification.qualify(store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
+                qualification.approve(store, candidate['contract_sha256'], qualified['qualification_id'], actor=ACTOR, authority=AUTHORITY)
+                for scenario in scenarios:
+                    with self.subTest(directions=directions, scenario=scenario):
+                        campaign_id = "-".join(directions) + "-" + scenario
+                        store.create_budget(campaign_id, '100', 'TEST')
+                        m = manifest(candidate, campaign_id)
+                        if scenario == 'multi-case':
+                            m['cases'].append(dict(id='other', package_sha256=candidate['contract']['package_sha256']))
+                            m['plan'][1]['case_id'] = 'other'
+                        if scenario in ('unstarted', 'pending'):
+                            m['panel'].append(dict(deepcopy(m['panel'][0]), id='z'))
+                            m['plan'].append(dict(cell_id='z', case_id='notes', configuration_id='z'))
+                            m['attempt_policy']['order'].append('z')
+                        snapshot = campaigns.create(store, m)
+                        cells = ['x', 'y', 'z'] if scenario == 'pending' else ['x', 'y']
+                        authority, evidence = inputs(snapshot, budget=campaign_id, cells=cells)
+                        authority['reserve_amounts'] = {cell: '7' for cell in cells}
+                        campaigns.admit(store, campaign_id, authority, evidence)
+                        for cell in cells:
+                            attempt = campaign_id + '-' + cell
+                            campaigns.reserve(store, campaign_id, cell, attempt)
+                            def candidate_response(operation, request):
+                                value = response(operation, request)
+                                value['cost']['amount'] = '3' if cell == 'x' and scenario != 'equal-final' else '2'
+                                return value
 
-                        def report(ctx, resources):
-                            result = findings(ctx, resources)
-                            if scenario == 'single-eligible' and cell == 'y':
-                                result['findings'][0].update(status='FAIL', attribution='candidate', finding='Action omise')
-                            piece = ctx['attempt']['output_piece_id']
-                            result['measures'] = [dict(criterion_id='quantity', value='2' if cell == 'x' else '1',
-                                unit='éléments', evidence=[dict(piece_id=piece, sha256=sha256(resources[piece]).hexdigest(),
-                                                                 passage=resources[piece].decode())])]
-                            return result
+                            execution.execute(self.data, attempt, candidate_response)
+                            if cell == 'z':
+                                continue
 
-                        evaluation.evaluate(store, scenario, attempt, responsible=RESPONSIBLE,
-                                            authority=EVALUATION_AUTHORITY, check=report)
-                    before = store.inspect_operations()
-                    path = '/preparation/dossiers/fixture/campaigns/' + scenario
-                    _, _, raw = self.request(path, cookies=cookies, json_response=True)
-                    result = json.loads(raw)
-                    page, _, _ = self.request(path, cookies=cookies)
-                    self.assertEqual(before, store.inspect_operations())
-                    self.assertEqual(scenario == 'complete', 'Notre conseil' in page.visible)
-                    if scenario == 'complete':
-                        self.assertEqual(('fictional-x', 'quality_then_cost', '2', 'TEST', 2), (
-                            result['recommendation']['configuration']['model'], result['recommendation']['basis'],
-                            result['recommendation']['amount'], result['recommendation']['unit'], result['recommendation']['count']))
-                    else:
-                        self.assertIsNone(result['recommendation'])
+                            def report(ctx, resources):
+                                result = findings(ctx, resources)
+                                if scenario == 'single-eligible' and cell == 'y':
+                                    result['findings'][0].update(status='FAIL', attribution='candidate', finding='Action omise')
+                                piece = ctx['attempt']['output_piece_id']
+                                result['measures'] = []
+                                for definition in spec['secondary_criteria']:
+                                    values = ('2', '1') if definition['favorable'] == 'higher' or scenario == 'tradeoff' else ('1', '2')
+                                    if scenario in ('equal-quality', 'equal-final'):
+                                        values = ('1', '1')
+                                    if scenario == 'precise':
+                                        values = ('1.0000000000000000000000000001', '1.0000000000000000000000000002')
+                                    result['measures'].append(dict(criterion_id=definition['id'], value=values[cell == 'y'],
+                                        unit=definition['unit'], evidence=[dict(piece_id=piece, sha256=sha256(resources[piece]).hexdigest(),
+                                                                             passage=resources[piece].decode())]))
+                                return result
+
+                            evaluation.evaluate(store, campaign_id, attempt, responsible=RESPONSIBLE,
+                                                authority=EVALUATION_AUTHORITY, check=report)
+                        before = store.inspect_operations()
+                        path = '/preparation/dossiers/fixture/campaigns/' + campaign_id
+                        _, _, raw = self.request(path, cookies=cookies, json_response=True)
+                        result = json.loads(raw)
+                        page, _, _ = self.request(path, cookies=cookies)
+                        self.assertEqual(before, store.inspect_operations())
+                        advised = scenario in ('complete', 'precise', 'equal-quality')
+                        self.assertEqual(advised, 'Notre conseil' in page.visible)
+                        if advised:
+                            winner = 'y' if scenario == 'equal-quality' else 'x'
+                            basis = 'equal_quality_cost' if scenario == 'equal-quality' else 'quality_then_cost'
+                            amount = '2' if winner == 'y' else '3'
+                            self.assertIn('fictional-' + winner, next(n for n in page.nodes if n['attrs'].get('class') == 'economic-choice')['text'])
+                            self.assertEqual(('fictional-' + winner, basis, amount, 'TEST', 2), (
+                                result['recommendation']['configuration']['model'], result['recommendation']['basis'],
+                                result['recommendation']['amount'], result['recommendation']['unit'], result['recommendation']['count']))
+                        else:
+                            self.assertIsNone(result['recommendation'])
 
     def test_pas_de_conseil_avec_une_reponse_absente(self):
         """Deux réponses satisfaisantes départageables ; la troisième n'a pas de réponse exploitable"""
