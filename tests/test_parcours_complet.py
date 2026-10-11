@@ -836,6 +836,16 @@ class ParcoursComplet(unittest.TestCase):
                  'reference_absente_du_paquet_candidat': reference not in brut},
                 ensure_ascii=False, indent=2) + '\n')
 
+    def rejouer_relances(self, dossier_id):
+        """Exécute les seconds contrôles dus (#492, piste 3), comme le fait le fil de relance de l'exécuteur"""
+        while True:
+            with closing(storage.Store(self.data)) as store:
+                due = prep.due_qualification_retries(store, dossier_id=dossier_id)
+                following = prep.retry_qualification(store, due[0][0], self.bound[1], 'a' * 40) if due else None
+            if following is None:
+                return
+            prep.execute_qualification(self.data, following, self.bound[1])
+
     def test_temoins_controles_qualifient_la_version_exacte(self):
         """Issue #445 : une alternative valable et un défaut ciblé, contrôlés sur les octets de chaque version
 
@@ -900,6 +910,7 @@ class ParcoursComplet(unittest.TestCase):
             page, _, _ = self.request(dossier)
             self.submit(page, '/validation', {})
             prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+            self.rejouer_relances(dossier_id)
             page, _, raw = self.request(dossier)
             versions.append(re.search(r'version (\d+)', page.visible).group(1))
             return page, raw
@@ -988,7 +999,8 @@ class ParcoursComplet(unittest.TestCase):
             qualifications = [op for op in store._operations(store._connection)
                               if op['dossier_id'] == dossier_id and op['phase'] == 'qualification']
             controls = [op for op in qualifications if op['requested_configuration'].get('model') == 'juge/fictif']
-            self.assertEqual(8, len(controls))
+            # 8 contrôles et le second contrôle de l'alternative rejetée à l'étape 2 (#492, piste 3)
+            self.assertEqual(9, len(controls))
             self.assertEqual(1, len({(op['authority'], op['budget_id']) for op in qualifications}))
             self.assertTrue(all(op['reserved_amount'] == '0.5' and op['observed_cost']['amount'] == '0.05'
                                 for op in controls))
@@ -1081,10 +1093,15 @@ class ParcoursComplet(unittest.TestCase):
         # 2. Critère étranger sur l'alternative, pièce étrangère sur le défaut : aucune décision prouvée
         corriger('Une action par ligne.')
         self.qualifier.result = {'qualified': True, 'findings': [], 'summary': 'Exemple vérifiable'}
-        juge.script = [lambda findings: [dict(row, criterion_id='E9') for row in findings],
+        critere_etranger = lambda findings: [dict(row, criterion_id='E9') for row in findings]
+        # Second contrôle de l'alternative (#492, piste 3) : même rejet ; le défaut n'est pas relancé, la version est bloquée
+        juge.script = [critere_etranger,
                        lambda findings: [dict(row, evidence=[{'piece_id': 'piece-inventee', 'passage': 'Aucune'}])
-                                         for row in findings]]
-        page = verifier()
+                                         for row in findings],
+                       critere_etranger]
+        verifier()
+        self.rejouer_relances(dossier_id)
+        page = self.request(dossier)[0]
         self.assertIn('Exemple à revoir avant comparaison', page.visible)
         self.assertEqual(2, detail(page).count('Décision sans preuve exploitable'))
         self.assertEqual([], retries())
@@ -1601,10 +1618,12 @@ class ParcoursComplet(unittest.TestCase):
             return omission(vue, findings) if vue['output']['content'] == omise else findings
         # Juge à qui la règle d'omission n'est pas annoncée : sa réponse se lit comme avant elle, sans preuve
         controle.evidence_rule = None
-        controle.script = [temoin_omis, temoin_omis]
+        # Troisième réponse : second contrôle du défaut (#492, piste 3), rejeté comme le premier
+        controle.script = [temoin_omis, temoin_omis, temoin_omis]
         dossier, page = self.exemple()
         self.submit(page, '/validation', {})
         prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+        self.rejouer_relances(dossier.rsplit('/', 1)[1])
         page, _, _ = self.request(dossier)
         self.assertIn('Exemple à revoir avant comparaison', page.visible)
         # Même témoin, même absence, sous la règle annoncée : défaut confirmé

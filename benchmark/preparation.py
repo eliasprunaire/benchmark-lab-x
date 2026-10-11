@@ -43,6 +43,10 @@ RETRY_SECONDS = (30, 120, 600, 1800)
 # NOT_SENT : relance programmée close avant envoi par un redémarrage, elle n'a consommé aucune tentative
 _RETRIED_INCIDENTS = ('RATE_LIMITED', 'PROVIDER_ERROR', 'CONNECTION_FAILED', 'NOT_SENT')
 _KEY_INCIDENTS = ('KEY_REJECTED', 'CREDIT_EXHAUSTED')
+# #492 : réponse d'un juge rejetée en entier pour son format ; un second contrôle du même témoin part sans
+# action de l'utilisateur, payé avec sa clé comme le premier (rang maximal 2, soit une relance par témoin)
+FORMAT_RETRY_ATTEMPTS = 2
+FORMAT_REJECTED_TEXT = 'La réponse du contrôle ne respecte pas le format attendu.'
 # Témoins de la vérification : chacun est jugé par le contrôle des campagnes, sous l'autorité de préparation ;
 # la borne fixe la réserve annoncée avant la validation
 WITNESS_FORMAT = 'benchmark-lab-x/qualification-witness/v1'
@@ -441,7 +445,8 @@ def retry_link(operation, *, unsent=False):
 def retry_notice(operation, due):
     """Cause de l'incident et délai avant la relance automatique, pour les pages"""
     retry_in = max(0, math.ceil((due - _now()).total_seconds()))
-    return _incident_reason(_provider_incident(operation, unsent=True)) + (
+    incident = _provider_incident(operation, unsent=True)
+    return (_incident_reason(incident) if incident else FORMAT_REJECTED_TEXT) + (
         ' Nouvelle tentative automatique dans ' + _duration(retry_in) + '.' if retry_in
         else ' Nouvelle tentative automatique dès que possible.'), retry_in
 
@@ -574,9 +579,26 @@ def _witness_due(operation):
     """
     if operation['state'] != 'RECEIVED' or _retry_attempt(operation) >= RETRY_ATTEMPTS:
         return None
+    if _format_rejected(operation):
+        return _now() if _retry_attempt(operation) < FORMAT_RETRY_ATTEMPTS else None
     if _provider_incident(operation, unsent=True) == 'NOT_SENT':
         return datetime.fromisoformat(operation['created_at'])
     return _retry_due(operation)
+
+
+def _format_rejected(operation):
+    """Réponse reçue d'un juge, rejetée en entier par `_witness_decisions` : aucune décision n'en sort"""
+    result = operation['receipt']['result']
+    if operation['state'] != 'RECEIVED' or type(result) is not dict or result == {'status': 'NOT_SENT'}:
+        return False
+    binding = _witness_binding(operation)
+    from .judgment import EVIDENCE_OMISSION_BINDING
+    try:
+        _witness_decisions(result, binding['review'], omission_allowed=(
+            operation['requested_configuration'].get('evidence_rule') == EVIDENCE_OMISSION_BINDING))
+    except (ValueError, TypeError, KeyError):
+        return True
+    return False
 
 
 def _witness_controls(store, connection, operation, witnesses, *, ran):
@@ -619,6 +641,10 @@ def _witness_controls(store, connection, operation, witnesses, *, ran):
                 except (ValueError, TypeError, KeyError):
                     # IntegrityError comprise : une citation étrangère ou divergente n'est pas une preuve
                     state = 'UNPROVEN'
+                    # #492 : un second contrôle est dû tant que le plafond n'est pas atteint
+                    due = None if ambiguous else _witness_due(item)
+                    if due is not None:
+                        state = 'PENDING'
             elif not ambiguous:
                 due = _witness_due(item)
         rows.append(dict(kind=witness['kind'], output=witness['output'], justification=witness['justification'],
@@ -627,6 +653,12 @@ def _witness_controls(store, connection, operation, witnesses, *, ran):
                              eliminatory=controls[row['control_id']]['eliminatory'], expected=row['status'],
                              decided=decided.get(row['control_id'])) for row in witness['expected']],
                          retry=None if due is None else (found[index], due)))
+    # #492 : une version déjà bloquée ne paie plus de second contrôle ; les témoins en attente d'un second contrôle
+    # de format sont alors lus comme rejetés, sans relance
+    if {row['state'] for row in rows} & {'CONTRADICTED', 'UNPROVEN', 'STALE'}:
+        for row in rows:
+            if row['state'] == 'PENDING' and row['retry'] is not None:
+                row.update(state='UNPROVEN', retry=None)
     return rows
 
 
@@ -714,7 +746,8 @@ def _witness_verdict(witnesses, summary):
     retries = [row['retry'] for row in witnesses if row['retry'] is not None]
     if retries:
         notice, retry_in = retry_notice(*min(retries, key=lambda pair: pair[1]))
-        return 'PENDING', 'Contrôle d’un témoin interrompu. ' + notice, 'provider', retry_in
+        interrupted = _provider_incident(min(retries, key=lambda pair: pair[1])[0], unsent=True) is not None
+        return 'PENDING', ('Contrôle d’un témoin interrompu. ' if interrupted else '') + notice, 'provider', retry_in
     return 'PENDING', 'Contrôle des témoins en cours.', None, None
 
 
