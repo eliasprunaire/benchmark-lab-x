@@ -1060,6 +1060,36 @@ class PreparationVolumeTests(unittest.TestCase):
         self.assertIsNone(prep.retry_qualification(self.store, due[0][0], self.transport, 'b' * 40))
         self.assertEqual(3, len(self.witness_operations()))
 
+    def test_citation_fausse_sur_un_controle_non_exige_ne_rejette_pas_le_temoin(self):
+        # #501, piste 2 : le témoin défaut n'exige que son premier contrôle ; un guillemet absent de la pièce sur un
+        # autre contrôle écarte ce seul constat, le contrôle exigé reste décidé et aucune relance ne part
+        controller = self.transport.controller()
+
+        def closing_quote_elsewhere(findings):
+            first = findings[0]['control_id']
+            return [row if row['control_id'] == first else dict(row, evidence=[
+                dict(proof, passage=proof['passage'] + '»') for proof in row['evidence']]) for row in findings]
+        controller.script = [None, closing_quote_elsewhere]
+        self.add_dossiers(1)
+        qualification = prep.view(self.store, self.session, 'dossier-1')['qualification']
+        self.assertEqual('CONFIRMED', qualification['witnesses'][1]['state'])
+        self.assertEqual('QUALIFIED', qualification['status'])
+        self.assertEqual([], prep.due_qualification_retries(self.store, session_id=self.session))
+
+    def test_controle_ecarte_reste_non_decide_et_un_controle_exige_ferme_la_reponse(self):
+        # #501, piste 2 : le constat écarté laisse son contrôle non décidé, même si un autre constat du contrôle est valide ;
+        # une citation fausse sur un contrôle exigé, ou sans `needed`, rejette toujours la réponse entière
+        review = self.witness_review([dict(id='O1', control_ids=['C1', 'C2'])])
+        good, bad = self.witness_answer('O1', 'C1'), self.witness_answer('O1', 'C2')
+        bad['findings'][0]['evidence'][0]['passage'] = 'La liste»'
+        twin = self.witness_answer('O1', 'C2')
+        answer = dict(good, findings=good['findings'] + twin['findings'] + bad['findings'])
+        self.assertEqual({'C1': 'PASS', 'C2': 'INDETERMINE'}, prep._witness_decisions(answer, review, needed={'C1'}))
+        with self.assertRaises(ValueError):
+            prep._witness_decisions(answer, review, needed={'C1', 'C2'})
+        with self.assertRaises(ValueError):
+            prep._witness_decisions(answer, review)
+
     def test_relance_de_format_sans_budget_suffisant_n_est_pas_reservee(self):
         # #492, piste 3 : réserve de la relance au-dessus du budget disponible : aucune opération, dossier bloqué
         # après la fenêtre de relance, avec l'exemple hors de cause
