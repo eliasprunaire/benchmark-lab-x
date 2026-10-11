@@ -921,20 +921,71 @@ class PreparationVolumeTests(unittest.TestCase):
             "SELECT count(*) FROM sqlite_schema WHERE name='s4_control'").fetchone()[0])
         self.assertLessEqual(self.full_reads(self.resume), 1)
 
-    def test_juge_qui_ecrit_le_controle_comme_critere_rend_le_temoin_inexploitable(self):
-        # #492 : pour une obligation composée, un `criterion_id` égal à l'identifiant d'un contrôle d'élément
-        # fait rejeter toute la réponse du juge, qui ne décide alors aucun contrôle du témoin
+    def test_controle_ecrit_comme_critere_est_lu_comme_son_critere_unique(self):
+        # #492, piste 2 : `criterion_id` égal à un contrôle déclaré sous un seul critère est remplacé par ce critère,
+        # la citation reste vérifiée à l'octet près
         controller = self.transport.controller()
         controller.script = [lambda findings: [dict(row, criterion_id=row['control_id']) for row in findings]]
         self.add_dossiers(1, obligations=[{'description': 'Lister les actions', 'elements': ['Forme', 'Échéance']},
                                           'Responsables conservés'])
-        request = controller.calls[0][1]['outgoing']
-        composed = next(row for row in request['obligations'] if len(row['control_ids']) == 2)
-        self.assertNotIn(composed['id'], composed['control_ids'])
+        witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
+        self.assertTrue(all(row['decided'] is not None for row in witnesses[0]['expected']))
+        self.assertEqual('CONFIRMED', witnesses[0]['state'])
+
+    def test_controle_ecrit_comme_critere_avec_citation_non_litterale_reste_rejete(self):
+        # #492, piste 2 : la substitution ne tolère aucun passage : la citation fausse ferme toujours la réponse
+        controller = self.transport.controller()
+
+        def corrupted(findings):
+            return [dict(row, criterion_id=row['control_id'],
+                         evidence=[dict(proof, passage=proof['passage'] + '\u00bb') if proof['passage'] else proof
+                                   for proof in row['evidence']]) for row in findings]
+        controller.script = [corrupted]
+        self.add_dossiers(1, obligations=[{'description': 'Lister les actions', 'elements': ['Forme', 'Échéance']},
+                                          'Responsables conservés'])
         witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
         self.assertEqual('UNPROVEN', witnesses[0]['state'])
         self.assertTrue(all(row['decided'] is None for row in witnesses[0]['expected']))
-        self.assertEqual('BLOCKED', prep.view(self.store, self.session, 'dossier-1')['qualification']['status'])
+
+    @staticmethod
+    def witness_review(obligations):
+        piece = lambda identifier: dict(piece_id=identifier, content='La liste des actions est complète')
+        return dict(task=dict(pieces=[piece('source')]), references=[], output=piece('sortie'),
+                    obligations=obligations, eliminatory_errors=[])
+
+    @staticmethod
+    def witness_answer(criterion_id, control_id):
+        finding = dict(criterion_id=criterion_id, control_id=control_id, status='PASS', attribution='candidate',
+                       finding='Constat du juge factice', evidence=[dict(piece_id='sortie', passage='La liste')])
+        return dict(findings=[finding], measures=[], limits=[], proposed_verdict='INDETERMINE')
+
+    def test_controle_declare_sous_deux_criteres_n_est_pas_substitue(self):
+        # #492, piste 2 : un contrôle partagé par deux critères est ambigu, aucun critère n'est choisi à la place du juge
+        review = self.witness_review([dict(id='O1', control_ids=['C']), dict(id='O2', control_ids=['C'])])
+        with self.assertRaisesRegex(ValueError, 'non déclaré'):
+            prep._witness_decisions(self.witness_answer('C', 'C'), review)
+
+    def test_controle_absent_de_tout_critere_reste_rejete(self):
+        # #492, piste 2 : ni critère ni contrôle déclaré, rien à substituer
+        review = self.witness_review([dict(id='O1', control_ids=['O1_1', 'O1_2'])])
+        with self.assertRaisesRegex(ValueError, 'non déclaré'):
+            prep._witness_decisions(self.witness_answer('INCONNU', 'INCONNU'), review)
+        with self.assertRaisesRegex(ValueError, 'non déclaré'):
+            prep._witness_decisions(self.witness_answer('O1_1', 'INCONNU'), review)
+
+    def test_un_constat_invalide_parmi_des_constats_substituables_ferme_la_reponse(self):
+        # #492, piste 2 : la substitution ne sauve pas la réponse si un constat vise un contrôle inconnu
+        controller = self.transport.controller()
+
+        def mixed(findings):
+            rows = [dict(row, criterion_id=row['control_id']) for row in findings]
+            return [dict(rows[0], criterion_id='INCONNU', control_id='INCONNU')] + rows[1:]
+        controller.script = [mixed]
+        self.add_dossiers(1, obligations=[{'description': 'Lister les actions', 'elements': ['Forme', 'Échéance']},
+                                          'Responsables conservés'])
+        witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
+        self.assertEqual('UNPROVEN', witnesses[0]['state'])
+        self.assertTrue(all(row['decided'] is None for row in witnesses[0]['expected']))
 
     def test_juge_qui_ajoute_un_guillemet_fermant_absent_de_la_piece_rend_le_temoin_inexploitable(self):
         # #492, règle A : une citation d'un caractère de trop ferme la réponse entière du juge, comme le 2026-10-09
