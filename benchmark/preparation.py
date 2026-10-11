@@ -651,6 +651,11 @@ def _witness_decisions(answer, review, *, omission_allowed=False):
     findings = []
     for finding in answer['findings']:
         _fields(finding, ('criterion_id', 'control_id', 'status', 'attribution', 'finding', 'evidence'), 'constat de témoin')
+        if finding['criterion_id'] not in criteria:
+            # #492 : un contrôle écrit à la place de son critère se lit comme ce critère s'il n'en a qu'un
+            owners = [criterion for criterion, controls in criteria.items() if finding['criterion_id'] in controls]
+            if len(owners) == 1:
+                finding = dict(finding, criterion_id=owners[0])
         if finding['control_id'] not in criteria.get(finding['criterion_id'], ()):
             raise ValueError('Critère ou contrôle non déclaré')
         if finding['status'] not in ('PASS', 'FAIL', 'INDETERMINE'):

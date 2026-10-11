@@ -921,20 +921,31 @@ class PreparationVolumeTests(unittest.TestCase):
             "SELECT count(*) FROM sqlite_schema WHERE name='s4_control'").fetchone()[0])
         self.assertLessEqual(self.full_reads(self.resume), 1)
 
-    def test_juge_qui_ecrit_le_controle_comme_critere_rend_le_temoin_inexploitable(self):
-        # #492 : pour une obligation composée, un `criterion_id` égal à l'identifiant d'un contrôle d'élément
-        # fait rejeter toute la réponse du juge, qui ne décide alors aucun contrôle du témoin
+    def test_controle_ecrit_comme_critere_est_lu_comme_son_critere_unique(self):
+        # #492, piste 2 : `criterion_id` égal à un contrôle déclaré sous un seul critère est remplacé par ce critère,
+        # la citation reste vérifiée à l'octet près
         controller = self.transport.controller()
         controller.script = [lambda findings: [dict(row, criterion_id=row['control_id']) for row in findings]]
         self.add_dossiers(1, obligations=[{'description': 'Lister les actions', 'elements': ['Forme', 'Échéance']},
                                           'Responsables conservés'])
-        request = controller.calls[0][1]['outgoing']
-        composed = next(row for row in request['obligations'] if len(row['control_ids']) == 2)
-        self.assertNotIn(composed['id'], composed['control_ids'])
+        witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
+        self.assertTrue(all(row['decided'] is not None for row in witnesses[0]['expected']))
+        self.assertEqual('CONFIRMED', witnesses[0]['state'])
+
+    def test_controle_ecrit_comme_critere_avec_citation_non_litterale_reste_rejete(self):
+        # #492, piste 2 : la substitution ne tolère aucun passage : la citation fausse ferme toujours la réponse
+        controller = self.transport.controller()
+
+        def corrupted(findings):
+            return [dict(row, criterion_id=row['control_id'],
+                         evidence=[dict(proof, passage=proof['passage'] + '\u00bb') if proof['passage'] else proof
+                                   for proof in row['evidence']]) for row in findings]
+        controller.script = [corrupted]
+        self.add_dossiers(1, obligations=[{'description': 'Lister les actions', 'elements': ['Forme', 'Échéance']},
+                                          'Responsables conservés'])
         witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
         self.assertEqual('UNPROVEN', witnesses[0]['state'])
         self.assertTrue(all(row['decided'] is None for row in witnesses[0]['expected']))
-        self.assertEqual('BLOCKED', prep.view(self.store, self.session, 'dossier-1')['qualification']['status'])
 
     def test_juge_qui_ajoute_un_guillemet_fermant_absent_de_la_piece_rend_le_temoin_inexploitable(self):
         # #492, règle A : une citation d'un caractère de trop ferme la réponse entière du juge, comme le 2026-10-09
