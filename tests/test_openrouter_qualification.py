@@ -947,6 +947,46 @@ class PreparationVolumeTests(unittest.TestCase):
         self.assertEqual('UNPROVEN', witnesses[0]['state'])
         self.assertTrue(all(row['decided'] is None for row in witnesses[0]['expected']))
 
+    @staticmethod
+    def witness_review(obligations):
+        piece = lambda identifier: dict(piece_id=identifier, content='La liste des actions est complète')
+        return dict(task=dict(pieces=[piece('source')]), references=[], output=piece('sortie'),
+                    obligations=obligations, eliminatory_errors=[])
+
+    @staticmethod
+    def witness_answer(criterion_id, control_id):
+        finding = dict(criterion_id=criterion_id, control_id=control_id, status='PASS', attribution='candidate',
+                       finding='Constat du juge factice', evidence=[dict(piece_id='sortie', passage='La liste')])
+        return dict(findings=[finding], measures=[], limits=[], proposed_verdict='INDETERMINE')
+
+    def test_controle_declare_sous_deux_criteres_n_est_pas_substitue(self):
+        # #492, piste 2 : un contrôle partagé par deux critères est ambigu, aucun critère n'est choisi à la place du juge
+        review = self.witness_review([dict(id='O1', control_ids=['C']), dict(id='O2', control_ids=['C'])])
+        with self.assertRaisesRegex(ValueError, 'non déclaré'):
+            prep._witness_decisions(self.witness_answer('C', 'C'), review)
+
+    def test_controle_absent_de_tout_critere_reste_rejete(self):
+        # #492, piste 2 : ni critère ni contrôle déclaré, rien à substituer
+        review = self.witness_review([dict(id='O1', control_ids=['O1_1', 'O1_2'])])
+        with self.assertRaisesRegex(ValueError, 'non déclaré'):
+            prep._witness_decisions(self.witness_answer('INCONNU', 'INCONNU'), review)
+        with self.assertRaisesRegex(ValueError, 'non déclaré'):
+            prep._witness_decisions(self.witness_answer('O1_1', 'INCONNU'), review)
+
+    def test_un_constat_invalide_parmi_des_constats_substituables_ferme_la_reponse(self):
+        # #492, piste 2 : la substitution ne sauve pas la réponse si un constat vise un contrôle inconnu
+        controller = self.transport.controller()
+
+        def mixed(findings):
+            rows = [dict(row, criterion_id=row['control_id']) for row in findings]
+            return [dict(rows[0], criterion_id='INCONNU', control_id='INCONNU')] + rows[1:]
+        controller.script = [mixed]
+        self.add_dossiers(1, obligations=[{'description': 'Lister les actions', 'elements': ['Forme', 'Échéance']},
+                                          'Responsables conservés'])
+        witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
+        self.assertEqual('UNPROVEN', witnesses[0]['state'])
+        self.assertTrue(all(row['decided'] is None for row in witnesses[0]['expected']))
+
     def test_juge_qui_ajoute_un_guillemet_fermant_absent_de_la_piece_rend_le_temoin_inexploitable(self):
         # #492, règle A : une citation d'un caractère de trop ferme la réponse entière du juge, comme le 2026-10-09
         controller = self.transport.controller()
