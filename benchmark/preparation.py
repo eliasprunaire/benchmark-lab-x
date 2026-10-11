@@ -46,6 +46,9 @@ _KEY_INCIDENTS = ('KEY_REJECTED', 'CREDIT_EXHAUSTED')
 # #492 : réponse d'un juge rejetée en entier pour son format ; un second contrôle du même témoin part sans
 # action de l'utilisateur, payé avec sa clé comme le premier (rang maximal 2, soit une relance par témoin)
 FORMAT_RETRY_ATTEMPTS = 2
+# Au-delà, une relance qui n'est pas partie (clé retirée, budget insuffisant) est abandonnée : le contrôle est dit
+# non réalisé, l'exemple n'est pas mis en cause
+FORMAT_RETRY_WINDOW = timedelta(minutes=10)
 FORMAT_REJECTED_TEXT = 'La réponse du contrôle ne respecte pas le format attendu.'
 # Témoins de la vérification : chacun est jugé par le contrôle des campagnes, sous l'autorité de préparation ;
 # la borne fixe la réserve annoncée avant la validation
@@ -580,7 +583,8 @@ def _witness_due(operation):
     if operation['state'] != 'RECEIVED' or _retry_attempt(operation) >= RETRY_ATTEMPTS:
         return None
     if _format_rejected(operation):
-        return _now() if _retry_attempt(operation) < FORMAT_RETRY_ATTEMPTS else None
+        expired = _now() > datetime.fromisoformat(operation['created_at']) + FORMAT_RETRY_WINDOW
+        return _now() if _retry_attempt(operation) < FORMAT_RETRY_ATTEMPTS and not expired else None
     if _provider_incident(operation, unsent=True) == 'NOT_SENT':
         return datetime.fromisoformat(operation['created_at'])
     return _retry_due(operation)
@@ -645,6 +649,9 @@ def _witness_controls(store, connection, operation, witnesses, *, ran):
                     due = None if ambiguous else _witness_due(item)
                     if due is not None:
                         state = 'PENDING'
+                    elif not ambiguous and _retry_attempt(item) < FORMAT_RETRY_ATTEMPTS:
+                        # Fenêtre de relance écoulée sans second contrôle : il n'a pas eu lieu
+                        state = 'NOT_RUN'
             elif not ambiguous:
                 due = _witness_due(item)
         rows.append(dict(kind=witness['kind'], output=witness['output'], justification=witness['justification'],
