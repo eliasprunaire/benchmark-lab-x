@@ -1,6 +1,7 @@
 """Frontières du chiffrement des accès, uniquement avec des secrets fictifs"""
 from base64 import urlsafe_b64decode
 import json
+import os
 import unittest
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -10,6 +11,13 @@ from benchmark.storage import IntegrityError
 
 
 SECRET = b'\x11' * 32
+
+
+def load_tests(loader, tests, pattern):
+    # La CI exécute ce module dans son étape dédiée ; la découverte locale reste complète
+    if pattern is not None and os.environ.get('BENCHMARK_TEST_CI_SPLIT') == '1':
+        return unittest.TestSuite()
+    return tests
 
 
 class ProviderCryptoTests(unittest.TestCase):

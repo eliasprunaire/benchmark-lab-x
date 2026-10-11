@@ -70,6 +70,7 @@ jobs:
 
       - name: Exécuter les tests
         env:
+          BENCHMARK_TEST_CI_SPLIT: "1"
           BENCHMARK_TEST_PI_PACKAGE: ${{ runner.temp }}/benchmark-pi/node_modules/@earendil-works/pi-coding-agent
         run: uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python -m unittest discover -s tests
 

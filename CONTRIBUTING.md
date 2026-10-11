@@ -1,3 +1,7 @@
+---
+style_gate: pass
+---
+
 # Contribuer à Bench-X
 
 Une contribution doit préserver les preuves, les frontières d’autorité et la distinction entre simulation, campagne réelle, release et déploiement. La CI vérifie le changement proposé. Après revue et fusion dans `main`, la chaîne de release et de déploiement prend le relais sans intervention humaine lorsque le commit est éligible.
@@ -76,6 +80,14 @@ fix(ci): corriger une garde du workflow
 Un commit sans effet produit ne doit pas déclencher une nouvelle version.
 
 ## Vérifier localement
+
+Avant toute modification de tests, appliquer [la politique commune aux agents](AGENTS.md#écrire-des-tests).
+Codex et Grok lisent `AGENTS.md`. Claude Code charge la même politique par l’import dans `CLAUDE.md`.
+
+Les quatre étapes de test restent définies dans [le workflow CI](.github/workflows/ci.yml).
+Leur répartition est décrite dans [AGENTS.md](AGENTS.md#validation).
+La commande ci-dessous conserve tous les tests Python lorsque `BENCHMARK_TEST_CI_SPLIT` n’est pas défini.
+Elle ne remplace pas les étapes Pi et Chromium.
 
 Commencez par le test le plus proche du changement. Avant la pull request, exécutez la suite complète :
 

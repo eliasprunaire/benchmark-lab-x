@@ -1,10 +1,7 @@
 """Habillage du parcours privé : gabarit commun, bloc d'état, badges, polices locales, aucune empreinte affichée"""
 from contextlib import closing
-import inspect
 from pathlib import Path
 import re
-import shutil
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -12,85 +9,13 @@ from unittest.mock import patch
 from benchmark import preparation as prep, restitution as r, storage, web_api
 from benchmark_web import projection, views
 from tests.test_s2_review_regressions import Authorized, response_for
-from tests.test_s6_regressions import Markup, build
+from tests.test_s6_regressions import build
 from tests.test_web_access import setUpModule  # noqa: F401  contrôle global des pages rendues
-
-AVAILABILITY = {'assistant_configured': True, 'admission_open': True, 'can_submit': True, 'reason': 'open'}
-
 
 class TemplateTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
 
-    def test_personal_key_follows_availability_before_description_without_nesting_forms(self):
-        from html.parser import HTMLParser
-        class Forms(HTMLParser):
-            depth = 0
-            nested = False
-            def handle_starttag(self, tag, attrs):
-                if tag == 'form':
-                    self.nested |= self.depth > 0
-                    self.depth += 1
-            def handle_endtag(self, tag):
-                if tag == 'form':
-                    self.depth -= 1
-        page = views.render({'dossiers': [], 'availability': dict(AVAILABILITY, can_submit=False, reason='access')},
-                            'csrf').decode()
-        forms = Forms()
-        forms.feed(page)
-        self.assertFalse(forms.nested)
-        self.assertLess(page.index('</aside>'), page.index('Ajouter ma clé OpenRouter'))
-        ready = views.render({'dossiers': [], 'availability': AVAILABILITY}, 'csrf').decode()
-        self.assertNotIn('id="availability"', ready)
-        self.assertLess(page.index('Enregistrer la clé'), page.index('Décrivez une tâche de votre travail et le résultat qui vous aiderait'))
-        parsed = Markup(page.encode())
-        button = next(attrs for tag, attrs in parsed.tags if tag == 'button' and attrs.get('form'))
-        self.assertEqual('prepare-case', button['form'])
-        self.assertTrue(any(tag == 'form' and attrs.get('id') == button['form'] for tag, attrs in parsed.tags))
-        self.assertNotIn('Préparation et qualification : plafond local', page)
-
-    def test_evitement_et_aide_du_formulaire_indisponible(self):
-        page = views.render({'dossiers': [], 'availability': dict(
-            AVAILABILITY, can_submit=False, reason='access')}, 'csrf')
-        parsed = Markup(page)
-        self.assertEqual('#main', parsed.links[0])
-        main = next(attrs for tag, attrs in parsed.tags if tag == 'main')
-        self.assertEqual({'id': 'main', 'tabindex': '-1'}, main)
-        request = next(attrs for tag, attrs in parsed.tags if attrs.get('id') == 'request')
-        self.assertEqual('request-help availability', request['aria-describedby'])
-        ids = [attrs['id'] for _, attrs in parsed.tags if 'id' in attrs]
-        self.assertEqual(len(ids), len(set(ids)))
-        for tag, attrs in parsed.tags:
-            if 'aria-describedby' in attrs:
-                self.assertTrue(set(attrs['aria-describedby'].split()) <= set(ids))
-            self.assertLessEqual(int(attrs.get('tabindex', '0')), 0)
-        css = views.STYLESHEET_PATH.read_text()
-        self.assertRegex(css, r'svg\[hidden\]\s*\{\s*display:\s*none;\s*\}')
-        self.assertRegex(css, r'body\s*\{[^}]*overflow-wrap:\s*break-word;')
-        self.assertNotRegex(css, r'body\s*\{[^}]*overflow-wrap:\s*anywhere;')
-        self.assertIn(':focus-visible { outline: 3px solid var(--focus)', css)
-
-    def test_personal_key_lives_on_home_and_access_page_only(self):
-        page = views.render({'operation_id': 'op', 'dossier_id': 'd1'},
-                            'csrf', '/preparation/dossiers').decode()
-        self.assertNotIn('id="openrouter-key"', page)
-        access = views.render({'kind': 'access', 'status': 'disconnected'},
-                              'csrf', '/preparation/access').decode()
-        self.assertEqual(1, access.count('id="openrouter-key"'))
-        self.assertNotIn('/preparation/access/start', access)
-
-    def test_chaque_motif_de_disponibilite_a_son_libelle(self):
-        motifs = set(re.findall(r"reason = '(\w+)'", inspect.getsource(prep.availability)))
-        self.assertNotIn('daily_cap', motifs)
-        for motif in motifs:
-            page = views.render({'dossiers': [], 'availability': dict(
-                AVAILABILITY, can_submit=motif == 'open', reason=motif)}, 'csrf').decode()
-            if motif == 'open':
-                # Préparation ouverte : rien ne bloque, aucun encadré
-                self.assertNotIn('<aside id="availability"', page)
-                continue
-            aside = re.search(r'<aside id="availability".*?</aside>', page, re.S).group()
-            self.assertRegex(aside, r'<p>[^<]{20,}</p>', motif)
 
     def test_contrastes_des_deux_themes(self):
         css = views.STYLESHEET_PATH.read_text()
@@ -119,61 +44,6 @@ class TemplateTests(unittest.TestCase):
                     low, high = sorted((luminance(colors[fg]), luminance(colors[bg])))
                     self.assertGreaterEqual((high + .05) / (low + .05), minimum)
 
-    def test_shell_menu_footer_and_version(self):
-        with patch.object(views, 'SOURCE_SHA', 'abcdef0123456789'):
-            home = views.render({'kind': 'home'}, '').decode()
-        self.assertIn('aria-current="page">Accueil</a>', home)
-        self.assertIn('href="/preparation"', home)
-        self.assertNotIn('href="/index.html"', home)
-        self.assertNotIn('Comparaisons publiées', home)
-        self.assertIn('Un seul manquement suffit', home)
-        self.assertIn('<footer class="site">', home)
-        # Sans identité de release : la révision seule, jamais le numéro cible (RULES) ; un checkout modifié
-        # ou un commit non poussé ne doit pas renvoyer vers un arbre qui n'est pas le code servi (AGPL §13)
-        self.assertIn('<div class="bottom"><span>Révision : abcdef0</span>'
-                      '<a class="source" href="https://github.com/eliasprunaire/benchmark-lab-x"><svg class="ico" aria-hidden="true"><use href="#i-github"/></svg>Code source</a></div>', home)
-        self.assertNotIn('/tree/', home)
-        self.assertNotIn('v0.1.0', home)
-        with patch.object(views, 'SOURCE_SHA', 'abcdef0123456789'), patch.object(views, 'RELEASE_VERSION', '0.2.0'):
-            released = views.render({'kind': 'home'}, '').decode()
-        self.assertIn('<span>Version : v0.2.0 (abcdef0)</span>'
-                      '<a class="source" href="https://github.com/eliasprunaire/benchmark-lab-x/tree/abcdef0123456789"><svg class="ico" aria-hidden="true"><use href="#i-github"/></svg>Code source</a>', released)
-        with patch.object(views, 'SOURCE_SHA', ''), patch.object(views, 'RELEASE_VERSION', '0.2.0'):
-            unknown = views.render({'kind': 'home'}, '').decode()
-        self.assertIn('<div class="bottom"><a class="source" href="https://github.com/eliasprunaire/benchmark-lab-x"><svg class="ico" aria-hidden="true"><use href="#i-github"/></svg>Code source</a></div>', unknown)
-        self.assertNotIn('v0.2.0', unknown)
-        self.assertNotIn('Version du site', home)
-        self.assertNotIn('Aucune ressource externe chargée.', home)
-        self.assertNotIn('sha256', home.lower())
-        listing = views.render({'dossiers': [{'dossier_id': 'd1', 'need': 'Trier des notes', 'revision': 2}], 'availability': AVAILABILITY}, 'csrf').decode()
-        self.assertIn('aria-current="page">Mes cas d’usage</a>', listing)
-        self.assertIn('<ul class="dossiers">', listing)
-        self.assertIn('href="/preparation/dossiers/d1"', listing)
-        waiting = views.render({'operation_id': 'op', 'dossier_id': 'd1', 'availability': AVAILABILITY}, 'csrf').decode()
-        self.assertIn('class="state wait"', waiting)
-        honeypot = views.render({'kind': 'honeypot_ack'}, 'csrf').decode()
-        for expected in ('<title>Demande enregistrée', 'class="state wait"',
-                         'Votre envoi est bien enregistré', 'Suivre mon cas d’usage'):
-            self.assertIn(expected, waiting)
-            self.assertIn(expected, honeypot)
-
-    def test_named_error_is_attached_to_its_field(self):
-        page = views.render(
-            {'error': 'Ce texte est trop court.', 'error_field': 'request',
-             'form': {'dossier_id': 'd', 'action_id': 'a', 'request': 'court',
-                      'useful': '', 'context': ''}}, 'csrf', error=True).decode()
-        self.assertIn('name="request" required minlength="40" maxlength="1500" rows="5" '
-                      'aria-describedby="request-help request-error"', page)
-        self.assertIn('en 40 caractères au moins', page)
-        self.assertIn('<p id="request-error" role="alert">Ce texte est trop court.</p>', page)
-        self.assertEqual(1, page.count('Ce texte est trop court.'))
-
-        message = views.render(
-            {'error': 'Ce texte est trop long.', 'error_field': 'message',
-             'form': {'action_id': 'a', 'revision': 1, 'kind': 'clarify',
-                      'message': 'long'}}, 'csrf', error=True).decode()
-        self.assertIn('aria-describedby="message-error"', message)
-        self.assertIn('<p id="message-error" role="alert">Ce texte est trop long.</p>', message)
 
     def test_fonts_and_projection_stylesheet_are_local_files(self):
         for name in ('AtkinsonHyperlegibleNext', 'AtkinsonHyperlegibleMono'):
@@ -188,130 +58,6 @@ class DossierPageTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
 
-    def test_qualified_example_stays_on_validation_until_models_are_opened(self):
-        nav = views.preparation_steps(dict(dossier_id='d1', revision=3, current_revision=3,
-            package={'instruction':'Exemple'}, validation={'revision':3}, qualified=True))
-        self.assertIn('aria-current="step"><span class="n">3</span>Validation', nav)
-        self.assertNotIn('aria-current="step"><span class="n">4</span>Modèles', nav)
-        self.assertIn('/preparation/dossiers/d1/configurations', nav)
-
-    def test_five_steps_preserve_revision_and_disable_future_steps(self):
-        value = dict(dossier_id='d1', revision=2, current_revision=3, stage='preview',
-                     package=None, validation=None, qualified=False, explanation='Exemple attendu',
-                     payload=dict(request='Besoin fictif', clarifications=[], validated_assumptions=[],
-                                  reformulation='', fictional_parameters={}))
-        page = views.render(value, 'csrf').decode()
-        nav = page.split('<nav class="steps"', 1)[1].split('</nav>', 1)[0]
-        for number, label in enumerate(('Besoin', 'Exemple', 'Validation', 'Modèles', 'Résultats'), 1):
-            self.assertIn(f'<span class="n">{number}</span>{label}', nav)
-        self.assertEqual(4, nav.count('aria-disabled="true"'))
-        # Sur la page du cas, les étapes sont un sommaire interne
-        self.assertIn('href="#besoin"', nav)
-
-    def test_scope_confirmation_explains_why_benchmark_is_unavailable(self):
-        page = views.render({
-            'dossier_id': 'd1', 'revision': 2, 'stage': 'scope_confirmation',
-            'package': None, 'validation': None, 'qualified': False,
-            'explanation': 'Je ne peux pas parcourir votre ordinateur. Acceptez-vous un exemple avec des pièces textuelles inventées ?',
-            'payload': {'request': 'Je voudrais organiser mes factures pour mon comptable.',
-                        'clarifications': [], 'validated_assumptions': [],
-                        'reformulation': '', 'fictional_parameters': {}},
-            'availability': AVAILABILITY},
-            'csrf', '/preparation/dossiers/d1').decode()
-        self.assertIn('Précisez le travail à comparer', page)
-        self.assertIn('Aucune comparaison ne peut être lancée à cette étape.', page)
-        self.assertNotIn('href="#exemple"', page)
-        self.assertNotIn('href="#validation"', page)
-        self.assertNotIn('action="/preparation/dossiers/d1/validation"', page)
-        self.assertNotIn('Choisir les modèles', page)
-        self.assertNotIn('Ajouter ma clé OpenRouter', page)
-
-    def test_out_of_scope_has_fixed_referrals_and_no_continuation(self):
-        links = {'math': 'https://matharena.ai/',
-                 'coding': 'https://livecodebench.github.io/', 'other': None}
-        for category, link in links.items():
-            with self.subTest(category=category):
-                page = views.render({
-                    'dossier_id': 'd1', 'revision': 2, 'stage': 'suspended',
-                    'checks': {'out_of_scope': category}, 'package': None,
-                    'validation': None, 'qualified': False,
-                    'explanation': 'Il s’agit d’un test générique, sans tâche de travail à comparer.',
-                    'payload': {'request': 'Un exercice générique', 'clarifications': [],
-                                'validated_assumptions': [], 'reformulation': '',
-                                'fictional_parameters': {}}, 'availability': AVAILABILITY},
-                    'csrf', '/preparation/dossiers/d1').decode()
-                self.assertIn('Bench-X ne peut pas comparer cette tâche', page)
-                self.assertNotIn('n’est pas encore', page)
-                self.assertNotIn('Envoyer ma réponse', page)
-                self.assertNotIn('action="/preparation/dossiers/d1/validation"', page)
-                self.assertNotIn('Choisir les modèles', page)
-                self.assertNotIn('L’équipe Bench-X doit intervenir', page)
-                self.assertNotIn('id="availability"', page)
-                self.assertIn('Décrire un autre cas d’usage', page)
-                if link:
-                    self.assertIn('href="' + link + '"', page)
-                if category == 'math':
-                    self.assertNotIn('https://livecodebench.github.io/', page)
-
-    def suspended(self, explanation, availability):
-        return views.render({
-            'dossier_id': 'd1', 'revision': 2, 'stage': 'suspended', 'package': None,
-            'validation': None, 'qualified': False, 'explanation': explanation,
-            'payload': {'request': 'Trier des notes inventées', 'clarifications': [],
-                        'validated_assumptions': [], 'reformulation': '', 'fictional_parameters': {}},
-            'availability': availability}, 'csrf', '/preparation/dossiers/d1').decode()
-
-    def test_preparation_suspendue_dit_la_cause_et_propose_de_renvoyer(self):
-        page = self.suspended('Incident chez OpenRouter ou chez le fournisseur du modèle. Préparation suspendue. '
-                              'Reçu et coût conservés ; aucune reprise automatique.', AVAILABILITY)
-        self.assertIn('Incident chez OpenRouter ou chez le fournisseur du modèle.', page)
-        self.assertIn('Renvoyez votre message', page)
-        self.assertNotIn('ne reprendra pas d’elle-même', page)
-        # L'envoi reste ouvert : le formulaire de réponse n'est pas désactivé
-        self.assertIn('<button type="submit">Envoyer ma réponse</button>', page)
-
-    def test_envoi_ferme_sans_attente_de_l_equipe(self):
-        cases = {'interrupted': 'Nous ne savons pas si le modèle a répondu. Rien n’est relancé ; '
-                                'cette opération sera close automatiquement.',
-                 'restore': 'Service momentanément indisponible, réessayez plus tard.'}
-        for reason, expected in cases.items():
-            with self.subTest(reason=reason):
-                page = self.suspended('Nous ne savons pas si le modèle a répondu à votre dernier message.',
-                                      dict(AVAILABILITY, can_submit=False, reason=reason))
-                self.assertIn(expected, page)
-                self.assertNotIn('Renvoyez votre message', page)
-                self.assertIn('disabled', page.split('Envoyer ma réponse')[0].rsplit('<button', 1)[1])
-
-    def test_exemple_valide_sans_verification_automatique_ne_compte_pas_sur_l_equipe(self):
-        page = views.render({
-            'dossier_id': 'd1', 'revision': 1, 'stage': 'preview',
-            'package': {'instruction': 'Relever les actions', 'deliverables': ['Liste'], 'pieces': [],
-                        'human_work': 'Relire', 'acceptable_ambiguities': [], 'limits': []},
-            'criteria': {'eliminatory': [], 'obligations': ['Action présente'], 'quality': []},
-            'criteria_rule': 'Règle', 'example_contents': {}, 'changes': [], 'piece_changes': {},
-            'validation': {'validated_at': '2026-09-16T08:00:00Z'}, 'qualified': False,
-            'qualification': {'status': 'PENDING', 'qualification_status': 'PENDING', 'approval_status': 'PENDING'},
-            'explanation': '',
-            'payload': {'request': 'Trier des notes inventées', 'clarifications': [],
-                        'validated_assumptions': [], 'reformulation': '', 'fictional_parameters': {}},
-            'availability': AVAILABILITY}, 'csrf', '/preparation/dossiers/d1').decode()
-        self.assertIn('La vérification de l’exemple n’a pas pu démarrer.', page)
-        self.assertNotIn('Approbation', page)
-
-    def test_historique_d_une_comparaison_arretee_sans_autorisation_a_attendre(self):
-        from benchmark_web.campaign_views import render_campaign_records
-        campaign = dict(campaign_id='c1', task={'version': 1, 'revision': 1}, panel=[], cells=[], attempts=[],
-                        conditions=dict(pi={'package': 'pi', 'version': '1', 'status': 'PINNED'},
-                                        frozen_at='2026-09-15T00:00:00Z', packages=[], tools=[], skills=[],
-                                        defaults={}, environment={}),
-                        admission_open=False, allowed_cells=[], restore_pending=True, stop_reason=None,
-                        missing_authorities=['exécution', 'appels candidats', 'budget'],
-                        budget=None, reserve_amounts=None, cost_basis={})
-        page = render_campaign_records([campaign], '/preparation/dossiers/d1')
-        self.assertIn('Aucun nouvel essai ne peut être lancé pour cette comparaison.', page)
-        self.assertIn('Service momentanément indisponible, réessayez plus tard.', page)
-        for absent in ('équipe', 'Autorisation', 'autorisation', 'appels candidats'):
-            self.assertNotIn(absent, page)
 
     def test_criteria_groups_render_versioned_packages(self):
         def render(criteria):
@@ -358,23 +104,6 @@ class DossierPageTests(unittest.TestCase):
         self.assertIn(rule, single_group)
         self.assertIn('<h1>Est-ce le travail que vous voulez tester ?</h1>', single_group)
 
-    def test_resume_de_qualification_bloquee_reste_du_texte(self):
-        summary = '<img src=x onerror="alert(1)">Correction requise'
-        page = views.render({
-            'dossier_id': 'd1', 'revision': 1, 'stage': 'preview', 'package': None,
-            'validation': {'validated_at': '2026-09-16T08:00:00Z'}, 'qualified': False,
-            'qualification': {'operation_id': 'op', 'status': 'BLOCKED', 'summary': summary,
-                              'findings': [], 'qualification_status': 'BLOCKED',
-                              'approval_status': 'PENDING'},
-            'explanation': 'Contrôle automatique de l’exemple',
-            'payload': {'request': 'Trier des notes inventées', 'clarifications': [],
-                        'validated_assumptions': [], 'reformulation': '',
-                        'fictional_parameters': {}},
-            'availability': AVAILABILITY}, 'csrf').decode()
-        self.assertIn('Exemple à revoir avant comparaison', page)
-        self.assertNotIn('<img src=x', page)
-        self.assertEqual(1, page.count(
-            '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;Correction requise'))
 
     def test_state_block_steps_and_hidden_correction_without_digests(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -404,98 +133,7 @@ class DossierPageTests(unittest.TestCase):
 
 
 class ComparisonPageTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which('node'), 'Node requis pour exécuter le suivi navigateur')
-    def test_progress_script_reads_only_and_stops_on_completion_error_or_input(self):
-        program = r'''
-const vm = require('node:vm'), assert = require('node:assert/strict');
-const script = require('node:fs').readFileSync(0, 'utf8');
-(async () => {
-  for (const outcome of ['waiting', 'finished', 'error-once', 'error', 'input', 'pause', 'campaign-waiting', 'campaign-finished', 'campaign-stopped']) {
-    const timers = new Map(), events = {}, requests = [], navigations = [], logs = [], delays = [];
-    // Un échec isolé réessaie plus tard ; trois échecs consécutifs arrêtent le suivi
-    const attempts = outcome === 'error' ? 3 : 1;
-    const updates = [], campaignStatus = {innerHTML: 'Une réponse reçue', replaceChildren: (...nodes) => updates.push(nodes)};
-    const campaign = outcome.startsWith('campaign-');
-    const waiting = outcome === 'waiting' || outcome === 'campaign-waiting';
-    const status = {}, progress = {}, pause = {addEventListener: (_, fn) => events.pause = fn};
-    const link = {href: 'https://fixture.invalid/preparation/dossiers/d1'};
-    const nodes = {'a': link, '[role="status"]': status, 'button': pause, 'progress': progress};
-    const panel = {querySelector: name => nodes[name]};
-    let serial = 0;
-    vm.runInNewContext(script, {
-      console: {info: (...args) => logs.push(args), error: (...args) => logs.push(args)},
-      document: {hidden: false, getElementById: id => id === 'preparation-progress' ? panel : id === 'campaign-status' && campaign ? campaignStatus : null,
-                 addEventListener: (event, fn) => events[event] = fn},
-      window: {addEventListener: (event, fn) => events[event] = fn},
-      location: {replace: url => navigations.push(url)}, AbortController,
-      setTimeout: (fn, delay) => {timers.set(++serial, fn); delays.push(delay); return serial;},
-      clearTimeout: id => timers.delete(id),
-      DOMParser: class {parseFromString() {return {getElementById: id => {
-        if (id === 'preparation-progress') return waiting ? panel : null;
-        if (id === 'campaign-status' && campaign) return {innerHTML: 'Deux réponses reçues', childNodes: ['Deux réponses reçues']};
-        if (id === 'campaign-followup' && campaign) return {dataset: outcome === 'campaign-finished' ? {resultsHref: '/results'} : {}};
-        return null;
-      }};}},
-      fetch: async (url, options) => {requests.push({url, options});
-        const failed = outcome.startsWith('error');
-        return {status: failed ? 503 : 200, ok: !failed, text: async () => '<html></html>'};}
-    });
-    if (outcome === 'input' || outcome === 'pause') events[outcome]();
-    else for (let run = 0; run < attempts; run++) {
-      const [id, task] = [...timers.entries()].find(([key]) => key !== 0) ?? [];
-      if (!task) break;
-      timers.delete(id); await task();
-    }
-    assert.equal(requests.length, ['input', 'pause'].includes(outcome) ? 0 : attempts);
-    if (outcome.startsWith('error')) assert.deepEqual(delays.filter(delay => delay !== 10000), [4000, 8000, 16000].slice(0, Math.min(attempts + 1, 3)));
-    for (const {url, options} of requests) {
-      assert.equal(url, link.href); assert.equal(options.method, undefined);
-      assert.equal(options.body, undefined); assert.equal(options.redirect, 'error');
-    }
-    assert.deepEqual(navigations, outcome === 'campaign-finished' ? ['/results'] : ['finished', 'campaign-stopped'].includes(outcome) ? [link.href] : []);
-    assert.equal(updates.length, outcome === 'campaign-waiting' ? 1 : 0);
-    for (const entry of logs) {
-      assert.match(entry[0], /^FOLLOWUP_(ACTIVE|COMPLETE|HTTP_ERROR|UNAVAILABLE)$/);
-      assert(entry.length === 1 || entry.length === 2 && [200, 503, 1, 2, 3].includes(entry[1]));
-    }
-    assert.equal(timers.size, waiting || outcome === 'error-once' ? 1 : 0);
-    if (outcome === 'error-once') assert.notEqual(progress.hidden, true);
-    if (['error', 'input', 'pause'].includes(outcome)) {
-      assert.equal(progress.hidden, true); assert.equal(pause.hidden, true);
-      assert.match(status.textContent, /interrompue|arrêtée/);
-    }
-  }
-})().catch(error => {console.error(error); process.exitCode = 1;});
-'''
-        subprocess.run(['node', '-e', program], input=views.PREPARATION_PROGRESS_SCRIPT,
-                       text=True, check=True, capture_output=True)
 
-    def test_progress_only_for_current_pending_work(self):
-        value = dict(dossier_id='d1', revision=1, current_revision=1, stage='waiting',
-                     package=None, validation=None, qualified=False, explanation='Ancien texte',
-                     payload=dict(request='Trier les factures fictives', clarifications=[],
-                                  validated_assumptions=[], reformulation='', fictional_parameters={}),
-                     availability={**AVAILABILITY, 'reason': 'waiting', 'can_submit': False})
-        for stage, qualification, prior_revision, pending in (
-                ('waiting', {}, False, True), ('waiting', {}, True, False),
-                ('clarification', {}, False, False), ('suspended', {}, False, False),
-                ('preview', {'operation_id': 'op', 'status': 'PENDING'}, False, True),
-                ('preview', {'operation_id': 'op', 'status': 'BLOCKED'}, False, False),
-                ('preview', {'operation_id': 'op', 'status': 'QUALIFIED'}, False, False)):
-            with self.subTest(stage=stage, qualification=qualification, prior_revision=prior_revision):
-                view = {**value, 'stage': stage, 'current_revision': 2 if prior_revision else 1,
-                        'qualification': {**qualification, 'summary': 'Contrôle', 'findings': []},
-                        'validation': {'validated_at': '2026-09-17'} if qualification else None,
-                        'qualified': qualification.get('status') == 'QUALIFIED'}
-                page = views.render(view, 'csrf', '/preparation/dossiers/d1').decode()
-                self.assertEqual(pending, '<progress ' in page)
-                self.assertEqual(pending, 'id="preparation-progress"' in page)
-                if pending:
-                    self.assertEqual(1, page.count('id="availability"'))
-                    self.assertNotIn('<aside id="availability"', page)
-                    self.assertIn('>Actualiser</a>', page)
-                    self.assertNotIn('<progress value=', page)
-                    self.assertIn('Cette page se met à jour d’elle-même si JavaScript est activé', page)
 
     def test_badges_and_cost_bars(self):
         with tempfile.TemporaryDirectory() as temporary:

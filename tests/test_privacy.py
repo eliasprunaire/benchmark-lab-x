@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import threading
 import time
+import os
 import unittest
 from unittest.mock import patch
 
@@ -16,6 +17,13 @@ from tests.test_s2_review_regressions import Authorized, response_for
 
 NOW = datetime(2026, 9, 18, 12, tzinfo=timezone.utc)
 SECRET = bytes.fromhex('11' * 32)
+
+
+def load_tests(loader, tests, pattern):
+    # La CI exécute ce module dans son étape dédiée ; la découverte locale reste complète
+    if pattern is not None and os.environ.get('BENCHMARK_TEST_CI_SPLIT') == '1':
+        return unittest.TestSuite()
+    return tests
 
 
 def initialize(data):

@@ -29,7 +29,7 @@ before(async () => {
 import json
 from benchmark import restitution
 from benchmark_web import projection, views
-from tests.test_privacy_views import example_view
+from tests.test_privacy_views import example_view, browser_views
 from tests.test_s10_regressions import S10ProofTests as proof
 proof.setUpClass()
 try:
@@ -76,7 +76,7 @@ example_page = views.render(case, 'csrf').decode()
 consent, controls = render_contribution(case, 'csrf'), render_privacy_controls(case, 'csrf')
 assert consent in example_page and controls in example_page
 launched = example_page.replace(consent, '').replace(controls, render_privacy_controls(case, 'csrf', consent))
-print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
+print(json.dumps({**browser_views(), 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
                   'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT,
@@ -105,7 +105,7 @@ print(json.dumps({'data': views.render({'kind': 'privacy_data'}, '').decode(), '
       const body = req.headers['content-type']?.includes('application/json') ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw));
       posts.push({path: url.pathname, body});
       res.writeHead(postStatus, {'Content-Type': 'application/json'}).end('{}');
-    } else if (url.pathname === '/preparation/dossiers/d1/campaigns/c1/conditions') {
+    } else if (['/preparation/dossiers/d1/campaigns/c1/conditions', '/preparation/dossiers/d1'].includes(url.pathname)) {
       // Réponses du suivi imposées par le test : un statut d'erreur ou le nom d'une page rendue
       const reply = followupReplies.shift() ?? 'followup';
       if (typeof reply === 'number') {res.writeHead(reply).end(); return;}
@@ -885,13 +885,17 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
   try {
     const failures = [];
     let page;
-    const start = async () => {
+    const requests = [];
+    const start = async (view = 'followup') => {
+      await page?.close();
       followupReplies = [];
+      requests.length = 0;
       page = await context.newPage(); page.setDefaultTimeout(5000);
+      page.on('request', request => {if (request.resourceType() === 'fetch') requests.push(request);});
       page.on('pageerror', error => failures.push(error.message));
       page.on('console', message => {if (/Content Security Policy/.test(message.text())) failures.push(message.text());});
       await page.clock.install();
-      await page.goto(origin + '/render/followup');
+      await page.goto(origin + '/render/' + view);
       // Horloge arrêtée juste après le chargement : seuls les délais avancés ici déclenchent un rafraîchissement
       await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1000);
     };
@@ -926,6 +930,33 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     await start();
     await tick(3000, 'followup_done', 'FOLLOWUP_COMPLETE');
     await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1');
+    // Préparation : lecture seule, arrêt sur saisie ou pause, puis navigation quand le travail se termine
+    for (const action of ['input', 'pause', 'complete']) {
+      await start('progress-waiting-none-False');
+      if (action === 'input') await page.locator('body').dispatchEvent('input');
+      if (action === 'pause') await page.getByRole('button', {name: 'Arrêter la mise à jour automatique'}).click();
+      if (action !== 'complete') {
+        await page.clock.runFor(30000);
+        assert.equal(requests.length, 0);
+        assert.equal(await running(), false);
+        assert.equal(await page.locator('#preparation-progress button').isVisible(), false);
+        assert.match(await page.locator('#preparation-progress [role="status"]').textContent(), /arrêtée/);
+      } else {
+        await tick(3000, 'progress-waiting-none-False', 'FOLLOWUP_ACTIVE');
+        assert.equal(await running(), true);
+        await tick(4000, 'progress-clarification-none-False', 'FOLLOWUP_COMPLETE');
+        await page.waitForURL(origin + '/preparation/dossiers/d1');
+        assert.equal(requests.length, 2);
+        for (const request of requests) {
+          assert.equal(request.method(), 'GET');
+          assert.equal(request.postData(), null);
+          assert.equal(request.url(), origin + '/preparation/dossiers/d1');
+        }
+      }
+    }
+    await start();
+    await tick(3000, 'followup-stopped', 'FOLLOWUP_COMPLETE');
+    await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1/conditions');
     assert.deepEqual(failures, []);
   } finally {followupReplies = []; await context.close();}
 });
@@ -979,5 +1010,346 @@ test('without JavaScript the case archive status keeps its static text', async (
     assert.equal(await page.locator('[data-privacy-controls] > [data-privacy-status]').textContent(),
       'Vos copies s’affichent ici quand JavaScript est activé.');
     assert.equal(await page.locator('.privacy-consent [data-privacy-status]').textContent(), 'Vous ne partagez pas cet exemple.');
+  } finally {await context.close();}
+});
+
+test('access and launch screens preserve available actions, estimates and refusal reasons', async () => {
+  const context = await browser.newContext({javaScriptEnabled: false});
+  try {
+    const page = await context.newPage();
+    for (const [state, label] of [['disconnected', 'Aucune clé enregistrée'], ['connected', 'Clé enregistrée'],
+      ['invalid', 'Clé à remplacer'], ['unavailable', 'Enregistrement de clé indisponible']]) {
+      await page.goto(origin + '/render/access-' + state);
+      assert.ok((await page.textContent('main')).includes(label), state);
+      assert.equal(await page.locator('form[action="/preparation/access/key"]').count(), state === 'unavailable' ? 0 : 1);
+      if (state === 'disconnected') assert.equal(await page.locator('input[name="return"]').inputValue(), '/preparation/access');
+      if (state === 'connected') {
+        const text = await page.textContent('main');
+        assert.ok(text.includes('Solde restant selon OpenRouter : 12,50 USD'));
+        assert.ok(text.includes('Plafond de la clé : 25 USD'));
+        assert.ok(text.includes('Retirer la clé de ce navigateur'));
+      }
+      if (state === 'invalid') assert.ok((await page.textContent('main')).includes('OpenRouter refuse cette clé'));
+      await page.goto(origin + '/render/launch-' + state);
+      assert.equal(await page.locator('form[action="/preparation/access/start"]').count(), 0);
+      if (state === 'unavailable') {
+        assert.equal(await page.locator('form[action="/preparation/access/key"], form[action="/preparation/access/disconnect"]').count(), 0);
+        assert.ok((await page.textContent('main')).includes('Impossible d’enregistrer une clé'));
+      }
+      if (state === 'connected') assert.equal(await page.locator('form[action="/preparation/access/disconnect"]').count(), 1);
+    }
+    for (const [name, text] of [['estimate-known', 'réservé pour l’évaluation : 0,125 USD'],
+      ['estimate-unknown', 'réservé pour l’évaluation : inconnu'],
+      ['launch-judgment-blocked', 'Budget insuffisant pour l’évaluation']]) {
+      await page.goto(origin + '/render/' + name);
+      assert.ok((await page.textContent('main')).includes(text), name);
+      assert.equal(await page.getByRole('button', {name: 'Lancer le benchmark', exact: true}).count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.locator('[id="cap_usd"], form[action$="/cap"]').count(), 0);
+    }
+    await page.goto(origin + '/render/estimate-known');
+    assert.ok((await page.textContent('main')).includes('le service d’exécution est indisponible. Réessayez dans quelques minutes.'));
+    for (const state of ['ready', 'blocked']) {
+      await page.goto(origin + '/render/launch-' + state);
+      const text = await page.textContent('main');
+      assert.equal(text.includes('Tout est prêt.'), state === 'ready');
+      assert.equal(text.includes('✓'), false);
+      assert.equal(await page.getByRole('button', {name: 'Lancer le benchmark', exact: true}).count(), state === 'ready' ? 1 : 0);
+      assert.equal(await page.locator('form[action$="/cap"], input[name="confirm"][required]').count(), 0);
+      assert.equal(await page.getByRole('link', {name: 'Modifier la sélection'}).getAttribute('href'), '/preparation/dossiers/d1/configurations');
+      if (state === 'ready') {
+        assert.ok(text.includes('crédit restant : 12,50 USD'));
+        assert.ok(text.includes('réponses estimées : 3,50 USD'));
+        assert.equal(await page.locator('input[name="confirm"]').getAttribute('type'), 'hidden');
+        assert.equal(await page.locator('input[name="confirm"]').inputValue(), 'yes');
+      } else {
+        for (const phrase of ['Modèle à choisir de nouveau', 'Ce que la vérification de l’exemple a relevé', 'Quantité à confirmer'])
+          assert.ok(text.includes(phrase), phrase);
+      }
+      assert.ok((await page.locator('form').evaluateAll(forms => forms.map(f => [f.method, f.getAttribute('action')]))).every(
+        ([method, action]) => method === 'post' && action.startsWith('/preparation/')));
+      assert.equal(/après le paiement|dépasser le plafond|Modifier le plafond/.test(text), false);
+    }
+    await page.goto(origin + '/render/configurations-selected');
+    assert.equal(await page.locator('form#configurations-form').getAttribute('action'), '/preparation/dossiers/d1/configurations');
+    assert.equal(await page.locator('input[name="models"]:checked').count(), 2);
+    assert.equal(await page.locator('select[name="tier"]').inputValue(), 'high');
+    assert.equal(await page.locator('select[name="tier"]').getAttribute('aria-describedby'), 'reasoning-help');
+    const effort = page.locator('select[name="effort:modele-a"]');
+    assert.equal(await effort.getAttribute('form'), 'configurations-form');
+    assert.equal(await effort.inputValue(), 'xhigh');
+    assert.equal(await page.locator('select[name="effort:modele-b"]').count(), 0);
+    const selection = await page.textContent('main');
+    for (const phrase of ['reçoit le niveau le plus proche qu’il propose', 'Ajuster le niveau par modèle',
+      'sans garantir qu’elle soit meilleure', 'niveau de raisonnement fixe']) assert.ok(selection.includes(phrase), phrase);
+    assert.equal(/Votre sélection|Coût total estimé|Plafond :/.test(selection), false);
+    assert.equal(await page.locator('a[href$="/campaigns/d1-c1/conditions"]').count(), 0);
+    assert.equal(await page.getByRole('button', {name: 'Continuer', exact: true}).count(), 1);
+    for (const [name, text] of [['16-01', '16 septembre 2026 à 12:00:01 UTC'],
+      ['16-02', '16 septembre 2026 à 12:00:02 UTC'], ['15-00', '15 septembre 2026 à 12:00:00 UTC']]) {
+      await page.goto(origin + '/render/date-' + name);
+      assert.ok((await page.textContent('main')).includes(text), text);
+    }
+    await page.goto(origin + '/render/configurations-empty');
+    assert.ok((await page.textContent('main')).includes('Relevé de modèles indisponible'));
+    assert.equal(await page.locator('#configurations-form').count(), 0);
+  } finally {await context.close();}
+});
+
+test('followup distinguishes acquisition, incidents and judgment without reopening launch', async () => {
+  const context = await browser.newContext({javaScriptEnabled: false});
+  try {
+    const page = await context.newPage();
+    for (const [state, active, terminal, message] of [
+      ['running', true, false, 'Benchmark en cours'], ['queued', true, false, 'Les essais n’ont pas encore démarré'],
+      ['stopped', false, false, 'La comparaison s’est arrêtée avant la fin'],
+      ['ambiguous', false, false, 'Un essai n’a pas pu être confirmé'],
+      ['incident', false, false, 'Un problème technique est survenu'], ['received', false, true, 'Réponses reçues']]) {
+      await page.goto(origin + '/render/followup-' + state);
+      const text = await page.textContent('main');
+      assert.ok(text.includes(message), state);
+      assert.equal(await page.locator('#preparation-progress').count(), Number(active), state);
+      assert.equal(await page.locator('[data-results-href]').count(), Number(terminal), state);
+      assert.equal(await page.locator('main form, #cap_usd').count(), 0);
+      assert.equal(await page.locator('script').count() > 0, active || terminal);
+      assert.equal(await page.locator('nav.steps a[href="/preparation/dossiers/d1/revisions/2"]').count() > 0, true);
+      assert.equal(await page.locator('nav.steps a[href="#exemple"]').count(), 0);
+      if (terminal) assert.ok(text.includes('Celles qui n’ont pas encore de verdict attendent leur évaluation.'));
+    }
+    for (const status of ['NOT_STARTED', 'WAITING', 'RUNNING', 'COMPLETE', 'BLOCKED']) {
+      await page.goto(origin + '/render/judgment-' + status);
+      const active = ['WAITING', 'RUNNING'].includes(status), ready = status === 'COMPLETE';
+      const text = await page.textContent('main');
+      assert.equal(await page.locator('#preparation-progress').count(), Number(active));
+      assert.equal(await page.locator('[data-results-href]').count(), Number(ready));
+      assert.ok(text.includes('Réponses reçues : 1 sur 1'));
+      assert.ok(text.includes(`Réponses évaluées : ${Number(ready)} sur 1`));
+      assert.equal(await page.locator('form[action$="/evaluate"]').count(), Number(status === 'NOT_STARTED'));
+      assert.equal(await page.locator('script').count() > 0, active || ready);
+      if (status === 'NOT_STARTED') {
+        assert.equal(await page.locator('input[name="confirm"]').inputValue(), 'yes');
+        assert.equal(await page.locator('input[name="csrf_token"]').inputValue(), 'csrf');
+      }
+      if (status === 'BLOCKED') assert.ok(text.includes('Budget insuffisant'));
+    }
+    for (const [state, judgment, active] of [['EMISSION_POSSIBLE', 'None', true], ['INTENT_RECORDED', 'None', true],
+      ['EMISSION_POSSIBLE', 'WAITING', true], ['RECEIVED', 'None', false], ['RECEIVED', 'BLOCKED', false]]) {
+      await page.goto(origin + '/render/mixed-' + state + '-' + judgment);
+      assert.equal(await page.locator('#preparation-progress').count(), Number(active));
+      assert.equal((await page.title()).includes('Benchmark en cours'), active);
+      assert.equal(await page.locator('script').count() > 0, active);
+    }
+  } finally {await context.close();}
+});
+
+test('preparation screens preserve navigation, accessible forms and recoverable states', async () => {
+  const context = await browser.newContext({javaScriptEnabled: false});
+  try {
+    const page = await context.newPage();
+    for (const reason of rendered['availability-reasons']) {
+      await page.goto(origin + '/render/availability-' + reason);
+      assert.equal(await page.locator('#availability').count(), Number(reason !== 'open'), reason);
+      if (reason !== 'open') assert.ok((await page.locator('#availability p').first().textContent()).length >= 20, reason);
+      assert.equal(await page.locator('form form').count(), 0);
+    }
+    await page.goto(origin + '/render/availability-access');
+    assert.equal(await page.locator('a').first().getAttribute('href'), '#main');
+    assert.equal(await page.locator('main').getAttribute('tabindex'), '-1');
+    assert.equal(await page.locator('#request').getAttribute('aria-describedby'), 'request-help availability');
+    assert.equal(await page.locator('button[form]').getAttribute('form'), 'prepare-case');
+    assert.equal(await page.locator('#prepare-case').count(), 1);
+    const ordering = await page.textContent('main');
+    assert.ok(ordering.indexOf('Enregistrer la clé') < ordering.indexOf('Décrivez une tâche de votre travail'));
+    assert.ok(await page.locator('#availability').evaluate(node => Boolean(node.compareDocumentPosition(document.getElementById('openrouter-key')) & Node.DOCUMENT_POSITION_FOLLOWING)));
+    assert.deepEqual(await page.evaluate(() => {
+      const nodes = [...document.querySelectorAll('[id]')], ids = nodes.map(n => n.id);
+      return [ids.length === new Set(ids).size,
+        [...document.querySelectorAll('[aria-describedby]')].every(n => n.getAttribute('aria-describedby').split(' ').every(id => ids.includes(id))),
+        [...document.querySelectorAll('[tabindex]')].every(n => n.tabIndex <= 0), getComputedStyle(document.body).overflowWrap];
+    }), [true, true, true, 'break-word']);
+    for (const [name, field, text] of [['request-error', 'request', 'Ce texte est trop court.'], ['message-error', 'message', 'Ce texte est trop long.']]) {
+      await page.goto(origin + '/render/' + name);
+      assert.ok((await page.locator(`[name="${field}"]`).getAttribute('aria-describedby')).includes(field + '-error'));
+      assert.equal(await page.locator('#' + field + '-error').getAttribute('role'), 'alert');
+      assert.equal(await page.locator('#' + field + '-error').textContent(), text);
+      assert.equal((await page.textContent('main')).split(text).length, 2);
+      if (field === 'request') {
+        assert.equal(await page.locator('#request').getAttribute('minlength'), '40');
+        assert.equal(await page.locator('#request').getAttribute('maxlength'), '1500');
+        assert.equal(await page.locator('#request').getAttribute('required'), '');
+        assert.ok((await page.textContent('main')).includes('en 40 caractères au moins'));
+      }
+    }
+    await page.goto(origin + '/render/prior-example');
+    assert.equal(await page.locator('nav.steps [aria-disabled="true"]').count(), 4);
+    for (const text of ['1Besoin', '2Exemple', '3Validation', '4Modèles', '5Résultats'])
+      assert.ok((await page.locator('nav.steps').textContent()).includes(text));
+    assert.equal(await page.locator('nav.steps a[href="#besoin"]').count(), 1);
+    await page.goto(origin + '/render/example-QUALIFIED');
+    assert.ok((await page.locator('nav.steps [aria-current="step"]').textContent()).includes('Validation'));
+    assert.equal(await page.locator('nav.steps a[href$="/configurations"]').count(), 1);
+    await page.goto(origin + '/render/scope');
+    assert.ok((await page.textContent('main')).includes('Précisez le travail à comparer'));
+    assert.ok((await page.textContent('main')).includes('Aucune comparaison ne peut être lancée à cette étape.'));
+    assert.equal((await page.textContent('main')).includes('Choisir les modèles'), false);
+    assert.equal(await page.locator('a[href="#exemple"], a[href="#validation"], form[action$="/validation"], #openrouter-key').count(), 0);
+    for (const category of ['math', 'coding', 'other']) {
+      await page.goto(origin + '/render/out-of-scope-' + category);
+      const text = await page.textContent('main');
+      assert.ok(text.includes('Bench-X ne peut pas comparer cette tâche'));
+      assert.ok(text.includes('Décrire un autre cas d’usage'));
+      assert.equal(/Envoyer ma réponse|Choisir les modèles|équipe Bench-X|n’est pas encore/.test(text), false);
+      assert.equal(await page.locator('form[action$="/validation"], #availability').count(), 0);
+      assert.equal(await page.locator('a[href="https://matharena.ai/"]').count(), Number(category === 'math'));
+      assert.equal(await page.locator('a[href="https://livecodebench.github.io/"]').count(), Number(category === 'coding'));
+    }
+    for (const reason of ['open', 'interrupted', 'restore']) {
+      await page.goto(origin + '/render/suspended-' + reason);
+      const text = await page.textContent('main');
+      assert.equal(text.includes('Renvoyez votre message'), reason === 'open');
+      assert.equal(await page.getByRole('button', {name: 'Envoyer ma réponse', exact: true}).isDisabled(), reason !== 'open');
+      assert.equal(text.includes('équipe'), false);
+      if (reason === 'open') assert.ok(text.includes('Incident chez OpenRouter ou chez le fournisseur du modèle.'));
+      if (reason === 'interrupted') assert.ok(text.includes('cette opération sera close automatiquement'));
+      if (reason === 'restore') assert.ok(text.includes('Service momentanément indisponible'));
+    }
+    await page.goto(origin + '/render/example-PENDING');
+    assert.ok((await page.textContent('main')).includes('La vérification de l’exemple n’a pas pu démarrer.'));
+    assert.equal((await page.textContent('main')).includes('Approbation'), false);
+    await page.goto(origin + '/render/example-BLOCKED');
+    assert.ok((await page.textContent('main')).includes('Exemple à revoir avant comparaison'));
+    assert.equal(await page.locator('img[src="x"]').count(), 0);
+    assert.equal((await page.textContent('main')).split('<img src=x onerror="alert(1)">Correction requise').length, 2);
+    await page.goto(origin + '/render/stopped-history');
+    assert.ok((await page.textContent('main')).includes('Aucun nouvel essai ne peut être lancé pour cette comparaison.'));
+    assert.ok((await page.textContent('main')).includes('Service momentanément indisponible'));
+    for (const [stage, status, prior, pending] of [['waiting', 'none', false, true], ['waiting', 'none', true, false],
+      ['clarification', 'none', false, false], ['suspended', 'none', false, false], ['preview', 'PENDING', false, true],
+      ['preview', 'BLOCKED', false, false], ['preview', 'QUALIFIED', false, false]]) {
+      await page.goto(origin + `/render/progress-${stage}-${status}-${prior ? 'True' : 'False'}`);
+      assert.equal(await page.locator('#preparation-progress').count(), Number(pending));
+      assert.equal(await page.locator('progress').count(), Number(pending));
+      if (pending) {
+        assert.equal(await page.locator('#availability').count(), 1);
+        assert.equal(await page.locator('aside#availability, progress[value]').count(), 0);
+        assert.ok((await page.textContent('main')).includes('Cette page se met à jour d’elle-même si JavaScript est activé'));
+      }
+    }
+  } finally {await context.close();}
+});
+
+test('privacy forms preserve consent scope, purpose tokens and expired states', async () => {
+  const context = await browser.newContext({javaScriptEnabled: false});
+  try {
+    const page = await context.newPage();
+    await page.goto(origin + '/render/example');
+    const text = await page.textContent('main');
+    assert.ok(text.indexOf('Les pièces de l’exemple') < text.indexOf('Oui, c’est le travail à tester'));
+    assert.ok(text.indexOf('Oui, c’est le travail à tester') < text.indexOf('conserver cet exemple pendant 6 mois'));
+    for (const phrase of ['historique local', 'votre besoin, vos messages et les versions successives',
+      'Cette copie contient plus que la contribution', 'a besoin de JavaScript', 'sans lui, seule la contribution',
+      'efface la copie de ce cas gardée dans ce navigateur', 'vos cas ne sont plus accessibles après 7 jours', 'Votre clé ne l’est plus après 30 jours'])
+      assert.ok(text.includes(phrase), phrase);
+    assert.equal(/Clé retirée après|11 jours|conserve votre copie locale/.test(text), false);
+    assert.equal(await page.locator('script[src="/preparation/privacy.js"]').count(), 1);
+    assert.ok(await page.locator('script:not([src])').count() > 0);
+    await page.goto(origin + '/render/privacy-listing');
+    const activity = page.locator('[data-privacy-activity]');
+    assert.equal(await activity.getAttribute('data-dossier-id'), 'd1');
+    assert.equal(await activity.getAttribute('data-content-version'), '4');
+    assert.equal(await activity.getAttribute('data-csrf-token'), 'privacy-token');
+    assert.equal(await page.locator('form[action="/preparation/access/key"] input[name="csrf_token"]').inputValue(), 'csrf');
+    assert.equal(await page.locator('[data-privacy-post="contribution"]').count(), 0);
+    assert.equal(await page.locator('[data-privacy-post="delete"]').count(), 1);
+    for (const name of ['current', 'expired', 'prior']) {
+      await page.goto(origin + '/render/consent-' + name);
+      const box = page.locator('[data-privacy-post="contribution"] input[type="checkbox"]');
+      assert.equal(await box.count(), Number(name !== 'prior'));
+      if (name === 'prior') continue;
+      assert.equal(await box.isChecked(), false);
+      assert.equal(await box.isDisabled(), name === 'expired');
+      assert.equal(await page.locator('[data-privacy-post="contribution"] input[name="revision"]').inputValue(), '5');
+      assert.equal(await page.locator('[data-privacy-post="contribution"] input[name="example_revision"]').inputValue(), '3');
+    }
+    for (const [state, year, label, disabled] of [['active', '2099', 'Active', false], ['withdrawn', '2099', 'Retirée', true],
+      ['expired', '2000', 'Expirée', true], ['active', '2000', 'Expirée', true], ['UNKNOWN_STATE', '2099', 'État inconnu', true]]) {
+      await page.goto(origin + `/render/contribution-${state}-${year}`);
+      const text = await page.textContent('main');
+      for (const phrase of [label, '18 septembre 2026', 'arrête seulement la contribution concernée',
+        'L’historique local continue', 'les copies déjà gardées dans ce navigateur restent']) assert.ok(text.includes(phrase), phrase);
+      assert.equal(text.includes('Contribution opaque-identifier'), false);
+      assert.equal(await page.locator('[data-privacy-activity]').count(), 0);
+      const form = page.locator('form[action="/preparation/contributions/opaque-identifier/withdraw"]');
+      assert.equal(await form.locator('button').isDisabled(), disabled);
+      assert.equal(await form.locator('input[name="csrf_token"]').inputValue(), 'purpose-only');
+    }
+    for (const name of ['safe', 'unsafe']) {
+      await page.goto(origin + '/render/bootstrap-' + name);
+      assert.equal(await page.locator('form[action="/preparation/session/open"]').count(), 1);
+      assert.equal(await page.locator('input[name="csrf_token"]').count(), 0);
+      assert.equal(await page.locator('input[name="return_path"]').inputValue(), '/preparation');
+      assert.equal((await page.content()).includes('//evil.test'), false);
+    }
+    await page.goto(origin + '/render/data');
+    assert.equal(await page.locator('[data-privacy-history]').count(), 1);
+    assert.equal(await page.locator('[data-privacy-activity]').count(), 0);
+  } finally {await context.close();}
+});
+
+test('public and private pages retain legal information and exact release identity', async () => {
+  const context = await browser.newContext({javaScriptEnabled: false});
+  try {
+    const page = await context.newPage();
+    for (const name of [...LEGAL, 'home', 'data', 'listing', 'example', 'request-error', 'publication-footer']) {
+      await page.goto(origin + '/render/' + name);
+      for (const href of ['/mentions-legales', '/cgu', '/confidentialite'])
+        assert.equal(await page.locator(`footer a[href="${href}"]`).count() > 0, true, name + href);
+      assert.equal(await page.locator('a[href="/preparation/privacy"]').count(), 0);
+      if (LEGAL.includes(name)) {
+        assert.equal(await page.locator('script, [data-privacy-activity], [aria-current], blockquote').count(), 0);
+        assert.equal(await page.locator('h1').count(), 1);
+        assert.equal(await page.title(), (await page.locator('h1').textContent()) + ' · Bench-X');
+        assert.equal(/\[\[|Formulation à retenir|N’annoncez pas|aucune route ne les expose|annoncez une fermeture d’accès/.test(await page.textContent('body')), false);
+      }
+    }
+    await page.goto(origin + '/render/confidentialite');
+    const privacy = await page.textContent('main');
+    for (const term of ['Dernière mise à jour : 29 septembre 2026', 'OpenRouter, Inc., établi aux États-Unis',
+      'article 45 du RGPD', 'article 46 du RGPD', 'Nous ne pouvons pas garantir', 'art. 6.1.b', 'art. 6.1.f',
+      'portabilité', 'CNIL', '3 place de Fontenoy', 'benchmark_session', 'désactivé par défaut', 'deux effets',
+      'contribution pour cet exemple', 'votre besoin, vos messages et les révisions', 'que la contribution exclut',
+      'retire la copie de contribution conservée sur le serveur', 'ne concerne que la contribution',
+      'n’arrête pas l’historique local', 'restent dans ce navigateur']) assert.ok(privacy.includes(term), term);
+    assert.ok((await page.getByRole('row').filter({hasText: 'Historique local dans votre navigateur'}).textContent()).includes('Votre consentement (art. 6.1.a)'));
+    assert.equal(/N’ÉCRIRE QU’APRÈS|N'ÉCRIRE QU'APRÈS/.test(privacy), false);
+    assert.equal(await page.locator('a[href="/preparation/data"]').count() > 0, true);
+    await page.goto(origin + '/render/cgu');
+    assert.ok((await page.textContent('main')).includes('Dernière mise à jour : 29 septembre 2026'));
+    await page.goto(origin + '/render/mentions-legales');
+    assert.ok((await page.textContent('main')).includes('AGPL-3.0-only'));
+    for (const [name, label, target] of [['checkout', 'Révision : abcdef0', ''],
+      ['release', 'Version : v0.2.0 (abcdef0)', '/tree/abcdef0123456789'], ['unknown', null, '']]) {
+      await page.goto(origin + '/render/identity-' + name);
+      const text = await page.textContent('body');
+      assert.equal(await page.locator('a.source').getAttribute('href'), 'https://github.com/eliasprunaire/benchmark-lab-x' + target);
+      if (label) assert.ok(text.includes(label));
+      else assert.equal(text.includes('v0.2.0'), false);
+      assert.equal(/v0.1.0|Version du site|Aucune ressource externe chargée|sha256/.test(text), false);
+      assert.equal(await page.locator('a[aria-current="page"]').textContent(), 'Accueil');
+      assert.equal(await page.locator('a[href="/index.html"]').count(), 0);
+      assert.ok(text.includes('Un seul manquement suffit'));
+      assert.equal(text.includes('Comparaisons publiées'), false);
+    }
+    await page.goto(origin + '/render/listing');
+    assert.equal(await page.locator('a[aria-current="page"]').textContent(), 'Mes cas d’usage');
+    assert.equal(await page.locator('ul.dossiers a[href="/preparation/dossiers/d1"]').count(), 1);
+    for (const name of ['waiting', 'honeypot']) {
+      await page.goto(origin + '/render/' + name);
+      assert.ok((await page.title()).startsWith('Demande enregistrée'));
+      assert.equal(await page.locator('.state.wait').count(), 1);
+      assert.ok((await page.textContent('main')).includes('Votre envoi est bien enregistré'));
+      assert.ok((await page.textContent('main')).includes('Suivre mon cas d’usage'));
+      assert.equal(await page.locator('#openrouter-key').count(), 0);
+    }
   } finally {await context.close();}
 });
