@@ -928,7 +928,9 @@ class ParcoursComplet(unittest.TestCase):
         # 2. Réussite déclarée sans citation de la réponse témoin : non qualifiée
         page, _ = verifier({'alternative': {'O1': ('PASS', 'Passage absent de la réponse témoin')}})
         self.examine(page, dossier, 'témoin sans preuve exploitable', None)
-        self.assertIn('Exemple à revoir avant comparaison', page.visible)
+        # #492, critère 4 : la réponse du juge, rejetée deux fois, n'est pas un verdict sur l'exemple
+        self.assertIn('Vérification impossible pour le moment', page.visible)
+        self.assertIn('restée inexploitable après une relance', page.visible)
         self.assertIn('Décision sans preuve exploitable', detail(page))
         self.assertFalse(any(n['tag'] == 'a' and n['text'] == 'Choisir les modèles' for n in page.nodes))
         self.request(dossier + '/configurations', status=403)
@@ -1102,7 +1104,9 @@ class ParcoursComplet(unittest.TestCase):
         verifier()
         self.rejouer_relances(dossier_id)
         page = self.request(dossier)[0]
-        self.assertIn('Exemple à revoir avant comparaison', page.visible)
+        # #492, critère 4 : la réponse du juge, rejetée deux fois, n'est pas un verdict sur l'exemple
+        self.assertIn('Vérification impossible pour le moment', page.visible)
+        self.assertIn('restée inexploitable après une relance', page.visible)
         self.assertEqual(2, detail(page).count('Décision sans preuve exploitable'))
         self.assertEqual([], retries())
         # 3. Incident reçu sur l'alternative : relance automatique annoncée, puis qualification sans correction
@@ -1625,7 +1629,9 @@ class ParcoursComplet(unittest.TestCase):
         prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
         self.rejouer_relances(dossier.rsplit('/', 1)[1])
         page, _, _ = self.request(dossier)
-        self.assertIn('Exemple à revoir avant comparaison', page.visible)
+        # #492, critère 4 : la réponse du juge, rejetée deux fois, n'est pas un verdict sur l'exemple
+        self.assertIn('Vérification impossible pour le moment', page.visible)
+        self.assertIn('restée inexploitable après une relance', page.visible)
         # Même témoin, même absence, sous la règle annoncée : défaut confirmé
         controle.evidence_rule = 'server-evidence/v2'
         controle.script = [temoin_omis, temoin_omis]

@@ -50,6 +50,8 @@ FORMAT_RETRY_ATTEMPTS = 2
 # non réalisé, l'exemple n'est pas mis en cause
 FORMAT_RETRY_WINDOW = timedelta(minutes=10)
 FORMAT_REJECTED_TEXT = 'La réponse du contrôle ne respecte pas le format attendu.'
+JUDGE_UNUSABLE_TEXT = ('La réponse du juge à un contrôle de témoin est restée inexploitable après une relance. '
+                       'Cela ne prouve pas que l’exemple est faux. Une modification de l’exemple relancera la vérification.')
 # Témoins de la vérification : chacun est jugé par le contrôle des campagnes, sous l'autorité de préparation ;
 # la borne fixe la réserve annoncée avant la validation
 WITNESS_FORMAT = 'benchmark-lab-x/qualification-witness/v1'
@@ -541,7 +543,7 @@ def _automatic_qualification(store, connection, dossier_id, revision):
             status, summary, cause, retry_in = _witness_verdict(witnesses, summary)
         # L'opération relancée reste côté serveur : sa revue cite la référence
         for row in witnesses:
-            del row['retry']
+            del row['retry'], row['rejected']
     value = dict(operation_id=operation_id, qualified=status == 'QUALIFIED', findings=findings,
                  summary=summary, model=model, cost_usd=cost, created_at=created,
                  status=status, qualification_status=status, approval_status='PENDING', witnesses=witnesses)
@@ -622,7 +624,7 @@ def _witness_controls(store, connection, operation, witnesses, *, ran):
     for index, witness in enumerate(witnesses):
         if not {row['control_id'] for row in witness['expected']} <= set(controls):
             raise IntegrityError('Attente de témoin hors des contrôles du paquet')
-        state, decided, model, cost, due = 'NOT_RUN', {}, None, None, None
+        state, decided, model, cost, due, rejected = 'NOT_RUN', {}, None, None, None, False
         if index in found:
             item = found[index]
             binding = _witness_binding(item)
@@ -644,7 +646,7 @@ def _witness_controls(store, connection, operation, witnesses, *, ran):
                     state = _witness_state(witness, decided)
                 except (ValueError, TypeError, KeyError):
                     # IntegrityError comprise : une citation étrangère ou divergente n'est pas une preuve
-                    state = 'UNPROVEN'
+                    state, rejected = 'UNPROVEN', True
                     # #492 : un second contrôle est dû tant que le plafond n'est pas atteint
                     due = None if ambiguous else _witness_due(item)
                     if due is not None:
@@ -659,7 +661,7 @@ def _witness_controls(store, connection, operation, witnesses, *, ran):
                              description=controls[row['control_id']]['description'],
                              eliminatory=controls[row['control_id']]['eliminatory'], expected=row['status'],
                              decided=decided.get(row['control_id'])) for row in witness['expected']],
-                         retry=None if due is None else (found[index], due)))
+                         retry=None if due is None else (found[index], due), rejected=rejected))
     # #492 : une version déjà bloquée ne paie plus de second contrôle ; les témoins en attente d'un second contrôle
     # de format sont alors lus comme rejetés, sans relance
     if {row['state'] for row in rows} & {'CONTRADICTED', 'UNPROVEN', 'STALE'}:
@@ -744,6 +746,10 @@ def _witness_verdict(witnesses, summary):
     states = {row['state'] for row in witnesses}
     if states == {'CONFIRMED'}:
         return 'QUALIFIED', summary, None, None
+    blocking = [row for row in witnesses if row['state'] in ('CONTRADICTED', 'UNPROVEN', 'STALE')]
+    if blocking and all(row['rejected'] for row in blocking):
+        # #492 : aucune décision du juge n'a pu être lue, ce n'est pas un verdict sur l'exemple
+        return 'BLOCKED', JUDGE_UNUSABLE_TEXT, 'judge', None
     if states & {'CONTRADICTED', 'UNPROVEN', 'STALE'}:
         return 'BLOCKED', ('Le contrôle n’a pas décidé un témoin comme attendu, preuve à l’appui, sur cette version. '
                            'La référence ou les critères de l’exemple sont à revoir.'), None, None
