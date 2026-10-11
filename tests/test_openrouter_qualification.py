@@ -944,7 +944,7 @@ class PreparationVolumeTests(unittest.TestCase):
         self.add_dossiers(1, obligations=[{'description': 'Lister les actions', 'elements': ['Forme', 'Échéance']},
                                           'Responsables conservés'])
         witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
-        self.assertEqual('UNPROVEN', witnesses[0]['state'])
+        self.assertEqual('PENDING', witnesses[0]['state'])
         self.assertTrue(all(row['decided'] is None for row in witnesses[0]['expected']))
 
     @staticmethod
@@ -984,7 +984,7 @@ class PreparationVolumeTests(unittest.TestCase):
         self.add_dossiers(1, obligations=[{'description': 'Lister les actions', 'elements': ['Forme', 'Échéance']},
                                           'Responsables conservés'])
         witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
-        self.assertEqual('UNPROVEN', witnesses[0]['state'])
+        self.assertEqual('PENDING', witnesses[0]['state'])
         self.assertTrue(all(row['decided'] is None for row in witnesses[0]['expected']))
 
     def test_juge_qui_ajoute_un_guillemet_fermant_absent_de_la_piece_rend_le_temoin_inexploitable(self):
@@ -997,9 +997,46 @@ class PreparationVolumeTests(unittest.TestCase):
         controller.script = [closing_quote]
         self.add_dossiers(1)
         witnesses = prep.view(self.store, self.session, 'dossier-1')['qualification']['witnesses']
-        self.assertEqual('UNPROVEN', witnesses[0]['state'])
+        # #492, piste 3 : la réponse rejetée laisse le témoin en attente de son second contrôle
+        self.assertEqual('PENDING', witnesses[0]['state'])
         self.assertTrue(all(row['decided'] is None for row in witnesses[0]['expected']))
-        self.assertEqual('BLOCKED', prep.view(self.store, self.session, 'dossier-1')['qualification']['status'])
+        self.assertEqual('PENDING', prep.view(self.store, self.session, 'dossier-1')['qualification']['status'])
+
+    def rejected_witness_retries(self, script):
+        # Juge simulé : une réponse de `script` à None est normale, à True porte un guillemet absent de la pièce (règle A)
+        controller = self.transport.controller()
+
+        def closing_quote(findings):
+            return [dict(row, evidence=[dict(proof, passage=proof['passage'] + '\u00bb')
+                                        if proof['passage'] else proof for proof in row['evidence']]) for row in findings]
+        controller.script = [closing_quote if rejected else None for rejected in script]
+        self.add_dossiers(1)
+        return prep.due_qualification_retries(self.store, session_id=self.session)
+
+    def retry_witness(self, due):
+        following = prep.retry_qualification(self.store, due[0][0], self.transport, 'b' * 40)
+        self.assertIsNotNone(following)
+        prep.execute_qualification(self.data, following, self.transport)
+        return prep.view(self.store, self.session, 'dossier-1')['qualification']
+
+    def test_reponse_de_juge_rejetee_pour_son_format_est_relancee_une_fois(self):
+        # #492, piste 3 : la réponse rejetée ne bloque pas l'exemple, un second contrôle du même témoin part
+        due = self.rejected_witness_retries([True])
+        self.assertEqual(1, len(due))
+        pending = prep.view(self.store, self.session, 'dossier-1')['qualification']
+        self.assertEqual('PENDING', pending['status'])
+        qualification = self.retry_witness(due)
+        self.assertEqual('CONFIRMED', qualification['witnesses'][0]['state'])
+        self.assertEqual('QUALIFIED', qualification['status'])
+        self.assertEqual([], prep.due_qualification_retries(self.store, session_id=self.session))
+
+    def test_deuxieme_reponse_rejetee_bloque_sans_nouvelle_relance(self):
+        # #492, piste 3 : plafond d'une relance par témoin, le dossier est alors à revoir comme avant
+        due = self.rejected_witness_retries([True, False, True])
+        qualification = self.retry_witness(due)
+        self.assertEqual('UNPROVEN', qualification['witnesses'][0]['state'])
+        self.assertEqual('BLOCKED', qualification['status'])
+        self.assertEqual([], prep.due_qualification_retries(self.store, session_id=self.session))
 
     def test_base_vide_sans_relecture(self):
         self.assertEqual(0, self.full_reads(self.resume))
