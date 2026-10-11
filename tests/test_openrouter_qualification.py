@@ -1038,6 +1038,17 @@ class PreparationVolumeTests(unittest.TestCase):
         self.assertEqual('BLOCKED', qualification['status'])
         self.assertEqual([], prep.due_qualification_retries(self.store, session_id=self.session))
 
+    def test_temoin_rejete_deux_fois_dit_que_la_reponse_du_juge_est_inexploitable(self):
+        # #492, critère 4 : deux réponses du juge rejetées pour leur format ne disent pas que l'exemple est à revoir
+        due = self.rejected_witness_retries([True, False, True])
+        qualification = self.retry_witness(due)
+        self.assertEqual('BLOCKED', qualification['status'])
+        self.assertEqual('judge', qualification.get('cause'))
+        self.assertIn('inexploitable', qualification['summary'])
+        self.assertNotIn('à revoir', qualification['summary'])
+        self.assertEqual('UNPROVEN', qualification['witnesses'][0]['state'])
+        self.assertEqual([], prep.due_qualification_retries(self.store, session_id=self.session))
+
     def test_relance_de_format_impossible_bloque_sans_attente_infinie(self):
         # #492, piste 3 : clé retirée ou budget insuffisant, la relance ne part jamais ; le dossier ne reste pas en
         # attente : passé la fenêtre de relance, le contrôle est dit non réalisé et l'exemple n'est pas mis en cause
