@@ -475,8 +475,10 @@ class OpenRouterPreparationTests(unittest.TestCase):
                 'Toute convention qui restreint les lectures recevables figure en termes généraux dans la consigne '
                 'ou les critères publics. Pour chaque attendu, la référence nomme les composantes requises et les '
                 "précisions dont l'omission est recevable, sans ajouter d'exigence. "
-                'Pour une date limite, une date seule conserve la borne incluse. Les autres relations temporelles '
-                "et les dates fixées d'événements restent telles quelles. Le critère public énonce cette convention.",
+                'Pour une date limite, une date seule signifie « au plus tard à cette date, incluse ». '
+                "Cette convention n'autorise pas à supprimer une borne exclue explicite, comme « avant ». "
+                "Les autres relations temporelles et les dates fixées d'événements restent telles quelles. "
+                'Le critère public énonce cette convention.',
                 system)
         system = assistant.load_profile(str(
             Path(assistant.__file__).parent / 'profiles' / 'qualification.profile.json'))['system']
