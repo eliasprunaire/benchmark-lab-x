@@ -861,7 +861,7 @@ class ParcoursComplet(unittest.TestCase):
         notes = ('Décision : le budget formation est validé.\n'
                  'Action : Camille relit le devis avant vendredi.\n')
         reference = ('Attendus : l’action de Camille, relire le devis avant vendredi. '
-                     'Toute formulation qui garde la personne, l’action et l’échéance est recevable.')
+                     'Toute formulation qui garde la personne et l’action est recevable.')
         consigne = ['Relever les actions à mener dans les notes, avec leur responsable.']
         criteres = {'eliminatory': ['Ajouter une action absente des notes'],
                     'obligations': ['Relever chaque action avec son responsable'], 'quality': []}
@@ -879,8 +879,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assistants['transport'] = SessionAssistant(preparer, {'model': 'factice'})
         alternative = {'kind': 'alternative', 'output': 'Camille : relire le devis, avant vendredi.',
                        'expected': [{'control_id': 'O1', 'status': 'PASS'}, {'control_id': 'E1', 'status': 'PASS'}],
-                       'justification': 'La référence accepte toute formulation qui garde la personne, '
-                                        'l’action et l’échéance ; ce tableau sans intitulé reste recevable.'}
+                       'justification': 'La référence accepte toute formulation qui garde la personne '
+                                        'et l’action ; ce tableau sans intitulé reste recevable.'}
         defaut = {'kind': 'defect', 'output': 'Budget formation validé ; aucune action relevée.',
                   'expected': [{'control_id': 'O1', 'status': 'FAIL'}],
                   'justification': 'La référence attend l’action de Camille : son omission est le défaut ciblé.'}
