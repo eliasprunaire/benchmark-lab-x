@@ -963,6 +963,11 @@ class ParcoursComplet(unittest.TestCase):
         self.qualifier.result = {'qualified': True, 'findings': [], 'summary': 'Les actions sont vérifiables',
                                  'witnesses': [alternative, defaut]}
         page, raw = verifier({})
+        # #509 : le contrôle reçoit la référence de sa version, sans l'échéance avant la correction, avec elle après
+        def references_vues(appels):
+            return {piece['content'] for _, request in appels for piece in request['outgoing']['references']}
+        self.assertEqual({reference}, references_vues(juge.calls[:controles]))
+        self.assertEqual({reference_echeance}, references_vues(juge.calls[controles:]))
         self.examine(page, dossier, 'témoins confirmés', 'Choisir les modèles')
         self.assertIn('Exemple vérifié, prêt à comparer', page.visible)
         verification = detail(page)
