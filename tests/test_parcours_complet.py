@@ -860,8 +860,13 @@ class ParcoursComplet(unittest.TestCase):
         """
         notes = ('Décision : le budget formation est validé.\n'
                  'Action : Camille relit le devis avant vendredi.\n')
+        # La référence suit la consigne : l'échéance n'est exigée qu'une fois la consigne corrigée (#509)
+        echeance = 'Garder l’échéance de chaque action.'
         reference = ('Attendus : l’action de Camille, relire le devis avant vendredi. '
-                     'Toute formulation qui garde la personne, l’action et l’échéance est recevable.')
+                     'Toute formulation qui garde la personne et l’action est recevable.')
+        reference_echeance = ('Attendus : l’action de Camille, relire le devis avant vendredi. '
+                              'Toute formulation qui garde la personne, l’action et l’échéance avant vendredi '
+                              'est recevable.')
         consigne = ['Relever les actions à mener dans les notes, avec leur responsable.']
         criteres = {'eliminatory': ['Ajouter une action absente des notes'],
                     'obligations': ['Relever chaque action avec son responsable'], 'quality': []}
@@ -874,13 +879,14 @@ class ParcoursComplet(unittest.TestCase):
             result['explanation'] = 'Cet exemple correspond-il bien à votre travail ?'
             result['package']['candidate'].update(instruction=' '.join(consigne), criteria=criteres,
                 deliverables=['Liste des actions'], pieces=[{'name': 'notes.txt', 'content': notes}])
-            result['package']['judgment']['pieces'] = [{'name': 'reference.txt', 'content': reference}]
+            result['package']['judgment']['pieces'] = [
+                {'name': 'reference.txt', 'content': reference_echeance if echeance in consigne else reference}]
             return value
         self.assistants['transport'] = SessionAssistant(preparer, {'model': 'factice'})
         alternative = {'kind': 'alternative', 'output': 'Camille : relire le devis, avant vendredi.',
                        'expected': [{'control_id': 'O1', 'status': 'PASS'}, {'control_id': 'E1', 'status': 'PASS'}],
-                       'justification': 'La référence accepte toute formulation qui garde la personne, '
-                                        'l’action et l’échéance ; ce tableau sans intitulé reste recevable.'}
+                       'justification': 'La réponse garde la personne, l’action et l’échéance avant vendredi ; '
+                                        'ce tableau sans intitulé reste recevable.'}
         defaut = {'kind': 'defect', 'output': 'Budget formation validé ; aucune action relevée.',
                   'expected': [{'control_id': 'O1', 'status': 'FAIL'}],
                   'justification': 'La référence attend l’action de Camille : son omission est le défaut ciblé.'}
@@ -953,10 +959,15 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Résultat de qualification reçu non utilisable', page.visible)
         self.assertEqual(controles, len(juge.calls))
         # Témoins décidés comme attendu, preuve à l'appui : version qualifiée, résultats liés à elle
-        corriger('Garder l’échéance de chaque action.')
+        corriger(echeance)
         self.qualifier.result = {'qualified': True, 'findings': [], 'summary': 'Les actions sont vérifiables',
                                  'witnesses': [alternative, defaut]}
         page, raw = verifier({})
+        # #509 : le contrôle reçoit la référence de sa version, sans l'échéance avant la correction, avec elle après
+        def references_vues(appels):
+            return {piece['content'] for _, request in appels for piece in request['outgoing']['references']}
+        self.assertEqual({reference}, references_vues(juge.calls[:controles]))
+        self.assertEqual({reference_echeance}, references_vues(juge.calls[controles:]))
         self.examine(page, dossier, 'témoins confirmés', 'Choisir les modèles')
         self.assertIn('Exemple vérifié, prêt à comparer', page.visible)
         verification = detail(page)
@@ -1025,7 +1036,7 @@ class ParcoursComplet(unittest.TestCase):
                                  access_secret=SECRET, access_transport=self.access)
         self.assertEqual(2, len(transmis))
         brut = storage._strict_json(transmis)
-        for reserve in (reference, 'reference.txt', alternative['output'], defaut['output'],
+        for reserve in (reference, reference_echeance, 'reference.txt', alternative['output'], defaut['output'],
                         alternative['justification'], defaut['justification']):
             self.assertNotIn(reserve, brut)
         artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
