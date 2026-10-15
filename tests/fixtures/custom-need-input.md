@@ -18,7 +18,7 @@ J'ai bien reçu le devis V2. Nous approuvons le montant de **4 850 € HT** et l
 Pouvez-vous me confirmer que la livraison des maquettes pour ordinateur et mobile est toujours prévue le **13 mars 2026** ?
 
 Bien cordialement,
-Élodie Martin
+Claire Renaud
 Gérante — Test Alpha SAS
 
 ---
@@ -43,7 +43,7 @@ Bonjour Claire,
 N'hésitez pas à me contacter si vous avez des questions.
 
 Bien cordialement,
-Alex Durand
+Matthieu Perrin
 Studio Test SAS — 12 rue des Tilleuls, 69002 Lyon
 
 ---
@@ -82,7 +82,7 @@ Nouveau montant proposé : **4 850 € HT** (au lieu de 4 200 € HT).
 Pour le moment, je maintiens la livraison des maquettes au **13 mars 2026**, sauf retard du cahier des charges photographique.
 
 Bien à vous,
-Alex Durand
+Matthieu Perrin
 
 ---
 
@@ -102,7 +102,7 @@ Nous aurons toutefois besoin d'ajouter deux pages : « Réalisations » et « Ma
 Par ailleurs, qui assurera l'hébergement après la mise en ligne : vous, ou devons-nous nous en charger ?
 
 Bien cordialement,
-Élodie Martin
+Claire Renaud
 
 ---
 
@@ -126,7 +126,7 @@ Voici le devis V2 (no TA-2026-001-R) :
 Dès réception de votre accord écrit, nous réserverons le créneau de démarrage pendant la semaine du 2 mars.
 
 Bien cordialement,
-Alex Durand
+Matthieu Perrin
 
 ---
 
@@ -187,7 +187,7 @@ Récapitulatif arrêté :
 Dès réception de l'exemplaire signé, nous confirmerons le démarrage pendant la semaine du 2 mars.
 
 Bien cordialement,
-Alex Durand
+Matthieu Perrin
 Studio Test SAS
 
 ---
@@ -207,7 +207,7 @@ Devis signé en pièce jointe. L'acompte de 40 % sera viré d'ici au samedi 21 f
 Pouvez-vous me confirmer par retour que le montant de **4 200 € HT** figurant sur notre bon de commande interne, repris de votre premier devis, est remplacé par **4 850 € HT** ?
 
 Merci,
-Élodie Martin
+Claire Renaud
 
 ---
 
