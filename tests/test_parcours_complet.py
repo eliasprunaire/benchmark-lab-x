@@ -1499,7 +1499,8 @@ class ParcoursComplet(unittest.TestCase):
         Modes d'échec couverts :
         1. l'aperçu montre un objet brut au lieu de l'obligation et de ses éléments ;
         2. le juge ne reçoit qu'un contrôle pour l'obligation composée, ou sans la description des éléments ;
-        3. un format respecté et une échéance inventée donnent autre chose que « Ne satisfait pas » ;
+        3. un constat scripté de format respecté et un constat scripté d'échéance inventée donnent autre chose
+           que « Ne satisfait pas » (le juge est scripté : le scénario ne prouve pas la détection d'une date inventée) ;
         4. le motif nomme l'obligation sans l'élément en défaut ;
         5. le détail ne montre pas l'état de chaque élément, ou compte les éléments comme des exigences ;
         6. le filtre « Respectée » retient une réponse dont un élément est en défaut ;

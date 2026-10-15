@@ -5,8 +5,8 @@
 `tools/release.py` lit les Conventional Commits depuis la dernière release SemVer atteignable, ou depuis le commit précédent lors de l’amorçage sans tag :
 
 - `feat` produit ou rupture sous `0.x` : `MINOR`, avec `PATCH` remis à zéro ;
-- `fix` : `PATCH` ;
-- `docs`, `test`, `chore`, `ci`, `style`, `refactor`, ainsi que les scopes `ci`, et autres types : aucune release ;
+- `fix`, `refactor` et `perf` : `PATCH` ;
+- `docs`, `test`, `chore`, `ci`, `style`, ainsi que les scopes `ci`, et autres types : aucune release ;
 - `!` ou `BREAKING CHANGE:` : rupture ; `MAJOR` à partir de `1.0.0`.
 
 La version calculée est passée au constructeur, injectée dans `benchmark.VERSION` et `release.json`, puis utilisée pour le tag et la release GitHub. Une préversion avec un suffixe comme `alpha.N` est demandée par l’entrée `pre_release` du déclenchement manuel ou par la variable `BENCHMARK_PRE_RELEASE`; elle est publiée avec le marqueur GitHub prerelease. Le même commit et la même version ne peuvent créer deux releases : la concurrence est sérialisée, un tag existant pour un autre commit arrête le workflow et une release partielle est vérifiée puis complétée sans écraser une divergence.

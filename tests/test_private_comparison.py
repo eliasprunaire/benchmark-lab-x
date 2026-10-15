@@ -175,7 +175,11 @@ class CustomNeedEngineTests(unittest.TestCase):
                     budget_id='custom-preparation-budget', reserve_amount='7',
                     requested_configuration={'model': 'fictional-local-preview'})
                 _, home, token, _ = web_api.dispatch(store, 'GET', '/preparation', None, None, 'a' * 40, granted())
-                task = Path(__file__).with_name('fixtures').joinpath('custom-need-task.md').read_text()
+                # Fixture d'intégration : sa consigne énumère les réponses attendues, ce que les règles excluent
+                # d'une épreuve ; elle prouve le passage dans le moteur, jamais la qualité d'une synthèse (#515)
+                # L'en-tête éditorial style_gate n'appartient pas à la consigne : il ne part pas chez le candidat
+                _, _, task = Path(__file__).with_name('fixtures').joinpath('custom-need-task.md').read_text().partition('---\n\n')
+                self.assertTrue(task.startswith('# quote-thread-summary\n'))
                 mail = Path(__file__).with_name('fixtures').joinpath('custom-need-input.md').read_text()
                 body = dict(dossier_id='custom-need', action_id='custom-need-create',
                             request='Synthétiser le fil fictif Test Alpha sans inventer de décisions.', csrf_token=home['csrf_token'],
