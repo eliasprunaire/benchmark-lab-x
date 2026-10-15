@@ -80,7 +80,7 @@ NOTES = ('Association Les Lanternes, réunion du 3 octobre 2027.\n'
          'A2 : Réserver les tables avant le 18 octobre ; responsable non désigné.\n')
 REFERENCE = ('P1 : concert proposé, non validé. D1 : atelier validé. '
              'A1 et D2 : Noé, affiches, échéance 14 octobre, remplace le 10. '
-             'A2 : tables, 18 octobre, responsable à confirmer. '
+             'A2 : tables, avant le 18 octobre, responsable à confirmer. '
              'Toute reformulation fidèle est recevable. Ne pas deviner le responsable.')
 
 
