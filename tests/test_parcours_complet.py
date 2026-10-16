@@ -1056,8 +1056,10 @@ class ParcoursComplet(unittest.TestCase):
         2. le préparateur ne reçoit pas le contrat hérité, ou un paquet au contrat différent est accepté ;
         3. le second cas réutilise les pièces ou la référence du premier, ou se qualifie sur celles-ci ;
         4. la correction d'un cas retire la validation ou la qualification de l'autre ;
-        5. la page présente plusieurs cas comme une preuve de représentativité ;
-        6. la page d'un cas seul affiche une liste de cas
+        5. la page présente plusieurs cas comme une preuve de représentativité, ou tait ce qui distingue un cas ;
+        6. la page d'un cas seul affiche une liste de cas ;
+        7. un refus de contrat ne dit pas sa cause, ou une correction ne rappelle pas le contrat hérité ;
+        8. le premier cas change de contrat sans que les autres cas le signalent
         """
         consigne = 'Relever les actions à mener dans les notes, avec leur responsable.'
         criteres = {'eliminatory': ['Ajouter une action absente des notes'],
@@ -1129,6 +1131,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Relever chaque action avec son responsable', messages[-1])
         page, _, _ = self.request(refuse)
         self.assertIn('Préparation arrêtée', page.visible)
+        # 7. La cause du refus est dite
+        self.assertIn('changeait la consigne ou les critères communs aux exemples de la tâche', page.visible)
+        refus_explique = 'changeait la consigne' in page.visible
         self.assertFalse(any(n['attrs'].get('id') == 'validation' for n in page.nodes))
         divergence.clear()
         page, _, _ = self.request(premier)
@@ -1156,26 +1161,39 @@ class ParcoursComplet(unittest.TestCase):
         for dossier in (premier, second):
             page, _, _ = self.request(dossier)
             cas = liste(page)
-            self.assertEqual(2, cas.count('Exemple vérifié'))
-            self.assertIn('Préparation arrêtée', cas)
-            self.assertIn('ne prouvent pas que les exemples représentent votre travail', cas)
+            self.assertEqual(2, cas.count('exemple vérifié'))
+            self.assertIn('préparation arrêtée', cas)
+            self.assertIn('ne prouvent pas qu’ils représentent votre travail', cas)
+            self.assertIn('Une action sans responsable, pour vérifier qu’elle est signalée', cas)
         # 4. Corriger le second cas retire seulement sa validation ; le premier reste prêt à comparer
         page, _, _ = self.request(second)
         self.submit(page, '/messages', {'kind': 'correct', 'message': 'Ajouter une seconde action sans responsable'})
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        # 7. La correction rappelle au préparateur le contrat hérité
+        self.assertIn(consigne, messages[-1])
         page, _, _ = self.request(second)
         self.examine(page, second, 'second cas corrigé', 'Oui, c’est le travail à tester')
         self.assertIn(consigne, page.visible)
         page, _, _ = self.request(premier)
         self.examine(page, premier, 'premier cas inchangé', 'Choisir les modèles')
-        self.assertEqual(1, liste(page).count('Exemple vérifié'))
+        self.assertEqual(1, liste(page).count('exemple vérifié'))
+        premier_reste_qualifie = 'Exemple vérifié, prêt à comparer' in page.visible
+        # 8. Le premier cas change de consigne : le second cas le signale, la page ne dit plus « même consigne »
+        divergence.append(True)
+        self.submit(page, '/messages', {'kind': 'correct', 'message': 'Demander aussi les dates'})
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        page, _, _ = self.request(second)
+        cas = liste(page)
+        self.assertIn('consigne ou critères d’une ancienne version de l’exemple 1', cas)
+        self.assertNotIn('Tous les exemples suivent la même consigne', cas)
         artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
         if artefacts:
             Path(artefacts).mkdir(parents=True, exist_ok=True)
             Path(artefacts, 'deux-cas.json').write_text(json.dumps(
-                {'cas': 3, 'cas_qualifies': 2, 'contrat_divergent_refuse': True,
+                {'cas_crees': 3, 'cas_qualifies_avant_corrections': 2, 'contrat_divergent_refuse_avec_sa_cause': refus_explique,
                  'references_partagees': len(set(juges[premier]) & set(juges[second])),
-                 'premier_cas_reste_qualifie_apres_correction_du_second': True},
+                 'premier_cas_reste_qualifie_apres_correction_du_second': premier_reste_qualifie,
+                 'changement_du_premier_cas_signale': 'ancienne version de l’exemple 1' in cas},
                 ensure_ascii=False, indent=2) + '\n')
 
     def test_temoins_relances_effet_ambigu_et_preuves_etrangeres(self):

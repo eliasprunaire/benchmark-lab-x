@@ -963,67 +963,78 @@ def _closed_preparation_operation(operation, *, conserved_wire=None, state=None)
     return value
 
 
-def _created(connection, dossier_id):
-    """Corps de création du cas, ou None pour un dossier sans action enregistrée"""
+class CaseContractError(ValueError):
+    """Paquet d'un autre exemple dont la consigne ou les critères diffèrent de ceux de la tâche"""
+
+
+CASE_CONTRACT_TEXT = 'Résultat refusé : il changeait la consigne ou les critères communs aux exemples de la tâche.'
+
+
+def _creation_body(connection, dossier_id):
+    """Corps de création du dossier, ou None pour un dossier sans action enregistrée"""
     row = connection.execute("SELECT request_json FROM s2_actions WHERE dossier_id=? AND kind='create'",
                              (dossier_id,)).fetchone()
     return None if row is None else json.loads(row[0], object_pairs_hook=_unique_object)
 
 
-def _contract_of(connection, dossier_id, revision):
+def _package(connection, dossier_id, revision):
     raw = connection.execute('SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
                              (dossier_id, revision)).fetchone()[0]
-    package = json.loads(raw, object_pairs_hook=_unique_object)
+    return None if raw is None else json.loads(raw, object_pairs_hook=_unique_object)
+
+
+def _contract(package):
+    """Consigne et critères : la part du paquet commune à tous les exemples d'une tâche"""
     return {'instruction': package['instruction'], 'criteria': package['criteria']}
 
 
+def _validated(connection, session_id, dossier_id, revision, digest):
+    return digest is not None and connection.execute(
+        'SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? AND package_sha256=? AND session_id=?',
+        (dossier_id, revision, digest, session_id)).fetchone() is not None
+
+
 def _case_body(store, session_id, body):
-    """Autre cas d'une tâche : demande et résultat attendu du premier cas, version courante de son contrat"""
+    """Autre exemple d'une tâche : demande et résultat attendu du premier, version courante de son contrat"""
     with store.read_snapshot() as connection:
         current = owner(connection, session_id, body['case_of'])
-        created = _created(connection, body['case_of'])
+        created = _creation_body(connection, body['case_of'])
     if created is None or 'case_of' in created:
-        raise Denied('Un cas s’ajoute depuis le premier cas de la tâche')
+        raise Denied('Un exemple s’ajoute depuis le premier exemple de la tâche')
     return dict(body, request=created['request'], useful=created.get('useful', ''),
                 case_of={'dossier_id': body['case_of'], 'revision': current})
 
 
-def _inherited_contract(store, connection, session_id, case_of):
-    """Contrat de la version validée du premier cas, refusé si cette version a changé ou n'est pas validée"""
+def _inherited_contract(connection, session_id, case_of):
+    """Contrat de la version validée du premier exemple, refusé si cette version a changé ou n'est pas validée"""
     _fields(case_of, ('dossier_id', 'revision'), 'case_of')
     first, revision = case_of['dossier_id'], case_of['revision']
     if owner(connection, session_id, first) != revision:
         raise ConflictError('Révision périmée')
     digest = connection.execute('SELECT package_sha256 FROM s2_revisions WHERE dossier_id=? AND revision=?',
                                 (first, revision)).fetchone()[0]
-    if digest is None or not connection.execute(
-            'SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? AND package_sha256=? AND session_id=?',
-            (first, revision, digest, session_id)).fetchone():
-        raise Denied('Premier cas non validé')
-    return _contract_of(connection, first, revision)
+    if not _validated(connection, session_id, first, revision, digest):
+        raise Denied('Premier exemple non validé')
+    return _contract(_package(connection, first, revision))
 
 
 def _inherited_text(contract):
-    return ('\n\nAutre cas de la même tâche : reprendre sans aucune modification la consigne et les critères '
+    return ('\n\nAutre exemple de la même tâche : reprendre sans aucune modification la consigne et les critères '
             'ci-dessous ; seuls les pièces et le résultat de référence changent.\nConsigne :\n'
             + contract['instruction'] + '\nCritères :\n' + encode(contract['criteria']))
 
 
 def _case_contract(connection, dossier_id):
-    """Contrat hérité par un autre cas de la tâche, ou None pour un premier cas"""
-    created = _created(connection, dossier_id)
+    """Contrat hérité par un autre exemple de la tâche, ou None pour un premier exemple"""
+    created = _creation_body(connection, dossier_id)
     if created is None or 'case_of' not in created:
         return None
-    return _contract_of(connection, created['case_of']['dossier_id'], created['case_of']['revision'])
-
-
-CASE_STATES = {'suspended': 'Préparation arrêtée', 'draft': 'En préparation', 'clarification': 'Question en attente',
-               'scope_confirmation': 'Question en attente'}
+    return _contract(_package(connection, created['case_of']['dossier_id'], created['case_of']['revision']))
 
 
 def _cases(store, connection, session_id, dossier_id):
-    """Cas de la même tâche, du premier au dernier créé ; un cas seul n'a pas de liste"""
-    created = _created(connection, dossier_id)
+    """Exemples de la même tâche, du premier au dernier créé ; un exemple seul n'a pas de liste"""
+    created = _creation_body(connection, dossier_id)
     first = created['case_of']['dossier_id'] if created and 'case_of' in created else dossier_id
     members = [first] + [row[0] for row in connection.execute(
         "SELECT a.dossier_id FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) WHERE a.kind='create' "
@@ -1031,18 +1042,24 @@ def _cases(store, connection, session_id, dossier_id):
         (session_id, first))]
     if len(members) == 1:
         return []
+    first_package = _package(connection, first, owner(connection, session_id, first))
     cases = []
     for number, member in enumerate(members, 1):
         current = owner(connection, session_id, member)
         stage, digest = connection.execute('SELECT stage,package_sha256 FROM s2_revisions WHERE dossier_id=? AND revision=?',
                                            (member, current)).fetchone()
-        validated = digest is not None and connection.execute(
-            'SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? AND package_sha256=? AND session_id=?',
-            (member, current, digest, session_id)).fetchone()
-        qualified = validated and (_automatic_qualification(store, connection, member, current) or {}).get('qualified')
-        state = (CASE_STATES.get(stage, 'À valider') if not validated else
-                 'Exemple vérifié' if qualified else 'Validé, vérification en attente ou à revoir')
-        cases.append({'number': number, 'dossier_id': member, 'current': member == dossier_id, 'state': state})
+        pending = connection.execute('SELECT 1 FROM s2_actions a JOIN operations o USING(operation_id) '
+                                     'WHERE a.dossier_id=? AND a.input_revision=? AND o.state!=?',
+                                     (member, current, 'RECEIVED')).fetchone()
+        validated = _validated(connection, session_id, member, current, digest)
+        inherited = _case_contract(connection, member)
+        cases.append(dict(number=number, dossier_id=member, current=member == dossier_id,
+                          stage='waiting' if pending else stage, validated=validated,
+                          qualified=validated and bool((_automatic_qualification(store, connection, member, current)
+                                                        or {}).get('qualified')),
+                          # Le premier exemple a changé de contrat depuis la création de celui-ci
+                          drifted=inherited is not None and first_package is not None and inherited != _contract(first_package),
+                          difference=(_creation_body(connection, member) or {}).get('context', '')))
     return cases
 
 
@@ -1094,9 +1111,11 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
                 (dossier_id, existing[1])).fetchone()[0])
             if checks.get('out_of_scope') is not None:
                 raise Denied('OUT_OF_SCOPE')
-        elif 'case_of' in body:
-            # Revérifié sous l'écriture : le premier cas n'a pas changé depuis la lecture de sa demande
-            message += _inherited_text(_inherited_contract(store, connection, session_id, body['case_of']))
+        # Création revérifiée sous l'écriture ; chaque échange suivant rappelle le contrat hérité au préparateur
+        inherited = (_case_contract(connection, dossier_id) if existing else
+                     _inherited_contract(connection, session_id, body['case_of']) if 'case_of' in body else None)
+        if inherited is not None:
+            message += _inherited_text(inherited)
         authority = admission(store, connection, transport=transport)
         if not authority or not transport or os.path.lexists(store._root / 'restore.json'):
             raise Denied('Admission fermée ou transport absent')
@@ -1821,7 +1840,9 @@ def execute(data, operation_id, transport):
                 else:
                     # Publication rolled back; keep the original receipt with an unusable revision
                     # Suspension limitée au cas d'usage : les autres restent ouverts
-                    retry_locked(lambda: _suspend(store, connection, operation, operation_id, request, response))
+                    refusal = CASE_CONTRACT_TEXT if isinstance(error, CaseContractError) else None
+                    retry_locked(lambda: _suspend(store, connection, operation, operation_id, request, response,
+                                                  refusal=refusal))
                 logging.getLogger(__name__).warning('PREPARATION_RECEIVED operation=%s usable=False error=%s cost=%s',
                     operation_id, type(error).__name__, response['cost']['status'])
             _recheck_key(store, transport, response)
@@ -1837,7 +1858,7 @@ def execute(data, operation_id, transport):
                 logging.getLogger(__name__).warning('PREPARATION_BLOCKED operation=%s', operation_id)
 
 
-def _suspend(store, connection, operation, operation_id, request, response):
+def _suspend(store, connection, operation, operation_id, request, response, *, refusal=None):
     """Conserver le reçu d'un résultat inutilisable dans une révision suspendue"""
     with _transaction(connection, write=True):
         dossier_id, before = operation['dossier_id'], operation['revision']
@@ -1856,7 +1877,7 @@ def _suspend(store, connection, operation, operation_id, request, response):
         store.save_dossier(dossier_id, revision, request['payload'])
         observed = response['receipt'].get('observed_configuration')
         incident = (observed.get('incident') if type(observed) is dict else None) or ''
-        reason = INCIDENT_TEXT.get(incident)
+        reason = refusal or INCIDENT_TEXT.get(incident)
         connection.execute('INSERT INTO s2_revisions VALUES (?,?,?,?,NULL,NULL,?,?)',
                            (dossier_id, revision, 'suspended',
                             # Seule une série épuisée arrive ici avec un incident relancé
@@ -1937,10 +1958,9 @@ def publish(store, operation, request, response):
                 explanation = 'SCOPE_LOOP : ' + explanation
         if generated is not None:
             inherited = _case_contract(connection, dossier_id)
-            if inherited is not None and inherited != {'instruction': generated['candidate']['instruction'],
-                                                       'criteria': generated['candidate']['criteria']}:
+            if inherited is not None and inherited != _contract(generated['candidate']):
                 # Refus, jamais réécriture : pièces et référence ont pu viser un autre contrat que celui de la tâche
-                raise ValueError('Consigne ou critères différents de ceux de la tâche')
+                raise CaseContractError('Consigne ou critères différents de ceux de la tâche')
         revision = before + 1
         store.save_dossier(dossier_id, revision, payload)
         package: dict[str, Any] | None = None
