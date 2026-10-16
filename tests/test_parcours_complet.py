@@ -1048,6 +1048,136 @@ class ParcoursComplet(unittest.TestCase):
                  'temoins_absents_du_paquet_candidat': all(w['output'] not in brut for w in (alternative, defaut))},
                 ensure_ascii=False, indent=2) + '\n')
 
+    def test_deux_cas_d_une_meme_tache_qualifies_jusqu_a_leur_validation(self):
+        """Issue #453 : un second cas reprend le contrat validé du premier, avec ses pièces, sa référence et sa qualification
+
+        Modes d'échec couverts :
+        1. un cas s'ajoute à une version non validée, ou depuis un cas qui n'est pas le premier ;
+        2. le préparateur ne reçoit pas le contrat hérité, ou un paquet au contrat différent est accepté ;
+        3. le second cas réutilise les pièces ou la référence du premier, ou se qualifie sur celles-ci ;
+        4. la correction d'un cas retire la validation ou la qualification de l'autre ;
+        5. la page présente plusieurs cas comme une preuve de représentativité ;
+        6. la page d'un cas seul affiche une liste de cas
+        """
+        consigne = 'Relever les actions à mener dans les notes, avec leur responsable.'
+        criteres = {'eliminatory': ['Ajouter une action absente des notes'],
+                    'obligations': ['Relever chaque action avec son responsable'], 'quality': []}
+        notes = {1: 'Action : Camille relit le devis avant vendredi.\n',
+                 2: 'Action : envoyer le compte rendu, sans responsable désigné.\n'}
+        references = {1: 'Attendus : l’action de Camille, relire le devis avant vendredi.',
+                      2: 'Attendus : l’envoi du compte rendu, signalé sans responsable.'}
+        messages, divergence = [], []
+
+        def preparer(operation, request):
+            self.calls.append(('préparation', operation['operation_id']))
+            message = request['outgoing']['message']
+            messages.append(message)
+            cas = 2 if 'sans responsable' in message else 1
+            value = response_for(operation)
+            value['cost'].update(amount='0.10', currency='USD', source='Reçu simulé #453')
+            result = value['receipt']['result']
+            result['explanation'] = 'Cet exemple correspond-il bien à votre travail ?'
+            result['package']['candidate'].update(
+                instruction=consigne + (' Ajouter les dates.' if divergence else ''), criteria=criteres,
+                deliverables=['Liste des actions'], pieces=[{'name': 'notes.txt', 'content': notes[cas]}])
+            result['package']['judgment']['pieces'] = [{'name': 'reference.txt', 'content': references[cas]}]
+            return value
+        self.assistants['transport'] = SessionAssistant(preparer, {'model': 'factice'})
+
+        def ajouter(page, contexte):
+            form = next(f for f in page.forms if f['action'] == '/preparation/dossiers' and 'case_of' in f['fields'])
+            self.request(form['action'], form['fields'] | {'context': contexte}, status=303)
+            prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+            return '/preparation/dossiers/' + form['fields']['dossier_id']
+
+        def qualifier(dossier):
+            page, _, _ = self.request(dossier)
+            self.submit(page, '/validation', {})
+            prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+            self.rejouer_relances(dossier.rsplit('/', 1)[1])
+            return self.request(dossier)[0]
+
+        def liste(page):
+            return next(n['text'] for n in page.nodes if n['attrs'].get('id') == 'cas')
+
+        page, _, _ = self.request('/')
+        target = page.link('Décrire mon cas')
+        page, _, _ = self.request(target)
+        key_form = page.form('/access/key')
+        self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
+        page, _, _ = self.request(target)
+        page = self.submit(page, '/dossiers', {'request': 'Relever les actions à mener dans mes notes de réunion'})
+        premier = page.link('Actualiser')
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        page, _, _ = self.request(premier)
+        # 1. Version non validée : aucun ajout proposé, et un envoi direct est refusé sans appel
+        self.assertFalse(any('case_of' in f['fields'] for f in page.forms))
+        appels = len(messages)
+        creation = self.request('/preparation')[0].form('/preparation/dossiers')
+        self.request(creation['action'], {'csrf_token': creation['fields']['csrf_token'], 'dossier_id': 'b' * 32,
+                                          'action_id': 'c' * 32, 'case_of': premier.rsplit('/', 1)[1],
+                                          'context': 'Une action sans responsable'}, status=403)
+        self.assertEqual(appels, len(messages))
+        page = qualifier(premier)
+        self.examine(page, premier, 'premier cas qualifié', 'Choisir les modèles')
+        # 6. Un seul cas : le parcours est inchangé, sans liste de cas
+        self.assertFalse(any(n['attrs'].get('id') == 'cas' for n in page.nodes))
+        # 2. Contrat différent : le paquet est refusé, la préparation du nouveau cas est suspendue
+        divergence.append(True)
+        refuse = ajouter(page, 'Une action sans responsable, pour vérifier qu’elle est signalée')
+        self.assertIn(consigne, messages[-1])
+        self.assertIn('Relever chaque action avec son responsable', messages[-1])
+        page, _, _ = self.request(refuse)
+        self.assertIn('Préparation arrêtée', page.visible)
+        self.assertFalse(any(n['attrs'].get('id') == 'validation' for n in page.nodes))
+        divergence.clear()
+        page, _, _ = self.request(premier)
+        second = ajouter(page, 'Une action sans responsable, pour vérifier qu’elle est signalée')
+        page, _, raw = self.request(second)
+        self.examine(page, second, 'second cas prêt', 'Oui, c’est le travail à tester')
+        self.assertIn(consigne, page.visible)
+        # Pièces repliées dans leur dépliant : le contenu se lit dans la page servie
+        self.assertIn('sans responsable désigné', raw.decode())
+        self.assertNotIn('Camille relit le devis', raw.decode())
+        # 1. Un cas s'ajoute seulement depuis le premier cas de la tâche
+        self.assertFalse(any('case_of' in f['fields'] for f in page.forms))
+        page = qualifier(second)
+        self.examine(page, second, 'second cas qualifié', 'Choisir les modèles')
+        # 3. La vérification du second cas lit sa propre référence, jamais celle du premier
+        verification = storage._strict_json(self.qualifier.calls[-1][1])
+        self.assertIn(references[2], verification)
+        self.assertNotIn(references[1], verification)
+        with closing(storage.Store(self.data)) as store:
+            juges = {dossier: [row[0] for row in store._connection.execute(
+                "SELECT sha256 FROM pieces WHERE dossier_id=? AND role='judge' ORDER BY revision",
+                (dossier.rsplit('/', 1)[1],))] for dossier in (premier, second)}
+        self.assertFalse(set(juges[premier]) & set(juges[second]))
+        # 5. Chaque cas liste les autres ; la diversité n'est pas présentée comme représentative
+        for dossier in (premier, second):
+            page, _, _ = self.request(dossier)
+            cas = liste(page)
+            self.assertEqual(2, cas.count('Exemple vérifié'))
+            self.assertIn('Préparation arrêtée', cas)
+            self.assertIn('ne prouvent pas que les exemples représentent votre travail', cas)
+        # 4. Corriger le second cas retire seulement sa validation ; le premier reste prêt à comparer
+        page, _, _ = self.request(second)
+        self.submit(page, '/messages', {'kind': 'correct', 'message': 'Ajouter une seconde action sans responsable'})
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        page, _, _ = self.request(second)
+        self.examine(page, second, 'second cas corrigé', 'Oui, c’est le travail à tester')
+        self.assertIn(consigne, page.visible)
+        page, _, _ = self.request(premier)
+        self.examine(page, premier, 'premier cas inchangé', 'Choisir les modèles')
+        self.assertEqual(1, liste(page).count('Exemple vérifié'))
+        artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
+        if artefacts:
+            Path(artefacts).mkdir(parents=True, exist_ok=True)
+            Path(artefacts, 'deux-cas.json').write_text(json.dumps(
+                {'cas': 3, 'cas_qualifies': 2, 'contrat_divergent_refuse': True,
+                 'references_partagees': len(set(juges[premier]) & set(juges[second])),
+                 'premier_cas_reste_qualifie_apres_correction_du_second': True},
+                ensure_ascii=False, indent=2) + '\n')
+
     def test_temoins_relances_effet_ambigu_et_preuves_etrangeres(self):
         """Issue #445, après revue indépendante : ce qui ne doit ni qualifier ni consommer
 

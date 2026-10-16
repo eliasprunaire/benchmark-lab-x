@@ -677,6 +677,23 @@ def render(value, csrf, path='/preparation', *, error=False):
                 content += ('<p><a href="' + text(url) + '/configurations">Choisir d’autres modèles</a> : '
                             'une nouvelle comparaison sera préparée, et les résultats actuels restent disponibles.</p>')
             content += '</section>'
+        cases = value.get('cases', [])
+        if cases:
+            content += section('Cas de cette tâche', '<ul>' + ''.join(
+                '<li>' + ('Cas ' + str(case['number']) + ' (cette page)' if case['current'] else
+                          '<a href="/preparation/dossiers/' + text(case['dossier_id']) + '">Cas ' + str(case['number']) + '</a>')
+                + ' : ' + text(case['state']) + '</li>' for case in cases) + '</ul>'
+                '<p class="note">Tous les cas suivent la même consigne et les mêmes critères. Plusieurs cas ne prouvent pas '
+                'que les exemples représentent votre travail : chacun reste un exemple inventé, validé et vérifié séparément.</p>', 'cas')
+        if value['validation'] and (not cases or cases[0]['current']) and not snapshot and not prior_revision and not referral:
+            content += ('<details><summary class="button sec">Ajouter un autre cas à cette tâche</summary><div>'
+                        '<p>Le nouveau cas reprend la consigne et les critères de cette version. L’assistant prépare d’autres pièces '
+                        'et un autre résultat de référence, à valider puis vérifier séparément. Cette préparation est payée avec '
+                        'votre clé OpenRouter.</p>' + form(csrf, '/preparation/dossiers',
+                {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16), 'case_of': dossier_id},
+                '<label for="case-context">En quoi ce cas diffère des autres</label>'
+                '<textarea id="case-context" name="context" required maxlength="200" rows="2"' + disabled + '></textarea>'
+                '<button type="submit"' + disabled + '>Préparer cet autre cas</button>') + '</div></details>')
         labels = {'PENDING': 'En attente', 'QUALIFIED': 'Vérification réussie',
                   'BLOCKED': 'Bloquée : la réponse de référence ou les contrôles ne sont pas assez établis'}
         if package and not referral:

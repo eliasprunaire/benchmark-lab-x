@@ -89,15 +89,21 @@ def _normalized_text(value, field, minimum, maximum):
 
 
 def _normalized_submission(body, create):
-    required = {'dossier_id', 'action_id', 'request'} if create else {'action_id', 'revision', 'kind', 'message'}
-    optional = {'useful', 'context'} if create else set()
     source_sha256 = body.get('source_sha256') if type(body) is dict else None
+    # Un autre cas de la même tâche : la demande vient du premier cas, seul le contexte distingue le nouveau
+    case = create and 'case_of' in body
+    required = ({'dossier_id', 'action_id', 'case_of', 'context'} if case else
+                {'dossier_id', 'action_id', 'request'} if create else {'action_id', 'revision', 'kind', 'message'})
+    optional = set() if case else {'useful', 'context'} if create else set()
     if type(source_sha256) is not str or re.fullmatch(r'[0-9a-f]{64}', source_sha256) is None:
         raise Denied('SOURCE_MISSING', 'source_sha256')
     if not required <= body.keys() or not body.keys() <= required | optional | {'source_sha256'}:
         raise ValueError('Formulaire invalide')
     result = {key: value for key, value in body.items() if key != 'source_sha256'}
-    if create:
+    if case:
+        identifier(result['case_of'])
+        result['context'] = _normalized_text(result['context'], 'context', 1, CONTEXT_MAX)
+    elif create:
         result['request'] = _normalized_text(result['request'], 'request', REQUEST_MIN, REQUEST_MAX)
         for field, maximum in (('useful', USEFUL_MAX), ('context', CONTEXT_MAX)):
             result[field] = _normalized_text(result.get(field, ''), field, 0, maximum)
@@ -907,6 +913,7 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
                 from .evaluation import projection as evaluations
                 for campaign in result['campaigns']:
                     campaign['evaluations'] = evaluations(store, connection, dossier_id, campaign['campaign_id'])
+        result['cases'] = _cases(store, connection, session_id, dossier_id)
         if include_history:
             from .restitution import _task_index
             result['current_revision'] = current
@@ -956,12 +963,97 @@ def _closed_preparation_operation(operation, *, conserved_wire=None, state=None)
     return value
 
 
+def _created(connection, dossier_id):
+    """Corps de création du cas, ou None pour un dossier sans action enregistrée"""
+    row = connection.execute("SELECT request_json FROM s2_actions WHERE dossier_id=? AND kind='create'",
+                             (dossier_id,)).fetchone()
+    return None if row is None else json.loads(row[0], object_pairs_hook=_unique_object)
+
+
+def _contract_of(connection, dossier_id, revision):
+    raw = connection.execute('SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
+                             (dossier_id, revision)).fetchone()[0]
+    package = json.loads(raw, object_pairs_hook=_unique_object)
+    return {'instruction': package['instruction'], 'criteria': package['criteria']}
+
+
+def _case_body(store, session_id, body):
+    """Autre cas d'une tâche : demande et résultat attendu du premier cas, version courante de son contrat"""
+    with store.read_snapshot() as connection:
+        current = owner(connection, session_id, body['case_of'])
+        created = _created(connection, body['case_of'])
+    if created is None or 'case_of' in created:
+        raise Denied('Un cas s’ajoute depuis le premier cas de la tâche')
+    return dict(body, request=created['request'], useful=created.get('useful', ''),
+                case_of={'dossier_id': body['case_of'], 'revision': current})
+
+
+def _inherited_contract(store, connection, session_id, case_of):
+    """Contrat de la version validée du premier cas, refusé si cette version a changé ou n'est pas validée"""
+    _fields(case_of, ('dossier_id', 'revision'), 'case_of')
+    first, revision = case_of['dossier_id'], case_of['revision']
+    if owner(connection, session_id, first) != revision:
+        raise ConflictError('Révision périmée')
+    digest = connection.execute('SELECT package_sha256 FROM s2_revisions WHERE dossier_id=? AND revision=?',
+                                (first, revision)).fetchone()[0]
+    if digest is None or not connection.execute(
+            'SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? AND package_sha256=? AND session_id=?',
+            (first, revision, digest, session_id)).fetchone():
+        raise Denied('Premier cas non validé')
+    return _contract_of(connection, first, revision)
+
+
+def _inherited_text(contract):
+    return ('\n\nAutre cas de la même tâche : reprendre sans aucune modification la consigne et les critères '
+            'ci-dessous ; seuls les pièces et le résultat de référence changent.\nConsigne :\n'
+            + contract['instruction'] + '\nCritères :\n' + encode(contract['criteria']))
+
+
+def _case_contract(connection, dossier_id):
+    """Contrat hérité par un autre cas de la tâche, ou None pour un premier cas"""
+    created = _created(connection, dossier_id)
+    if created is None or 'case_of' not in created:
+        return None
+    return _contract_of(connection, created['case_of']['dossier_id'], created['case_of']['revision'])
+
+
+CASE_STATES = {'suspended': 'Préparation arrêtée', 'draft': 'En préparation', 'clarification': 'Question en attente',
+               'scope_confirmation': 'Question en attente'}
+
+
+def _cases(store, connection, session_id, dossier_id):
+    """Cas de la même tâche, du premier au dernier créé ; un cas seul n'a pas de liste"""
+    created = _created(connection, dossier_id)
+    first = created['case_of']['dossier_id'] if created and 'case_of' in created else dossier_id
+    members = [first] + [row[0] for row in connection.execute(
+        "SELECT a.dossier_id FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) WHERE a.kind='create' "
+        "AND d.session_id=? AND json_extract(a.request_json, '$.case_of.dossier_id')=? ORDER BY a.rowid",
+        (session_id, first))]
+    if len(members) == 1:
+        return []
+    cases = []
+    for number, member in enumerate(members, 1):
+        current = owner(connection, session_id, member)
+        stage, digest = connection.execute('SELECT stage,package_sha256 FROM s2_revisions WHERE dossier_id=? AND revision=?',
+                                           (member, current)).fetchone()
+        validated = digest is not None and connection.execute(
+            'SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? AND package_sha256=? AND session_id=?',
+            (member, current, digest, session_id)).fetchone()
+        qualified = validated and (_automatic_qualification(store, connection, member, current) or {}).get('qualified')
+        state = (CASE_STATES.get(stage, 'À valider') if not validated else
+                 'Exemple vérifié' if qualified else 'Validé, vérification en attente ou à revoir')
+        cases.append({'number': number, 'dossier_id': member, 'current': member == dossier_id, 'state': state})
+    return cases
+
+
 def submit(store, session_id, dossier_id, body, source, transport, *, enforce_limits=False,
            source_sha256=None):
     connection = connection_for(store)
     now = _now() if enforce_limits else None
     identifier(dossier_id)
     identifier(body['action_id'])
+    if 'case_of' in body and 'request' not in body:
+        body = _case_body(store, session_id, body)
     create = 'request' in body
     kind = 'create' if create else body['kind']
     if kind not in ('create', 'clarify', 'correct'):
@@ -1002,6 +1094,9 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
                 (dossier_id, existing[1])).fetchone()[0])
             if checks.get('out_of_scope') is not None:
                 raise Denied('OUT_OF_SCOPE')
+        elif 'case_of' in body:
+            # Revérifié sous l'écriture : le premier cas n'a pas changé depuis la lecture de sa demande
+            message += _inherited_text(_inherited_contract(store, connection, session_id, body['case_of']))
         authority = admission(store, connection, transport=transport)
         if not authority or not transport or os.path.lexists(store._root / 'restore.json'):
             raise Denied('Admission fermée ou transport absent')
@@ -1840,6 +1935,12 @@ def publish(store, operation, request, response):
             elif scope_count >= 3:
                 stage = 'suspended'
                 explanation = 'SCOPE_LOOP : ' + explanation
+        if generated is not None:
+            inherited = _case_contract(connection, dossier_id)
+            if inherited is not None and inherited != {'instruction': generated['candidate']['instruction'],
+                                                       'criteria': generated['candidate']['criteria']}:
+                # Refus, jamais réécriture : pièces et référence ont pu viser un autre contrat que celui de la tâche
+                raise ValueError('Consigne ou critères différents de ceux de la tâche')
         revision = before + 1
         store.save_dossier(dossier_id, revision, payload)
         package: dict[str, Any] | None = None
