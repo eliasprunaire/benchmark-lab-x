@@ -681,7 +681,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         if cases:
             def case_state(case):
                 if case['drifted']:
-                    return 'consigne ou critères d’une ancienne version de l’exemple 1'
+                    return 'contrat d’une ancienne version de l’exemple 1'
                 if case['validated']:
                     return 'exemple vérifié' if case['qualified'] else 'validé, vérification en attente ou à revoir'
                 return 'à valider' if case['stage'] == 'preview' else stages[case['stage']][1].lower()
@@ -692,16 +692,18 @@ def render(value, csrf, path='/preparation', *, error=False):
                 + ' : ' + text(case_state(case)) + '.'
                 + (' Ce qui le distingue : ' + text(case['difference']) if case['difference'] else '') + '</li>'
                 for case in cases) + '</ul>'
-                + ('<p class="note">La consigne ou les critères de l’exemple 1 ont changé depuis la création de certains exemples : '
+                + ('<p class="note">Le contrat de l’exemple 1 a changé depuis la création de certains exemples : '
                    'ces exemples ne suivent plus la même consigne. Ajoutez-les de nouveau depuis l’exemple 1.' if drifted else
-                   '<p class="note">Tous les exemples suivent la même consigne et les mêmes critères.')
+                   '<p class="note">Tous les exemples suivent la même consigne, les mêmes livrables et les mêmes critères.')
                 + ' Plusieurs exemples ne prouvent pas qu’ils représentent votre travail : chacun reste inventé, validé et '
                 'vérifié séparément.</p>', 'cas')
         if value['validation'] and (not cases or cases[0]['current']) and not snapshot and not prior_revision and not referral:
             content += ('<details><summary class="button sec">' + icon('i-pen') + 'Ajouter un autre exemple à cette tâche</summary><div>'
-                        '<p id="case-context-help">Le nouvel exemple reprend la consigne et les critères de cette version. '
-                        'L’assistant prépare d’autres pièces et un autre résultat de référence, à valider puis vérifier séparément. '
-                        'Cette préparation est payée avec votre clé OpenRouter.</p>' + form(csrf, '/preparation/dossiers',
+                        '<p id="case-context-help">Le nouvel exemple reprend la consigne, les livrables, les critères et les '
+                        'ambiguïtés acceptables de cette version. L’assistant prépare d’autres pièces et un autre résultat de '
+                        'référence, à valider puis vérifier séparément. Cette préparation est payée avec votre clé OpenRouter. '
+                        'Stabilisez cet exemple avant d’en ajouter d’autres : une correction ultérieure de sa consigne ne se '
+                        'reporte pas aux exemples déjà créés.</p>' + form(csrf, '/preparation/dossiers',
                 {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16), 'case_of': dossier_id},
                 '<label for="case-context">Ce qui distingue cet exemple, par exemple la difficulté qu’il couvre</label>'
                 '<textarea id="case-context" name="context" required maxlength="' + str(CONTEXT_MAX)

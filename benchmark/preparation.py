@@ -967,7 +967,8 @@ class CaseContractError(ValueError):
     """Paquet d'un autre exemple dont la consigne ou les critères diffèrent de ceux de la tâche"""
 
 
-CASE_CONTRACT_TEXT = 'Résultat refusé : il changeait la consigne ou les critères communs aux exemples de la tâche.'
+CASE_CONTRACT_TEXT = ('Résultat refusé : il changeait la consigne, les livrables, les critères ou les ambiguïtés acceptables '
+                      'communs aux exemples de la tâche.')
 
 
 def _creation_body(connection, dossier_id):
@@ -983,9 +984,12 @@ def _package(connection, dossier_id, revision):
     return None if raw is None else json.loads(raw, object_pairs_hook=_unique_object)
 
 
+CONTRACT_FIELDS = ('instruction', 'deliverables', 'criteria', 'acceptable_ambiguities')
+
+
 def _contract(package):
-    """Consigne et critères : la part du paquet commune à tous les exemples d'une tâche"""
-    return {'instruction': package['instruction'], 'criteria': package['criteria']}
+    """Vue candidate sans les pièces : la part du paquet commune à tous les exemples d'une tâche"""
+    return {field: package[field] for field in CONTRACT_FIELDS}
 
 
 def _validated(connection, session_id, dossier_id, revision, digest):
@@ -999,52 +1003,61 @@ def _case_body(store, session_id, body):
     with store.read_snapshot() as connection:
         current = owner(connection, session_id, body['case_of'])
         created = _creation_body(connection, body['case_of'])
+        package = _package(connection, body['case_of'], current)
     if created is None or 'case_of' in created:
         raise Denied('Un exemple s’ajoute depuis le premier exemple de la tâche')
+    if package is None:
+        raise Denied('Premier exemple non validé')
+    # Contrat figé dans l'exemple : il reste contrôlable même après la purge du premier exemple
     return dict(body, request=created['request'], useful=created.get('useful', ''),
-                case_of={'dossier_id': body['case_of'], 'revision': current})
+                case_of={'dossier_id': body['case_of'], 'revision': current, 'contract': _contract(package)})
 
 
 def _inherited_contract(connection, session_id, case_of):
     """Contrat de la version validée du premier exemple, refusé si cette version a changé ou n'est pas validée"""
-    _fields(case_of, ('dossier_id', 'revision'), 'case_of')
+    _fields(case_of, ('dossier_id', 'revision', 'contract'), 'case_of')
     first, revision = case_of['dossier_id'], case_of['revision']
     if owner(connection, session_id, first) != revision:
         raise ConflictError('Révision périmée')
     digest = connection.execute('SELECT package_sha256 FROM s2_revisions WHERE dossier_id=? AND revision=?',
                                 (first, revision)).fetchone()[0]
-    if not _validated(connection, session_id, first, revision, digest):
+    if not _validated(connection, session_id, first, revision, digest) or case_of['contract'] != _contract(
+            _package(connection, first, revision)):
         raise Denied('Premier exemple non validé')
-    return _contract(_package(connection, first, revision))
+    return case_of['contract']
 
 
 def _inherited_text(contract):
-    return ('\n\nAutre exemple de la même tâche : reprendre sans aucune modification la consigne et les critères '
-            'ci-dessous ; seuls les pièces et le résultat de référence changent.\nConsigne :\n'
-            + contract['instruction'] + '\nCritères :\n' + encode(contract['criteria']))
+    return ('\n\nAutre exemple de la même tâche : reprendre sans aucune modification la consigne, les livrables, '
+            'les critères et les ambiguïtés acceptables ci-dessous ; seuls les pièces et le résultat de référence '
+            'changent.\nConsigne :\n' + contract['instruction'] + '\nLivrables :\n' + encode(contract['deliverables'])
+            + '\nCritères :\n' + encode(contract['criteria'])
+            + '\nAmbiguïtés acceptables :\n' + encode(contract['acceptable_ambiguities']))
 
 
 def _case_contract(connection, dossier_id):
     """Contrat hérité par un autre exemple de la tâche, ou None pour un premier exemple"""
     created = _creation_body(connection, dossier_id)
-    if created is None or 'case_of' not in created:
-        return None
-    return _contract(_package(connection, created['case_of']['dossier_id'], created['case_of']['revision']))
+    return created['case_of']['contract'] if created is not None and 'case_of' in created else None
 
 
 def _cases(store, connection, session_id, dossier_id):
     """Exemples de la même tâche, du premier au dernier créé ; un exemple seul n'a pas de liste"""
     created = _creation_body(connection, dossier_id)
     first = created['case_of']['dossier_id'] if created and 'case_of' in created else dossier_id
-    members = [first] + [row[0] for row in connection.execute(
+    linked = [row[0] for row in connection.execute(
         "SELECT a.dossier_id FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) WHERE a.kind='create' "
         "AND d.session_id=? AND json_extract(a.request_json, '$.case_of.dossier_id')=? ORDER BY a.rowid",
         (session_id, first))]
-    if len(members) == 1:
+    # Premier exemple purgé : les autres gardent leur numéro et leur contrat figé
+    kept = connection.execute('SELECT 1 FROM s2_dossiers WHERE dossier_id=? AND session_id=?',
+                              (first, session_id)).fetchone() is not None
+    members = [(number, member) for number, member in enumerate([first] + linked, 1) if kept or number > 1]
+    if len(members) == 1 and members[0][1] == dossier_id and not linked:
         return []
-    first_package = _package(connection, first, owner(connection, session_id, first))
+    first_package = _package(connection, first, owner(connection, session_id, first)) if kept else None
     cases = []
-    for number, member in enumerate(members, 1):
+    for number, member in members:
         current = owner(connection, session_id, member)
         stage, digest = connection.execute('SELECT stage,package_sha256 FROM s2_revisions WHERE dossier_id=? AND revision=?',
                                            (member, current)).fetchone()
