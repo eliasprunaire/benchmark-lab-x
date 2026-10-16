@@ -24,6 +24,7 @@ Un jalon porte un nom, jamais un numéro. Les jalons se succèdent sous les noms
 | Accès API via OpenRouter sous Pi constant, financé par la clé personnelle du demandeur : clé chiffrée liée à la session, retrait, expiration | [§5.1](PRD.md#51-capacités), [§10](PRD.md#accès-openrouter-personnel) | Alpha |
 | Historique et contributions : conservation, historique local, contribution facultative, « Mes données » | [§10](PRD.md#historique-et-contributions) | Alpha |
 | Saisie, interview, aperçus, corrections et accès aux preuves au clavier et sur petit écran | [§10](PRD.md#consulter-les-résultats) | Alpha |
+| Plusieurs campagnes, chacune liée à une version de tâche, à ses cas et à un panel figé | [§5.1](PRD.md#51-capacités) | Alpha |
 
 ## Sans jalon décidé
 
@@ -32,7 +33,6 @@ Les exigences suivantes du PRD n’ont pas encore de jalon. Les dater demande un
 - navigation catalogue, tâche, campagne et comparaison des configurations ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
 - consultation publique des seules restitutions approuvées, sans classement universel ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
 - catalogue de tâches versionnées, avec contrat et cas d'essai identifiés ; aucune demande n’y est publiée automatiquement ([§5.1](PRD.md#51-capacités))
-- plusieurs campagnes, chacune liée à une version de tâche, à ses cas et à un panel figé ([§5.1](PRD.md#51-capacités))
 - résultats réellement acquis et évalués sur le catalogue et le panel approuvés ([§5.1](PRD.md#51-capacités))
 - classements par critère et filtres combinés, sans note pondérée ni désignation automatique du meilleur modèle ([§5.1](PRD.md#51-capacités), [§7](PRD.md#7-ordre-de-décision))
 - secours officiel candidat en dernier recours selon les conditions de l’ARD ([§5.1](PRD.md#51-capacités))
