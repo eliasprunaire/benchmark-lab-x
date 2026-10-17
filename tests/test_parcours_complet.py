@@ -1534,6 +1534,12 @@ class ParcoursComplet(unittest.TestCase):
                         if cell['configuration_id'] == configuration['id']]
             self.assertEqual(3, len(montants))
             self.assertEqual(storage._money(configuration['estimate']['amount_usd']), sum(montants))
+        # Un plan qui omet tous les essais d'un modèle est refusé, même si l'autre en a trois
+        incomplet = dict(manifeste, campaign_id=manifeste['campaign_id'] + 'x',
+                         plan=[cell for cell in manifeste['plan'] if cell['configuration_id'] == 'configuration-1'])
+        incomplet['attempt_policy'] = dict(manifeste['attempt_policy'], order=[cell['cell_id'] for cell in incomplet['plan']])
+        with closing(storage.Store(self.data)) as store, self.assertRaisesRegex(ValueError, 'Essais prévus inégaux'):
+            campaigns.create(store, incomplet)
         # Le choix se relit sur la page des modèles
         _, _, raw = self.request(dossier + '/configurations')
         self.assertRegex(raw.decode(), r'name="repetitions"[^>]*>(?:(?!</select>).)*<option value="3" selected>')

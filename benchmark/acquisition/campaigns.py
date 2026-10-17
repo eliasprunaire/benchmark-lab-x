@@ -301,7 +301,7 @@ def _manifest(value, contract, contracts=None, *, require_data_collection=False)
             encode(cell['estimate'])
         if 'repetition' in cell and (type(cell['repetition']) is not int or not 1 <= cell['repetition'] <= MAX_REPETITIONS):
             raise ValueError('Essai prévu invalide')
-    # Essais prévus : le même nombre pour chaque exemple et chaque modèle, numérotés de 1 à ce nombre ;
+    # Essais prévus : chaque exemple et chaque modèle, le même nombre pour chacun, numérotés de 1 à ce nombre ;
     # une reprise technique garde le numéro de l'essai qu'elle vise
     repeated = sum('repetition' in cell for cell in value['plan'])
     if repeated and 'recovery_of' not in value:
@@ -309,7 +309,7 @@ def _manifest(value, contract, contracts=None, *, require_data_collection=False)
         for cell in value['plan']:
             groups.setdefault((cell['case_id'], cell['configuration_id']), []).append(cell.get('repetition'))
         count = len(value['plan']) // len(groups)
-        if (repeated != len(value['plan']) or count < 2
+        if (repeated != len(value['plan']) or count < 2 or len(groups) != len(cases) * len(panel)
                 or any(sorted(numbers) != list(range(1, count + 1)) for numbers in groups.values())):
             raise ValueError('Essais prévus inégaux')
     policy = value['attempt_policy']
