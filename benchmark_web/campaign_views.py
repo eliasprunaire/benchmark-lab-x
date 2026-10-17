@@ -505,15 +505,18 @@ def render_comparison(value):
     def pending_reason(item):
         # Le modèle sans réponse exploitable est nommé comme dans le tableau, avec la cause lue dans son reçu
         configuration = panel.get(item.get('configuration_id'))
-        if item['state'] != 'NO_USABLE_RESPONSE' or configuration is None:
+        if item['state'] not in ('NO_USABLE_RESPONSE', 'NOT_SENT') or configuration is None:
             return item['next_action']
+        case = next((v for v in value['cases'] if v['id'] == item.get('case_id')), None) if multiple_cases else None
+        prefix = example_label(case, value['cases'].index(case) + 1) + ' : ' if case else ''
+        if item['state'] == 'NOT_SENT':
+            return (prefix + model_name(configuration, names) + ' n’a pas été appelé : la comparaison s’est arrêtée '
+                    'avant cet essai. Il n’est pas évalué et n’entre pas dans la comparaison.')
         count = item.get('recoveries', 0)
         # Une cause que le reçu n'établit pas est dite inconnue, jamais devinée
         details = [item.get('cause') or 'cause non établie par le reçu'] + (
             [str(count) + (' reprises' if count > 1 else ' reprise')] if count else [])
-        case = next((v for v in value['cases'] if v['id'] == item.get('case_id')), None) if multiple_cases else None
-        return ((example_label(case, value['cases'].index(case) + 1) + ' : ' if case else '')
-                + 'Aucune réponse exploitable pour ' + model_name(configuration, names)
+        return (prefix + 'Aucune réponse exploitable pour ' + model_name(configuration, names)
                 + (' · ' + effort_label(configuration) if sum(c['model'] == configuration['model'] for c in panel.values()) > 1 else '')
                 + ' (' + ' ; '.join(details) + ')'
                 + '. Ce modèle n’est pas évalué et n’entre pas dans la comparaison.')
@@ -522,7 +525,7 @@ def render_comparison(value):
     if pending_reasons:
         content += '<ul>' + ''.join(pending_reasons) + '</ul>'
     # Un modèle sans réponse exploitable est terminé : il ne fait pas dire que les essais se sont arrêtés
-    open_pending = [item for item in value.get('pending_attempts', []) if item['state'] != 'NO_USABLE_RESPONSE']
+    open_pending = [item for item in value.get('pending_attempts', []) if item['state'] not in ('NO_USABLE_RESPONSE', 'NOT_SENT')]
     coverage = value['coverage']
     content += '<p class="note">Réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : '
     content += text(coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '. '

@@ -1353,7 +1353,7 @@ class ParcoursComplet(unittest.TestCase):
             cas = cas_de(request['outgoing']['pieces'][0]['content'])
             modele = request['requested_configuration']['model']
             recus.append((cas, modele))
-            if (cas, modele) == (2, 'mistralai/mistral-small-2603'):
+            if (cas, modele) == (2, 'deepseek/deepseek-v4.1-flash'):
                 raise RuntimeError('Réponse perdue après émission')
             value = response(operation, request)
             omise = modele == 'deepseek/deepseek-v4.1-flash'
@@ -1364,31 +1364,35 @@ class ParcoursComplet(unittest.TestCase):
         execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
         # 2. Chaque essai a reçu les pièces de son propre exemple, dans l'ordre du plan
         modeles = ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603']
-        self.assertEqual([(1, m) for m in modeles] + [(2, m) for m in modeles], recus)
+        self.assertEqual([(1, m) for m in modeles] + [(2, m) for m in modeles[:2]], recus)
         # 4. Un effet ambigu arrête la comparaison ; un redémarrage ne rejoue ni l'ambigu ni ce qui est reçu
         with closing(storage.Store(self.data)) as store:
             runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
         execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
-        self.assertEqual(6, len(recus))
+        self.assertEqual(5, len(recus))
         with closing(storage.Store(self.data)) as store:
             etats = {cell['cell_id']: cell['state'] for cell in campaigns.inspect(store, recap.split('/')[-2])['cells']}
-        self.assertEqual(['RECEIVED'] * 5 + ['AMBIGUOUS'], [etats[cell['cell_id']] for cell in manifeste['plan']])
+        # L'essai qui suit l'ambigu garde son intention : il ne partira plus
+        self.assertEqual(['RECEIVED'] * 4 + ['AMBIGUOUS', 'INTENT_RECORDED'],
+                         [etats[cell['cell_id']] for cell in manifeste['plan']])
         # Couverture de l'arrêt : chaque essai garde son état, sous son exemple, sans lancement possible
         suivi, _, _ = self.request(recap)
         self.assertFalse(any(f['action'].endswith('/start') for f in suivi.forms))
-        self.assertEqual(5, suivi.visible.count('réponse reçue'))
+        self.assertEqual(4, suivi.visible.count('réponse reçue'))
         # Quinze minutes après l'envoi, l'ambigu est clos sans relance ; l'évaluation s'ouvre alors
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
         execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
-        self.assertEqual(6, len(recus))
+        self.assertEqual(5, len(recus))
+        # 4. L'essai jamais parti ne retient pas l'évaluation des réponses déjà reçues
         page, _, _ = self.request(recap)
         self.submit(page, '/evaluate', {})
         ids = self.starts.get_nowait()['judgment_operations']
-        self.assertEqual(5, len(ids))
+        self.assertEqual(4, len(ids))
         auto.execute_campaign(self.data, ids, self.bound[2])
+        self.assertEqual(5, len(recus))
         # 2. Le juge de chaque réponse lit les pièces et la référence de son exemple, jamais celles d'un autre
-        self.assertEqual(5, juge.request.call_count)
+        self.assertEqual(4, juge.request.call_count)
         jugés = []
         for vue in self.judged:
             cas = cas_de(vue['task']['pieces'][0]['content'])
@@ -1398,7 +1402,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIn(references[cas], texte)
             self.assertFalse(any(references[autre] in texte for autre in references if autre != cas))
             jugés.append(cas)
-        self.assertEqual([1, 1, 1, 2, 2], sorted(jugés))
+        self.assertEqual([1, 1, 1, 2], sorted(jugés))
         comparison = recap.removesuffix('/conditions')
         results, _, raw = self.request(comparison)
         self.examine(results, comparison, 'résultats de deux exemples', None)
@@ -1414,7 +1418,7 @@ class ParcoursComplet(unittest.TestCase):
         _, _, raw = self.request(comparison, json_response=True)
         lignes = {(row['case_id'], row['requested_configuration']['model']): row
                   for row in json.loads(raw)['rows']}
-        self.assertEqual({('case-1', m) for m in modeles} | {('case-2', m) for m in modeles[:2]}, set(lignes))
+        self.assertEqual({('case-1', m) for m in modeles} | {('case-2', modeles[0])}, set(lignes))
         self.assertEqual('SATISFAIT', lignes[('case-2', 'openai/gpt-5.6-sol')]['verdict'])
         # Le détail d'une réponse de l'exemple 2 montre ses pièces et sa réponse, jamais celles de l'exemple 1
         detail_href = Page(sections[2].encode()).link('Détail et preuves')
@@ -1423,10 +1427,12 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn(notes[2].strip(), raw.decode())
         self.assertNotIn(notes[1].strip(), raw.decode())
         self.assertEqual('NE SATISFAIT PAS', lignes[('case-1', 'deepseek/deepseek-v4.1-flash')]['verdict'])
-        # 4. Couverture prévue et observée : la réponse perdue reste visible sous son exemple et son modèle
-        self.assertIn('Exemple 2 : Aucune réponse exploitable pour Modèle C', results.visible)
+        # 4. Couverture prévue et observée : la réponse perdue et l'essai jamais parti restent visibles
+        self.assertIn('Exemple 2 : Aucune réponse exploitable pour Modèle B', results.visible)
         self.assertNotIn('Modèle C', second_tableau)
-        self.assertRegex(results.visible, r'essais lancés : 6 sur 6')
+        self.assertRegex(results.visible, r'essais lancés : 5 sur 6')
+        self.assertIn('Exemple 2 : Modèle C n’a pas été appelé : la comparaison s’est arrêtée avant cet essai.', results.visible)
+        self.assertNotIn('doit être relue', results.visible)
         # 5. Aucun conseil sur plusieurs exemples ; la limite du juge est dite avec les verdicts
         self.assertNotIn('Notre conseil', results.visible)
         self.assertIn('Le juge automatique n’est pas qualifié', results.visible)
@@ -1438,7 +1444,7 @@ class ParcoursComplet(unittest.TestCase):
                 {'essais_prevus': len(manifeste['plan']), 'exemples_inclus': len(manifeste['cases']),
                  'essais_envoyes_par_exemple': {str(cas): sum(c == cas for c, _ in recus) for cas in (1, 2)},
                  'etats_apres_arret': [etats[cell['cell_id']] for cell in manifeste['plan']],
-                 'appels_candidats_apres_redemarrage': len(recus) - 6,
+                 'appels_candidats_apres_redemarrage': len(recus) - 5,
                  'jugements': juge.request.call_count,
                  'references_etrangeres_lues_par_le_juge': 0,
                  'conseil_affiche': 'Notre conseil' in results.visible},

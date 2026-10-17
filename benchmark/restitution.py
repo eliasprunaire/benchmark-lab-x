@@ -325,6 +325,11 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                                configuration_id=cell['configuration_id'], case_id=cell['case_id'],
                                cause=causes.get(attempt['attempt_id']),
                                recoveries=len(chain(attempt['attempt_id'])) - 1)
+            elif attempts[attempt['attempt_id']]['state'] == 'INTENT_RECORDED' and not campaign['admission_open']:
+                # Arrêtée avant son envoi : l'essai ne partira plus, il reste compté comme non lancé
+                cell = next(c for c in campaign['cells'] if c['cell_id'] == attempts[attempt['attempt_id']]['cell_id'])
+                attempt.update(state='NOT_SENT', next_action='Essai jamais envoyé : la comparaison s’est arrêtée avant lui.',
+                               configuration_id=cell['configuration_id'], case_id=cell['case_id'])
             elif attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='EVALUATION_' + progress_status,
                     next_action=progress_reason or 'Réponse reçue. Son évaluation automatique n’est pas terminée.')
@@ -373,7 +378,8 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         rows.append(row)
     _rank(rows, columns)
     population = [r['attempt_id'] for r in rows]
-    attempted = sum(cell['state'] != 'NOT_STARTED' for cell in campaign['cells'])
+    # Une intention jamais émise n'est pas un essai lancé (ARD : la tentative n'atteste pas l'envoi)
+    attempted = sum(cell['state'] not in ('NOT_STARTED', 'INTENT_RECORDED') for cell in campaign['cells'])
     coverage = dict(planned_cells=len(campaign['cells']), attempted_cells=attempted,
                     evaluated_attempts=len(rows), decided_attempts=sum(r['verdict'] is not None for r in rows),
                     not_started=len(campaign['cells']) - attempted)

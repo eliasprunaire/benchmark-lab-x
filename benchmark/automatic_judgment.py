@@ -140,6 +140,17 @@ def _attempts(store, connection, campaign_id):
     return result
 
 
+def acquired(snapshot, attempts):
+    """Réponses à évaluer connues : toutes reçues, ou comparaison arrêtée dont le reste ne partira jamais
+
+    Sans admission, aucune intention encore enregistrée n'est émise : elle reste un essai non lancé et ne
+    retient plus l'évaluation des réponses reçues. Un essai en cours ou ambigu la retient toujours
+    """
+    pending = [a for a in attempts if a['state'] != 'RECEIVED']
+    return bool(attempts) and (not pending or snapshot['admission'] is None
+                               and all(a['state'] == 'INTENT_RECORDED' for a in pending))
+
+
 def guard_budget(store, connection, budget_id, *, campaign_id=None):
     """Keep one launch's assistance envelope available until its judge intents are reserved"""
     if not connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_status'").fetchone():
@@ -308,12 +319,12 @@ def _plan(store, connection, session_id, dossier_id, campaign_id, transport):
     config, _ = preflight(store, session_id, dossier_id, campaign_id, transport,
                           count=None if due is None else len(due))
     attempts = _attempts(store, connection, campaign_id)
-    if not attempts or any(a['state'] != 'RECEIVED' for _, a in attempts):
+    if not acquired(c._inspect(store, connection, campaign_id), [a for _, a in attempts]):
         raise ConflictError('Réponses candidates à rapprocher avant l’évaluation')
     plan = []
     for cid, attempt in attempts:
-        # Sortie absente, vide ou blanche : rien à juger, aucun appel payant
-        if not c.answered(attempt) or due is not None and attempt['operation_id'] not in due:
+        # Sortie absente, vide ou blanche, ou essai jamais parti : rien à juger, aucun appel payant
+        if attempt['state'] != 'RECEIVED' or not c.answered(attempt) or due is not None and attempt['operation_id'] not in due:
             continue
         previous, length, _ = due[attempt['operation_id']] if due is not None else (None, 0, None)
         ctx = context(store, connection, cid, attempt['operation_id'])
@@ -444,6 +455,9 @@ def status(store, connection, campaign_id, snapshot=None):
         result['can_start'] = total > 0
         if not result['can_start']:
             result.update(status='BLOCKED', reason='Aucune réponse exploitable à évaluer.')
+    elif total > 0 and acquired(snapshot, attempts):
+        # Comparaison arrêtée : les réponses reçues s'évaluent, les essais jamais envoyés restent non lancés
+        result['can_start'] = True
     elif attempts:
         result['status'] = 'WAITING'
     return result
