@@ -616,11 +616,20 @@ def render_comparison(value):
         content += '<p class="note">Aucune réponse ne correspond à ces filtres. Retirez un filtre pour revoir les autres : rien n’a été supprimé.</p>'
     for case_number, case in enumerate(value['cases'], 1):
         rows = [r for r in value['rows'] if r['case_id'] == case['id']]
-        if not rows:
+        if not rows and (not multiple_cases or query.get('case', case['id']) != case['id']):
             continue
         label = example_label(case, case_number) if multiple_cases else 'Comparaison des modèles'
         if multiple_cases:
-            content += '<h3>' + text(label) + '</h3>'
+            # Un filtre ne retire ni l'exemple ni son dénominateur
+            evaluated = len({r['attempt_id'] for r in latest.values() if r['case_id'] == case['id']})
+            planned = sum(cell['case_id'] == case['id'] for cell in value['cells'])
+            content += '<h3>' + text(label) + '</h3><p class="hint">' + text(
+                _plural(evaluated, 'réponse évaluée') + ' sur ' + _plural(planned, 'essai prévu')) + '</p>'
+            if not rows:
+                # Sans filtre, le dénominateur suffit ; sans aucune réponse affichée, la note générale le dit déjà
+                if query and value['rows']:
+                    content += '<p class="note">Aucune réponse de cet exemple ne correspond à ces filtres.</p>'
+                continue
         content += '<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '">'
         content += '<table><caption>Chaque verdict concerne la réponse obtenue sur cet exemple.</caption><thead><tr>'
         quality_columns = [column for column in value['columns'] if 'criterion_id' in column]
@@ -628,8 +637,9 @@ def render_comparison(value):
         for title in titles:
             content += '<th scope="col">' + text(title) + '</th>'
         content += '</tr></thead><tbody>'
-        known = [float(r['cost']['value']) for r in rows
-                 if r['cost']['value'] is not None and _numeric(r['cost']['value'])]
+        # Échelle des barres sur toutes les réponses de l'exemple : un filtre ne la change pas
+        known = [float(r['candidate_cost']['amount']) for r in latest.values() if r['case_id'] == case['id']
+                 and r['candidate_cost'] is not None and _numeric(r['candidate_cost']['amount'])]
         for row in rows:
             content += '<tr id="attempt-' + text(row['attempt_id']) + '"' + ('' if row['verdict'] == 'SATISFAIT' else ' class="out"') + ' tabindex="-1"><th scope="row">'
             content += '<strong>' + text(model_name(row['requested_configuration'], names)) + '</strong>'
@@ -1178,7 +1188,7 @@ def render_calibration(scope):
     return content + '</div>'
 
 
-def render_result(record, names=None):
+def render_result(record, names=None, place=None):
     """Lecture humaine compacte d'une évaluation : fragment partagé par la page directe et la modale.
 
     Le rendu technique complet reste `render_evaluations` sur les révisions du cas
@@ -1190,7 +1200,7 @@ def render_result(record, names=None):
     spec = record['qualification']['contract']['specification']
     configuration = record['requested_configuration']
     verdict = record['decision']['verdict']
-    content = '<section class="result" id="evaluation-' + text(eid) + '"><p class="eyebrow">Résultat sur cet exemple</p>'
+    content = '<section class="result" id="evaluation-' + text(eid) + '"><p class="eyebrow">' + text(place or 'Résultat sur cet exemple') + '</p>'
     name = model_name(configuration, names or {})
     content += '<h2>' + text(name) + '</h2><p class="hint">' + text(effort_label(configuration)) + '</p>'
     if name != configuration['model']:
@@ -1274,7 +1284,12 @@ def render_attempt_detail(value):
     history = value['history']
     content = '<p><a href="' + text(value['back_href']) + '">Revenir aux résultats</a></p>'
     names = value.get('model_names', {})
-    content += '<div id="attempt-detail">' + render_result(history[-1], names)
+    # Exemple et essai de la réponse, dans le fragment que la modale extrait aussi
+    where = value['place']
+    place = [example_label(where['case'], where['number'])] if where['examples'] > 1 else []
+    if history[-1].get('repetition'):
+        place.append('Essai ' + str(history[-1]['repetition']) + ' sur ' + str(where['repetitions']))
+    content += '<div id="attempt-detail">' + render_result(history[-1], names, ' · '.join(place))
     for record in reversed(history[:-1]):
         content += '<details><summary>Ancienne évaluation, remplacée le ' + text(date_lisible_utc(record['created_at'])) + '</summary>'
         content += render_result(record, names) + '</details>'

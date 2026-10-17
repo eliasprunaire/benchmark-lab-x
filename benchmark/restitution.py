@@ -342,6 +342,12 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     base = campaign_url(dossier_id, campaign_id)
     suffix = '?' + urlencode(query) if query else ''
     for record in latest.values():
+        attempt = next(a for a in visible if a['operation_id'] == record['attempt_id'])
+        # Essai prévu de sa cellule ; une reprise garde celui de l'essai qu'elle vise. Posé sur
+        # l'historique aussi, que lit le détail
+        cell = next(c for c in campaign['cells'] if c['cell_id'] == attempt['cell_id'])
+        if 'repetition' in cell:
+            record['repetition'] = cell['repetition']
         row = deepcopy(record)
         row['verdict'] = row['decision']['verdict']
         # Une reprise est une configuration distincte, dite sur sa ligne (RULES.md §5)
@@ -349,11 +355,6 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                                  if record['attempt_id'] in parents else None)
         if record['attempt_id'] in observations:
             row['observations'] = observations[record['attempt_id']]
-        attempt = next(a for a in visible if a['operation_id'] == record['attempt_id'])
-        # Essai prévu de sa cellule ; une reprise garde celui de l'essai qu'elle vise
-        cell = next(c for c in campaign['cells'] if c['cell_id'] == attempt['cell_id'])
-        if 'repetition' in cell:
-            row['repetition'] = cell['repetition']
         incompatible = ('Impossible de confirmer que la réponse vient du modèle demandé' if record['attribution_incident'] else
                         'Un problème technique empêche de rattacher la réponse au modèle' if record['incident'] == 'HARNESS_ERROR' else
                         'Réponse absente ou envoi de l’appel non confirmé' if record['output_piece_id'] is None or attempt['emission'] != 'ESTABLISHED' else None)
@@ -468,9 +469,13 @@ def _detail(store, connection, session_id, dossier_id, value, attempt_id):
         pieces = e._pieces_bytes(store, connection, session_id, dossier_id,
                                  record['evaluation_id'], [link['piece_id'] for link in record['proof_links']])
         record['proof_contents'] = {pid: raw.decode('utf-8') for pid, raw in pieces.items()}
+    # Exemple et nombre d'essais de la réponse : le détail les nomme
+    number, case = next((n, x) for n, x in enumerate(value['cases'], 1) if x['id'] == history[-1]['case_id'])
     return p.page_view(dict(kind='attempt_detail', campaign_id=campaign_id, task=value['task'],
                        need=value['need'], model_names=value['model_names'], conclusion=value['conclusion'],
                        coverage=value['coverage'], history=history,
+                       place=dict(case=dict(id=case['id']), number=number, examples=len(value['cases']),
+                                  repetitions=max((cell.get('repetition', 1) for cell in value['cells']), default=1)),
                        filter_scope=value['filter_scope'], dossier_href=value['dossier_href'], href=value['href'],
                        back_href=value['href'] + ('?' + urlencode(value['filter_scope']) if value['filter_scope'] else '') +
                                  '#attempt-' + attempt_id))
