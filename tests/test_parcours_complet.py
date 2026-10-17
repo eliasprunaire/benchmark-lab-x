@@ -1391,6 +1391,9 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
         execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
         self.assertEqual(5, len(recus))
+        # Issue #458 : avant toute évaluation, la comparaison dit déjà pourquoi elle ne conseille pas
+        avant, _, _ = self.request(recap.removesuffix('/conditions'))
+        self.assertIn('Exemple 1 : toutes les réponses prévues ne sont pas évaluées.', avant.visible)
         # 4. L'essai jamais parti ne retient pas l'évaluation des réponses déjà reçues
         page, _, _ = self.request(recap)
         self.submit(page, '/evaluate', {})
@@ -1448,6 +1451,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('doit être relue', results.visible)
         # 5. Aucun conseil sur plusieurs exemples ; la limite du juge est dite avec les verdicts
         self.assertNotIn('Notre conseil', results.visible)
+        # Issue #458 : l'absence de conseil nomme l'exemple incomplet
+        self.assertIn('Exemple 2 : toutes les réponses prévues ne sont pas évaluées.', results.visible)
         self.assertIn('Le juge automatique n’est pas qualifié', results.visible)
         self.sans_promesse(results)
         # Issue #456 : un filtre garde chaque exemple, son dénominateur, ses essais manquants et l'échelle de ses coûts
@@ -1463,6 +1468,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIn('Exemple 2 : Modèle C n’a pas été appelé', page.visible)
             self.assertRegex(page.visible, r'essais lancés : 5 sur 6')
             self.assertNotIn('Notre conseil', page.visible)
+            self.assertIn('Exemple 2 : toutes les réponses prévues ne sont pas évaluées.', page.visible)
             self.assertIn('Le juge automatique n’est pas qualifié', page.visible)
             sous_filtre[filtre] = [(part.count('Détail et preuves'),
                                     'Aucune réponse de cet exemple ne correspond à ces filtres.' in part)
@@ -1485,6 +1491,7 @@ class ParcoursComplet(unittest.TestCase):
                  'jugements': juge.request.call_count,
                  'references_etrangeres_lues_par_le_juge': 0,
                  'conseil_affiche': 'Notre conseil' in results.visible,
+                 'raison_sans_conseil': json.loads(self.request(comparison, json_response=True)[2])['abstention'],
                  'reponses_affichees_par_exemple_sous_filtre': {filtre: [n for n, _ in comptes]
                                                                 for filtre, comptes in sous_filtre.items()}},
                 ensure_ascii=False, indent=2) + '\n')
@@ -2622,6 +2629,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
         self.assertNotIn('Aucune réponse exploitable', html)
         self.assertNotIn('Notre conseil', html)
+        self.assertIn('Une reprise a été demandée pour un modèle.', html)
 
     def depenses(self, html):
         """Récapitulatif des dépenses de la comparaison : texte entier et lignes de chaque phase"""
@@ -2919,6 +2927,9 @@ class ParcoursComplet(unittest.TestCase):
         Échecs couverts : conseil avec plusieurs cas, cellule non lancée ou une seule réponse
         satisfaisante ; consultation qui modifie les observations ; sens numérique inversé, précision
         perdue, coût préféré à la qualité, compromis de sens opposés ou égalité départagée arbitrairement
+
+        Issue #458 (décision D06 d'Ayo) : sur plusieurs exemples, le conseil exige que chaque exemple
+        désigne la même configuration, sans somme des coûts ; chaque absence de conseil dit sa raison
         """
         from copy import deepcopy
         from hashlib import sha256
@@ -2934,9 +2945,10 @@ class ParcoursComplet(unittest.TestCase):
                 store._connection.execute(f'UPDATE {table} SET session_id=? WHERE dossier_id=?', (sid, 'fixture'))
             cookies = SimpleCookie('benchmark_session=' + token)
             for directions, scenarios in (
-                    (('higher',), ('complete', 'multi-case', 'unstarted', 'pending', 'single-eligible')),
+                    (('higher',), ('complete', 'multi-case', 'multi-agree', 'multi-disagree', 'unstarted', 'pending',
+                                    'single-eligible')),
                     (('lower',), ('complete', 'equal-quality', 'equal-final', 'precise')),
-                    (('higher', 'lower'), ('complete', 'tradeoff'))):
+                    (('higher', 'lower'), ('complete', 'tradeoff', 'multi-tradeoff'))):
                 spec = specification(reference)
                 spec['secondary_criteria'] = [dict(id=direction, measure='Quantité fictive' if direction == 'higher' else 'Durée fictive',
                     proof='Sortie conservée', unit='éléments' if direction == 'higher' else 's', favorable=direction, aggregation=None)
@@ -2952,12 +2964,18 @@ class ParcoursComplet(unittest.TestCase):
                         if scenario == 'multi-case':
                             m['cases'].append(dict(id='other', package_sha256=candidate['contract']['package_sha256']))
                             m['plan'][1]['case_id'] = 'other'
+                        # Deux exemples, chacun avec les deux modèles
+                        both = scenario in ('multi-agree', 'multi-disagree', 'multi-tradeoff')
+                        if both:
+                            m['cases'].append(dict(id='other', package_sha256=candidate['contract']['package_sha256']))
+                            m['plan'] += [dict(cell_id=ident + '2', case_id='other', configuration_id=ident) for ident in ('x', 'y')]
+                            m['attempt_policy']['order'] += ['x2', 'y2']
                         if scenario in ('unstarted', 'pending'):
                             m['panel'].append(dict(deepcopy(m['panel'][0]), id='z'))
                             m['plan'].append(dict(cell_id='z', case_id='notes', configuration_id='z'))
                             m['attempt_policy']['order'].append('z')
                         snapshot = campaigns.create(store, m)
-                        cells = ['x', 'y', 'z'] if scenario == 'pending' else ['x', 'y']
+                        cells = ['x', 'y', 'z'] if scenario == 'pending' else ['x', 'y', 'x2', 'y2'] if both else ['x', 'y']
                         authority, evidence = inputs(snapshot, budget=campaign_id, cells=cells)
                         authority['reserve_amounts'] = {cell: '7' for cell in cells}
                         campaigns.admit(store, campaign_id, authority, evidence)
@@ -2980,12 +2998,16 @@ class ParcoursComplet(unittest.TestCase):
                                 piece = ctx['attempt']['output_piece_id']
                                 result['measures'] = []
                                 for definition in spec['secondary_criteria']:
-                                    values = ('2', '1') if definition['favorable'] == 'higher' or scenario == 'tradeoff' else ('1', '2')
+                                    # multi-tradeoff croise les qualités sur l'exemple 2 seulement
+                                    crossed = scenario == 'tradeoff' or (scenario == 'multi-tradeoff' and cell.endswith('2'))
+                                    values = ('2', '1') if definition['favorable'] == 'higher' or crossed else ('1', '2')
                                     if scenario in ('equal-quality', 'equal-final'):
                                         values = ('1', '1')
                                     if scenario == 'precise':
                                         values = ('1.0000000000000000000000000001', '1.0000000000000000000000000002')
-                                    result['measures'].append(dict(criterion_id=definition['id'], value=values[cell == 'y'],
+                                    # L'exemple 2 de multi-disagree inverse les qualités : y y devient meilleur
+                                    worse = cell.startswith('y') != (scenario == 'multi-disagree' and cell.endswith('2'))
+                                    result['measures'].append(dict(criterion_id=definition['id'], value=values[worse],
                                         unit=definition['unit'], evidence=[dict(piece_id=piece, sha256=sha256(resources[piece]).hexdigest(),
                                                                              passage=resources[piece].decode())]))
                                 return result
@@ -2998,9 +3020,22 @@ class ParcoursComplet(unittest.TestCase):
                         result = json.loads(raw)
                         page, _, _ = self.request(path, cookies=cookies)
                         self.assertEqual(before, store.inspect_operations())
-                        advised = scenario in ('complete', 'precise', 'equal-quality')
+                        advised = scenario in ('complete', 'precise', 'equal-quality', 'multi-agree')
                         self.assertEqual(advised, 'Notre conseil' in page.visible)
-                        if advised:
+                        self.assertEqual(not advised, 'Pas de conseil' in page.visible)
+                        if scenario == 'multi-agree':
+                            # Un coût par exemple, jamais leur somme
+                            choice = result['recommendation']
+                            self.assertEqual('fictional-x', choice['configuration']['model'])
+                            self.assertNotIn('amount', choice)
+                            self.assertEqual([('notes', '3', 'quality_then_cost'), ('other', '2', 'quality_then_cost')],
+                                             [(c['case_id'], c['amount'], c['basis']) for c in choice['cases']])
+                            aside = next(n for n in page.nodes if n['attrs'].get('class') == 'economic-choice')['text']
+                            self.assertIn('Exemple 1 : 3 TEST', aside)
+                            self.assertIn('Exemple 2 : 2 TEST', aside)
+                            self.assertIn('Ce conseil repose sur 2 exemples', aside)
+                            self.assertIsNone(result['abstention'])
+                        elif advised:
                             winner = 'y' if scenario == 'equal-quality' else 'x'
                             basis = 'equal_quality_cost' if scenario == 'equal-quality' else 'quality_then_cost'
                             amount = '2' if winner == 'y' else '3'
@@ -3010,6 +3045,22 @@ class ParcoursComplet(unittest.TestCase):
                                 result['recommendation']['amount'], result['recommendation']['unit'], result['recommendation']['count']))
                         else:
                             self.assertIsNone(result['recommendation'])
+                            # Raison et exemple nommés : multi-case n'a qu'une réponse sur chaque exemple
+                            expected = {'multi-case': ('few', 'notes'), 'multi-disagree': ('disagreement', None),
+                                        'unstarted': ('incomplete', None), 'pending': ('incomplete', None),
+                                        'single-eligible': ('few', None), 'equal-final': ('tie', None),
+                                        'tradeoff': ('tradeoff', None), 'multi-tradeoff': ('tradeoff', 'other')}[scenario]
+                            self.assertEqual(expected, (result['abstention']['reason'], result['abstention']['case_id']))
+                            if scenario == 'multi-disagree':
+                                self.assertEqual([('notes', 'fictional-x'), ('other', 'fictional-y')],
+                                                 [(c['case_id'], c['configuration']['model'])
+                                                  for c in result['abstention']['choices']])
+                                self.assertIn('Les exemples ne désignent pas le même modèle', page.visible)
+                            if scenario == 'multi-case':
+                                self.assertIn('Exemple 1 : moins de deux réponses satisfont l’exemple.', page.visible)
+                            if scenario == 'multi-tradeoff':
+                                self.assertIn('Exemple 2 : aucune réponse n’est la meilleure sur tous les critères de qualité.',
+                                              page.visible)
 
     def test_pas_de_conseil_avec_une_reponse_absente(self):
         """Deux réponses satisfaisantes départageables ; la troisième n'a pas de réponse exploitable"""
@@ -3037,6 +3088,7 @@ class ParcoursComplet(unittest.TestCase):
                                 comportement=comportement, repetitions=2)
         self.assertEqual(4, html.count('<tr id="attempt-'))
         self.assertNotIn('Notre conseil', html)
+        self.assertIn('Un modèle compte plus d’un essai sur un même exemple.', html)
 
     def test_pas_de_conseil_a_egalite_finale(self):
         _, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent')
@@ -3054,6 +3106,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('class="out"', html)
         self.assertIn('Comparaison des coûts incomplète', html)
         self.assertNotIn('Notre conseil', html)
+        self.assertIn('La qualité ou le coût d’une réponse qui satisfait l’exemple n’est pas connu.', html)
 
     def test_pas_de_conseil_quand_les_qualites_se_croisent(self):
         def mesure(critere, sortie):
@@ -3220,6 +3273,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Aucune réponse exploitable pour Modèle B (arrêt pour longueur, plafond demandé : 4096 '
                       'jetons de sortie).', html)
         self.assertEqual(1, html.count('Aucune réponse exploitable pour Modèle B'))
+        # Issue #458 : la raison reste vraie quand la reprise n'a pas eu lieu
+        self.assertIn('Une reprise a été demandée pour un modèle.', html)
         # Issue #441 : la reprise refusée ne partira jamais, elle ne laisse aucune dépense en suspens
         texte, phases = self.depenses(html)
         self.assertIn('Coût complet connu', texte)

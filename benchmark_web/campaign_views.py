@@ -393,6 +393,20 @@ def output_label(configuration, recoveries):
     return ' · '.join(parts)
 
 
+# Raison de l'absence de conseil, calculée par restitution._recommendation
+ABSTENTION_REASONS = {
+    'incomplete': 'toutes les réponses prévues ne sont pas évaluées.',
+    'repeated': 'un modèle compte plus d’un essai sur un même exemple.',
+    'recovered': 'une reprise a été demandée pour un modèle.',
+    'few': 'moins de deux réponses satisfont l’exemple.',
+    'no_quality': 'aucun critère de qualité ne compare les réponses.',
+    'unknown': 'la qualité ou le coût d’une réponse qui satisfait l’exemple n’est pas connu.',
+    'tradeoff': 'aucune réponse n’est la meilleure sur tous les critères de qualité.',
+    'tie': 'plusieurs réponses ont la même qualité et le même coût.',
+    'disagreement': 'les exemples ne désignent pas le même modèle.',
+}
+
+
 def model_name(configuration, names):
     """Nom commercial du relevé, sinon l'identifiant Openrouter : le même libellé sur chaque écran"""
     return names.get(configuration['model'], configuration['model'])
@@ -549,6 +563,20 @@ def render_comparison(value):
         content += '<p class="hint">Réponses reçues ' + text('le ' + jour_lisible(dates[0]) if len(dates) == 1 else
                                                           'du ' + jour_lisible(dates[0]) + ' au ' + jour_lisible(dates[-1])) + '.</p>'
     content += '</div>'
+
+    def number(case_id):
+        return next(n for n, case in enumerate(value['cases'], 1) if case['id'] == case_id)
+    # Une comparaison sans réponse évaluée explique aussi l'absence de conseil
+    if value.get('abstention'):
+        abstention = value['abstention']
+        reason = ABSTENTION_REASONS[abstention['reason']]
+        content += '<aside class="economic-choice" aria-labelledby="no-choice-title"><h2 id="no-choice-title">Pas de conseil</h2><p>'
+        content += text('Exemple ' + str(number(abstention['case_id'])) + ' : ' + reason if abstention['case_id']
+                        else reason[0].upper() + reason[1:]) + '</p>'
+        if abstention.get('choices'):
+            content += '<p>' + text(' · '.join('Exemple ' + str(number(item['case_id'])) + ' : ' + model_name(item['configuration'], names)
+                                               for item in abstention['choices'])) + '</p>'
+        content += '</aside>'
     if not value['population']:
         return content + render_expenses(value.get('expenses'), names)
     choice = value.get('recommendation')
@@ -557,8 +585,12 @@ def render_comparison(value):
         content += '<h2 id="economic-choice-title">Notre conseil</h2><div class="choice-highlight"><div>'
         content += '<p class="choice-model">' + text(model_name(choice['configuration'], names)) + '</p>'
         content += '<p>' + text(effort_label(choice['configuration'])) + '</p></div>'
-        content += '<p class="choice-cost">Coût observé<strong>' + text(montant_lisible(choice['amount']) + ' ' + choice['unit']) + '</strong></p></div>'
-        if choice['basis'] == 'quality_then_cost':
+        # Décision D06 d'Ayo (#458) : un coût par exemple, jamais leur somme
+        costs = ([(montant_lisible(choice['amount']) + ' ' + choice['unit'])] if 'cases' not in choice else
+                 ['Exemple ' + str(number(item['case_id'])) + ' : ' + montant_lisible(item['amount']) + ' ' + item['unit']
+                  for item in choice['cases']])
+        content += '<p class="choice-cost">Coût observé' + ''.join('<strong>' + text(cost) + '</strong>' for cost in costs) + '</p></div>'
+        if choice['basis'] in ('quality_then_cost', 'each_case'):
             criteria = list(dict.fromkeys(definition.get('measure') or definition.get('label')
                                           for definition in choice['quality']
                                           if definition.get('measure') or definition.get('label')))
@@ -567,10 +599,12 @@ def render_comparison(value):
             content += '<p>Nous retenons d’abord la <span class="quality-term"><span class="quality-help" tabindex="0" '
             content += 'aria-describedby="quality-definition">qualité observée</span>'
             content += '<span id="quality-definition" class="quality-tooltip" role="tooltip">' + definition + '</span></span> la plus élevée. '
-            content += 'À qualité égale, le coût observé le plus bas l’emporte.</p>'
+            content += 'À qualité égale, le coût observé le plus bas l’emporte.'
+            content += (' Ce modèle est retenu sur chaque exemple, lu séparément.' if 'cases' in choice else '') + '</p>'
         else:
             content += '<p>Les ' + text(choice['count']) + ' réponses qui satisfont l’exemple ont la même qualité observée. Nous retenons la moins coûteuse.</p>'
-        content += '<p class="hint">Ce conseil repose sur un seul exemple. Sur d’autres tâches, le résultat peut être différent.</p></aside>'
+        content += ('<p class="hint">Ce conseil repose sur ' + ('un seul exemple' if 'cases' not in choice else
+                    text(len(choice['cases'])) + ' exemples') + '. Sur d’autres tâches, le résultat peut être différent.</p></aside>')
     sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
     sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
     options = {

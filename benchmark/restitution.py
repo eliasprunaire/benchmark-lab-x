@@ -130,17 +130,18 @@ def _rank(rows, columns):
                 metric['rank'] = 1 + sum(other > value if higher else other < value for other in values)
 
 
-def _recommendation(rows, columns, case_count, coverage, pending):
-    """Recommend the strongest observed quality, using cost only to break an exact tie"""
-    if (case_count != 1 or pending or coverage['not_started']
-            or coverage['decided_attempts'] != coverage['planned_cells']
-            or len({row['configuration_id'] for row in rows}) != len(rows)):
-        return None
+def _case_choice(rows, quality):
+    """Apply the single-case rule to one example: its retained row and basis, or the reason of abstention"""
+    if len({row['configuration_id'] for row in rows}) != len(rows):
+        return 'repeated'
     eligible = [row for row in rows if row['verdict'] == 'SATISFAIT']
-    quality = [column for column in columns if 'criterion_id' in column]
-    if (len(eligible) < 2 or not quality or any(row['cost']['rank'] is None for row in eligible)
+    if len(eligible) < 2:
+        return 'few'
+    if not quality:
+        return 'no_quality'
+    if (any(row['cost']['rank'] is None for row in eligible)
             or any(_metric(row, column)['rank'] is None for row in eligible for column in quality)):
-        return None
+        return 'unknown'
     quality_vectors = {}
     for row in eligible:
         values = []
@@ -158,16 +159,51 @@ def _recommendation(rows, columns, case_count, coverage, pending):
                                                    quality_vectors[row['attempt_id']]))
         for other in eligible if other is not row)]
     if len({quality_vectors[row['attempt_id']] for row in frontier}) != 1:
-        return None
+        return 'tradeoff'
     cheapest = min(_metric_number(row['cost']) for row in frontier)
     winners = [row for row in frontier if _metric_number(row['cost']) == cheapest]
     if len(winners) != 1:
-        return None
-    row = winners[0]
+        return 'tie'
     basis = ('equal_quality_cost' if len(set(quality_vectors.values())) == 1 else 'quality_then_cost')
-    return dict(configuration=deepcopy(row['requested_configuration']), count=len(eligible),
-                amount=row['cost']['value'], unit=row['cost']['unit'], basis=basis,
-                quality=[deepcopy(column['definition']) for column in quality], detail_href=row['detail_href'])
+    return winners[0], basis, len(eligible)
+
+
+def _recommendation(rows, columns, cases, cells, pending, recovered):
+    """Recommend the configuration the single-case rule retains on every example, or say why not
+
+    Décision D06 d'Ayo (#458) : chaque exemple est lu seul ; aucune somme de coûts ni score entre exemples
+    """
+    def abstain(reason, case=None, **extra):
+        return None, dict(reason=reason, case_id=case['id'] if case and len(cases) > 1 else None, **extra)
+
+    # Décision d'Ayo : pas de conseil sur une comparaison qui compte une reprise (une tentative par configuration)
+    if recovered:
+        return abstain('recovered')
+    groups = [(case, [row for row in rows if row['case_id'] == case['id']]) for case in cases]
+    for case, group in groups:
+        if sum(row['verdict'] is not None for row in group) != sum(cell['case_id'] == case['id'] for cell in cells):
+            return abstain('incomplete', case)
+    if pending:
+        return abstain('incomplete')
+    quality = [column for column in columns if 'criterion_id' in column]
+    choices = []
+    for case, group in groups:
+        choice = _case_choice(group, quality)
+        if type(choice) is str:
+            return abstain(choice, case)
+        choices.append((case, *choice))
+    if len({row['configuration_id'] for _, row, _, _ in choices}) != 1:
+        return abstain('disagreement', choices=[dict(case_id=case['id'], configuration=deepcopy(row['requested_configuration']))
+                                                for case, row, _, _ in choices])
+    definitions = [deepcopy(column['definition']) for column in quality]
+    if len(choices) == 1:
+        _, row, basis, count = choices[0]
+        return dict(configuration=deepcopy(row['requested_configuration']), count=count,
+                    amount=row['cost']['value'], unit=row['cost']['unit'], basis=basis,
+                    quality=definitions, detail_href=row['detail_href']), None
+    return dict(configuration=deepcopy(choices[0][1]['requested_configuration']), basis='each_case', quality=definitions,
+                cases=[dict(case_id=case['id'], amount=row['cost']['value'], unit=row['cost']['unit'], basis=basis,
+                            count=count, detail_href=row['detail_href']) for case, row, basis, count in choices]), None
 
 
 EXPENSE_GROUPS = ('compared', 'other_attempts', 'judgment', 'probes', 'preparation', 'qualification')
@@ -423,14 +459,15 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
             group = known + unknown
         ordered.extend(group)
     payload = store.get_dossier(dossier_id, contract['revision'])
+    # Calculé sur toutes les réponses, indépendamment des filtres
+    recommendation, abstention = _recommendation(rows, columns, campaign['cases'], campaign['cells'], pending, bool(descendants))
     return dict(kind='comparison', visibility='private', catalogue_admission=False,
                 campaign_id=campaign_id, contract_sha256=campaign['contract_sha256'], task=campaign['task'],
                 need=payload['request'], reformulation=payload['reformulation'],
                 result_expected=spec['result_expected'], human_work=contract['package']['human_work'],
                 conclusion=conclusion, coverage=coverage, population=population, filter_scope=deepcopy(query),
                 economic_status='COMPLETE' if complete else 'INCOMPLETE', columns=columns, rows=ordered,
-                # Décision d'Ayo : pas de conseil sur une comparaison qui compte une reprise (une tentative par configuration)
-                recommendation=None if descendants else _recommendation(rows, columns, len(campaign['cases']), coverage, pending),
+                recommendation=recommendation, abstention=abstention,
                 expenses=_expenses(store, connection, dossier_id, contract['revision'], [campaign_id] + descendants,
                                    {r['attempt_id'] for r in rows}, held,
                                    {cfg['estimate']['probe_operation_id'] for cfg in campaign['panel']
