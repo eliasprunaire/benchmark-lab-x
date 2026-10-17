@@ -852,12 +852,17 @@ class Store:
         if snapshot and self._verified_operations is not None:
             return deepcopy([record for record in self._verified_operations
                              if operation_ids is None or record['operation_id'] in operation_ids])
-        # Hors snapshot, dans une transaction : la copie validée reste servie tant qu'aucune écriture de cette
-        # connexion (total_changes) ni d'une autre (data_version) n'a eu lieu ; toute écriture fait revalider tout
-        version = ((connection.total_changes, connection.execute('PRAGMA data_version').fetchone()[0])
-                   if connection is self._connection and connection.in_transaction and not snapshot else None)
-        if version is not None and self._transaction_operations is not None and self._transaction_operations[0] == version:
-            return deepcopy([record for record in self._transaction_operations[1]
+        # Hors snapshot, dans une même `_transaction` : la copie validée reste servie tant qu'aucune écriture de
+        # cette connexion (total_changes) ni d'une autre (data_version) n'a eu lieu ; toute écriture fait revalider
+        # tout. Liée à sa transaction, car un ROLLBACK ne fait pas revenir total_changes en arrière
+        current = _created_pieces.get()
+        version = ((current, connection.total_changes, connection.execute('PRAGMA data_version').fetchone()[0])
+                   if connection is self._connection and connection.in_transaction and not snapshot
+                   and current is not None else None)
+        cached = self._transaction_operations
+        if (version is not None and cached is not None and cached[0][0] is current
+                and cached[0][1:] == version[1:]):
+            return deepcopy([record for record in cached[1]
                              if operation_ids is None or record['operation_id'] in operation_ids])
         rows = connection.execute(
             'SELECT ' + ', '.join('o.' + column for column in _OPERATION_COLUMNS)

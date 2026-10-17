@@ -81,6 +81,16 @@ class ServiceStorageTests(unittest.TestCase):
                     self.assertTrue(verify(store)['integrity_ok'])
                 self.assertIsNone(store._verified_operations)
                 self.assertEqual(store.inspect_operations()[0]['resources'], ['changed'])
+                # #528 : une écriture annulée ne reste jamais servie par la copie validée d'une transaction
+                from benchmark.storage import _transaction
+                connection = store._connection
+                with self.assertRaises(RuntimeError):
+                    with _transaction(connection, write=True):
+                        connection.execute("UPDATE operations SET resources_json='[\"annule\"]' WHERE operation_id='op'")
+                        self.assertEqual(store._operations(connection)[0]['resources'], ['annule'])
+                        raise RuntimeError('annulation')
+                with _transaction(connection):
+                    self.assertEqual(store._operations(connection)[0]['resources'], ['changed'])
 
     def test_full_verification_checks_database_once_per_snapshot_not_per_piece(self):
         with tempfile.TemporaryDirectory() as directory:
