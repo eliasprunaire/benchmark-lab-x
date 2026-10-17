@@ -51,6 +51,8 @@ def render_privacy_controls(value, csrf, contribution=''):
         attrs += ' data-privacy-activity'
     if dossier:
         attrs += ' data-dossier-id="' + text(dossier) + '"'
+        if privacy.get('campaign_id'):
+            attrs += ' data-campaign-id="' + text(privacy['campaign_id']) + '"'
         if type(privacy.get('content_version')) is int:
             attrs += ' data-content-version="' + str(privacy['content_version']) + '"'
     content = '<details class="privacy-controls"' + attrs + '><summary>Vos données pour ce cas</summary>' + contribution

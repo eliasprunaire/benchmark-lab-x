@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
 import json
+import re
 from pathlib import Path
 import secrets
 import sqlite3
@@ -202,7 +203,8 @@ def _entries(values, fields, label, optional=()):
     return seen
 
 
-def _manifest(value, contract, *, require_data_collection=False):
+def _manifest(value, contract, contracts=None, *, require_data_collection=False):
+    """`contract` : celui de la campagne ; `contracts` : celui de chaque cas, quand il en a un propre"""
     _fields(value, _MANIFEST + tuple(k for k in _MANIFEST_OPTIONAL if k in value), 'manifest')
     if value.get('funding', 'operator') not in ('operator', 'requester'):
         raise ValueError('Financement de campagne inconnu')
@@ -220,10 +222,20 @@ def _manifest(value, contract, *, require_data_collection=False):
     if type(value['version']) is not int or value['version'] < 1:
         raise ValueError('Version de manifeste requise')
     _hash(value['contract_sha256'])
-    cases = _entries(value['cases'], ('id', 'package_sha256'), 'cases')
+    cases = _entries(value['cases'], ('id', 'package_sha256'), 'cases', ('contract_sha256',))
+    linked = [case['contract_sha256'] for case in value['cases'] if 'contract_sha256' in case]
+    # Plusieurs exemples d'une tâche : chaque cas porte le contrat de son exemple, le premier celui de la campagne
+    if linked and (len(linked) != len(value['cases']) or len(set(linked)) != len(linked)
+                   or linked[0] != value['contract_sha256'] or value.get('funding') != 'requester'):
+        raise ValueError('Contrat par cas incomplet')
+    from ..preparation import _contract
     for case in value['cases']:
-        if case['package_sha256'] != contract['package_sha256']:
+        own = (contracts or {}).get(case['id'], contract)
+        if case['package_sha256'] != own['package_sha256']:
             raise ValueError('Cas sans paquet contractuel exact')
+        if own is not contract and (own['specification'] != contract['specification']
+                                    or _contract(own['package']) != _contract(contract['package'])):
+            raise ValueError('Consigne ou critères différents entre les cas')
     panel = _entries(value['panel'], _CONFIGURATION, 'panel', _CONFIGURATION_OPTIONAL)
     from ..transports.official import provider_for_endpoint
     from ..transports.openrouter import ENDPOINT
@@ -279,10 +291,12 @@ def _manifest(value, contract, *, require_data_collection=False):
             raise ValueError('Liste de ressources requise')
     if type(conditions['defaults']) is not dict or type(conditions['environment']) is not dict or not conditions['environment']:
         raise ValueError('Conditions communes incomplètes')
-    cells = _entries(value['plan'], ('cell_id', 'case_id', 'configuration_id'), 'plan')
+    cells = _entries(value['plan'], ('cell_id', 'case_id', 'configuration_id'), 'plan', ('estimate',))
     for cell in value['plan']:
         if cell['case_id'] not in cases or cell['configuration_id'] not in panel:
             raise ValueError('Cellule hors du manifeste')
+        if 'estimate' in cell:
+            encode(cell['estimate'])
     policy = value['attempt_policy']
     _fields(policy, ('retries', 'order', 'reason'), 'attempt_policy')
     _texts(policy['order'], 'order', required=True, unique=True)
@@ -429,6 +443,28 @@ def _approved(store, connection, fingerprint, *, current=False):
     return contract
 
 
+def case_fingerprint(manifest, case_id):
+    """Contrat d'un cas : le sien pour un autre exemple de la tâche, celui de la campagne sinon"""
+    case = next(case for case in manifest['cases'] if case['id'] == case_id)
+    return case.get('contract_sha256', manifest['contract_sha256'])
+
+
+def _contracts(store, connection, manifest, contract, *, current=False):
+    """Contrat de chaque cas, tous de la même session que la campagne"""
+    _entries(manifest['cases'], ('id', 'package_sha256'), 'cases', ('contract_sha256',))
+    result = {}
+    for case in manifest['cases']:
+        fingerprint = case.get('contract_sha256', manifest['contract_sha256'])
+        _hash(fingerprint)
+        result[case['id']] = (contract if fingerprint == manifest['contract_sha256']
+                              else _approved(store, connection, fingerprint, current=current))
+    sessions = {connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
+                                   (own['dossier_id'],)).fetchone() for own in result.values()}
+    if len(sessions) != 1:
+        raise IntegrityError('Cas d’une autre session')
+    return result
+
+
 def create(store, manifest):
     value = deepcopy(manifest)
     _fields(value, _MANIFEST + tuple(k for k in _MANIFEST_OPTIONAL if k in value), 'manifest')
@@ -466,6 +502,31 @@ def _requester_campaigns(store, connection, dossier_id):
             and snapshot['manifest']['campaign_id'].startswith(prefix)]
 
 
+def examples(store, connection, session_id, dossier_id, contract):
+    """Exemples de la tâche, numérotés, chacun avec son contrat courant s'il entre dans une comparaison
+
+    Seul le premier exemple porte une comparaison de plusieurs exemples. Un autre exemple y entre
+    validé, vérifié et au contrat du premier ; sinon son contrat reste None
+    """
+    from ..preparation import Denied, _cases, _contract
+    listed = _cases(store, connection, session_id, dossier_id)
+    if not listed or listed[0]['dossier_id'] != dossier_id:
+        return []
+    result = []
+    for case in listed:
+        own = contract if case['dossier_id'] == dossier_id else None
+        if own is None and case['validated'] and case['qualified'] and not case['drifted'] and case['stage'] != 'waiting':
+            try:
+                own = _current_contract(store, connection, case['dossier_id'])
+            except (Denied, ConflictError, IntegrityError):
+                own = None
+            if own is not None and (own['specification'] != contract['specification']
+                                    or _contract(own['package']) != _contract(contract['package'])):
+                own = None
+        result.append(dict(case, contract=own))
+    return result
+
+
 def adapted_effort(levels, wanted):
     """Niveau envoyé à un modèle : celui demandé s'il l'accepte, sinon le plus proche
 
@@ -482,10 +543,29 @@ def adapted_effort(levels, wanted):
     return min(usable, key=lambda level: (abs(_EFFORT_ORDER.index(level) - target), -_EFFORT_ORDER.index(level)))
 
 
-def _configuration(model, tier, index, assumptions, fetched_at, chosen, limit):
+def _estimate(model, assumptions, fetched_at, limit, cells=1):
+    """Prévision de `cells` réponses qui atteignent chacune la limite de sortie de la configuration"""
     from ..transports import prices as openrouter_prices
-    # L'estimation compte une réponse qui atteint la limite de sortie de cette configuration
-    assumptions = {**assumptions, 'output_tokens': limit}
+    assumptions = {**assumptions, 'output_tokens': limit * cells}
+    if cells > 1:
+        assumptions['cells'] = cells
+    pricing = {
+        'prompt': (None if model['input_price_per_million'] is None else
+                   str(_money(model['input_price_per_million']) / Decimal(1_000_000))),
+        'completion': (None if model['output_price_per_million'] is None else
+                       str(_money(model['output_price_per_million']) / Decimal(1_000_000))),
+    }
+    forecast = openrouter_prices.price_row(
+        pricing, {'prompt': assumptions['input_tokens'], 'completion': assumptions['output_tokens']})['forecast']
+    estimate = {'amount_usd': forecast['token_subtotal_usd'], 'forecast': forecast,
+                'fetched_at': model.get('fetched_at', fetched_at), 'assumptions': deepcopy(assumptions)}
+    if model.get('probe_operation_id'):
+        estimate['probe_operation_id'] = model['probe_operation_id']
+    return estimate
+
+
+def _configuration(model, tier, index, assumptions, fetched_at, chosen, limit, cells=1):
+    """`assumptions` : l'entrée de toutes ses cellules ; l'estimation compte `cells` réponses à la limite de sortie"""
     parameters = {
         'max_tokens': limit,
         'provider': {'only': [model['route']], 'order': [model['route']],
@@ -502,18 +582,7 @@ def _configuration(model, tier, index, assumptions, fetched_at, chosen, limit):
     else:
         effort = sent
         parameters['reasoning'] = {'effort': sent}
-    pricing = {
-        'prompt': (None if model['input_price_per_million'] is None else
-                   str(_money(model['input_price_per_million']) / Decimal(1_000_000))),
-        'completion': (None if model['output_price_per_million'] is None else
-                       str(_money(model['output_price_per_million']) / Decimal(1_000_000))),
-    }
-    forecast = openrouter_prices.price_row(
-        pricing, {'prompt': assumptions['input_tokens'], 'completion': assumptions['output_tokens']})['forecast']
-    estimate = {'amount_usd': forecast['token_subtotal_usd'], 'forecast': forecast,
-                'fetched_at': model.get('fetched_at', fetched_at), 'assumptions': deepcopy(assumptions)}
-    if model.get('probe_operation_id'):
-        estimate['probe_operation_id'] = model['probe_operation_id']
+    estimate = _estimate(model, assumptions, fetched_at, limit, cells)
     configuration = dict(
         id=f'configuration-{index}', provider='OpenRouter', model=model['id'], revision=model['id'],
         access='API', channel_id='https://openrouter.ai/api/v1/chat/completions',
@@ -574,14 +643,25 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
         context_lengths = [model['context_length'] for model in selected]
         if any(type(value) is not int or value <= 0 for value in context_lengths):
             raise ValueError('Fenêtre de contexte absente du relevé')
-        pieces = [dict(id=piece['id'], role='candidate',
-                       content=store.read_piece(piece['id']).decode('utf-8'))
-                  for piece in contract['package']['pieces']]
-        user_message = encode(outgoing.candidate(contract['package'], pieces))
-        candidate_bytes = (system_context(CANDIDATE_SYSTEM_PROMPT) + user_message).encode('utf-8')
-        assumptions = {'bytes_per_token': BYTES_PER_TOKEN,
-                       'input_tokens': (len(candidate_bytes) + BYTES_PER_TOKEN - 1) // BYTES_PER_TOKEN,
-                       'cached_input_tokens': 0, 'requests_per_cell': 1}
+        # Le numéro de l'exemple dans la tâche nomme son cas : `case-3` reste l'exemple 3 si le 2 n'entre pas
+        included = [(case['number'], case['contract'])
+                    for case in examples(store, connection, session_id, dossier_id, contract)
+                    if case['contract'] is not None] or [(1, contract)]
+        numbers, retained = zip(*included)
+
+        def assumptions_for(example):
+            pieces = [dict(id=piece['id'], role='candidate',
+                           content=store.read_piece(piece['id']).decode('utf-8'))
+                      for piece in example['package']['pieces']]
+            user_message = encode(outgoing.candidate(example['package'], pieces))
+            candidate_bytes = (system_context(CANDIDATE_SYSTEM_PROMPT) + user_message).encode('utf-8')
+            return {'bytes_per_token': BYTES_PER_TOKEN,
+                    'input_tokens': (len(candidate_bytes) + BYTES_PER_TOKEN - 1) // BYTES_PER_TOKEN,
+                    'cached_input_tokens': 0, 'requests_per_cell': 1}
+        per_case = [assumptions_for(example) for example in retained]
+        # Toutes les cellules d'une configuration : leurs entrées s'additionnent, une réponse chacune
+        assumptions = dict(per_case[0], input_tokens=sum(item['input_tokens'] for item in per_case))
+        largest = max(item['input_tokens'] for item in per_case)
         limits = {model['id']: limits.get(model['id'], DEFAULT_MAX_OUTPUT_TOKENS) for model in selected}
         from ..preparation import Denied
         for model in selected:
@@ -589,22 +669,36 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
             # nomme le modèle et sa borne pour qu'elle se corrige sur la page des configurations
             limit = limits[model['id']]
             bound = output_bound(model)
-            room = max(model['context_length'] - assumptions['input_tokens'], 0)
+            room = max(model['context_length'] - largest, 0)
             reason = ('bound' if bound is not None and limit > bound else 'context' if limit > room else None)
             if reason:
                 raise Denied('OUTPUT_LIMIT_ABOVE_BOUND', findings=[dict(
                     model=model['name'] or model['id'], limit=limit, reason=reason,
                     bound=bound if reason == 'bound' else room)])
         panel = [_configuration(model, body['tier'], index, assumptions, catalogue['fetched_at'],
-                                efforts.get(model['id']), limits[model['id']])
+                                efforts.get(model['id']), limits[model['id']], len(retained))
                  for index, model in enumerate(selected, 1)]
-        count = len(_requester_campaigns(store, connection, dossier_id))
-        campaign_id = f'{dossier_id}-c{count + 1}'
-        case = {'id': 'case-1', 'package_sha256': contract['package_sha256']}
-        plan = [dict(cell_id=f'cell-{index}', case_id=case['id'], configuration_id=config['id'])
+        # Une comparaison purgée avec un autre exemple laisse son enveloppe : son numéro ne revient jamais
+        used = [int(match.group(1)) for (name,) in connection.execute(
+                    'SELECT campaign_id FROM s4_campaigns UNION SELECT budget_id FROM budgets')
+                if (match := re.fullmatch(re.escape(dossier_id) + r'-c([0-9]+)', name))]
+        campaign_id = f'{dossier_id}-c{max(used, default=0) + 1}'
+        cases = [{'id': f'case-{number}', 'package_sha256': example['package_sha256']}
+                 for number, example in zip(numbers, retained)]
+        plan = [dict(cell_id=f'cell-{index}', case_id=cases[0]['id'], configuration_id=config['id'])
                 for index, config in enumerate(panel, 1)]
+        if len(retained) > 1:
+            for case, example in zip(cases, retained):
+                case['contract_sha256'] = value_digest(example)
+            # Une cellule par exemple et par configuration, exemple par exemple, chacune avec sa prévision
+            by_id = {model['id']: model for model in selected}
+            plan = [dict(cell_id=f'cell-{index}', case_id=case['id'], configuration_id=config['id'],
+                         estimate=_estimate(by_id[config['model']], item, catalogue['fetched_at'],
+                                            limits[config['model']]))
+                    for index, (case, item, config) in enumerate(
+                        ((case, item, config) for case, item in zip(cases, per_case) for config in panel), 1)]
         manifest = dict(
-            campaign_id=campaign_id, version=1, contract_sha256=value_digest(contract), cases=[case], panel=panel,
+            campaign_id=campaign_id, version=1, contract_sha256=value_digest(contract), cases=cases, panel=panel,
             conditions=dict(
                 pi=dict(package=candidate_identity['package'], version=candidate_identity['version'],
                         sha256=candidate_identity['sha256'], status='active', proof=candidate_identity['scope']),
@@ -699,7 +793,8 @@ def _create(store, connection, value):
                                   (value['contract_sha256'], value['contract_sha256'])).fetchone():
             raise IntegrityError('Contrat de campagne introuvable')
         contract = _approved(store, connection, value['contract_sha256'], current=True)
-        _manifest(value, contract, require_data_collection=True)
+        _manifest(value, contract, _contracts(store, connection, value, contract, current=True),
+                  require_data_collection=True)
         from ..model_catalog import require_current
         for configuration in value['panel']:
             require_current(configuration)
@@ -730,7 +825,8 @@ def _load(store, connection, campaign_id):
     if (manifest['campaign_id'], manifest['contract_sha256']) != (campaign_id, row[0]):
         raise IntegrityError('Identité du manifeste divergente')
     contract = _approved(store, connection, row[0])
-    _manifest(manifest, contract)
+    contracts = _contracts(store, connection, manifest, contract)
+    _manifest(manifest, contract, contracts)
     if 'recovery_of' in manifest:
         from .recovery import validate_link
         validate_link(store, connection, manifest)
@@ -738,7 +834,7 @@ def _load(store, connection, campaign_id):
                                'WHERE campaign_id=? ORDER BY cell_id', (campaign_id,)).fetchall()
     if cells != sorted(tuple(cell[k] for k in ('cell_id', 'case_id', 'configuration_id')) for cell in manifest['plan']):
         raise IntegrityError('Cellules divergentes du manifeste')
-    return manifest, row[2], contract
+    return manifest, row[2], contract, contracts
 
 
 def _authority(value, manifest, fingerprint):
@@ -837,9 +933,10 @@ def _admissions(store, connection, manifest, fingerprint):
 
 
 def _request(store, manifest, fingerprint, contract, cell):
+    """`contract` : celui du cas de la cellule"""
     config = next(c for c in manifest['panel'] if c['id'] == cell['configuration_id'])
     request: dict = dict(campaign_id=manifest['campaign_id'], manifest_sha256=fingerprint,
-                contract_sha256=manifest['contract_sha256'], cell_id=cell['cell_id'], case_id=cell['case_id'],
+                contract_sha256=case_fingerprint(manifest, cell['case_id']), cell_id=cell['cell_id'], case_id=cell['case_id'],
                 requested_configuration=config, conditions=manifest['conditions'], package=contract['package'],
                 pieces=[dict(id=p['id'], sha256=p['sha256'], content=store.read_piece(p['id']).decode('utf-8'))
                         for p in contract['package']['pieces']])
@@ -887,7 +984,7 @@ def _result(receipt, cost):
 
 
 def _inspect(store, connection, campaign_id):
-    manifest, fingerprint, contract = _load(store, connection, campaign_id)
+    manifest, fingerprint, contract, contracts = _load(store, connection, campaign_id)
     admissions = _admissions(store, connection, manifest, fingerprint)
     status = connection.execute('SELECT admission_id, stop_reason, stopped_at FROM s4_status WHERE campaign_id=?',
                                 (campaign_id,)).fetchone()
@@ -922,7 +1019,7 @@ def _inspect(store, connection, campaign_id):
         for source, source_hash in engine.items():
             _present(source, 'engine source')
             _hash(source_hash)
-        if request != _request(store, manifest, fingerprint, contract, cell):
+        if request != _request(store, manifest, fingerprint, contracts[cell['case_id']], cell):
             raise IntegrityError('Requête divergente du paquet ou du manifeste')
         authority = admissions[aid]['authority']
         op = operations[oid]
@@ -1048,7 +1145,8 @@ def _envelope(store, connection, snapshot, authority):
 
 
 def _eligible(store, connection, snapshot, authority, evidence):
-    _approved(store, connection, snapshot['manifest']['contract_sha256'], current=True)
+    contract = _approved(store, connection, snapshot['manifest']['contract_sha256'], current=True)
+    _contracts(store, connection, snapshot['manifest'], contract, current=True)
     _authority(authority, snapshot['manifest'], snapshot['manifest_sha256'])
     _evidence(evidence, snapshot['manifest'])
     return _envelope(store, connection, snapshot, authority)
@@ -1067,7 +1165,8 @@ def _admit(store, connection, campaign_id, authority, evidence, *, owner_launch=
     """Shared admission body; caller owns the enclosing transaction"""
     snapshot = _inspect(store, connection, campaign_id)
     contract = _approved(store, connection, snapshot['manifest']['contract_sha256'], current=True)
-    _manifest(snapshot['manifest'], contract, require_data_collection=True)
+    _manifest(snapshot['manifest'], contract, _contracts(store, connection, snapshot['manifest'], contract, current=True),
+              require_data_collection=True)
     if owner_launch:
         session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
                                         (snapshot['task']['dossier_id'],)).fetchone()[0]
@@ -1113,7 +1212,8 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
     campaign_id = snapshot['manifest']['campaign_id']
     manifest = snapshot['manifest']
     contract = _approved(store, connection, manifest['contract_sha256'])
-    _manifest(manifest, contract, require_data_collection=True)
+    contracts = _contracts(store, connection, manifest, contract)
+    _manifest(manifest, contract, contracts, require_data_collection=True)
     admission = snapshot['admission']
     if admission is None or cell_id not in admission['authority']['allowed_cells']:
         raise ValueError('Admission explicite de cette cellule requise')
@@ -1121,7 +1221,7 @@ def _reserve(store, connection, snapshot, cell_id, attempt_id):
     cell = next(c for c in snapshot['cells'] if c['cell_id'] == cell_id)
     if cell['state'] != 'NOT_STARTED':
         raise ConflictError('Tentative déjà enregistrée pour cette cellule')
-    request = _request(store, manifest, snapshot['manifest_sha256'], contract, cell)
+    request = _request(store, manifest, snapshot['manifest_sha256'], contracts[cell['case_id']], cell)
     engine = _engine()
     digest = value_digest(request)
     authority = admission['authority']
@@ -1161,9 +1261,10 @@ def _recovery_plan(store, snapshot):
         for endpoint in item['endpoints']:
             limits = _recovery_tiers(configuration['parameters']['max_tokens'], endpoint['max_completion_tokens'])
             tiers.setdefault(item['id'], limits)
-            amounts.append(_money(endpoint['pricing']['prompt'])
-                           * configuration['estimate']['assumptions']['input_tokens'] * len(limits)
-                           + _money(endpoint['pricing']['completion']) * sum(limits))
+            # Entrée de toutes les cellules de la configuration, une sortie par cellule et par reprise
+            assumptions = configuration['estimate']['assumptions']
+            amounts.append(_money(endpoint['pricing']['prompt']) * assumptions['input_tokens'] * len(limits)
+                           + _money(endpoint['pricing']['completion']) * sum(limits) * assumptions.get('cells', 1))
     return tiers, str(_sum_money(amounts))
 
 
@@ -1263,6 +1364,19 @@ def _requester_checks(store, connection, snapshot, session_id, access):
                     selectable[configuration['model']].get('probe_operation_id'))]
     except LookupError:
         missing = [configuration['model'] for configuration in snapshot['manifest']['panel']]
+    # Autres exemples : chacun encore validé, vérifié et à la version retenue par la sélection
+    examples_current = True
+    if len(snapshot['manifest']['cases']) > 1:
+        try:
+            anchor = _approved(store, connection, snapshot['manifest']['contract_sha256'])
+            for own in list(_contracts(store, connection, snapshot['manifest'], anchor, current=True).values())[1:]:
+                row = connection.execute('SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? '
+                                         'AND package_sha256=? AND session_id=?',
+                                         (own['dossier_id'], own['revision'], own['package_sha256'], session_id)).fetchone()
+                require_qualification(store, connection, own['dossier_id'], own['revision'])
+                examples_current = examples_current and row is not None
+        except (Denied, ConflictError, IntegrityError, KeyError):
+            examples_current = False
     total = _estimate_total(snapshot)
     listed = [item['manifest']['campaign_id'] for item in _requester_campaigns(store, connection, task['dossier_id'])]
     campaign_id = snapshot['manifest']['campaign_id']
@@ -1290,7 +1404,35 @@ def _requester_checks(store, connection, snapshot, session_id, access):
          'detail': ('Estimation totale : non estimable' if total is None else
                     'Estimation totale : ' + format(total, 'f').replace('.', ',') +
                     ' USD')},
+        # Toujours présent : un exemple seul le satisfait, et la liste des contrôles reste celle des refus connus
+        {'key': 'examples_current', 'ok': examples_current,
+         'detail': ('Chaque exemple est vérifié, à la version choisie' if examples_current else
+                    'Un autre exemple a changé depuis ce choix : choisissez de nouveau les modèles')},
     ]
+
+
+def _recap_examples(store, connection, session_id, dossier_id, snapshot):
+    """Exemples de la tâche pour le récapitulatif : inclus dans la comparaison, ou laissés de côté avec leur motif"""
+    from ..preparation import _cases
+    manifest = snapshot['manifest']
+    anchor = _approved(store, connection, manifest['contract_sha256'])
+    included = {own['dossier_id']: case_id for case_id, own in _contracts(store, connection, manifest, anchor).items()}
+    listed = _cases(store, connection, session_id, dossier_id)
+    # Seul le premier exemple porte une comparaison de plusieurs exemples : lui seul nomme les exemples écartés,
+    # même quand un seul entre ; une tâche d'un seul exemple n'a pas de liste
+    if not listed or listed[0]['dossier_id'] != dossier_id:
+        return []
+    result = []
+    for case in listed:
+        reason = (None if case['dossier_id'] in included else
+                  'en préparation' if case['stage'] == 'waiting' else
+                  'pas encore validé' if not case['validated'] else
+                  'pas encore vérifié' if not case['qualified'] else
+                  'contrat d’une ancienne version de l’exemple 1' if case['drifted'] else
+                  'ajouté ou modifié après ce choix')
+        result.append(dict(number=case['number'], difference=case['difference'],
+                           case_id=included.get(case['dossier_id']), excluded=reason))
+    return result
 
 
 def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=None,
@@ -1340,6 +1482,7 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
                 judgment_estimate_usd=judgment_estimate,
                 estimate_total_usd=None if total is None else str(total), access=access,
                 recovery_limits=recovery_limits, recovery_estimate_usd=recovery_estimate,
+                examples=_recap_examples(store, connection, session_id, dossier_id, snapshot),
                 model_names=model_catalogue.display_names(store)))
         admission = snapshot['admission']
         grant = admission['authority'].get('browser_launch') if admission else None
@@ -1420,9 +1563,9 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
             except sqlite3.IntegrityError as error:
                 raise ConflictError('Enveloppe demandeur déjà créée') from error
             reserve_amounts = {
-                cell['cell_id']: next(configuration['estimate']['amount_usd']
-                                      for configuration in snapshot['manifest']['panel']
-                                      if configuration['id'] == cell['configuration_id'])
+                cell['cell_id']: cell['estimate']['amount_usd'] if 'estimate' in cell else next(
+                    configuration['estimate']['amount_usd'] for configuration in snapshot['manifest']['panel']
+                    if configuration['id'] == cell['configuration_id'])
                 for cell in snapshot['manifest']['plan']}
             identity = 'requester:' + session_id
             authority = dict(

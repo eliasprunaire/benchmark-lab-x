@@ -58,7 +58,7 @@ WITNESS_FORMAT = 'benchmark-lab-x/qualification-witness/v1'
 WITNESS_LIMIT = 4
 _CHECK_CODES = frozenset({
     'selection_current', 'example_validated', 'example_qualified', 'configurations_available',
-    'access_connected', 'estimate_available',
+    'access_connected', 'estimate_available', 'examples_current',
 })
 
 

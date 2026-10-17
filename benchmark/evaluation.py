@@ -670,10 +670,11 @@ def projection(store, connection, dossier_id, campaign_id):
         if record['campaign_id'] not in family:
             continue
         automatic = record['engine_version'] == auto.FORMAT
-        qualification = (auto.context(store, connection, record['campaign_id'], record['attempt_id'])['qualification'] if automatic
-                         else q._inspect(store, connection, record['contract_sha256']))
+        ctx = auto.context(store, connection, record['campaign_id'], record['attempt_id']) if automatic else None
+        qualification = ctx['qualification'] if ctx else q._inspect(store, connection, record['contract_sha256'])
         contract = qualification['contract']
-        if contract['dossier_id'] != dossier_id:
+        # Un autre exemple de la tâche garde son contrat ; la comparaison reste celle du dossier qui la porte
+        if (ctx['campaign']['task'] if ctx else contract)['dossier_id'] != dossier_id:
             raise IntegrityError('Évaluation étrangère au dossier')
         # The context, operator admissions and other S1 operations stay private
         visible = {k: deepcopy(v) for k, v in record.items() if k != 'judgment'}

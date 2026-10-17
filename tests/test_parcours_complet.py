@@ -1,6 +1,6 @@
 """Parcours HTTP local sur données contrôlées, sans participant ni appel fournisseur"""
 from contextlib import closing
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from http.client import HTTPConnection
 from http.cookies import SimpleCookie
@@ -1204,6 +1204,292 @@ class ParcoursComplet(unittest.TestCase):
                  'premier_cas_reste_qualifie_apres_correction_du_second': premier_reste_qualifie,
                  'changement_du_premier_cas_signale': 'ancienne version de l’exemple 1' in cas},
                 ensure_ascii=False, indent=2) + '\n')
+
+    NOTES_454 = {1: 'Action : Camille relit le devis avant vendredi.\n',
+                 2: 'Action : envoyer le compte rendu aux participants, sans responsable désigné.\n',
+                 3: 'Action : Inès réserve la salle.\n'}
+    REFERENCES_454 = {1: 'Attendus : l’action de Camille, relire le devis avant vendredi.',
+                      2: 'Attendus : l’envoi du compte rendu, signalé sans responsable.',
+                      3: 'Attendus : la réservation de la salle par Inès.'}
+
+    def deux_exemples_454(self):
+        """Clé, premier exemple et second exemple de la même tâche, chacun avec ses notes et sa référence, vérifiés
+
+        Rend le premier et le second exemple, et `ajouter(page, contexte)` qui ajoute un autre exemple sans le valider
+        """
+        consigne = 'Relever les actions à mener dans les notes, avec leur responsable.'
+        criteres = {'eliminatory': ['Ajouter une action absente des notes'],
+                    'obligations': ['Relever chaque action avec son responsable'], 'quality': []}
+        notes, references = self.NOTES_454, self.REFERENCES_454
+
+        def preparer(operation, request):
+            self.calls.append(('préparation', operation['operation_id']))
+            message = request['outgoing']['message']
+            cas = 3 if 'salle' in message else 2 if 'sans responsable' in message else 1
+            value = response_for(operation)
+            value['cost'].update(amount='0.10', currency='USD', source='Reçu simulé #454')
+            result = value['receipt']['result']
+            result['explanation'] = 'Cet exemple correspond-il bien à votre travail ?'
+            result['package']['candidate'].update(instruction=consigne, criteria=criteres,
+                                                  deliverables=['Liste des actions'],
+                                                  pieces=[{'name': 'notes.txt', 'content': notes[cas]}])
+            result['package']['judgment']['pieces'] = [{'name': 'reference.txt', 'content': references[cas]}]
+            return value
+        self.assistants['transport'] = SessionAssistant(preparer, {'model': 'factice'})
+
+        def ajouter(page, contexte):
+            form = next(f for f in page.forms if f['action'] == '/preparation/dossiers' and 'case_of' in f['fields'])
+            self.request(form['action'], form['fields'] | {'context': contexte}, status=303)
+            prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+            return '/preparation/dossiers/' + form['fields']['dossier_id']
+        page, _, _ = self.request('/')
+        target = page.link('Décrire mon cas')
+        page, _, _ = self.request(target)
+        key_form = page.form('/access/key')
+        self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
+        page, _, _ = self.request(target)
+        page = self.submit(page, '/dossiers', {'request': 'Relever les actions à mener dans mes notes de réunion'})
+        premier = page.link('Actualiser')
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        page = self.qualifier_454(premier)
+        second = ajouter(page, 'Une action sans responsable, pour vérifier qu’elle est signalée')
+        self.qualifier_454(second)
+        return premier, second, ajouter
+
+    def qualifier_454(self, dossier):
+        page, _, _ = self.request(dossier)
+        self.submit(page, '/validation', {})
+        prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+        return self.request(dossier)[0]
+
+    def test_plusieurs_exemples_lances_puis_lus_par_exemple(self):
+        """Issue #454 : le lancement confirmé exécute une cellule par exemple et par modèle, puis restitue par exemple
+
+        Modes d'échec couverts :
+        1. le récapitulatif tait les exemples, les essais ou leur estimation, ou compte un exemple non vérifié ;
+        2. un essai reçoit les pièces d'un autre exemple, ou son jugement lit la référence d'un autre exemple ;
+        3. sortie, verdict, coût ou incident rattachés au mauvais exemple ou au mauvais modèle ;
+        4. un arrêt partiel perd la couverture prévue ou observée, ou une reprise rejoue un essai reçu ou ambigu ;
+        5. un conseil économique agrège plusieurs exemples, ou les résultats taisent que le juge n'est pas qualifié
+        """
+        from benchmark import automatic_judgment as auto, runtime
+        notes, references = self.NOTES_454, self.REFERENCES_454
+        qualifier = self.qualifier_454
+
+        def cas_de(texte):
+            return next(numero for numero, contenu in notes.items() if contenu.strip() in texte)
+
+        # Le juge satisfait une réponse qui reprend l'action et son responsable, sinon il la fait échouer
+        def ajuste(contenu, constats):
+            satisfait = 'Responsable' in contenu['output']['content']
+            return [dict(constat, status='PASS' if satisfait else 'FAIL',
+                         finding='Action relevée' if satisfait else 'Action omise') for constat in constats]
+        juge = self.juge_factice(ajuste=ajuste)
+        premier, second, ajouter = self.deux_exemples_454()
+        # Un troisième exemple préparé mais jamais validé n'entre pas dans la comparaison
+        page, _, _ = self.request(premier)
+        ajouter(page, 'Une salle à réserver, exemple laissé sans validation')
+        page, _, _ = self.request(premier + '/configurations')
+        page = self.submit(page, '/configurations', {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
+            'tier': 'low'})
+        recap = premier + '/campaigns/' + premier.rsplit('/', 1)[1] + '-c1/conditions'
+        # 1. Panel, exemples, réglages, essais et leur estimation, avant toute confirmation
+        self.examine(page, recap, 'récapitulatif de deux exemples', 'Lancer le benchmark')
+        synthese = next(n['text'] for n in page.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
+        self.assertRegex(synthese, r'^3 modèles · 2 exemples · 6 essais · réponses estimées : [0-9,]+ USD · '
+                                   r'réservé pour l’évaluation : [0-9,]+ USD · crédit restant : [0-9,]+ USD$')
+        exemples = next(n['text'] for n in page.nodes if n['attrs'].get('id') == 'exemples')
+        self.assertIn('Exemple 1', exemples)
+        self.assertIn('Exemple 2 : Une action sans responsable, pour vérifier qu’elle est signalée', exemples)
+        self.assertIn('Exemple 3 : Une salle à réserver, exemple laissé sans validation', exemples)
+        self.assertIn('pas inclus', exemples)
+        essais = next(n for n in page.nodes if n['tag'] == 'table' and n['attrs'].get('aria-label') == 'Essais prévus')
+        lignes = [n['text'] for n in page.nodes if n['tag'] == 'tr' and n['text'] in essais['text']][1:]
+        self.assertEqual(6, len(lignes))
+        self.assertEqual(3, sum(ligne.startswith('Exemple 1') for ligne in lignes))
+        self.assertEqual(3, sum(ligne.startswith('Exemple 2') for ligne in lignes))
+        self.assertTrue(all('USD' in ligne for ligne in lignes))
+        self.assertTrue(any(n['tag'] == 'details' and 'Détail des critères et des réglages' in n['text'] for n in page.nodes))
+        with closing(storage.Store(self.data)) as store:
+            manifeste = campaigns.inspect(store, recap.split('/')[-2])['manifest']
+        # Chaque essai porte l'estimation de son exemple ; celle d'un modèle est la somme de ses essais
+        entrees = {cell['case_id']: cell['estimate']['assumptions']['input_tokens'] for cell in manifeste['plan']}
+        self.assertEqual(2, len(set(entrees.values())))
+        for configuration in manifeste['panel']:
+            montants = [storage._money(cell['estimate']['amount_usd']) for cell in manifeste['plan']
+                        if cell['configuration_id'] == configuration['id']]
+            self.assertEqual(storage._money(configuration['estimate']['amount_usd']), sum(montants))
+        # 1. Un exemple corrigé après ce choix ferme le lancement, sans appel ; un nouveau choix le reprend
+        page, _, _ = self.request(second)
+        self.submit(page, '/messages', {'kind': 'correct', 'message': 'Préciser que l’action sans responsable vise les participants'})
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        page, _, _ = self.request(recap)
+        self.assertFalse(any(f['action'].endswith('/start') for f in page.forms))
+        self.assertIn('Un autre exemple a changé depuis ce choix', page.visible)
+        self.assertEqual(premier + '/configurations', page.link('Choisir de nouveau les modèles'))
+        refuse, _, _ = self.request(recap.removesuffix('/conditions') + '/start', {
+            'csrf_token': next(f['fields']['csrf_token'] for f in self.request(premier)[0].forms if 'csrf_token' in f['fields']),
+            'manifest_version': manifeste['version'], 'frozen_at': manifeste['conditions']['frozen_at'],
+            'confirm': 'yes'}, status=403)
+        self.assertIn('Un autre exemple a changé depuis ce choix', refuse.visible)
+        self.assertTrue(self.starts.empty())
+        # 1. Un choix fait pendant que l'exemple 2 attend sa validation ne compte que l'exemple 1, et le dit
+        page, _, _ = self.request(premier + '/configurations')
+        seul = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+                                                     'tier': 'low'})
+        exemples = next(n['text'] for n in seul.nodes if n['attrs'].get('id') == 'exemples')
+        self.assertIn('Exemple 2 : Une action sans responsable, pour vérifier qu’elle est signalée · pas inclus : pas encore validé', exemples)
+        self.assertNotIn('exemples · ', next(n['text'] for n in seul.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text']))
+        qualifier(second)
+        page, _, _ = self.request(premier + '/configurations')
+        page = self.submit(page, '/configurations', {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
+            'tier': 'low'})
+        recap = recap.replace('-c1/', '-c3/')
+        self.examine(page, recap, 'nouveau récapitulatif de deux exemples', 'Lancer le benchmark')
+        with closing(storage.Store(self.data)) as store:
+            manifeste = campaigns.inspect(store, recap.split('/')[-2])['manifest']
+        self.submit(page, '/start', {}, status=303)
+        attempts = self.starts.get_nowait()['candidate_attempts']
+        self.assertEqual(6, len(attempts))
+        recus = []
+
+        def candidat(operation, request):
+            # Seules les pièces réellement envoyées disent à quel exemple l'essai répond
+            cas = cas_de(request['outgoing']['pieces'][0]['content'])
+            modele = request['requested_configuration']['model']
+            recus.append((cas, modele))
+            if (cas, modele) == (2, 'deepseek/deepseek-v4.1-flash'):
+                raise RuntimeError('Réponse perdue après émission')
+            value = response(operation, request)
+            omise = modele == 'deepseek/deepseek-v4.1-flash'
+            value['receipt']['result']['output'] = ('Action omise' if omise else
+                                                    'Action : ' + notes[cas].strip() + ' | Responsable : relevé')
+            value['cost'].update(status='KNOWN', amount=f'0.{cas}{1 + omise}', currency='USD', source='Reçu candidat #454')
+            return value
+        execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
+        # 2. Chaque essai a reçu les pièces de son propre exemple, dans l'ordre du plan
+        modeles = ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603']
+        self.assertEqual([(1, m) for m in modeles] + [(2, m) for m in modeles[:2]], recus)
+        # 4. Un effet ambigu arrête la comparaison ; un redémarrage ne rejoue ni l'ambigu ni ce qui est reçu
+        with closing(storage.Store(self.data)) as store:
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
+        self.assertEqual(5, len(recus))
+        with closing(storage.Store(self.data)) as store:
+            etats = {cell['cell_id']: cell['state'] for cell in campaigns.inspect(store, recap.split('/')[-2])['cells']}
+        # L'essai qui suit l'ambigu garde son intention : il ne partira plus
+        self.assertEqual(['RECEIVED'] * 4 + ['AMBIGUOUS', 'INTENT_RECORDED'],
+                         [etats[cell['cell_id']] for cell in manifeste['plan']])
+        # Couverture de l'arrêt : chaque essai garde son état, sous son exemple, sans lancement possible
+        suivi, _, _ = self.request(recap)
+        self.assertFalse(any(f['action'].endswith('/start') for f in suivi.forms))
+        self.assertEqual(4, suivi.visible.count('réponse reçue'))
+        # Quinze minutes après l'envoi, l'ambigu est clos sans relance ; l'évaluation s'ouvre alors
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
+        execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
+        self.assertEqual(5, len(recus))
+        # 4. L'essai jamais parti ne retient pas l'évaluation des réponses déjà reçues
+        page, _, _ = self.request(recap)
+        self.submit(page, '/evaluate', {})
+        ids = self.starts.get_nowait()['judgment_operations']
+        self.assertEqual(4, len(ids))
+        auto.execute_campaign(self.data, ids, self.bound[2])
+        self.assertEqual(5, len(recus))
+        # 2. Le juge de chaque réponse lit les pièces et la référence de son exemple, jamais celles d'un autre
+        self.assertEqual(4, juge.request.call_count)
+        jugés = []
+        for vue in self.judged:
+            cas = cas_de(vue['task']['pieces'][0]['content'])
+            if 'Responsable' in vue['output']['content']:
+                self.assertEqual(cas, cas_de(vue['output']['content']))
+            texte = storage._strict_json(vue['references'])
+            self.assertIn(references[cas], texte)
+            self.assertFalse(any(references[autre] in texte for autre in references if autre != cas))
+            jugés.append(cas)
+        self.assertEqual([1, 1, 1, 2], sorted(jugés))
+        comparison = recap.removesuffix('/conditions')
+        results, _, raw = self.request(comparison)
+        self.examine(results, comparison, 'résultats de deux exemples', None)
+        # 3. Chaque verdict, coût et incident sous son exemple et son modèle
+        sections = raw.decode().split('<h3>Exemple ')
+        self.assertEqual(3, len(sections))
+        premier_tableau, second_tableau = (Page(part.encode()).visible for part in sections[1:])
+        self.assertIn('Modèle A', premier_tableau)
+        self.assertIn('0,11 USD', premier_tableau)
+        self.assertIn('0,12 USD', premier_tableau)
+        self.assertIn('0,21 USD', second_tableau)
+        self.assertNotIn('0,12 USD', second_tableau)
+        _, _, raw = self.request(comparison, json_response=True)
+        lignes = {(row['case_id'], row['requested_configuration']['model']): row
+                  for row in json.loads(raw)['rows']}
+        self.assertEqual({('case-1', m) for m in modeles} | {('case-2', modeles[0])}, set(lignes))
+        self.assertEqual('SATISFAIT', lignes[('case-2', 'openai/gpt-5.6-sol')]['verdict'])
+        # Le détail d'une réponse de l'exemple 2 montre ses pièces et sa réponse, jamais celles de l'exemple 1
+        detail_href = Page(sections[2].encode()).link('Détail et preuves')
+        detail, _, raw = self.request(detail_href)
+        self.examine(detail, detail_href, 'détail d’une réponse de l’exemple 2', None)
+        self.assertIn(notes[2].strip(), raw.decode())
+        self.assertNotIn(notes[1].strip(), raw.decode())
+        self.assertEqual('NE SATISFAIT PAS', lignes[('case-1', 'deepseek/deepseek-v4.1-flash')]['verdict'])
+        # 4. Couverture prévue et observée : la réponse perdue et l'essai jamais parti restent visibles
+        self.assertIn('Exemple 2 : Aucune réponse exploitable pour Modèle B', results.visible)
+        self.assertNotIn('Modèle C', second_tableau)
+        self.assertRegex(results.visible, r'essais lancés : 5 sur 6')
+        self.assertIn('Exemple 2 : Modèle C n’a pas été appelé : la comparaison s’est arrêtée avant cet essai.', results.visible)
+        self.assertNotIn('doit être relue', results.visible)
+        # 5. Aucun conseil sur plusieurs exemples ; la limite du juge est dite avec les verdicts
+        self.assertNotIn('Notre conseil', results.visible)
+        self.assertIn('Le juge automatique n’est pas qualifié', results.visible)
+        self.sans_promesse(results)
+        artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
+        if artefacts:
+            Path(artefacts).mkdir(parents=True, exist_ok=True)
+            Path(artefacts, 'plusieurs-exemples.json').write_text(json.dumps(
+                {'essais_prevus': len(manifeste['plan']), 'exemples_inclus': len(manifeste['cases']),
+                 'essais_envoyes_par_exemple': {str(cas): sum(c == cas for c, _ in recus) for cas in (1, 2)},
+                 'etats_apres_arret': [etats[cell['cell_id']] for cell in manifeste['plan']],
+                 'appels_candidats_apres_redemarrage': len(recus) - 5,
+                 'jugements': juge.request.call_count,
+                 'references_etrangeres_lues_par_le_juge': 0,
+                 'conseil_affiche': 'Notre conseil' in results.visible},
+                ensure_ascii=False, indent=2) + '\n')
+
+    def test_reprise_pour_longueur_sur_son_propre_exemple(self):
+        """Issue #454 : un essai coupé pour longueur est repris avec les pièces de son exemple
+
+        Modes d'échec couverts :
+        1. la reprise d'un essai de l'exemple 2 envoie les pièces de l'exemple 1, ou l'inverse ;
+        2. une reprise part plus d'une fois pour un même essai, ou n'est pas reprise sur son exemple ;
+        3. la réponse reprise est jugée ou affichée sous un autre exemple
+        """
+        self.juge_factice()
+
+        def comportement(value, model, limit, suivi):
+            if model == 'mistralai/mistral-small-2603' and limit == 4096:
+                self.coupee(value, 'Action : relire', limit)
+        premier, recap, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'], comportement,
+            qualifier=lambda: self.deux_exemples_454()[0])
+        self.assertIn('2 exemples · 4 essais', recap.visible)
+        tour = [('openai/gpt-5.6-sol', 4096), ('mistralai/mistral-small-2603', 4096), ('mistralai/mistral-small-2603', 8192)]
+        self.assertEqual(tour + tour, envois)
+        with closing(storage.Store(self.data)) as store:
+            reprises = [json.loads(row[0]) for row in store._connection.execute(
+                'SELECT a.request_json FROM s4_attempts a JOIN s4_campaigns c USING(campaign_id) '
+                "WHERE json_extract(c.manifest_json, '$.recovery_of') IS NOT NULL ORDER BY a.rowid")]
+        # 1. et 2. Une reprise par essai coupé, chacune avec les pièces de son exemple
+        self.assertEqual([('case-1', self.NOTES_454[1]), ('case-2', self.NOTES_454[2])],
+                         [(r['case_id'], r['pieces'][0]['content']) for r in reprises])
+        raw = self.evaluer(premier)
+        # 3. Chaque exemple garde ses deux modèles, la reprise comprise, sous son propre titre
+        sections = raw.split('<h3>Exemple ')
+        self.assertEqual(3, len(sections))
+        for section in sections[1:]:
+            self.assertIn('Modèle A', Page(section.encode()).visible)
+            self.assertIn('Modèle C', Page(section.encode()).visible)
 
     def test_temoins_relances_effet_ambigu_et_preuves_etrangeres(self):
         """Issue #445, après revue indépendante : ce qui ne doit ni qualifier ni consommer

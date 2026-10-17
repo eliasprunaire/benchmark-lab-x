@@ -367,7 +367,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
                                 access_secret=SECRET, access_transport=self.access)
         self.assertEqual(['selection_current', 'example_validated', 'example_qualified',
                           'configurations_available', 'access_connected',
-                          'estimate_available'], [check['key'] for check in summary['checks']])
+                          'estimate_available', 'examples_current'], [check['key'] for check in summary['checks']])
         self.assertTrue(summary['launchable'])
         self.assertEqual({'limit_remaining_usd': '18.5', 'limit_usd': '20'},
                          summary['checks'][4]['detail'])
@@ -450,7 +450,8 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.assertIn('<td>non estimable</td>', page)
         self.assertIn('réponses estimées : non estimable', page)
         checks = c._requester_checks(self.store, self.store._connection, snapshot, self.sid, {})
-        self.assertEqual('Estimation totale : non estimable', checks[-1]['detail'])
+        self.assertEqual('Estimation totale : non estimable',
+                         next(check for check in checks if check['key'] == 'estimate_available')['detail'])
         preview = p.view(self.store, self.sid, 'fixture')
         preview['indicative_cost'] = None
         self.assertIn('Coût estimé de cette préparation : non estimable',

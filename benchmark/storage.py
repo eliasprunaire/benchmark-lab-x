@@ -640,6 +640,11 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
                   's5' if s5 is not None and actual == _expected_schema(tuple(s5)) else
                   's6' if s6 is not None and actual == _expected_schema(tuple(s6)) else
                   's7' if s7 is not None and actual == _expected_schema(tuple(s7)) else None)
+        if layout is None and s6 is not None and 's7_control' in names:
+            from .privacy import extended_schema
+            # Déclencheurs antérieurs à #454 : lisibles sans écriture, mis à niveau par la purge sous ses verrous
+            if actual == _expected_schema(tuple(extended_schema(s6, cases=False))):
+                layout = 's7'
         if layout in ('s2', 's3', 's4', 's5', 's6', 's7') and connection.execute(
                 'SELECT singleton, format_identity FROM s2_control').fetchall() != [(1, PREPARATION_IDENTITY)]:
             raise SchemaError('unsupported preparation identity')

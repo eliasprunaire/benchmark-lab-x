@@ -155,7 +155,7 @@ Le responsable du traitement est **Cybrel RSSI**, joignable à **contact@cybrel.
 | Contribution facultative | Copie privée distincte ; consentement échu 6 mois calendaires après son enregistrement, copie fermée à l’échéance |
 | Sauvegardes | Jusqu’à 7 points quotidiens ; des copies restaurables subsistent après la fermeture de l’accès, sans durée publique tant que l’inventaire n’est pas vérifié |
 
-L’activité sur un dossier renouvelle seulement ce dossier et l’accès principal. L’activité sur l’accueil renouvelle seulement l’accès. Un accès expiré ne se réactive pas par une requête d’activité.
+L’activité sur un dossier renouvelle seulement ce dossier et l’accès principal. Par décision d’Ayo, une comparaison de plusieurs exemples est liée à chacun d’eux : l’activité sur les pages de la comparaison renouvelle aussi les autres exemples qu’elle utilise, et l’expiration ou la suppression de l’un d’eux supprime la comparaison, y compris ses résultats sur les autres exemples ; ces autres exemples restent conservés. L’activité sur l’accueil renouvelle seulement l’accès. Un accès expiré ne se réactive pas par une requête d’activité.
 
 La durée des sauvegardes reste distincte de la durée active des données. Une restauration applique les révocations et expirations avant tout accès. Aucune durée de conservation en sauvegarde n’est annoncée tant que l’inventaire n’est pas vérifié ; une telle borne ne constituerait pas une certification d’effacement physique du support.
 

@@ -26,19 +26,29 @@ def context(store, connection, campaign_id, attempt_id):
     cache = store._judgment_contexts[1]
     if campaign_id not in cache:
         cache[campaign_id] = _campaign_context(store, connection, campaign_id)
-    campaign, contract, operation_id = deepcopy(cache[campaign_id])
+    campaign, contracts = deepcopy(cache[campaign_id])
     attempt = next((a for a in campaign['attempts'] if a['operation_id'] == attempt_id), None)
     if attempt is None:
         raise KeyError(attempt_id)
+    # Chaque réponse se juge sur le contrat, les pièces et la référence de son propre exemple
+    cell = next(x for x in campaign['manifest']['plan'] if x['cell_id'] == attempt['cell_id'])
+    fingerprint = c.case_fingerprint(campaign['manifest'], cell['case_id'])
+    contract, operation_id = contracts[fingerprint]
     return dict(campaign=campaign, attempt=attempt, qualification=dict(contract=contract,
-        contract_sha256=campaign['manifest']['contract_sha256'], operation_id=operation_id))
+        contract_sha256=fingerprint, operation_id=operation_id))
 
 
 def _campaign_context(store, connection, campaign_id):
     campaign = c._inspect(store, connection, campaign_id)
     if campaign['manifest'].get('funding') != 'requester':
         raise ValueError('Campagne personnelle requise')
-    fingerprint = campaign['manifest']['contract_sha256']
+    fingerprints = dict.fromkeys(c.case_fingerprint(campaign['manifest'], case['id'])
+                                 for case in campaign['manifest']['cases'])
+    return campaign, {fingerprint: _case_context(store, connection, fingerprint) for fingerprint in fingerprints}
+
+
+def _case_context(store, connection, fingerprint):
+    """Contrat d'un exemple et sa référence qualifiée, avec l'opération qui l'a qualifiée"""
     contract = deepcopy(c._comparison_contract(store, connection, fingerprint))
     qualified = p._automatic_qualification(store, connection, contract['dossier_id'], contract['revision'])
     if qualified is None:
@@ -58,7 +68,7 @@ def _campaign_context(store, connection, campaign_id):
     if not references:
         raise IntegrityError('Référence qualifiée requise')
     contract['specification'] = review_specification(contract['specification'])
-    return campaign, contract, operation['operation_id']
+    return contract, operation['operation_id']
 
 
 def review_specification(spec):
@@ -128,6 +138,17 @@ def _attempts(store, connection, campaign_id):
         result += [(cid, attempt) for attempt in snapshot['attempts']
                    if cid == campaign_id or snapshot['admission'] is not None or attempt['state'] != 'INTENT_RECORDED']
     return result
+
+
+def acquired(snapshot, attempts):
+    """Réponses à évaluer connues : toutes reçues, ou comparaison arrêtée dont le reste ne partira jamais
+
+    Sans admission, aucune intention encore enregistrée n'est émise : elle reste un essai non lancé et ne
+    retient plus l'évaluation des réponses reçues. Un essai en cours ou ambigu la retient toujours
+    """
+    pending = [a for a in attempts if a['state'] != 'RECEIVED']
+    return bool(attempts) and (not pending or snapshot['admission'] is None
+                               and all(a['state'] == 'INTENT_RECORDED' for a in pending))
 
 
 def guard_budget(store, connection, budget_id, *, campaign_id=None):
@@ -298,12 +319,12 @@ def _plan(store, connection, session_id, dossier_id, campaign_id, transport):
     config, _ = preflight(store, session_id, dossier_id, campaign_id, transport,
                           count=None if due is None else len(due))
     attempts = _attempts(store, connection, campaign_id)
-    if not attempts or any(a['state'] != 'RECEIVED' for _, a in attempts):
+    if not acquired(c._inspect(store, connection, campaign_id), [a for _, a in attempts]):
         raise ConflictError('Réponses candidates à rapprocher avant l’évaluation')
     plan = []
     for cid, attempt in attempts:
-        # Sortie absente, vide ou blanche : rien à juger, aucun appel payant
-        if not c.answered(attempt) or due is not None and attempt['operation_id'] not in due:
+        # Sortie absente, vide ou blanche, ou essai jamais parti : rien à juger, aucun appel payant
+        if attempt['state'] != 'RECEIVED' or not c.answered(attempt) or due is not None and attempt['operation_id'] not in due:
             continue
         previous, length, _ = due[attempt['operation_id']] if due is not None else (None, 0, None)
         ctx = context(store, connection, cid, attempt['operation_id'])
@@ -434,6 +455,9 @@ def status(store, connection, campaign_id, snapshot=None):
         result['can_start'] = total > 0
         if not result['can_start']:
             result.update(status='BLOCKED', reason='Aucune réponse exploitable à évaluer.')
+    elif total > 0 and acquired(snapshot, attempts):
+        # Comparaison arrêtée : les réponses reçues s'évaluent, les essais jamais envoyés restent non lancés
+        result['can_start'] = True
     elif attempts:
         result['status'] = 'WAITING'
     return result

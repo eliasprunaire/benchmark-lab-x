@@ -250,6 +250,15 @@ test('activity requires a trusted visible interaction and never transmits entere
     await page.locator('#message').fill('secret text must not be sent');
     await response;
     assert.deepEqual(posts, [{path: '/preparation/activity', body: {csrf_token: 'csrf', dossier_id: 'd1'}}]);
+    // Issue #454 : une page de la comparaison la nomme, pour renouveler aussi ses autres exemples
+    posts = [];
+    const compared = await pageFor(context);
+    await compared.setContent('<div data-privacy-activity data-csrf-token="csrf" data-dossier-id="d1" data-campaign-id="d1-c1"></div><button id="read">Lire</button>');
+    await compared.evaluate(() => privacy.mountPrivacy());
+    const named = compared.waitForResponse(r => r.url().endsWith('/preparation/activity'));
+    await compared.locator('#read').click();
+    await named;
+    assert.deepEqual(posts, [{path: '/preparation/activity', body: {csrf_token: 'csrf', dossier_id: 'd1', campaign_id: 'd1-c1'}}]);
   } finally {await context.close();}
 });
 

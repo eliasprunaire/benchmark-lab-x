@@ -494,7 +494,7 @@ def render_comparison(value):
                 count = sum(record['decision']['verdict'] == verdict for record in records)
                 if count:
                     counts.append(label + ' : ' + str(count))
-            prefix = '<strong>Cas ' + text(case_number) + '</strong> : ' if multiple_cases else ''
+            prefix = '<strong>' + text(example_label(case, case_number)) + '</strong> : ' if multiple_cases else ''
             content += '<p>' + prefix + text(' · '.join(counts)) + '.</p>'
     if not latest:
         received = any(cell['state'] == 'RECEIVED' for cell in value['cells'])
@@ -505,13 +505,18 @@ def render_comparison(value):
     def pending_reason(item):
         # Le modèle sans réponse exploitable est nommé comme dans le tableau, avec la cause lue dans son reçu
         configuration = panel.get(item.get('configuration_id'))
-        if item['state'] != 'NO_USABLE_RESPONSE' or configuration is None:
+        if item['state'] not in ('NO_USABLE_RESPONSE', 'NOT_SENT') or configuration is None:
             return item['next_action']
+        case = next((v for v in value['cases'] if v['id'] == item.get('case_id')), None) if multiple_cases else None
+        prefix = example_label(case, value['cases'].index(case) + 1) + ' : ' if case else ''
+        if item['state'] == 'NOT_SENT':
+            return (prefix + model_name(configuration, names) + ' n’a pas été appelé : la comparaison s’est arrêtée '
+                    'avant cet essai. Il n’est pas évalué et n’entre pas dans la comparaison.')
         count = item.get('recoveries', 0)
         # Une cause que le reçu n'établit pas est dite inconnue, jamais devinée
         details = [item.get('cause') or 'cause non établie par le reçu'] + (
             [str(count) + (' reprises' if count > 1 else ' reprise')] if count else [])
-        return ('Aucune réponse exploitable pour ' + model_name(configuration, names)
+        return (prefix + 'Aucune réponse exploitable pour ' + model_name(configuration, names)
                 + (' · ' + effort_label(configuration) if sum(c['model'] == configuration['model'] for c in panel.values()) > 1 else '')
                 + ' (' + ' ; '.join(details) + ')'
                 + '. Ce modèle n’est pas évalué et n’entre pas dans la comparaison.')
@@ -520,13 +525,17 @@ def render_comparison(value):
     if pending_reasons:
         content += '<ul>' + ''.join(pending_reasons) + '</ul>'
     # Un modèle sans réponse exploitable est terminé : il ne fait pas dire que les essais se sont arrêtés
-    open_pending = [item for item in value.get('pending_attempts', []) if item['state'] != 'NO_USABLE_RESPONSE']
+    open_pending = [item for item in value.get('pending_attempts', []) if item['state'] not in ('NO_USABLE_RESPONSE', 'NOT_SENT')]
     coverage = value['coverage']
     content += '<p class="note">Réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : '
     content += text(coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '. '
     if value['economic_status'] != 'COMPLETE':
         content += 'Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables. '
     content += '</p>'
+    if multiple_cases:
+        # Décision d'Ayo du 2026-10-16 : tout résultat sur plusieurs exemples annonce cette limite
+        content += ('<p class="note">Le juge automatique n’est pas qualifié : ses verdicts n’ont pas été comparés '
+                    'à des jugements humains. Chaque verdict vaut pour un exemple ; les exemples ne s’additionnent pas.</p>')
     if value.get('stop_reason') and (coverage['not_started'] or open_pending):
         content += '<p>Comparaison incomplète : les essais se sont arrêtés avant la fin. Vous pouvez lire les réponses déjà reçues.</p>'
     dates = sorted(set(date[:10] for date in value.get('acquisition_dates', [])))
@@ -559,7 +568,7 @@ def render_comparison(value):
     sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
     sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
     options = {
-        'case': ('Cas testé', 'Tous les cas', [(v['id'], 'Cas ' + str(number))
+        'case': ('Exemple', 'Tous les exemples', [(v['id'], example_label(v, number))
                          for number, v in enumerate(value['cases'], 1)] if multiple_cases else []),
         'configuration': ('Modèle', 'Tous les modèles', [(v['id'], model_name(v, names) +
                            (' · ' + effort_label(v) if sum(p['model'] == v['model'] for p in value['panel']) > 1 else '')) for v in value['panel']]),
@@ -603,7 +612,7 @@ def render_comparison(value):
         rows = [r for r in value['rows'] if r['case_id'] == case['id']]
         if not rows:
             continue
-        label = 'Cas ' + str(case_number) if multiple_cases else 'Comparaison des modèles'
+        label = example_label(case, case_number) if multiple_cases else 'Comparaison des modèles'
         if multiple_cases:
             content += '<h3>' + text(label) + '</h3>'
         content += '<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '">'
@@ -841,6 +850,12 @@ def render_campaign_followup(value, csrf):
     return content + '</div>'
 
 
+def example_label(case, number):
+    """« Exemple N » : le numéro de l'exemple dans la tâche, porté par l'identifiant `case-N` de son cas"""
+    suffix = case['id'].removeprefix('case-')
+    return 'Exemple ' + (suffix if suffix.isdigit() else str(number))
+
+
 def render_campaign_launch_requester(value, csrf):
     """Récapitulatif avant dépense : synthèse, bouton, détail ; puis suivi une fois lancé"""
     campaign = value['campaign']
@@ -853,9 +868,11 @@ def render_campaign_launch_requester(value, csrf):
     # Prévision des réponses et réservation de l'évaluation restent deux montants distincts (RULES.md, contrôle de dépense)
     def usd(amount, unknown):
         return unknown if amount is None else montant_lisible(amount) + ' USD'
+    cases = campaign.get('cases', [])
     content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
     content += '<p class="synthesis">' + text(
         str(len(panel)) + (' modèles' if len(panel) > 1 else ' modèle')
+        + (' · ' + str(len(cases)) + ' exemples · ' + str(len(campaign['cells'])) + ' essais' if len(cases) > 1 else '')
         + ' · réponses estimées : ' + usd(value.get('estimate_total_usd'), 'non estimable')
         + ' · réservé pour l’évaluation : ' + usd(value.get('judgment_estimate_usd'), 'inconnu')
         + ' · crédit restant : ' + usd(value.get('access', {}).get('limit_remaining_usd'), 'inconnu')) + '</p>'
@@ -875,6 +892,23 @@ def render_campaign_launch_requester(value, csrf):
                 '<table class="compact"><thead><tr><th scope="col">Modèle</th><th scope="col">Niveau de raisonnement</th>'
                 '<th scope="col">Limite de sortie</th><th scope="col">Coût estimé</th></tr></thead><tbody>'
                 + rows + '</tbody></table></div>')
+    if value.get('examples'):
+        items = []
+        for example in value.get('examples', []):
+            label = 'Exemple ' + str(example['number']) + (' : ' + example['difference'] if example['difference'] else '')
+            items.append(label + ('' if example['excluded'] is None else ' · pas inclus : ' + example['excluded']))
+        content += ('<div id="exemples"><p>Exemples comparés : chaque modèle répond une fois à chacun. '
+                    'Plusieurs exemples ne prouvent pas qu’ils représentent votre travail.</p>' + listing(items) + '</div>')
+    if len(cases) > 1:
+        labels = {case['id']: example_label(case, number) for number, case in enumerate(cases, 1)}
+        rows = ''.join('<tr><th scope="row">' + text(labels[cell['case_id']]) + '</th><td>'
+                       + text(model_name(next(item for item in panel if item['id'] == cell['configuration_id']), names))
+                       + '</td><td>' + text(usd(cell['estimate']['amount_usd'], 'non estimable')) + '</td></tr>'
+                       for cell in campaign['cells'])
+        content += ('<div class="table-scroll" role="region" tabindex="0" aria-label="Essais prévus">'
+                    '<table class="compact" aria-label="Essais prévus"><thead><tr><th scope="col">Exemple</th>'
+                    '<th scope="col">Modèle</th><th scope="col">Coût estimé</th></tr></thead><tbody>'
+                    + rows + '</tbody></table></div>')
     content += '<p>Tous les appels passent par votre clé OpenRouter. Son plafond est la seule limite de dépense. Les montants affichés ici sont une prévision et une réservation, pas des dépenses facturées.</p>'
     if any(recoveries.values()):
         # Reprises préautorisées par ce lancement (RULES.md §9) : leur coût reste distinct de la prévision
@@ -884,7 +918,9 @@ def render_campaign_launch_requester(value, csrf):
             'propre ligne. Coût estimé si chaque modèle était repris jusqu’à sa dernière limite : '
             + usd(value.get('recovery_estimate_usd'), 'non estimable') + '.') + '</p>'
     content += section('Ce qui sera testé', '<p>' + text(value['criteria']['result_expected']) + '</p>' +
-        '<p>Chaque modèle reçoit la même consigne et les mêmes pièces. Le verdict vaudra pour cet exemple et pour chaque modèle tel qu’il est réglé ici, sans conclure sur le modèle en général.</p>' +
+        ('<p>Chaque modèle reçoit la même consigne et, pour chaque exemple, les mêmes pièces. Chaque verdict vaudra pour un exemple et pour un modèle tel qu’il est réglé ici, sans conclure sur le modèle en général ni additionner les exemples.</p>'
+         if len(cases) > 1 else
+         '<p>Chaque modèle reçoit la même consigne et les mêmes pièces. Le verdict vaudra pour cet exemple et pour chaque modèle tel qu’il est réglé ici, sans conclure sur le modèle en général.</p>') +
         '<details><summary>Détail des critères et des réglages</summary>' + readable_fields(
             {'criteria': value['criteria'], 'conditions': campaign['conditions'], 'panel': panel}) + '</details>')
     failures = [check for check in value['checks'] if not check['ok']]
@@ -910,6 +946,7 @@ def render_campaign_launch_requester(value, csrf):
                                   'Voir la dernière sélection'),
             'example_validated': (dossier_url + '#validation', 'Valider l’exemple'),
             'example_qualified': (dossier_url, 'Voir la vérification de l’exemple'),
+            'examples_current': (dossier_url + '/configurations', 'Choisir de nouveau les modèles'),
             'configurations_available': (dossier_url + '/configurations', 'Changer de modèles'),
             'access_connected': None,
             'estimate_available': (dossier_url + '/configurations', 'Revoir les modèles choisis'),
