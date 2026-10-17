@@ -501,6 +501,7 @@ def render_comparison(value):
         content += '<p>' + ('Des réponses sont arrivées. Leur verdict n’est pas encore disponible.' if received else
                              'Aucune réponse n’a encore été évaluée. Le suivi indique où en est la comparaison.') + '</p>'
     panel = {configuration['id']: configuration for configuration in value.get('panel', [])}
+    repetitions = max((cell.get('repetition', 1) for cell in value['cells']), default=1)
 
     def pending_reason(item):
         # Le modèle sans réponse exploitable est nommé comme dans le tableau, avec la cause lue dans son reçu
@@ -509,8 +510,10 @@ def render_comparison(value):
             return item['next_action']
         case = next((v for v in value['cases'] if v['id'] == item.get('case_id')), None) if multiple_cases else None
         prefix = example_label(case, value['cases'].index(case) + 1) + ' : ' if case else ''
+        attempt = ', essai ' + str(item['repetition']) if item.get('repetition') else ''
         if item['state'] == 'NOT_SENT':
-            return (prefix + model_name(configuration, names) + ' n’a pas été appelé : la comparaison s’est arrêtée '
+            return (prefix + model_name(configuration, names) + (attempt + ',' if attempt else '')
+                    + ' n’a pas été appelé : la comparaison s’est arrêtée '
                     'avant cet essai. Il n’est pas évalué et n’entre pas dans la comparaison.')
         count = item.get('recoveries', 0)
         # Une cause que le reçu n'établit pas est dite inconnue, jamais devinée
@@ -518,8 +521,8 @@ def render_comparison(value):
             [str(count) + (' reprises' if count > 1 else ' reprise')] if count else [])
         return (prefix + 'Aucune réponse exploitable pour ' + model_name(configuration, names)
                 + (' · ' + effort_label(configuration) if sum(c['model'] == configuration['model'] for c in panel.values()) > 1 else '')
-                + ' (' + ' ; '.join(details) + ')'
-                + '. Ce modèle n’est pas évalué et n’entre pas dans la comparaison.')
+                + attempt + ' (' + ' ; '.join(details) + ')'
+                + '. ' + ('Cet essai' if attempt else 'Ce modèle') + ' n’est pas évalué et n’entre pas dans la comparaison.')
     pending_reasons = list(dict.fromkeys('<li>' + text(pending_reason(item)) + receipt_observations(item) + '</li>'
                                          for item in value.get('pending_attempts', [])))
     if pending_reasons:
@@ -532,10 +535,13 @@ def render_comparison(value):
     if value['economic_status'] != 'COMPLETE':
         content += 'Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables. '
     content += '</p>'
-    if multiple_cases:
-        # Décision d'Ayo du 2026-10-16 : tout résultat sur plusieurs exemples annonce cette limite
+    if multiple_cases or repetitions > 1:
+        # Décision d'Ayo du 2026-10-16 : tout résultat sur plusieurs exemples ou plusieurs essais annonce cette limite
         content += ('<p class="note">Le juge automatique n’est pas qualifié : ses verdicts n’ont pas été comparés '
-                    'à des jugements humains. Chaque verdict vaut pour un exemple ; les exemples ne s’additionnent pas.</p>')
+                    'à des jugements humains.'
+                    + (' Chaque verdict vaut pour un exemple ; les exemples ne s’additionnent pas.' if multiple_cases else '')
+                    + (' Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.' if repetitions > 1 else '')
+                    + '</p>')
     if value.get('stop_reason') and (coverage['not_started'] or open_pending):
         content += '<p>Comparaison incomplète : les essais se sont arrêtés avant la fin. Vous pouvez lire les réponses déjà reçues.</p>'
     dates = sorted(set(date[:10] for date in value.get('acquisition_dates', [])))
@@ -628,6 +634,8 @@ def render_comparison(value):
             content += '<tr id="attempt-' + text(row['attempt_id']) + '"' + ('' if row['verdict'] == 'SATISFAIT' else ' class="out"') + ' tabindex="-1"><th scope="row">'
             content += '<strong>' + text(model_name(row['requested_configuration'], names)) + '</strong>'
             content += '<p class="hint">' + text(effort_label(row['requested_configuration'])) + '</p>'
+            if row.get('repetition'):
+                content += '<p class="hint">' + text('Essai ' + str(row['repetition']) + ' sur ' + str(repetitions)) + '</p>'
             if row.get('recovery_limit'):
                 content += '<p class="hint">' + text('Reprise après arrêt pour longueur : limite de sortie de '
                                                      + str(row['recovery_limit']) + ' jetons') + '</p>'
@@ -742,8 +750,19 @@ def render_configurations(value, csrf):
                     hidden('csrf_token', csrf) + '<fieldset id="model-choices"><legend>Modèles à comparer</legend>' +
                     choices + '</fieldset></form>')
         content += render_custom_models(value, csrf, dossier_url)
+        # Décision d'Ayo du 2026-10-17 : un même nombre d'essais pour chaque modèle et chaque exemple
+        repetitions = ('<label for="repetitions">Essais par modèle et par exemple</label>'
+                       '<select id="repetitions" form="configurations-form" name="repetitions" aria-describedby="repetitions-help">'
+                       + ''.join('<option value="' + str(count) + '"' + (' selected' if value.get('repetitions', 1) == count else '')
+                                 + '>' + str(count) + (' essais' if count > 1 else ' essai') + '</option>'
+                                 for count in range(1, value.get('max_repetitions', 1) + 1))
+                       + '</select><p class="hint" id="repetitions-help">Chaque essai est une réponse distincte, payée et '
+                       'évaluée séparément. Tous les essais partent, quel que soit le résultat des autres. Plusieurs essais '
+                       'montrent si les réponses d’un modèle varient ; ils ne mesurent pas sa fiabilité. Avec plus d’un essai, '
+                       'aucun conseil n’est donné.</p>')
         # Le récapitulatif de la sélection suit l'enregistrement : le serveur y redirige
         content += ('<fieldset><legend>Raisonnement</legend>' + tiers + '</fieldset>'
+                    '<fieldset><legend>Essais</legend>' + repetitions + '</fieldset>'
                     '<fieldset><legend>Limite de sortie</legend>' + limits +
                     '</fieldset><button form="configurations-form" type="submit">Continuer</button>')
     return content
@@ -824,8 +843,13 @@ def render_campaign_followup(value, csrf):
               'EMISSION_POSSIBLE': 'en cours', 'RECEIVED': 'réponse reçue',
               'AMBIGUOUS': 'réponse non confirmée, à vérifier'}
     models = {item['id']: candidate_label(item, value.get('model_names', {})) for item in campaign['panel']}
+    cases = campaign.get('cases', [])
+    # Plusieurs essais d'un modèle : chaque ligne nomme son exemple et son essai
+    examples = {case['id']: example_label(case, number) + ' : ' for number, case in enumerate(cases, 1)} if len(cases) > 1 else {}
     content += section('Modèle par modèle', listing(
-        models.get(cell['configuration_id'], 'Modèle') + ' : ' + states.get(cell['state'], 'état inconnu')
+        examples.get(cell.get('case_id'), '') + models.get(cell['configuration_id'], 'Modèle')
+        + (' · essai ' + str(cell['repetition']) if 'repetition' in cell else '')
+        + ' : ' + states.get(cell['state'], 'état inconnu')
         for cell in campaign['cells']))
     received = sum(cell['state'] == 'RECEIVED' for cell in campaign['cells'])
     all_received = bool(campaign['cells']) and received == len(campaign['cells'])
@@ -869,10 +893,13 @@ def render_campaign_launch_requester(value, csrf):
     def usd(amount, unknown):
         return unknown if amount is None else montant_lisible(amount) + ' USD'
     cases = campaign.get('cases', [])
+    repetitions = max((cell.get('repetition', 1) for cell in campaign['cells']), default=1)
     content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
     content += '<p class="synthesis">' + text(
         str(len(panel)) + (' modèles' if len(panel) > 1 else ' modèle')
-        + (' · ' + str(len(cases)) + ' exemples · ' + str(len(campaign['cells'])) + ' essais' if len(cases) > 1 else '')
+        + (' · ' + str(len(cases)) + ' exemples' if len(cases) > 1 else '')
+        + (' · ' + str(repetitions) + ' essais par modèle' + (' et par exemple' if len(cases) > 1 else '') if repetitions > 1 else '')
+        + (' · ' + str(len(campaign['cells'])) + ' essais' if len(cases) > 1 or repetitions > 1 else '')
         + ' · réponses estimées : ' + usd(value.get('estimate_total_usd'), 'non estimable')
         + ' · réservé pour l’évaluation : ' + usd(value.get('judgment_estimate_usd'), 'inconnu')
         + ' · crédit restant : ' + usd(value.get('access', {}).get('limit_remaining_usd'), 'inconnu')) + '</p>'
@@ -897,17 +924,27 @@ def render_campaign_launch_requester(value, csrf):
         for example in value.get('examples', []):
             label = 'Exemple ' + str(example['number']) + (' : ' + example['difference'] if example['difference'] else '')
             items.append(label + ('' if example['excluded'] is None else ' · pas inclus : ' + example['excluded']))
-        content += ('<div id="exemples"><p>Exemples comparés : chaque modèle répond une fois à chacun. '
+        # Plusieurs essais : le paragraphe qui suit dit combien de fois chaque modèle répond
+        content += ('<div id="exemples"><p>Exemples comparés' + (' : chaque modèle répond une fois à chacun' if repetitions == 1 else '') + '. '
                     'Plusieurs exemples ne prouvent pas qu’ils représentent votre travail.</p>' + listing(items) + '</div>')
-    if len(cases) > 1:
+    if repetitions > 1:
+        content += '<p>' + text('Chaque modèle répond ' + str(repetitions) + ' fois à '
+                                + ('chaque exemple' if len(cases) > 1 else 'l’exemple') + '. Chaque essai est une réponse '
+                                'distincte, payée et évaluée séparément ; tous partent, quel que soit le résultat des autres.') + '</p>'
+    if len(cases) > 1 or repetitions > 1:
         labels = {case['id']: example_label(case, number) for number, case in enumerate(cases, 1)}
-        rows = ''.join('<tr><th scope="row">' + text(labels[cell['case_id']]) + '</th><td>'
-                       + text(model_name(next(item for item in panel if item['id'] == cell['configuration_id']), names))
-                       + '</td><td>' + text(usd(cell['estimate']['amount_usd'], 'non estimable')) + '</td></tr>'
-                       for cell in campaign['cells'])
+        columns = (['Exemple'] if len(cases) > 1 else []) + (['Essai'] if repetitions > 1 else []) + ['Modèle', 'Coût estimé']
+        rows = ''
+        for cell in campaign['cells']:
+            values = (([labels[cell['case_id']]] if len(cases) > 1 else [])
+                      + (['Essai ' + str(cell['repetition'])] if repetitions > 1 else [])
+                      + [model_name(next(item for item in panel if item['id'] == cell['configuration_id']), names),
+                         usd(cell['estimate']['amount_usd'], 'non estimable')])
+            rows += ('<tr><th scope="row">' + text(values[0]) + '</th>'
+                     + ''.join('<td>' + text(item) + '</td>' for item in values[1:]) + '</tr>')
         content += ('<div class="table-scroll" role="region" tabindex="0" aria-label="Essais prévus">'
-                    '<table class="compact" aria-label="Essais prévus"><thead><tr><th scope="col">Exemple</th>'
-                    '<th scope="col">Modèle</th><th scope="col">Coût estimé</th></tr></thead><tbody>'
+                    '<table class="compact" aria-label="Essais prévus"><thead><tr>'
+                    + ''.join('<th scope="col">' + title + '</th>' for title in columns) + '</tr></thead><tbody>'
                     + rows + '</tbody></table></div>')
     content += '<p>Tous les appels passent par votre clé OpenRouter. Son plafond est la seule limite de dépense. Les montants affichés ici sont une prévision et une réservation, pas des dépenses facturées.</p>'
     if any(recoveries.values()):

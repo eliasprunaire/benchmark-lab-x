@@ -62,6 +62,7 @@ Le produit réunit les capacités ci-dessous et les [critères d’acceptation p
 - résultats réellement acquis et évalués sur le catalogue et le panel approuvés
 - accès API via OpenRouter sous Pi constant ; secours officiel candidat en dernier recours selon les conditions de l’ARD
 - suivi des tentatives, incidents, coûts et preuves, sans relance implicite hors la relance automatique bornée des appels assistés (préparation, vérification, évaluation)
+- un à trois essais par modèle et par exemple, choisis par l’utilisateur avant le lancement, chacun jugé et affiché séparément
 - navigation catalogue, tâche, campagne et comparaison des configurations
 - classements par critère et filtres combinés, sans note pondérée ni désignation automatique du meilleur modèle
 - consultation publique des seules restitutions approuvées, sans classement universel

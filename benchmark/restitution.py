@@ -323,13 +323,15 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 cell = next(c for c in campaign['cells'] if c['cell_id'] == attempts[attempt['attempt_id']]['cell_id'])
                 attempt.update(state='NO_USABLE_RESPONSE', next_action=NO_USABLE_RESPONSE,
                                configuration_id=cell['configuration_id'], case_id=cell['case_id'],
+                               **({'repetition': cell['repetition']} if 'repetition' in cell else {}),
                                cause=causes.get(attempt['attempt_id']),
                                recoveries=len(chain(attempt['attempt_id'])) - 1)
             elif attempts[attempt['attempt_id']]['state'] == 'INTENT_RECORDED' and not campaign['admission_open']:
                 # Arrêtée avant son envoi : l'essai ne partira plus, il reste compté comme non lancé
                 cell = next(c for c in campaign['cells'] if c['cell_id'] == attempts[attempt['attempt_id']]['cell_id'])
                 attempt.update(state='NOT_SENT', next_action='Essai jamais envoyé : la comparaison s’est arrêtée avant lui.',
-                               configuration_id=cell['configuration_id'], case_id=cell['case_id'])
+                               configuration_id=cell['configuration_id'], case_id=cell['case_id'],
+                               **({'repetition': cell['repetition']} if 'repetition' in cell else {}))
             elif attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='EVALUATION_' + progress_status,
                     next_action=progress_reason or 'Réponse reçue. Son évaluation automatique n’est pas terminée.')
@@ -348,6 +350,10 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         if record['attempt_id'] in observations:
             row['observations'] = observations[record['attempt_id']]
         attempt = next(a for a in visible if a['operation_id'] == record['attempt_id'])
+        # Essai prévu de sa cellule ; une reprise garde celui de l'essai qu'elle vise
+        cell = next(c for c in campaign['cells'] if c['cell_id'] == attempt['cell_id'])
+        if 'repetition' in cell:
+            row['repetition'] = cell['repetition']
         incompatible = ('Impossible de confirmer que la réponse vient du modèle demandé' if record['attribution_incident'] else
                         'Un problème technique empêche de rattacher la réponse au modèle' if record['incident'] == 'HARNESS_ERROR' else
                         'Réponse absente ou envoi de l’appel non confirmé' if record['output_piece_id'] is None or attempt['emission'] != 'ESTABLISHED' else None)
