@@ -29,6 +29,7 @@ before(async () => {
 import json
 from benchmark import restitution
 from benchmark_web import projection, views
+from benchmark_web.server import RESPONSE_TIMEOUT
 from tests.test_privacy_views import example_view, browser_views
 from tests.test_s10_regressions import S10ProofTests as proof
 proof.setUpClass()
@@ -95,6 +96,8 @@ print(json.dumps({**browser_views(), 'data': views.render({'kind': 'privacy_data
                   'launch': views.render(launch(), 'csrf').decode(),
                   'followup': views.render(launch('EMISSION_POSSIBLE'), 'csrf').decode(),
                   'followup_done': views.render(launch('RECEIVED'), 'csrf').decode(),
+                  'launch_timeout': views.render(dict(RESPONSE_TIMEOUT), '', '/preparation/dossiers/d1/campaigns/c1/start',
+                                                 error=True).decode(),
                   'progress_script': views.PREPARATION_PROGRESS_SCRIPT}))
 `], {encoding: 'utf8'}));
   server = createServer(async (req, res) => {
@@ -898,6 +901,30 @@ test('pre-launch summary: synthesis, single launch button as confirmation, model
       assert.deepEqual(failures, []);
     } finally {await context.close();}
   }
+});
+
+test('an expired launch wait claims neither failure nor success and only offers to consult the campaign', async () => {
+  const context = await browser.newContext({viewport: {width: 390, height: 844}});
+  try {
+    const page = await context.newPage(); page.setDefaultTimeout(3000);
+    const failures = [];
+    page.on('pageerror', error => failures.push(error.message));
+    const sent = posts.length;
+    followupReplies = ['followup'];
+    await page.goto(origin + '/render/launch_timeout');
+    assert.equal(await page.locator('h1').textContent(), 'Réponse non reçue à temps');
+    const alert = await page.getByRole('alert').textContent();
+    assert.match(alert, /rien n’indique qu’il a échoué/);
+    assert.doesNotMatch(await page.locator('main').innerText(), /indisponible|n’a pas abouti|Lancement enregistré/);
+    assert.equal(await page.locator('main form').count(), 0, 'aucun renvoi proposé');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement');
+    // La consultation est une lecture : elle ouvre le suivi de la même campagne sans rien envoyer
+    await page.getByRole('link', {name: 'Consulter l’état du lancement'}).click();
+    await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1/conditions');
+    assert.equal(await page.locator('h1').textContent(), 'Benchmark en cours');
+    assert.equal(posts.length, sent, 'consultation émise en POST');
+    assert.deepEqual(failures, []);
+  } finally {await context.close();}
 });
 
 test('benchmark followup survives an isolated failure, stops after three in a row, then opens the results', async () => {

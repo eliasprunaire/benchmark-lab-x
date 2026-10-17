@@ -66,6 +66,8 @@ class FakeExecutor:
         self.raw_response = None
         self.start_cookie = None
         self.forced_status = None
+        # Réponse retenue jusqu'à ce que le test la libère, puis jamais envoyée : le web a cessé d'attendre
+        self.held = None
 
     def __enter__(self):
         self.worker.start()
@@ -106,6 +108,9 @@ class FakeExecutor:
                         continue
                     request = json.loads(raw)
                     self.requests.put(request)
+                    if self.held is not None:
+                        self.held.wait(5)
+                        continue
                     if self.raw_response is not None:
                         # Trame brute imposée par le test : le web doit y voir une panne
                         connection.sendall(self.raw_response)
@@ -147,10 +152,14 @@ def campaign_view(access):
                                         'pi': {'package': 'pi', 'version': '1'}}}}
 
 
-def _serve_web_logged(journal, *arguments, home_size=0, **options):
+def _serve_web_logged(journal, *arguments, home_size=0, relay_budget=None, **options):
     """Cible de processus : le runtime règle le journal sur INFO, cette fixture l'envoie dans un fichier"""
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s',
                         filename=journal, force=True)
+    if relay_budget is not None:
+        # Échéance du relais réduite dans le processus web, pour atteindre l'expiration sans attendre 65 s
+        from benchmark import service
+        service.RELAY_BUDGET_SECONDS = relay_budget
     if home_size:
         # Un rendu assez lourd pour que l'écriture dépasse le délai du serveur
         views.render = lambda *args, **kwargs: b'a' * home_size
@@ -1074,6 +1083,51 @@ class InterruptedWriteJournalTests(WebServerCase):
             time.sleep(3)
         time.sleep(.5)
         self.assertEqual([('GET', '/', '200')], [self.parsed(line) for line in self.lines()[start:]])
+
+
+class RelayTimeoutTests(WebServerCase):
+    """#517 : l'exécuteur admet le lancement après l'échéance du relais"""
+    journal_expected = True
+    web_options = {'relay_budget': .3}
+    lines = AccessJournalTests.lines
+    parsed = staticmethod(AccessJournalTests.parsed)
+
+    def test_attente_expiree_n_est_ni_un_echec_ni_une_indisponibilite(self):
+        start_path = '/preparation/dossiers/d1/campaigns/d1-c1/start'
+        body = urlencode({'csrf_token': 'csrf', 'manifest_version': '1',
+                          'frozen_at': '2026-09-15T00:00:00Z', 'confirm': 'yes'}).encode()
+        form = {'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': 'benchmark_session=session-token'}
+        begin = len(self.lines())
+        for accept in ('application/json', 'text/html'):
+            with self.subTest(accept=accept):
+                self.executor.held = threading.Event()
+                status, headers, raw = self.request('POST', start_path, body, form | {'Accept': accept})
+                self.executor.held.set()
+                self.assertEqual(start_path, self.executor.requests.get(timeout=1)['path'])
+                self.assertTrue(self.executor.requests.empty(), 'requête réémise par le web')
+                self.assertEqual(504, status)
+                self.assertNotIn('Location', headers)
+                self.assertNotIn('Set-Cookie', headers)
+                text = json.loads(raw)['error'] if accept == 'application/json' else raw.decode()
+                self.assertIn('rien n’indique qu’il a échoué', text)
+                self.assertNotIn('indisponible', text)
+                if accept == 'application/json':
+                    value = json.loads(raw)
+                    self.assertEqual('RESPONSE_TIMEOUT', value['error_code'])
+                    self.assertNotIn('unavailable', value)
+                else:
+                    self.assertIn('href="/preparation/dossiers/d1/campaigns/d1-c1/conditions"', text)
+        # Une lecture expirée ne modifie rien : elle garde son annonce distincte
+        self.executor.held = threading.Event()
+        status, _, raw = self.request('GET', '/preparation/access', headers={'Accept': 'application/json'})
+        self.executor.held.set()
+        self.executor.requests.get(timeout=1)
+        self.assertEqual(503, status)
+        self.assertIn('rien n’a été modifié', json.loads(raw)['error'])
+        self.executor.held = None
+        self.assertEqual([('POST', '/preparation/dossiers/<id>/campaigns/<id>/start', '504')] * 2
+                         + [('GET', '/preparation/access', '503')],
+                         [self.parsed(line) for line in self.lines()[begin:]])
 
 
 if __name__ == '__main__':

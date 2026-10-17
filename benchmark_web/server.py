@@ -66,6 +66,11 @@ _RESOURCES = {
     **{'/preparation/fonts/' + path.name: (path, 'text/plain; charset=utf-8') for path in views.FONTS_PATH.glob('OFL-*.txt')},
 }
 _METHODS = frozenset(('GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'TRACE', 'CONNECT'))
+# Envoi dont l'exécuteur n'a pas répondu dans le délai du relais : il le traite peut-être encore (#517).
+# Ni échec, ni indisponibilité : la page mène à l'état enregistré, jamais à un renvoi
+RESPONSE_TIMEOUT = {'title': 'Réponse non reçue à temps', 'error_code': 'RESPONSE_TIMEOUT',
+                    'error': 'Bench-X n’a pas répondu à temps, mais rien n’indique qu’il a échoué : votre envoi est '
+                             'peut-être encore en cours de traitement. Consultez son état avant de renvoyer quoi que ce soit.'}
 
 
 def _load_resource(path, media_type):
@@ -495,8 +500,13 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 value = {'error': 'Ce formulaire n’a pas pu être traité. Rechargez la page, puis réessayez. Aucun appel n’a été lancé.'}
                 self.respond(400, value if wants_json else views.render(value, '', error=True),
                              'application/json' if wants_json else 'text/html; charset=utf-8')
-            except OSError:
+            except OSError as error:
                 read_only = self.command in ('GET', 'HEAD')
+                if isinstance(error, TimeoutError) and not read_only:
+                    value = dict(RESPONSE_TIMEOUT)
+                    self.respond(504, value if wants_json else views.render(value, '', self.path, error=True),
+                                 'application/json' if wants_json else 'text/html; charset=utf-8')
+                    return
                 # L'archive s'enregistre à sa première demande : après un délai, rien ne prouve le contraire
                 writing_read = urlsplit(self.path).path.endswith('/archive')
                 value = {'error': 'Bench-X est momentanément indisponible. Cette page ne peut pas s’afficher. '

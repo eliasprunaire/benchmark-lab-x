@@ -148,7 +148,11 @@ class ParcoursComplet(unittest.TestCase):
                         result = {'status': 409, 'value': {'error': 'Action refusée : consultez le dossier courant.'}}
                     except (ValueError, KeyError, TypeError):
                         result = {'status': 400, 'value': {'error': 'Action non vérifiée. Vérifiez les champs ou consultez le dossier courant.'}}
-                self.wfile.write((storage._strict_json(result) + '\n').encode())
+                try:
+                    self.wfile.write((storage._strict_json(result) + '\n').encode())
+                except BrokenPipeError:
+                    # Le web a cessé d'attendre : l'effet reste enregistré, comme dans l'exécuteur
+                    pass
 
         executor = socketserver.UnixStreamServer(str(self.sock), Executor)
         self.addCleanup(executor.server_close)
@@ -463,9 +467,45 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIn('✕ Exécution des essais', closed.visible)
             self.assertNotIn('Lancement enregistré', closed.visible)
             self.assertFalse(any(f['action'].endswith('/start') for f in closed.forms))
-        self.submit(page, '/start', {}, status=303)
-        attempts = self.starts.get_nowait()['candidate_attempts']
+        # #517 : l'admission répond après l'échéance du relais. L'attente expire, la campagne reste à consulter
+        campaign_id = recap.split('/campaigns/', 1)[1].split('/', 1)[0]
+        released, admit = threading.Event(), campaigns.launch
+
+        def late_launch(*args, **kwargs):
+            self.assertTrue(released.wait(5), 'Admission jamais libérée')
+            return admit(*args, **kwargs)
+        start_form = page.form('/start')
+        with patch.object(service, 'RELAY_BUDGET_SECONDS', .3), patch.object(campaigns, 'launch', late_launch):
+            waiting, _, _ = self.request(start_form['action'], start_form['fields'], status=504)
+            released.set()
+            attempts = self.starts.get(timeout=5)['candidate_attempts']
+        self.examine(waiting, start_form['action'], 'attente expirée', 'Consulter l’état du lancement')
+        self.assertEqual('Réponse non reçue à temps', next(n['text'] for n in waiting.nodes if n['tag'] == 'h1'))
+        self.assertIn('rien n’indique qu’il a échoué', waiting.visible)
+        for claim in ('n’a pas abouti', 'indisponible', 'Lancement enregistré', 'Aucun appel'):
+            self.assertNotIn(claim, waiting.visible)
+        self.assertEqual(recap, waiting.link('Consulter l’état du lancement'))
         self.assertEqual(2, len(attempts))
+
+        def persisted():
+            with closing(storage.Store(self.data)) as store:
+                snapshot = campaigns.inspect(store, campaign_id)
+                return ([a['admission_id'] for a in snapshot['admissions']],
+                        sorted(a['operation_id'] for a in snapshot['attempts']),
+                        sorted(o['operation_id'] for o in store._operations(store._connection)),
+                        store._connection.execute('SELECT count(*) FROM s4_emissions').fetchone()[0])
+        effects = persisted()
+        self.assertEqual(1, len(effects[0]))
+        self.assertEqual(sorted(attempts), effects[1])
+        self.assertEqual(0, effects[3])
+        # Consulter puis renvoyer le même lancement : ni émission, ni intention, ni seconde campagne
+        for _ in range(2):
+            self.request(recap)
+        # Lancement déjà admis : le formulaire de lancement initial n'a plus la forme d'un lancement à accepter
+        self.request(start_form['action'], start_form['fields'], status=400)
+        self.assertEqual(effects, persisted())
+        self.assertTrue(self.starts.empty())
+        self.assertEqual(3, len(self.calls))
         # Après un lancement, le choix des modèles repart de la sélection lancée, pas d'une plus ancienne
         chosen, _, _ = self.request(configurations)
         self.assertEqual({'openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'},
