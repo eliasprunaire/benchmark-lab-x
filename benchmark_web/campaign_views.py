@@ -397,7 +397,7 @@ def output_label(configuration, recoveries):
 ABSTENTION_REASONS = {
     'incomplete': 'toutes les réponses prévues ne sont pas évaluées.',
     'repeated': 'un modèle compte plus d’un essai sur un même exemple.',
-    'recovered': 'une reprise ajoute une seconde tentative pour un modèle.',
+    'recovered': 'une reprise a été demandée pour un modèle.',
     'few': 'moins de deux réponses satisfont l’exemple.',
     'no_quality': 'aucun critère de qualité ne compare les réponses.',
     'unknown': 'la qualité ou le coût d’une réponse qui satisfait l’exemple n’est pas connu.',
@@ -563,12 +563,23 @@ def render_comparison(value):
         content += '<p class="hint">Réponses reçues ' + text('le ' + jour_lisible(dates[0]) if len(dates) == 1 else
                                                           'du ' + jour_lisible(dates[0]) + ' au ' + jour_lisible(dates[-1])) + '.</p>'
     content += '</div>'
-    if not value['population']:
-        return content + render_expenses(value.get('expenses'), names)
-    choice = value.get('recommendation')
 
     def number(case_id):
         return next(n for n, case in enumerate(value['cases'], 1) if case['id'] == case_id)
+    # Une comparaison sans réponse évaluée explique aussi l'absence de conseil
+    if value.get('abstention'):
+        abstention = value['abstention']
+        reason = ABSTENTION_REASONS[abstention['reason']]
+        content += '<aside class="economic-choice" aria-labelledby="no-choice-title"><h2 id="no-choice-title">Pas de conseil</h2><p>'
+        content += text('Exemple ' + str(number(abstention['case_id'])) + ' : ' + reason if abstention['case_id']
+                        else reason[0].upper() + reason[1:]) + '</p>'
+        if abstention.get('choices'):
+            content += '<p>' + text(' · '.join('Exemple ' + str(number(item['case_id'])) + ' : ' + model_name(item['configuration'], names)
+                                               for item in abstention['choices'])) + '</p>'
+        content += '</aside>'
+    if not value['population']:
+        return content + render_expenses(value.get('expenses'), names)
+    choice = value.get('recommendation')
     if choice:
         content += '<aside class="economic-choice" aria-labelledby="economic-choice-title">'
         content += '<h2 id="economic-choice-title">Notre conseil</h2><div class="choice-highlight"><div>'
@@ -594,16 +605,6 @@ def render_comparison(value):
             content += '<p>Les ' + text(choice['count']) + ' réponses qui satisfont l’exemple ont la même qualité observée. Nous retenons la moins coûteuse.</p>'
         content += ('<p class="hint">Ce conseil repose sur ' + ('un seul exemple' if 'cases' not in choice else
                     text(len(choice['cases'])) + ' exemples') + '. Sur d’autres tâches, le résultat peut être différent.</p></aside>')
-    elif value.get('abstention'):
-        abstention = value['abstention']
-        reason = ABSTENTION_REASONS[abstention['reason']]
-        content += '<aside class="economic-choice" aria-labelledby="no-choice-title"><h2 id="no-choice-title">Pas de conseil</h2><p>'
-        content += text('Exemple ' + str(number(abstention['case_id'])) + ' : ' + reason if abstention['case_id']
-                        else reason[0].upper() + reason[1:]) + '</p>'
-        if abstention.get('choices'):
-            content += '<p>' + text(' · '.join('Exemple ' + str(number(item['case_id'])) + ' : ' + model_name(item['configuration'], names)
-                                               for item in abstention['choices'])) + '</p>'
-        content += '</aside>'
     sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
     sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
     options = {

@@ -1391,6 +1391,9 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
         execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
         self.assertEqual(5, len(recus))
+        # Issue #458 : avant toute évaluation, la comparaison dit déjà pourquoi elle ne conseille pas
+        avant, _, _ = self.request(recap.removesuffix('/conditions'))
+        self.assertIn('Exemple 1 : toutes les réponses prévues ne sont pas évaluées.', avant.visible)
         # 4. L'essai jamais parti ne retient pas l'évaluation des réponses déjà reçues
         page, _, _ = self.request(recap)
         self.submit(page, '/evaluate', {})
@@ -2626,7 +2629,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
         self.assertNotIn('Aucune réponse exploitable', html)
         self.assertNotIn('Notre conseil', html)
-        self.assertIn('Une reprise ajoute une seconde tentative pour un modèle.', html)
+        self.assertIn('Une reprise a été demandée pour un modèle.', html)
 
     def depenses(self, html):
         """Récapitulatif des dépenses de la comparaison : texte entier et lignes de chaque phase"""
@@ -3270,6 +3273,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Aucune réponse exploitable pour Modèle B (arrêt pour longueur, plafond demandé : 4096 '
                       'jetons de sortie).', html)
         self.assertEqual(1, html.count('Aucune réponse exploitable pour Modèle B'))
+        # Issue #458 : la raison reste vraie quand la reprise n'a pas eu lieu
+        self.assertIn('Une reprise a été demandée pour un modèle.', html)
         # Issue #441 : la reprise refusée ne partira jamais, elle ne laisse aucune dépense en suspens
         texte, phases = self.depenses(html)
         self.assertIn('Coût complet connu', texte)
