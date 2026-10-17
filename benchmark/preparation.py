@@ -1693,16 +1693,13 @@ def _reserve_witnesses(store, connection, operation, witnesses, controller):
 
     Sans réserve possible, la vérification reste lisible et dit que le contrôle n'a pas eu lieu
     """
-    connection.execute('SAVEPOINT temoins')
+    from .storage import _savepoint
     try:
-        ids = [_reserve_witness(store, connection, operation, witness, index, controller)
-               for index, witness in enumerate(witnesses)]
-        connection.execute('RELEASE temoins')
-        return ids
+        with _savepoint(connection, 'temoins'):
+            return [_reserve_witness(store, connection, operation, witness, index, controller)
+                    for index, witness in enumerate(witnesses)]
     # Toute erreur, suppression demandée comprise : le reçu payé de la vérification s'écrit quand même
     except Exception as error:
-        connection.execute('ROLLBACK TO temoins')
-        connection.execute('RELEASE temoins')
         logging.getLogger(__name__).warning('QUALIFICATION_WITNESSES_NOT_RESERVED operation=%s error=%s',
                                             operation['operation_id'], type(error).__name__)
         return []
