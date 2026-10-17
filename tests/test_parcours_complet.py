@@ -1334,12 +1334,19 @@ class ParcoursComplet(unittest.TestCase):
             'confirm': 'yes'}, status=403)
         self.assertIn('Un autre exemple a changé depuis ce choix', refuse.visible)
         self.assertTrue(self.starts.empty())
+        # 1. Un choix fait pendant que l'exemple 2 attend sa validation ne compte que l'exemple 1, et le dit
+        page, _, _ = self.request(premier + '/configurations')
+        seul = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
+                                                     'tier': 'low'})
+        exemples = next(n['text'] for n in seul.nodes if n['attrs'].get('id') == 'exemples')
+        self.assertIn('Exemple 2 : Une action sans responsable, pour vérifier qu’elle est signalée · pas inclus : pas encore validé', exemples)
+        self.assertNotIn('exemples · ', next(n['text'] for n in seul.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text']))
         qualifier(second)
         page, _, _ = self.request(premier + '/configurations')
         page = self.submit(page, '/configurations', {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
             'tier': 'low'})
-        recap = recap.replace('-c1/', '-c2/')
+        recap = recap.replace('-c1/', '-c3/')
         self.examine(page, recap, 'nouveau récapitulatif de deux exemples', 'Lancer le benchmark')
         with closing(storage.Store(self.data)) as store:
             manifeste = campaigns.inspect(store, recap.split('/')[-2])['manifest']

@@ -892,14 +892,15 @@ def render_campaign_launch_requester(value, csrf):
                 '<table class="compact"><thead><tr><th scope="col">Modèle</th><th scope="col">Niveau de raisonnement</th>'
                 '<th scope="col">Limite de sortie</th><th scope="col">Coût estimé</th></tr></thead><tbody>'
                 + rows + '</tbody></table></div>')
-    if len(cases) > 1:
-        labels = {case['id']: example_label(case, number) for number, case in enumerate(cases, 1)}
+    if value.get('examples'):
         items = []
         for example in value.get('examples', []):
             label = 'Exemple ' + str(example['number']) + (' : ' + example['difference'] if example['difference'] else '')
             items.append(label + ('' if example['excluded'] is None else ' · pas inclus : ' + example['excluded']))
         content += ('<div id="exemples"><p>Exemples comparés : chaque modèle répond une fois à chacun. '
                     'Plusieurs exemples ne prouvent pas qu’ils représentent votre travail.</p>' + listing(items) + '</div>')
+    if len(cases) > 1:
+        labels = {case['id']: example_label(case, number) for number, case in enumerate(cases, 1)}
         rows = ''.join('<tr><th scope="row">' + text(labels[cell['case_id']]) + '</th><td>'
                        + text(model_name(next(item for item in panel if item['id'] == cell['configuration_id']), names))
                        + '</td><td>' + text(usd(cell['estimate']['amount_usd'], 'non estimable')) + '</td></tr>'

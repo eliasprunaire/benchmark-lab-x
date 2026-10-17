@@ -1415,12 +1415,15 @@ def _recap_examples(store, connection, session_id, dossier_id, snapshot):
     """Exemples de la tâche pour le récapitulatif : inclus dans la comparaison, ou laissés de côté avec leur motif"""
     from ..preparation import _cases
     manifest = snapshot['manifest']
-    if len(manifest['cases']) == 1:
-        return []
     anchor = _approved(store, connection, manifest['contract_sha256'])
     included = {own['dossier_id']: case_id for case_id, own in _contracts(store, connection, manifest, anchor).items()}
+    listed = _cases(store, connection, session_id, dossier_id)
+    # Seul le premier exemple porte une comparaison de plusieurs exemples : lui seul nomme les exemples écartés,
+    # même quand un seul entre ; une tâche d'un seul exemple n'a pas de liste
+    if not listed or listed[0]['dossier_id'] != dossier_id:
+        return []
     result = []
-    for case in _cases(store, connection, session_id, dossier_id):
+    for case in listed:
         reason = (None if case['dossier_id'] in included else
                   'en préparation' if case['stage'] == 'waiting' else
                   'pas encore validé' if not case['validated'] else
