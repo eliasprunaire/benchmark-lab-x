@@ -822,6 +822,17 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     assert.equal(tooltip.visible, true, 'infobulle absente au toucher');
     assert.ok(tooltip.left >= 0 && tooltip.right <= 390, 'infobulle hors écran ' + JSON.stringify(tooltip));
     mkdirSync('reports/privacy-browser', {recursive: true});
+    // Deux exemples : chaque tableau garde son titre et son dénominateur, et le clavier atteint chacun
+    assert.deepEqual(await page.$$eval('.comparison-results h3', titles => titles.map(title =>
+      /^\d+ réponses? évaluées? sur \d+ essais? prévus?$/.test(title.nextElementSibling.textContent))), [true, true]);
+    const reached = new Set();
+    for (let press = 0; press < 120 && reached.size < 2; press++) {
+      await page.keyboard.press('Tab');
+      const region = await page.evaluate(() => document.activeElement.matches('.table-scroll[role="region"]')
+        ? document.activeElement.getAttribute('aria-label') : null);
+      if (region) reached.add(region);
+    }
+    assert.equal(reached.size, 2, 'tableau d’un exemple hors d’atteinte au clavier');
     await page.screenshot({path: 'reports/privacy-browser/results-mobile.png', fullPage: true});
     await page.goto(origin + '/render/preview');
     assert.equal(await page.locator('h1').count(), 1, 'aperçu à plusieurs titres principaux');

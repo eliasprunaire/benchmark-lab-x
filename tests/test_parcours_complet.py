@@ -1433,7 +1433,13 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(detail, detail_href, 'détail d’une réponse de l’exemple 2', None)
         self.assertIn(notes[2].strip(), raw.decode())
         self.assertNotIn(notes[1].strip(), raw.decode())
+        # Issue #456 : le détail nomme l'exemple de la réponse, même ouvert dans la modale
+        self.assertIn('Exemple 2', next(n['text'] for n in detail.nodes if n['attrs'].get('id') == 'attempt-detail'))
         self.assertEqual('NE SATISFAIT PAS', lignes[('case-1', 'deepseek/deepseek-v4.1-flash')]['verdict'])
+        # Issue #456 : un second exemple n'est pas un essai, et son coût se classe sur son seul exemple
+        self.assertNotRegex(results.visible, r'Essai \d sur')
+        self.assertFalse(any('repetition' in row for row in lignes.values()))
+        self.assertEqual(1, lignes[('case-2', 'openai/gpt-5.6-sol')]['cost']['rank'])
         # 4. Couverture prévue et observée : la réponse perdue et l'essai jamais parti restent visibles
         self.assertIn('Exemple 2 : Aucune réponse exploitable pour Modèle B', results.visible)
         self.assertNotIn('Modèle C', second_tableau)
@@ -1444,6 +1450,30 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Notre conseil', results.visible)
         self.assertIn('Le juge automatique n’est pas qualifié', results.visible)
         self.sans_promesse(results)
+        # Issue #456 : un filtre garde chaque exemple, son dénominateur, ses essais manquants et l'échelle de ses coûts
+        sous_filtre, echelles = {}, {}
+        for filtre in ('', 'verdict=NE+SATISFAIT+PAS', 'configuration=configuration-1'):
+            page, _, raw = self.request(comparison + ('?' + filtre if filtre else ''))
+            # Modèle A coûte 0,11 USD sur l'exemple 1, dont la réponse la plus chère coûte 0,12 USD
+            echelles[filtre] = '<rect width="92%"' in raw.decode().split('<h3>Exemple ')[1]
+            parties = [Page(part.encode()).visible for part in raw.decode().split('<h3>Exemple ')]
+            self.assertEqual(3, len(parties))
+            self.assertIn('3 réponses évaluées sur 3 essais prévus', parties[1])
+            self.assertIn('1 réponse évaluée sur 3 essais prévus', parties[2])
+            self.assertIn('Exemple 2 : Modèle C n’a pas été appelé', page.visible)
+            self.assertRegex(page.visible, r'essais lancés : 5 sur 6')
+            self.assertNotIn('Notre conseil', page.visible)
+            self.assertIn('Le juge automatique n’est pas qualifié', page.visible)
+            sous_filtre[filtre] = [(part.count('Détail et preuves'),
+                                    'Aucune réponse de cet exemple ne correspond à ces filtres.' in part)
+                                   for part in parties[1:]]
+        self.assertEqual([(3, False), (1, False)], sous_filtre[''])
+        self.assertEqual([(1, False), (0, True)], sous_filtre['verdict=NE+SATISFAIT+PAS'])
+        self.assertEqual([(1, False), (1, False)], sous_filtre['configuration=configuration-1'])
+        self.assertTrue(echelles[''] and echelles['configuration=configuration-1'])
+        # Choisir un exemple n'affiche que lui
+        _, _, raw = self.request(comparison + '?case=case-2')
+        self.assertEqual(2, len(raw.decode().split('<h3>Exemple ')))
         artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
         if artefacts:
             Path(artefacts).mkdir(parents=True, exist_ok=True)
@@ -1454,7 +1484,9 @@ class ParcoursComplet(unittest.TestCase):
                  'appels_candidats_apres_redemarrage': len(recus) - 5,
                  'jugements': juge.request.call_count,
                  'references_etrangeres_lues_par_le_juge': 0,
-                 'conseil_affiche': 'Notre conseil' in results.visible},
+                 'conseil_affiche': 'Notre conseil' in results.visible,
+                 'reponses_affichees_par_exemple_sous_filtre': {filtre: [n for n, _ in comptes]
+                                                                for filtre, comptes in sous_filtre.items()}},
                 ensure_ascii=False, indent=2) + '\n')
 
     def test_reprise_pour_longueur_sur_son_propre_exemple(self):
@@ -1608,6 +1640,18 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.', results.visible)
         self.assertNotIn('%', results.visible)
         self.sans_promesse(results)
+        # Issue #456 : filtré sur Mistral, ses deux essais restent séparés et numérotés, sans conseil ni taux
+        filtre, _, raw = self.request(comparison + '?configuration=configuration-2')
+        self.assertEqual(2, raw.decode().count('<tr id="attempt-'))
+        for attendu in ('Essai 1 sur 3', 'Essai 2 sur 3', 'Modèle C, essai 3, n’a pas été appelé', 'essais lancés : 5 sur 6',
+                        'Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.'):
+            self.assertIn(attendu, filtre.visible)
+        self.assertNotIn('Notre conseil', filtre.visible)
+        # Le détail d'un essai, page ou modale, nomme son numéro
+        href = next(row['detail_href'] for row in json.loads(donnees)['rows']
+                    if (row['requested_configuration']['model'], row['repetition']) == (modeles[1], 2))
+        detail, _, _ = self.request(href)
+        self.assertIn('Essai 2 sur 3', next(n['text'] for n in detail.nodes if n['attrs'].get('id') == 'attempt-detail'))
         artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
         if artefacts:
             Path(artefacts).mkdir(parents=True, exist_ok=True)
