@@ -603,7 +603,8 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.contribute('first')
         self.assertEqual([], self.corpus('first')['campaigns'])
         # L'archive personnelle du premier exemple garde chaque réponse de la comparaison
-        record = self.record('first', archive.archive_manifest(self.store, self.sid, 'first'))
+        old_archive = archive.archive_manifest(self.store, self.sid, 'first')
+        record = self.record('first', old_archive)
         self.assertEqual(4, len(record['campaigns'][0]['models']))
         # 1. L'activité sur le premier exemple renouvelle aussi le second, jamais un dossier sans lien
         def expires(dossier):
@@ -653,6 +654,12 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertEqual(kept, [op for op in self.store.inspect_operations() if op['dossier_id'] in ('first', 'other')])
         after = prep.view(self.store, self.sid, 'first')
         self.assertEqual([], after.get('campaigns', []))
+        # L'archive du premier exemple ne sert plus la comparaison qui contenait le second
+        fresh = archive.archive_manifest(self.store, self.sid, 'first')
+        self.assertNotEqual(old_archive['snapshot_id'], fresh['snapshot_id'])
+        self.assertEqual([], self.record('first', fresh)['campaigns'])
+        with self.assertRaises((prep.Denied, LookupError, ValueError)):
+            self.record('first', old_archive)
         self.assertEqual((first_view['revision'], first_view['package_sha256'], first_view['qualified']),
                          (after['revision'], after['package_sha256'], after['qualified']))
         self.assertTrue(self.store.verify_storage()['integrity_ok'])

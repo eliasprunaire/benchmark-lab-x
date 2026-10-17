@@ -578,6 +578,11 @@ def _purge_dossier(store, connection, dossier_id, session_id, remaining, manifes
         connection.execute('DELETE FROM reservations WHERE operation_id=?', (op['operation_id'],))
         connection.execute('DELETE FROM operations WHERE operation_id=?', (op['operation_id'],))
     connection.executemany('DELETE FROM pieces WHERE piece_id=?', [(row[0],) for row in linked_outputs])
+    # L'exemple qui portait la comparaison change de contenu : ses instantanés d'archive la contenaient
+    anchors = {op['dossier_id'] for op in operations if op['operation_id'] in linked_ids} - {dossier_id}
+    for anchor in anchors:
+        connection.execute('DELETE FROM s7_archives WHERE dossier_id=?', (anchor,))
+        connection.execute('UPDATE s7_dossiers SET content_version=content_version+1 WHERE dossier_id=?', (anchor,))
     for table in ('pieces', 's2_revisions', 's2_dossiers', 'dossier_revisions'):
         connection.execute(f'DELETE FROM {table} WHERE dossier_id=?', (dossier_id,))
     connection.execute('DELETE FROM s7_archives WHERE dossier_id=?', (dossier_id,))
