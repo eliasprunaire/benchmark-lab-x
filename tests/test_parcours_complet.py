@@ -30,6 +30,9 @@ from tests.test_s4_regressions import response
 from tests.test_s3_regressions import ACTOR, check, specification
 from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
+# Lectures complètes du registre tolérées pour un lancement : une par transaction, pas une par contrôle (#528)
+LAUNCH_REGISTRY_READS = 10
+
 
 class Page(HTMLParser):
     """Lire les formulaires, le texte hors dépliants et l'ordre natif de tabulation"""
@@ -479,10 +482,17 @@ class ParcoursComplet(unittest.TestCase):
             self.assertTrue(released.wait(5), 'Admission jamais libérée')
             return admit(*args, **kwargs)
         start_form = page.form('/start')
-        with patch.object(service, 'RELAY_BUDGET_SECONDS', .3), patch.object(campaigns, 'launch', late_launch):
+        # #528 : chaque lecture du registre hors snapshot revalidait toutes les opérations, 0,6 s en production
+        validated = []
+        validate = storage._operation
+        with patch.object(service, 'RELAY_BUDGET_SECONDS', .3), patch.object(campaigns, 'launch', late_launch), \
+                patch.object(storage, '_operation', lambda record: validated.append(1) or validate(record)):
             waiting, _, _ = self.request(start_form['action'], start_form['fields'], status=504)
             released.set()
             attempts = self.starts.get(timeout=5)['candidate_attempts']
+        with closing(storage.Store(self.data)) as store:
+            registry = store._connection.execute('SELECT count(*) FROM operations').fetchone()[0]
+        self.assertLessEqual(len(validated), LAUNCH_REGISTRY_READS * registry, (len(validated), registry))
         self.examine(waiting, start_form['action'], 'attente expirée', 'Consulter l’état du lancement')
         self.assertEqual('Réponse non reçue à temps', next(n['text'] for n in waiting.nodes if n['tag'] == 'h1'))
         self.assertIn('rien n’indique qu’il a échoué', waiting.visible)

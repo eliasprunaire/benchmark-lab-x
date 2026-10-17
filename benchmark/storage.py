@@ -345,6 +345,9 @@ def _receipt(value, cost):
 before_commit: ContextVar[Callable[[sqlite3.Connection], object] | None] = ContextVar('before_commit', default=None)
 # Fichiers de pièces écrits par la transaction en cours, retirés si elle est annulée
 _created_pieces: ContextVar[list | None] = ContextVar('_created_pieces', default=None)
+# Registre validé par la transaction en cours, par connexion, avec sa version (#528). Libéré à la sortie de
+# la transaction ; un savepoint annulé passe par `_savepoint`, qui l'oublie
+_registry_copy: ContextVar[dict | None] = ContextVar('_registry_copy', default=None)
 
 
 def data_version(connection):
@@ -362,6 +365,7 @@ def _transaction(connection, *, write=False):
     connection.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
     created: list = []
     token = _created_pieces.set(created)
+    copy_token = _registry_copy.set({})
     try:
         yield
         joined = before_commit.get() if write else None
@@ -383,7 +387,25 @@ def _transaction(connection, *, write=False):
             pass
         raise
     finally:
+        _registry_copy.reset(copy_token)
         _created_pieces.reset(token)
+
+
+@contextmanager
+def _savepoint(connection, name='partiel'):
+    """Savepoint dans la transaction en cours : annulé sur erreur, sans copie du registre devenue fausse"""
+    connection.execute(f'SAVEPOINT {name}')
+    try:
+        yield
+    except BaseException:
+        connection.execute(f'ROLLBACK TO {name}')
+        connection.execute(f'RELEASE {name}')
+        # ROLLBACK TO ne change ni total_changes ni data_version : la copie est oubliée explicitement
+        copies = _registry_copy.get()
+        if copies is not None:
+            copies.clear()
+        raise
+    connection.execute(f'RELEASE {name}')
 
 
 def _text(value, label):
@@ -850,6 +872,14 @@ class Store:
         if snapshot and self._verified_operations is not None:
             return deepcopy([record for record in self._verified_operations
                              if operation_ids is None or record['operation_id'] in operation_ids])
+        # Hors snapshot, dans une même `_transaction` : la copie validée reste servie tant qu'aucune écriture de
+        # cette connexion ni d'une autre n'a eu lieu ; toute écriture fait revalider tout le registre
+        copies = _registry_copy.get() if connection is self._connection and connection.in_transaction and not snapshot else None
+        version = data_version(connection) if copies is not None else None
+        cached = copies.get(connection) if copies is not None else None
+        if cached is not None and cached[0] == version:
+            return deepcopy([record for record in cached[1]
+                             if operation_ids is None or record['operation_id'] in operation_ids])
         rows = connection.execute(
             'SELECT ' + ', '.join('o.' + column for column in _OPERATION_COLUMNS)
             + ', r.budget_id, r.amount, b.currency FROM operations o '
@@ -891,6 +921,8 @@ class Store:
             records.append(record)
         if snapshot:
             self._verified_operations = deepcopy(records)
+        if copies is not None:
+            copies[connection] = (version, deepcopy(records))
         return [record for record in records
                 if operation_ids is None or record['operation_id'] in operation_ids]
 
