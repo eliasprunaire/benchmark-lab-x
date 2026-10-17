@@ -342,6 +342,10 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                                 del form_body[key]
                             if limits:
                                 form_body['output_limits'] = limits
+                            if 'repetitions' in form_body:
+                                if not re.fullmatch('[1-9]', values['repetitions'][0]):
+                                    raise ValueError('Nombre d’essais invalide')
+                                form_body['repetitions'] = int(values['repetitions'][0])
                         if 'revision' in form_body:
                             revision = values['revision'][0]
                             if not re.fullmatch('0|[1-9][0-9]*' if self.path.endswith('/contribution') else '[1-9][0-9]*', revision):

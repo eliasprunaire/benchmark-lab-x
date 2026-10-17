@@ -1491,6 +1491,174 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIn('Modèle A', Page(section.encode()).visible)
             self.assertIn('Modèle C', Page(section.encode()).visible)
 
+    def test_essais_repetes_annonces_puis_tous_visibles(self):
+        """Issue #455 : le demandeur choisit 1 à 3 essais par modèle, tous annoncés, tous lancés, tous restitués
+
+        Modes d'échec couverts :
+        1. un nombre d'essais hors de 1 à 3 est accepté, ou le récapitulatif tait le nombre, les essais ou leur estimation ;
+        2. le nombre d'essais lancés dépend du résultat des premiers, ou un essai défavorable disparaît des résultats ;
+        3. un arrêt perd le plan ou les observations, ou un redémarrage rejoue un essai reçu ou ambigu ;
+        4. deux essais du même modèle se confondent dans le suivi, les résultats ou les essais manquants ;
+        5. un conseil ou un taux de fiabilité est déduit de plusieurs essais
+        """
+        from benchmark import automatic_judgment as auto, runtime
+        modeles = ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603']
+        # Le juge satisfait une réponse qui nomme le responsable de l'action
+        juge = self.juge_factice(ajuste=lambda contenu, constats: [
+            dict(constat, status='PASS' if 'Responsable' in contenu['output']['content'] else 'FAIL')
+            for constat in constats])
+        dossier = self.exemple_qualifie()
+        page, _, _ = self.request(dossier + '/configurations')
+        # 1. Hors de 1 à 3 : refusé, sans comparaison créée
+        for refuse in ('0', '4', 'deux'):
+            self.request(dossier + '/configurations', page.form(dossier + '/configurations')['fields']
+                         | {'models': modeles, 'tier': 'low', 'repetitions': refuse}, status=400)
+        recap = self.submit(page, '/configurations', {'models': modeles, 'tier': 'low', 'repetitions': '3'})
+        suivi = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions'
+        self.examine(recap, suivi, 'récapitulatif de trois essais par modèle', 'Lancer le benchmark')
+        synthese = next(n['text'] for n in recap.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
+        self.assertRegex(synthese, r'^2 modèles · 3 essais par modèle · 6 essais · réponses estimées : [0-9,]+ USD · ')
+        self.assertIn('Chaque modèle répond 3 fois à l’exemple', recap.visible)
+        essais = next(n for n in recap.nodes if n['tag'] == 'table' and n['attrs'].get('aria-label') == 'Essais prévus')
+        lignes = [n['text'] for n in recap.nodes if n['tag'] == 'tr' and n['text'] in essais['text']][1:]
+        self.assertEqual(['Essai 1', 'Essai 1', 'Essai 2', 'Essai 2', 'Essai 3', 'Essai 3'], [l[:7] for l in lignes])
+        self.assertTrue(all('USD' in ligne for ligne in lignes))
+        with closing(storage.Store(self.data)) as store:
+            manifeste = campaigns.inspect(store, suivi.split('/')[-2])['manifest']
+        # Essai 1 de chaque modèle avant tout essai 2 : un arrêt laisse la même couverture à chacun
+        self.assertEqual([(1, 'configuration-1'), (1, 'configuration-2'), (2, 'configuration-1'),
+                          (2, 'configuration-2'), (3, 'configuration-1'), (3, 'configuration-2')],
+                         [(cell['repetition'], cell['configuration_id']) for cell in manifeste['plan']])
+        for configuration in manifeste['panel']:
+            montants = [storage._money(cell['estimate']['amount_usd']) for cell in manifeste['plan']
+                        if cell['configuration_id'] == configuration['id']]
+            self.assertEqual(3, len(montants))
+            self.assertEqual(storage._money(configuration['estimate']['amount_usd']), sum(montants))
+        # Le choix se relit sur la page des modèles
+        _, _, raw = self.request(dossier + '/configurations')
+        self.assertRegex(raw.decode(), r'name="repetitions"[^>]*>(?:(?!</select>).)*<option value="3" selected>')
+        self.submit(recap, '/start', {}, status=303)
+        attempts = self.starts.get_nowait()['candidate_attempts']
+        self.assertEqual(6, len(attempts))
+        recus = []
+
+        def candidat(operation, request):
+            modele = request['requested_configuration']['model']
+            recus.append(modele)
+            essai = recus.count(modele)
+            if (modele, essai) == (modeles[0], 3):
+                raise RuntimeError('Réponse perdue après émission')
+            value = response(operation, request)
+            # 2. Le premier essai de Mistral échoue, le second réussit : aucun des deux ne remplace l'autre
+            value['receipt']['result']['output'] = ('Action omise' if (modele, essai) == (modeles[1], 1) else
+                                                    'Action : relire | Responsable : Camille')
+            value['cost'].update(status='KNOWN', amount=f'0.{essai}{modeles.index(modele) + 1}', currency='USD',
+                                 source='Reçu candidat #455')
+            return value
+        execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
+        self.assertEqual(modeles * 2 + modeles[:1], recus)
+        # 3. L'essai ambigu arrête la comparaison ; un redémarrage ne rejoue rien
+        with closing(storage.Store(self.data)) as store:
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
+        self.assertEqual(5, len(recus))
+        with closing(storage.Store(self.data)) as store:
+            etats = {cell['cell_id']: cell['state'] for cell in campaigns.inspect(store, suivi.split('/')[-2])['cells']}
+        self.assertEqual(['RECEIVED'] * 4 + ['AMBIGUOUS', 'INTENT_RECORDED'],
+                         [etats[cell['cell_id']] for cell in manifeste['plan']])
+        # 4. Le suivi nomme chaque essai de chaque modèle
+        page, _, _ = self.request(suivi)
+        lignes = [n['text'] for n in page.nodes if n['tag'] == 'li' and ' · essai ' in n['text']]
+        self.assertEqual([('Modèle A', '1', 'réponse reçue'), ('Modèle C', '1', 'réponse reçue'),
+                          ('Modèle A', '2', 'réponse reçue'), ('Modèle C', '2', 'réponse reçue'),
+                          ('Modèle A', '3', 'réponse non confirmée, à vérifier'), ('Modèle C', '3', 'en attente de démarrage')],
+                         [(ligne[:8], *re.search(r' · essai (\d) : (.*)$', ligne).groups()) for ligne in lignes])
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
+        page, _, _ = self.request(suivi)
+        self.submit(page, '/evaluate', {})
+        auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
+        self.assertEqual(4, juge.request.call_count)
+        self.assertEqual(5, len(recus))
+        comparison = suivi.removesuffix('/conditions')
+        results, _, raw = self.request(comparison)
+        self.examine(results, comparison, 'résultats de trois essais par modèle', None)
+        _, _, donnees = self.request(comparison, json_response=True)
+        verdicts = {(row['requested_configuration']['model'], row['repetition']): row['verdict']
+                    for row in json.loads(donnees)['rows']}
+        # 2. Chaque essai reçu a sa ligne et son verdict, l'échec du premier essai de Mistral compris
+        self.assertEqual({(modeles[0], 1): 'SATISFAIT', (modeles[0], 2): 'SATISFAIT',
+                          (modeles[1], 1): 'NE SATISFAIT PAS', (modeles[1], 2): 'SATISFAIT'}, verdicts)
+        self.assertEqual(4, raw.decode().count('<tr id="attempt-'))
+        for numero in (1, 2):
+            self.assertEqual(2, results.visible.count('Essai ' + str(numero) + ' sur 3'))
+        # 4. Les deux essais manquants restent visibles, chacun sous son numéro
+        self.assertIn('Aucune réponse exploitable pour Modèle A, essai 3', results.visible)
+        self.assertIn('Modèle C, essai 3, n’a pas été appelé', results.visible)
+        self.assertRegex(results.visible, r'essais lancés : 5 sur 6')
+        # 5. Ni conseil, ni taux : les essais se lisent un par un
+        self.assertNotIn('Notre conseil', results.visible)
+        self.assertIn('Le juge automatique n’est pas qualifié', results.visible)
+        self.assertIn('Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.', results.visible)
+        self.assertNotIn('%', results.visible)
+        self.sans_promesse(results)
+        artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
+        if artefacts:
+            Path(artefacts).mkdir(parents=True, exist_ok=True)
+            Path(artefacts, 'essais-repetes.json').write_text(json.dumps(
+                {'essais_par_modele': 3, 'essais_prevus': len(manifeste['plan']),
+                 'refus_hors_borne': ['0', '4', 'deux'], 'envois': len(recus),
+                 'etats_apres_arret': [etats[cell['cell_id']] for cell in manifeste['plan']],
+                 'appels_candidats_apres_redemarrage': len(recus) - 5, 'jugements': juge.request.call_count,
+                 'verdicts': {f'{modele} essai {essai}': verdict for (modele, essai), verdict in verdicts.items()},
+                 'conseil_affiche': 'Notre conseil' in results.visible},
+                ensure_ascii=False, indent=2) + '\n')
+
+    def test_reprise_pour_longueur_d_un_essai_repete(self):
+        """Issue #455 : la reprise technique vise un essai prévu, sans devenir un essai de plus
+
+        Modes d'échec couverts :
+        1. la reprise de l'essai 2 vise l'essai 1, ou un essai non coupé est repris ;
+        2. la reprise compte comme un essai prévu, ou l'essai 2 perd son numéro une fois repris ;
+        3. le coût de l'envoi coupé se confond avec celui de la réponse reprise
+        """
+        self.juge_factice()
+        envois_mistral = []
+
+        def comportement(value, model, limit, suivi):
+            if model == 'mistralai/mistral-small-2603':
+                envois_mistral.append(limit)
+                value['cost'].update(status='KNOWN', amount=f'0.0{len(envois_mistral)}')
+                if len(envois_mistral) == 2:
+                    self.coupee(value, 'Action : relire', limit)
+        dossier, recap, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'], comportement, repetitions=2)
+        self.assertIn('2 modèles · 2 essais par modèle · 4 essais', recap.visible)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('mistralai/mistral-small-2603', 4096)] * 2
+                         + [('mistralai/mistral-small-2603', 8192)], envois)
+        with closing(storage.Store(self.data)) as store:
+            reprise, = [json.loads(row[0]) for row in store._connection.execute(
+                "SELECT manifest_json FROM s4_campaigns WHERE json_extract(manifest_json, '$.recovery_of') IS NOT NULL")]
+            source = store._connection.execute('SELECT cell_id FROM s4_attempts WHERE operation_id=?',
+                                               (reprise['recovery_of'],)).fetchone()[0]
+            racine = campaigns.inspect(store, dossier.rsplit('/', 1)[1] + '-c1')['manifest']
+        # 1. et 2. La reprise vise le deuxième essai de Mistral et garde son numéro
+        cellule = next(cell for cell in racine['plan'] if cell['cell_id'] == source)
+        self.assertEqual((2, 'configuration-2'), (cellule['repetition'], cellule['configuration_id']))
+        self.assertEqual([cellule], reprise['plan'])
+        html = self.evaluer(dossier)
+        self.assertEqual(4, html.count('<tr id="attempt-'))
+        lignes = {Page(ligne.encode()).visible for ligne in re.findall(r'<tr id="attempt-.*?</tr>', html, re.S)}
+        reprises = [ligne for ligne in lignes if 'Reprise après arrêt pour longueur' in ligne]
+        self.assertEqual(1, len(reprises))
+        self.assertIn('Essai 2 sur 2', reprises[0])
+        self.assertIn('0,03 USD', reprises[0])
+        self.assertIn('Réponses évaluées : 4 · essais lancés : 4 sur 4.', Page(html.encode()).visible)
+        # 3. L'envoi coupé reste dans les autres envois, avec son propre coût
+        _, phases = self.depenses(html)
+        self.assertTrue(any('0,02' in item for item in phases['Autres envois aux modèles']))
+        self.assertFalse(any('0,02' in item for item in phases['Réponses comparées']))
+
     def test_temoins_relances_effet_ambigu_et_preuves_etrangeres(self):
         """Issue #445, après revue indépendante : ce qui ne doit ni qualifier ni consommer
 
@@ -2250,11 +2418,12 @@ class ParcoursComplet(unittest.TestCase):
                  'deepseek/deepseek-v4.1-flash': ('0.000003', '0.000012'),
                  'mistralai/mistral-small-2603': ('0.000004', '0.000018')}
 
-    def lancer_avec_reprises(self, models, comportement, qualifier=None):
+    def lancer_avec_reprises(self, models, comportement, qualifier=None, repetitions=None):
         """Relevé aux tarifs publiés, lancement public, puis exécution par une fabrique liée à la clé
 
         `comportement(valeur, modèle, limite, suivi)` modifie la réponse factice ; `suivi` est l'adresse
-        du suivi de la comparaison ; `qualifier()` remplace `exemple_qualifie`. Renvoie le dossier, le
+        du suivi de la comparaison ; `qualifier()` remplace `exemple_qualifie` ; `repetitions` : essais par
+        modèle choisis sur la page des modèles. Renvoie le dossier, le
         récapitulatif avant lancement, les envois (modèle, limite) et les clés reçues par la fabrique
         """
         with closing(storage.Store(self.data)) as store:
@@ -2269,7 +2438,8 @@ class ParcoursComplet(unittest.TestCase):
         dossier = (qualifier or self.exemple_qualifie)()
         suivi = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions'
         page, _, _ = self.request(dossier + '/configurations')
-        recap = self.submit(page, '/configurations', {'models': models, 'tier': 'low'})
+        recap = self.submit(page, '/configurations', {'models': models, 'tier': 'low'}
+                            | ({'repetitions': str(repetitions)} if repetitions else {}))
         self.submit(recap, '/start', {})
         attempts = self.starts.get_nowait()['candidate_attempts']
         envois, cles = [], []
@@ -2507,7 +2677,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotRegex(next(n for n in page.nodes if n['tag'] == 'main')['text'], self.PROMESSE)
 
     def comparer(self, qualites, mesure, *, constat=None, comportement=None,
-                 models=('openai/gpt-5.6-sol', 'mistralai/mistral-small-2603')):
+                 models=('openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'), repetitions=None):
         """Comparaison sans reprise de modèles satisfaisants, coûts connus sauf `comportement(valeur, modèle)`
 
         `mesure(critère, sortie)` rend la valeur du juge pour chaque critère de qualité nommé dans
@@ -2523,8 +2693,8 @@ class ParcoursComplet(unittest.TestCase):
                 value['receipt']['result']['output'] = self.SORTIE_C
             if comportement:
                 comportement(value, model)
-        dossier, _, envois, _ = self.lancer_avec_reprises(list(models), reponse)
-        self.assertEqual(len(models), len(envois))
+        dossier, _, envois, _ = self.lancer_avec_reprises(list(models), reponse, repetitions=repetitions)
+        self.assertEqual(len(models) * (repetitions or 1), len(envois))
         return dossier, self.evaluer(dossier)
 
     def test_conseil_retient_la_qualite_puis_le_cout_sur_toute_la_comparaison(self):
@@ -2803,6 +2973,19 @@ class ParcoursComplet(unittest.TestCase):
                                 models=('openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'))
         self.assertIn('Satisfait : 2', html)
         self.assertIn('Aucune réponse exploitable pour Modèle B', html)
+        self.assertNotIn('Notre conseil', html)
+
+    def test_pas_de_conseil_avec_plusieurs_essais(self):
+        """Issue #455 : les conditions du conseil départagé par le coût, avec deux essais par modèle
+
+        Mode d'échec : le conseil est donné alors que chaque modèle compte plusieurs tentatives (RULES.md §8)
+        """
+        def comportement(value, model):
+            if model == 'openai/gpt-5.6-sol':
+                value['cost'].update(amount='0.30')
+        _, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent',
+                                comportement=comportement, repetitions=2)
+        self.assertEqual(4, html.count('<tr id="attempt-'))
         self.assertNotIn('Notre conseil', html)
 
     def test_pas_de_conseil_a_egalite_finale(self):

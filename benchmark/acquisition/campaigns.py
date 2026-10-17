@@ -120,6 +120,8 @@ _AUTHORITY = ('actor', 'authority_id', 'purpose', 'manifest_sha256', 'execution_
 _OBSERVED = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters', 'effort',
              'data_collection')
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
+# Décision d'Ayo du 2026-10-17 : le demandeur choisit 1 à 3 essais par modèle et par exemple
+MAX_REPETITIONS = 3
 # Paliers des reprises après un arrêt pour longueur, dans le parcours public (RULES.md §9)
 LENGTH_RECOVERY_LIMITS = (DEFAULT_MAX_OUTPUT_TOKENS * 2, DEFAULT_MAX_OUTPUT_TOKENS * 4)
 COMPARISON_COST_BASIS = {'scope': 'Une tentative par cellule', 'attempts': 'Sans reprise',
@@ -291,12 +293,25 @@ def _manifest(value, contract, contracts=None, *, require_data_collection=False)
             raise ValueError('Liste de ressources requise')
     if type(conditions['defaults']) is not dict or type(conditions['environment']) is not dict or not conditions['environment']:
         raise ValueError('Conditions communes incomplètes')
-    cells = _entries(value['plan'], ('cell_id', 'case_id', 'configuration_id'), 'plan', ('estimate',))
+    cells = _entries(value['plan'], ('cell_id', 'case_id', 'configuration_id'), 'plan', ('estimate', 'repetition'))
     for cell in value['plan']:
         if cell['case_id'] not in cases or cell['configuration_id'] not in panel:
             raise ValueError('Cellule hors du manifeste')
         if 'estimate' in cell:
             encode(cell['estimate'])
+        if 'repetition' in cell and (type(cell['repetition']) is not int or not 1 <= cell['repetition'] <= MAX_REPETITIONS):
+            raise ValueError('Essai prévu invalide')
+    # Essais prévus : le même nombre pour chaque exemple et chaque modèle, numérotés de 1 à ce nombre ;
+    # une reprise technique garde le numéro de l'essai qu'elle vise
+    repeated = sum('repetition' in cell for cell in value['plan'])
+    if repeated and 'recovery_of' not in value:
+        groups = {}
+        for cell in value['plan']:
+            groups.setdefault((cell['case_id'], cell['configuration_id']), []).append(cell.get('repetition'))
+        count = len(value['plan']) // len(groups)
+        if (repeated != len(value['plan']) or count < 2
+                or any(sorted(numbers) != list(range(1, count + 1)) for numbers in groups.values())):
+            raise ValueError('Essais prévus inégaux')
     policy = value['attempt_policy']
     _fields(policy, ('retries', 'order', 'reason'), 'attempt_policy')
     _texts(policy['order'], 'order', required=True, unique=True)
@@ -611,6 +626,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
     body = dict(body)
     efforts = body.pop('efforts', {})
     limits = body.pop('output_limits', {})
+    repetitions = body.pop('repetitions', 1)
     _fields(body, ('models', 'tier'), 'configurations')
     if (type(body['models']) is not list or len(body['models']) < 2
             or len(set(body['models'])) != len(body['models'])
@@ -624,6 +640,8 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
     if (type(limits) is not dict or not set(limits) <= set(body['models'])
             or any(type(limit) is not int or limit <= 0 for limit in limits.values())):
         raise ValueError('Limites de sortie par modèle invalides')
+    if type(repetitions) is not int or not 1 <= repetitions <= MAX_REPETITIONS:
+        raise ValueError('Nombre d’essais invalide')
     if type(candidate_identity) is not dict:
         raise LookupError('CANDIDATE_PI_UNAVAILABLE')
     _intact(store)
@@ -660,7 +678,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
                     'cached_input_tokens': 0, 'requests_per_cell': 1}
         per_case = [assumptions_for(example) for example in retained]
         # Toutes les cellules d'une configuration : leurs entrées s'additionnent, une réponse chacune
-        assumptions = dict(per_case[0], input_tokens=sum(item['input_tokens'] for item in per_case))
+        assumptions = dict(per_case[0], input_tokens=sum(item['input_tokens'] for item in per_case) * repetitions)
         largest = max(item['input_tokens'] for item in per_case)
         limits = {model['id']: limits.get(model['id'], DEFAULT_MAX_OUTPUT_TOKENS) for model in selected}
         from ..preparation import Denied
@@ -676,7 +694,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
                     model=model['name'] or model['id'], limit=limit, reason=reason,
                     bound=bound if reason == 'bound' else room)])
         panel = [_configuration(model, body['tier'], index, assumptions, catalogue['fetched_at'],
-                                efforts.get(model['id']), limits[model['id']], len(retained))
+                                efforts.get(model['id']), limits[model['id']], len(retained) * repetitions)
                  for index, model in enumerate(selected, 1)]
         # Une comparaison purgée avec un autre exemple laisse son enveloppe : son numéro ne revient jamais
         used = [int(match.group(1)) for (name,) in connection.execute(
@@ -685,18 +703,20 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
         campaign_id = f'{dossier_id}-c{max(used, default=0) + 1}'
         cases = [{'id': f'case-{number}', 'package_sha256': example['package_sha256']}
                  for number, example in zip(numbers, retained)]
-        plan = [dict(cell_id=f'cell-{index}', case_id=cases[0]['id'], configuration_id=config['id'])
-                for index, config in enumerate(panel, 1)]
         if len(retained) > 1:
             for case, example in zip(cases, retained):
                 case['contract_sha256'] = value_digest(example)
-            # Une cellule par exemple et par configuration, exemple par exemple, chacune avec sa prévision
-            by_id = {model['id']: model for model in selected}
-            plan = [dict(cell_id=f'cell-{index}', case_id=case['id'], configuration_id=config['id'],
-                         estimate=_estimate(by_id[config['model']], item, catalogue['fetched_at'],
-                                            limits[config['model']]))
-                    for index, (case, item, config) in enumerate(
-                        ((case, item, config) for case, item in zip(cases, per_case) for config in panel), 1)]
+        # Une cellule par exemple, par essai et par configuration : chaque modèle reçoit son essai 1 avant
+        # tout essai 2, pour qu'un arrêt laisse la même couverture à chacun. Plusieurs cellules par
+        # configuration : chacune porte sa prévision
+        by_id = {model['id']: model for model in selected}
+        order = [(case, item, repetition, config) for case, item in zip(cases, per_case)
+                 for repetition in range(1, repetitions + 1) for config in panel]
+        plan = [dict(cell_id=f'cell-{index}', case_id=case['id'], configuration_id=config['id'])
+                | ({'repetition': repetition} if repetitions > 1 else {})
+                | ({'estimate': _estimate(by_id[config['model']], item, catalogue['fetched_at'], limits[config['model']])}
+                   if len(order) > len(panel) else {})
+                for index, (case, item, repetition, config) in enumerate(order, 1)]
         manifest = dict(
             campaign_id=campaign_id, version=1, contract_sha256=value_digest(contract), cases=cases, panel=panel,
             conditions=dict(
@@ -711,7 +731,7 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
                 frozen_at=_now()),
             plan=plan,
             attempt_policy=dict(retries=False, order=[cell['cell_id'] for cell in plan],
-                                reason='Ordre de sélection du demandeur'),
+                                reason='Ordre de sélection du demandeur' + (', essai par essai' if repetitions > 1 else '')),
             cost_basis=contract['specification']['cost_basis'], funding='requester')
         _create(store, connection, manifest)
     return configurations_view(store, session_id, dossier_id)
@@ -737,6 +757,7 @@ def configurations_view(store, session_id, dossier_id):
                     if not snapshot['admissions'] and not snapshot['attempts']]
         # Pré-cochée : la dernière sélection du dossier, même lancée, jamais une plus ancienne restée prête
         panel = [] if not requested else requested[-1]['manifest']['panel']
+        repetitions = max((cell.get('repetition', 1) for cell in requested[-1]['manifest']['plan']), default=1) if requested else 1
         selected = {item['model'] for item in panel}
         available_tiers = ['low', 'high']
         # Ce qui a été demandé : le palier commun pour les modèles sans choix propre, le choix sinon
@@ -763,6 +784,7 @@ def configurations_view(store, session_id, dossier_id):
                               'default_output_tokens': DEFAULT_MAX_OUTPUT_TOKENS,
                               'current_campaign_id': None, 'configurations': [], 'models': models,
                               'current_tier': current_tier, 'superseded': [],
+                              'repetitions': repetitions, 'max_repetitions': MAX_REPETITIONS,
                               'available_tiers': available_tiers, 'estimate_total_usd': None,
                               'estimate_available': False, 'assumptions': None,
                               'fetched_at': None if catalogue is None else catalogue['fetched_at'],
@@ -777,7 +799,7 @@ def configurations_view(store, session_id, dossier_id):
             'default_output_tokens': DEFAULT_MAX_OUTPUT_TOKENS,
             'current_campaign_id': current['manifest']['campaign_id'],
             'configurations': current['manifest']['panel'],
-            'current_tier': current_tier,
+            'current_tier': current_tier, 'repetitions': repetitions, 'max_repetitions': MAX_REPETITIONS,
             'superseded': [snapshot['manifest']['campaign_id'] for snapshot in prepared[:-1]],
             'available_tiers': available_tiers, 'estimate_total_usd': total,
             'estimate_available': total is not None,
