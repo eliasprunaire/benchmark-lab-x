@@ -2945,7 +2945,7 @@ class ParcoursComplet(unittest.TestCase):
                     (('higher',), ('complete', 'multi-case', 'multi-agree', 'multi-disagree', 'unstarted', 'pending',
                                     'single-eligible')),
                     (('lower',), ('complete', 'equal-quality', 'equal-final', 'precise')),
-                    (('higher', 'lower'), ('complete', 'tradeoff'))):
+                    (('higher', 'lower'), ('complete', 'tradeoff', 'multi-tradeoff'))):
                 spec = specification(reference)
                 spec['secondary_criteria'] = [dict(id=direction, measure='Quantité fictive' if direction == 'higher' else 'Durée fictive',
                     proof='Sortie conservée', unit='éléments' if direction == 'higher' else 's', favorable=direction, aggregation=None)
@@ -2962,7 +2962,7 @@ class ParcoursComplet(unittest.TestCase):
                             m['cases'].append(dict(id='other', package_sha256=candidate['contract']['package_sha256']))
                             m['plan'][1]['case_id'] = 'other'
                         # Deux exemples, chacun avec les deux modèles
-                        both = scenario in ('multi-agree', 'multi-disagree')
+                        both = scenario in ('multi-agree', 'multi-disagree', 'multi-tradeoff')
                         if both:
                             m['cases'].append(dict(id='other', package_sha256=candidate['contract']['package_sha256']))
                             m['plan'] += [dict(cell_id=ident + '2', case_id='other', configuration_id=ident) for ident in ('x', 'y')]
@@ -2995,7 +2995,9 @@ class ParcoursComplet(unittest.TestCase):
                                 piece = ctx['attempt']['output_piece_id']
                                 result['measures'] = []
                                 for definition in spec['secondary_criteria']:
-                                    values = ('2', '1') if definition['favorable'] == 'higher' or scenario == 'tradeoff' else ('1', '2')
+                                    # multi-tradeoff croise les qualités sur l'exemple 2 seulement
+                                    crossed = scenario == 'tradeoff' or (scenario == 'multi-tradeoff' and cell.endswith('2'))
+                                    values = ('2', '1') if definition['favorable'] == 'higher' or crossed else ('1', '2')
                                     if scenario in ('equal-quality', 'equal-final'):
                                         values = ('1', '1')
                                     if scenario == 'precise':
@@ -3044,7 +3046,7 @@ class ParcoursComplet(unittest.TestCase):
                             expected = {'multi-case': ('few', 'notes'), 'multi-disagree': ('disagreement', None),
                                         'unstarted': ('incomplete', None), 'pending': ('incomplete', None),
                                         'single-eligible': ('few', None), 'equal-final': ('tie', None),
-                                        'tradeoff': ('tradeoff', None)}[scenario]
+                                        'tradeoff': ('tradeoff', None), 'multi-tradeoff': ('tradeoff', 'other')}[scenario]
                             self.assertEqual(expected, (result['abstention']['reason'], result['abstention']['case_id']))
                             if scenario == 'multi-disagree':
                                 self.assertEqual([('notes', 'fictional-x'), ('other', 'fictional-y')],
@@ -3053,6 +3055,9 @@ class ParcoursComplet(unittest.TestCase):
                                 self.assertIn('Les exemples ne désignent pas le même modèle', page.visible)
                             if scenario == 'multi-case':
                                 self.assertIn('Exemple 1 : moins de deux réponses satisfont l’exemple.', page.visible)
+                            if scenario == 'multi-tradeoff':
+                                self.assertIn('Exemple 2 : aucune réponse n’est la meilleure sur tous les critères de qualité.',
+                                              page.visible)
 
     def test_pas_de_conseil_avec_une_reponse_absente(self):
         """Deux réponses satisfaisantes départageables ; la troisième n'a pas de réponse exploitable"""
