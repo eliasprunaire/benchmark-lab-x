@@ -98,7 +98,8 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
     if enabled and method == 'POST' and path != '/preparation/activity':
         dossier = re.match(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})(?:/|$)', path)
         created = body.get('dossier_id') if path == '/preparation/dossiers' and isinstance(body, dict) else None
-        effect = _activity_with_effect(store, p.session(store, token)[0], dossier.group(1) if dossier else created)
+        effect = _activity_with_effect(store, p.session(store, token)[0], dossier.group(1) if dossier else created,
+                                       _campaign_of(path))
     else:
         effect = nullcontext([])
     with effect as joined:
@@ -115,7 +116,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         try:
             session_id, csrf, _ = p.session(store, cookie or token)
             if method == 'POST' and path != '/preparation/activity' and not joined:
-                privacy.activity(store, session_id, dossier_id)
+                privacy.activity(store, session_id, dossier_id, campaign_id=_campaign_of(path))
             state = store._connection.execute('SELECT expires_at FROM s7_sessions WHERE session_id=?', (session_id,)).fetchone()
             privacy_state: dict = {'csrf_token': csrf, 'session_expires_at': state[0]}
             value['privacy'] = privacy_state
@@ -123,6 +124,9 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
                 row = store._connection.execute('SELECT content_version FROM s7_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()
                 if row:
                     privacy_state.update(dossier_id=dossier_id, content_version=row[0])
+                    # Une page de la comparaison la nomme : l'activité y renouvelle aussi ses autres exemples
+                    if _campaign_of(path):
+                        privacy_state['campaign_id'] = _campaign_of(path)
                     from . import privacy_archive as archives
                     current = p.owner(store._connection, session_id, dossier_id)
                     contribution = archives.contribution_view(store, session_id, dossier_id)['contribution']
@@ -139,8 +143,14 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
     return code, value, cookie, work
 
 
+def _campaign_of(path):
+    """Comparaison nommée par l'adresse d'une de ses pages, ou None"""
+    route = re.match(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/campaigns/([A-Za-z0-9_-]{1,128})(?:/|$)', urlsplit(path).path)
+    return route.group(1) if route else None
+
+
 @contextmanager
-def _activity_with_effect(store, session_id, dossier_id):
+def _activity_with_effect(store, session_id, dossier_id, campaign_id=None):
     """Écrit l'activité dans chaque transaction d'écriture de l'effet, avant son COMMIT
 
     Écrite à part après un effet commis, elle pourrait échouer seule et faire annoncer comme non
@@ -154,7 +164,7 @@ def _activity_with_effect(store, session_id, dossier_id):
 
     def join(connection):
         if connection is store._connection:
-            privacy.extend_activity(connection, session_id, dossier_id)
+            privacy.extend_activity(connection, session_id, dossier_id, campaign_id=campaign_id)
             joined.append(connection)
     reset = storage.before_commit.set(join)
     try:
@@ -233,9 +243,12 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
         body = {key: value for key, value in body.items() if key != 'csrf_token'}
         if path == '/preparation/activity':
             from . import privacy
-            if set(body) - {'dossier_id'} or body.get('dossier_id') is not None and not isinstance(body['dossier_id'], str):
+            if (set(body) - {'dossier_id', 'campaign_id'}
+                    or any(body.get(key) is not None and not isinstance(body[key], str) for key in body)
+                    or 'campaign_id' in body and 'dossier_id' not in body):
                 raise ValueError('Activité invalide')
-            return 200, privacy.activity(store, session_id, body.get('dossier_id')), token, None
+            return 200, privacy.activity(store, session_id, body.get('dossier_id'),
+                                         campaign_id=body.get('campaign_id')), token, None
     if method == 'POST' and (path == '/preparation/dossiers' or
             re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/(messages|validation)', path)):
         if transport is None or (path.endswith('/validation') and qualification_transport is None):

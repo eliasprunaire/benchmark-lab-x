@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
 import json
+import re
 from pathlib import Path
 import secrets
 import sqlite3
@@ -677,8 +678,11 @@ def prepare_configurations(store, session_id, dossier_id, body, candidate_identi
         panel = [_configuration(model, body['tier'], index, assumptions, catalogue['fetched_at'],
                                 efforts.get(model['id']), limits[model['id']], len(retained))
                  for index, model in enumerate(selected, 1)]
-        count = len(_requester_campaigns(store, connection, dossier_id))
-        campaign_id = f'{dossier_id}-c{count + 1}'
+        # Une comparaison purgée avec un autre exemple laisse son enveloppe : son numéro ne revient jamais
+        used = [int(match.group(1)) for (name,) in connection.execute(
+                    'SELECT campaign_id FROM s4_campaigns UNION SELECT budget_id FROM budgets')
+                if (match := re.fullmatch(re.escape(dossier_id) + r'-c([0-9]+)', name))]
+        campaign_id = f'{dossier_id}-c{max(used, default=0) + 1}'
         cases = [{'id': f'case-{number}', 'package_sha256': example['package_sha256']}
                  for number, example in zip(numbers, retained)]
         plan = [dict(cell_id=f'cell-{index}', case_id=cases[0]['id'], configuration_id=config['id'])

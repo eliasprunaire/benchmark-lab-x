@@ -338,6 +338,7 @@ function mountActivity(root) {
     pending = true;
     const body = {csrf_token: marker.dataset.csrfToken};
     if (marker.dataset.dossierId) body.dossier_id = marker.dataset.dossierId;
+    if (marker.dataset.dossierId && marker.dataset.campaignId) body.campaign_id = marker.dataset.campaignId;
     try {await post('/preparation/activity', body);}
     catch {
       const status = marker.querySelector('[data-privacy-status]');

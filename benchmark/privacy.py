@@ -278,18 +278,18 @@ def authorize_dossier(connection, session_id, dossier_id, current=None):
         raise Gone('Ce cas d’usage n’est plus accessible sur le serveur')
 
 
-def compared_dossiers(connection, dossier_id):
-    """Autres exemples des comparaisons que porte ce dossier : leur activité suit la sienne (#454)"""
-    if not connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_campaigns'").fetchone():
+def compared_dossiers(connection, dossier_id, campaign_id):
+    """Autres exemples de cette comparaison, portée par ce dossier : l'activité sur elle les renouvelle (#454)"""
+    if campaign_id is None or not connection.execute("SELECT 1 FROM sqlite_schema WHERE name='s4_campaigns'").fetchone():
         return []
     return [row[0] for row in connection.execute(
         'SELECT DISTINCT c.dossier_id FROM s4_campaigns a JOIN s2_comparison_contracts o USING(contract_sha256), '
         "json_each(a.manifest_json, '$.cases') j JOIN s2_comparison_contracts c "
         "ON c.contract_sha256=json_extract(j.value, '$.contract_sha256') "
-        'WHERE o.dossier_id=? AND c.dossier_id!=?', (dossier_id, dossier_id))]
+        'WHERE o.dossier_id=? AND a.campaign_id=? AND c.dossier_id!=?', (dossier_id, campaign_id, dossier_id))]
 
 
-def extend_activity(connection, session_id, dossier_id=None, current=None):
+def extend_activity(connection, session_id, dossier_id=None, current=None, campaign_id=None):
     """Prolonge seulement les échéances encore ouvertes, sans lever
 
     Jointe à une écriture déjà autorisée, elle ne doit ni l'annuler ni rouvrir un accès échu
@@ -300,12 +300,12 @@ def extend_activity(connection, session_id, dossier_id=None, current=None):
         connection.executemany("UPDATE s7_dossiers SET last_activity_at=?,expires_at=? "
                                "WHERE dossier_id=? AND session_id=? AND state='ACTIVE' AND expires_at>?",
                                [(at, (current + DOSSIER_LIFETIME).isoformat(), dossier, session_id, at)
-                                for dossier in [dossier_id] + compared_dossiers(connection, dossier_id)])
+                                for dossier in [dossier_id] + compared_dossiers(connection, dossier_id, campaign_id)])
     connection.execute('UPDATE s7_sessions SET last_activity_at=?,expires_at=? WHERE session_id=? AND expires_at>?',
                        (at, (current + SESSION_LIFETIME).isoformat(), session_id, at))
 
 
-def activity(store, session_id, dossier_id=None, *, current=None):
+def activity(store, session_id, dossier_id=None, *, current=None, campaign_id=None):
     connection = store._connection_checked()
     current = current or now()
     with _transaction(connection, write=True):
@@ -319,7 +319,7 @@ def activity(store, session_id, dossier_id=None, *, current=None):
                                    "WHERE dossier_id=? AND session_id=? AND state='ACTIVE' AND expires_at>?",
                                    [(current.isoformat(), (current + DOSSIER_LIFETIME).isoformat(), dossier,
                                      session_id, current.isoformat())
-                                    for dossier in compared_dossiers(connection, dossier_id)])
+                                    for dossier in compared_dossiers(connection, dossier_id, campaign_id)])
         expires = (current + SESSION_LIFETIME).isoformat()
         connection.execute('UPDATE s7_sessions SET last_activity_at=?,expires_at=? WHERE session_id=?',
                            (current.isoformat(), expires, session_id))
@@ -525,6 +525,10 @@ def _purge_dossier(store, connection, dossier_id, session_id, remaining, manifes
     # Portée par un autre exemple, elle emporte ses essais, sorties et jugements, rattachés à cet exemple
     linked = {cid for cid, manifest in manifests.items() if cid not in campaigns and any(
         case.get('contract_sha256') in contracts for case in manifest.get('cases', []))}
+    # Exemple qui porte chaque comparaison liée, lu dans son manifeste, lancée ou non
+    anchors = {row[0] for cid in linked for row in connection.execute(
+        'SELECT c.dossier_id FROM s2_comparison_contracts c JOIN s4_campaigns a USING(contract_sha256) '
+        'WHERE a.campaign_id=?', (cid,))} - {dossier_id}
     linked_outputs = connection.execute(
         'SELECT p.piece_id,p.relative_path,p.sha256,p.size_bytes FROM pieces p JOIN s4_results r ON r.output_piece_id=p.piece_id '
         f"JOIN s4_attempts a USING(operation_id) WHERE a.campaign_id IN ({','.join('?' * len(linked))})",
@@ -579,7 +583,6 @@ def _purge_dossier(store, connection, dossier_id, session_id, remaining, manifes
         connection.execute('DELETE FROM operations WHERE operation_id=?', (op['operation_id'],))
     connection.executemany('DELETE FROM pieces WHERE piece_id=?', [(row[0],) for row in linked_outputs])
     # L'exemple qui portait la comparaison change de contenu : ses instantanés d'archive la contenaient
-    anchors = {op['dossier_id'] for op in operations if op['operation_id'] in linked_ids} - {dossier_id}
     for anchor in anchors:
         connection.execute('DELETE FROM s7_archives WHERE dossier_id=?', (anchor,))
         connection.execute('UPDATE s7_dossiers SET content_version=content_version+1 WHERE dossier_id=?', (anchor,))
@@ -649,6 +652,10 @@ def purge(data, *, wait=0.0, drain=0.0, _reconciled_store=None):
                 held.enter_context(worker_lock(store, wait=drain))
             except BlockingIOError:
                 return {'purged': [], 'pending': True, 'lock': 'UNAVAILABLE'}
+            # Seule écriture de schéma de #454, sous les verrous exclusifs : les déclencheurs d'une base
+            # antérieure désignent ensuite aussi les dossiers des autres exemples d'une comparaison
+            with _transaction(connection, write=True):
+                upgrade_deletion_triggers(connection)
             proof = store.verify_storage()
             if not proof['integrity_ok'] or proof['orphan_files']:
                 raise IntegrityError('Stockage à rapprocher avant purge')

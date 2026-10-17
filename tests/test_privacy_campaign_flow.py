@@ -568,11 +568,14 @@ class PrivacyCampaignFlow(unittest.TestCase):
         """Issue #454, décision d'Ayo du 2026-10-17 : une comparaison de plusieurs exemples est liée à chacun d'eux
 
         Modes d'échec couverts :
-        1. l'activité sur l'exemple qui porte la comparaison laisse expirer un autre exemple qu'elle utilise ;
+        1. l'activité sur la comparaison laisse expirer un autre exemple qu'elle utilise, ou une activité hors
+           de la comparaison le renouvelle ;
         2. la purge d'un exemple utilisé est différée, ou laisse la comparaison, ses essais, ses sorties ou ses jugements ;
         3. cette purge touche l'exemple qui portait la comparaison au-delà de cette comparaison, ou un dossier sans lien ;
         4. la copie de contribution emporte une comparaison qui contient un autre exemple ;
-        5. une base aux déclencheurs antérieurs refuse l'ouverture au lieu d'être mise à niveau
+        5. une base aux déclencheurs antérieurs refuse l'ouverture, est réécrite à l'ouverture (une sauvegarde
+           vérifiée serait altérée), ou garde ses déclencheurs après la purge ;
+        6. une comparaison créée après la purge reprend l'identifiant, donc l'enveloppe, de la comparaison purgée
         """
         from datetime import timedelta
         self.prepare('first')
@@ -606,15 +609,21 @@ class PrivacyCampaignFlow(unittest.TestCase):
         old_archive = archive.archive_manifest(self.store, self.sid, 'first')
         record = self.record('first', old_archive)
         self.assertEqual(4, len(record['campaigns'][0]['models']))
-        # 1. L'activité sur le premier exemple renouvelle aussi le second, jamais un dossier sans lien
+        # 1. Seule l'activité sur la comparaison renouvelle le second exemple, jamais un dossier sans lien
         def expires(dossier):
             return self.store._connection.execute('SELECT expires_at FROM s7_dossiers WHERE dossier_id=?',
                                                   (dossier,)).fetchone()[0]
+        before = {dossier: expires(dossier) for dossier in ('second', 'other')}
+        privacy.activity(self.store, self.sid, 'first', current=NOW + timedelta(days=4))
+        self.assertEqual(before, {dossier: expires(dossier) for dossier in ('second', 'other')})
         later = NOW + timedelta(days=5)
-        before = expires('other')
-        privacy.activity(self.store, self.sid, 'first', current=later)
+        privacy.activity(self.store, self.sid, 'first', current=later, campaign_id=cid)
         self.assertEqual((later + privacy.DOSSIER_LIFETIME).isoformat(), expires('second'))
-        self.assertEqual(before, expires('other'))
+        self.assertEqual(before['other'], expires('other'))
+        # Une page de la comparaison la nomme dans son signal d'activité ; la page de l'exemple ne le fait pas
+        for path, named in (('/preparation/dossiers/first/campaigns/' + cid, True), ('/preparation/dossiers/first', False)):
+            _, value, _, _ = web_api.dispatch(self.store, 'GET', path, self.token, None, 'a' * 40, None)
+            self.assertEqual(named, ('data-campaign-id="' + cid + '"') in views.render(value, 'csrf', path).decode())
         # 5. Une base aux déclencheurs antérieurs à #454 est mise à niveau à l'ouverture
         connection = self.store._connection
         legacy = privacy.legacy_deletion_triggers()
@@ -623,13 +632,15 @@ class PrivacyCampaignFlow(unittest.TestCase):
             for table, sql in legacy.items():
                 connection.execute(f'DROP TRIGGER {table}_delete')
                 connection.execute(sql)
+        def triggers():
+            found = dict(self.store._connection.execute(
+                "SELECT tbl_name, sql FROM sqlite_schema WHERE type='trigger' AND name LIKE '%_delete'").fetchall())
+            return {table: found[table] for table in legacy}
         self.store.close()
         self.store = storage.Store(self.data)
         self.addCleanup(self.store.close)
-        triggers = dict(self.store._connection.execute(
-            "SELECT tbl_name, sql FROM sqlite_schema WHERE type='trigger' AND name LIKE '%_delete'").fetchall())
-        self.assertEqual({table: privacy.deletion_trigger(table) for table in legacy},
-                         {table: triggers[table] for table in legacy})
+        # L'ouverture lit cette base sans l'écrire
+        self.assertEqual(legacy, triggers())
         # 2. et 3. Supprimer le second exemple supprime la comparaison, sans toucher au reste du premier
         operations = {op['operation_id'] for op in auto.operations(self.store, self.store._connection, cid)}
         operations |= {row[0] for row in self.store._connection.execute(
@@ -645,6 +656,7 @@ class PrivacyCampaignFlow(unittest.TestCase):
         privacy.request_delete(self.store, self.sid, 'second')
         report = privacy.purge(self.data)
         self.assertEqual((['second'], []), (report['purged'], report['operator_review']))
+        self.assertEqual({table: privacy.deletion_trigger(table) for table in legacy}, triggers())
         for table in ('s4_campaigns', 's4_cells', 's4_attempts', 's4_status', 's4_caps', 's4_admissions'):
             self.assertEqual(0, self.store._connection.execute(
                 f'SELECT count(*) FROM {table} WHERE campaign_id=?', (cid,)).fetchone()[0], table)
@@ -660,6 +672,14 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertEqual([], self.record('first', fresh)['campaigns'])
         with self.assertRaises((prep.Denied, LookupError, ValueError)):
             self.record('first', old_archive)
+        # 6. Une nouvelle comparaison du premier exemple prend un identifiant neuf et se lance
+        again = campaigns.prepare_configurations(self.store, self.sid, 'first',
+            dict(models=['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], tier='low'), identity)['current_campaign_id']
+        self.assertNotEqual(cid, again)
+        fresh_snapshot = campaigns.inspect(self.store, again)
+        self.assertEqual(2, len(campaigns.launch(self.store, self.sid, 'first', again, dict(
+            manifest_version=1, frozen_at=fresh_snapshot['manifest']['conditions']['frozen_at'], confirm='yes'),
+            access_secret=SECRET, access_transport=self.access)))
         self.assertEqual((first_view['revision'], first_view['package_sha256'], first_view['qualified']),
                          (after['revision'], after['package_sha256'], after['qualified']))
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
