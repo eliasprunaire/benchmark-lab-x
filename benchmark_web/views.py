@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import secrets
 
-from benchmark.preparation import binding
+from benchmark.preparation import CONTEXT_MAX, binding
 from benchmark.storage import _strict_json as encode
 
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
@@ -677,6 +677,38 @@ def render(value, csrf, path='/preparation', *, error=False):
                 content += ('<p><a href="' + text(url) + '/configurations">Choisir d’autres modèles</a> : '
                             'une nouvelle comparaison sera préparée, et les résultats actuels restent disponibles.</p>')
             content += '</section>'
+        cases = value.get('cases', [])
+        if cases:
+            def case_state(case):
+                if case['drifted']:
+                    return 'contrat d’une ancienne version de l’exemple 1'
+                if case['validated']:
+                    return 'exemple vérifié' if case['qualified'] else 'validé, vérification en attente ou à revoir'
+                return 'à valider' if case['stage'] == 'preview' else stages[case['stage']][1].lower()
+            drifted = any(case['drifted'] for case in cases)
+            content += section('Exemples de cette tâche', '<ul>' + ''.join(
+                '<li>' + ('Exemple ' + str(case['number']) + ' (cette page)' if case['current'] else
+                          '<a href="/preparation/dossiers/' + text(case['dossier_id']) + '">Exemple ' + str(case['number']) + '</a>')
+                + ' : ' + text(case_state(case)) + '.'
+                + (' Ce qui le distingue : ' + text(case['difference']) if case['difference'] else '') + '</li>'
+                for case in cases) + '</ul>'
+                + ('<p class="note">Le contrat de l’exemple 1 a changé depuis la création de certains exemples : '
+                   'ces exemples ne suivent plus la même consigne. Ajoutez-les de nouveau depuis l’exemple 1.' if drifted else
+                   '<p class="note">Tous les exemples suivent la même consigne, les mêmes livrables et les mêmes critères.')
+                + ' Plusieurs exemples ne prouvent pas qu’ils représentent votre travail : chacun reste inventé, validé et '
+                'vérifié séparément.</p>', 'cas')
+        if value['validation'] and (not cases or cases[0]['current']) and not snapshot and not prior_revision and not referral:
+            content += ('<details><summary class="button sec">' + icon('i-pen') + 'Ajouter un autre exemple à cette tâche</summary><div>'
+                        '<p id="case-context-help">Le nouvel exemple reprend la consigne, les livrables, les critères et les '
+                        'ambiguïtés acceptables de cette version. L’assistant prépare d’autres pièces et un autre résultat de '
+                        'référence, à valider puis vérifier séparément. Cette préparation est payée avec votre clé OpenRouter. '
+                        'Stabilisez cet exemple avant d’en ajouter d’autres : une correction ultérieure de sa consigne ne se '
+                        'reporte pas aux exemples déjà créés.</p>' + form(csrf, '/preparation/dossiers',
+                {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16), 'case_of': dossier_id},
+                '<label for="case-context">Ce qui distingue cet exemple, par exemple la difficulté qu’il couvre</label>'
+                '<textarea id="case-context" name="context" required maxlength="' + str(CONTEXT_MAX)
+                + '" rows="2" aria-describedby="case-context-help"' + disabled + '></textarea>'
+                '<button type="submit"' + disabled + '>Préparer cet exemple</button>') + '</div></details>')
         labels = {'PENDING': 'En attente', 'QUALIFIED': 'Vérification réussie',
                   'BLOCKED': 'Bloquée : la réponse de référence ou les contrôles ne sont pas assez établis'}
         if package and not referral:

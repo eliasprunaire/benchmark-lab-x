@@ -89,15 +89,21 @@ def _normalized_text(value, field, minimum, maximum):
 
 
 def _normalized_submission(body, create):
-    required = {'dossier_id', 'action_id', 'request'} if create else {'action_id', 'revision', 'kind', 'message'}
-    optional = {'useful', 'context'} if create else set()
     source_sha256 = body.get('source_sha256') if type(body) is dict else None
+    # Un autre cas de la même tâche : la demande vient du premier cas, seul le contexte distingue le nouveau
+    case = create and 'case_of' in body
+    required = ({'dossier_id', 'action_id', 'case_of', 'context'} if case else
+                {'dossier_id', 'action_id', 'request'} if create else {'action_id', 'revision', 'kind', 'message'})
+    optional = set() if case else {'useful', 'context'} if create else set()
     if type(source_sha256) is not str or re.fullmatch(r'[0-9a-f]{64}', source_sha256) is None:
         raise Denied('SOURCE_MISSING', 'source_sha256')
     if not required <= body.keys() or not body.keys() <= required | optional | {'source_sha256'}:
         raise ValueError('Formulaire invalide')
     result = {key: value for key, value in body.items() if key != 'source_sha256'}
-    if create:
+    if case:
+        identifier(result['case_of'])
+        result['context'] = _normalized_text(result['context'], 'context', 1, CONTEXT_MAX)
+    elif create:
         result['request'] = _normalized_text(result['request'], 'request', REQUEST_MIN, REQUEST_MAX)
         for field, maximum in (('useful', USEFUL_MAX), ('context', CONTEXT_MAX)):
             result[field] = _normalized_text(result.get(field, ''), field, 0, maximum)
@@ -907,6 +913,7 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
                 from .evaluation import projection as evaluations
                 for campaign in result['campaigns']:
                     campaign['evaluations'] = evaluations(store, connection, dossier_id, campaign['campaign_id'])
+        result['cases'] = _cases(store, connection, session_id, dossier_id)
         if include_history:
             from .restitution import _task_index
             result['current_revision'] = current
@@ -956,12 +963,127 @@ def _closed_preparation_operation(operation, *, conserved_wire=None, state=None)
     return value
 
 
+class CaseContractError(ValueError):
+    """Paquet d'un autre exemple dont la consigne ou les critères diffèrent de ceux de la tâche"""
+
+
+CASE_CONTRACT_TEXT = ('Résultat refusé : il changeait la consigne, les livrables, les critères ou les ambiguïtés acceptables '
+                      'communs aux exemples de la tâche.')
+
+
+def _creation_body(connection, dossier_id):
+    """Corps de création du dossier, ou None pour un dossier sans action enregistrée"""
+    row = connection.execute("SELECT request_json FROM s2_actions WHERE dossier_id=? AND kind='create'",
+                             (dossier_id,)).fetchone()
+    return None if row is None else json.loads(row[0], object_pairs_hook=_unique_object)
+
+
+def _package(connection, dossier_id, revision):
+    raw = connection.execute('SELECT package_json FROM s2_revisions WHERE dossier_id=? AND revision=?',
+                             (dossier_id, revision)).fetchone()[0]
+    return None if raw is None else json.loads(raw, object_pairs_hook=_unique_object)
+
+
+CONTRACT_FIELDS = ('instruction', 'deliverables', 'criteria', 'acceptable_ambiguities')
+
+
+def _contract(package):
+    """Vue candidate sans les pièces : la part du paquet commune à tous les exemples d'une tâche"""
+    return {field: package[field] for field in CONTRACT_FIELDS}
+
+
+def _validated(connection, session_id, dossier_id, revision, digest):
+    return digest is not None and connection.execute(
+        'SELECT 1 FROM s2_validations WHERE dossier_id=? AND revision=? AND package_sha256=? AND session_id=?',
+        (dossier_id, revision, digest, session_id)).fetchone() is not None
+
+
+def _case_body(store, session_id, body):
+    """Autre exemple d'une tâche : demande et résultat attendu du premier, version courante de son contrat"""
+    with store.read_snapshot() as connection:
+        current = owner(connection, session_id, body['case_of'])
+        created = _creation_body(connection, body['case_of'])
+        package = _package(connection, body['case_of'], current)
+    if created is None or 'case_of' in created:
+        raise Denied('Un exemple s’ajoute depuis le premier exemple de la tâche')
+    if package is None:
+        raise Denied('Premier exemple non validé')
+    # Contrat figé dans l'exemple : il reste contrôlable même après la purge du premier exemple
+    return dict(body, request=created['request'], useful=created.get('useful', ''),
+                case_of={'dossier_id': body['case_of'], 'revision': current, 'contract': _contract(package)})
+
+
+def _inherited_contract(connection, session_id, case_of):
+    """Contrat de la version validée du premier exemple, refusé si cette version a changé ou n'est pas validée"""
+    _fields(case_of, ('dossier_id', 'revision', 'contract'), 'case_of')
+    first, revision = case_of['dossier_id'], case_of['revision']
+    if owner(connection, session_id, first) != revision:
+        raise ConflictError('Révision périmée')
+    digest = connection.execute('SELECT package_sha256 FROM s2_revisions WHERE dossier_id=? AND revision=?',
+                                (first, revision)).fetchone()[0]
+    if not _validated(connection, session_id, first, revision, digest) or case_of['contract'] != _contract(
+            _package(connection, first, revision)):
+        raise Denied('Premier exemple non validé')
+    return case_of['contract']
+
+
+def _inherited_text(contract):
+    return ('\n\nAutre exemple de la même tâche : reprendre sans aucune modification la consigne, les livrables, '
+            'les critères et les ambiguïtés acceptables ci-dessous ; seuls les pièces et le résultat de référence '
+            'changent.\nConsigne :\n' + contract['instruction'] + '\nLivrables :\n' + encode(contract['deliverables'])
+            + '\nCritères :\n' + encode(contract['criteria'])
+            + '\nAmbiguïtés acceptables :\n' + encode(contract['acceptable_ambiguities']))
+
+
+def _case_contract(connection, dossier_id):
+    """Contrat hérité par un autre exemple de la tâche, ou None pour un premier exemple"""
+    created = _creation_body(connection, dossier_id)
+    return created['case_of']['contract'] if created is not None and 'case_of' in created else None
+
+
+def _cases(store, connection, session_id, dossier_id):
+    """Exemples de la même tâche, du premier au dernier créé ; un exemple seul n'a pas de liste"""
+    created = _creation_body(connection, dossier_id)
+    first = created['case_of']['dossier_id'] if created and 'case_of' in created else dossier_id
+    linked = [row[0] for row in connection.execute(
+        "SELECT a.dossier_id FROM s2_actions a JOIN s2_dossiers d USING(dossier_id) WHERE a.kind='create' "
+        "AND d.session_id=? AND json_extract(a.request_json, '$.case_of.dossier_id')=? ORDER BY a.rowid",
+        (session_id, first))]
+    # Premier exemple purgé : les autres gardent leur numéro et leur contrat figé
+    kept = connection.execute('SELECT 1 FROM s2_dossiers WHERE dossier_id=? AND session_id=?',
+                              (first, session_id)).fetchone() is not None
+    members = [(number, member) for number, member in enumerate([first] + linked, 1) if kept or number > 1]
+    if len(members) == 1 and members[0][1] == dossier_id and not linked:
+        return []
+    first_package = _package(connection, first, owner(connection, session_id, first)) if kept else None
+    cases = []
+    for number, member in members:
+        current = owner(connection, session_id, member)
+        stage, digest = connection.execute('SELECT stage,package_sha256 FROM s2_revisions WHERE dossier_id=? AND revision=?',
+                                           (member, current)).fetchone()
+        pending = connection.execute('SELECT 1 FROM s2_actions a JOIN operations o USING(operation_id) '
+                                     'WHERE a.dossier_id=? AND a.input_revision=? AND o.state!=?',
+                                     (member, current, 'RECEIVED')).fetchone()
+        validated = _validated(connection, session_id, member, current, digest)
+        inherited = _case_contract(connection, member)
+        cases.append(dict(number=number, dossier_id=member, current=member == dossier_id,
+                          stage='waiting' if pending else stage, validated=validated,
+                          qualified=validated and bool((_automatic_qualification(store, connection, member, current)
+                                                        or {}).get('qualified')),
+                          # Le premier exemple a changé de contrat depuis la création de celui-ci
+                          drifted=inherited is not None and first_package is not None and inherited != _contract(first_package),
+                          difference=(_creation_body(connection, member) or {}).get('context', '')))
+    return cases
+
+
 def submit(store, session_id, dossier_id, body, source, transport, *, enforce_limits=False,
            source_sha256=None):
     connection = connection_for(store)
     now = _now() if enforce_limits else None
     identifier(dossier_id)
     identifier(body['action_id'])
+    if 'case_of' in body and 'request' not in body:
+        body = _case_body(store, session_id, body)
     create = 'request' in body
     kind = 'create' if create else body['kind']
     if kind not in ('create', 'clarify', 'correct'):
@@ -1002,6 +1124,11 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
                 (dossier_id, existing[1])).fetchone()[0])
             if checks.get('out_of_scope') is not None:
                 raise Denied('OUT_OF_SCOPE')
+        # Création revérifiée sous l'écriture ; chaque échange suivant rappelle le contrat hérité au préparateur
+        inherited = (_case_contract(connection, dossier_id) if existing else
+                     _inherited_contract(connection, session_id, body['case_of']) if 'case_of' in body else None)
+        if inherited is not None:
+            message += _inherited_text(inherited)
         authority = admission(store, connection, transport=transport)
         if not authority or not transport or os.path.lexists(store._root / 'restore.json'):
             raise Denied('Admission fermée ou transport absent')
@@ -1726,7 +1853,9 @@ def execute(data, operation_id, transport):
                 else:
                     # Publication rolled back; keep the original receipt with an unusable revision
                     # Suspension limitée au cas d'usage : les autres restent ouverts
-                    retry_locked(lambda: _suspend(store, connection, operation, operation_id, request, response))
+                    refusal = CASE_CONTRACT_TEXT if isinstance(error, CaseContractError) else None
+                    retry_locked(lambda: _suspend(store, connection, operation, operation_id, request, response,
+                                                  refusal=refusal))
                 logging.getLogger(__name__).warning('PREPARATION_RECEIVED operation=%s usable=False error=%s cost=%s',
                     operation_id, type(error).__name__, response['cost']['status'])
             _recheck_key(store, transport, response)
@@ -1742,7 +1871,7 @@ def execute(data, operation_id, transport):
                 logging.getLogger(__name__).warning('PREPARATION_BLOCKED operation=%s', operation_id)
 
 
-def _suspend(store, connection, operation, operation_id, request, response):
+def _suspend(store, connection, operation, operation_id, request, response, *, refusal=None):
     """Conserver le reçu d'un résultat inutilisable dans une révision suspendue"""
     with _transaction(connection, write=True):
         dossier_id, before = operation['dossier_id'], operation['revision']
@@ -1761,7 +1890,7 @@ def _suspend(store, connection, operation, operation_id, request, response):
         store.save_dossier(dossier_id, revision, request['payload'])
         observed = response['receipt'].get('observed_configuration')
         incident = (observed.get('incident') if type(observed) is dict else None) or ''
-        reason = INCIDENT_TEXT.get(incident)
+        reason = refusal or INCIDENT_TEXT.get(incident)
         connection.execute('INSERT INTO s2_revisions VALUES (?,?,?,?,NULL,NULL,?,?)',
                            (dossier_id, revision, 'suspended',
                             # Seule une série épuisée arrive ici avec un incident relancé
@@ -1840,6 +1969,11 @@ def publish(store, operation, request, response):
             elif scope_count >= 3:
                 stage = 'suspended'
                 explanation = 'SCOPE_LOOP : ' + explanation
+        if generated is not None:
+            inherited = _case_contract(connection, dossier_id)
+            if inherited is not None and inherited != _contract(generated['candidate']):
+                # Refus, jamais réécriture : pièces et référence ont pu viser un autre contrat que celui de la tâche
+                raise CaseContractError('Consigne ou critères différents de ceux de la tâche')
         revision = before + 1
         store.save_dossier(dossier_id, revision, payload)
         package: dict[str, Any] | None = None
