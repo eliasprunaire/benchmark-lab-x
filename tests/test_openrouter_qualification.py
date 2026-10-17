@@ -1011,7 +1011,18 @@ class PreparationVolumeTests(unittest.TestCase):
                                         if proof['passage'] else proof for proof in row['evidence']]) for row in findings]
         controller.script = [closing_quote if rejected else None for rejected in script]
         self.add_dossiers(1)
-        return prep.due_qualification_retries(self.store, session_id=self.session)
+        # #530 : chaque POST de la session refait cette recherche ; une copie complète du registre par
+        # qualification examinée tenait la base 20 s pour 123 qualifications
+        full, read = [], storage.Store._operations
+
+        def counted(store, connection, *, operation_ids=None):
+            full.append(operation_ids is None)
+            return read(store, connection, operation_ids=operation_ids)
+        with patch.object(storage.Store, '_operations', counted):
+            due = prep.due_qualification_retries(self.store, session_id=self.session)
+        # Seule une relance due fait examiner sa série : le coût suit les relances, pas les qualifications
+        self.assertLessEqual(sum(full), 2 * len(due), full)
+        return due
 
     def retry_witness(self, due):
         following = prep.retry_qualification(self.store, due[0][0], self.transport, 'b' * 40)
