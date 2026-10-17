@@ -760,6 +760,8 @@ class Store:
         self._connection = None
         self._verified_read_changes = None
         self._verified_operations = None
+        # Registre validé dans une transaction, avec la version de base qui l'a produit (#528)
+        self._transaction_operations = None
         self._verified_contexts = None
         self._verified_schema = None
         self._checked_data = None
@@ -850,6 +852,13 @@ class Store:
         if snapshot and self._verified_operations is not None:
             return deepcopy([record for record in self._verified_operations
                              if operation_ids is None or record['operation_id'] in operation_ids])
+        # Hors snapshot, dans une transaction : la copie validée reste servie tant qu'aucune écriture de cette
+        # connexion (total_changes) ni d'une autre (data_version) n'a eu lieu ; toute écriture fait revalider tout
+        version = ((connection.total_changes, connection.execute('PRAGMA data_version').fetchone()[0])
+                   if connection is self._connection and connection.in_transaction and not snapshot else None)
+        if version is not None and self._transaction_operations is not None and self._transaction_operations[0] == version:
+            return deepcopy([record for record in self._transaction_operations[1]
+                             if operation_ids is None or record['operation_id'] in operation_ids])
         rows = connection.execute(
             'SELECT ' + ', '.join('o.' + column for column in _OPERATION_COLUMNS)
             + ', r.budget_id, r.amount, b.currency FROM operations o '
@@ -891,6 +900,8 @@ class Store:
             records.append(record)
         if snapshot:
             self._verified_operations = deepcopy(records)
+        if version is not None:
+            self._transaction_operations = (version, deepcopy(records))
         return [record for record in records
                 if operation_ids is None or record['operation_id'] in operation_ids]
 
