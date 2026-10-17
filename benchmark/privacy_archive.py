@@ -337,8 +337,11 @@ def _contribution_payload(store, session_id, dossier_id, example_revision):
         raise ConflictError('Version de l’exemple modifiée')
     if view['package'] is None:
         raise p.Denied('Exemple requis pour contribuer')
+    from .acquisition import campaigns as c
+    # Une comparaison qui contient d'autres exemples que celui consenti reste hors de la copie
     campaigns = [campaign for campaign in view.get('campaigns', [])
-                 if campaign['task']['revision'] == example_revision]
+                 if campaign['task']['revision'] == example_revision
+                 and not any('contract_sha256' in case for case in c.inspect(store, campaign['campaign_id'])['manifest']['cases'])]
     value = dict(format='bench-x/contribution/v1', example=_revision(view),
                  campaigns=_campaigns(store, session_id, dossier_id, campaigns))
     raw = encode(value)

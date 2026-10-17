@@ -346,6 +346,7 @@ def denied_response(error):
         'configurations_available': 'Certains modèles choisis ne sont plus disponibles. Remplacez-les avant de lancer la comparaison.',
         'access_connected': 'Ajoutez votre clé OpenRouter avant de lancer la comparaison.',
         'estimate_available': 'Le coût de cette comparaison n’a pas pu être estimé. Il doit l’être avant le lancement.',
+        'examples_current': 'Un autre exemple a changé depuis ce choix. Choisissez de nouveau les modèles ; rien n’a été lancé ni débité.',
         'QUALIFICATION_UNAVAILABLE': 'La vérification de l’exemple est indisponible pour le moment. Réessayez plus tard.',
         'ADMISSION_CLOSED': 'Ajoutez ou vérifiez votre clé OpenRouter pour continuer. Aucun appel n’a été lancé.',
         'PROBE_SLUG_INVALID': 'Copiez l’identifiant exact du modèle sur sa fiche OpenRouter, au format constructeur/modèle. Les adresses web et les routeurs automatiques ne sont pas acceptés.',

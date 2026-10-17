@@ -116,6 +116,10 @@ class SchemaError(ValueError):
     """The existing database is not a supported S1 schema"""
 
 
+class SchemaUpgradeRequired(SchemaError):
+    """Base s7 aux déclencheurs de suppression antérieurs à #454, mise à niveau à l'ouverture du Store"""
+
+
 class IntegrityError(ValueError):
     """Stored data, a private path or piece bytes cannot be trusted"""
 
@@ -659,6 +663,10 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
             from .provider_access import FORMAT_IDENTITY
             if connection.execute('SELECT * FROM s6_control').fetchall() != [(1, FORMAT_IDENTITY)]:
                 raise SchemaError('unsupported provider access identity')
+        if layout is None and s6 is not None and 's7_control' in names:
+            from .privacy import extended_schema
+            if actual == _expected_schema(tuple(extended_schema(s6, cases=False))):
+                raise SchemaUpgradeRequired('Déclencheurs de suppression antérieurs à #454')
         if layout is None or (reconciliation and layout == 'canary'):
             raise SchemaError("unsupported storage schema structure")
         if catalogue and layout not in ('s2', 's3', 's4', 's5', 's6', 's7'):
@@ -748,6 +756,29 @@ def initialize_preparation(root: Path) -> None:
         store.close()
 
 
+def _upgrade_deletion_triggers(root):
+    """Une écriture de schéma, sans donnée : chaque exemple d'une comparaison en désigne le dossier (#454)
+
+    Revérifiée sous le verrou d'écriture : un autre processus a pu la faire entre-temps
+    """
+    from .privacy import upgrade_deletion_triggers
+    connection = _connect(root, "rw")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            _check_schema(connection, check_data=False)
+        except SchemaUpgradeRequired:
+            upgrade_deletion_triggers(connection)
+            _check_schema(connection, check_data=False)
+        connection.execute("COMMIT")
+    except BaseException:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise
+    finally:
+        connection.close()
+
+
 class Store:
     """Open only compatible existing storage; callers must close it explicitly"""
 
@@ -766,7 +797,13 @@ class Store:
             self._root_fd = _open_directory(self._root)
             check = _connect(self._root, "ro")
             try:
-                _check_schema(check)
+                try:
+                    _check_schema(check)
+                except SchemaUpgradeRequired:
+                    check.close()
+                    _upgrade_deletion_triggers(self._root)
+                    check = _connect(self._root, "ro")
+                    _check_schema(check)
             finally:
                 check.close()
             self._pieces_fd = _open_directory(self._root / "pieces")

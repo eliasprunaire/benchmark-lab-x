@@ -155,11 +155,11 @@ class ComparisonPageTests(unittest.TestCase):
                 store, sid, _, _, _ = build(data)
             with closing(store):
                 page = views.render(r.comparison(store, sid, 'fixture', 'comparison'), '').decode()
-        options = dict(re.findall(r'<option value="([^"]+)"(?: selected)?>(Cas [0-9]+)</option>', page))
-        titles = set(re.findall(r'<h3>(Cas [0-9]+)</h3>', page))
+        options = dict(re.findall(r'<option value="([^"]+)"(?: selected)?>(Exemple [0-9]+)</option>', page))
+        titles = set(re.findall(r'<h3>(Exemple [0-9]+)</h3>', page))
         self.assertEqual(1, page.count('<h2>Comparaison des modèles</h2>'))
         self.assertLess(page.index('<h2>Comparaison des modèles</h2>'), page.index('id="filters"'))
-        self.assertEqual({'notes': 'Cas 1', 'distinct': 'Cas 2'}, options)
+        self.assertEqual({'notes': 'Exemple 1', 'distinct': 'Exemple 2'}, options)
         self.assertEqual(set(options.values()), titles)
 
 

@@ -322,7 +322,8 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
             if attempts[attempt['attempt_id']]['state'] == 'RECEIVED' and not attempts[attempt['attempt_id']]['answered']:
                 cell = next(c for c in campaign['cells'] if c['cell_id'] == attempts[attempt['attempt_id']]['cell_id'])
                 attempt.update(state='NO_USABLE_RESPONSE', next_action=NO_USABLE_RESPONSE,
-                               configuration_id=cell['configuration_id'], cause=causes.get(attempt['attempt_id']),
+                               configuration_id=cell['configuration_id'], case_id=cell['case_id'],
+                               cause=causes.get(attempt['attempt_id']),
                                recoveries=len(chain(attempt['attempt_id'])) - 1)
             elif attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='EVALUATION_' + progress_status,

@@ -26,19 +26,29 @@ def context(store, connection, campaign_id, attempt_id):
     cache = store._judgment_contexts[1]
     if campaign_id not in cache:
         cache[campaign_id] = _campaign_context(store, connection, campaign_id)
-    campaign, contract, operation_id = deepcopy(cache[campaign_id])
+    campaign, contracts = deepcopy(cache[campaign_id])
     attempt = next((a for a in campaign['attempts'] if a['operation_id'] == attempt_id), None)
     if attempt is None:
         raise KeyError(attempt_id)
+    # Chaque réponse se juge sur le contrat, les pièces et la référence de son propre exemple
+    cell = next(x for x in campaign['manifest']['plan'] if x['cell_id'] == attempt['cell_id'])
+    fingerprint = c.case_fingerprint(campaign['manifest'], cell['case_id'])
+    contract, operation_id = contracts[fingerprint]
     return dict(campaign=campaign, attempt=attempt, qualification=dict(contract=contract,
-        contract_sha256=campaign['manifest']['contract_sha256'], operation_id=operation_id))
+        contract_sha256=fingerprint, operation_id=operation_id))
 
 
 def _campaign_context(store, connection, campaign_id):
     campaign = c._inspect(store, connection, campaign_id)
     if campaign['manifest'].get('funding') != 'requester':
         raise ValueError('Campagne personnelle requise')
-    fingerprint = campaign['manifest']['contract_sha256']
+    fingerprints = dict.fromkeys(c.case_fingerprint(campaign['manifest'], case['id'])
+                                 for case in campaign['manifest']['cases'])
+    return campaign, {fingerprint: _case_context(store, connection, fingerprint) for fingerprint in fingerprints}
+
+
+def _case_context(store, connection, fingerprint):
+    """Contrat d'un exemple et sa référence qualifiée, avec l'opération qui l'a qualifiée"""
     contract = deepcopy(c._comparison_contract(store, connection, fingerprint))
     qualified = p._automatic_qualification(store, connection, contract['dossier_id'], contract['revision'])
     if qualified is None:
@@ -58,7 +68,7 @@ def _campaign_context(store, connection, campaign_id):
     if not references:
         raise IntegrityError('Référence qualifiée requise')
     contract['specification'] = review_specification(contract['specification'])
-    return campaign, contract, operation['operation_id']
+    return contract, operation['operation_id']
 
 
 def review_specification(spec):

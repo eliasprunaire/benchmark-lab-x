@@ -102,9 +102,10 @@ def _reserve(store, connection, request, transport, *, automatic=False, prepared
     ctx, content = prepared or _inputs(store, connection, request, automatic=automatic)
     aid = auto.admission(store, connection) if automatic else _admission(store, ctx)
     _envelope(store, connection, request)
-    contract = ctx['qualification']['contract']
-    operation = dict(operation_id=request['operation_id'], dossier_id=contract['dossier_id'],
-        revision=contract['revision'], phase='judgment', authority=request['authority']['authority_id'],
+    # Le jugement appartient au dossier qui porte la comparaison, même pour la réponse d'un autre exemple
+    task = ctx['campaign']['task']
+    operation = dict(operation_id=request['operation_id'], dossier_id=task['dossier_id'],
+        revision=task['revision'], phase='judgment', authority=request['authority']['authority_id'],
         engine_version=auto.FORMAT if automatic else FORMAT,
         requested_configuration=request['requested_configuration'], resources=[])
     wire = transport.prepare(deepcopy(operation), dict(outgoing_format=outgoing.FORMAT, outgoing=content))
@@ -136,14 +137,14 @@ def _bound(store, connection, operation, *, latest=False):
             or (not automatic and (saved['context']['campaign']['admission'] is None
             or saved['context']['campaign']['admission']['admission_id'] != saved['admission_id']))):
         raise IntegrityError('Instantané de jugement divergent')
-    contract = ctx['qualification']['contract']
+    task = ctx['campaign']['task']
     if (content != saved['content']
             or operation['operation_id'] != request['operation_id']
             or operation['authority'] != request['authority']['authority_id']
             or operation['budget_id'] != request['budget_id']
             or operation['reserved_amount'] != request['reserve_amount']
             or operation['requested_configuration'] != request['requested_configuration']
-            or (operation['dossier_id'], operation['revision']) != (contract['dossier_id'], contract['revision'])):
+            or (operation['dossier_id'], operation['revision']) != (task['dossier_id'], task['revision'])):
         raise IntegrityError('Liaison de jugement divergente')
     wire = json.loads(operation['resources'][1], object_pairs_hook=storage._unique_object)
     config = operation['requested_configuration']

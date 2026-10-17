@@ -563,3 +563,96 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertEqual(before, legacy.store.inspect_operations())
         self.assertEqual(snapshot, campaigns.inspect(legacy.store, 'local-comparison'))
         self.assertTrue(legacy.store.verify_storage()['integrity_ok'])
+
+    def test_a_comparison_of_several_examples_is_bound_to_each_of_them(self):
+        """Issue #454, décision d'Ayo du 2026-10-17 : une comparaison de plusieurs exemples est liée à chacun d'eux
+
+        Modes d'échec couverts :
+        1. l'activité sur l'exemple qui porte la comparaison laisse expirer un autre exemple qu'elle utilise ;
+        2. la purge d'un exemple utilisé est différée, ou laisse la comparaison, ses essais, ses sorties ou ses jugements ;
+        3. cette purge touche l'exemple qui portait la comparaison au-delà de cette comparaison, ou un dossier sans lien ;
+        4. la copie de contribution emporte une comparaison qui contient un autre exemple ;
+        5. une base aux déclencheurs antérieurs refuse l'ouverture au lieu d'être mise à niveau
+        """
+        from datetime import timedelta
+        self.prepare('first')
+        self.qualify('first')
+        self.stage = 'preparation'
+        operation, _ = prep.submit(self.store, self.sid, 'second',
+            dict(action_id='second', case_of='first', context='Un autre exemple des mêmes notes'), 'a' * 40, self.preparer)
+        prep.execute(self.data, operation, self.preparer)
+        self.qualify('second')
+        self.prepare('other')
+        identity = dict(package='@earendil-works/pi-coding-agent', version='0.85.1',
+            sha256='1' * 64, bridge_sha256='2' * 64, node_version='v24.0.0',
+            node_sha256='3' * 64, scope='Fixture locale sans exécution Pi')
+        cid = campaigns.prepare_configurations(self.store, self.sid, 'first',
+            dict(models=['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], tier='low'), identity)['current_campaign_id']
+        snapshot = campaigns.inspect(self.store, cid)
+        self.assertEqual(2, len(snapshot['manifest']['cases']))
+        attempts = campaigns.launch(self.store, self.sid, 'first', cid, dict(
+            manifest_version=snapshot['manifest']['version'], frozen_at=snapshot['manifest']['conditions']['frozen_at'],
+            confirm='yes'), access_secret=SECRET, access_transport=self.access)
+        self.assertEqual(4, len(attempts))
+        self.stage = 'judgment'
+        service._retention_worker(self.data, 'first', service._campaign_worker, self.data,
+            dict(candidate_attempts=attempts, judgment_campaign=cid, session_id=self.sid, dossier_id='first'),
+            self.candidate, None, SECRET, self.access, self.judge)
+        self.assertEqual(4, len(restitution.comparison(self.store, self.sid, 'first', cid)['rows']))
+        # 4. La contribution du premier exemple n'emporte pas la comparaison qui contient le second
+        self.contribute('first')
+        self.assertEqual([], self.corpus('first')['campaigns'])
+        # L'archive personnelle du premier exemple garde chaque réponse de la comparaison
+        record = self.record('first', archive.archive_manifest(self.store, self.sid, 'first'))
+        self.assertEqual(4, len(record['campaigns'][0]['models']))
+        # 1. L'activité sur le premier exemple renouvelle aussi le second, jamais un dossier sans lien
+        def expires(dossier):
+            return self.store._connection.execute('SELECT expires_at FROM s7_dossiers WHERE dossier_id=?',
+                                                  (dossier,)).fetchone()[0]
+        later = NOW + timedelta(days=5)
+        before = expires('other')
+        privacy.activity(self.store, self.sid, 'first', current=later)
+        self.assertEqual((later + privacy.DOSSIER_LIFETIME).isoformat(), expires('second'))
+        self.assertEqual(before, expires('other'))
+        # 5. Une base aux déclencheurs antérieurs à #454 est mise à niveau à l'ouverture
+        connection = self.store._connection
+        legacy = privacy.legacy_deletion_triggers()
+        self.assertTrue(legacy)
+        with storage._transaction(connection, write=True):
+            for table, sql in legacy.items():
+                connection.execute(f'DROP TRIGGER {table}_delete')
+                connection.execute(sql)
+        self.store.close()
+        self.store = storage.Store(self.data)
+        self.addCleanup(self.store.close)
+        triggers = dict(self.store._connection.execute(
+            "SELECT tbl_name, sql FROM sqlite_schema WHERE type='trigger' AND name LIKE '%_delete'").fetchall())
+        self.assertEqual({table: privacy.deletion_trigger(table) for table in legacy},
+                         {table: triggers[table] for table in legacy})
+        # 2. et 3. Supprimer le second exemple supprime la comparaison, sans toucher au reste du premier
+        operations = {op['operation_id'] for op in auto.operations(self.store, self.store._connection, cid)}
+        operations |= {row[0] for row in self.store._connection.execute(
+            'SELECT operation_id FROM s4_attempts WHERE campaign_id=?', (cid,))}
+        self.assertEqual(8, len(operations))
+        outputs = [self.data / row[0] for row in self.store._connection.execute(
+            'SELECT p.relative_path FROM pieces p JOIN s4_results r ON r.output_piece_id=p.piece_id '
+            'JOIN s4_attempts a USING(operation_id) WHERE a.campaign_id=?', (cid,))]
+        self.assertEqual(4, len(outputs))
+        kept = [op for op in self.store.inspect_operations()
+                if op['dossier_id'] in ('first', 'other') and op['operation_id'] not in operations]
+        first_view = prep.view(self.store, self.sid, 'first')
+        privacy.request_delete(self.store, self.sid, 'second')
+        report = privacy.purge(self.data)
+        self.assertEqual((['second'], []), (report['purged'], report['operator_review']))
+        for table in ('s4_campaigns', 's4_cells', 's4_attempts', 's4_status', 's4_caps', 's4_admissions'):
+            self.assertEqual(0, self.store._connection.execute(
+                f'SELECT count(*) FROM {table} WHERE campaign_id=?', (cid,)).fetchone()[0], table)
+        self.assertFalse(any(path.exists() for path in outputs))
+        self.assertEqual(set(), operations & {op['operation_id'] for op in self.store.inspect_operations()})
+        self.assertLessEqual(operations, {op['operation_id'] for op in privacy.retired_operations(self.store._connection)})
+        self.assertEqual(kept, [op for op in self.store.inspect_operations() if op['dossier_id'] in ('first', 'other')])
+        after = prep.view(self.store, self.sid, 'first')
+        self.assertEqual([], after.get('campaigns', []))
+        self.assertEqual((first_view['revision'], first_view['package_sha256'], first_view['qualified']),
+                         (after['revision'], after['package_sha256'], after['qualified']))
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
