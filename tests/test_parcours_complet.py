@@ -443,6 +443,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Cette sélection a été remplacée par une plus récente', refused.visible)
         self.assertEqual(recap, refused.link('Voir la dernière sélection'))
         self.assertTrue(self.starts.empty())
+        # Refus avant admission : aucune admission, aucun essai, aucune émission
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual((0, 0, 0), tuple(store._connection.execute(
+                f'SELECT count(*) FROM {table}').fetchone()[0] for table in ('s4_admissions', 's4_attempts', 's4_emissions')))
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'comparaison préparée', 'Vérifier puis lancer la comparaison')
         self.assertIn('Comparaison prête à lancer', page.visible)
@@ -500,7 +504,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(0, effects[3])
         # Consulter puis renvoyer le même lancement : ni émission, ni intention, ni seconde campagne
         for _ in range(2):
-            self.request(recap)
+            consulted, _, _ = self.request(recap)
+            self.assertEqual('Benchmark en cours', next(n['text'] for n in consulted.nodes if n['tag'] == 'h1'))
+            self.assertFalse(any(f['action'].endswith('/start') for f in consulted.forms))
         # Lancement déjà admis : le formulaire de lancement initial n'a plus la forme d'un lancement à accepter
         self.request(start_form['action'], start_form['fields'], status=400)
         self.assertEqual(effects, persisted())

@@ -1101,9 +1101,11 @@ class RelayTimeoutTests(WebServerCase):
         for accept in ('application/json', 'text/html'):
             with self.subTest(accept=accept):
                 self.executor.held = threading.Event()
-                status, headers, raw = self.request('POST', start_path, body, form | {'Accept': accept})
+                # Une query string ne doit pas faire perdre le lien de consultation
+                path = start_path + ('?origine=1' if accept == 'text/html' else '')
+                status, headers, raw = self.request('POST', path, body, form | {'Accept': accept})
                 self.executor.held.set()
-                self.assertEqual(start_path, self.executor.requests.get(timeout=1)['path'])
+                self.assertEqual(path, self.executor.requests.get(timeout=1)['path'])
                 self.assertTrue(self.executor.requests.empty(), 'requête réémise par le web')
                 self.assertEqual(504, status)
                 self.assertNotIn('Location', headers)
