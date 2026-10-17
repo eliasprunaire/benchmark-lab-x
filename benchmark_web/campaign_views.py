@@ -847,7 +847,7 @@ def render_campaign_followup(value, csrf):
     # Plusieurs essais d'un modèle : chaque ligne nomme son exemple et son essai
     examples = {case['id']: example_label(case, number) + ' : ' for number, case in enumerate(cases, 1)} if len(cases) > 1 else {}
     content += section('Modèle par modèle', listing(
-        examples.get(cell['case_id'], '') + models.get(cell['configuration_id'], 'Modèle')
+        examples.get(cell.get('case_id'), '') + models.get(cell['configuration_id'], 'Modèle')
         + (' · essai ' + str(cell['repetition']) if 'repetition' in cell else '')
         + ' : ' + states.get(cell['state'], 'état inconnu')
         for cell in campaign['cells']))
