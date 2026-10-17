@@ -320,8 +320,13 @@ def render(value, csrf, path='/preparation', *, error=False):
                         + '">Voir la dernière sélection</a></p>')
         if value.get('error_code') == 'OUTPUT_LIMIT_ABOVE_BOUND' and path.endswith('/configurations'):
             content += '<p><a class="button" href="' + text(path) + '">Revenir au choix des modèles</a></p>'
+        # Attente expirée d'un lancement : l'état enregistré se lit sur son suivi, sans rien renvoyer
+        followup = (re.fullmatch(r'(/preparation/dossiers/[A-Za-z0-9_-]{1,128}/campaigns/[A-Za-z0-9_-]{1,128})/(?:start|evaluate)', path)
+                    if value.get('error_code') == 'RESPONSE_TIMEOUT' else None)
+        if followup:
+            content += '<p><a class="button" href="' + text(followup[1] + '/conditions') + '">Consulter l’état du lancement</a></p>'
         back_class = ('button sec' if type(submitted) is dict and ('request' in submitted or 'message' in submitted)
-                      or value.get('error_code') == 'OUTPUT_LIMIT_ABOVE_BOUND' else 'button')
+                      or value.get('error_code') == 'OUTPUT_LIMIT_ABOVE_BOUND' or followup else 'button')
         content += '<p><a class="' + back_class + '" href="/preparation">Retrouver mes cas d’usage</a></p>'
     elif value.get('kind') == 'contributions':
         title, content = render_contributions(value)
