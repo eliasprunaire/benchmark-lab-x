@@ -3494,7 +3494,8 @@ class ParcoursComplet(unittest.TestCase):
         with patch.object(service.threading, 'Timer'):
             for operation_id, dossier, session, _ in dues:
                 service._retry('candidate', self.data, dossier, session, operation_id, retry)
-        # Issue #539 : aucun minuteur réel ne part de lui-même pendant le test, dans un ordre variable
+        # Issue #539 : aucun minuteur réel ne part de lui-même pendant le test, dans un ordre variable ;
+        # ce contrôle échoue si les minuteurs ne sont plus simulés ci-dessus
         self.assertEqual([], [t for t in timers.values() if isinstance(t, threading.Thread) and t.ident is not None])
         # Les minuteurs suivants sont relus ici à leur échéance, jamais laissés courir après le test
         for timer in timers.values():
