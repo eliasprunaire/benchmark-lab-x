@@ -279,7 +279,7 @@ def _next_preauthorized_attempt(store, operation_id, *, allow_official=False):
     try:
         with _transaction(connection, write=True):
             snapshot, attempt = r.parent(store, connection, operation_id)
-            incident = storage.candidate_incident(attempt['operation'])
+            incident = r.relaunched(store, connection, snapshot, attempt)
             if incident:
                 # Relance après incident fournisseur : seulement à l'échéance, y compris après un redémarrage
                 from ..preparation import _now

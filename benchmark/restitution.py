@@ -239,7 +239,11 @@ def _expenses(store, connection, dossier_id, revision, family, compared, held, p
     operations = sorted(store._operations(connection), key=lambda op: op['created_at'])
     by_id = {op['operation_id']: op for op in operations}
     # Nature de chaque reprise, lue dans le reçu qu'elle vise : longueur, ou incident fournisseur relancé (#533)
-    kinds = {cid: 'INCIDENT' if storage.candidate_incident(by_id[c.q._decode(raw, digest)['recovery_of']]) else 'LENGTH'
+    from .acquisition import recovery
+    # Préautorisation du lancement, lue une fois : sans elle, une reprise après 429 reste une reprise de route
+    grant = (recovery._owner_grant(store, connection, c._inspect(store, connection, family[0]))[1] or {}) if family[1:] else {}
+    kinds = {cid: 'INCIDENT' if 'incident_retries' in grant and storage.candidate_incident(
+                 by_id[c.q._decode(raw, digest)['recovery_of']]) else 'LENGTH'
              for cid, raw, digest in connection.execute(
                  f'SELECT campaign_id, manifest_json, manifest_sha256 FROM s4_campaigns WHERE campaign_id IN '
                  f'({",".join("?" * len(family[1:]))})', family[1:]).fetchall()} if family[1:] else {}
@@ -325,8 +329,11 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                if a['operation_id'] in held}
     superseded = set(parents.values())
     # Relances après incident fournisseur (#533) : même demande, seule la dernière tentative compte
+    from .acquisition.recovery import _owner_grant
+    grant = _owner_grant(store, connection, c._inspect(store, connection, campaign_id))[1] or {}
     sources = {op['operation_id']: op for op in store._operations(connection, operation_ids=superseded)}
-    relaunched = {aid for aid, source in parents.items() if storage.candidate_incident(sources[source])}
+    relaunched = {aid for aid, source in parents.items()
+                  if 'incident_retries' in grant and storage.candidate_incident(sources[source])}
     every = campaign['attempts'] + [a for cid in descendants
                                     for a in c.projection(store, connection, dossier_id, cid)[0]['attempts']
                                     if a['operation_id'] in held]

@@ -404,6 +404,16 @@ def status(store, connection, campaign_id, snapshot=None):
     result = dict(status='NOT_STARTED', total=total, cells=cells, completed=completed, reason=None, can_start=False,
                   # Reprises techniques pas encore reçues : le suivi les dit au lieu d'annoncer toutes les réponses
                   recovering=sum(cid != campaign_id and a['state'] != 'RECEIVED' for cid, a in family))
+    recovering = result['recovering']
+    if type(recovering) is int and recovering:
+        # Une relance après incident fournisseur n'est pas une reprise pour longueur : le suivi le distingue (#533)
+        from .acquisition import recovery
+        relaunching = 0
+        for cid, a in family:
+            if cid != campaign_id and a['state'] != 'RECEIVED':
+                source_snapshot, source = recovery.parent(store, connection, c._inspect(store, connection, cid)['manifest']['recovery_of'])
+                relaunching += recovery.relaunched(store, connection, source_snapshot, source)
+        result.update(recovering=recovering - relaunching, relaunching=relaunching)
     due = _due(snapshot['stop_reason'], ops)
     from .acquisition.recovery import pending_relaunches
     relaunches = [] if ops else pending_relaunches(store, connection, campaign_id)

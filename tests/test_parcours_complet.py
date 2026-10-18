@@ -3379,7 +3379,7 @@ class ParcoursComplet(unittest.TestCase):
         """
         from benchmark import runtime
         judge = self.juge_factice()
-        script = [429, 503]
+        script, pendant = [429, 503], []
 
         def comportement(value, model, limit, suivi):
             if model == 'deepseek/deepseek-v4.1-flash':
@@ -3387,6 +3387,9 @@ class ParcoursComplet(unittest.TestCase):
             elif script:
                 status = script.pop(0)
                 self.incident_fournisseur(value, status, retry_after='600' if status == 429 else None)
+            else:
+                # Pendant l'appel de la dernière relance, le suivi dit sa vraie cause
+                pendant.append(self.request(suivi)[0].visible)
         dossier, _, envois, cles = self.lancer_avec_reprises(
             ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
         A, B = ('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096)
@@ -3421,6 +3424,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual([], self.relancer())
         self.assertEqual([A, B, A, A], envois)
         self.assertEqual([KEY] * len(envois), cles)
+        self.assertEqual(1, len(pendant))
+        self.assertIn('Un modèle est interrogé de nouveau après un incident fournisseur.', pendant[0])
+        self.assertNotIn('longueur', pendant[0])
         html = self.evaluer(dossier)
         # Seule la dernière tentative de Modèle A est évaluée
         self.assertEqual(2, judge.request.call_count)

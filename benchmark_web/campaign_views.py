@@ -831,6 +831,9 @@ def campaign_followup(campaign):
         if judgment.get('relaunch') and not any(c['state'] in ('EMISSION_POSSIBLE', 'INTENT_RECORDED') for c in cells):
             # Relance d'un appel candidat après un incident fournisseur : cause et délai, rien n'est à faire
             return True, False, judgment['reason'] + ' Les autres réponses sont conservées.'
+        if judgment.get('relaunching') and not judgment.get('recovering'):
+            return True, False, ('Un modèle est interrogé de nouveau après un incident fournisseur. '
+                                 'Sa réponse arrive au fur et à mesure.')
         if judgment.get('recovering'):
             count = judgment['recovering']
             return True, False, (str(count) + (' modèles arrêtés' if count > 1 else ' modèle arrêté')

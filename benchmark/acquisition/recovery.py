@@ -137,13 +137,14 @@ def validate_link(store, connection, manifest):
     previous, attempt = parent(store, connection, oid)
     old = previous['manifest']
     if candidate_incident(attempt['operation']):
+        # Relance après incident : la même demande exactement ; son autorité est vérifiée à l'admission
+        # (`bind_derived`). Une reprise de route change ses routes et suit le contrôle ci-dessous
         cell = next(x for x in old['plan'] if x['cell_id'] == attempt['cell_id'])
         config = next(x for x in old['panel'] if x['id'] == cell['configuration_id'])
-        if (manifest['plan'] != [cell] or manifest['panel'] != [config] or 'official_fallback' in manifest
-                or any(manifest.get(k) != old.get(k) for k in ('contract_sha256', 'conditions', 'cases', 'cost_basis',
-                                                                'financial_cost_policy'))):
-            raise ValueError('Une relance après incident reprend la même demande')
-        return
+        if (manifest['plan'] == [cell] and manifest['panel'] == [config] and 'official_fallback' not in manifest
+                and all(manifest.get(k) == old.get(k) for k in ('contract_sha256', 'conditions', 'cases', 'cost_basis',
+                                                                 'financial_cost_policy'))):
+            return
     if observation(attempt)['kind'] not in _RECOVERABLE:
         raise ValueError('Incident non récupérable ; refus conservé')
     if any(manifest.get(k) != old.get(k) for k in ('contract_sha256', 'conditions', 'cases', 'cost_basis', 'financial_cost_policy')):
@@ -433,7 +434,7 @@ def _official_proposal(store, connection, operation_id, grant, budget_id, *, che
 def _automatic_proposal(store, connection, operation_id, grant, *, allow_official,
                         check_budget=True):
     snapshot, attempt = parent(store, connection, operation_id)
-    if candidate_incident(attempt['operation']):
+    if candidate_incident(attempt['operation']) and 'incident_retries' in grant:
         return _incident_proposal(store, connection, snapshot, attempt, grant, check_budget=check_budget)
     if 'max_recoveries' in grant:
         # Compteur explicite : les limites calculées ne suffisent pas à borner la chaîne
@@ -441,7 +442,7 @@ def _automatic_proposal(store, connection, operation_id, grant, *, allow_officia
         depth, current = 0, snapshot
         while current['manifest'].get('recovery_of'):
             current, source = parent(store, connection, current['manifest']['recovery_of'])
-            depth += not candidate_incident(source['operation'])
+            depth += not (candidate_incident(source['operation']) and 'incident_retries' in grant)
         if depth >= grant['max_recoveries']:
             raise ValueError('Nombre de reprises préautorisées atteint')
     budget_id = snapshot['admissions'][-1]['authority']['budget_id']
@@ -456,8 +457,20 @@ def _automatic_proposal(store, connection, operation_id, grant, *, allow_officia
                                   check_budget=check_budget)
 
 
+def relaunched(store, connection, snapshot, attempt):
+    """Reçu en incident fournisseur que le lancement préautorise à relancer (#533)
+
+    Une préautorisation antérieure garde la reprise ROUTE_ERROR sur une autre route
+    """
+    if not candidate_incident(attempt['operation']):
+        return False
+    _, grant = _owner_grant(store, connection, snapshot)
+    return 'incident_retries' in (grant or {})
+
+
 def incident_rank(store, connection, snapshot):
     """Rang de la tentative de cette campagne dans sa série de relances après incident fournisseur (#533)"""
+    # L'appelant a vérifié la préautorisation du lancement ; la relire ici reparcourrait toute la chaîne
     rank, current = 1, snapshot
     while current['manifest'].get('recovery_of'):
         current, source = parent(store, connection, current['manifest']['recovery_of'])
