@@ -184,11 +184,13 @@ def _configuration(name, value):
 
 
 def _campaigns(store, session_id, dossier_id, campaigns):
+    from .acquisition import campaigns as c
     result: list[dict] = []
     for campaign in campaigns:
         cid = campaign['campaign_id']
         # Une comparaison par campagne, réutilisée par chacune de ses lignes dans le même instantané
-        with store.read_snapshot() as connection:
+        # Chaque modèle en attente relit la projection de sa campagne : une inspection par campagne (#543)
+        with store.read_snapshot() as connection, c.inspections(connection):
             models = _models(store, connection, session_id, dossier_id, campaign)
         result.append(dict(id=cid, models=models))
     return result

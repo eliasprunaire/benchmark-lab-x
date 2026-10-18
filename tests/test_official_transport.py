@@ -315,6 +315,21 @@ class OfficialTransportTests(unittest.TestCase):
         self.assertEqual((4, 3), (len(listed), len(chain)))
         self.assertEqual(sorted(v['campaign_id'] for v in listed), sorted(call.args[2] for call in loaded.call_args_list))
         self.assertEqual(projected, next(v for v in listed if v['campaign_id'] == 'automatic-official'))
+        # Issue #543 : la recherche des relances lit la table en une passe, sans décoder de manifeste en Python
+        source = next(v['campaign_id'] for v in listed if v['campaign_id'] in chain and not v['recovery_of'])
+        with self.h.store.read_snapshot() as connection, patch.object(c.q, '_decode', wraps=c.q._decode) as decoded:
+            found = c._recovery_descendants(connection, source)
+        with self.subTest('coût'):
+            self.assertEqual((2, 0), (len(found), decoded.call_count))
+        # Revue PR #544 : un lien de relance altéré est refusé, jamais ignoré par la recherche
+        child = next(v for v in listed if v['campaign_id'] == found[0])
+        self.h.store._connection.execute('DROP TRIGGER s4_campaigns_update')
+        self.h.store._connection.execute('UPDATE s4_campaigns SET manifest_json=replace(manifest_json, ?, ?) '
+                                         'WHERE campaign_id=?', (child['recovery_of'], 'altere', found[0]))
+        self.h.store._connection.execute(c._TRIGGERS['s4_campaigns_update'])
+        with self.subTest('intégrité'), self.h.store.read_snapshot() as connection, \
+                self.assertRaises(c.IntegrityError):
+            c._recovery_descendants(connection, source)
 
     def test_three_native_formats_preserve_pi_wire_and_unknown_cost(self):
         h = self.h
