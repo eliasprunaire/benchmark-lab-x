@@ -828,7 +828,7 @@ def campaign_followup(campaign):
             return False, True, ' '.join(filter(None, ('Évaluation terminée.', judgment.get('reason'), 'Vos résultats sont prêts.')))
         if status == 'BLOCKED':
             return False, False, judgment.get('reason') or 'L’évaluation s’est arrêtée. Elle ne reprendra pas d’elle-même.'
-        if judgment.get('relaunch'):
+        if judgment.get('relaunch') and not any(c['state'] in ('EMISSION_POSSIBLE', 'INTENT_RECORDED') for c in cells):
             # Relance d'un appel candidat après un incident fournisseur : cause et délai, rien n'est à faire
             return True, False, judgment['reason'] + ' Les autres réponses sont conservées.'
         if judgment.get('recovering'):

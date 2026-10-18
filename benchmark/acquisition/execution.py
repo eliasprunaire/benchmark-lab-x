@@ -189,8 +189,11 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
                     connection.execute('INSERT INTO s4_results VALUES (?,?,?,?,?)',
                                        (attempt_id, output_id, value_digest(receipt), value_digest(cost), c._now()))
                     # Incident fournisseur relancé d'office (#533) : la comparaison continue, la relance attend son échéance
-                    incomplete = not storage.candidate_incident(dict(
+                    # Sans préautorisation figée de relance (lancement antérieur), l'arrêt nommé de #525 demeure
+                    relaunched = storage.candidate_incident(dict(
                         state='RECEIVED', receipt=receipt, requested_configuration=request['requested_configuration'])) and (
+                        (r._owner_grant(store, connection, snapshot)[1] or {}).get('incident_retries', 0) > 1)
+                    incomplete = not relaunched and (
                         c._attribution(receipt, request['requested_configuration'])
                         or (cost['status'] == 'UNKNOWN'
                             and snapshot['manifest'].get('financial_cost_policy') != 'retain_reserve')
@@ -381,10 +384,10 @@ def due_retries(store, *, session_id=None, dossier_id=None):
         query = ('SELECT c.campaign_id, q.dossier_id, d.session_id FROM s4_campaigns c JOIN '
                  '(SELECT contract_sha256, dossier_id FROM s3_contracts UNION ALL '
                  'SELECT contract_sha256, dossier_id FROM s2_comparison_contracts) q USING(contract_sha256) '
-                 "JOIN s2_dossiers d ON d.dossier_id=q.dossier_id WHERE c.campaign_id NOT LIKE 'recovery-%'")
-        for campaign_id, dossier, session in connection.execute(query).fetchall():
-            if session_id is not None and session != session_id or dossier_id is not None and dossier != dossier_id:
-                continue
+                 "JOIN s2_dossiers d ON d.dossier_id=q.dossier_id WHERE c.campaign_id NOT LIKE 'recovery-%' "
+                 'AND (? IS NULL OR d.session_id=?) AND (? IS NULL OR q.dossier_id=?)')
+        for campaign_id, dossier, session in connection.execute(
+                query, (session_id, session_id, dossier_id, dossier_id)).fetchall():
             for attempt, due in r.pending_relaunches(store, connection, campaign_id):
                 result.append((attempt['operation_id'], dossier, session, max(0, (due - _now()).total_seconds())))
     return result

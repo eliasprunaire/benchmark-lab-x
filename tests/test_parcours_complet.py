@@ -3400,10 +3400,14 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Évaluer les réponses reçues', page.visible)
         page, _, _ = self.request(dossier)
         self.assertNotIn('Lancer l’évaluation', page.visible)
+        # Les résultats ne déclarent pas sans réponse un modèle dont la relance est programmée
+        _, _, raw = self.request(suivi.removesuffix('/conditions'))
+        self.assertIn('Relance automatique programmée après un incident fournisseur.', raw.decode())
+        self.assertNotIn('Aucune réponse exploitable', raw.decode())
         # Avant l'échéance, rien ne part
-        self.assertEqual([480], self.relancer())
+        self.assertEqual([420], self.relancer())
         self.assertEqual([A, B], envois)
-        self.clock += timedelta(seconds=480)
+        self.clock += timedelta(seconds=420)
         self.relancer()
         self.assertEqual([A, B, A], envois)
         page, _, _ = self.request(suivi)
@@ -3490,6 +3494,58 @@ class ParcoursComplet(unittest.TestCase):
         html = raw.decode()
         self.assertIn('Aucune réponse exploitable pour Modèle A (OpenRouter limite temporairement les demandes ; '
                       '5 tentatives).', html)
+
+    def test_relance_due_pendant_qu_un_autre_modele_repond(self):
+        """Issue #533 : une relance due pendant l'appel d'un autre modèle attend sa fin, puis part et fait évaluer
+
+        Modes d'échec couverts :
+        1. la relance part pendant un autre appel du même budget, ou évalue avant sa réponse ;
+        2. l'évaluation lancée avec la comparaison l'arrête parce qu'une relance attend ;
+        3. la relance différée n'est jamais reprogrammée, ou ne lance pas l'évaluation
+        """
+        judge = self.juge_factice()
+        script, pendant = [429], []
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+                # Modèle B répond lentement : la relance de Modèle A arrive à échéance pendant son appel
+                self.clock += timedelta(seconds=30)
+                pendant.append(self.relancer_par_l_executeur())
+            elif script:
+                self.incident_fournisseur(value, script.pop(0))
+        dossier, _, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        self.assertEqual([[0]], pendant)
+        self.assertEqual(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], [model for model, _ in envois])
+        # Suite du fil de lancement : rien n'est évalué, la comparaison reste admise
+        service._judge_comparison(self.data, self.start, self.bound[2], None)
+        self.assertEqual(0, judge.request.call_count)
+        self.relancer_par_l_executeur()
+        self.assertEqual(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'openai/gpt-5.6-sol'],
+                         [model for model, _ in envois])
+        self.assertEqual(2, judge.request.call_count)
+        with closing(storage.Store(self.data)) as store:
+            self.assertIsNone(campaigns.inspect(store, self.start['judgment_campaign'])['stop_reason'])
+
+    def test_limite_de_debit_sans_preautorisation_garde_l_arret(self):
+        """Issue #533 : une comparaison lancée sans relance préautorisée garde l'arrêt nommé de #525"""
+        def sans_relance(store, panel):
+            grant = original(store, panel)
+            grant.pop('incident_retries')
+            return grant
+        original = campaigns._requester_recovery
+
+        def comportement(value, model, limit, suivi):
+            self.incident_fournisseur(value, 429)
+        with patch.object(campaigns, '_requester_recovery', sans_relance):
+            dossier, _, envois, _ = self.lancer_avec_reprises(
+                ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096)], envois)
+        self.clock += timedelta(hours=1)
+        self.assertEqual([], self.relancer())
+        page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
+        self.assertIn('OpenRouter limite temporairement les demandes. La comparaison s’est arrêtée', page.visible)
 
     def test_credit_epuise_d_un_candidat_arrete_la_comparaison(self):
         """Issue #533 : un incident non relançable garde l'arrêt et son message nommé (#532)

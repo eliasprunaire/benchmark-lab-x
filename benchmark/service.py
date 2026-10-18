@@ -628,24 +628,28 @@ def _campaign_worker(data, start, candidate_transport, factory, secret, access_t
                      relaunch=None):
     """Interroger les modèles, programmer les relances après incident fournisseur, puis évaluer"""
     from .acquisition import execution
-    execution.execute_launch(data, start['candidate_attempts'], candidate_transport,
-                             transport_factory=factory, access_secret=secret, access_transport=access_transport)
-    if relaunch is not None and relaunch[0] is not None:
-        try:
-            with closing(Store(data)) as store:
-                _resume_retries(store, data, dict(candidate=relaunch), dossier_id=start.get('dossier_id'))
-        except Exception as error:
-            # Le prochain POST de la session ou le démarrage reprogramme la relance
-            logging.getLogger(__name__).warning('CANDIDATE_RETRY_RESUME_SKIPPED error=%s', type(error).__name__)
-    _judge_comparison(data, start, judge, retry)
+
+    def acquire():
+        execution.execute_launch(data, start['candidate_attempts'], candidate_transport,
+                                 transport_factory=factory, access_secret=secret, access_transport=access_transport)
+        if relaunch is not None and relaunch[0] is not None:
+            try:
+                with closing(Store(data)) as store:
+                    _resume_retries(store, data, dict(candidate=relaunch), dossier_id=start.get('dossier_id'))
+            except Exception as error:
+                # Le prochain POST de la session ou le démarrage reprogramme la relance
+                logging.getLogger(__name__).warning('CANDIDATE_RETRY_RESUME_SKIPPED error=%s', type(error).__name__)
+    _judge_comparison(data, start, judge, retry, acquire)
 
 
-def _judge_comparison(data, start, judge, retry):
-    """Évaluer une comparaison acquise ; une relance candidate encore attendue la fera évaluer après elle (#533)"""
+def _judge_comparison(data, start, judge, retry, acquire=None):
+    """Acquérir puis évaluer une comparaison ; une relance candidate encore attendue la fera évaluer après elle (#533)"""
     from . import automatic_judgment as auto
     from .acquisition import campaigns
     from .acquisition.recovery import pending_relaunches
     try:
+        if acquire is not None:
+            acquire()
         if 'judgment_campaign' not in start:
             return
         with closing(Store(data)) as store:
@@ -653,7 +657,9 @@ def _judge_comparison(data, start, judge, retry):
             if snapshot['admission'] is None:
                 return
             with store.read_snapshot() as connection:
-                if pending_relaunches(store, connection, start['judgment_campaign']):
+                # Relance encore attendue, ou autre modèle encore interrogé : le fil qui finit en dernier évalue
+                if pending_relaunches(store, connection, start['judgment_campaign']) or not auto.acquired(
+                        snapshot, [a for _, a in auto._attempts(store, connection, start['judgment_campaign'])]):
                     return
             ids = auto.reserve_campaign(store, start['session_id'], start['dossier_id'],
                                         start['judgment_campaign'], judge)

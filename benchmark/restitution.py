@@ -339,6 +339,9 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
             ids.append(parents[ids[-1]])
         return ids[::-1]
     causes, attempts_by_id = {}, {}
+    from .acquisition.recovery import pending_relaunches
+    # Relance programmée après un incident fournisseur : la cellule attend encore sa réponse (#533)
+    awaited = {attempt['operation_id'] for attempt, _ in pending_relaunches(store, connection, campaign_id)}
     latest = {record['attempt_id']: record for record in records}
     concerned = {a['operation_id'] for a in visible
                  if a['state'] == 'RECEIVED' and not a['answered'] and a['operation_id'] not in latest}
@@ -368,7 +371,9 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         attempts = {a['operation_id']: a for a in visible}
         for attempt in pending:
             # Rien n'a été envoyé au juge : état terminal, la cellule reste comptée comme non couverte
-            if attempts[attempt['attempt_id']]['state'] == 'RECEIVED' and not attempts[attempt['attempt_id']]['answered']:
+            if attempt['attempt_id'] in awaited:
+                attempt.update(next_action='Relance automatique programmée après un incident fournisseur.')
+            elif attempts[attempt['attempt_id']]['state'] == 'RECEIVED' and not attempts[attempt['attempt_id']]['answered']:
                 cell = next(c for c in campaign['cells'] if c['cell_id'] == attempts[attempt['attempt_id']]['cell_id'])
                 attempt.update(state='NO_USABLE_RESPONSE', next_action=NO_USABLE_RESPONSE,
                                configuration_id=cell['configuration_id'], case_id=cell['case_id'],
