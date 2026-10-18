@@ -327,6 +327,17 @@ INCIDENT_TEXT = {
     'RATE_LIMITED': 'OpenRouter limite temporairement les demandes.',
     'PROVIDER_ERROR': 'Incident chez OpenRouter ou chez le fournisseur du modèle.',
 }
+# Appel direct à l'API officielle (#535) : l'incident ne vient pas d'OpenRouter
+OFFICIAL_INCIDENT_TEXT = {
+    'RATE_LIMITED': 'L’API officielle du fournisseur limite temporairement les demandes.',
+    'PROVIDER_ERROR': 'Incident sur l’API officielle du fournisseur du modèle.',
+}
+
+
+def candidate_incident_text(operation):
+    """Cause lisible d'un appel candidat en incident fournisseur, attribuée au canal réellement appelé"""
+    texts = INCIDENT_TEXT if operation['requested_configuration']['channel_id'] == ENDPOINT else OFFICIAL_INCIDENT_TEXT
+    return texts[operation['receipt']['result']['incident']]
 
 
 class NotSent(OSError):

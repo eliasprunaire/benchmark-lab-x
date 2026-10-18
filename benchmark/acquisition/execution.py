@@ -249,11 +249,11 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
                                access_secret=access_secret, access_transport=access_transport)
 
 
-def _derive_authority(owner_record, snapshot, operation_id, reserve_amount, budget_id):
+def _derive_authority(owner_record, snapshot, operation_id, reserve_amount, budget_id, purpose='start'):
     owner = owner_record['authority']
     cell = snapshot['manifest']['plan'][0]['cell_id']
     return dict(
-        actor=owner['actor'], authority_id=owner['authority_id'], purpose='start',
+        actor=owner['actor'], authority_id=owner['authority_id'], purpose=purpose,
         manifest_sha256=snapshot['manifest_sha256'], execution_authority=owner['execution_authority'],
         candidate_authority=owner['candidate_authority'], budget_authority=owner['budget_authority'],
         budget_id=budget_id, allowed_cells=[cell], reserve_amounts={cell: reserve_amount},
@@ -315,10 +315,13 @@ def _next_preauthorized_attempt(store, operation_id, *, allow_official=False):
                     return None
             snap = c._inspect(store, connection, cid)
             if snap['admission'] is None:
-                if snap['admissions']:
+                # Relance réservée arrêtée par le seul redémarrage : réadmise sous la même préautorisation (#535).
+                # `_admit` refuse une tentative déjà partie, même ambiguë
+                resumed = bool(snap['admissions'])
+                if resumed and not (incident and snap['stop_reason'] == r.RESTARTED):
                     return None
-                authority = _derive_authority(owner, snap, operation_id,
-                                              proposal['reserve_amount'], proposal['budget_id'])
+                authority = _derive_authority(owner, snap, operation_id, proposal['reserve_amount'],
+                                              proposal['budget_id'], purpose='resume' if resumed else 'start')
                 evidence = _derive_evidence(owner, snap, grant)
                 c._admit(store, connection, cid, authority, evidence)
                 snap = c._inspect(store, connection, cid)
