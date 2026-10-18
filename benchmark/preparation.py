@@ -20,6 +20,8 @@ from .storage import (Store, SchemaError, IntegrityError, ConflictError, BudgetE
                       ambiguous_expired, AMBIGUOUS_EXPIRED_TEXT)
 from .validation import identifier
 from .transports.openrouter import INCIDENT_TEXT, NOT_SENT_TEXT, NotSent
+# Réexporté pour le rendu web, qui n'importe pas les transports (#537)
+from .transports.openrouter import incident_text as incident_text
 
 
 REQUEST_MIN = 40

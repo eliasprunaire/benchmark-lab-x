@@ -13,7 +13,7 @@ import re
 import secrets
 
 from benchmark.storage import _strict_json as encode
-from benchmark.preparation import INCIDENT_TEXT, NOT_SENT_TEXT
+from benchmark.preparation import INCIDENT_TEXT, NOT_SENT_TEXT, incident_text
 from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
 
@@ -845,7 +845,8 @@ def campaign_followup(campaign):
                                  else 'Évaluation en cours. ' + judgment['reason'] if judgment.get('reason')
                                  else 'Évaluation en cours : chaque réponse est vérifiée selon les critères de votre exemple.')
         if status == 'NOT_STARTED' and cells and all(c['state'] == 'RECEIVED' for c in cells):
-            return False, False, 'Toutes les réponses sont arrivées. Leur évaluation n’est pas encore lancée.'
+            return False, False, ' '.join(filter(None, ('Toutes les réponses sont arrivées. Leur évaluation n’est pas encore lancée.',
+                                                         judgment.get('reason'))))
     stopped = campaign.get('stop_reason') or campaign.get('restore_pending') or not campaign.get('admission_open')
     # Un modèle encore interrogé garde le suivi actif, même si un autre a déjà rencontré un incident
     if not stopped and any(c['state'] == 'EMISSION_POSSIBLE' for c in cells):
@@ -858,10 +859,14 @@ def campaign_followup(campaign):
         return False, False, AMBIGUOUS_EXPIRED_TEXT + ' La comparaison s’est arrêtée ; les réponses déjà reçues restent consultables.'
     # Incident fournisseur reçu (#525) : sa cause est dite, l'arrêt reste celui du contrat financier
     # Un incident de clé l'emporte : depuis #533, une limite de débit sur un autre modèle n'arrête rien
-    incidents = [a['incident'] for a in campaign['attempts'] if a.get('incident') in INCIDENT_TEXT]
-    named = next((i for i in incidents if i in ('KEY_REJECTED', 'CREDIT_EXHAUSTED')), incidents[0] if incidents else None)
+    incidents = [a for a in campaign['attempts'] if a.get('incident') in INCIDENT_TEXT]
+    named = next((a for a in incidents if a['incident'] in ('KEY_REJECTED', 'CREDIT_EXHAUSTED')), incidents[0] if incidents else None)
     if named:
-        return False, False, (INCIDENT_TEXT[named] + ' La comparaison s’est arrêtée ; les réponses déjà reçues '
+        # Texte du canal appelé, comme sur la page de résultats (#537)
+        cell = next((c for c in cells if c.get('cell_id') == named.get('cell_id')), {})
+        config = next((p for p in campaign['panel'] if p['id'] == cell.get('configuration_id')), {})
+        return False, False, (incident_text(config.get('channel_id'), named['incident'])
+                              + ' La comparaison s’est arrêtée ; les réponses déjà reçues '
                               'restent consultables et rien n’est relancé automatiquement.')
     if any(a.get('incident') or a.get('attribution_incident') for a in campaign['attempts']):
         return False, False, 'Un problème technique est survenu. Le suivi s’est arrêté et rien n’est relancé automatiquement.'
@@ -908,13 +913,21 @@ def render_campaign_followup(value, csrf):
     cases = campaign.get('cases', [])
     # Plusieurs essais d'un modèle : chaque ligne nomme son exemple et son essai
     examples = {case['id']: example_label(case, number) + ' : ' for number, case in enumerate(cases, 1)} if len(cases) > 1 else {}
+    # Modèle resté en incident fournisseur à sa dernière tentative (#537) : sa réponse reçue n'est pas exploitable
+    unusable = set((campaign.get('judgment') or {}).get('unusable_cells', ()))
+    # Appel clos sans réponse confirmée (#537), dans la comparaison ou sa chaîne de relances : ni reçu ni compté
+    closed = set((campaign.get('judgment') or {}).get('closed_cells', ())) | {
+        a.get('cell_id') for a in campaign['attempts'] if a.get('incident') == AMBIGUOUS_EXPIRED}
     content += section('Modèle par modèle', listing(
         examples.get(cell.get('case_id'), '') + models.get(cell['configuration_id'], 'Modèle')
         + (' · essai ' + str(cell['repetition']) if 'repetition' in cell else '')
-        + ' : ' + states.get(cell['state'], 'état inconnu')
+        + ' : ' + ('réponse non confirmée, appel clos' if cell.get('cell_id') in closed and cell['state'] == 'RECEIVED'
+                   else 'pas de réponse exploitable' if cell.get('cell_id') in unusable and cell['state'] == 'RECEIVED'
+                   else states.get(cell['state'], 'état inconnu'))
         for cell in campaign['cells']))
     received = sum(cell['state'] == 'RECEIVED' for cell in campaign['cells'])
     all_received = bool(campaign['cells']) and received == len(campaign['cells'])
+    received -= sum(cell['state'] == 'RECEIVED' and cell.get('cell_id') in closed for cell in campaign['cells'])
     content += '<p>Réponses reçues : ' + str(received) + ' sur ' + str(len(campaign['cells'])) + '.</p>'
     judgment = campaign.get('judgment')
     if judgment:

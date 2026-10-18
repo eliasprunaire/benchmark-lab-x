@@ -148,7 +148,12 @@ class OfficialTransportTests(unittest.TestCase):
         connection.getresponse.return_value.read.return_value = json.dumps(body).encode()
         return connection
 
-    def test_preauthorized_official_fallback_runs_without_user_selection(self):
+    def preauthorized_fallback(self, budget):
+        """Campagne opérateur à secours officiel et relance préautorisés ; l'appel officiel reçoit un 429
+
+        Renvoie le transport officiel, la configuration source, la fabrique, les appels OpenRouter, les canaux
+        appelés et la campagne officielle en limite de débit
+        """
         h = self.h
         source = deepcopy(c.inspect(h.store, 'pi-offline')['manifest'])
         source.update(campaign_id='automatic-official', financial_cost_policy='retain_reserve')
@@ -160,7 +165,7 @@ class OfficialTransportTests(unittest.TestCase):
                           allow_fallbacks=False, require_parameters=True,
                           data_collection='deny'),
             reasoning=dict(effort='low'))
-        h.store.create_budget(source['campaign_id'], '2', 'USD')
+        h.store.create_budget(source['campaign_id'], budget, 'USD')
         snapshot = c.create(h.store, source)
         authority, evidence = inputs(snapshot, cells=['x'], budget=source['campaign_id'])
         authority['reserve_amounts'] = {'x': '0.1'}
@@ -224,6 +229,11 @@ class OfficialTransportTests(unittest.TestCase):
                 patch.object(native, 'HTTPSConnection', return_value=limited):
             execution.execute(h.data, 'automatic-source', transport_factory=factory)
         limited_campaign = next(item for item in c.list_campaigns(h.store) if item['manifest'].get('official_fallback'))
+        return transport, config, factory, router_calls, channels, limited_campaign
+
+    def test_preauthorized_official_fallback_runs_without_user_selection(self):
+        h = self.h
+        transport, config, factory, router_calls, channels, limited_campaign = self.preauthorized_fallback('2')
         limited_attempt = limited_campaign['attempts'][0]
         self.assertEqual('RATE_LIMITED', limited_attempt['operation']['receipt']['result']['incident'])
         # La cause lue sur la page de résultats vise l'API officielle appelée, jamais OpenRouter (revue PR #536)
@@ -236,11 +246,18 @@ class OfficialTransportTests(unittest.TestCase):
         # Avant le Retry-After de 120 s, plus long que les 30 s du premier délai, rien n'est réservé
         with patch('benchmark.preparation._now', return_value=received_at + timedelta(seconds=60)):
             self.assertIsNone(execution.retry(h.store, limited_attempt['operation_id']))
-        with patch('benchmark.preparation._now', return_value=received_at + timedelta(seconds=120)):
-            relaunch = execution.retry(h.store, limited_attempt['operation_id'])
-        self.assertIsNotNone(relaunch)
-        with patch.object(native, 'HTTPSConnection', return_value=self.response('zai')):
-            execution.execute(h.data, relaunch, transport_factory=factory)
+        # Issue #537 : relance émise par le minuteur de l'exécuteur, profil de jugement configuré ; sur une
+        # campagne opérateur, elle ne lance aucune évaluation automatique et n'arrête rien
+        from benchmark import service
+        judge, timers = Mock(), {}
+        with patch('benchmark.preparation._now', return_value=received_at + timedelta(seconds=120)), \
+                patch.object(native, 'HTTPSConnection', return_value=self.response('zai')):
+            service._retry('candidate', h.data, limited_campaign['task']['dossier_id'], None,
+                           limited_attempt['operation_id'], ((factory, judge), None, None, 'a' * 40, timers))
+        for timer in timers.values():
+            timer.cancel()
+        self.assertEqual([], judge.mock_calls)
+        self.assertIsNone(c.inspect(h.store, 'automatic-official')['stop_reason'])
 
         campaigns = c.list_campaigns(h.store)
         relaunched = next(item for item in campaigns
@@ -263,6 +280,20 @@ class OfficialTransportTests(unittest.TestCase):
         execution.continue_preauthorized(h.data, relaunched['attempts'][0]['operation_id'],
                                        transport_factory=factory)
         self.assertEqual(before, sum(len(item['attempts']) for item in c.list_campaigns(h.store)))
+
+    def test_relaunch_without_budget_leaves_awaited_relaunches(self):
+        """Issue #537 : une relance que le budget ne couvre plus n'est pas attendue sans fin"""
+        # Réserve de 0,2 retenue par le 429 officiel : il reste moins que les 0,2 de sa relance
+        *_, limited_campaign = self.preauthorized_fallback('0.35')
+        attempt = limited_campaign['attempts'][0]
+        received_at = datetime.fromisoformat(attempt['operation']['receipt']['observed_configuration']['http']['received_at'])
+        with patch('benchmark.preparation._now', return_value=received_at + timedelta(hours=1)):
+            self.assertIsNone(execution.retry(self.h.store, attempt['operation_id']))
+            self.assertEqual([], execution.due_retries(self.h.store))
+            c.connection_for(self.h.store)
+            with self.h.store.read_snapshot() as connection:
+                self.assertEqual({attempt['operation_id']: 'budget de relance insuffisant'},
+                                 recovery.blocked_relaunches(self.h.store, connection, 'automatic-official'))
 
     def test_three_native_formats_preserve_pi_wire_and_unknown_cost(self):
         h = self.h

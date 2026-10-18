@@ -11,7 +11,7 @@ from . import campaigns as c
 from .. import qualification as q, outgoing
 from ..validation import digest as value_digest, identifier, _hash, _texts
 from ..storage import (BudgetError, ConflictError, IntegrityError, _fields, _money, _transaction,
-                       candidate_incident)
+                       ambiguous_expired, candidate_incident)
 
 _IDENTITY = ('provider', 'model', 'revision', 'access', 'channel_id')
 _UNRECOVERABLE = {'MODEL_IDENTITY_MISMATCH', 'PROVIDER_ROUTE_MISMATCH', 'HARNESS_ERROR'}
@@ -543,11 +543,13 @@ def incident_open(store, connection, snapshot):
         current, _ = parent(store, connection, current['manifest']['recovery_of'])
 
 
-def pending_relaunches(store, connection, campaign_id):
-    """Relances après incident fournisseur encore attendues dans une comparaison et ses reprises
+# Causes qui interdisent de réserver une relance : elle sort des relances attendues (#537)
+RELAUNCH_AMBIGUOUS = 'un autre appel n’a pas de réponse confirmée'
+RELAUNCH_BUDGET = 'budget de relance insuffisant'
 
-    (tentative en incident, échéance) ; la comparaison n'est pas acquise tant que la liste n'est pas vide
-    """
+
+def _relaunches(store, connection, campaign_id):
+    """(tentative en incident, échéance, cause qui interdit sa réservation ou None) de la comparaison et ses reprises"""
     snapshots = [c._inspect(store, connection, cid)
                  for cid in [campaign_id] + c._recovery_descendants(connection, campaign_id)]
     # Une relance réservée puis arrêtée par le seul redémarrage, jamais émise, reste attendue (#535)
@@ -562,8 +564,41 @@ def pending_relaunches(store, connection, campaign_id):
             _, grant = _owner_grant(store, connection, snapshot)
             if (grant is not None and incident_open(store, connection, snapshot)
                     and cell_attempts(store, connection, snapshot) < grant.get('incident_retries', 0)):
-                result.append((attempt, incident_due(store, connection, snapshot, attempt)))
+                result.append((attempt, incident_due(store, connection, snapshot, attempt),
+                               _blocked(store, connection, snapshot, attempt, grant)))
     return result
+
+
+def _blocked(store, connection, snapshot, attempt, grant):
+    """Cause qui interdit de réserver la relance, ou None
+
+    Un appel encore en cours sur le même budget la laisse attendue : sa réponse peut la rendre possible
+    """
+    try:
+        _incident_proposal(store, connection, snapshot['manifest'], attempt, grant)
+        return None
+    except BudgetError:
+        operations = [op for op in store._operations(connection) if op['budget_id'] == attempt['operation']['budget_id']]
+        if any(op['state'] == 'EMISSION_POSSIBLE' for op in operations):
+            return None
+        if any(op['state'] == 'AMBIGUOUS' or ambiguous_expired(op) for op in operations):
+            return RELAUNCH_AMBIGUOUS
+        return RELAUNCH_BUDGET
+
+
+def pending_relaunches(store, connection, campaign_id):
+    """Relances après incident fournisseur encore attendues dans une comparaison et ses reprises
+
+    (tentative en incident, échéance) ; la comparaison n'est pas acquise tant que la liste n'est pas vide.
+    Une relance qu'aucune réservation ne permet n'est pas attendue (#537)
+    """
+    return [(attempt, due) for attempt, due, blocked in _relaunches(store, connection, campaign_id) if blocked is None]
+
+
+def blocked_relaunches(store, connection, campaign_id):
+    """Relances qu'aucune réservation ne permet : {tentative en incident : cause} (#537)"""
+    return {attempt['operation_id']: blocked for attempt, _, blocked in _relaunches(store, connection, campaign_id)
+            if blocked}
 
 
 def _incident_proposal(store, connection, source, attempt, grant, *, check_budget=True):

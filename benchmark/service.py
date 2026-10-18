@@ -662,11 +662,12 @@ def _judge_comparison(data, start, judge, retry, acquire=None):
                 if pending_relaunches(store, connection, start['judgment_campaign']) or not auto.acquired(
                         snapshot, [a for _, a in auto._attempts(store, connection, start['judgment_campaign'])]):
                     return
+                # Aucune réponse exploitable, reprises comprises : rien à évaluer, et aucun arrêt d'évaluation
+                # qui masquerait leur cause dans le suivi (revue PR #538)
+                if not any(campaigns.answered(a) for _, a in auto._attempts(store, connection, start['judgment_campaign'])):
+                    return
             ids = auto.reserve_campaign(store, start['session_id'], start['dossier_id'],
                                         start['judgment_campaign'], judge)
-            # Une reprise réussie compte comme réponse à évaluer
-            if not ids and not any(campaigns.answered(a) for _, a in auto._attempts(store, store._connection, start['judgment_campaign'])):
-                campaigns.stop(store, start['judgment_campaign'], reason='JUDGMENT_STOPPED')
         _judgment_worker(data, start['dossier_id'], ids, judge, retry)
     except Exception as error:
         # Un fil qui meurt laisserait la campagne en attente sans fin : l'erreur est journalisée, la campagne arrêtée
@@ -697,6 +698,9 @@ def _candidate_worker(data, dossier_id, operation_id, transport, retry):
             snapshot, _ = recovery.parent(store, connection, operation_id)
             while snapshot['manifest'].get('recovery_of'):
                 snapshot, _ = recovery.parent(store, connection, snapshot['manifest']['recovery_of'])
+            # L'évaluation automatique ne s'applique qu'aux comparaisons du demandeur (#537)
+            if snapshot['manifest'].get('funding') != 'requester':
+                return
             session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
                                             (dossier_id,)).fetchone()[0]
         judge = judgment_profile if secret is None else judgment_profile.for_session(
