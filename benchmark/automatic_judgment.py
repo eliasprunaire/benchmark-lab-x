@@ -399,6 +399,20 @@ def _last_attempts(connection, family):
     return [(manifests[cid], attempt) for cid, attempt in family if attempt['operation_id'] not in followed]
 
 
+def ended_cells(connection, family, awaited=()):
+    """Cellules dont la dernière tentative n'a pas de réponse : (reçue sans réponse à évaluer hors relance attendue,
+    closes sans réponse confirmée)
+
+    Même critère que l'évaluation (`answered`) : incident fournisseur, coupure pour longueur, sortie vide.
+    Le suivi ne les présente pas comme des réponses reçues (#537, #539)
+    """
+    last = _last_attempts(connection, family)
+    closed = [attempt['cell_id'] for _, attempt in last if storage.ambiguous_expired(attempt['operation'])]
+    return ([attempt['cell_id'] for _, attempt in last
+             if attempt['state'] == 'RECEIVED' and not c.answered(attempt) and attempt['operation_id'] not in awaited
+             and attempt['cell_id'] not in closed], closed)
+
+
 def _incident_ends(connection, family):
     """(manifeste, tentative) des dernières tentatives de cellule restées en incident fournisseur"""
     return [(manifest, attempt) for manifest, attempt in _last_attempts(connection, family)
@@ -465,11 +479,7 @@ def status(store, connection, campaign_id, snapshot=None):
     relaunches = [] if ops else [(attempt, due) for attempt, due, cause in states if cause is None]
     # Modèles sans réponse exploitable après leur dernière tentative, relance attendue exclue (#537)
     awaited = {attempt['operation_id'] for attempt, _ in relaunches}
-    result['unusable_cells'] = [attempt['cell_id'] for _, attempt in _incident_ends(connection, family)
-                                if attempt['operation_id'] not in awaited]
-    # Dernière tentative close sans réponse confirmée (#537) : elle n'est pas une réponse reçue
-    result['closed_cells'] = [attempt['cell_id'] for _, attempt in _last_attempts(connection, family)
-                              if storage.ambiguous_expired(attempt['operation'])]
+    result['unusable_cells'], result['closed_cells'] = ended_cells(connection, family, awaited)
     exhausted = [incident for incident in (p._provider_incident(op, unsent=True) for op in latest)
                  if incident in p._RETRIED_INCIDENTS]
     if ops and completed == total:

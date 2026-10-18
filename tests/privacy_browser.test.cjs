@@ -1155,7 +1155,9 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       // #525 : un incident fournisseur non relançable nommé, jamais présenté comme un problème technique anonyme
       ['credit-exhausted', false, false, 'Crédit OpenRouter épuisé pour votre clé : rechargez-le ou relevez son plafond. La comparaison s’est arrêtée'],
       // #537 : l'incident est attribué au canal appelé, jamais à OpenRouter par défaut
-      ['official-limited', false, false, 'L’API officielle du fournisseur limite temporairement les demandes. La comparaison s’est arrêtée']]) {
+      ['official-limited', false, false, 'L’API officielle du fournisseur limite temporairement les demandes. La comparaison s’est arrêtée'],
+      // #539 : campagne opérateur, le modèle épuisé n'est pas présenté comme une réponse reçue
+      ['operator-exhausted', false, false, 'Modèle A · Niveau de raisonnement non renseigné : pas de réponse exploitable']]) {
       await page.goto(origin + '/render/followup-' + state);
       const text = await page.textContent('main');
       assert.ok(text.includes(message), state);

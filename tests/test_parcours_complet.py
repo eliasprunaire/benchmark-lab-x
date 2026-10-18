@@ -2650,6 +2650,11 @@ class ParcoursComplet(unittest.TestCase):
         html = self.evaluer(dossier)
         # Modèle A et la reprise de Modèle B ; les réponses coupées de Modèle C ne partent jamais au juge
         self.assertEqual(2, judge.request.call_count)
+        # Revue PR #540 : la dernière reprise encore coupée n'est pas présentée comme une réponse reçue
+        page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
+        bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
+        self.assertTrue(bloc.split('Modèle C')[1].strip().endswith(': pas de réponse exploitable'), bloc)
+        self.assertTrue(bloc.split('Modèle B')[1].split('Modèle C')[0].strip().endswith(': réponse reçue'), bloc)
         rows = html.split('<tbody>')[1].split('</tbody>')[0]
         self.assertEqual(2, rows.count('<tr id="attempt-'))
         reprise = next(chunk for chunk in rows.split('<tr id="attempt-')[1:] if '<strong>Modèle B</strong>' in chunk)
@@ -3490,8 +3495,13 @@ class ParcoursComplet(unittest.TestCase):
         retry = ((self.fabrique, self.assistants['judgment_transport']), SECRET, self.access, 'a' * 40, timers)
         with closing(storage.Store(self.data)) as store:
             dues = execution.due_retries(store)
-        for operation_id, dossier, session, _ in dues:
-            service._retry('candidate', self.data, dossier, session, operation_id, retry)
+        # Minuteurs simulés, comme dans les tests de l'évaluation : seule l'échéance relue ici fait partir une relance
+        with patch.object(service.threading, 'Timer'):
+            for operation_id, dossier, session, _ in dues:
+                service._retry('candidate', self.data, dossier, session, operation_id, retry)
+        # Issue #539 : aucun minuteur réel ne part de lui-même pendant le test, dans un ordre variable ;
+        # ce contrôle échoue si les minuteurs ne sont plus simulés ci-dessus
+        self.assertEqual([], [t for t in timers.values() if isinstance(t, threading.Thread) and t.ident is not None])
         # Les minuteurs suivants sont relus ici à leur échéance, jamais laissés courir après le test
         for timer in timers.values():
             timer.cancel()
