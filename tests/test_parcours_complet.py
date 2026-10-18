@@ -3375,10 +3375,14 @@ class ParcoursComplet(unittest.TestCase):
         2. la relance part avant son échéance, ou ignore un `Retry-After` plus long que son délai ;
         3. un redémarrage perd la relance due, ou la duplique ;
         4. l'évaluation part pendant qu'une relance est programmée, ou juge une tentative en incident ;
-        5. le suivi tait la relance programmée, sa cause ou son délai
+        5. le suivi tait la relance programmée, sa cause ou son délai ;
+        6. la relance, même demande, retire « Notre conseil » comme une reprise pour longueur (décision d'Ayo)
         """
         from benchmark import runtime
-        judge = self.juge_factice()
+        # Critère de qualité mesuré et coûts connus : sans relance comptée comme reprise, un conseil est donné
+        self.criteria = {'eliminatory': [], 'obligations': ['Toutes les actions présentes'], 'quality': [
+            {'label': 'Clarté du tableau', 'scale': ['excellent', 'acceptable', 'faible'], 'favorable': 'excellent'}]}
+        judge = self.juge_factice(lambda critere: ('PASS', 'candidate', 'Exigence respectée'), mesure='excellent')
         script, pendant = [429, 503], []
 
         def comportement(value, model, limit, suivi):
@@ -3433,6 +3437,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
         self.assertNotIn('Aucune réponse exploitable', html)
         self.assertIn('Réponse obtenue à la tentative 3, après un incident fournisseur', html)
+        self.assertIn('Notre conseil', html)
+        self.assertNotIn('Une reprise a été demandée', html)
         self.assertNotIn('Reprise après arrêt pour longueur', html)
         texte, phases = self.depenses(html)
         # Essai d'origine et première relance, remplacés : seule la relance porte ce libellé

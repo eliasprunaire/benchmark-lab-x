@@ -331,9 +331,13 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     # Relances après incident fournisseur (#533) : même demande, seule la dernière tentative compte
     from .acquisition.recovery import _owner_grant
     grant = _owner_grant(store, connection, c._inspect(store, connection, campaign_id))[1] or {}
-    sources = {op['operation_id']: op for op in store._operations(connection, operation_ids=superseded)}
+    origins = {s['manifest']['recovery_of'] for s in snapshots}
+    sources = {op['operation_id']: op for op in store._operations(connection, operation_ids=superseded | origins)}
     relaunched = {aid for aid, source in parents.items()
                   if 'incident_retries' in grant and storage.candidate_incident(sources[source])}
+    # Décision d'Ayo (#533) : une relance après 429 ou 5xx renvoie la même demande et ne retire pas le conseil ;
+    # seules les reprises pour longueur ou changement de route comptent
+    recovered = any(not ('incident_retries' in grant and storage.candidate_incident(sources[origin])) for origin in origins)
     every = campaign['attempts'] + [a for cid in descendants
                                     for a in c.projection(store, connection, dossier_id, cid)[0]['attempts']
                                     if a['operation_id'] in held]
@@ -489,7 +493,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         ordered.extend(group)
     payload = store.get_dossier(dossier_id, contract['revision'])
     # Calculé sur toutes les réponses, indépendamment des filtres
-    recommendation, abstention = _recommendation(rows, columns, campaign['cases'], campaign['cells'], pending, bool(descendants))
+    recommendation, abstention = _recommendation(rows, columns, campaign['cases'], campaign['cells'], pending, recovered)
     return dict(kind='comparison', visibility='private', catalogue_admission=False,
                 campaign_id=campaign_id, contract_sha256=campaign['contract_sha256'], task=campaign['task'],
                 need=payload['request'], reformulation=payload['reformulation'],
