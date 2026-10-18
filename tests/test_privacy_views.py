@@ -73,6 +73,13 @@ def browser_views():
         cells=[dict(configuration_id='x', state='RECEIVED'), dict(configuration_id='y', state='INTENT_RECORDED')],
         panel=[dict(id='x', model='Modèle A'), dict(id='y', model='Modèle B')])
     examples['followup-credit-exhausted'] = value
+    # #537 : limite de débit reçue sur l'API officielle, campagne arrêtée sans relance préautorisée
+    value = deepcopy(examples['followup-incident'])
+    value['campaign'].update(admission_open=False, stop_reason='ACQUISITION_EVIDENCE_INCOMPLETE',
+        attempts=[dict(cell_id='x1', state='RECEIVED', incident='RATE_LIMITED')],
+        cells=[dict(cell_id='x1', configuration_id='x', state='RECEIVED')],
+        panel=[dict(id='x', model='Modèle A', channel_id='https://api.z.ai/api/paas/v4/chat/completions')])
+    examples['followup-official-limited'] = value
     for status in ('NOT_STARTED', 'WAITING', 'RUNNING', 'COMPLETE', 'BLOCKED'):
         value = deepcopy(examples['followup-received'])
         value['campaign']['judgment'] = dict(status=status, total=1, completed=int(status == 'COMPLETE'),

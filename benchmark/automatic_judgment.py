@@ -391,22 +391,39 @@ def _completed(store, connection, ops):
     return count, unusable
 
 
-def _exhausted(store, connection, family):
-    """« (cause ; N tentatives) » des modèles restés en incident fournisseur à leur dernière tentative (#535)"""
-    from .acquisition.recovery import cell_attempts
+def _incident_ends(connection, family):
+    """(manifeste, tentative) des dernières tentatives de cellule restées en incident fournisseur"""
     manifests = {cid: c.q._decode(*connection.execute('SELECT manifest_json, manifest_sha256 FROM s4_campaigns '
                                                       'WHERE campaign_id=?', (cid,)).fetchone()) for cid, _ in family}
     followed = {manifest.get('recovery_of') for manifest in manifests.values()}
+    return [(manifests[cid], attempt) for cid, attempt in family
+            if attempt['operation_id'] not in followed and storage.candidate_incident(attempt['operation'])]
+
+
+def _exhausted(store, connection, family, blocked):
+    """« (cause ; N tentatives) » des modèles restés en incident fournisseur à leur dernière tentative (#535)
+
+    `blocked` : relances qu'aucune réservation ne permet, avec leur cause (#537)
+    """
+    from .acquisition.recovery import cell_attempts
     causes = []
-    for cid, attempt in family:
-        if attempt['operation_id'] in followed or not storage.candidate_incident(attempt['operation']):
-            continue
-        count = cell_attempts(store, connection, dict(manifest=manifests[cid]))
+    for manifest, attempt in _incident_ends(connection, family):
+        count = cell_attempts(store, connection, dict(manifest=manifest))
         cause = candidate_incident_text(attempt['operation']).rstrip('.') + (
-            f' ; {count} tentatives' if count > 1 else '')
+            f' ; {count} tentatives' if count > 1 else '') + (
+            f' ; relance impossible : {blocked[attempt["operation_id"]]}' if attempt['operation_id'] in blocked else '')
         if cause not in causes:
             causes.append(cause)
     return ' (' + ' · '.join(causes) + ')' if causes else ''
+
+
+def _missing(store, connection, family, blocked, cells, total):
+    """Modèles sans réponse exploitable, avec leur cause : ils ne sont pas évalués"""
+    missing = cells - total
+    return (f'{missing} modèle{"s" if missing > 1 else ""} sur {cells} '
+            f'{"n’ont" if missing > 1 else "n’a"} pas donné de réponse exploitable'
+            f'{_exhausted(store, connection, family, blocked)} : '
+            f'{"ils ne sont pas évalués" if missing > 1 else "il n’est pas évalué"}.')
 
 
 def status(store, connection, campaign_id, snapshot=None):
@@ -422,6 +439,7 @@ def status(store, connection, campaign_id, snapshot=None):
     cells = len(snapshot['manifest']['plan'])
     completed, unusable = _completed(store, connection, latest)
     result = dict(status='NOT_STARTED', total=total, cells=cells, completed=completed, reason=None, can_start=False,
+                  unusable_cells=list[str](),
                   # Reprises techniques pas encore reçues : le suivi les dit au lieu d'annoncer toutes les réponses
                   recovering=sum(cid != campaign_id and a['state'] != 'RECEIVED' for cid, a in family))
     recovering = result['recovering']
@@ -435,19 +453,22 @@ def status(store, connection, campaign_id, snapshot=None):
                 relaunching += recovery.relaunched(store, connection, source_snapshot, source)
         result.update(recovering=recovering - relaunching, relaunching=relaunching)
     due = _due(snapshot['stop_reason'], ops)
-    from .acquisition.recovery import pending_relaunches
-    relaunches = [] if ops else pending_relaunches(store, connection, campaign_id)
+    from .acquisition.recovery import _relaunches
+    # Lues une fois par lecture du suivi : chaque passe inspecte toute la chaîne de relances
+    states = _relaunches(store, connection, campaign_id)
+    blocked = {attempt['operation_id']: cause for attempt, _, cause in states if cause}
+    relaunches = [] if ops else [(attempt, due) for attempt, due, cause in states if cause is None]
+    # Modèles sans réponse exploitable après leur dernière tentative, relance attendue exclue (#537)
+    awaited = {attempt['operation_id'] for attempt, _ in relaunches}
+    result['unusable_cells'] = [attempt['cell_id'] for _, attempt in _incident_ends(connection, family)
+                                if attempt['operation_id'] not in awaited]
     exhausted = [incident for incident in (p._provider_incident(op, unsent=True) for op in latest)
                  if incident in p._RETRIED_INCIDENTS]
     if ops and completed == total:
         # Terminée avant toute autre lecture : une admission fermée après la fin n'est pas une interruption
         result['status'] = 'COMPLETE'
         if cells > total:
-            missing = cells - total
-            result['reason'] = (f'{missing} modèle{"s" if missing > 1 else ""} sur {cells} '
-                                f'{"n’ont" if missing > 1 else "n’a"} pas donné de réponse exploitable'
-                                f'{_exhausted(store, connection, family)} : '
-                                f'{"ils ne sont pas évalués" if missing > 1 else "il n’est pas évalué"}.')
+            result['reason'] = _missing(store, connection, family, blocked, cells, total)
     elif snapshot['stop_reason'] == 'JUDGMENT_STOPPED':
         unreachable = any(storage.not_sent(o) and (o['receipt']['observed_configuration'] or {}).get('incident')
                           == 'CONNECTION_FAILED' for o in ops)
@@ -496,7 +517,10 @@ def status(store, connection, campaign_id, snapshot=None):
     elif attempts and all(a['state'] == 'RECEIVED' for a in attempts):
         result['can_start'] = total > 0
         if not result['can_start']:
-            result.update(status='BLOCKED', reason=f'Aucune réponse exploitable à évaluer{_exhausted(store, connection, family)}.')
+            result.update(status='BLOCKED', reason=f'Aucune réponse exploitable à évaluer{_exhausted(store, connection, family, blocked)}.')
+        elif blocked:
+            # Relance impossible (#537) : la réponse reçue s'évalue, le suivi dit pourquoi l'autre manque
+            result['reason'] = _missing(store, connection, family, blocked, cells, total)
     elif total > 0 and acquired(snapshot, attempts):
         # Comparaison arrêtée : les réponses reçues s'évaluent, les essais jamais envoyés restent non lancés
         result['can_start'] = True

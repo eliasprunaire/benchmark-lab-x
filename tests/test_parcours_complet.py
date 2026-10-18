@@ -3534,6 +3534,11 @@ class ParcoursComplet(unittest.TestCase):
         # Issue #535 : le suivi nomme la cause et le nombre de tentatives, comme la page de résultats
         self.assertIn('1 modèle sur 2 n’a pas donné de réponse exploitable (OpenRouter limite temporairement les '
                       'demandes ; 5 tentatives) : il n’est pas évalué.', page.visible)
+        # Issue #537 : le bloc « Modèle par modèle » ne dit pas « réponse reçue » pour le modèle épuisé
+        bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
+        ligne_a, ligne_b = bloc.split('Modèle B')
+        self.assertTrue(ligne_a.strip().endswith(': pas de réponse exploitable'), ligne_a)
+        self.assertTrue(ligne_b.strip().endswith(': réponse reçue'), ligne_b)
         results, _, raw = self.request(comparison)
         self.examine(results, comparison, 'résultats après relances épuisées', None)
         html = raw.decode()
@@ -3569,6 +3574,51 @@ class ParcoursComplet(unittest.TestCase):
         self.clock += timedelta(hours=1)
         self.assertEqual([], self.relancer_par_l_executeur())
         self.assertEqual(3, len(envois))
+
+    def test_autre_appel_ambigu_au_redemarrage_la_relance_n_attend_pas(self):
+        """Issue #537 : un autre appel resté ambigu au redémarrage interdit la relance, qui n'est pas attendue sans fin
+
+        Modes d'échec couverts :
+        1. le suivi annonce « Nouvelle tentative automatique dès que possible » sans fin ;
+        2. la relance part, ou l'appel ambigu est rejoué ;
+        3. le suivi tait pourquoi la relance n'a pas lieu ;
+        4. l'évaluation de la réponse reçue ne peut jamais partir
+        """
+        from benchmark import runtime
+
+        class Plantage(BaseException):
+            """Fin brutale du processus pendant l'appel de Modèle C"""
+        envois, suivis = [], []
+
+        def comportement(value, model, limit, suivi):
+            envois.append(model)
+            suivis.append(suivi)
+            if model == 'openai/gpt-5.6-sol':
+                self.incident_fournisseur(value, 429)
+            elif model == 'mistralai/mistral-small-2603':
+                raise Plantage
+            else:
+                value['cost'].update(status='KNOWN', amount='0.05')
+        with self.assertRaises(Plantage):
+            self.lancer_avec_reprises(
+                ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'], comportement)
+        with closing(storage.Store(self.data)) as store:
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.clock += timedelta(seconds=30)
+        self.assertEqual([], self.relancer_par_l_executeur())
+        page, _, _ = self.request(suivis[0])
+        self.assertNotIn('Nouvelle tentative automatique', page.visible)
+        # L'appel ambigu est clos sans rejeu ; la réponse reçue de Modèle B peut être évaluée
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
+        self.clock += timedelta(hours=1)
+        self.assertEqual([], self.relancer_par_l_executeur())
+        self.assertEqual(3, len(envois))
+        page, _, _ = self.request(suivis[0])
+        self.assertNotIn('Nouvelle tentative automatique', page.visible)
+        self.assertIn('relance impossible : un autre appel n’a pas de réponse confirmée', page.visible)
+        page, _, _ = self.request(suivis[0].split('/campaigns/')[0])
+        self.assertIn('Lancer l’évaluation', page.visible)
 
     def test_tous_les_modeles_epuises_le_suivi_nomme_la_cause(self):
         """Issue #535 : sans aucune réponse exploitable après cinq tentatives, le suivi dit la cause et leur nombre"""

@@ -334,10 +334,16 @@ OFFICIAL_INCIDENT_TEXT = {
 }
 
 
+def incident_text(channel_id, incident):
+    """Cause lisible d'un incident fournisseur, attribuée au canal appelé ; canal inconnu : OpenRouter"""
+    if channel_id not in (None, ENDPOINT) and incident in OFFICIAL_INCIDENT_TEXT:
+        return OFFICIAL_INCIDENT_TEXT[incident]
+    return INCIDENT_TEXT[incident]
+
+
 def candidate_incident_text(operation):
     """Cause lisible d'un appel candidat en incident fournisseur, attribuée au canal réellement appelé"""
-    texts = INCIDENT_TEXT if operation['requested_configuration']['channel_id'] == ENDPOINT else OFFICIAL_INCIDENT_TEXT
-    return texts[operation['receipt']['result']['incident']]
+    return incident_text(operation['requested_configuration']['channel_id'], operation['receipt']['result']['incident'])
 
 
 class NotSent(OSError):

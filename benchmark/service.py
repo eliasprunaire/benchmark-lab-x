@@ -697,6 +697,9 @@ def _candidate_worker(data, dossier_id, operation_id, transport, retry):
             snapshot, _ = recovery.parent(store, connection, operation_id)
             while snapshot['manifest'].get('recovery_of'):
                 snapshot, _ = recovery.parent(store, connection, snapshot['manifest']['recovery_of'])
+            # L'évaluation automatique ne s'applique qu'aux comparaisons du demandeur (#537)
+            if snapshot['manifest'].get('funding') != 'requester':
+                return
             session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
                                             (dossier_id,)).fetchone()[0]
         judge = judgment_profile if secret is None else judgment_profile.for_session(
