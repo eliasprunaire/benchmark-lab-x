@@ -391,13 +391,18 @@ def _completed(store, connection, ops):
     return count, unusable
 
 
-def _incident_ends(connection, family):
-    """(manifeste, tentative) des dernières tentatives de cellule restées en incident fournisseur"""
+def _last_attempts(connection, family):
+    """(manifeste, tentative) de la dernière tentative de chaque cellule, relances et reprises comprises"""
     manifests = {cid: c.q._decode(*connection.execute('SELECT manifest_json, manifest_sha256 FROM s4_campaigns '
                                                       'WHERE campaign_id=?', (cid,)).fetchone()) for cid, _ in family}
     followed = {manifest.get('recovery_of') for manifest in manifests.values()}
-    return [(manifests[cid], attempt) for cid, attempt in family
-            if attempt['operation_id'] not in followed and storage.candidate_incident(attempt['operation'])]
+    return [(manifests[cid], attempt) for cid, attempt in family if attempt['operation_id'] not in followed]
+
+
+def _incident_ends(connection, family):
+    """(manifeste, tentative) des dernières tentatives de cellule restées en incident fournisseur"""
+    return [(manifest, attempt) for manifest, attempt in _last_attempts(connection, family)
+            if storage.candidate_incident(attempt['operation'])]
 
 
 def _exhausted(store, connection, family, blocked):
@@ -439,7 +444,7 @@ def status(store, connection, campaign_id, snapshot=None):
     cells = len(snapshot['manifest']['plan'])
     completed, unusable = _completed(store, connection, latest)
     result = dict(status='NOT_STARTED', total=total, cells=cells, completed=completed, reason=None, can_start=False,
-                  unusable_cells=list[str](),
+                  unusable_cells=list[str](), closed_cells=list[str](),
                   # Reprises techniques pas encore reçues : le suivi les dit au lieu d'annoncer toutes les réponses
                   recovering=sum(cid != campaign_id and a['state'] != 'RECEIVED' for cid, a in family))
     recovering = result['recovering']
@@ -462,6 +467,9 @@ def status(store, connection, campaign_id, snapshot=None):
     awaited = {attempt['operation_id'] for attempt, _ in relaunches}
     result['unusable_cells'] = [attempt['cell_id'] for _, attempt in _incident_ends(connection, family)
                                 if attempt['operation_id'] not in awaited]
+    # Dernière tentative close sans réponse confirmée (#537) : elle n'est pas une réponse reçue
+    result['closed_cells'] = [attempt['cell_id'] for _, attempt in _last_attempts(connection, family)
+                              if storage.ambiguous_expired(attempt['operation'])]
     exhausted = [incident for incident in (p._provider_incident(op, unsent=True) for op in latest)
                  if incident in p._RETRIED_INCIDENTS]
     if ops and completed == total:

@@ -3574,6 +3574,15 @@ class ParcoursComplet(unittest.TestCase):
         self.clock += timedelta(hours=1)
         self.assertEqual([], self.relancer_par_l_executeur())
         self.assertEqual(3, len(envois))
+        # Issue #537 : la relance close sans réponse confirmée n'est ni « réponse reçue » ni comptée comme reçue
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
+        page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
+        bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
+        ligne_a, ligne_b = bloc.split('Modèle B')
+        self.assertTrue(ligne_a.strip().endswith(': réponse non confirmée, appel clos'), ligne_a)
+        self.assertTrue(ligne_b.strip().endswith(': réponse reçue'), ligne_b)
+        self.assertIn('Réponses reçues : 1 sur 2.', page.visible)
 
     def test_autre_appel_ambigu_au_redemarrage_la_relance_n_attend_pas(self):
         """Issue #537 : un autre appel resté ambigu au redémarrage interdit la relance, qui n'est pas attendue sans fin
@@ -3617,6 +3626,10 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(suivis[0])
         self.assertNotIn('Nouvelle tentative automatique', page.visible)
         self.assertIn('relance impossible : un autre appel n’a pas de réponse confirmée', page.visible)
+        # L'appel clos sans réponse confirmée n'est ni « réponse reçue » ni compté parmi les réponses reçues
+        bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
+        self.assertTrue(bloc.split('Modèle C')[1].strip().endswith(': réponse non confirmée, appel clos'), bloc)
+        self.assertIn('Réponses reçues : 2 sur 3.', page.visible)
         page, _, _ = self.request(suivis[0].split('/campaigns/')[0])
         self.assertIn('Lancer l’évaluation', page.visible)
 
