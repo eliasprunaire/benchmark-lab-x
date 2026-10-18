@@ -1151,7 +1151,9 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       ['running', true, false, 'Benchmark en cours'], ['queued', true, false, 'Les essais n’ont pas encore démarré'],
       ['stopped', false, false, 'La comparaison s’est arrêtée avant la fin'],
       ['ambiguous', false, false, 'Un essai n’a pas pu être confirmé'],
-      ['incident', false, false, 'Un problème technique est survenu'], ['received', false, true, 'Réponses reçues']]) {
+      ['incident', false, false, 'Un problème technique est survenu'], ['received', false, true, 'Réponses reçues'],
+      // #525 : un incident fournisseur nommé, jamais présenté comme un problème technique anonyme
+      ['rate-limited', false, false, 'OpenRouter limite temporairement les demandes. La comparaison s’est arrêtée']]) {
       await page.goto(origin + '/render/followup-' + state);
       const text = await page.textContent('main');
       assert.ok(text.includes(message), state);
