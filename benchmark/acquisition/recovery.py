@@ -29,6 +29,20 @@ def parent(store, connection, operation_id):
     return snapshot, attempt
 
 
+def _source(store, connection, operation_id):
+    """Reçu source d'une relance et manifeste de sa campagne, lus sans `_inspect`
+
+    Les contrôles d'une campagne descendante s'exécutent pendant son propre `_inspect` : inspecter la source
+    à chaque maillon revérifierait toute la chaîne en cascade (#533)
+    """
+    row = connection.execute('SELECT a.cell_id, c.manifest_json, c.manifest_sha256 FROM s4_attempts a JOIN s4_campaigns c '
+                             'USING(campaign_id) WHERE a.operation_id=?', (operation_id,)).fetchone()
+    operations = store._operations(connection, operation_ids={operation_id})
+    if row is None or len(operations) != 1:
+        raise ValueError('Tentative source absente')
+    return q._decode(row[1], row[2]), dict(operation_id=operation_id, cell_id=row[0], operation=operations[0])
+
+
 def observation(attempt) -> dict:
     if attempt['state'] != 'RECEIVED':
         raise ConflictError('Reçu attribuable requis ; aucun rejeu ambigu')
@@ -134,8 +148,7 @@ def validate_link(store, connection, manifest):
     own = connection.execute('SELECT rowid FROM s4_campaigns WHERE campaign_id=?', (manifest['campaign_id'],)).fetchone()
     if row is None or (own and row[0] >= own[0]):
         raise ValueError('La reprise doit suivre un reçu antérieur')
-    previous, attempt = parent(store, connection, oid)
-    old = previous['manifest']
+    old, attempt = _source(store, connection, oid)
     if candidate_incident(attempt['operation']):
         # Relance après incident : la même demande exactement ; son autorité est vérifiée à l'admission
         # (`bind_derived`). Une reprise de route change ses routes et suit le contrôle ci-dessous
@@ -145,6 +158,7 @@ def validate_link(store, connection, manifest):
                 and all(manifest.get(k) == old.get(k) for k in ('contract_sha256', 'conditions', 'cases', 'cost_basis',
                                                                  'financial_cost_policy'))):
             return
+    previous, attempt = parent(store, connection, oid)
     if observation(attempt)['kind'] not in _RECOVERABLE:
         raise ValueError('Incident non récupérable ; refus conservé')
     if any(manifest.get(k) != old.get(k) for k in ('contract_sha256', 'conditions', 'cases', 'cost_basis', 'financial_cost_policy')):
@@ -433,9 +447,11 @@ def _official_proposal(store, connection, operation_id, grant, budget_id, *, che
 
 def _automatic_proposal(store, connection, operation_id, grant, *, allow_official,
                         check_budget=True):
+    if 'incident_retries' in grant:
+        manifest, attempt = _source(store, connection, operation_id)
+        if candidate_incident(attempt['operation']):
+            return _incident_proposal(store, connection, manifest, attempt, grant, check_budget=check_budget)
     snapshot, attempt = parent(store, connection, operation_id)
-    if candidate_incident(attempt['operation']) and 'incident_retries' in grant:
-        return _incident_proposal(store, connection, snapshot, attempt, grant, check_budget=check_budget)
     if 'max_recoveries' in grant:
         # Compteur explicite : les limites calculées ne suffisent pas à borner la chaîne
         # Une relance après incident fournisseur a son propre plafond
@@ -470,13 +486,18 @@ def relaunched(store, connection, snapshot, attempt):
 
 def incident_rank(store, connection, snapshot):
     """Rang de la tentative de cette campagne dans sa série de relances après incident fournisseur (#533)"""
-    # L'appelant a vérifié la préautorisation du lancement ; la relire ici reparcourrait toute la chaîne
-    rank, current = 1, snapshot
-    while current['manifest'].get('recovery_of'):
-        current, source = parent(store, connection, current['manifest']['recovery_of'])
-        if not candidate_incident(source['operation']):
+    # L'appelant a vérifié la préautorisation du lancement. Les manifestes et reçus sont lus sans `_inspect` :
+    # appelé depuis la vérification d'une admission dérivée, un `_inspect` par maillon revérifierait chaque
+    # ancêtre en cascade
+    rank, source_id = 1, snapshot['manifest'].get('recovery_of')
+    while source_id:
+        source = store._operations(connection, operation_ids={source_id})
+        if len(source) != 1 or not candidate_incident(source[0]):
             break
         rank += 1
+        raw, digest = connection.execute('SELECT c.manifest_json, c.manifest_sha256 FROM s4_campaigns c JOIN s4_attempts a '
+                                         'USING(campaign_id) WHERE a.operation_id=?', (source_id,)).fetchone()
+        source_id = q._decode(raw, digest).get('recovery_of')
     return rank
 
 
@@ -527,11 +548,11 @@ def pending_relaunches(store, connection, campaign_id):
     return result
 
 
-def _incident_proposal(store, connection, snapshot, attempt, grant, *, check_budget=True):
+def _incident_proposal(store, connection, source, attempt, grant, *, check_budget=True):
     """Même demande sous une nouvelle identité liée au reçu en incident, avec sa propre réserve"""
-    if incident_rank(store, connection, snapshot) >= grant.get('incident_retries', 0):
+    if incident_rank(store, connection, dict(manifest=source)) >= grant.get('incident_retries', 0):
         raise ValueError('Relances après incident fournisseur épuisées')
-    manifest = deepcopy(snapshot['manifest'])
+    manifest = deepcopy(source)
     cell = next(x for x in manifest['plan'] if x['cell_id'] == attempt['cell_id'])
     config = next(x for x in manifest['panel'] if x['id'] == cell['configuration_id'])
     manifest.pop('official_fallback', None)
@@ -540,9 +561,11 @@ def _incident_proposal(store, connection, snapshot, attempt, grant, *, check_bud
                     attempt_policy=dict(retries=False, order=[cell['cell_id']],
                                         reason='Relance après incident fournisseur du reçu ' + attempt['operation_id']
                                         + ' ; même demande, aucune sélection sémantique'))
+    # Même enveloppe que la tentative source, dont la réservation porte le budget
     proposal = dict(manifest=manifest, reserve_amount=attempt['operation']['reserved_amount'],
-                    budget_id=snapshot['admissions'][-1]['authority']['budget_id'])
+                    budget_id=attempt['operation']['budget_id'])
     if check_budget:
+        snapshot, _ = parent(store, connection, attempt['operation_id'])
         budget = c._envelope(store, connection, snapshot, snapshot['admissions'][-1]['authority'])
         if not budget['provider_managed'] and _money(proposal['reserve_amount']) > Decimal(budget['available']):
             raise BudgetError('Budget de relance insuffisant')
