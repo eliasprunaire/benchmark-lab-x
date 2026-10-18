@@ -914,9 +914,11 @@ def render_campaign_followup(value, csrf):
     # Plusieurs essais d'un modèle : chaque ligne nomme son exemple et son essai
     examples = {case['id']: example_label(case, number) + ' : ' for number, case in enumerate(cases, 1)} if len(cases) > 1 else {}
     # Modèle resté en incident fournisseur à sa dernière tentative (#537) : sa réponse reçue n'est pas exploitable
-    unusable = set((campaign.get('judgment') or {}).get('unusable_cells', ()))
+    # Comparaison du demandeur : lu dans son évaluation ; campagne opérateur : dans sa projection (#539)
+    outcome = campaign.get('judgment') or campaign
+    unusable = set(outcome.get('unusable_cells', ()))
     # Appel clos sans réponse confirmée (#537), dans la comparaison ou sa chaîne de relances : ni reçu ni compté
-    closed = set((campaign.get('judgment') or {}).get('closed_cells', ())) | {
+    closed = set(outcome.get('closed_cells', ())) | {
         a.get('cell_id') for a in campaign['attempts'] if a.get('incident') == AMBIGUOUS_EXPIRED}
     content += section('Modèle par modèle', listing(
         examples.get(cell.get('case_id'), '') + models.get(cell['configuration_id'], 'Modèle')

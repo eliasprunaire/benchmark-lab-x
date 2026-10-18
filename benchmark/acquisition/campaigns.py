@@ -1770,6 +1770,16 @@ def _projected(store, connection, campaign_id, snapshot) -> dict:
         # Toujours projeté une fois lancé : une évaluation jamais lancée n'est pas une comparaison terminée
         if snapshot['attempts']:
             projected['judgment'] = auto.status(store, connection, campaign_id, snapshot)
+    elif snapshot['attempts']:
+        # Campagne opérateur (#539) : ses relances sont des campagnes distinctes, lues pour la dernière tentative
+        from .. import automatic_judgment as auto
+        from .recovery import pending_relaunches
+        family = [(cid, attempt) for cid in [campaign_id] + _recovery_descendants(connection, campaign_id)
+                  for attempt in (snapshot if cid == campaign_id else _inspect(store, connection, cid))['attempts']]
+        unusable, projected['closed_cells'] = auto.ended_cells(connection, family)
+        # Relances attendues lues seulement si une cellule finit en incident : la projection reste une inspection
+        awaited = {attempt['cell_id'] for attempt, _ in pending_relaunches(store, connection, campaign_id)} if unusable else set()
+        projected['unusable_cells'] = [cell for cell in unusable if cell not in awaited]
     return projected
 
 

@@ -80,6 +80,11 @@ def browser_views():
         cells=[dict(cell_id='x1', configuration_id='x', state='RECEIVED')],
         panel=[dict(id='x', model='Modèle A', channel_id='https://api.z.ai/api/paas/v4/chat/completions')])
     examples['followup-official-limited'] = value
+    # #539 : campagne opérateur, modèle épuisé à sa dernière tentative, sans évaluation automatique
+    value = deepcopy(examples['followup-incident'])
+    value['campaign'].update(attempts=[dict(cell_id='x1', state='RECEIVED', incident='LENGTH')], unusable_cells=['x1'],
+        closed_cells=[], cells=[dict(cell_id='x1', configuration_id='x', state='RECEIVED')])
+    examples['followup-operator-exhausted'] = value
     for status in ('NOT_STARTED', 'WAITING', 'RUNNING', 'COMPLETE', 'BLOCKED'):
         value = deepcopy(examples['followup-received'])
         value['campaign']['judgment'] = dict(status=status, total=1, completed=int(status == 'COMPLETE'),

@@ -148,7 +148,7 @@ class OfficialTransportTests(unittest.TestCase):
         connection.getresponse.return_value.read.return_value = json.dumps(body).encode()
         return connection
 
-    def preauthorized_fallback(self, budget):
+    def preauthorized_fallback(self, budget, retries=5):
         """Campagne opérateur à secours officiel et relance préautorisés ; l'appel officiel reçoit un 429
 
         Renvoie le transport officiel, la configuration source, la fabrique, les appels OpenRouter, les canaux
@@ -198,7 +198,7 @@ class OfficialTransportTests(unittest.TestCase):
                 },
             },
             # Issue #535 : la relance d'office après 429 ou 5xx vaut aussi sur le canal officiel
-            'incident_retries': 5,
+            'incident_retries': retries,
         }
         c.admit(h.store, source['campaign_id'], authority, evidence)
         c.reserve(h.store, source['campaign_id'], 'x', 'automatic-source')
@@ -251,7 +251,8 @@ class OfficialTransportTests(unittest.TestCase):
         from benchmark import service
         judge, timers = Mock(), {}
         with patch('benchmark.preparation._now', return_value=received_at + timedelta(seconds=120)), \
-                patch.object(native, 'HTTPSConnection', return_value=self.response('zai')):
+                patch.object(native, 'HTTPSConnection', return_value=self.response('zai')), \
+                patch.object(service.threading, 'Timer'):
             service._retry('candidate', h.data, limited_campaign['task']['dossier_id'], None,
                            limited_attempt['operation_id'], ((factory, judge), None, None, 'a' * 40, timers))
         for timer in timers.values():
@@ -294,6 +295,18 @@ class OfficialTransportTests(unittest.TestCase):
             with self.h.store.read_snapshot() as connection:
                 self.assertEqual({attempt['operation_id']: 'budget de relance insuffisant'},
                                  recovery.blocked_relaunches(self.h.store, connection, 'automatic-official'))
+
+    def test_operator_exhausted_model_has_no_usable_response(self):
+        """Issue #539 : sur une campagne opérateur, un modèle épuisé n'est pas présenté comme une réponse reçue"""
+        # Troisième tentative de la cellule : source, reprise OpenRouter, puis secours officiel en 429
+        *_, limited_campaign = self.preauthorized_fallback('2', retries=3)
+        attempt = limited_campaign['attempts'][0]
+        self.assertEqual([], execution.due_retries(self.h.store))
+        c.connection_for(self.h.store)
+        with self.h.store.read_snapshot() as connection:
+            projected, = c.projection(self.h.store, connection, limited_campaign['task']['dossier_id'], 'automatic-official')
+        self.assertEqual([attempt['cell_id']], projected['unusable_cells'])
+        self.assertEqual([], projected['closed_cells'])
 
     def test_three_native_formats_preserve_pi_wire_and_unknown_cost(self):
         h = self.h
@@ -362,7 +375,11 @@ class OfficialTransportTests(unittest.TestCase):
 
     def test_native_rate_limit_without_preauthorization_stops_with_its_cause(self):
         """Issue #535 : sans relance préautorisée, un 429 ou un 5xx officiel arrête la campagne sous sa cause"""
-        for kind, status, incident in (('deepseek', 429, 'RATE_LIMITED'), ('anthropic', 503, 'PROVIDER_ERROR')):
+        # Issue #539 : une clé refusée (401) ou un crédit épuisé (402) sur l'API officielle ne prend jamais la
+        # cause OpenRouter KEY_REJECTED ou CREDIT_EXHAUSTED : son texte OpenRouter n'est pas atteignable
+        for kind, status, incident in (('deepseek', 429, 'RATE_LIMITED'), ('anthropic', 503, 'PROVIDER_ERROR'),
+                                       ('moonshot', 401, 'PROVIDER_RESPONSE_INCOMPLETE'),
+                                       ('openai', 402, 'PROVIDER_RESPONSE_INCOMPLETE')):
             with self.subTest(status=status):
                 transport, cid, oid = self.prepare(kind)
                 connection = self.response(kind)
