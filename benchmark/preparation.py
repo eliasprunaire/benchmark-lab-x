@@ -1433,9 +1433,15 @@ def due_qualification_retries(store, *, session_id=None, dossier_id=None):
             "AND o.state='RECEIVED' AND (? IS NULL OR d.session_id=?) AND (? IS NULL OR d.dossier_id=?)",
             (session_id, session_id, dossier_id, dossier_id)).fetchall()
         for operation_id, dossier, session in rows:
-            operation = _retryable(store, connection, operation_id)
-            due = None if operation is None else _due(store, connection, operation)
-            if due is not None:
+            # Échéance d'abord, sur la seule opération : la plupart n'en ont aucune, et l'examen de la série
+            # relit tout le registre (#530)
+            try:
+                due = _due(store, connection, store._operations(connection, operation_ids={operation_id})[0])
+            except (KeyError, IndexError, TypeError, ValueError):
+                # Forme que seul l'examen complet écarte : ordre d'origine, même résultat
+                operation = _retryable(store, connection, operation_id)
+                due = None if operation is None else _due(store, connection, operation)
+            if due is not None and _retryable(store, connection, operation_id) is not None:
                 result.append((operation_id, dossier, session, max(0, math.ceil((due - _now()).total_seconds()))))
     return result
 

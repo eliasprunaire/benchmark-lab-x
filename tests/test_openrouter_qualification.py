@@ -906,11 +906,24 @@ class PreparationVolumeTests(unittest.TestCase):
 
     def test_relectures_completes_independantes_du_nombre_de_dossiers(self):
         self.add_dossiers(3)
-        few = self.full_reads(lambda: self.resume())
+        few, few_copies = self.full_reads(lambda: self.resume()), self.full_copies(self.resume)
         self.add_dossiers(9)
-        many = self.full_reads(lambda: self.resume())
+        many, many_copies = self.full_reads(lambda: self.resume()), self.full_copies(self.resume)
         self.assertEqual(few, many)
         self.assertLessEqual(many, 1)
+        # #530 : servie depuis le snapshot, une copie complète par qualification tenait encore la base
+        # 20 s pour 123 qualifications en production (0,07 s par copie)
+        self.assertEqual(few_copies, many_copies, (few_copies, many_copies))
+
+    def full_copies(self, call):
+        copies, read = [], storage.Store._operations
+
+        def counted(store, connection, *, operation_ids=None):
+            copies.append(operation_ids is None)
+            return read(store, connection, operation_ids=operation_ids)
+        with patch.object(storage.Store, '_operations', counted):
+            call()
+        return sum(copies)
 
     def test_relectures_avec_tables_s4_presentes(self):
         # Les trois natures de relance interrogent le registre, comme en production
