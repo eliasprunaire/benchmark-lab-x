@@ -307,6 +307,14 @@ class OfficialTransportTests(unittest.TestCase):
             projected, = c.projection(self.h.store, connection, limited_campaign['task']['dossier_id'], 'automatic-official')
         self.assertEqual([attempt['cell_id']], projected['unusable_cells'])
         self.assertEqual([], projected['closed_cells'])
+        # Issue #541 : chaque relance listée et chaque validation de lien relisent la chaîne ; une inspection par campagne
+        with self.h.store.read_snapshot() as connection, patch.object(c, '_load', wraps=c._load) as loaded:
+            listed = c.projection(self.h.store, connection, limited_campaign['task']['dossier_id'])
+        # La chaîne de trois campagnes et la comparaison Pi du dossier
+        chain = [v['campaign_id'] for v in listed if v['campaign_id'] == 'automatic-official' or v['recovery_of']]
+        self.assertEqual((4, 3), (len(listed), len(chain)))
+        self.assertEqual(sorted(v['campaign_id'] for v in listed), sorted(call.args[2] for call in loaded.call_args_list))
+        self.assertEqual(projected, next(v for v in listed if v['campaign_id'] == 'automatic-official'))
 
     def test_three_native_formats_preserve_pi_wire_and_unknown_cost(self):
         h = self.h

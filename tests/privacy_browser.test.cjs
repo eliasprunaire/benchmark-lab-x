@@ -1168,6 +1168,8 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       assert.equal(await page.locator('nav.steps a[href="/preparation/dossiers/d1/revisions/2"]').count() > 0, true);
       assert.equal(await page.locator('nav.steps a[href="#exemple"]').count(), 0);
       if (terminal) assert.ok(text.includes('Celles qui n’ont pas encore de verdict attendent leur évaluation.'));
+      // #541 : la ligne de compte ne présente pas le modèle épuisé comme une réponse reçue
+      if (state === 'operator-exhausted') assert.ok(text.includes('Réponses reçues : 0 sur 1.'), text);
     }
     for (const status of ['NOT_STARTED', 'WAITING', 'RUNNING', 'COMPLETE', 'BLOCKED']) {
       await page.goto(origin + '/render/judgment-' + status);

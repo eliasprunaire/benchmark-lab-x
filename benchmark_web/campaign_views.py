@@ -929,7 +929,8 @@ def render_campaign_followup(value, csrf):
         for cell in campaign['cells']))
     received = sum(cell['state'] == 'RECEIVED' for cell in campaign['cells'])
     all_received = bool(campaign['cells']) and received == len(campaign['cells'])
-    received -= sum(cell['state'] == 'RECEIVED' and cell.get('cell_id') in closed for cell in campaign['cells'])
+    # Ni l'appel clos ni la cellule sans réponse exploitable ne comptent comme une réponse reçue (#541)
+    received -= sum(cell['state'] == 'RECEIVED' and cell.get('cell_id') in closed | unusable for cell in campaign['cells'])
     content += '<p>Réponses reçues : ' + str(received) + ' sur ' + str(len(campaign['cells'])) + '.</p>'
     judgment = campaign.get('judgment')
     if judgment:

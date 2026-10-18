@@ -2655,6 +2655,8 @@ class ParcoursComplet(unittest.TestCase):
         bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
         self.assertTrue(bloc.split('Modèle C')[1].strip().endswith(': pas de réponse exploitable'), bloc)
         self.assertTrue(bloc.split('Modèle B')[1].split('Modèle C')[0].strip().endswith(': réponse reçue'), bloc)
+        # Issue #541 : la ligne de compte ne la compte pas non plus comme une réponse reçue
+        self.assertIn('Réponses reçues : 2 sur 3.', page.visible)
         rows = html.split('<tbody>')[1].split('</tbody>')[0]
         self.assertEqual(2, rows.count('<tr id="attempt-'))
         reprise = next(chunk for chunk in rows.split('<tr id="attempt-')[1:] if '<strong>Modèle B</strong>' in chunk)
@@ -3639,7 +3641,9 @@ class ParcoursComplet(unittest.TestCase):
         # L'appel clos sans réponse confirmée n'est ni « réponse reçue » ni compté parmi les réponses reçues
         bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
         self.assertTrue(bloc.split('Modèle C')[1].strip().endswith(': réponse non confirmée, appel clos'), bloc)
-        self.assertIn('Réponses reçues : 2 sur 3.', page.visible)
+        # Issue #541 : Modèle A, sans réponse exploitable, n'est pas compté non plus
+        self.assertTrue(bloc.split('Modèle A')[1].split('Modèle B')[0].strip().endswith(': pas de réponse exploitable'), bloc)
+        self.assertIn('Réponses reçues : 1 sur 3.', page.visible)
         page, _, _ = self.request(suivis[0].split('/campaigns/')[0])
         self.assertIn('Lancer l’évaluation', page.visible)
 
