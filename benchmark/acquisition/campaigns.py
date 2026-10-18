@@ -1698,18 +1698,23 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
 
 
 def _recovery_descendants(connection, campaign_id):
-    # Seuls les manifestes de la chaîne sont décodés et vérifiés, pas toute la table (#543)
-    def children(oid):
-        rows = connection.execute("SELECT campaign_id, manifest_json, manifest_sha256 FROM s4_campaigns "
-                                  "WHERE json_extract(manifest_json, '$.recovery_of')=? ORDER BY rowid", (oid,))
-        return [cid for cid, raw, digest in rows if q._decode(raw, digest).get('recovery_of') == oid]
+    # Une passe sur la table, sans décoder les manifestes en Python (#543). Chaque manifeste reste vérifié :
+    # son empreinte est celle de ses octets canoniques, un lien altéré est refusé et non ignoré (revue PR #544)
+    children = {}
+    for cid, parent_oid, raw, digest in connection.execute(
+            "SELECT campaign_id, json_extract(manifest_json, '$.recovery_of'), manifest_json, manifest_sha256 "
+            'FROM s4_campaigns ORDER BY rowid'):
+        if sha256(raw.encode('utf-8')).hexdigest() != digest:
+            raise IntegrityError('Identité du manifeste divergente')
+        if parent_oid:
+            children.setdefault(parent_oid, []).append(cid)
     found = []
     pending = [row[0] for row in connection.execute(
         'SELECT operation_id FROM s4_attempts WHERE campaign_id=?', (campaign_id,))]
     seen = set()
     while pending:
         oid = pending.pop()
-        for cid in children(oid):
+        for cid in children.get(oid, ()):
             if cid in seen:
                 continue
             seen.add(cid)
