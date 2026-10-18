@@ -319,7 +319,9 @@ def _plan(store, connection, session_id, dossier_id, campaign_id, transport):
     config, _ = preflight(store, session_id, dossier_id, campaign_id, transport,
                           count=None if due is None else len(due))
     attempts = _attempts(store, connection, campaign_id)
-    if not acquired(c._inspect(store, connection, campaign_id), [a for _, a in attempts]):
+    from .acquisition.recovery import pending_relaunches
+    if (not acquired(c._inspect(store, connection, campaign_id), [a for _, a in attempts])
+            or pending_relaunches(store, connection, campaign_id)):
         raise ConflictError('Réponses candidates à rapprocher avant l’évaluation')
     plan = []
     for cid, attempt in attempts:
@@ -403,6 +405,8 @@ def status(store, connection, campaign_id, snapshot=None):
                   # Reprises techniques pas encore reçues : le suivi les dit au lieu d'annoncer toutes les réponses
                   recovering=sum(cid != campaign_id and a['state'] != 'RECEIVED' for cid, a in family))
     due = _due(snapshot['stop_reason'], ops)
+    from .acquisition.recovery import pending_relaunches
+    relaunches = [] if ops else pending_relaunches(store, connection, campaign_id)
     exhausted = [incident for incident in (p._provider_incident(op, unsent=True) for op in latest)
                  if incident in p._RETRIED_INCIDENTS]
     if ops and completed == total:
@@ -451,6 +455,14 @@ def status(store, connection, campaign_id, snapshot=None):
             result.update(status='BLOCKED', reason='Évaluation interrompue. Aucun appel ne sera relancé automatiquement.')
         else:
             result['status'] = 'RUNNING'
+    elif relaunches:
+        # Appel candidat relancé d'office après un incident fournisseur (#533) : l'évaluation attend sa réponse
+        attempt, when = min(relaunches, key=lambda item: item[1])
+        incident = attempt['operation']['receipt']['result']['incident']
+        retry_in = max(0, math.ceil((when - p._now()).total_seconds()))
+        result.update(status='WAITING', relaunch=len(relaunches), retry_in=retry_in, reason=p.INCIDENT_TEXT[incident] + (
+            ' Nouvelle tentative automatique dans ' + p._duration(retry_in) + '.' if retry_in
+            else ' Nouvelle tentative automatique dès que possible.'))
     elif attempts and all(a['state'] == 'RECEIVED' for a in attempts):
         result['can_start'] = total > 0
         if not result['can_start']:

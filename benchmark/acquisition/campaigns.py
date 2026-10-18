@@ -1152,12 +1152,16 @@ def _envelope(store, connection, snapshot, authority):
                           and op['operation_id'] not in expired]
     if budget['currency'] != snapshot['manifest']['cost_basis']['unit']:
         raise BudgetError('Unité du budget différente de la base de coût')
-    retained = _retained_costs(snapshot, store, connection)
+    # Un incident fournisseur relancé d'office garde son coût inconnu et sa réserve sans bloquer la suite (#533)
+    retained = _retained_costs(snapshot, store, connection) | {
+        op['operation_id'] for op in operations if op['operation_id'] in campaign_operations and storage.candidate_incident(op)}
     if (set(budget['unknown_cost_operations']) - retained - expired or not budget['provider_managed'] and Decimal(budget['available']) < 0
-            or any((_attribution(op['receipt'], op['requested_configuration']) and not routing_error(op))
+            or any((_attribution(op['receipt'], op['requested_configuration']) and not routing_error(op)
+                    and op['operation_id'] not in retained)
                    or op['receipt']['result']['emission'] != 'ESTABLISHED' for op in dependent_receipts)
             or any(op['budget_id'] == authority['budget_id'] and op['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') for op in operations)
-            or any(a['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') or (a['attribution_incident'] and not routing_error(a['operation']))
+            or any(a['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS') or (a['attribution_incident'] and not routing_error(a['operation'])
+                                                                         and a['operation_id'] not in retained)
                    or (a['operation']['observed_cost'] is not None and a['operation']['observed_cost']['status'] == 'UNKNOWN'
                        and a['operation_id'] not in retained)
                    or (a['operation']['receipt'] is not None and a['operation']['receipt']['result']['emission'] != 'ESTABLISHED')
@@ -1351,7 +1355,10 @@ def _requester_recovery(store, panel) -> dict | None:
         except (KeyError, TypeError, ValueError):
             continue
         capabilities.append(item)
-    return dict(capabilities=capabilities, max_recoveries=len(LENGTH_RECOVERY_LIMITS)) if capabilities else None
+    # Décision d'Ayo (#533) : un 429 ou un 5xx reçu est relancé d'office, au plus RETRY_ATTEMPTS tentatives par cellule
+    from ..preparation import RETRY_ATTEMPTS
+    return dict(capabilities=capabilities, max_recoveries=len(LENGTH_RECOVERY_LIMITS),
+                incident_retries=RETRY_ATTEMPTS) if capabilities else None
 
 
 def _estimate_total(snapshot):

@@ -624,18 +624,37 @@ def _probe_worker(future, data, request, fetch, secret, access_transport, transp
     future.set_result(result)
 
 
-def _campaign_worker(data, start, candidate_transport, factory, secret, access_transport, judge, retry=None):
+def _campaign_worker(data, start, candidate_transport, factory, secret, access_transport, judge, retry=None,
+                     relaunch=None):
+    """Interroger les modèles, programmer les relances après incident fournisseur, puis évaluer"""
+    from .acquisition import execution
+    execution.execute_launch(data, start['candidate_attempts'], candidate_transport,
+                             transport_factory=factory, access_secret=secret, access_transport=access_transport)
+    if relaunch is not None and relaunch[0] is not None:
+        try:
+            with closing(Store(data)) as store:
+                _resume_retries(store, data, dict(candidate=relaunch), dossier_id=start.get('dossier_id'))
+        except Exception as error:
+            # Le prochain POST de la session ou le démarrage reprogramme la relance
+            logging.getLogger(__name__).warning('CANDIDATE_RETRY_RESUME_SKIPPED error=%s', type(error).__name__)
+    _judge_comparison(data, start, judge, retry)
+
+
+def _judge_comparison(data, start, judge, retry):
+    """Évaluer une comparaison acquise ; une relance candidate encore attendue la fera évaluer après elle (#533)"""
     from . import automatic_judgment as auto
-    from .acquisition import campaigns, execution
+    from .acquisition import campaigns
+    from .acquisition.recovery import pending_relaunches
     try:
-        execution.execute_launch(data, start['candidate_attempts'], candidate_transport,
-                                 transport_factory=factory, access_secret=secret, access_transport=access_transport)
         if 'judgment_campaign' not in start:
             return
         with closing(Store(data)) as store:
             snapshot = campaigns.inspect(store, start['judgment_campaign'])
             if snapshot['admission'] is None:
                 return
+            with store.read_snapshot() as connection:
+                if pending_relaunches(store, connection, start['judgment_campaign']):
+                    return
             ids = auto.reserve_campaign(store, start['session_id'], start['dossier_id'],
                                         start['judgment_campaign'], judge)
             # Une reprise réussie compte comme réponse à évaluer
@@ -654,6 +673,30 @@ def _campaign_worker(data, start, candidate_transport, factory, secret, access_t
         except Exception as failure:
             logging.getLogger(__name__).error('CAMPAIGN_STOP_FAILED campaign=%s error=%s',
                                               start['judgment_campaign'], type(failure).__name__)
+
+
+def _candidate_worker(data, dossier_id, operation_id, transport, retry):
+    """Émettre la relance d'un appel candidat, programmer la suivante, puis évaluer quand plus rien n'est attendu"""
+    from . import provider_access
+    from .acquisition import execution, recovery
+    factory, judgment_profile = transport
+    _, secret, access_transport, _, timers = retry
+    execution.execute_retry(data, operation_id, factory, access_secret=secret, access_transport=access_transport)
+    with closing(Store(data)) as store:
+        _resume_retries(store, data, dict(candidate=retry), dossier_id=dossier_id)
+        if judgment_profile is None:
+            return
+        with store.read_snapshot() as connection:
+            snapshot, _ = recovery.parent(store, connection, operation_id)
+            while snapshot['manifest'].get('recovery_of'):
+                snapshot, _ = recovery.parent(store, connection, snapshot['manifest']['recovery_of'])
+            session_id = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?',
+                                            (dossier_id,)).fetchone()[0]
+        judge = judgment_profile if secret is None else judgment_profile.for_session(
+            provider_access.key_for_session(store, session_id, secret, access_transport), session_id, secret)
+    # Mêmes minuteurs que l'évaluation lancée au départ : ses propres relances restent programmées
+    _judge_comparison(data, dict(judgment_campaign=snapshot['manifest']['campaign_id'], session_id=session_id,
+                                 dossier_id=dossier_id), judge, (judgment_profile, secret, access_transport, retry[3], timers))
 
 
 def _qualification_worker(data, dossier_id, operation_id, transport, retry):
@@ -693,9 +736,12 @@ def _resume_qualification_retries(store, data, retry, *, session_id=None, dossie
 def _retry_kinds():
     """Par nature d'appel assisté : relances dues, réservation de la suivante, fil qui l'exécute"""
     from . import automatic_judgment as auto, preparation
+    from .acquisition import execution
     return dict(qualification=(preparation.due_qualification_retries, preparation.retry_qualification, _qualification_worker),
                 preparation=(preparation.due_preparation_retries, preparation.retry_preparation, _preparation_worker),
-                judgment=(auto.due_retries, auto.retry, _judgment_worker))
+                judgment=(auto.due_retries, auto.retry, _judgment_worker),
+                candidate=(execution.due_retries, lambda store, operation_id, transport, source: execution.retry(
+                    store, operation_id), _candidate_worker))
 
 
 def _resume_retries(store, data, retries, *, session_id=None, dossier_id=None):
@@ -762,7 +808,8 @@ def _retry(kind, data, dossier_id, session_id, operation_id, retry):
     try:
         with closing(Store(data)) as store:
             # Clé relue à l'échéance : celle que la session a connectée à cet instant
-            transport = profile if secret is None else profile.for_session(
+            # Relance candidate : la clé est relue par l'exécution elle-même, au moment de l'envoi
+            transport = profile if secret is None or kind == 'candidate' else profile.for_session(
                 provider_access.key_for_session(store, session_id, secret, access_transport), session_id, secret)
             following = reserve(store, operation_id, transport, source)
         if following:
@@ -829,7 +876,10 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
             retry_timers = {}
             retries = {kind: (profile, access_secret, access_transport, source, retry_timers) for kind, profile in
                        (('qualification', qualification_transport), ('preparation', transport),
-                        ('judgment', judgment_transport))}
+                        ('judgment', judgment_transport),
+                        # Relances d'appels candidats après incident fournisseur (#533), puis leur évaluation
+                        ('candidate', None if candidate_transport_factory is None
+                         else (candidate_transport_factory, judgment_transport)))}
             try:
                 _resume_retries(store, data, retries)
             except Exception as error:
@@ -901,7 +951,7 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     else:
                         threading.Thread(target=_retention_worker, args=(data, value.get('dossier_id'), _campaign_worker, data, start, candidate_transport,
                             candidate_transport_factory, access_secret, access_transport, active_judgment,
-                            retries['judgment']), daemon=True).start()
+                            retries['judgment'], retries['candidate']), daemon=True).start()
                 elif start:
                     threading.Thread(target=_retention_worker, args=(data, value.get('dossier_id'), _preparation_worker, data,
                         value.get('dossier_id'), start, active_transport, retries['preparation']), daemon=True).start()

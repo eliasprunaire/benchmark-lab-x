@@ -31,6 +31,9 @@ RESPONSE_CAUSES = {'EMPTY_OUTPUT': 'réponse terminée sans texte',
 def _response_cause(attempt):
     """Cause lisible d'une réponse inexploitable, ou None si le reçu ne l'établit pas"""
     from .acquisition import recovery
+    if storage.candidate_incident(attempt['operation']):
+        from .preparation import INCIDENT_TEXT
+        return INCIDENT_TEXT[attempt['operation']['receipt']['result']['incident']].rstrip('.')
     try:
         kind = recovery.observation(attempt)['kind']
     except (ValueError, KeyError, TypeError, AttributeError, ConflictError, IntegrityError):
@@ -233,7 +236,14 @@ def _expenses(store, connection, dossier_id, revision, family, compared, held, p
         family).fetchall())
     currencies = dict(connection.execute('SELECT budget_id, currency FROM budgets').fetchall())
     groups = {key: [] for key in EXPENSE_GROUPS}
-    for op in sorted(store._operations(connection), key=lambda op: op['created_at']):
+    operations = sorted(store._operations(connection), key=lambda op: op['created_at'])
+    by_id = {op['operation_id']: op for op in operations}
+    # Nature de chaque reprise, lue dans le reçu qu'elle vise : longueur, ou incident fournisseur relancé (#533)
+    kinds = {cid: 'INCIDENT' if storage.candidate_incident(by_id[c.q._decode(raw, digest)['recovery_of']]) else 'LENGTH'
+             for cid, raw, digest in connection.execute(
+                 f'SELECT campaign_id, manifest_json, manifest_sha256 FROM s4_campaigns WHERE campaign_id IN '
+                 f'({",".join("?" * len(family[1:]))})', family[1:]).fetchall()} if family[1:] else {}
+    for op in operations:
         if op['dossier_id'] != dossier_id:
             continue
         if op['operation_id'] in attempts:
@@ -265,7 +275,7 @@ def _expenses(store, connection, dossier_id, revision, family, compared, held, p
             # Un coût connu libère sa réserve, même dans une autre unité que la base
             reserved=None if known else op['reserved_amount'], reserved_unit=currencies[op['budget_id']],
             estimate=(observed.get('indicative_cost') or {}).get('token_subtotal_usd'),
-            recovery=attempts.get(op['operation_id'], family[0]) != family[0]))
+            recovery=kinds.get(attempts.get(op['operation_id']))))
 
     def total(items):
         return format(storage._sum_money(storage._money(i['cost']['amount']) for i in items if i['counted']), 'f')
@@ -314,6 +324,9 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     parents = {a['operation_id']: s['manifest']['recovery_of'] for s in snapshots for a in s['attempts']
                if a['operation_id'] in held}
     superseded = set(parents.values())
+    # Relances après incident fournisseur (#533) : même demande, seule la dernière tentative compte
+    sources = {op['operation_id']: op for op in store._operations(connection, operation_ids=superseded)}
+    relaunched = {aid for aid, source in parents.items() if storage.candidate_incident(sources[source])}
     every = campaign['attempts'] + [a for cid in descendants
                                     for a in c.projection(store, connection, dossier_id, cid)[0]['attempts']
                                     if a['operation_id'] in held]
@@ -325,7 +338,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         while ids[-1] in parents:
             ids.append(parents[ids[-1]])
         return ids[::-1]
-    causes = {}
+    causes, attempts_by_id = {}, {}
     latest = {record['attempt_id']: record for record in records}
     concerned = {a['operation_id'] for a in visible
                  if a['state'] == 'RECEIVED' and not a['answered'] and a['operation_id'] not in latest}
@@ -361,7 +374,10 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                                configuration_id=cell['configuration_id'], case_id=cell['case_id'],
                                **({'repetition': cell['repetition']} if 'repetition' in cell else {}),
                                cause=causes.get(attempt['attempt_id']),
-                               recoveries=len(chain(attempt['attempt_id'])) - 1)
+                               recoveries=len(chain(attempt['attempt_id'])) - 1,
+                               **({'attempts': len(chain(attempt['attempt_id']))}
+                                  if attempt['attempt_id'] in relaunched or storage.candidate_incident(
+                                      attempts_by_id[attempt['attempt_id']]['operation']) else {}))
             elif attempts[attempt['attempt_id']]['state'] == 'INTENT_RECORDED' and not campaign['admission_open']:
                 # Arrêtée avant son envoi : l'essai ne partira plus, il reste compté comme non lancé
                 cell = next(c for c in campaign['cells'] if c['cell_id'] == attempts[attempt['attempt_id']]['cell_id'])
@@ -388,7 +404,8 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         row['verdict'] = row['decision']['verdict']
         # Une reprise est une configuration distincte, dite sur sa ligne (RULES.md §5)
         row['recovery_limit'] = (record['requested_configuration']['parameters']['max_tokens']
-                                 if record['attempt_id'] in parents else None)
+                                 if record['attempt_id'] in parents and record['attempt_id'] not in relaunched else None)
+        row['relaunch'] = len(chain(record['attempt_id'])) if record['attempt_id'] in relaunched else None
         if record['attempt_id'] in observations:
             row['observations'] = observations[record['attempt_id']]
         incompatible = ('Impossible de confirmer que la réponse vient du modèle demandé' if record['attribution_incident'] else

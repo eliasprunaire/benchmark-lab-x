@@ -150,6 +150,22 @@ def provider_incident(operation):
     return type(observed) is dict and observed.get('incident') in ('RATE_LIMITED', 'PROVIDER_ERROR')
 
 
+def candidate_incident(operation):
+    """Appel candidat reçu en incident fournisseur (429, 5xx), relancé d'office (#533)
+
+    Sans sortie et sans identité contredite : une identité absente du corps d'erreur n'est pas une autre
+    identité. Son coût reste INCONNU et sa réserve comptée, sans arrêter les autres cellules
+    """
+    receipt = operation['receipt']
+    if operation['state'] != 'RECEIVED' or receipt is None or type(receipt['result']) is not dict:
+        return False
+    result, observed = receipt['result'], receipt['observed_configuration'] or {}
+    config = operation['requested_configuration']
+    return (result.get('incident') in ('RATE_LIMITED', 'PROVIDER_ERROR') and result.get('output') is None
+            and result.get('emission') == 'ESTABLISHED' and type(observed) is dict
+            and all(observed.get(field) in (None, config[field]) for field in config.get('required_observations', ())))
+
+
 # Au-delà, aucune réponse ne peut plus arriver sur la connexion de l'appel : l'effet inconnu est clos, jamais rejoué
 AMBIGUITY_DELAY = timedelta(minutes=15)
 AMBIGUOUS_EXPIRED = 'AMBIGUOUS_EXPIRED'
@@ -1117,7 +1133,7 @@ class Store:
                 and not (phase in ('preparation', 'correction', 'qualification')
                          and row['phase'] in ('preparation', 'correction', 'qualification')
                          and row['state'] == 'RECEIVED')
-                and not provider_incident(row) and not ambiguous_expired(row)]
+                and not provider_incident(row) and not candidate_incident(row) and not ambiguous_expired(row)]
 
     def inspect_budget(self, budget_id: str) -> dict:
         _text(budget_id, 'budget_id')
