@@ -210,6 +210,7 @@ class PiOfficial(PiOpenRouter):
             connection.request('POST', self.path, body=wire.encode(), headers=headers)
             response = connection.getresponse()
             status = response.status
+            retry_after = response.getheader('Retry-After')
             try:
                 raw = response.read(limits.MAX_RESPONSE_BYTES + 1)
                 complete = response.length in (None, 0)
@@ -270,6 +271,9 @@ class PiOfficial(PiOpenRouter):
                 incident = None
         except (ValueError, TypeError, KeyError, AttributeError):
             pass
+        # 429 ou 5xx sans sortie : même cause que sur OpenRouter, relancée d'office sous préautorisation (#535)
+        if output is None and limits.incident_for(status) in ('RATE_LIMITED', 'PROVIDER_ERROR'):
+            incident = limits.incident_for(status)
         model = data.get('model') if type(data.get('model')) is str else None
         if (model is not None or status == 200) and model != request['requested_configuration']['revision']:
             incident = 'MODEL_IDENTITY_MISMATCH'
@@ -279,7 +283,8 @@ class PiOfficial(PiOpenRouter):
                          revision='Native response /model; no hidden weight revision attested' if model else None,
                          access='Executor HTTPS request', channel_id='Executor HTTPS endpoint', route='Executor HTTPS endpoint'),
             request=json.loads(wire), outgoing=self._wire_proof, native_usage=data.get('usage'),
-            http=dict(endpoint=self.endpoint, status=status, response_headers={}, started_at=started,
+            http=dict(endpoint=self.endpoint, status=status, started_at=started,
+                      response_headers={'Retry-After': retry_after} if type(retry_after) is str else {},
                       received_at=datetime.now(timezone.utc).isoformat(), elapsed_seconds=time.monotonic()-clock,
                       complete=complete, credential_redacted=redacted,
                       body_base64=b64encode(raw).decode(), body_sha256=sha256(raw).hexdigest()))

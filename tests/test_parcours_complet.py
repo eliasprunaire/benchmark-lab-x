@@ -3376,14 +3376,16 @@ class ParcoursComplet(unittest.TestCase):
         3. un redémarrage perd la relance due, ou la duplique ;
         4. l'évaluation part pendant qu'une relance est programmée, ou juge une tentative en incident ;
         5. le suivi tait la relance programmée, sa cause ou son délai ;
-        6. la relance, même demande, retire « Notre conseil » comme une reprise pour longueur (décision d'Ayo)
+        6. la relance, même demande, retire « Notre conseil » comme une reprise pour longueur (décision d'Ayo) ;
+        7. un redémarrage entre réservation et envoi perd la relance réservée, ou l'émet deux fois (#535) ;
+        8. après un redémarrage, la relance réussie n'entraîne pas l'évaluation automatique, ou rouvre la comparaison (#535)
         """
         from benchmark import runtime
         # Critère de qualité mesuré et coûts connus : sans relance comptée comme reprise, un conseil est donné
         self.criteria = {'eliminatory': [], 'obligations': ['Toutes les actions présentes'], 'quality': [
             {'label': 'Clarté du tableau', 'scale': ['excellent', 'acceptable', 'faible'], 'favorable': 'excellent'}]}
         judge = self.juge_factice(lambda critere: ('PASS', 'candidate', 'Exigence respectée'), mesure='excellent')
-        script, pendant = [429, 503], []
+        script, pendant = [429, 503, 503], []
 
         def comportement(value, model, limit, suivi):
             if model == 'deepseek/deepseek-v4.1-flash':
@@ -3425,25 +3427,42 @@ class ParcoursComplet(unittest.TestCase):
             runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
         self.clock += timedelta(seconds=60)
         self.relancer()
-        self.assertEqual([], self.relancer())
+        # Aucun doublon : seule la relance suivante est programmée, à 10 min
+        self.assertEqual([600], self.relancer())
         self.assertEqual([A, B, A, A], envois)
+        # Issue #535 : redémarrage après la réservation de la relance suivante, avant son envoi
+        self.clock += timedelta(seconds=600)
+        with closing(storage.Store(self.data)) as store:
+            (source, *_), = execution.due_retries(store)
+            reservee = execution.retry(store, source)
+            self.assertIsNotNone(reservee)
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.assertEqual([A, B, A, A], envois)
+        # Le minuteur de l'exécuteur émet la relance réservée une seule fois, puis lance l'évaluation sans action
+        self.assertEqual([0], self.relancer_par_l_executeur())
+        self.assertEqual([], self.relancer_par_l_executeur())
+        self.assertEqual([A, B, A, A, A], envois)
         self.assertEqual([KEY] * len(envois), cles)
         self.assertEqual(1, len(pendant))
         self.assertIn('Un modèle est interrogé de nouveau après un incident fournisseur.', pendant[0])
         self.assertNotIn('longueur', pendant[0])
-        html = self.evaluer(dossier)
-        # Seule la dernière tentative de Modèle A est évaluée
+        # Seule la dernière tentative de Modèle A est évaluée ; la comparaison arrêtée par le redémarrage le reste
         self.assertEqual(2, judge.request.call_count)
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual('PROCESS_STARTED_ADMISSION_BLOCKED',
+                             campaigns.inspect(store, self.start['judgment_campaign'])['stop_reason'])
+        _, _, raw = self.request(suivi.removesuffix('/conditions'))
+        html = raw.decode()
         self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
         self.assertNotIn('Aucune réponse exploitable', html)
-        self.assertIn('Réponse obtenue à la tentative 3, après un incident fournisseur', html)
+        self.assertIn('Réponse obtenue à la tentative 4, après un incident fournisseur', html)
         self.assertIn('Notre conseil', html)
         self.assertNotIn('Une reprise a été demandée', html)
         self.assertNotIn('Reprise après arrêt pour longueur', html)
         texte, phases = self.depenses(html)
-        # Essai d'origine et première relance, remplacés : seule la relance porte ce libellé
-        self.assertEqual(2, len(phases['Autres envois aux modèles']))
-        self.assertEqual(1, sum('relance après incident fournisseur' in ligne for ligne in phases['Autres envois aux modèles']))
+        # Essai d'origine et deux premières relances, remplacés : seules les relances portent ce libellé
+        self.assertEqual(3, len(phases['Autres envois aux modèles']))
+        self.assertEqual(2, sum('relance après incident fournisseur' in ligne for ligne in phases['Autres envois aux modèles']))
         artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
         if artefacts:
             Path(artefacts).mkdir(parents=True, exist_ok=True)
@@ -3501,11 +3520,58 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(comparison + '/conditions')
         self.assertNotIn('Nouvelle tentative automatique', page.visible)
         self.assertIn('Évaluation terminée.', page.visible)
+        # Issue #535 : le suivi nomme la cause et le nombre de tentatives, comme la page de résultats
+        self.assertIn('1 modèle sur 2 n’a pas donné de réponse exploitable (OpenRouter limite temporairement les '
+                      'demandes ; 5 tentatives) : il n’est pas évalué.', page.visible)
         results, _, raw = self.request(comparison)
         self.examine(results, comparison, 'résultats après relances épuisées', None)
         html = raw.decode()
         self.assertIn('Aucune réponse exploitable pour Modèle A (OpenRouter limite temporairement les demandes ; '
                       '5 tentatives).', html)
+
+    def test_relance_ambigue_au_redemarrage_jamais_rejouee(self):
+        """Issue #535 : une relance partie quand l'exécuteur redémarre reste ambiguë et n'est jamais rejouée"""
+        from benchmark import runtime
+
+        class Plantage(BaseException):
+            """Fin brutale du processus : aucun gestionnaire d'erreur ne s'exécute"""
+        script = [429]
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+            elif script:
+                self.incident_fournisseur(value, script.pop(0))
+            else:
+                raise Plantage
+        dossier, _, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        self.clock += timedelta(seconds=30)
+        with self.assertRaises(Plantage):
+            self.relancer_par_l_executeur()
+        # Le démarrage suivant rend ambiguë la relance partie, sous le seul arrêt du redémarrage
+        with closing(storage.Store(self.data)) as store:
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+            self.assertEqual(['AMBIGUOUS'], [op['state'] for op in store.inspect_operations()
+                                             if op['operation_id'].startswith('recovery-')])
+        self.assertEqual(3, len(envois))
+        self.clock += timedelta(hours=1)
+        self.assertEqual([], self.relancer_par_l_executeur())
+        self.assertEqual(3, len(envois))
+
+    def test_tous_les_modeles_epuises_le_suivi_nomme_la_cause(self):
+        """Issue #535 : sans aucune réponse exploitable après cinq tentatives, le suivi dit la cause et leur nombre"""
+        def comportement(value, model, limit, suivi):
+            self.incident_fournisseur(value, 503)
+        dossier, _, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        for delay in (30, 120, 600, 1800):
+            self.clock += timedelta(seconds=delay)
+            self.relancer()
+        self.assertEqual(10, len(envois))
+        page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
+        self.assertIn('Aucune réponse exploitable à évaluer (Incident chez OpenRouter ou chez le fournisseur du '
+                      'modèle ; 5 tentatives).', page.visible)
 
     def test_relance_due_pendant_qu_un_autre_modele_repond(self):
         """Issue #533 : une relance due pendant l'appel d'un autre modèle attend sa fin, puis part et fait évaluer

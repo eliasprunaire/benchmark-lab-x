@@ -1,6 +1,7 @@
 """Native HTTP fixtures under real Pi; no paid provider calls"""
 from base64 import b64decode
 from copy import deepcopy
+from datetime import datetime, timedelta
 from hashlib import sha256
 import json
 import unittest
@@ -191,6 +192,8 @@ class OfficialTransportTests(unittest.TestCase):
                     'reserve_amount': '0.2',
                 },
             },
+            # Issue #535 : la relance d'office après 429 ou 5xx vaut aussi sur le canal officiel
+            'incident_retries': 5,
         }
         c.admit(h.store, source['campaign_id'], authority, evidence)
         c.reserve(h.store, source['campaign_id'], 'x', 'automatic-source')
@@ -212,13 +215,37 @@ class OfficialTransportTests(unittest.TestCase):
             body['usage']['prompt_tokens'] = 10
             return 200, {}, json.dumps(body).encode(), True, '2026-09-10T10:00:00+00:00', time.monotonic()
 
+        limited = self.response('zai')
+        limited.getresponse.return_value.read.return_value = json.dumps(
+            dict(error=dict(code=429, message='Rate limited'))).encode()
+        limited.getresponse.return_value.status = 429
+        limited.getresponse.return_value.getheader.return_value = '120'
         with patch.object(router.http, 'post', side_effect=truncated), \
-                patch.object(native, 'HTTPSConnection',
-                             return_value=self.response('zai')):
+                patch.object(native, 'HTTPSConnection', return_value=limited):
             execution.execute(h.data, 'automatic-source', transport_factory=factory)
+        limited_campaign = next(item for item in c.list_campaigns(h.store) if item['manifest'].get('official_fallback'))
+        limited_attempt = limited_campaign['attempts'][0]
+        self.assertEqual('RATE_LIMITED', limited_attempt['operation']['receipt']['result']['incident'])
+        self.assertIsNotNone(limited_campaign['admission'])
+        received_at = datetime.fromisoformat(
+            limited_attempt['operation']['receipt']['observed_configuration']['http']['received_at'])
+        # Avant le Retry-After de 120 s, plus long que les 30 s du premier délai, rien n'est réservé
+        with patch('benchmark.preparation._now', return_value=received_at + timedelta(seconds=60)):
+            self.assertIsNone(execution.retry(h.store, limited_attempt['operation_id']))
+        with patch('benchmark.preparation._now', return_value=received_at + timedelta(seconds=120)):
+            relaunch = execution.retry(h.store, limited_attempt['operation_id'])
+        self.assertIsNotNone(relaunch)
+        with patch.object(native, 'HTTPSConnection', return_value=self.response('zai')):
+            execution.execute(h.data, relaunch, transport_factory=factory)
 
         campaigns = c.list_campaigns(h.store)
-        recovered = next(item for item in campaigns if item['manifest'].get('official_fallback'))
+        relaunched = next(item for item in campaigns
+                          if item['manifest'].get('recovery_of') == limited_attempt['operation_id'])
+        # Même demande sur le même canal officiel, sous le même secours préautorisé
+        self.assertEqual(limited_campaign['manifest']['panel'], relaunched['manifest']['panel'])
+        self.assertEqual(limited_campaign['manifest']['official_fallback'], relaunched['manifest']['official_fallback'])
+        self.assertEqual('Native output', relaunched['attempts'][0]['operation']['receipt']['result']['output'])
+        recovered = limited_campaign
         openrouter_child = next(item for item in campaigns
                                 if item['manifest'].get('recovery_of') == 'automatic-source')
         self.assertEqual(2, len(router_calls))
@@ -227,9 +254,9 @@ class OfficialTransportTests(unittest.TestCase):
         self.assertEqual('automatic-source', openrouter_child['manifest']['recovery_of'])
         self.assertEqual(transport.endpoint, recovered['manifest']['panel'][0]['channel_id'])
         self.assertEqual('RECEIVED', recovered['attempts'][0]['state'])
-        self.assertEqual([config['channel_id'], config['channel_id'], transport.endpoint], channels)
+        self.assertEqual([config['channel_id'], config['channel_id'], transport.endpoint, transport.endpoint], channels)
         before = sum(len(item['attempts']) for item in campaigns)
-        execution.continue_preauthorized(h.data, recovered['attempts'][0]['operation_id'],
+        execution.continue_preauthorized(h.data, relaunched['attempts'][0]['operation_id'],
                                        transport_factory=factory)
         self.assertEqual(before, sum(len(item['attempts']) for item in c.list_campaigns(h.store)))
 
@@ -297,6 +324,22 @@ class OfficialTransportTests(unittest.TestCase):
                 self.prepare('anthropic', mutate=lambda manifest: manifest['official_fallback'].update(
                     route_attempts=['pi-op']))
         connection.assert_not_called()
+
+    def test_native_rate_limit_without_preauthorization_stops_with_its_cause(self):
+        """Issue #535 : sans relance préautorisée, un 429 ou un 5xx officiel arrête la campagne sous sa cause"""
+        for kind, status, incident in (('deepseek', 429, 'RATE_LIMITED'), ('anthropic', 503, 'PROVIDER_ERROR')):
+            with self.subTest(status=status):
+                transport, cid, oid = self.prepare(kind)
+                connection = self.response(kind)
+                connection.getresponse.return_value.read.return_value = json.dumps(
+                    dict(error=dict(code=status, message='Incident'))).encode()
+                connection.getresponse.return_value.status = status
+                connection.getresponse.return_value.getheader.return_value = None
+                with patch.object(native, 'HTTPSConnection', return_value=connection):
+                    execution.execute(self.h.data, oid, transport)
+                snapshot = c.inspect(self.h.store, cid)
+                self.assertEqual(incident, snapshot['attempts'][0]['operation']['receipt']['result']['incident'])
+                self.assertEqual('ACQUISITION_EVIDENCE_INCOMPLETE', snapshot['stop_reason'])
 
     def test_truncated_native_output_stays_an_incident(self):
         transport, cid, oid = self.prepare('anthropic')

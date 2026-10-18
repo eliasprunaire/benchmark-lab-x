@@ -154,9 +154,10 @@ def validate_link(store, connection, manifest):
         # (`bind_derived`). Une reprise de route change ses routes et suit le contrôle ci-dessous
         cell = next(x for x in old['plan'] if x['cell_id'] == attempt['cell_id'])
         config = next(x for x in old['panel'] if x['id'] == cell['configuration_id'])
-        if (manifest['plan'] == [cell] and manifest['panel'] == [config] and 'official_fallback' not in manifest
+        # Un secours officiel relancé garde sa preuve de routes épuisées, inchangée (#535)
+        if (manifest['plan'] == [cell] and manifest['panel'] == [config]
                 and all(manifest.get(k) == old.get(k) for k in ('contract_sha256', 'conditions', 'cases', 'cost_basis',
-                                                                 'financial_cost_policy'))):
+                                                                 'financial_cost_policy', 'official_fallback'))):
             return
     previous, attempt = parent(store, connection, oid)
     if observation(attempt)['kind'] not in _RECOVERABLE:
@@ -549,7 +550,10 @@ def pending_relaunches(store, connection, campaign_id):
     """
     snapshots = [c._inspect(store, connection, cid)
                  for cid in [campaign_id] + c._recovery_descendants(connection, campaign_id)]
-    followed = {snapshot['manifest'].get('recovery_of') for snapshot in snapshots}
+    # Une relance réservée puis arrêtée par le seul redémarrage, jamais émise, reste attendue (#535)
+    followed = {snapshot['manifest'].get('recovery_of') for snapshot in snapshots
+                if snapshot['admission'] is not None or snapshot['stop_reason'] != RESTARTED
+                or [a['state'] for a in snapshot['attempts']] != ['INTENT_RECORDED']}
     result = []
     for snapshot in snapshots:
         for attempt in snapshot['attempts']:
@@ -569,7 +573,6 @@ def _incident_proposal(store, connection, source, attempt, grant, *, check_budge
     manifest = deepcopy(source)
     cell = next(x for x in manifest['plan'] if x['cell_id'] == attempt['cell_id'])
     config = next(x for x in manifest['panel'] if x['id'] == cell['configuration_id'])
-    manifest.pop('official_fallback', None)
     manifest.update(campaign_id='recovery-' + value_digest([attempt['operation_id'], 'incident'])[:40],
                     recovery_of=attempt['operation_id'], panel=[config], plan=[cell],
                     attempt_policy=dict(retries=False, order=[cell['cell_id']],

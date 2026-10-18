@@ -646,7 +646,7 @@ def _judge_comparison(data, start, judge, retry, acquire=None):
     """Acquérir puis évaluer une comparaison ; une relance candidate encore attendue la fera évaluer après elle (#533)"""
     from . import automatic_judgment as auto
     from .acquisition import campaigns
-    from .acquisition.recovery import pending_relaunches
+    from .acquisition.recovery import RESTARTED, pending_relaunches
     try:
         if acquire is not None:
             acquire()
@@ -654,7 +654,8 @@ def _judge_comparison(data, start, judge, retry, acquire=None):
             return
         with closing(Store(data)) as store:
             snapshot = campaigns.inspect(store, start['judgment_campaign'])
-            if snapshot['admission'] is None:
+            # Après un redémarrage, la relance qui finit évalue comme sans lui (#535) ; la comparaison reste fermée
+            if snapshot['admission'] is None and snapshot['stop_reason'] != RESTARTED:
                 return
             with store.read_snapshot() as connection:
                 # Relance encore attendue, ou autre modèle encore interrogé : le fil qui finit en dernier évalue
