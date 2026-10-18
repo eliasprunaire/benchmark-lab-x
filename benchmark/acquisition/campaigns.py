@@ -4,6 +4,7 @@ The local operator supplies authority and availability evidence. No provider,
 plugin loader, queue drainer or content evaluator belongs to this module.
 """
 from contextlib import closing
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -1005,7 +1006,22 @@ def _result(receipt, cost):
         raise ValueError('Émission établie, inconnue ou non envoyée requise')
 
 
+# (connexion, {campagne : instantané}) de la projection en cours, None hors projection (#541)
+_PROJECTION_INSPECTIONS: ContextVar[tuple | None] = ContextVar('_PROJECTION_INSPECTIONS', default=None)
+
+
 def _inspect(store, connection, campaign_id):
+    # Pendant une projection, chaque campagne n'est inspectée qu'une fois, appels imbriqués compris :
+    # la validation du lien d'une relance relit chacune de ses sources. Copie rendue, comme `evaluation._context`
+    memo = _PROJECTION_INSPECTIONS.get()
+    if memo is None or memo[0] is not connection:
+        return _inspect_once(store, connection, campaign_id)
+    if campaign_id not in memo[1]:
+        memo[1][campaign_id] = _inspect_once(store, connection, campaign_id)
+    return deepcopy(memo[1][campaign_id])
+
+
+def _inspect_once(store, connection, campaign_id):
     manifest, fingerprint, contract, contracts = _load(store, connection, campaign_id)
     admissions = _admissions(store, connection, manifest, fingerprint)
     status = connection.execute('SELECT admission_id, stop_reason, stopped_at FROM s4_status WHERE campaign_id=?',
@@ -1793,9 +1809,14 @@ def projection(store, connection, dossier_id, campaign_id=None):
     if campaign_id is not None:
         query += ' AND c.campaign_id=?'
     rows = connection.execute(query + ' ORDER BY c.rowid', parameters).fetchall()
-    snapshots = [(cid, _inspect(store, connection, cid)) for (cid,) in rows]
-    # Une reprise publique se lit avec sa comparaison source, jamais comme une comparaison de plus ;
-    # une reprise opérateur reste listée, comme avant
-    return [_projected(store, connection, cid, snapshot) for cid, snapshot in snapshots
-            if campaign_id is not None or not (snapshot['manifest'].get('recovery_of')
-                                               and snapshot['manifest'].get('funding') == 'requester')]
+    # Une relance opérateur listée relit aussi sa chaîne : une inspection par campagne, pas par lecture (#541)
+    token = _PROJECTION_INSPECTIONS.set((connection, {}))
+    try:
+        snapshots = [(cid, _inspect(store, connection, cid)) for (cid,) in rows]
+        # Une reprise publique se lit avec sa comparaison source, jamais comme une comparaison de plus ;
+        # une reprise opérateur reste listée, comme avant
+        return [_projected(store, connection, cid, snapshot) for cid, snapshot in snapshots
+                if campaign_id is not None or not (snapshot['manifest'].get('recovery_of')
+                                                   and snapshot['manifest'].get('funding') == 'requester')]
+    finally:
+        _PROJECTION_INSPECTIONS.reset(token)
