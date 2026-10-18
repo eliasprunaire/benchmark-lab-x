@@ -3639,10 +3639,14 @@ class ParcoursComplet(unittest.TestCase):
             self.incident_fournisseur(value, 503)
         dossier, _, envois, _ = self.lancer_avec_reprises(
             ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        # Minuteur de l'exécuteur : la dernière relance passe par l'évaluation automatique, sans rien à évaluer
         for delay in (30, 120, 600, 1800):
             self.clock += timedelta(seconds=delay)
-            self.relancer()
+            self.relancer_par_l_executeur()
         self.assertEqual(10, len(envois))
+        # Revue PR #538 : aucune évaluation tentée, donc aucun arrêt d'évaluation qui masquerait la cause
+        with closing(storage.Store(self.data)) as store:
+            self.assertIsNone(campaigns.inspect(store, self.start['judgment_campaign'])['stop_reason'])
         page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
         self.assertIn('Aucune réponse exploitable à évaluer (Incident chez OpenRouter ou chez le fournisseur du '
                       'modèle ; 5 tentatives).', page.visible)
