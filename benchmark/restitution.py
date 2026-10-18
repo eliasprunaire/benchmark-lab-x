@@ -32,8 +32,8 @@ def _response_cause(attempt):
     """Cause lisible d'une réponse inexploitable, ou None si le reçu ne l'établit pas"""
     from .acquisition import recovery
     if storage.candidate_incident(attempt['operation']):
-        from .preparation import INCIDENT_TEXT
-        return INCIDENT_TEXT[attempt['operation']['receipt']['result']['incident']].rstrip('.')
+        from .transports.openrouter import candidate_incident_text
+        return candidate_incident_text(attempt['operation']).rstrip('.')
     try:
         kind = recovery.observation(attempt)['kind']
     except (ValueError, KeyError, TypeError, AttributeError, ConflictError, IntegrityError):

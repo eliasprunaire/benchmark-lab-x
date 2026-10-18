@@ -11,7 +11,7 @@ from . import evaluation as e, judgment, preparation as p, provider_access, stor
 from .acquisition import campaigns as c
 from .runtime import worker_lock
 from .storage import BudgetError, ConflictError, IntegrityError, _money, _transaction
-from .transports.openrouter import NotSent
+from .transports.openrouter import NotSent, candidate_incident_text
 from .validation import digest
 
 FORMAT = 'benchmark-lab-x/automatic-judgment/v1'
@@ -222,9 +222,11 @@ def preflight(store, session_id, dossier_id, campaign_id, transport, *, check_ac
             count = len(snapshot['manifest']['plan']) - len(_latest(operations(store, connection, campaign_id)))
         budget_id = provider_access.preparation_budget_id(session_id)
         guard_budget(store, connection, budget_id, campaign_id=campaign_id)
-        # La maintenance d'un déploiement ferme l'admission sans retirer son autorisation : l'évaluation reste sous elle
+        # La maintenance d'un déploiement, ou un redémarrage (#535), ferme l'admission sans retirer son
+        # autorisation : l'évaluation reste sous elle
+        from .acquisition.recovery import RESTARTED
         authorized = snapshot['admission'] or (snapshot['admissions'][-1] if snapshot['admissions']
-                                               and snapshot['stop_reason'] == 'MAINTENANCE' else None)
+                                               and snapshot['stop_reason'] in ('MAINTENANCE', RESTARTED) else None)
         grant = (authorized or {}).get('authority', {}).get('automatic_judgment')
         if grant:
             # Un déploiement ultérieur garde le profil autorisé au lancement : l'évaluation se termine sous lui
@@ -400,7 +402,7 @@ def _exhausted(store, connection, family):
         if attempt['operation_id'] in followed or not storage.candidate_incident(attempt['operation']):
             continue
         count = cell_attempts(store, connection, dict(manifest=manifests[cid]))
-        cause = p.INCIDENT_TEXT[attempt['operation']['receipt']['result']['incident']].rstrip('.') + (
+        cause = candidate_incident_text(attempt['operation']).rstrip('.') + (
             f' ; {count} tentatives' if count > 1 else '')
         if cause not in causes:
             causes.append(cause)
@@ -487,9 +489,8 @@ def status(store, connection, campaign_id, snapshot=None):
     elif relaunches:
         # Appel candidat relancé d'office après un incident fournisseur (#533) : l'évaluation attend sa réponse
         attempt, when = min(relaunches, key=lambda item: item[1])
-        incident = attempt['operation']['receipt']['result']['incident']
         retry_in = max(0, math.ceil((when - p._now()).total_seconds()))
-        result.update(status='WAITING', relaunch=len(relaunches), retry_in=retry_in, reason=p.INCIDENT_TEXT[incident] + (
+        result.update(status='WAITING', relaunch=len(relaunches), retry_in=retry_in, reason=candidate_incident_text(attempt['operation']) + (
             ' Nouvelle tentative automatique dans ' + p._duration(retry_in) + '.' if retry_in
             else ' Nouvelle tentative automatique dès que possible.'))
     elif attempts and all(a['state'] == 'RECEIVED' for a in attempts):

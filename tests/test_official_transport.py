@@ -226,6 +226,10 @@ class OfficialTransportTests(unittest.TestCase):
         limited_campaign = next(item for item in c.list_campaigns(h.store) if item['manifest'].get('official_fallback'))
         limited_attempt = limited_campaign['attempts'][0]
         self.assertEqual('RATE_LIMITED', limited_attempt['operation']['receipt']['result']['incident'])
+        # La cause lue sur la page de résultats vise l'API officielle appelée, jamais OpenRouter (revue PR #536)
+        from benchmark import restitution
+        self.assertEqual('L’API officielle du fournisseur limite temporairement les demandes',
+                         restitution._response_cause(limited_attempt))
         self.assertIsNotNone(limited_campaign['admission'])
         received_at = datetime.fromisoformat(
             limited_attempt['operation']['receipt']['observed_configuration']['http']['received_at'])

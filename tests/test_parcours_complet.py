@@ -3438,6 +3438,14 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIsNotNone(reservee)
             runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
         self.assertEqual([A, B, A, A], envois)
+        # Profil du juge changé au redémarrage : l'évaluation reste sous celui autorisé au lancement (revue PR #536)
+        from benchmark import automatic_judgment as auto
+        from benchmark.transports import openrouter
+        from tests.test_openrouter_preparation import estimate_for
+        autorise = self.assistants['judgment_transport']._profile
+        nouveau = dict(autorise, system=autorise['system'] + ' Consigne d’un redémarrage ultérieur.')
+        self.assistants['judgment_transport'] = openrouter.OpenRouterJudgment(None, nouveau, retained=[autorise])
+        self.assistants['judgment_transport']._quote = openrouter.configuration(estimate_for(nouveau), nouveau)
         # Le minuteur de l'exécuteur émet la relance réservée une seule fois, puis lance l'évaluation sans action
         self.assertEqual([0], self.relancer_par_l_executeur())
         self.assertEqual([], self.relancer_par_l_executeur())
@@ -3449,8 +3457,11 @@ class ParcoursComplet(unittest.TestCase):
         # Seule la dernière tentative de Modèle A est évaluée ; la comparaison arrêtée par le redémarrage le reste
         self.assertEqual(2, judge.request.call_count)
         with closing(storage.Store(self.data)) as store:
-            self.assertEqual('PROCESS_STARTED_ADMISSION_BLOCKED',
-                             campaigns.inspect(store, self.start['judgment_campaign'])['stop_reason'])
+            snapshot = campaigns.inspect(store, self.start['judgment_campaign'])
+            self.assertEqual('PROCESS_STARTED_ADMISSION_BLOCKED', snapshot['stop_reason'])
+            jugements = [op['requested_configuration'] for op in store.inspect_operations()
+                         if op['engine_version'] == auto.FORMAT]
+        self.assertEqual([snapshot['admissions'][-1]['authority']['automatic_judgment']['configuration']] * 2, jugements)
         _, _, raw = self.request(suivi.removesuffix('/conditions'))
         html = raw.decode()
         self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
