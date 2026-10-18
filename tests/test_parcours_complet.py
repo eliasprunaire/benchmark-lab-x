@@ -3559,6 +3559,42 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
         self.assertIn('OpenRouter limite temporairement les demandes. La comparaison s’est arrêtée', page.visible)
 
+    def test_plafond_de_cinq_tentatives_compte_les_reprises_pour_longueur(self):
+        """Issue #533 : cinq tentatives au plus par cellule, reprises pour longueur comprises (revue de la PR #534)"""
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+            elif limit < 16384:
+                self.coupee(value, 'Action : relire' + ' | suite' * (limit // 1024), limit)
+            else:
+                self.incident_fournisseur(value, 429)
+        dossier, _, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        for delay in (30, 120, 600, 1800):
+            self.clock += timedelta(seconds=delay)
+            self.relancer()
+        self.assertEqual([4096, 8192, 16384, 16384, 16384],
+                         [limit for model, limit in envois if model == 'openai/gpt-5.6-sol'])
+
+    def test_limite_de_debit_relancee_sans_capacites_figees(self):
+        """Issue #533 : un modèle absent du relevé conservé est relancé ; seule la reprise pour longueur exige ses capacités"""
+        from benchmark.acquisition import recovery
+        script = [429]
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+            elif script:
+                self.incident_fournisseur(value, script.pop(0))
+        # Aucune capacité figée : comme pour un modèle ajouté par vérification, hors du relevé partagé
+        with patch.object(recovery, '_capability', side_effect=ValueError('absent du relevé')):
+            dossier, _, envois, _ = self.lancer_avec_reprises(
+                ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        self.clock += timedelta(seconds=30)
+        self.relancer()
+        self.assertEqual(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'openai/gpt-5.6-sol'],
+                         [model for model, _ in envois])
+
     def test_credit_epuise_d_un_candidat_arrete_la_comparaison(self):
         """Issue #533 : un incident non relançable garde l'arrêt et son message nommé (#532)
 

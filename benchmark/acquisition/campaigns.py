@@ -1357,8 +1357,8 @@ def _requester_recovery(store, panel) -> dict | None:
         capabilities.append(item)
     # Décision d'Ayo (#533) : un 429 ou un 5xx reçu est relancé d'office, au plus RETRY_ATTEMPTS tentatives par cellule
     from ..preparation import RETRY_ATTEMPTS
-    return dict(capabilities=capabilities, max_recoveries=len(LENGTH_RECOVERY_LIMITS),
-                incident_retries=RETRY_ATTEMPTS) if capabilities else None
+    # La relance reprend la même demande : elle ne dépend pas des capacités qu'exige la reprise pour longueur
+    return dict(capabilities=capabilities, max_recoveries=len(LENGTH_RECOVERY_LIMITS), incident_retries=RETRY_ATTEMPTS)
 
 
 def _estimate_total(snapshot):

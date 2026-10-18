@@ -296,7 +296,8 @@ def _next_preauthorized_attempt(store, operation_id, *, allow_official=False):
             if not incident:
                 try:
                     observed = r.observation(attempt)
-                except (ValueError, ConflictError, IntegrityError):
+                # Corps malformé : pas de reprise, comme dans `routing_error`, jamais l'arrêt de la comparaison
+                except (ValueError, ConflictError, IntegrityError, KeyError, TypeError, AttributeError):
                     return None
                 if observed['kind'] not in r._RECOVERABLE:
                     return None

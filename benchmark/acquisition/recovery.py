@@ -501,6 +501,20 @@ def incident_rank(store, connection, snapshot):
     return rank
 
 
+def cell_attempts(store, connection, snapshot):
+    """Tentatives de la cellule jusqu'à celle de cette campagne, reprises pour longueur ou de route comprises
+
+    Le plafond de relance porte sur toute la cellule (#533). Manifestes lus sans `_inspect`, comme `incident_rank`
+    """
+    count, source_id = 1, snapshot['manifest'].get('recovery_of')
+    while source_id:
+        count += 1
+        raw, digest = connection.execute('SELECT c.manifest_json, c.manifest_sha256 FROM s4_campaigns c JOIN s4_attempts a '
+                                         'USING(campaign_id) WHERE a.operation_id=?', (source_id,)).fetchone()
+        source_id = q._decode(raw, digest).get('recovery_of')
+    return count
+
+
 def incident_due(store, connection, snapshot, attempt):
     """Échéance de la relance : 30 s, 2 min, 10 min puis 30 min après le reçu, ou un Retry-After plus long"""
     from ..preparation import RETRY_SECONDS, _retry_after
@@ -543,14 +557,14 @@ def pending_relaunches(store, connection, campaign_id):
                 continue
             _, grant = _owner_grant(store, connection, snapshot)
             if (grant is not None and incident_open(store, connection, snapshot)
-                    and incident_rank(store, connection, snapshot) < grant.get('incident_retries', 0)):
+                    and cell_attempts(store, connection, snapshot) < grant.get('incident_retries', 0)):
                 result.append((attempt, incident_due(store, connection, snapshot, attempt)))
     return result
 
 
 def _incident_proposal(store, connection, source, attempt, grant, *, check_budget=True):
     """Même demande sous une nouvelle identité liée au reçu en incident, avec sa propre réserve"""
-    if incident_rank(store, connection, dict(manifest=source)) >= grant.get('incident_retries', 0):
+    if cell_attempts(store, connection, dict(manifest=source)) >= grant.get('incident_retries', 0):
         raise ValueError('Relances après incident fournisseur épuisées')
     manifest = deepcopy(source)
     cell = next(x for x in manifest['plan'] if x['cell_id'] == attempt['cell_id'])
@@ -665,7 +679,8 @@ def validate_grant(grant, *, purpose, recovery):
     capabilities = grant['capabilities']
     if type(capabilities) is dict:
         items = [capabilities]
-    elif type(capabilities) is list and capabilities:
+    # Sans capacité figée, seule la relance après incident reste préautorisée (#533)
+    elif type(capabilities) is list and (capabilities or 'incident_retries' in grant):
         items = capabilities
     else:
         raise ValueError('Capacités figées requises')
