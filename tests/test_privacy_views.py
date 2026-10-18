@@ -66,13 +66,13 @@ def browser_views():
             attempts=[dict(state=state, incident=incident)], cells=[dict(configuration_id='x', state=state)],
             panel=[dict(id='x', model='Modèle A')])
         examples['followup-' + name] = value
-    # #525 : limite de débit sur le premier essai, campagne arrêtée, second modèle jamais interrogé
+    # #525, #533 : crédit épuisé sur le premier essai, campagne arrêtée, second modèle jamais interrogé
     value = deepcopy(examples['followup-incident'])
     value['campaign'].update(admission_open=False, stop_reason='ACQUISITION_EVIDENCE_INCOMPLETE',
-        attempts=[dict(state='RECEIVED', incident='RATE_LIMITED'), dict(state='INTENT_RECORDED', incident=None)],
+        attempts=[dict(state='RECEIVED', incident='CREDIT_EXHAUSTED'), dict(state='INTENT_RECORDED', incident=None)],
         cells=[dict(configuration_id='x', state='RECEIVED'), dict(configuration_id='y', state='INTENT_RECORDED')],
         panel=[dict(id='x', model='Modèle A'), dict(id='y', model='Modèle B')])
-    examples['followup-rate-limited'] = value
+    examples['followup-credit-exhausted'] = value
     for status in ('NOT_STARTED', 'WAITING', 'RUNNING', 'COMPLETE', 'BLOCKED'):
         value = deepcopy(examples['followup-received'])
         value['campaign']['judgment'] = dict(status=status, total=1, completed=int(status == 'COMPLETE'),

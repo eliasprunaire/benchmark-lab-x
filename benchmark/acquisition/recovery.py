@@ -1,6 +1,7 @@
 """Receipt-driven recovery; auto-execution needs a frozen owner preauthorization"""
 from base64 import b64decode
 from copy import deepcopy
+from datetime import datetime, timedelta
 from decimal import Decimal
 from hashlib import sha256
 import json
@@ -9,11 +10,14 @@ import os
 from . import campaigns as c
 from .. import qualification as q, outgoing
 from ..validation import digest as value_digest, identifier, _hash, _texts
-from ..storage import BudgetError, ConflictError, IntegrityError, _fields, _money, _transaction
+from ..storage import (BudgetError, ConflictError, IntegrityError, _fields, _money, _transaction,
+                       candidate_incident)
 
 _IDENTITY = ('provider', 'model', 'revision', 'access', 'channel_id')
 _UNRECOVERABLE = {'MODEL_IDENTITY_MISMATCH', 'PROVIDER_ROUTE_MISMATCH', 'HARNESS_ERROR'}
 _RECOVERABLE = {'LENGTH', 'EMPTY_OUTPUT', 'ROUTE_ERROR'}
+# Seul arrêt qui laisse partir une relance après incident fournisseur : le redémarrage de l'exécuteur (#533)
+RESTARTED = 'PROCESS_STARTED_ADMISSION_BLOCKED'
 
 
 def parent(store, connection, operation_id):
@@ -23,6 +27,20 @@ def parent(store, connection, operation_id):
     snapshot = c._inspect(store, connection, row[0])
     attempt = next(a for a in snapshot['attempts'] if a['operation_id'] == operation_id)
     return snapshot, attempt
+
+
+def _source(store, connection, operation_id):
+    """Reçu source d'une relance et manifeste de sa campagne, lus sans `_inspect`
+
+    Les contrôles d'une campagne descendante s'exécutent pendant son propre `_inspect` : inspecter la source
+    à chaque maillon revérifierait toute la chaîne en cascade (#533)
+    """
+    row = connection.execute('SELECT a.cell_id, c.manifest_json, c.manifest_sha256 FROM s4_attempts a JOIN s4_campaigns c '
+                             'USING(campaign_id) WHERE a.operation_id=?', (operation_id,)).fetchone()
+    operations = store._operations(connection, operation_ids={operation_id})
+    if row is None or len(operations) != 1:
+        raise ValueError('Tentative source absente')
+    return q._decode(row[1], row[2]), dict(operation_id=operation_id, cell_id=row[0], operation=operations[0])
 
 
 def observation(attempt) -> dict:
@@ -130,8 +148,17 @@ def validate_link(store, connection, manifest):
     own = connection.execute('SELECT rowid FROM s4_campaigns WHERE campaign_id=?', (manifest['campaign_id'],)).fetchone()
     if row is None or (own and row[0] >= own[0]):
         raise ValueError('La reprise doit suivre un reçu antérieur')
+    old, attempt = _source(store, connection, oid)
+    if candidate_incident(attempt['operation']):
+        # Relance après incident : la même demande exactement ; son autorité est vérifiée à l'admission
+        # (`bind_derived`). Une reprise de route change ses routes et suit le contrôle ci-dessous
+        cell = next(x for x in old['plan'] if x['cell_id'] == attempt['cell_id'])
+        config = next(x for x in old['panel'] if x['id'] == cell['configuration_id'])
+        if (manifest['plan'] == [cell] and manifest['panel'] == [config] and 'official_fallback' not in manifest
+                and all(manifest.get(k) == old.get(k) for k in ('contract_sha256', 'conditions', 'cases', 'cost_basis',
+                                                                 'financial_cost_policy'))):
+            return
     previous, attempt = parent(store, connection, oid)
-    old = previous['manifest']
     if observation(attempt)['kind'] not in _RECOVERABLE:
         raise ValueError('Incident non récupérable ; refus conservé')
     if any(manifest.get(k) != old.get(k) for k in ('contract_sha256', 'conditions', 'cases', 'cost_basis', 'financial_cost_policy')):
@@ -420,13 +447,18 @@ def _official_proposal(store, connection, operation_id, grant, budget_id, *, che
 
 def _automatic_proposal(store, connection, operation_id, grant, *, allow_official,
                         check_budget=True):
+    if 'incident_retries' in grant:
+        manifest, attempt = _source(store, connection, operation_id)
+        if candidate_incident(attempt['operation']):
+            return _incident_proposal(store, connection, manifest, attempt, grant, check_budget=check_budget)
     snapshot, attempt = parent(store, connection, operation_id)
     if 'max_recoveries' in grant:
         # Compteur explicite : les limites calculées ne suffisent pas à borner la chaîne
+        # Une relance après incident fournisseur a son propre plafond
         depth, current = 0, snapshot
         while current['manifest'].get('recovery_of'):
-            depth += 1
-            current, _ = parent(store, connection, current['manifest']['recovery_of'])
+            current, source = parent(store, connection, current['manifest']['recovery_of'])
+            depth += not (candidate_incident(source['operation']) and 'incident_retries' in grant)
         if depth >= grant['max_recoveries']:
             raise ValueError('Nombre de reprises préautorisées atteint')
     budget_id = snapshot['admissions'][-1]['authority']['budget_id']
@@ -439,6 +471,119 @@ def _automatic_proposal(store, connection, operation_id, grant, *, allow_officia
             raise
         return _official_proposal(store, connection, operation_id, grant, budget_id,
                                   check_budget=check_budget)
+
+
+def relaunched(store, connection, snapshot, attempt):
+    """Reçu en incident fournisseur que le lancement préautorise à relancer (#533)
+
+    Une préautorisation antérieure garde la reprise ROUTE_ERROR sur une autre route
+    """
+    if not candidate_incident(attempt['operation']):
+        return False
+    _, grant = _owner_grant(store, connection, snapshot)
+    return 'incident_retries' in (grant or {})
+
+
+def incident_rank(store, connection, snapshot):
+    """Rang de la tentative de cette campagne dans sa série de relances après incident fournisseur (#533)"""
+    # L'appelant a vérifié la préautorisation du lancement. Les manifestes et reçus sont lus sans `_inspect` :
+    # appelé depuis la vérification d'une admission dérivée, un `_inspect` par maillon revérifierait chaque
+    # ancêtre en cascade
+    rank, source_id = 1, snapshot['manifest'].get('recovery_of')
+    while source_id:
+        source = store._operations(connection, operation_ids={source_id})
+        if len(source) != 1 or not candidate_incident(source[0]):
+            break
+        rank += 1
+        raw, digest = connection.execute('SELECT c.manifest_json, c.manifest_sha256 FROM s4_campaigns c JOIN s4_attempts a '
+                                         'USING(campaign_id) WHERE a.operation_id=?', (source_id,)).fetchone()
+        source_id = q._decode(raw, digest).get('recovery_of')
+    return rank
+
+
+def cell_attempts(store, connection, snapshot):
+    """Tentatives de la cellule jusqu'à celle de cette campagne, reprises pour longueur ou de route comprises
+
+    Le plafond de relance porte sur toute la cellule (#533). Manifestes lus sans `_inspect`, comme `incident_rank`
+    """
+    count, source_id = 1, snapshot['manifest'].get('recovery_of')
+    while source_id:
+        count += 1
+        raw, digest = connection.execute('SELECT c.manifest_json, c.manifest_sha256 FROM s4_campaigns c JOIN s4_attempts a '
+                                         'USING(campaign_id) WHERE a.operation_id=?', (source_id,)).fetchone()
+        source_id = q._decode(raw, digest).get('recovery_of')
+    return count
+
+
+def incident_due(store, connection, snapshot, attempt):
+    """Échéance de la relance : 30 s, 2 min, 10 min puis 30 min après le reçu, ou un Retry-After plus long"""
+    from ..preparation import RETRY_SECONDS, _retry_after
+    observed = attempt['operation']['receipt']['observed_configuration'] or {}
+    http = observed.get('http')
+    http = http if isinstance(http, dict) else {}
+    failed_at = datetime.fromisoformat(http.get('received_at') or attempt['operation']['created_at'])
+    headers = http.get('response_headers')
+    headers = headers if isinstance(headers, dict) else {}
+    rank = min(incident_rank(store, connection, snapshot), len(RETRY_SECONDS))
+    return failed_at + timedelta(seconds=max(RETRY_SECONDS[rank - 1], _retry_after(headers.get('Retry-After'), failed_at)))
+
+
+def incident_open(store, connection, snapshot):
+    """Relance permise : chaque campagne de la chaîne admise, ou arrêtée par le seul redémarrage de l'exécuteur
+
+    Un redémarrage ferme toutes les admissions sans rien établir contre la série ; tout autre arrêt la clôt
+    """
+    current = snapshot
+    while True:
+        if current['admission'] is None and current['stop_reason'] != RESTARTED:
+            return False
+        if not current['manifest'].get('recovery_of'):
+            return not os.path.lexists(store._root / 'restore.json')
+        current, _ = parent(store, connection, current['manifest']['recovery_of'])
+
+
+def pending_relaunches(store, connection, campaign_id):
+    """Relances après incident fournisseur encore attendues dans une comparaison et ses reprises
+
+    (tentative en incident, échéance) ; la comparaison n'est pas acquise tant que la liste n'est pas vide
+    """
+    snapshots = [c._inspect(store, connection, cid)
+                 for cid in [campaign_id] + c._recovery_descendants(connection, campaign_id)]
+    followed = {snapshot['manifest'].get('recovery_of') for snapshot in snapshots}
+    result = []
+    for snapshot in snapshots:
+        for attempt in snapshot['attempts']:
+            if attempt['operation_id'] in followed or not candidate_incident(attempt['operation']):
+                continue
+            _, grant = _owner_grant(store, connection, snapshot)
+            if (grant is not None and incident_open(store, connection, snapshot)
+                    and cell_attempts(store, connection, snapshot) < grant.get('incident_retries', 0)):
+                result.append((attempt, incident_due(store, connection, snapshot, attempt)))
+    return result
+
+
+def _incident_proposal(store, connection, source, attempt, grant, *, check_budget=True):
+    """Même demande sous une nouvelle identité liée au reçu en incident, avec sa propre réserve"""
+    if cell_attempts(store, connection, dict(manifest=source)) >= grant.get('incident_retries', 0):
+        raise ValueError('Relances après incident fournisseur épuisées')
+    manifest = deepcopy(source)
+    cell = next(x for x in manifest['plan'] if x['cell_id'] == attempt['cell_id'])
+    config = next(x for x in manifest['panel'] if x['id'] == cell['configuration_id'])
+    manifest.pop('official_fallback', None)
+    manifest.update(campaign_id='recovery-' + value_digest([attempt['operation_id'], 'incident'])[:40],
+                    recovery_of=attempt['operation_id'], panel=[config], plan=[cell],
+                    attempt_policy=dict(retries=False, order=[cell['cell_id']],
+                                        reason='Relance après incident fournisseur du reçu ' + attempt['operation_id']
+                                        + ' ; même demande, aucune sélection sémantique'))
+    # Même enveloppe que la tentative source, dont la réservation porte le budget
+    proposal = dict(manifest=manifest, reserve_amount=attempt['operation']['reserved_amount'],
+                    budget_id=attempt['operation']['budget_id'])
+    if check_budget:
+        snapshot, _ = parent(store, connection, attempt['operation_id'])
+        budget = c._envelope(store, connection, snapshot, snapshot['admissions'][-1]['authority'])
+        if not budget['provider_managed'] and _money(proposal['reserve_amount']) > Decimal(budget['available']):
+            raise BudgetError('Budget de relance insuffisant')
+    return proposal
 
 
 def propose(store, operation_id, capabilities):
@@ -523,15 +668,19 @@ def _capability(value):
 def validate_grant(grant, *, purpose, recovery):
     if purpose != 'start' or recovery:
         raise ValueError('Préautorisation figée à l’admission propriétaire initiale')
-    extra = tuple(key for key in ('official_fallbacks', 'max_recoveries') if key in grant)
+    extra = tuple(key for key in ('official_fallbacks', 'max_recoveries', 'incident_retries') if key in grant)
     _fields(grant, ('capabilities',) + extra, 'technical recovery')
     limit = grant.get('max_recoveries', 1)
     if type(limit) is not int or limit < 1:
         raise ValueError('Nombre de reprises invalide')
+    attempts = grant.get('incident_retries', 1)
+    if type(attempts) is not int or attempts < 1:
+        raise ValueError('Nombre de tentatives après incident invalide')
     capabilities = grant['capabilities']
     if type(capabilities) is dict:
         items = [capabilities]
-    elif type(capabilities) is list and capabilities:
+    # Sans capacité figée, seule la relance après incident reste préautorisée (#533)
+    elif type(capabilities) is list and (capabilities or 'incident_retries' in grant):
         items = capabilities
     else:
         raise ValueError('Capacités figées requises')

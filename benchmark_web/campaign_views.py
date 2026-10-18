@@ -477,7 +477,8 @@ def render_expenses(expenses, names):
             if item['state'] in EXPENSE_STATES:
                 details.append(EXPENSE_STATES[item['state']])
             if item['recovery'] and item['state'] != 'STOPPED':
-                details.append('reprise après arrêt pour longueur')
+                details.append('relance après incident fournisseur' if item['recovery'] == 'INCIDENT'
+                               else 'reprise après arrêt pour longueur')
             if item['reserved'] is not None:
                 details.append('montant réservé : ' + montant_lisible(item['reserved']) + ' ' + item['reserved_unit'])
             if item['estimate'] is not None:
@@ -532,6 +533,7 @@ def render_comparison(value):
         count = item.get('recoveries', 0)
         # Une cause que le reçu n'établit pas est dite inconnue, jamais devinée
         details = [item.get('cause') or 'cause non établie par le reçu'] + (
+            [str(item['attempts']) + ' tentatives'] if item.get('attempts', 0) > 1 else
             [str(count) + (' reprises' if count > 1 else ' reprise')] if count else [])
         return (prefix + 'Aucune réponse exploitable pour ' + model_name(configuration, names)
                 + (' · ' + effort_label(configuration) if sum(c['model'] == configuration['model'] for c in panel.values()) > 1 else '')
@@ -680,6 +682,9 @@ def render_comparison(value):
             content += '<p class="hint">' + text(effort_label(row['requested_configuration'])) + '</p>'
             if row.get('repetition'):
                 content += '<p class="hint">' + text('Essai ' + str(row['repetition']) + ' sur ' + str(repetitions)) + '</p>'
+            if row.get('relaunch'):
+                content += '<p class="hint">' + text('Réponse obtenue à la tentative ' + str(row['relaunch'])
+                                                     + ', après un incident fournisseur') + '</p>'
             if row.get('recovery_limit'):
                 content += '<p class="hint">' + text('Reprise après arrêt pour longueur : limite de sortie de '
                                                      + str(row['recovery_limit']) + ' jetons') + '</p>'
@@ -823,6 +828,12 @@ def campaign_followup(campaign):
             return False, True, ' '.join(filter(None, ('Évaluation terminée.', judgment.get('reason'), 'Vos résultats sont prêts.')))
         if status == 'BLOCKED':
             return False, False, judgment.get('reason') or 'L’évaluation s’est arrêtée. Elle ne reprendra pas d’elle-même.'
+        if judgment.get('relaunch') and not any(c['state'] in ('EMISSION_POSSIBLE', 'INTENT_RECORDED') for c in cells):
+            # Relance d'un appel candidat après un incident fournisseur : cause et délai, rien n'est à faire
+            return True, False, judgment['reason'] + ' Les autres réponses sont conservées.'
+        if judgment.get('relaunching') and not judgment.get('recovering'):
+            return True, False, ('Un modèle est interrogé de nouveau après un incident fournisseur. '
+                                 'Sa réponse arrive au fur et à mesure.')
         if judgment.get('recovering'):
             count = judgment['recovering']
             return True, False, (str(count) + (' modèles arrêtés' if count > 1 else ' modèle arrêté')
@@ -846,7 +857,9 @@ def campaign_followup(campaign):
     if any(a.get('incident') == AMBIGUOUS_EXPIRED for a in campaign['attempts']):
         return False, False, AMBIGUOUS_EXPIRED_TEXT + ' La comparaison s’est arrêtée ; les réponses déjà reçues restent consultables.'
     # Incident fournisseur reçu (#525) : sa cause est dite, l'arrêt reste celui du contrat financier
-    named = next((a['incident'] for a in campaign['attempts'] if a.get('incident') in INCIDENT_TEXT), None)
+    # Un incident de clé l'emporte : depuis #533, une limite de débit sur un autre modèle n'arrête rien
+    incidents = [a['incident'] for a in campaign['attempts'] if a.get('incident') in INCIDENT_TEXT]
+    named = next((i for i in incidents if i in ('KEY_REJECTED', 'CREDIT_EXHAUSTED')), incidents[0] if incidents else None)
     if named:
         return False, False, (INCIDENT_TEXT[named] + ' La comparaison s’est arrêtée ; les réponses déjà reçues '
                               'restent consultables et rien n’est relancé automatiquement.')

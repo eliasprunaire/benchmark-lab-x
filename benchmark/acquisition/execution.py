@@ -188,10 +188,16 @@ def execute(data, attempt_id, transport: Callable[..., dict] | None = None, *,
                                          name='Sortie brute ' + attempt_id, role='judge', media_type='text/plain; charset=utf-8', content=output.encode('utf-8'))
                     connection.execute('INSERT INTO s4_results VALUES (?,?,?,?,?)',
                                        (attempt_id, output_id, value_digest(receipt), value_digest(cost), c._now()))
-                    incomplete = (c._attribution(receipt, request['requested_configuration'])
-                                  or (cost['status'] == 'UNKNOWN'
-                                      and snapshot['manifest'].get('financial_cost_policy') != 'retain_reserve')
-                                  or receipt['result']['emission'] != 'ESTABLISHED')
+                    # Incident fournisseur relancé d'office (#533) : la comparaison continue, la relance attend son échéance
+                    # Sans préautorisation figée de relance (lancement antérieur), l'arrêt nommé de #525 demeure
+                    relaunched = storage.candidate_incident(dict(
+                        state='RECEIVED', receipt=receipt, requested_configuration=request['requested_configuration'])) and (
+                        (r._owner_grant(store, connection, snapshot)[1] or {}).get('incident_retries', 0) > 1)
+                    incomplete = not relaunched and (
+                        c._attribution(receipt, request['requested_configuration'])
+                        or (cost['status'] == 'UNKNOWN'
+                            and snapshot['manifest'].get('financial_cost_policy') != 'retain_reserve')
+                        or receipt['result']['emission'] != 'ESTABLISHED')
                     if incomplete:
                         connection.execute('UPDATE s4_status SET admission_id=NULL, stop_reason=?, stopped_at=? WHERE campaign_id=?',
                                            ('ACQUISITION_EVIDENCE_INCOMPLETE', c._now(), snapshot['manifest']['campaign_id']))
@@ -273,19 +279,28 @@ def _next_preauthorized_attempt(store, operation_id, *, allow_official=False):
     try:
         with _transaction(connection, write=True):
             snapshot, attempt = r.parent(store, connection, operation_id)
-            if (attempt['state'] != 'RECEIVED'
+            incident = r.relaunched(store, connection, snapshot, attempt)
+            if incident:
+                # Relance après incident fournisseur : seulement à l'échéance, y compris après un redémarrage
+                from ..preparation import _now
+                if not r.incident_open(store, connection, snapshot) or _now() < r.incident_due(
+                        store, connection, snapshot, attempt):
+                    return None
+            elif (attempt['state'] != 'RECEIVED'
                     or snapshot['admission'] is None
                     or os.path.lexists(store._root / 'restore.json')):
                 return None
             owner, grant = r._owner_grant(store, connection, snapshot)
             if grant is None:
                 return None
-            try:
-                observed = r.observation(attempt)
-            except (ValueError, ConflictError, IntegrityError):
-                return None
-            if observed['kind'] not in r._RECOVERABLE:
-                return None
+            if not incident:
+                try:
+                    observed = r.observation(attempt)
+                # Corps malformé : pas de reprise, comme dans `routing_error`, jamais l'arrêt de la comparaison
+                except (ValueError, ConflictError, IntegrityError, KeyError, TypeError, AttributeError):
+                    return None
+                if observed['kind'] not in r._RECOVERABLE:
+                    return None
             try:
                 proposal = r._automatic_proposal(store, connection, operation_id, grant,
                                                allow_official=allow_official)
@@ -355,3 +370,40 @@ def continue_preauthorized(data, operation_id, transport=None, *, transport_fact
         logging.getLogger(__name__).warning('RECOVERY_STOPPED operation=%s error=%s', nxt, type(error).__name__)
         # Une continuation concurrente qui trouve la reprise déjà émise n'arrête pas le fil qui l'a émise
         _stop_after_failure(data, nxt, unsent_only=True)
+
+
+def due_retries(store, *, session_id=None, dossier_id=None):
+    """Relances d'appels candidats après incident fournisseur encore à émettre (#533)
+
+    (opération en incident, dossier, session, secondes avant l'échéance), pour le minuteur de l'exécuteur
+    """
+    from ..preparation import _now
+    c.connection_for(store)
+    result = []
+    # Lecture seule, dans l'instantané partagé avec les autres natures de relance
+    with store.read_snapshot() as connection:
+        query = ('SELECT c.campaign_id, q.dossier_id, d.session_id FROM s4_campaigns c JOIN '
+                 '(SELECT contract_sha256, dossier_id FROM s3_contracts UNION ALL '
+                 'SELECT contract_sha256, dossier_id FROM s2_comparison_contracts) q USING(contract_sha256) '
+                 "JOIN s2_dossiers d ON d.dossier_id=q.dossier_id WHERE c.campaign_id NOT LIKE 'recovery-%' "
+                 'AND (? IS NULL OR d.session_id=?) AND (? IS NULL OR q.dossier_id=?)')
+        for campaign_id, dossier, session in connection.execute(
+                query, (session_id, session_id, dossier_id, dossier_id)).fetchall():
+            for attempt, due in r.pending_relaunches(store, connection, campaign_id):
+                result.append((attempt['operation_id'], dossier, session, max(0, (due - _now()).total_seconds())))
+    return result
+
+
+def retry(store, operation_id):
+    """Réserver la relance due d'un appel candidat en incident ; None avant l'échéance ou sans autorité"""
+    return _next_preauthorized_attempt(store, operation_id, allow_official=False)
+
+
+def execute_retry(data, operation_id, transport_factory, *, access_secret=None, access_transport=None):
+    """Émettre une relance réservée ; un refus avant envoi l'arrête seule, la comparaison source continue"""
+    try:
+        execute(data, operation_id, transport_factory=transport_factory,
+                access_secret=access_secret, access_transport=access_transport)
+    except Exception as error:
+        logging.getLogger(__name__).warning('RELAUNCH_STOPPED operation=%s error=%s', operation_id, type(error).__name__)
+        _stop_after_failure(data, operation_id, unsent_only=True)

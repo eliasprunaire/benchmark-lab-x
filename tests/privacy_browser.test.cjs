@@ -1152,8 +1152,8 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       ['stopped', false, false, 'La comparaison s’est arrêtée avant la fin'],
       ['ambiguous', false, false, 'Un essai n’a pas pu être confirmé'],
       ['incident', false, false, 'Un problème technique est survenu'], ['received', false, true, 'Réponses reçues'],
-      // #525 : un incident fournisseur nommé, jamais présenté comme un problème technique anonyme
-      ['rate-limited', false, false, 'OpenRouter limite temporairement les demandes. La comparaison s’est arrêtée']]) {
+      // #525 : un incident fournisseur non relançable nommé, jamais présenté comme un problème technique anonyme
+      ['credit-exhausted', false, false, 'Crédit OpenRouter épuisé pour votre clé : rechargez-le ou relevez son plafond. La comparaison s’est arrêtée']]) {
       await page.goto(origin + '/render/followup-' + state);
       const text = await page.textContent('main');
       assert.ok(text.includes(message), state);

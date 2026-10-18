@@ -2554,7 +2554,8 @@ class ParcoursComplet(unittest.TestCase):
         recap = self.submit(page, '/configurations', {'models': models, 'tier': 'low'}
                             | ({'repetitions': str(repetitions)} if repetitions else {}))
         self.submit(recap, '/start', {})
-        attempts = self.starts.get_nowait()['candidate_attempts']
+        self.start = self.starts.get_nowait()
+        attempts = self.start['candidate_attempts']
         envois, cles = [], []
 
         def candidat(operation, request):
@@ -2567,6 +2568,8 @@ class ParcoursComplet(unittest.TestCase):
         def fabrique(channel_id, key):
             cles.append(key)
             return candidat
+        # Les relances programmées partent par la même fabrique, comme dans l'exécuteur
+        self.fabrique = fabrique
         execution.execute_launch(self.data, attempts, transport_factory=fabrique,
                                  access_secret=SECRET, access_transport=self.access)
         return dossier, recap, envois, cles
@@ -3336,6 +3339,283 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Coût complet connu', texte)
         self.assertEqual(1, sum('Modèle B : aucune dépense' in ligne and 'reprise arrêtée avant envoi' in ligne
                                 for ligne in phases['Autres envois aux modèles']))
+
+    def incident_fournisseur(self, value, status, retry_after=None):
+        """Reçu Pi d'un incident fournisseur : corps complet, sans modèle ni sortie, coût inconnu"""
+        from base64 import b64encode
+        from hashlib import sha256
+        from benchmark.transports.openrouter import incident_for
+        body = storage._strict_json({'error': {'code': status, 'message': 'Incident simulé'}}).encode()
+        observed = value['receipt']['observed_configuration']
+        observed['revision'] = None
+        observed['sources'] = {key: text for key, text in observed['sources'].items() if key != 'revision'}
+        observed['http'] = dict(status=status, complete=True, credential_redacted=False,
+                                received_at=self.clock.isoformat(),
+                                response_headers={'Retry-After': retry_after} if retry_after else {},
+                                body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest())
+        value['receipt']['result'].update(output=None, incident=incident_for(status))
+        value['cost'].update(status='UNKNOWN', amount=None)
+
+    def relancer(self):
+        """Minuteur de l'exécuteur : chaque relance due est réservée puis émise ; renvoie les délais restants"""
+        with closing(storage.Store(self.data)) as store:
+            dues = execution.due_retries(store)
+            suivantes = [execution.retry(store, operation_id) for operation_id, *_ in dues]
+        for suivante in suivantes:
+            if suivante:
+                execution.execute(self.data, suivante, transport_factory=self.fabrique,
+                                  access_secret=SECRET, access_transport=self.access)
+        return [delay for *_, delay in dues]
+
+    def test_incident_fournisseur_candidat_relance_d_office(self):
+        """Issue #533 : un 429 ou un 5xx reçu par un candidat est relancé d'office, sans arrêter la comparaison
+
+        Modes d'échec couverts :
+        1. l'incident ferme l'admission et le modèle suivant n'est jamais interrogé ;
+        2. la relance part avant son échéance, ou ignore un `Retry-After` plus long que son délai ;
+        3. un redémarrage perd la relance due, ou la duplique ;
+        4. l'évaluation part pendant qu'une relance est programmée, ou juge une tentative en incident ;
+        5. le suivi tait la relance programmée, sa cause ou son délai ;
+        6. la relance, même demande, retire « Notre conseil » comme une reprise pour longueur (décision d'Ayo)
+        """
+        from benchmark import runtime
+        # Critère de qualité mesuré et coûts connus : sans relance comptée comme reprise, un conseil est donné
+        self.criteria = {'eliminatory': [], 'obligations': ['Toutes les actions présentes'], 'quality': [
+            {'label': 'Clarté du tableau', 'scale': ['excellent', 'acceptable', 'faible'], 'favorable': 'excellent'}]}
+        judge = self.juge_factice(lambda critere: ('PASS', 'candidate', 'Exigence respectée'), mesure='excellent')
+        script, pendant = [429, 503], []
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+            elif script:
+                status = script.pop(0)
+                self.incident_fournisseur(value, status, retry_after='600' if status == 429 else None)
+            else:
+                # Pendant l'appel de la dernière relance, le suivi dit sa vraie cause
+                pendant.append(self.request(suivi)[0].visible)
+        dossier, _, envois, cles = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        A, B = ('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096)
+        self.assertEqual([A, B], envois)
+        suivi = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions'
+        # Chaque page lue avance l'horloge d'une minute : le Retry-After de 600 s l'emporte sur les 30 s
+        page, _, _ = self.request(suivi)
+        self.assertIn('OpenRouter limite temporairement les demandes. Nouvelle tentative automatique dans 9 min. '
+                      'Les autres réponses sont conservées.', page.visible)
+        self.assertNotIn('La comparaison s’est arrêtée', page.visible)
+        self.assertNotIn('Évaluer les réponses reçues', page.visible)
+        page, _, _ = self.request(dossier)
+        self.assertNotIn('Lancer l’évaluation', page.visible)
+        # Les résultats ne déclarent pas sans réponse un modèle dont la relance est programmée
+        _, _, raw = self.request(suivi.removesuffix('/conditions'))
+        self.assertIn('Relance automatique programmée après un incident fournisseur.', raw.decode())
+        self.assertNotIn('Aucune réponse exploitable', raw.decode())
+        # Avant l'échéance, rien ne part
+        self.assertEqual([420], self.relancer())
+        self.assertEqual([A, B], envois)
+        self.clock += timedelta(seconds=420)
+        self.relancer()
+        self.assertEqual([A, B, A], envois)
+        page, _, _ = self.request(suivi)
+        self.assertIn('Incident chez OpenRouter ou chez le fournisseur du modèle. Nouvelle tentative automatique dans 1 min',
+                      page.visible)
+        # Redémarrage de l'exécuteur : la relance due part une seule fois
+        with closing(storage.Store(self.data)) as store:
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.clock += timedelta(seconds=60)
+        self.relancer()
+        self.assertEqual([], self.relancer())
+        self.assertEqual([A, B, A, A], envois)
+        self.assertEqual([KEY] * len(envois), cles)
+        self.assertEqual(1, len(pendant))
+        self.assertIn('Un modèle est interrogé de nouveau après un incident fournisseur.', pendant[0])
+        self.assertNotIn('longueur', pendant[0])
+        html = self.evaluer(dossier)
+        # Seule la dernière tentative de Modèle A est évaluée
+        self.assertEqual(2, judge.request.call_count)
+        self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
+        self.assertNotIn('Aucune réponse exploitable', html)
+        self.assertIn('Réponse obtenue à la tentative 3, après un incident fournisseur', html)
+        self.assertIn('Notre conseil', html)
+        self.assertNotIn('Une reprise a été demandée', html)
+        self.assertNotIn('Reprise après arrêt pour longueur', html)
+        texte, phases = self.depenses(html)
+        # Essai d'origine et première relance, remplacés : seule la relance porte ce libellé
+        self.assertEqual(2, len(phases['Autres envois aux modèles']))
+        self.assertEqual(1, sum('relance après incident fournisseur' in ligne for ligne in phases['Autres envois aux modèles']))
+        artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
+        if artefacts:
+            Path(artefacts).mkdir(parents=True, exist_ok=True)
+            Path(artefacts, 'relance-incident-candidat.json').write_text(json.dumps(
+                {'envois': envois, 'jugements': judge.request.call_count,
+                 'lignes_du_tableau': html.split('<tbody>')[1].count('<tr id="attempt-'),
+                 'autres_envois': [re.sub(r'<[^>]+>', ' ', ligne).split('  ')[0].strip()
+                                   for ligne in phases['Autres envois aux modèles']]},
+                ensure_ascii=False, indent=2) + '\n')
+
+    def relancer_par_l_executeur(self):
+        """Minuteurs de l'exécuteur à l'échéance : relance, minuteur suivant, puis évaluation automatique"""
+        timers = {}
+        retry = ((self.fabrique, self.assistants['judgment_transport']), SECRET, self.access, 'a' * 40, timers)
+        with closing(storage.Store(self.data)) as store:
+            dues = execution.due_retries(store)
+        for operation_id, dossier, session, _ in dues:
+            service._retry('candidate', self.data, dossier, session, operation_id, retry)
+        # Les minuteurs suivants sont relus ici à leur échéance, jamais laissés courir après le test
+        for timer in timers.values():
+            timer.cancel()
+        return [delay for *_, delay in dues]
+
+    def test_incident_fournisseur_candidat_borne_a_cinq_tentatives(self):
+        """Issue #533 : au-delà de cinq tentatives, la cellule s'arrête avec sa cause nommée
+
+        Modes d'échec couverts :
+        1. la relance continue au-delà de cinq tentatives ;
+        2. la cellule épuisée n'a pas de cause nommée, ou retient l'évaluation des autres modèles ;
+        3. l'évaluation automatique lancée avec la comparaison l'arrête pendant qu'une relance attend ;
+        4. après la dernière relance, l'évaluation automatique ne part pas
+        """
+        judge = self.juge_factice()
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+            else:
+                self.incident_fournisseur(value, 429)
+        dossier, _, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        # Suite du fil de lancement : l'évaluation automatique attend la relance, sans arrêter la comparaison
+        service._judge_comparison(self.data, self.start, self.bound[2], None)
+        self.assertEqual(0, judge.request.call_count)
+        for delay in (30, 120, 600, 1800):
+            self.clock += timedelta(seconds=delay)
+            self.relancer_par_l_executeur()
+        self.clock += timedelta(hours=1)
+        self.assertEqual([], self.relancer_par_l_executeur())
+        self.assertEqual(5, sum(model == 'openai/gpt-5.6-sol' for model, _ in envois))
+        self.assertEqual(6, len(envois))
+        # La dernière relance a lancé l'évaluation de la seule réponse exploitable
+        self.assertEqual(1, judge.request.call_count)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        page, _, _ = self.request(comparison + '/conditions')
+        self.assertNotIn('Nouvelle tentative automatique', page.visible)
+        self.assertIn('Évaluation terminée.', page.visible)
+        results, _, raw = self.request(comparison)
+        self.examine(results, comparison, 'résultats après relances épuisées', None)
+        html = raw.decode()
+        self.assertIn('Aucune réponse exploitable pour Modèle A (OpenRouter limite temporairement les demandes ; '
+                      '5 tentatives).', html)
+
+    def test_relance_due_pendant_qu_un_autre_modele_repond(self):
+        """Issue #533 : une relance due pendant l'appel d'un autre modèle attend sa fin, puis part et fait évaluer
+
+        Modes d'échec couverts :
+        1. la relance part pendant un autre appel du même budget, ou évalue avant sa réponse ;
+        2. l'évaluation lancée avec la comparaison l'arrête parce qu'une relance attend ;
+        3. la relance différée n'est jamais reprogrammée, ou ne lance pas l'évaluation
+        """
+        judge = self.juge_factice()
+        script, pendant = [429], []
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+                # Modèle B répond lentement : la relance de Modèle A arrive à échéance pendant son appel
+                self.clock += timedelta(seconds=30)
+                pendant.append(self.relancer_par_l_executeur())
+            elif script:
+                self.incident_fournisseur(value, script.pop(0))
+        dossier, _, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        self.assertEqual([[0]], pendant)
+        self.assertEqual(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], [model for model, _ in envois])
+        # Suite du fil de lancement : rien n'est évalué, la comparaison reste admise
+        service._judge_comparison(self.data, self.start, self.bound[2], None)
+        self.assertEqual(0, judge.request.call_count)
+        self.relancer_par_l_executeur()
+        self.assertEqual(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'openai/gpt-5.6-sol'],
+                         [model for model, _ in envois])
+        self.assertEqual(2, judge.request.call_count)
+        with closing(storage.Store(self.data)) as store:
+            self.assertIsNone(campaigns.inspect(store, self.start['judgment_campaign'])['stop_reason'])
+
+    def test_limite_de_debit_sans_preautorisation_garde_l_arret(self):
+        """Issue #533 : une comparaison lancée sans relance préautorisée garde l'arrêt nommé de #525"""
+        def sans_relance(store, panel):
+            grant = original(store, panel)
+            grant.pop('incident_retries')
+            return grant
+        original = campaigns._requester_recovery
+
+        def comportement(value, model, limit, suivi):
+            self.incident_fournisseur(value, 429)
+        with patch.object(campaigns, '_requester_recovery', sans_relance):
+            dossier, _, envois, _ = self.lancer_avec_reprises(
+                ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096)], envois)
+        self.clock += timedelta(hours=1)
+        self.assertEqual([], self.relancer())
+        page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
+        self.assertIn('OpenRouter limite temporairement les demandes. La comparaison s’est arrêtée', page.visible)
+
+    def test_plafond_de_cinq_tentatives_compte_les_reprises_pour_longueur(self):
+        """Issue #533 : cinq tentatives au plus par cellule, reprises pour longueur comprises (revue de la PR #534)"""
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+            elif limit < 16384:
+                self.coupee(value, 'Action : relire' + ' | suite' * (limit // 1024), limit)
+            else:
+                self.incident_fournisseur(value, 429)
+        dossier, _, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        for delay in (30, 120, 600, 1800):
+            self.clock += timedelta(seconds=delay)
+            self.relancer()
+        self.assertEqual([4096, 8192, 16384, 16384, 16384],
+                         [limit for model, limit in envois if model == 'openai/gpt-5.6-sol'])
+
+    def test_limite_de_debit_relancee_sans_capacites_figees(self):
+        """Issue #533 : un modèle absent du relevé conservé est relancé ; seule la reprise pour longueur exige ses capacités"""
+        from benchmark.acquisition import recovery
+        script = [429]
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+            elif script:
+                self.incident_fournisseur(value, script.pop(0))
+        # Aucune capacité figée : comme pour un modèle ajouté par vérification, hors du relevé partagé
+        with patch.object(recovery, '_capability', side_effect=ValueError('absent du relevé')):
+            dossier, _, envois, _ = self.lancer_avec_reprises(
+                ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
+        self.clock += timedelta(seconds=30)
+        self.relancer()
+        self.assertEqual(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'openai/gpt-5.6-sol'],
+                         [model for model, _ in envois])
+
+    def test_credit_epuise_d_un_candidat_arrete_la_comparaison(self):
+        """Issue #533 : un incident non relançable garde l'arrêt et son message nommé (#532)
+
+        Modes d'échec couverts :
+        1. un crédit épuisé est relancé, ou laisse interroger les modèles suivants ;
+        2. la limite de débit reçue avant lui masque le crédit épuisé, seule cause sur laquelle agir ;
+        3. la relance programmée de la limite de débit part malgré l'arrêt de la comparaison
+        """
+        def comportement(value, model, limit, suivi):
+            self.incident_fournisseur(value, 429 if model == 'openai/gpt-5.6-sol' else 402)
+        # La revérification de la clé interroge OpenRouter : hors périmètre de ce parcours sans réseau
+        with patch.object(provider_access, 'recheck'):
+            dossier, _, envois, _ = self.lancer_avec_reprises(
+                ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'], comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096)], envois)
+        self.clock += timedelta(hours=1)
+        self.assertEqual([], self.relancer())
+        self.assertEqual(2, len(envois))
+        page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
+        self.assertIn('Crédit OpenRouter épuisé pour votre clé : rechargez-le ou relevez son plafond. '
+                      'La comparaison s’est arrêtée', page.visible)
 
     def test_cout_complet_inconnu_tant_qu_un_envoi_attend(self):
         """Issue #441 : un envoi réservé mais pas encore parti peut encore coûter
