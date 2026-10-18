@@ -400,15 +400,17 @@ def _last_attempts(connection, family):
 
 
 def ended_cells(connection, family, awaited=()):
-    """Cellules dont la dernière tentative n'a pas de réponse : (en incident fournisseur hors relance attendue, closes
-    sans réponse confirmée)
+    """Cellules dont la dernière tentative n'a pas de réponse : (reçue sans réponse à évaluer hors relance attendue,
+    closes sans réponse confirmée)
 
+    Même critère que l'évaluation (`answered`) : incident fournisseur, coupure pour longueur, sortie vide.
     Le suivi ne les présente pas comme des réponses reçues (#537, #539)
     """
     last = _last_attempts(connection, family)
+    closed = [attempt['cell_id'] for _, attempt in last if storage.ambiguous_expired(attempt['operation'])]
     return ([attempt['cell_id'] for _, attempt in last
-             if storage.candidate_incident(attempt['operation']) and attempt['operation_id'] not in awaited],
-            [attempt['cell_id'] for _, attempt in last if storage.ambiguous_expired(attempt['operation'])])
+             if attempt['state'] == 'RECEIVED' and not c.answered(attempt) and attempt['operation_id'] not in awaited
+             and attempt['cell_id'] not in closed], closed)
 
 
 def _incident_ends(connection, family):
