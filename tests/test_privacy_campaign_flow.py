@@ -355,7 +355,19 @@ class PrivacyCampaignFlow(unittest.TestCase):
             self.data, launched, candidate, access_secret=SECRET, access_transport=self.access), attempts)
         self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096),
                           ('deepseek/deepseek-v4.1-flash', 8192)], sent)
-        pending = self.record('recovery', archive.archive_manifest(self.store, self.sid, 'recovery'))
+        # Issue #543 : dans l'instantané de l'archive, chaque campagne de la chaîne est inspectée une seule fois
+        loads = []
+        prepare = archive._campaigns
+
+        def counted(*args):
+            with patch.object(campaigns, '_load', wraps=campaigns._load) as loaded:
+                result = prepare(*args)
+            loads.extend(call.args[2] for call in loaded.call_args_list)
+            return result
+        with patch.object(archive, '_campaigns', counted):
+            pending = self.record('recovery', archive.archive_manifest(self.store, self.sid, 'recovery'))
+        # La comparaison et sa reprise : une inspection chacune
+        self.assertEqual([1, 1], sorted(map(loads.count, set(loads))))
         models = pending['campaigns'][0]['models']
         self.assertEqual(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], [row['name'] for row in models])
         self.assertTrue(all(row['verdict'] is None and row['answer'] == '  fictional raw output\n' for row in models))

@@ -2671,6 +2671,14 @@ class ParcoursComplet(unittest.TestCase):
                       '16384 jetons de sortie ; 2 reprises).', html)
         self.assertNotIn('Notre conseil', html)
         self.assertNotIn('rien n’est relancé automatiquement', html)
+        # Issue #543 : la projection des évaluations inspecte chaque campagne de la chaîne une seule fois
+        dossier_id = dossier.rsplit('/', 1)[1]
+        with closing(storage.Store(self.data)) as store, store.read_snapshot() as connection, \
+                patch.object(campaigns, '_load', wraps=campaigns._load) as loaded:
+            evaluation.projection(store, connection, dossier_id, dossier_id + '-c1')
+        loads = [call.args[2] for call in loaded.call_args_list]
+        # La comparaison et la reprise de Modèle B : une inspection chacune
+        self.assertEqual([1, 1], sorted(map(loads.count, set(loads))))
 
     def test_reprise_reussie_sans_conseil(self):
         """Décision d'Ayo du 2026-10-02 : pas de conseil sur une comparaison qui compte une reprise

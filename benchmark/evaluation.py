@@ -662,6 +662,12 @@ def evaluate(store, campaign_id, attempt_id, *, responsible, authority, check, p
 
 def projection(store, connection, dossier_id, campaign_id):
     """Private owner projection, without broad access to the judge piece role"""
+    # Chaque enregistrement relit sa campagne et la chaîne de ses relances : une inspection par campagne (#543)
+    with c.inspections(connection):
+        return _projection(store, connection, dossier_id, campaign_id)
+
+
+def _projection(store, connection, dossier_id, campaign_id):
     from . import automatic_judgment as auto, calibration
     records = []
     # Les reprises techniques d'une campagne se lisent avec elle (RULES.md §9)

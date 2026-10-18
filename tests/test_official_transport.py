@@ -315,6 +315,12 @@ class OfficialTransportTests(unittest.TestCase):
         self.assertEqual((4, 3), (len(listed), len(chain)))
         self.assertEqual(sorted(v['campaign_id'] for v in listed), sorted(call.args[2] for call in loaded.call_args_list))
         self.assertEqual(projected, next(v for v in listed if v['campaign_id'] == 'automatic-official'))
+        # Issue #543 : la recherche des relances ne décode que les manifestes de la chaîne, pas la comparaison Pi
+        source = next(v['campaign_id'] for v in listed if v['campaign_id'] in chain and not v['recovery_of'])
+        with self.h.store.read_snapshot() as connection, patch.object(c.q, '_decode', wraps=c.q._decode) as decoded:
+            found = c._recovery_descendants(connection, source)
+        self.assertEqual(2, len(found))
+        self.assertEqual(len(found), decoded.call_count)
 
     def test_three_native_formats_preserve_pi_wire_and_unknown_cost(self):
         h = self.h

@@ -3,7 +3,7 @@
 The local operator supplies authority and availability evidence. No provider,
 plugin loader, queue drainer or content evaluator belongs to this module.
 """
-from contextlib import closing
+from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -1010,6 +1010,20 @@ def _result(receipt, cost):
 _PROJECTION_INSPECTIONS: ContextVar[tuple | None] = ContextVar('_PROJECTION_INSPECTIONS', default=None)
 
 
+@contextmanager
+def inspections(connection):
+    """Une inspection par campagne pendant toute une lecture sans écriture, lectures imbriquées comprises (#543)"""
+    memo = _PROJECTION_INSPECTIONS.get()
+    if memo is not None and memo[0] is connection:
+        yield
+        return
+    token = _PROJECTION_INSPECTIONS.set((connection, {}))
+    try:
+        yield
+    finally:
+        _PROJECTION_INSPECTIONS.reset(token)
+
+
 def _inspect(store, connection, campaign_id):
     # Pendant une projection, chaque campagne n'est inspectée qu'une fois, appels imbriqués compris :
     # la validation du lien d'une relance relit chacune de ses sources. Copie rendue, comme `evaluation._context`
@@ -1684,19 +1698,18 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
 
 
 def _recovery_descendants(connection, campaign_id):
-    children = {}
-    for cid, raw, digest in connection.execute(
-            'SELECT campaign_id, manifest_json, manifest_sha256 FROM s4_campaigns'):
-        parent_oid = q._decode(raw, digest).get('recovery_of')
-        if parent_oid:
-            children.setdefault(parent_oid, []).append(cid)
+    # Seuls les manifestes de la chaîne sont décodés et vérifiés, pas toute la table (#543)
+    def children(oid):
+        rows = connection.execute("SELECT campaign_id, manifest_json, manifest_sha256 FROM s4_campaigns "
+                                  "WHERE json_extract(manifest_json, '$.recovery_of')=? ORDER BY rowid", (oid,))
+        return [cid for cid, raw, digest in rows if q._decode(raw, digest).get('recovery_of') == oid]
     found = []
     pending = [row[0] for row in connection.execute(
         'SELECT operation_id FROM s4_attempts WHERE campaign_id=?', (campaign_id,))]
     seen = set()
     while pending:
         oid = pending.pop()
-        for cid in children.get(oid, ()):
+        for cid in children(oid):
             if cid in seen:
                 continue
             seen.add(cid)
@@ -1810,13 +1823,10 @@ def projection(store, connection, dossier_id, campaign_id=None):
         query += ' AND c.campaign_id=?'
     rows = connection.execute(query + ' ORDER BY c.rowid', parameters).fetchall()
     # Une relance opérateur listée relit aussi sa chaîne : une inspection par campagne, pas par lecture (#541)
-    token = _PROJECTION_INSPECTIONS.set((connection, {}))
-    try:
+    with inspections(connection):
         snapshots = [(cid, _inspect(store, connection, cid)) for (cid,) in rows]
         # Une reprise publique se lit avec sa comparaison source, jamais comme une comparaison de plus ;
         # une reprise opérateur reste listée, comme avant
         return [_projected(store, connection, cid, snapshot) for cid, snapshot in snapshots
                 if campaign_id is not None or not (snapshot['manifest'].get('recovery_of')
                                                    and snapshot['manifest'].get('funding') == 'requester')]
-    finally:
-        _PROJECTION_INSPECTIONS.reset(token)
