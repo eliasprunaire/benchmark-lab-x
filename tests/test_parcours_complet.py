@@ -1672,7 +1672,9 @@ class ParcoursComplet(unittest.TestCase):
         lignes = [n['text'] for n in page.nodes if n['tag'] == 'li' and ' · essai ' in n['text']]
         self.assertEqual([('Modèle A', '1', 'réponse reçue'), ('Modèle C', '1', 'réponse reçue'),
                           ('Modèle A', '2', 'réponse reçue'), ('Modèle C', '2', 'réponse reçue'),
-                          ('Modèle A', '3', 'réponse non confirmée, à vérifier'), ('Modèle C', '3', 'en attente de démarrage')],
+                          ('Modèle A', '3', 'réponse non confirmée, à vérifier'),
+                          # Issue #525 : la comparaison arrêtée n'enverra plus cet essai
+                          ('Modèle C', '3', 'non appelé : la comparaison s’est arrêtée avant cet essai')],
                          [(ligne[:8], *re.search(r' · essai (\d) : (.*)$', ligne).groups()) for ligne in lignes])
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
@@ -3378,6 +3380,98 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Aucune réponse exploitable pour Modèle C (cause non établie par le reçu). Ce modèle', html)
         self.assertIn('Essai d’origine · motif de fin transmis : stop · consommation transmise : '
                       'completion_tokens 40, prompt_tokens 120', html)
+
+    def test_reponse_sans_identite_ni_cout_arrete_et_garde_les_preuves(self):
+        """Issue #525 : condition établie de N4 (#517), un corps d'erreur 502 reçu sous HTTP 200
+
+        Le reçu n'a ni modèle, ni sortie, ni coût : l'attribution échoue et le coût reste inconnu sous la
+        politique `require_observed` du parcours public. La garde arrête la comparaison.
+        Modes d'échec couverts :
+        1. sortie, reçu, réserve ou identités perdus après l'arrêt ;
+        2. un essai jamais envoyé présenté comme en attente ou comme une dépense à venir ;
+        3. l'arrêt dit « problème technique » sans nommer la preuve qui manque ;
+        4. le coût inconnu compté zéro, le sous-total connu présenté comme complet, ou un conseil donné ;
+        5. une consultation ou un redémarrage de l'exécuteur émet un essai de plus
+        """
+        from benchmark import runtime
+        from benchmark_web.fragments import montant_lisible
+        judge = self.juge_factice()
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                # Comme Grok 4.7 dans N4 : corps {"error": {"code": 502}} sous HTTP 200, sans modèle
+                self.incident_fournisseur(value, 502)
+                value['receipt']['observed_configuration']['http']['status'] = 200
+                value['receipt']['result']['incident'] = 'MODEL_IDENTITY_MISMATCH'
+        dossier, _, envois, _ = self.lancer_avec_reprises(list(self.MAJORANTS), comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096)], envois)
+        campaign_id = dossier.rsplit('/', 1)[1] + '-c1'
+        suivi = dossier + '/campaigns/' + campaign_id + '/conditions'
+
+        def persisted():
+            with closing(storage.Store(self.data)) as store:
+                snapshot = campaigns.inspect(store, campaign_id)
+                connection = store._connection
+                return (snapshot['stop_reason'], snapshot['manifest_sha256'],
+                        [(a['operation_id'], a['state'], storage._strict_json(a['operation']['receipt']),
+                          storage._strict_json(a['operation']['observed_cost']), a['operation']['reserved_amount'])
+                         for a in snapshot['attempts']],
+                        connection.execute('SELECT operation_id, output_piece_id FROM s4_results ORDER BY rowid').fetchall(),
+                        connection.execute('SELECT count(*) FROM s4_emissions').fetchone()[0],
+                        snapshot['admissions'][0]['authority']['reserve_amounts'])
+        effets = persisted()
+        arret, _, tentatives, resultats, emissions, reserves = effets
+        self.assertEqual('ACQUISITION_EVIDENCE_INCOMPLETE', arret)
+        self.assertEqual(['RECEIVED', 'RECEIVED', 'INTENT_RECORDED'], [t[1] for t in tentatives])
+        self.assertEqual(2, emissions)
+        # Sortie de Modèle A conservée ; le reçu de Modèle B n'a aucune sortie
+        self.assertEqual([tentatives[0][0], tentatives[1][0]], [r[0] for r in resultats])
+        self.assertIsNotNone(resultats[0][1])
+        self.assertIsNone(resultats[1][1])
+        recu, cout = json.loads(tentatives[1][2]), json.loads(tentatives[1][3])
+        self.assertEqual(('MODEL_IDENTITY_MISMATCH', None, 200), (recu['result']['incident'], recu['result']['output'],
+                                                                  recu['observed_configuration']['http']['status']))
+        # Coût inconnu, jamais zéro ; chaque réserve reste celle de l'admission
+        self.assertEqual(('UNKNOWN', None), (cout['status'], cout['amount']))
+        self.assertEqual(sorted(reserves.values()), sorted(t[4] for t in tentatives))
+        # Consultations, puis redémarrage de l'exécuteur : aucun essai de plus, preuves inchangées
+        for _ in range(2):
+            page, _, _ = self.request(suivi)
+            self.assertIn('Une réponse reçue n’indique ni le modèle qui a répondu ni son coût. La comparaison '
+                          's’est arrêtée', page.visible)
+            self.assertNotIn('problème technique', page.visible)
+            bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
+            self.assertEqual(['réponse reçue', 'pas de réponse exploitable',
+                              'non appelé : la comparaison s’est arrêtée avant cet essai'],
+                             [ligne.rsplit(' : ', 1)[-1].strip() if 'non appelé' not in ligne
+                              else ligne[ligne.index('non appelé'):].strip() for ligne in bloc.split('Modèle ')[1:]])
+            self.assertIn('Réponses reçues : 1 sur 3.', page.visible)
+        with closing(storage.Store(self.data)) as store:
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.clock += timedelta(hours=1)
+        self.assertEqual([], self.relancer_par_l_executeur())
+        self.assertEqual(effets, persisted())
+        _, _, raw = self.request(dossier + '/campaigns/' + campaign_id)
+        texte, phases = self.depenses(raw.decode())
+        _, connu = self.operations_du_dossier()
+        self.assertIn('Coût complet inconnu · sous-total connu : ' + montant_lisible(str(connu)) + ' USD', texte)
+        self.assertIn('le sous-total ne donne que la somme des dépenses connues', texte)
+        lignes = phases['Autres envois aux modèles']
+        self.assertTrue(lignes[1].startswith('Modèle B : dépense inconnue'), lignes[1])
+        self.assertIn('montant réservé : ' + montant_lisible(reserves['cell-2']) + ' USD', lignes[1])
+        self.assertTrue(lignes[2].startswith('Modèle C : aucune dépense'), lignes[2])
+        self.assertIn('non envoyé : la comparaison s’est arrêtée avant cet essai', lignes[2])
+        self.assertNotIn('dépense à venir', texte)
+        # La réponse exploitable de Modèle A est seule évaluée ; la couverture prévue reste distincte
+        html = self.evaluer(dossier)
+        self.assertEqual(1, judge.request.call_count)
+        self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu)', html)
+        self.assertIn('Modèle C n’a pas été appelé : la comparaison s’est arrêtée avant cet essai.', html)
+        self.assertIn('essais lancés : 2 sur 3', html)
+        self.assertIn('Comparaison des coûts incomplète', html)
+        self.assertNotIn('Notre conseil', html)
+        self.assertEqual(2, len(envois))
+        self.assertEqual(effets, persisted())
 
     def test_reprise_refusee_ne_bloque_pas_la_comparaison(self):
         """Une reprise refusée avant envoi (clé révoquée, par exemple) ne reste pas en attente

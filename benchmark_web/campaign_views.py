@@ -474,7 +474,9 @@ def render_expenses(expenses, names):
             details = [date_lisible_utc(item['created_at'])]
             if cost is not None:
                 details.append('source : ' + cost['source'])
-            if item['state'] in EXPENSE_STATES:
+            if item['state'] == 'STOPPED' and not item['recovery']:
+                details.append('non envoyé : la comparaison s’est arrêtée avant cet essai')
+            elif item['state'] in EXPENSE_STATES:
                 details.append(EXPENSE_STATES[item['state']])
             if item['recovery'] and item['state'] != 'STOPPED':
                 details.append('relance après incident fournisseur' if item['recovery'] == 'INCIDENT'
@@ -818,6 +820,19 @@ def render_configurations(value, csrf):
     return content
 
 
+def missing_evidence(attempt):
+    """Ce que le reçu d'un essai n'établit pas, en clair, ou None (#525)"""
+    if attempt.get('state') != 'RECEIVED':
+        return None
+    identity = bool(attempt.get('attribution_incident'))
+    cost = (attempt.get('observed_cost') or {}).get('status') != 'KNOWN'
+    if identity and cost:
+        return 'Une réponse reçue n’indique ni le modèle qui a répondu ni son coût.'
+    if identity:
+        return 'Une réponse reçue n’indique pas le modèle demandé.'
+    return 'Le coût d’une réponse reçue n’est pas connu.' if cost else None
+
+
 def campaign_followup(campaign):
     """État d’affichage seulement : ne crée aucune autorité ni reprise"""
     cells = campaign['cells']
@@ -870,6 +885,12 @@ def campaign_followup(campaign):
                               + ' La comparaison s’est arrêtée ; les réponses déjà reçues '
                               'restent consultables et rien n’est relancé automatiquement.')
     if any(a.get('incident') or a.get('attribution_incident') for a in campaign['attempts']):
+        # Preuve d'acquisition incomplète (#525) : le dernier reçu en cause dit ce qui manque, sans cause devinée
+        missing = next(filter(None, map(missing_evidence, sorted(
+            campaign['attempts'], key=lambda a: a.get('received_at') or '', reverse=True))), None)
+        if campaign.get('stop_reason') == 'ACQUISITION_EVIDENCE_INCOMPLETE' and missing:
+            return False, False, (missing + ' La comparaison s’est arrêtée ; les réponses déjà reçues '
+                                  'restent consultables et rien n’est relancé automatiquement.')
         return False, False, 'Un problème technique est survenu. Le suivi s’est arrêté et rien n’est relancé automatiquement.'
     if any(c['state'] == 'AMBIGUOUS' for c in cells) or campaign.get('state') == 'BLOCKED':
         return False, False, 'Un essai n’a pas pu être confirmé : nous ne savons pas si le modèle a répondu. Rien n’est relancé automatiquement.'
@@ -926,6 +947,9 @@ def render_campaign_followup(value, csrf):
         + (' · essai ' + str(cell['repetition']) if 'repetition' in cell else '')
         + ' : ' + ('réponse non confirmée, appel clos' if cell.get('cell_id') in closed and cell['state'] == 'RECEIVED'
                    else 'pas de réponse exploitable' if cell.get('cell_id') in unusable and cell['state'] == 'RECEIVED'
+                   # Sans admission, une intention n'est jamais émise (#525), comme sur la page de résultats
+                   else 'non appelé : la comparaison s’est arrêtée avant cet essai'
+                   if cell['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open')
                    else states.get(cell['state'], 'état inconnu'))
         for cell in campaign['cells']))
     received = sum(cell['state'] == 'RECEIVED' for cell in campaign['cells'])

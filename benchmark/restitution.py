@@ -505,7 +505,9 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 economic_status='COMPLETE' if complete else 'INCOMPLETE', columns=columns, rows=ordered,
                 recommendation=recommendation, abstention=abstention,
                 expenses=_expenses(store, connection, dossier_id, contract['revision'], [campaign_id] + descendants,
-                                   {r['attempt_id'] for r in rows}, held,
+                                   # Un essai que la comparaison arrêtée n'enverra plus ne coûtera rien (#525)
+                                   {r['attempt_id'] for r in rows},
+                                   held - {a['attempt_id'] for a in pending if a.get('state') == 'NOT_SENT'},
                                    {cfg['estimate']['probe_operation_id'] for cfg in campaign['panel']
                                     if 'probe_operation_id' in cfg.get('estimate', {})},
                                    sum(a.get('state') in ('REVIEW_REQUIRED', 'EVALUATION_NOT_STARTED', 'EVALUATION_RUNNING')
