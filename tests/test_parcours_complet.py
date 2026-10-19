@@ -3502,6 +3502,19 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, len(envois))
         self.assertEqual(effets, persisted())
 
+    def test_cout_inconnu_seul_arrete_et_le_dit(self):
+        """Issue #525 : un coût inconnu sans incident arrête la comparaison sous `require_observed`
+
+        Mode d'échec : le suivi dit seulement que la comparaison s'est arrêtée, sans la preuve qui manque
+        """
+        def comportement(value, model, limit, suivi):
+            if model == 'openai/gpt-5.6-sol':
+                value['cost'].update(status='UNKNOWN', amount=None)
+        dossier, _, envois, _ = self.lancer_avec_reprises(list(self.MAJORANTS), comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096)], envois)
+        page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
+        self.assertIn('Le coût d’une réponse reçue n’est pas connu. La comparaison s’est arrêtée', page.visible)
+
     def test_reprise_refusee_ne_bloque_pas_la_comparaison(self):
         """Une reprise refusée avant envoi (clé révoquée, par exemple) ne reste pas en attente
 

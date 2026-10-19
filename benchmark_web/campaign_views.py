@@ -884,13 +884,16 @@ def campaign_followup(campaign):
         return False, False, (incident_text(config.get('channel_id'), named['incident'])
                               + ' La comparaison s’est arrêtée ; les réponses déjà reçues '
                               'restent consultables et rien n’est relancé automatiquement.')
-    if any(a.get('incident') or a.get('attribution_incident') for a in campaign['attempts']):
-        # Preuve d'acquisition incomplète (#525) : le dernier reçu en cause dit ce qui manque, sans cause devinée
-        missing = next(filter(None, map(missing_evidence, sorted(
-            campaign['attempts'], key=lambda a: a.get('received_at') or '', reverse=True))), None)
-        if campaign.get('stop_reason') == 'ACQUISITION_EVIDENCE_INCOMPLETE' and missing:
-            return False, False, (missing + ' La comparaison s’est arrêtée ; les réponses déjà reçues '
-                                  'restent consultables et rien n’est relancé automatiquement.')
+    # Preuve d'acquisition incomplète (#525) : le dernier reçu en cause dit ce qui manque, sans cause devinée
+    missing = next(filter(None, map(missing_evidence, sorted(
+        campaign['attempts'], key=lambda a: a.get('received_at') or '', reverse=True))), None)
+    incident = any(a.get('incident') or a.get('attribution_incident') for a in campaign['attempts'])
+    # Sans incident, le seul coût inconnu n'est dit que s'il a empêché un essai de partir
+    if campaign.get('stop_reason') == 'ACQUISITION_EVIDENCE_INCOMPLETE' and missing and (
+            incident or any(c['state'] == 'INTENT_RECORDED' for c in cells)):
+        return False, False, (missing + ' La comparaison s’est arrêtée ; les réponses déjà reçues '
+                              'restent consultables et rien n’est relancé automatiquement.')
+    if incident:
         return False, False, 'Un problème technique est survenu. Le suivi s’est arrêté et rien n’est relancé automatiquement.'
     if any(c['state'] == 'AMBIGUOUS' for c in cells) or campaign.get('state') == 'BLOCKED':
         return False, False, 'Un essai n’a pas pu être confirmé : nous ne savons pas si le modèle a répondu. Rien n’est relancé automatiquement.'
