@@ -4,12 +4,19 @@ import hmac
 import logging
 import re
 import sqlite3
+import threading
 from typing import cast
 from urllib.parse import urlsplit, parse_qsl
 
 from . import preparation as p
 from . import storage
 from .storage import _fields
+
+# Lancements en cours dans ce processus d'exécution (#524) : jusqu'à l'admission, leur suivi ne propose pas de
+# second lancement. Compte par campagne : deux envois qui se chevauchent ne se libèrent pas l'un l'autre.
+# Un redémarrage interrompt aussi le lancement, le compte repart vide
+_LAUNCHING: dict[str, int] = {}
+_LAUNCHING_LOCK = threading.Lock()
 
 
 def dispatch(store, method, path, token, body, source, transport, *, qualification_transport=None, candidate_transport=None,
@@ -321,9 +328,17 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
             if requester:
                 from . import automatic_judgment as auto
                 auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport)
-            attempts = campaigns.launch(store, session_id, dossier_id, campaign_id, body,
-                                        access_secret=access_secret, access_transport=access_transport,
-                                        judgment_transport=judgment_transport if requester else None)
+            with _LAUNCHING_LOCK:
+                _LAUNCHING[campaign_id] = _LAUNCHING.get(campaign_id, 0) + 1
+            try:
+                attempts = campaigns.launch(store, session_id, dossier_id, campaign_id, body,
+                                            access_secret=access_secret, access_transport=access_transport,
+                                            judgment_transport=judgment_transport if requester else None)
+            finally:
+                with _LAUNCHING_LOCK:
+                    _LAUNCHING[campaign_id] -= 1
+                    if not _LAUNCHING[campaign_id]:
+                        del _LAUNCHING[campaign_id]
             value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
                                           access_secret=access_secret,
                                           access_transport=access_transport, judgment_transport=judgment_transport)
@@ -348,6 +363,10 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
             value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
                                           access_secret=access_secret,
                                           access_transport=access_transport, judgment_transport=judgment_transport)
+            if requester and campaign_id in _LAUNCHING:
+                value['checks'].append(dict(key='launch_pending', ok=False,
+                    detail='un lancement de cette comparaison est déjà en cours d’enregistrement ; actualisez la page dans un moment'))
+                value['launchable'] = False
             if requester:
                 # Une exécution indisponible est un contrôle comme les autres : jamais un refus sans cause affichée
                 if not callable(candidate_transport) or judgment_transport is None:
