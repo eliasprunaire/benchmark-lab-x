@@ -157,7 +157,8 @@ class ParcoursComplet(unittest.TestCase):
                     # Le web a cessé d'attendre : l'effet reste enregistré, comme dans l'exécuteur
                     pass
 
-        executor = socketserver.UnixStreamServer(str(self.sock), Executor)
+        # Une requête par fil, comme `BoundedUnixServer` : un lancement retenu ne bloque pas le suivi (#524)
+        executor = socketserver.ThreadingUnixStreamServer(str(self.sock), Executor)
         self.addCleanup(executor.server_close)
         thread = threading.Thread(target=executor.serve_forever, kwargs={'poll_interval': .01})
         thread.start()
@@ -476,23 +477,51 @@ class ParcoursComplet(unittest.TestCase):
             self.assertFalse(any(f['action'].endswith('/start') for f in closed.forms))
         # #517 : l'admission répond après l'échéance du relais. L'attente expire, la campagne reste à consulter
         campaign_id = recap.split('/campaigns/', 1)[1].split('/', 1)[0]
-        released, admit = threading.Event(), campaigns.launch
+        # Un portail par lancement retenu, ouverts l'un après l'autre : le premier admis n'est pas concurrencé
+        admit, gates, entered, lock, callers, finished = (campaigns.launch, (threading.Event(), threading.Event()),
+                                                          threading.Event(), threading.Lock(), [], queue.Queue())
 
         def late_launch(*args, **kwargs):
-            self.assertTrue(released.wait(5), 'Admission jamais libérée')
-            return admit(*args, **kwargs)
+            with lock:
+                index = len(callers)
+                callers.append(threading.get_ident())
+            entered.set()
+            self.assertTrue(gates[index].wait(5), 'Admission jamais libérée')
+            try:
+                return admit(*args, **kwargs)
+            finally:
+                finished.put(index)
         start_form = page.form('/start')
-        # #528 : chaque lecture du registre hors snapshot revalidait toutes les opérations, 0,6 s en production
+
+        def counts():
+            with closing(storage.Store(self.data)) as store:
+                return tuple(store._connection.execute(f'SELECT count(*) FROM {table}').fetchone()[0]
+                             for table in ('s4_admissions', 's4_attempts', 's4_emissions'))
+        # #528 : chaque lecture du registre hors snapshot revalidait toutes les opérations, 0,6 s en production.
+        # Comptées par fil : chaque requête de l'exécuteur a le sien
         validated = []
         validate = storage._operation
         with patch.object(service, 'RELAY_BUDGET_SECONDS', .3), patch.object(campaigns, 'launch', late_launch), \
-                patch.object(storage, '_operation', lambda record: validated.append(1) or validate(record)):
+                patch.object(storage, '_operation', lambda record: validated.append(threading.get_ident()) or validate(record)):
             waiting, _, _ = self.request(start_form['action'], start_form['fields'], status=504)
-            released.set()
+            self.assertTrue(entered.wait(5), 'Lancement jamais retenu')
+            # #524 : entre l'expiration et l'admission tardive, le suivi se lit et un second envoi n'admet rien
+            self.request(recap)
+            self.assertEqual((0, 0, 0), counts())
+            again, _, _ = self.request(start_form['action'], start_form['fields'], status=504)
+            self.assertEqual('Réponse non reçue à temps', next(n['text'] for n in again.nodes if n['tag'] == 'h1'))
+            self.assertEqual(2, len(callers))
+            gates[0].set()
+            self.assertEqual(0, finished.get(timeout=5))
             attempts = self.starts.get(timeout=5)['candidate_attempts']
+            # Le second lancement retenu reprend après l'admission du premier : il n'admet rien
+            gates[1].set()
+            self.assertEqual(1, finished.get(timeout=5))
+        self.assertEqual((1, 2, 0), counts())
         with closing(storage.Store(self.data)) as store:
             registry = store._connection.execute('SELECT count(*) FROM operations').fetchone()[0]
-        self.assertLessEqual(len(validated), LAUNCH_REGISTRY_READS * registry, (len(validated), registry))
+        reads = validated.count(callers[0])
+        self.assertLessEqual(reads, LAUNCH_REGISTRY_READS * registry, (reads, registry))
         self.examine(waiting, start_form['action'], 'attente expirée', 'Consulter l’état du lancement')
         self.assertEqual('Réponse non reçue à temps', next(n['text'] for n in waiting.nodes if n['tag'] == 'h1'))
         self.assertIn('rien n’indique qu’il a échoué', waiting.visible)
@@ -1672,7 +1701,9 @@ class ParcoursComplet(unittest.TestCase):
         lignes = [n['text'] for n in page.nodes if n['tag'] == 'li' and ' · essai ' in n['text']]
         self.assertEqual([('Modèle A', '1', 'réponse reçue'), ('Modèle C', '1', 'réponse reçue'),
                           ('Modèle A', '2', 'réponse reçue'), ('Modèle C', '2', 'réponse reçue'),
-                          ('Modèle A', '3', 'réponse non confirmée, à vérifier'), ('Modèle C', '3', 'en attente de démarrage')],
+                          ('Modèle A', '3', 'réponse non confirmée, à vérifier'),
+                          # Issue #525 : la comparaison arrêtée n'enverra plus cet essai
+                          ('Modèle C', '3', 'non appelé : la comparaison s’est arrêtée avant cet essai')],
                          [(ligne[:8], *re.search(r' · essai (\d) : (.*)$', ligne).groups()) for ligne in lignes])
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
@@ -2680,6 +2711,69 @@ class ParcoursComplet(unittest.TestCase):
         # La comparaison et la reprise de Modèle B : une inspection chacune
         self.assertEqual([1, 1], sorted(map(loads.count, set(loads))))
 
+    def test_reponse_coupee_sans_progression_nomme_l_arret_des_reprises(self):
+        """Issue #526 : condition établie de N5 (#517), la reprise rend une réponse coupée plus courte
+
+        Le parcours nominal à trois émissions reste `test_reponse_coupee_reprise_au_plus_deux_fois`.
+        Modes d'échec couverts :
+        1. la seconde reprise part malgré l'absence de progression, ou la première ne part pas ;
+        2. le lecteur voit « 1 reprise » sans le motif qui interdit la suivante ;
+        3. une continuation concurrente ou un redémarrage de l'exécuteur émet une tentative de plus ;
+        4. consultations, continuation ou redémarrage changent identités, reçus, coûts ou filiation
+        """
+        from benchmark import runtime
+        judge = self.juge_factice()
+
+        def comportement(value, model, limit, suivi):
+            if model == 'mistralai/mistral-small-2603':
+                value['cost'].update(status='KNOWN', amount='0.05')
+                # Comme Qwen 3.8 Flash dans N5 : 706 caractères à 4 096 jetons, 523 à 8 192
+                self.coupee(value, 'x' * (706 if limit == 4096 else 523), limit)
+        dossier, _, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'], comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('mistralai/mistral-small-2603', 4096),
+                          ('mistralai/mistral-small-2603', 8192)], envois)
+        source_id = dossier.rsplit('/', 1)[1] + '-c1'
+
+        def persisted():
+            with closing(storage.Store(self.data)) as store:
+                connection = store._connection
+                chain = [(cid, campaigns.inspect(store, cid)['manifest'].get('recovery_of'))
+                         for (cid,) in connection.execute('SELECT campaign_id FROM s4_campaigns ORDER BY rowid').fetchall()]
+                operations = [(op['operation_id'], op['state'], op['requested_configuration']['parameters']['max_tokens'],
+                               storage._strict_json(op['receipt']), storage._strict_json(op['observed_cost']))
+                              for op in store.inspect_operations() if op['phase'] == 'acquisition']
+                return chain, operations, connection.execute('SELECT count(*) FROM s4_emissions').fetchone()[0]
+        effects = persisted()
+        chain, operations, emissions = effects
+        self.assertEqual(3, emissions)
+        # Filiation : une seule reprise, liée au reçu coupé à 4 096 jetons ; aucune intention à 16 384
+        source = next(op for op in operations if op[2] == 4096 and 'x' * 706 in op[3])
+        self.assertEqual([(source_id, None), (chain[1][0], source[0])], chain)
+        self.assertEqual([4096, 4096, 8192], sorted(op[2] for op in operations))
+        self.assertEqual({'RECEIVED'}, {op[1] for op in operations})
+        recovery_id = next(op[0] for op in operations if op[2] == 8192)
+        # Continuations concurrentes de l'essai coupé et de sa reprise, puis redémarrage de l'exécuteur
+        for operation_id in (source[0], recovery_id):
+            execution.continue_preauthorized(self.data, operation_id, transport_factory=self.fabrique,
+                                             access_secret=SECRET, access_transport=self.access)
+        with closing(storage.Store(self.data)) as store:
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.clock += timedelta(hours=1)
+        self.assertEqual([], self.relancer_par_l_executeur())
+        self.assertEqual(3, len(envois))
+        self.assertEqual(effects, persisted())
+        html = self.evaluer(dossier)
+        # Seule la réponse exploitable de Modèle A part au juge
+        self.assertEqual(1, judge.request.call_count)
+        ligne = html.split('Aucune réponse exploitable pour Modèle C')[1].split('. Ce modèle')[0]
+        self.assertEqual(' (arrêt pour longueur, plafond demandé : 8192 jetons de sortie ; 1 reprise ; reprise '
+                         'suivante non tentée : la reprise n’a pas allongé la réponse coupée)', ligne)
+        page, _, _ = self.request(dossier + '/campaigns/' + source_id + '/conditions')
+        self.assertIn('Réponses reçues : 1 sur 2.', page.visible)
+        self.assertEqual(3, len(envois))
+        self.assertEqual(effects[:2], persisted()[:2])
+
     def test_reprise_reussie_sans_conseil(self):
         """Décision d'Ayo du 2026-10-02 : pas de conseil sur une comparaison qui compte une reprise
 
@@ -3316,6 +3410,111 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Essai d’origine · motif de fin transmis : stop · consommation transmise : '
                       'completion_tokens 40, prompt_tokens 120', html)
 
+    def test_reponse_sans_identite_ni_cout_arrete_et_garde_les_preuves(self):
+        """Issue #525 : condition établie de N4 (#517), un corps d'erreur 502 reçu sous HTTP 200
+
+        Le reçu n'a ni modèle, ni sortie, ni coût : l'attribution échoue et le coût reste inconnu sous la
+        politique `require_observed` du parcours public. La garde arrête la comparaison.
+        Modes d'échec couverts :
+        1. sortie, reçu, réserve ou identités perdus après l'arrêt ;
+        2. un essai jamais envoyé présenté comme en attente ou comme une dépense à venir ;
+        3. l'arrêt dit « problème technique » sans nommer la preuve qui manque ;
+        4. le coût inconnu compté zéro, le sous-total connu présenté comme complet, ou un conseil donné ;
+        5. une consultation ou un redémarrage de l'exécuteur émet un essai de plus
+        """
+        from benchmark import runtime
+        from benchmark_web.fragments import montant_lisible
+        judge = self.juge_factice()
+
+        def comportement(value, model, limit, suivi):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                # Comme Grok 4.7 dans N4 : corps {"error": {"code": 502}} sous HTTP 200, sans modèle
+                self.incident_fournisseur(value, 502)
+                value['receipt']['observed_configuration']['http']['status'] = 200
+                value['receipt']['result']['incident'] = 'MODEL_IDENTITY_MISMATCH'
+        dossier, _, envois, _ = self.lancer_avec_reprises(list(self.MAJORANTS), comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096)], envois)
+        campaign_id = dossier.rsplit('/', 1)[1] + '-c1'
+        suivi = dossier + '/campaigns/' + campaign_id + '/conditions'
+
+        def persisted():
+            with closing(storage.Store(self.data)) as store:
+                snapshot = campaigns.inspect(store, campaign_id)
+                connection = store._connection
+                return (snapshot['stop_reason'], snapshot['manifest_sha256'],
+                        [(a['operation_id'], a['state'], storage._strict_json(a['operation']['receipt']),
+                          storage._strict_json(a['operation']['observed_cost']), a['operation']['reserved_amount'])
+                         for a in snapshot['attempts']],
+                        connection.execute('SELECT operation_id, output_piece_id FROM s4_results ORDER BY rowid').fetchall(),
+                        connection.execute('SELECT count(*) FROM s4_emissions').fetchone()[0],
+                        snapshot['admissions'][0]['authority']['reserve_amounts'])
+        effets = persisted()
+        arret, _, tentatives, resultats, emissions, reserves = effets
+        self.assertEqual('ACQUISITION_EVIDENCE_INCOMPLETE', arret)
+        self.assertEqual(['RECEIVED', 'RECEIVED', 'INTENT_RECORDED'], [t[1] for t in tentatives])
+        self.assertEqual(2, emissions)
+        # Sortie de Modèle A conservée ; le reçu de Modèle B n'a aucune sortie
+        self.assertEqual([tentatives[0][0], tentatives[1][0]], [r[0] for r in resultats])
+        self.assertIsNotNone(resultats[0][1])
+        self.assertIsNone(resultats[1][1])
+        recu, cout = json.loads(tentatives[1][2]), json.loads(tentatives[1][3])
+        self.assertEqual(('MODEL_IDENTITY_MISMATCH', None, 200), (recu['result']['incident'], recu['result']['output'],
+                                                                  recu['observed_configuration']['http']['status']))
+        # Coût inconnu, jamais zéro ; chaque réserve reste celle de l'admission
+        self.assertEqual(('UNKNOWN', None), (cout['status'], cout['amount']))
+        self.assertEqual(sorted(reserves.values()), sorted(t[4] for t in tentatives))
+        # Consultations, puis redémarrage de l'exécuteur : aucun essai de plus, preuves inchangées
+        for _ in range(2):
+            page, _, _ = self.request(suivi)
+            self.assertIn('Une réponse reçue n’indique ni le modèle qui a répondu ni son coût. La comparaison '
+                          's’est arrêtée', page.visible)
+            self.assertNotIn('problème technique', page.visible)
+            bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
+            self.assertEqual(['réponse reçue', 'pas de réponse exploitable',
+                              'non appelé : la comparaison s’est arrêtée avant cet essai'],
+                             [ligne.rsplit(' : ', 1)[-1].strip() if 'non appelé' not in ligne
+                              else ligne[ligne.index('non appelé'):].strip() for ligne in bloc.split('Modèle ')[1:]])
+            self.assertIn('Réponses reçues : 1 sur 3.', page.visible)
+        with closing(storage.Store(self.data)) as store:
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.clock += timedelta(hours=1)
+        self.assertEqual([], self.relancer_par_l_executeur())
+        self.assertEqual(effets, persisted())
+        _, _, raw = self.request(dossier + '/campaigns/' + campaign_id)
+        texte, phases = self.depenses(raw.decode())
+        _, connu = self.operations_du_dossier()
+        self.assertIn('Coût complet inconnu · sous-total connu : ' + montant_lisible(str(connu)) + ' USD', texte)
+        self.assertIn('le sous-total ne donne que la somme des dépenses connues', texte)
+        lignes = phases['Autres envois aux modèles']
+        self.assertTrue(lignes[1].startswith('Modèle B : dépense inconnue'), lignes[1])
+        self.assertIn('montant réservé : ' + montant_lisible(reserves['cell-2']) + ' USD', lignes[1])
+        self.assertTrue(lignes[2].startswith('Modèle C : aucune dépense'), lignes[2])
+        self.assertIn('non envoyé : la comparaison s’est arrêtée avant cet essai', lignes[2])
+        self.assertNotIn('dépense à venir', texte)
+        # La réponse exploitable de Modèle A est seule évaluée ; la couverture prévue reste distincte
+        html = self.evaluer(dossier)
+        self.assertEqual(1, judge.request.call_count)
+        self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu)', html)
+        self.assertIn('Modèle C n’a pas été appelé : la comparaison s’est arrêtée avant cet essai.', html)
+        self.assertIn('essais lancés : 2 sur 3', html)
+        self.assertIn('Comparaison des coûts incomplète', html)
+        self.assertNotIn('Notre conseil', html)
+        self.assertEqual(2, len(envois))
+        self.assertEqual(effets, persisted())
+
+    def test_cout_inconnu_seul_arrete_et_le_dit(self):
+        """Issue #525 : un coût inconnu sans incident arrête la comparaison sous `require_observed`
+
+        Mode d'échec : le suivi dit seulement que la comparaison s'est arrêtée, sans la preuve qui manque
+        """
+        def comportement(value, model, limit, suivi):
+            if model == 'openai/gpt-5.6-sol':
+                value['cost'].update(status='UNKNOWN', amount=None)
+        dossier, _, envois, _ = self.lancer_avec_reprises(list(self.MAJORANTS), comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096)], envois)
+        page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
+        self.assertIn('Le coût d’une réponse reçue n’est pas connu. La comparaison s’est arrêtée', page.visible)
+
     def test_reprise_refusee_ne_bloque_pas_la_comparaison(self):
         """Une reprise refusée avant envoi (clé révoquée, par exemple) ne reste pas en attente
 
@@ -3631,11 +3830,28 @@ class ParcoursComplet(unittest.TestCase):
         with self.assertRaises(Plantage):
             self.lancer_avec_reprises(
                 ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'], comportement)
+
+        def effets():
+            """Issue #524 : campagnes et filiations (manifestes), admissions, intentions et émissions persistées"""
+            with closing(storage.Store(self.data)) as store:
+                tables = {'s4_campaigns': 'campaign_id, manifest_sha256', 's4_admissions': 'admission_id, campaign_id',
+                          's4_attempts': 'operation_id, campaign_id, cell_id', 's4_emissions': '*'}
+                return {table: store._connection.execute(f'SELECT {columns} FROM {table} ORDER BY rowid').fetchall()
+                        for table, columns in tables.items()}, sorted(
+                    op['state'] for op in store.inspect_operations() if op['phase'] == 'acquisition')
+        # Issue #524 : l'appel de Modèle C est peut-être parti ; consulter puis redémarrer ne rejoue rien
+        avant, etats = effets()
+        self.assertEqual(3, len(avant['s4_emissions']))
+        self.assertEqual(['EMISSION_POSSIBLE', 'RECEIVED', 'RECEIVED'], etats)
+        self.request(suivis[0])
+        self.assertEqual((avant, etats), effets())
         with closing(storage.Store(self.data)) as store:
             runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.assertEqual((avant, ['AMBIGUOUS', 'RECEIVED', 'RECEIVED']), effets())
         self.clock += timedelta(seconds=30)
         self.assertEqual([], self.relancer_par_l_executeur())
         page, _, _ = self.request(suivis[0])
+        self.assertEqual(avant, effets()[0])
         self.assertNotIn('Nouvelle tentative automatique', page.visible)
         # L'appel ambigu est clos sans rejeu ; la réponse reçue de Modèle B peut être évaluée
         with closing(storage.Store(self.data)) as store:
@@ -3654,6 +3870,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Réponses reçues : 1 sur 3.', page.visible)
         page, _, _ = self.request(suivis[0].split('/campaigns/')[0])
         self.assertIn('Lancer l’évaluation', page.visible)
+        self.assertEqual(avant, effets()[0])
 
     def test_tous_les_modeles_epuises_le_suivi_nomme_la_cause(self):
         """Issue #535 : sans aucune réponse exploitable après cinq tentatives, le suivi dit la cause et leur nombre"""

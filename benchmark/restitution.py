@@ -8,6 +8,7 @@ from urllib.parse import parse_qsl, urlencode
 
 from .validation import identifier
 from .acquisition import campaigns as c
+from .acquisition.recovery import NO_PROGRESS
 from . import evaluation as e, model_catalogue, preparation as p, qualification as q, storage
 from .publications import SCHEMA, PRESENTATION_VERSION, _decode
 from .storage import ConflictError, IntegrityError, _strict_json as encode
@@ -20,6 +21,8 @@ NO_USABLE_RESPONSE = 'Aucune réponse exploitable de ce modèle : il n’est pas
 LIMIT = 'Ces résultats portent sur un exemple inventé. Ils ne se transposent pas tels quels à vos dossiers réels et ne s’additionnent pas avec ceux d’autres cas ou d’autres comparaisons.'
 VERDICTS = ('SATISFAIT', 'NE SATISFAIT PAS', 'A_REPRENDRE', 'INDETERMINE')
 FILTERS = ('case', 'sort', 'direction', 'verdict', 'obligation', 'configuration')
+# Refus figé d'une reprise pour longueur que l'exécuteur n'a pas tentée (#526) ; un autre refus reste tu
+DECLINED = {NO_PROGRESS: 'la reprise n’a pas allongé la réponse coupée'}
 
 
 # Lues dans le reçu HTTP conservé ; un reçu illisible ne fait avancer aucune cause
@@ -350,7 +353,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
             ids.append(parents[ids[-1]])
         return ids[::-1]
     causes, attempts_by_id = {}, {}
-    from .acquisition.recovery import pending_relaunches
+    from .acquisition.recovery import declined, pending_relaunches
     # Relance programmée après un incident fournisseur : la cellule attend encore sa réponse (#533)
     awaited = {attempt['operation_id'] for attempt, _ in pending_relaunches(store, connection, campaign_id)}
     latest = {record['attempt_id']: record for record in records}
@@ -391,6 +394,9 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                                **({'repetition': cell['repetition']} if 'repetition' in cell else {}),
                                cause=causes.get(attempt['attempt_id']),
                                recoveries=len(chain(attempt['attempt_id'])) - 1,
+                               # Seule une réponse coupée pour longueur relit la préautorisation
+                               declined=DECLINED.get(declined(store, connection, attempt['attempt_id']) or '')
+                               if (causes.get(attempt['attempt_id']) or '').startswith('arrêt pour longueur') else None,
                                **({'attempts': len(chain(attempt['attempt_id']))}
                                   if attempt['attempt_id'] in relaunched or storage.candidate_incident(
                                       attempts_by_id[attempt['attempt_id']]['operation']) else {}))
@@ -502,7 +508,10 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                 economic_status='COMPLETE' if complete else 'INCOMPLETE', columns=columns, rows=ordered,
                 recommendation=recommendation, abstention=abstention,
                 expenses=_expenses(store, connection, dossier_id, contract['revision'], [campaign_id] + descendants,
-                                   {r['attempt_id'] for r in rows}, held,
+                                   # Un essai que la comparaison arrêtée n'enverra plus ne coûtera rien (#525)
+                                   {r['attempt_id'] for r in rows},
+                                   held - {a['attempt_id'] for a in pending if a.get('state') == 'NOT_SENT'
+                                          and a['attempt_id'] in {x['operation_id'] for x in campaign['attempts']}},
                                    {cfg['estimate']['probe_operation_id'] for cfg in campaign['panel']
                                     if 'probe_operation_id' in cfg.get('estimate', {})},
                                    sum(a.get('state') in ('REVIEW_REQUIRED', 'EVALUATION_NOT_STARTED', 'EVALUATION_RUNNING')

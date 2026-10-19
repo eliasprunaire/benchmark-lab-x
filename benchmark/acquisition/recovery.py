@@ -18,6 +18,8 @@ _UNRECOVERABLE = {'MODEL_IDENTITY_MISMATCH', 'PROVIDER_ROUTE_MISMATCH', 'HARNESS
 _RECOVERABLE = {'LENGTH', 'EMPTY_OUTPUT', 'ROUTE_ERROR'}
 # Seul arrêt qui laisse partir une relance après incident fournisseur : le redémarrage de l'exécuteur (#533)
 RESTARTED = 'PROCESS_STARTED_ADMISSION_BLOCKED'
+# Garde de progression d'une reprise pour longueur, restituée au demandeur (#526)
+NO_PROGRESS = 'Arrêt : aucune progression de sortie'
 
 
 def parent(store, connection, operation_id):
@@ -338,7 +340,7 @@ def derive_child(source_manifest, attempt, observed, capabilities, *, budget_id,
         raise ValueError('Capacités d’un autre modèle')
     if source_manifest.get('recovery_of') and observed['kind'] == 'LENGTH':
         if earlier_output_chars is None or observed['output_chars'] <= earlier_output_chars:
-            raise ValueError('Arrêt : aucune progression de sortie')
+            raise ValueError(NO_PROGRESS)
     params = config['parameters']
     allowed = params['provider']['only']
     endpoints = [e for tag in allowed for e in capabilities['endpoints']
@@ -472,6 +474,24 @@ def _automatic_proposal(store, connection, operation_id, grant, *, allow_officia
             raise
         return _official_proposal(store, connection, operation_id, grant, budget_id,
                                   check_budget=check_budget)
+
+
+def declined(store, connection, operation_id):
+    """Refus figé d'une nouvelle reprise pour longueur de ce reçu, ou None (#526)
+
+    Même calcul que l'exécuteur, sans réserver ni émettre. Le budget, qui change après coup, n'est pas relu.
+    Un secours officiel préautorisé peut suivre ce refus : aucun motif n'est alors donné
+    """
+    snapshot, attempt = parent(store, connection, operation_id)
+    _, grant = _owner_grant(store, connection, snapshot)
+    try:
+        if grant is None or grant.get('official_fallbacks') or observation(attempt)['kind'] != 'LENGTH':
+            return None
+        _automatic_proposal(store, connection, operation_id, grant, allow_official=False, check_budget=False)
+    # Mêmes erreurs que `_next_preauthorized_attempt`, corps malformé compris
+    except (ValueError, KeyError, TypeError, AttributeError, StopIteration) as exc:
+        return str(exc)
+    return None
 
 
 def relaunched(store, connection, snapshot, attempt):
