@@ -534,7 +534,8 @@ def render_comparison(value):
         # Une cause que le reçu n'établit pas est dite inconnue, jamais devinée
         details = [item.get('cause') or 'cause non établie par le reçu'] + (
             [str(item['attempts']) + ' tentatives'] if item.get('attempts', 0) > 1 else
-            [str(count) + (' reprises' if count > 1 else ' reprise')] if count else [])
+            [str(count) + (' reprises' if count > 1 else ' reprise')] if count else []) + (
+            ['reprise suivante non tentée : ' + item['declined']] if item.get('declined') else [])
         return (prefix + 'Aucune réponse exploitable pour ' + model_name(configuration, names)
                 + (' · ' + effort_label(configuration) if sum(c['model'] == configuration['model'] for c in panel.values()) > 1 else '')
                 + attempt + ' (' + ' ; '.join(details) + ')'

@@ -2680,6 +2680,69 @@ class ParcoursComplet(unittest.TestCase):
         # La comparaison et la reprise de Modèle B : une inspection chacune
         self.assertEqual([1, 1], sorted(map(loads.count, set(loads))))
 
+    def test_reponse_coupee_sans_progression_nomme_l_arret_des_reprises(self):
+        """Issue #526 : condition établie de N5 (#517), la reprise rend une réponse coupée plus courte
+
+        Le parcours nominal à trois émissions reste `test_reponse_coupee_reprise_au_plus_deux_fois`.
+        Modes d'échec couverts :
+        1. la seconde reprise part malgré l'absence de progression, ou la première ne part pas ;
+        2. le lecteur voit « 1 reprise » sans le motif qui interdit la suivante ;
+        3. une continuation concurrente ou un redémarrage de l'exécuteur émet une tentative de plus ;
+        4. consultations, continuation ou redémarrage changent identités, reçus, coûts ou filiation
+        """
+        from benchmark import runtime
+        judge = self.juge_factice()
+
+        def comportement(value, model, limit, suivi):
+            if model == 'mistralai/mistral-small-2603':
+                value['cost'].update(status='KNOWN', amount='0.05')
+                # Comme Qwen 3.8 Flash dans N5 : 706 caractères à 4 096 jetons, 523 à 8 192
+                self.coupee(value, 'x' * (706 if limit == 4096 else 523), limit)
+        dossier, _, envois, _ = self.lancer_avec_reprises(
+            ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'], comportement)
+        self.assertEqual([('openai/gpt-5.6-sol', 4096), ('mistralai/mistral-small-2603', 4096),
+                          ('mistralai/mistral-small-2603', 8192)], envois)
+        source_id = dossier.rsplit('/', 1)[1] + '-c1'
+
+        def persisted():
+            with closing(storage.Store(self.data)) as store:
+                connection = store._connection
+                chain = [(cid, campaigns.inspect(store, cid)['manifest'].get('recovery_of'))
+                         for (cid,) in connection.execute('SELECT campaign_id FROM s4_campaigns ORDER BY rowid').fetchall()]
+                operations = [(op['operation_id'], op['state'], op['requested_configuration']['parameters']['max_tokens'],
+                               storage._strict_json(op['receipt']), storage._strict_json(op['observed_cost']))
+                              for op in store.inspect_operations() if op['phase'] == 'acquisition']
+                return chain, operations, connection.execute('SELECT count(*) FROM s4_emissions').fetchone()[0]
+        effects = persisted()
+        chain, operations, emissions = effects
+        self.assertEqual(3, emissions)
+        # Filiation : une seule reprise, liée au reçu coupé à 4 096 jetons ; aucune intention à 16 384
+        source = next(op for op in operations if op[2] == 4096 and 'x' * 706 in op[3])
+        self.assertEqual([(source_id, None), (chain[1][0], source[0])], chain)
+        self.assertEqual([4096, 4096, 8192], sorted(op[2] for op in operations))
+        self.assertEqual({'RECEIVED'}, {op[1] for op in operations})
+        recovery_id = next(op[0] for op in operations if op[2] == 8192)
+        # Continuations concurrentes de l'essai coupé et de sa reprise, puis redémarrage de l'exécuteur
+        for operation_id in (source[0], recovery_id):
+            execution.continue_preauthorized(self.data, operation_id, transport_factory=self.fabrique,
+                                             access_secret=SECRET, access_transport=self.access)
+        with closing(storage.Store(self.data)) as store:
+            runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.clock += timedelta(hours=1)
+        self.assertEqual([], self.relancer_par_l_executeur())
+        self.assertEqual(3, len(envois))
+        self.assertEqual(effects, persisted())
+        html = self.evaluer(dossier)
+        # Seule la réponse exploitable de Modèle A part au juge
+        self.assertEqual(1, judge.request.call_count)
+        ligne = html.split('Aucune réponse exploitable pour Modèle C')[1].split('. Ce modèle')[0]
+        self.assertEqual(' (arrêt pour longueur, plafond demandé : 8192 jetons de sortie ; 1 reprise ; reprise '
+                         'suivante non tentée : la reprise n’a pas allongé la réponse coupée)', ligne)
+        page, _, _ = self.request(dossier + '/campaigns/' + source_id + '/conditions')
+        self.assertIn('Réponses reçues : 1 sur 2.', page.visible)
+        self.assertEqual(3, len(envois))
+        self.assertEqual(effects[:2], persisted()[:2])
+
     def test_reprise_reussie_sans_conseil(self):
         """Décision d'Ayo du 2026-10-02 : pas de conseil sur une comparaison qui compte une reprise
 

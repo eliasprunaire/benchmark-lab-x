@@ -474,6 +474,22 @@ def _automatic_proposal(store, connection, operation_id, grant, *, allow_officia
                                   check_budget=check_budget)
 
 
+def declined(store, connection, operation_id):
+    """Refus figé d'une nouvelle reprise pour longueur de ce reçu, ou None (#526)
+
+    Même calcul que l'exécuteur, sans réserver ni émettre. Le budget, qui change après coup, n'est pas relu
+    """
+    snapshot, attempt = parent(store, connection, operation_id)
+    _, grant = _owner_grant(store, connection, snapshot)
+    try:
+        if grant is None or observation(attempt)['kind'] != 'LENGTH':
+            return None
+        _automatic_proposal(store, connection, operation_id, grant, allow_official=False, check_budget=False)
+    except (ValueError, KeyError, TypeError) as exc:
+        return str(exc)
+    return None
+
+
 def relaunched(store, connection, snapshot, attempt):
     """Reçu en incident fournisseur que le lancement préautorise à relancer (#533)
 

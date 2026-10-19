@@ -20,6 +20,8 @@ NO_USABLE_RESPONSE = 'Aucune réponse exploitable de ce modèle : il n’est pas
 LIMIT = 'Ces résultats portent sur un exemple inventé. Ils ne se transposent pas tels quels à vos dossiers réels et ne s’additionnent pas avec ceux d’autres cas ou d’autres comparaisons.'
 VERDICTS = ('SATISFAIT', 'NE SATISFAIT PAS', 'A_REPRENDRE', 'INDETERMINE')
 FILTERS = ('case', 'sort', 'direction', 'verdict', 'obligation', 'configuration')
+# Refus figé d'une reprise pour longueur que l'exécuteur n'a pas tentée (#526) ; un autre refus reste tu
+DECLINED = {'Arrêt : aucune progression de sortie': 'la reprise n’a pas allongé la réponse coupée'}
 
 
 # Lues dans le reçu HTTP conservé ; un reçu illisible ne fait avancer aucune cause
@@ -350,7 +352,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
             ids.append(parents[ids[-1]])
         return ids[::-1]
     causes, attempts_by_id = {}, {}
-    from .acquisition.recovery import pending_relaunches
+    from .acquisition.recovery import declined, pending_relaunches
     # Relance programmée après un incident fournisseur : la cellule attend encore sa réponse (#533)
     awaited = {attempt['operation_id'] for attempt, _ in pending_relaunches(store, connection, campaign_id)}
     latest = {record['attempt_id']: record for record in records}
@@ -391,6 +393,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                                **({'repetition': cell['repetition']} if 'repetition' in cell else {}),
                                cause=causes.get(attempt['attempt_id']),
                                recoveries=len(chain(attempt['attempt_id'])) - 1,
+                               declined=DECLINED.get(declined(store, connection, attempt['attempt_id']) or ''),
                                **({'attempts': len(chain(attempt['attempt_id']))}
                                   if attempt['attempt_id'] in relaunched or storage.candidate_incident(
                                       attempts_by_id[attempt['attempt_id']]['operation']) else {}))
