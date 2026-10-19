@@ -157,7 +157,8 @@ class ParcoursComplet(unittest.TestCase):
                     # Le web a cessé d'attendre : l'effet reste enregistré, comme dans l'exécuteur
                     pass
 
-        executor = socketserver.UnixStreamServer(str(self.sock), Executor)
+        # Une requête par fil, comme `BoundedUnixServer` : un lancement retenu ne bloque pas le suivi (#524)
+        executor = socketserver.ThreadingUnixStreamServer(str(self.sock), Executor)
         self.addCleanup(executor.server_close)
         thread = threading.Thread(target=executor.serve_forever, kwargs={'poll_interval': .01})
         thread.start()
@@ -476,23 +477,51 @@ class ParcoursComplet(unittest.TestCase):
             self.assertFalse(any(f['action'].endswith('/start') for f in closed.forms))
         # #517 : l'admission répond après l'échéance du relais. L'attente expire, la campagne reste à consulter
         campaign_id = recap.split('/campaigns/', 1)[1].split('/', 1)[0]
-        released, admit = threading.Event(), campaigns.launch
+        # Un portail par lancement retenu, ouverts l'un après l'autre : le premier admis n'est pas concurrencé
+        admit, gates, entered, lock, callers, finished = (campaigns.launch, (threading.Event(), threading.Event()),
+                                                          threading.Event(), threading.Lock(), [], queue.Queue())
 
         def late_launch(*args, **kwargs):
-            self.assertTrue(released.wait(5), 'Admission jamais libérée')
-            return admit(*args, **kwargs)
+            with lock:
+                index = len(callers)
+                callers.append(threading.get_ident())
+            entered.set()
+            self.assertTrue(gates[index].wait(5), 'Admission jamais libérée')
+            try:
+                return admit(*args, **kwargs)
+            finally:
+                finished.put(index)
         start_form = page.form('/start')
-        # #528 : chaque lecture du registre hors snapshot revalidait toutes les opérations, 0,6 s en production
+
+        def counts():
+            with closing(storage.Store(self.data)) as store:
+                return tuple(store._connection.execute(f'SELECT count(*) FROM {table}').fetchone()[0]
+                             for table in ('s4_admissions', 's4_attempts', 's4_emissions'))
+        # #528 : chaque lecture du registre hors snapshot revalidait toutes les opérations, 0,6 s en production.
+        # Comptées par fil : chaque requête de l'exécuteur a le sien
         validated = []
         validate = storage._operation
         with patch.object(service, 'RELAY_BUDGET_SECONDS', .3), patch.object(campaigns, 'launch', late_launch), \
-                patch.object(storage, '_operation', lambda record: validated.append(1) or validate(record)):
+                patch.object(storage, '_operation', lambda record: validated.append(threading.get_ident()) or validate(record)):
             waiting, _, _ = self.request(start_form['action'], start_form['fields'], status=504)
-            released.set()
+            self.assertTrue(entered.wait(5), 'Lancement jamais retenu')
+            # #524 : entre l'expiration et l'admission tardive, le suivi se lit et un second envoi n'admet rien
+            self.request(recap)
+            self.assertEqual((0, 0, 0), counts())
+            again, _, _ = self.request(start_form['action'], start_form['fields'], status=504)
+            self.assertEqual('Réponse non reçue à temps', next(n['text'] for n in again.nodes if n['tag'] == 'h1'))
+            self.assertEqual(2, len(callers))
+            gates[0].set()
+            self.assertEqual(0, finished.get(timeout=5))
             attempts = self.starts.get(timeout=5)['candidate_attempts']
+            # Le second lancement retenu reprend après l'admission du premier : il n'admet rien
+            gates[1].set()
+            self.assertEqual(1, finished.get(timeout=5))
+        self.assertEqual((1, 2, 0), counts())
         with closing(storage.Store(self.data)) as store:
             registry = store._connection.execute('SELECT count(*) FROM operations').fetchone()[0]
-        self.assertLessEqual(len(validated), LAUNCH_REGISTRY_READS * registry, (len(validated), registry))
+        reads = validated.count(callers[0])
+        self.assertLessEqual(reads, LAUNCH_REGISTRY_READS * registry, (reads, registry))
         self.examine(waiting, start_form['action'], 'attente expirée', 'Consulter l’état du lancement')
         self.assertEqual('Réponse non reçue à temps', next(n['text'] for n in waiting.nodes if n['tag'] == 'h1'))
         self.assertIn('rien n’indique qu’il a échoué', waiting.visible)
