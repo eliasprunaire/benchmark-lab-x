@@ -13,8 +13,9 @@ from . import storage
 from .storage import _fields
 
 # Lancements en cours dans ce processus d'exécution (#524) : jusqu'à l'admission, leur suivi ne propose pas de
-# second lancement. Un redémarrage interrompt aussi le lancement, l'ensemble repart vide
-_LAUNCHING: set[str] = set()
+# second lancement. Compte par campagne : deux envois qui se chevauchent ne se libèrent pas l'un l'autre.
+# Un redémarrage interrompt aussi le lancement, le compte repart vide
+_LAUNCHING: dict[str, int] = {}
 _LAUNCHING_LOCK = threading.Lock()
 
 
@@ -328,14 +329,16 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                 from . import automatic_judgment as auto
                 auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport)
             with _LAUNCHING_LOCK:
-                _LAUNCHING.add(campaign_id)
+                _LAUNCHING[campaign_id] = _LAUNCHING.get(campaign_id, 0) + 1
             try:
                 attempts = campaigns.launch(store, session_id, dossier_id, campaign_id, body,
                                             access_secret=access_secret, access_transport=access_transport,
                                             judgment_transport=judgment_transport if requester else None)
             finally:
                 with _LAUNCHING_LOCK:
-                    _LAUNCHING.discard(campaign_id)
+                    _LAUNCHING[campaign_id] -= 1
+                    if not _LAUNCHING[campaign_id]:
+                        del _LAUNCHING[campaign_id]
             value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
                                           access_secret=access_secret,
                                           access_transport=access_transport, judgment_transport=judgment_transport)
