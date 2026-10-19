@@ -3788,11 +3788,28 @@ class ParcoursComplet(unittest.TestCase):
         with self.assertRaises(Plantage):
             self.lancer_avec_reprises(
                 ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'], comportement)
+
+        def effets():
+            """Issue #524 : campagnes et filiations (manifestes), admissions, intentions et émissions persistées"""
+            with closing(storage.Store(self.data)) as store:
+                tables = {'s4_campaigns': 'campaign_id, manifest_sha256', 's4_admissions': 'admission_id, campaign_id',
+                          's4_attempts': 'operation_id, campaign_id, cell_id', 's4_emissions': '*'}
+                return {table: store._connection.execute(f'SELECT {columns} FROM {table} ORDER BY rowid').fetchall()
+                        for table, columns in tables.items()}, sorted(
+                    op['state'] for op in store.inspect_operations() if op['phase'] == 'acquisition')
+        # Issue #524 : l'appel de Modèle C est peut-être parti ; consulter puis redémarrer ne rejoue rien
+        avant, etats = effets()
+        self.assertEqual(3, len(avant['s4_emissions']))
+        self.assertEqual(['EMISSION_POSSIBLE', 'RECEIVED', 'RECEIVED'], etats)
+        self.request(suivis[0])
+        self.assertEqual((avant, etats), effets())
         with closing(storage.Store(self.data)) as store:
             runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+        self.assertEqual((avant, ['AMBIGUOUS', 'RECEIVED', 'RECEIVED']), effets())
         self.clock += timedelta(seconds=30)
         self.assertEqual([], self.relancer_par_l_executeur())
         page, _, _ = self.request(suivis[0])
+        self.assertEqual(avant, effets()[0])
         self.assertNotIn('Nouvelle tentative automatique', page.visible)
         # L'appel ambigu est clos sans rejeu ; la réponse reçue de Modèle B peut être évaluée
         with closing(storage.Store(self.data)) as store:
@@ -3811,6 +3828,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Réponses reçues : 1 sur 3.', page.visible)
         page, _, _ = self.request(suivis[0].split('/campaigns/')[0])
         self.assertIn('Lancer l’évaluation', page.visible)
+        self.assertEqual(avant, effets()[0])
 
     def test_tous_les_modeles_epuises_le_suivi_nomme_la_cause(self):
         """Issue #535 : sans aucune réponse exploitable après cinq tentatives, le suivi dit la cause et leur nombre"""
