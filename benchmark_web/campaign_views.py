@@ -824,12 +824,14 @@ def missing_evidence(attempt):
     """Ce que le reçu d'un essai n'établit pas, en clair, ou None (#525)"""
     if attempt.get('state') != 'RECEIVED':
         return None
-    identity = bool(attempt.get('attribution_incident'))
+    fields = set(attempt.get('attribution_incident') or ())
+    # Le modèle n'est nommé que si son champ manque ou diffère ; sinon la provenance reste générale
+    identity = ('le modèle qui a répondu' if fields & {'model', 'revision'} else 'la provenance demandée') if fields else None
     cost = (attempt.get('observed_cost') or {}).get('status') != 'KNOWN'
     if identity and cost:
-        return 'Une réponse reçue n’indique ni le modèle qui a répondu ni son coût.'
+        return 'Une réponse reçue n’indique ni ' + identity + ' ni son coût.'
     if identity:
-        return 'Une réponse reçue n’indique pas le modèle demandé.'
+        return 'Une réponse reçue n’indique pas ' + identity + '.'
     return 'Le coût d’une réponse reçue n’est pas connu.' if cost else None
 
 
