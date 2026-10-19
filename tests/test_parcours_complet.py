@@ -505,8 +505,12 @@ class ParcoursComplet(unittest.TestCase):
                 patch.object(storage, '_operation', lambda record: validated.append(threading.get_ident()) or validate(record)):
             waiting, _, _ = self.request(start_form['action'], start_form['fields'], status=504)
             self.assertTrue(entered.wait(5), 'Lancement jamais retenu')
-            # #524 : entre l'expiration et l'admission tardive, le suivi se lit et un second envoi n'admet rien
-            self.request(recap)
+            # #524 : entre l'expiration et l'admission tardive, le suivi se lit sans proposer de second lancement,
+            # et un envoi direct n'admet rien
+            interval, _, _ = self.request(recap)
+            self.assertFalse(any(f['action'].endswith('/start') for f in interval.forms))
+            self.assertIn('Impossible de lancer pour l’instant : un lancement de cette comparaison est déjà en cours '
+                          'd’enregistrement ; actualisez la page dans un moment.', interval.visible)
             self.assertEqual((0, 0, 0), counts())
             again, _, _ = self.request(start_form['action'], start_form['fields'], status=504)
             self.assertEqual('Réponse non reçue à temps', next(n['text'] for n in again.nodes if n['tag'] == 'h1'))
