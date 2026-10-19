@@ -485,7 +485,8 @@ def declined(store, connection, operation_id):
         if grant is None or observation(attempt)['kind'] != 'LENGTH':
             return None
         _automatic_proposal(store, connection, operation_id, grant, allow_official=False, check_budget=False)
-    except (ValueError, KeyError, TypeError) as exc:
+    # Mêmes erreurs que `_next_preauthorized_attempt`, corps malformé compris
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
         return str(exc)
     return None
 
