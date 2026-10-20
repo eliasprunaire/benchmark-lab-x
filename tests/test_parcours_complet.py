@@ -2050,28 +2050,38 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         return dossier, page
 
-    def juge_factice(self, constat=None, mesure=None, ajuste=None):
+    def juge_factice(self, constat=None, mesure=None, ajuste=None, *, statut=200, cout='0.001', contenu=None, profil=None, cle=None):
         """Juge OpenRouter réel sur une connexion HTTP simulée : chaque réponse évaluée ne satisfait pas une obligation
 
         `constat(critère)` remplace ce FAIL uniforme par (statut, attribution, texte du constat) ; pour une
         obligation composée, il reçoit l'élément que vise le contrôle ;
         `mesure` est la valeur rendue pour chaque critère de qualité, sinon aucun n'est mesuré ;
         appelable, elle reçoit le critère et la réponse évaluée ;
-        `ajuste(vue du juge, constats)` réécrit les constats d'une réponse avant l'envoi
+        `ajuste(vue du juge, constats)` réécrit les constats d'une réponse avant l'envoi.
+        `statut`, `cout` et `contenu` restent modifiables via `self.juge_etat` pour un contrôle fictif :
+        `cout` None omet l'usage, `contenu` remplace la proposition
         """
         from unittest.mock import Mock
         from benchmark.transports import openrouter
         from tests.test_openrouter_preparation import SYNTHETIC_PROFILE, estimate_for
         # Règle de preuve du profil réel du juge : omission prouvable
-        profile = openrouter.load_profile(str(SYNTHETIC_PROFILE)) | {'evidence_rule': 'server-evidence/v2'}
+        if profil is None:
+            profile = openrouter.load_profile(str(SYNTHETIC_PROFILE)) | {'evidence_rule': 'server-evidence/v2'}
+        else:
+            profile = openrouter.load_profile(str(profil))
         judge = openrouter.OpenRouterJudgment(None, profile)
+        if cle is not None:
+            judge._api_key = cle
         judge._quote = openrouter.configuration(estimate_for(profile), profile)
         http = Mock()
         http.getresponse.return_value.status = 200
         http.getresponse.return_value.length = 0
         http.getresponse.return_value.getheader.return_value = None
+        etat = {'statut': statut, 'cout': cout, 'contenu': contenu}
+        self.juge_etat = etat
 
         def answer(method, path, *, body, headers):
+            http.getresponse.return_value.status = etat['statut']
             content = json.loads(json.loads(body)['messages'][1]['content'])
             self.judged.append(content)
             self.judge_systems.append(json.loads(body)['messages'][0]['content'])
@@ -2090,10 +2100,13 @@ class ParcoursComplet(unittest.TestCase):
             if ajuste:
                 findings = ajuste(content, findings)
             result = dict(findings=findings, measures=measures, limits=[], proposed_verdict='SATISFAIT')
+            raw = etat['contenu'] if etat['contenu'] is not None else storage._strict_json(result)
             document = dict(id='fixture-judge', model=profile['revision'],
-                choices=[dict(finish_reason='stop', message=dict(role='assistant', content=storage._strict_json(result)))],
-                usage=dict(cost='0.001'), openrouter_metadata=dict(requested=profile['model'],
+                choices=[dict(finish_reason='stop', message=dict(role='assistant', content=raw))],
+                openrouter_metadata=dict(requested=profile['model'],
                 endpoints=dict(available=[dict(provider=profile['routes'][0]['provider_name'], selected=True)])))
+            if etat['cout'] is not None:
+                document['usage'] = dict(cost=etat['cout'])
             http.getresponse.return_value.read.return_value = storage._strict_json(document).encode()
         http.request.side_effect = answer
         self.enterContext(patch.object(openrouter, 'HTTPSConnection', return_value=http))
@@ -4331,6 +4344,366 @@ class ParcoursComplet(unittest.TestCase):
             connection.connect(('192.0.2.1', 443))
         with socket.socket() as connection, self.assertRaisesRegex(AssertionError, '^No network$'):
             connection.connect_ex(('192.0.2.1', 443))
+
+
+    def test_controle_juge_reponse_construite(self):
+        """Contrôle d'une réponse construite : transports fictifs, aucun fournisseur"""
+        from decimal import Decimal
+        from hashlib import sha256
+        from benchmark import judgment, runtime
+        from benchmark.transports import openrouter
+
+        class Horloge(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return self.clock
+
+        self.enterContext(patch.object(openrouter, 'datetime', Horloge))
+        dossier, _page = self.exemple()
+        dossier_id = dossier.rsplit('/', 1)[1]
+        with closing(storage.Store(self.data)) as store:
+            revision = store._connection.execute(
+                'SELECT MAX(revision) FROM dossier_revisions WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
+            avant = store._connection.execute('SELECT COUNT(*) FROM s5_evaluations').fetchone()[0]
+        self.assertIsInstance(revision, int)
+        note = 'Décision retenue : atelier validé.'
+        sortie = 'Décision retenue : atelier validé.'
+        reference = 'Éléments synthétiques hors décision retenue FIXTURE-REF-549'
+        marqueur = 'MARQUEUR_MATRICE_NON_ENVOYE'
+
+        def empreinte(contenu):
+            return sha256(contenu.encode()).hexdigest()
+
+        def piece(identifiant, nom, contenu):
+            return dict(piece_id=identifiant, name=nom, sha256=empreinte(contenu), content=contenu)
+
+        def contrat(locaux=None):
+            spec = dict(result_expected='Restituer la décision retenue de la note fictive',
+                        obligations=[dict(id='O1', description='Restituer la décision retenue')],
+                        eliminatory_errors=[dict(id='E1', description='Inventer une décision')],
+                        secondary_criteria=[], limits=['Fixture synthétique'])
+            if locaux is not None:
+                spec['local_criterion_ids'] = locaux
+            return dict(instruction='Extraire la décision retenue de la note fictive',
+                        deliverables=['Une ligne pour la décision retenue'],
+                        criteria=['Restituer la décision retenue'], acceptable_ambiguities=[], specification=spec)
+
+        def transport_courant():
+            return self.assistants['judgment_transport']
+
+        def surveiller(transport):
+            appels = []
+            origine = transport.prepare
+
+            def prepare(operation, request, api_key=None):
+                appels.append(operation['operation_id'])
+                return origine(operation, request, api_key=api_key)
+
+            transport.prepare = prepare
+            return appels
+
+        def budget(identifiant, limite):
+            with closing(storage.Store(self.data)) as store:
+                store.create_budget(identifiant, limite, 'USD')
+
+        def demande(transport, operation_id, control_id, budget_id, reponse, locaux=None):
+            return dict(operation_id=operation_id, control_id=control_id, dossier_id=dossier_id, revision=revision,
+                        budget_id=budget_id, reserve_amount=transport._quote['reserve_usd'],
+                        requested_configuration=transport._quote, provenance='reponse-construite-de-controle',
+                        authority='requester-controle', contrat=contrat(locaux),
+                        compte_rendu=piece('cr-c1', 'compte-rendu.md', note),
+                        reponse=piece('rep-c1', 'reponse.md', reponse),
+                        reference=piece('ref-c1', 'reference.md', reference))
+
+        def ouvrir():
+            return closing(storage.Store(self.data))
+
+        with self.subTest('réponse construite acceptée'):
+            http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                     cle='fixture-control-key')
+            transport = transport_courant()
+            appels = surveiller(transport)
+            budget('controle-ok', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-accepte', 'ctrl-accepte', 'controle-ok', sortie), transport)
+            self.assertEqual(1, len(appels))
+            judgment.execute_control(self.data, 'c-accepte', transport)
+            self.assertEqual(1, http.request.call_count)
+            with ouvrir() as store:
+                vu = judgment.inspect_control(store, 'c-accepte')
+                operation = next(row for row in store.inspect_operations() if row['operation_id'] == 'c-accepte')
+                self.assertEqual('benchmark-lab-x/judgment-control/v1', operation['engine_version'])
+                self.assertIsNone(store._connection.execute('SELECT 1 FROM s4_results WHERE operation_id=?', ('c-accepte',)).fetchone())
+                self.assertIsNone(store._connection.execute("SELECT 1 FROM pieces WHERE role='controle-construit'").fetchone())
+                self.assertIsNone(store._connection.execute('SELECT 1 FROM pieces WHERE piece_id=?', ('rep-c1',)).fetchone())
+                self.assertEqual(avant, store._connection.execute('SELECT COUNT(*) FROM s5_evaluations').fetchone()[0])
+                runtime.verify(store)
+            self.assertEqual('reponse-construite-de-controle', vu['provenance'])
+            self.assertFalse(vu['reference_qualifiee'])
+            self.assertEqual('SATISFAIT', vu['verdict'])
+            self.assertEqual('SATISFAIT', vu['proposal']['proposed_verdict'])
+            self.assertEqual('RECEIVED', vu['state'])
+            self.assertIsNone(vu['incident'])
+            self.assertEqual(transport._quote['model'], vu['model'])
+            self.assertEqual(transport._quote['revision'], vu['revision'])
+            self.assertEqual(transport._quote['profile_sha256'], vu['profile_sha256'])
+            self.assertEqual(transport._quote['prompt_sha256'], vu['prompt_sha256'])
+            self.assertEqual(transport._quote['reserve_usd'], vu['reserve_amount'])
+            self.assertEqual(empreinte(sortie), next(row['sha256'] for row in vu['pieces'] if row['kind'] == 'reponse'))
+            self.assertTrue(all(row['role'] == 'controle-construit' for row in vu['pieces']))
+            corps = storage._strict_json(self.judged[-1])
+            self.assertNotIn(marqueur, corps)
+            self.assertNotIn('verdict_attendu', corps)
+            self.assertIn(reference, corps)
+            self.assertNotIn('emission', vu['proposal'])
+            with self.assertRaises(storage.ConflictError):
+                judgment.execute_control(self.data, 'c-accepte', transport)
+            self.assertEqual(1, http.request.call_count)
+
+        with self.subTest('pièce altérée rejetée avant envoi'):
+            http = self.juge_factice(cle='fixture-control-key')
+            transport = transport_courant()
+            appels = surveiller(transport)
+            budget('controle-altere', '5')
+            requete = demande(transport, 'c-altere', 'ctrl-altere', 'controle-altere', sortie)
+            requete['reponse'] = dict(requete['reponse'], content=sortie + 'x')
+            with ouvrir() as store:
+                with self.assertRaisesRegex(storage.IntegrityError, 'Empreinte de pièce divergente'):
+                    judgment.reserve_control(store, requete, transport)
+                self.assertIsNone(store._connection.execute('SELECT 1 FROM operations WHERE operation_id=?', ('c-altere',)).fetchone())
+            self.assertEqual([], appels)
+            self.assertEqual(0, http.request.call_count)
+
+        with self.subTest('nom de sortie candidate refusé'):
+            transport = transport_courant()
+            appels = surveiller(transport)
+            requete = demande(transport, 'c-brute', 'ctrl-brute', 'controle-altere', sortie)
+            requete['reponse'] = piece('rep-c1', 'Sortie brute c-brute', sortie)
+            with ouvrir() as store, self.assertRaises(ValueError):
+                judgment.reserve_control(store, requete, transport)
+            self.assertEqual([], appels)
+
+        with self.subTest('budget insuffisant bloque l’envoi'):
+            transport = transport_courant()
+            appels = surveiller(transport)
+            budget('controle-court', '0.01')
+            with ouvrir() as store, self.assertRaises(storage.BudgetError):
+                judgment.reserve_control(store, demande(transport, 'c-court', 'ctrl-court', 'controle-court', sortie), transport)
+            self.assertEqual([], appels)
+            self.assertEqual(0, http.request.call_count)
+
+        with self.subTest('verdict proposé sans défaut prouvé'):
+            http = self.juge_factice(cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-defaut', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-defaut', 'ctrl-defaut', 'controle-defaut', sortie), transport)
+            judgment.execute_control(self.data, 'c-defaut', transport)
+            with ouvrir() as store:
+                vu = judgment.inspect_control(store, 'c-defaut')
+            self.assertEqual('NE SATISFAIT PAS', vu['verdict'])
+            self.assertEqual('SATISFAIT', vu['proposal']['proposed_verdict'])
+            self.assertEqual(1, http.request.call_count)
+
+        with self.subTest('contrôle absent ou indéterminé'):
+            http = self.juge_factice(constat=lambda _critere: ('INDETERMINE', 'evidence', 'Preuve insuffisante'),
+                                     cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-indet', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-indet', 'ctrl-indet', 'controle-indet', sortie), transport)
+            judgment.execute_control(self.data, 'c-indet', transport)
+            with ouvrir() as store:
+                vu = judgment.inspect_control(store, 'c-indet')
+            self.assertEqual('INDETERMINE', vu['verdict'])
+            self.assertNotEqual('SATISFAIT', vu['verdict'])
+
+            http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                     ajuste=lambda _vue, constats: constats[:-1], cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-trou', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-trou', 'ctrl-trou', 'controle-trou', sortie), transport)
+            judgment.execute_control(self.data, 'c-trou', transport)
+            with ouvrir() as store:
+                vu = judgment.inspect_control(store, 'c-trou')
+            self.assertEqual('INDETERMINE', vu['verdict'])
+
+            http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Sans preuve'),
+                                     ajuste=lambda _vue, constats: [dict(constat, evidence=[]) for constat in constats],
+                                     cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-preuve', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-preuve', 'ctrl-preuve', 'controle-preuve', sortie), transport)
+            judgment.execute_control(self.data, 'c-preuve', transport)
+            with ouvrir() as store:
+                vu = judgment.inspect_control(store, 'c-preuve')
+            self.assertIsNone(vu['verdict'])
+            self.assertEqual('UNUSABLE_JUDGMENT_PROPOSAL', vu['incident'])
+            self.assertIsNone(vu['proposal'])
+
+            http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                     cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-local', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(
+                    transport, 'c-local', 'ctrl-local', 'controle-local', sortie, locaux=['O1']), transport)
+            judgment.execute_control(self.data, 'c-local', transport)
+            with ouvrir() as store:
+                vu = judgment.inspect_control(store, 'c-local')
+            self.assertEqual('INDETERMINE', vu['verdict'])
+            self.assertEqual('INDETERMINE', next(row['status'] for row in vu['proposal']['findings'] if row['criterion_id'] == 'O1'))
+
+        with self.subTest('incident conservé sans verdict fabriqué'):
+            http = self.juge_factice(contenu='{}', cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-incident', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-incident', 'ctrl-incident', 'controle-incident', sortie), transport)
+            judgment.execute_control(self.data, 'c-incident', transport)
+            with ouvrir() as store:
+                vu = judgment.inspect_control(store, 'c-incident')
+            self.assertEqual('UNUSABLE_JUDGMENT_PROPOSAL', vu['incident'])
+            self.assertIsNone(vu['verdict'])
+            self.assertIsNone(vu['proposal'])
+            self.assertEqual('RECEIVED', vu['state'])
+            self.assertEqual(1, http.request.call_count)
+
+        with self.subTest('coût inconnu conserve la réserve'):
+            http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                     cout=None, cle='fixture-control-key')
+            transport = transport_courant()
+            appels = surveiller(transport)
+            budget('controle-inconnu', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-inconnu', 'ctrl-inconnu', 'controle-inconnu', sortie), transport)
+            judgment.execute_control(self.data, 'c-inconnu', transport)
+            with ouvrir() as store:
+                vu = judgment.inspect_control(store, 'c-inconnu')
+                enveloppe = store.inspect_budget('controle-inconnu')
+            self.assertEqual('UNKNOWN', vu['cost']['status'])
+            self.assertIsNone(vu['cost']['amount'])
+            self.assertEqual(Decimal(0), Decimal(enveloppe['spent']))
+            self.assertEqual(Decimal(transport._quote['reserve_usd']), Decimal(enveloppe['reserved']))
+            deja = len(appels)
+            with ouvrir() as store, self.assertRaises(storage.BudgetError):
+                judgment.reserve_control(store, demande(transport, 'c-inconnu-2', 'ctrl-inconnu', 'controle-inconnu', sortie), transport)
+            self.assertEqual(deja, len(appels))
+            self.assertEqual(1, http.request.call_count)
+
+        with self.subTest('reprises bornées sans double émission'):
+            http = self.juge_factice(statut=429, cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-relance', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-relance', 'ctrl-relance', 'controle-relance', sortie), transport)
+            courant = 'c-relance'
+            for attente in (30, 120, 600, 1800):
+                judgment.execute_control(self.data, courant, transport)
+                with ouvrir() as store:
+                    self.assertIsNone(judgment.resume_control(store, courant, transport))
+                    self.clock += timedelta(seconds=attente - 1)
+                    self.assertIsNone(judgment.resume_control(store, courant, transport))
+                    self.clock += timedelta(seconds=1)
+                    suivant = judgment.resume_control(store, courant, transport)
+                self.assertIsNotNone(suivant)
+                courant = suivant
+            judgment.execute_control(self.data, courant, transport)
+            self.clock += timedelta(seconds=100000)
+            with ouvrir() as store:
+                self.assertIsNone(judgment.resume_control(store, courant, transport))
+                serie = [row for row in store.inspect_operations()
+                         if row['engine_version'] == 'benchmark-lab-x/judgment-control/v1'
+                         and json.loads(row['resources'][0])['control_id'] == 'ctrl-relance']
+            self.assertEqual(5, len(serie))
+            self.assertEqual(5, http.request.call_count)
+            self.assertTrue(all(row['receipt']['observed_configuration']['incident'] == 'RATE_LIMITED' for row in serie))
+
+        with self.subTest('arrêt empêche les appels suivants'):
+            http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                     cle='fixture-control-key')
+            transport = transport_courant()
+            appels = surveiller(transport)
+            budget('controle-arret', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-arret-1', 'ctrl-arret', 'controle-arret', sortie), transport)
+                judgment.reserve_control(store, demande(transport, 'c-arret-2', 'ctrl-arret', 'controle-arret', sortie), transport)
+            origine = http.request.side_effect
+            http.request.side_effect = OSError('apres connexion')
+            try:
+                resultat = judgment.execute_series(self.data, ['c-arret-1', 'c-arret-2'], transport)
+            finally:
+                http.request.side_effect = origine
+            self.assertEqual(dict(stopped=True, error='OSError'), resultat)
+            with ouvrir() as store:
+                premier = judgment.inspect_control(store, 'c-arret-1')
+                second = next(row for row in store.inspect_operations() if row['operation_id'] == 'c-arret-2')
+            self.assertEqual('AMBIGUOUS', premier['state'])
+            self.assertIsNone(premier['verdict'])
+            self.assertEqual({'status': 'NOT_SENT', 'control_stop': 'JUDGMENT_STOPPED'}, second['receipt']['result'])
+            deja = len(appels)
+            with ouvrir() as store, self.assertRaisesRegex(storage.ConflictError, 'Contrôle arrêté'):
+                judgment.reserve_control(store, demande(transport, 'c-arret-3', 'ctrl-arret', 'controle-arret', sortie), transport)
+            self.assertEqual(deja, len(appels))
+
+        with self.subTest('connexion impossible n’arrête pas la série'):
+            http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                     cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-muet', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-muet-1', 'ctrl-muet', 'controle-muet', sortie), transport)
+                judgment.reserve_control(store, demande(transport, 'c-muet-2', 'ctrl-muet', 'controle-muet', sortie), transport)
+            http.connect.side_effect = [OSError('dns'), None]
+            resultat = judgment.execute_series(self.data, ['c-muet-1', 'c-muet-2'], transport)
+            self.assertEqual(dict(stopped=False, error=None), resultat)
+            with ouvrir() as store:
+                premier = next(row for row in store.inspect_operations() if row['operation_id'] == 'c-muet-1')
+                second = judgment.inspect_control(store, 'c-muet-2')
+            self.assertEqual({'status': 'NOT_SENT'}, premier['receipt']['result'])
+            self.assertEqual('CONNECTION_FAILED', premier['receipt']['observed_configuration']['incident'])
+            self.assertEqual('SATISFAIT', second['verdict'])
+            self.assertEqual(1, http.request.call_count)
+
+        with self.subTest('nouvelle version de pièce'):
+            http = self.juge_factice(profil=openrouter.AUTOMATIC_JUDGMENT_PROFILE,
+                                     constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                     cle='fixture-control-key')
+            transport = transport_courant()
+            appels = surveiller(transport)
+            budget('controle-version', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-version-1', 'ctrl-version', 'controle-version', sortie), transport)
+            judgment.execute_control(self.data, 'c-version-1', transport)
+            with ouvrir() as store:
+                vu = judgment.inspect_control(store, 'c-version-1')
+                premiere = next(row for row in store.inspect_operations() if row['operation_id'] == 'c-version-1')
+                figee = premiere['resources'][0]
+            self.assertEqual('anthropic/claude-fable-5.1', vu['model'])
+            self.assertEqual('anthropic/claude-fable-5.1-20260831', vu['revision'])
+            self.assertEqual(transport._quote['profile_sha256'], vu['profile_sha256'])
+            self.assertEqual(transport._quote['prompt_sha256'], vu['prompt_sha256'])
+            self.assertEqual('SATISFAIT', vu['verdict'])
+            suivante = sortie + ' v2'
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-version-2', 'ctrl-version-2', 'controle-version', suivante), transport)
+                vue = judgment.inspect_control(store, 'c-version-2')
+                encore = next(row for row in store.inspect_operations() if row['operation_id'] == 'c-version-1')
+            self.assertNotEqual(vu['review_sha256'], vue['review_sha256'])
+            self.assertEqual(empreinte(suivante), next(row['sha256'] for row in vue['pieces'] if row['kind'] == 'reponse'))
+            self.assertEqual(figee, encore['resources'][0])
+            requete = demande(transport, 'c-version-3', 'ctrl-version-3', 'controle-version', suivante)
+            requete['reponse'] = dict(requete['reponse'], content=suivante + 'x')
+            deja = len(appels)
+            with ouvrir() as store:
+                with self.assertRaisesRegex(storage.IntegrityError, 'Empreinte de pièce divergente'):
+                    judgment.reserve_control(store, requete, transport)
+                inchangee = next(row for row in store.inspect_operations() if row['operation_id'] == 'c-version-1')
+            self.assertEqual(deja, len(appels))
+            self.assertEqual(figee, inchangee['resources'][0])
+            self.assertEqual(1, http.request.call_count)
 
 
 if __name__ == '__main__':
