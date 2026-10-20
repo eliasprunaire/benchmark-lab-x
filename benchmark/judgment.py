@@ -422,7 +422,35 @@ def _retained_proposal(store, connection, operation, ctx, *, recover_metadata=Fa
 
 def verify_judgments(store, connection):
     from .automatic_judgment import FORMAT as automatic_format
+    from .judgment_control import FORMAT as control_format, _verify_persisted
     for operation in store._operations(connection):
-        if operation['engine_version'] in (FORMAT, automatic_format):
+        if operation['engine_version'] == control_format:
+            _verify_persisted(operation)
+        elif operation['engine_version'] in (FORMAT, automatic_format):
             _, ctx = _bound(store, connection, operation)
             _retained_proposal(store, connection, operation, ctx)
+
+
+def reserve_control(store, request, transport, *, link=None):
+    from .judgment_control import reserve_control as impl
+    return impl(store, request, transport, link=link)
+
+
+def execute_control(data, operation_id, transport):
+    from .judgment_control import execute_control as impl
+    return impl(data, operation_id, transport)
+
+
+def inspect_control(store, operation_id):
+    from .judgment_control import inspect_control as impl
+    return impl(store, operation_id)
+
+
+def resume_control(store, operation_id, transport):
+    from .judgment_control import resume_control as impl
+    return impl(store, operation_id, transport)
+
+
+def execute_series(data, operation_ids, transport):
+    from .judgment_control import execute_series as impl
+    return impl(data, operation_ids, transport)
