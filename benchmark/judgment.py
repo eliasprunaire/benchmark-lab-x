@@ -422,8 +422,11 @@ def _retained_proposal(store, connection, operation, ctx, *, recover_metadata=Fa
 
 def verify_judgments(store, connection):
     from .automatic_judgment import FORMAT as automatic_format
+    from .judgment_control import FORMAT as control_format, _verify_persisted
     for operation in store._operations(connection):
-        if operation['engine_version'] in (FORMAT, automatic_format):
+        if operation['engine_version'] == control_format:
+            _verify_persisted(operation)
+        elif operation['engine_version'] in (FORMAT, automatic_format):
             _, ctx = _bound(store, connection, operation)
             _retained_proposal(store, connection, operation, ctx)
 

@@ -4377,11 +4377,12 @@ class ParcoursComplet(unittest.TestCase):
         def piece(identifiant, nom, contenu):
             return dict(piece_id=identifiant, name=nom, sha256=empreinte(contenu), content=contenu)
 
-        def contrat(locaux=None):
+        def contrat(locaux=None, secondaires=None):
             spec = dict(result_expected='Restituer la décision retenue de la note fictive',
                         obligations=[dict(id='O1', description='Restituer la décision retenue')],
                         eliminatory_errors=[dict(id='E1', description='Inventer une décision')],
-                        secondary_criteria=[], limits=['Fixture synthétique'])
+                        secondary_criteria=[] if secondaires is None else secondaires,
+                        limits=['Fixture synthétique'])
             if locaux is not None:
                 spec['local_criterion_ids'] = locaux
             return dict(instruction='Extraire la décision retenue de la note fictive',
@@ -4406,11 +4407,11 @@ class ParcoursComplet(unittest.TestCase):
             with closing(storage.Store(self.data)) as store:
                 store.create_budget(identifiant, limite, 'USD')
 
-        def demande(transport, operation_id, control_id, budget_id, reponse, locaux=None):
+        def demande(transport, operation_id, control_id, budget_id, reponse, locaux=None, secondaires=None):
             return dict(operation_id=operation_id, control_id=control_id, dossier_id=dossier_id, revision=revision,
                         budget_id=budget_id, reserve_amount=transport._quote['reserve_usd'],
                         requested_configuration=transport._quote, provenance='reponse-construite-de-controle',
-                        authority='requester-controle', contrat=contrat(locaux),
+                        authority='requester-controle', contrat=contrat(locaux, secondaires),
                         compte_rendu=piece('cr-c1', 'compte-rendu.md', note),
                         reponse=piece('rep-c1', 'reponse.md', reponse),
                         reference=piece('ref-c1', 'reference.md', reference))
@@ -4752,6 +4753,190 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual(deja, len(appels))
             self.assertEqual(figee, inchangee['resources'][0])
             self.assertEqual(1, http.request.call_count)
+
+        def critere_secondaire():
+            return dict(id='Q1', label='Clarté de la décision', favorable='excellent')
+
+        def fige(operation_id):
+            with ouvrir() as store:
+                return store._connection.execute(
+                    'SELECT receipt_json, observed_cost_json FROM operations WHERE operation_id=?',
+                    (operation_id,)).fetchone()
+
+        with self.subTest('mesure secondaire invalide rend la proposition inexploitable'):
+            def executer(operation_id, control_id, budget_id, altère=None):
+                http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                         mesure='atelier validé', cle='fixture-control-key')
+                transport = transport_courant()
+                budget(budget_id, '5')
+                with ouvrir() as store:
+                    judgment.reserve_control(store, demande(
+                        transport, operation_id, control_id, budget_id, sortie,
+                        secondaires=[critere_secondaire()]), transport)
+                if altère is not None:
+                    origine = http.request.side_effect
+
+                    def reponse_altérée(*args, **kwargs):
+                        origine(*args, **kwargs)
+                        document = json.loads(http.getresponse.return_value.read.return_value)
+                        proposition = json.loads(document['choices'][0]['message']['content'])
+                        proposition['measures'] = [altère(proposition['measures'][0])]
+                        document['choices'][0]['message']['content'] = storage._strict_json(proposition)
+                        http.getresponse.return_value.read.return_value = storage._strict_json(document).encode()
+
+                    http.request.side_effect = reponse_altérée
+                judgment.execute_control(self.data, operation_id, transport)
+                with ouvrir() as store:
+                    return judgment.inspect_control(store, operation_id)
+
+            valide = executer('c-mesure-ok', 'ctrl-mesure-ok', 'controle-mesure-ok')
+            self.assertIsNone(valide['incident'])
+            self.assertEqual('SATISFAIT', valide['verdict'])
+            self.assertEqual('atelier validé', valide['proposal']['measures'][0]['value'])
+            self.assertEqual('descriptif', valide['proposal']['measures'][0]['unit'])
+            self.assertEqual(sortie, valide['proposal']['measures'][0]['evidence'][0]['passage'])
+            inconnue = executer('c-mesure-vide', 'ctrl-mesure-vide', 'controle-mesure-vide',
+                                lambda mesure: dict(mesure, value=None, evidence=[]))
+            self.assertIsNone(inconnue['incident'])
+            self.assertEqual([dict(criterion_id='Q1', value=None, unit='descriptif', evidence=[])],
+                             inconnue['proposal']['measures'])
+            for nom, suffixe, altère in (
+                    ('unité', 'unite', lambda mesure: dict(mesure, unit='secondes')),
+                    ('valeur', 'valeur', lambda mesure: dict(mesure, value={'libre': 1})),
+                    ('preuve', 'preuve', lambda mesure: dict(mesure, evidence=[dict(
+                        mesure['evidence'][0], passage='PASSAGE_ABSENT')]))):
+                vu = executer('c-mesure-' + suffixe, 'ctrl-mesure-' + suffixe, 'controle-mesure-' + suffixe, altère)
+                self.assertEqual('UNUSABLE_JUDGMENT_PROPOSAL', vu['incident'], nom)
+                self.assertIsNone(vu['proposal'], nom)
+                self.assertIsNone(vu['verdict'], nom)
+
+        with self.subTest('contrôle persisté altéré refusé par la vérification'):
+            def controle_valide(operation_id, budget_id):
+                self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                  cle='fixture-control-key')
+                transport = transport_courant()
+                budget(budget_id, '5')
+                with ouvrir() as store:
+                    judgment.reserve_control(store, demande(
+                        transport, operation_id, 'ctrl-' + operation_id, budget_id, sortie), transport)
+                judgment.execute_control(self.data, operation_id, transport)
+
+            def colonne(operation_id, nom):
+                with ouvrir() as store:
+                    return store._connection.execute(
+                        f'SELECT {nom} FROM operations WHERE operation_id=?', (operation_id,)).fetchone()[0]
+
+            def ecrire(operation_id, nom, valeur):
+                with ouvrir() as store:
+                    store._connection.execute(
+                        f'UPDATE operations SET {nom}=? WHERE operation_id=?', (valeur, operation_id))
+
+            controle_valide('c-audit-preuve', 'controle-audit-preuve')
+            controle_valide('c-audit-liaison', 'controle-audit-liaison')
+            with ouvrir() as store:
+                runtime.verify(store)
+            preuve = colonne('c-audit-preuve', 'receipt_json')
+            recu = json.loads(preuve)
+            passage = recu['result']['findings'][0]['evidence'][0]['passage']
+            self.assertIn(passage, sortie)
+            recu['result']['findings'][0]['evidence'][0]['passage'] = 'PASSAGE_ETRANGER'
+            ecrire('c-audit-preuve', 'receipt_json', storage._strict_json(recu))
+            with self.assertRaises(storage.IntegrityError):
+                with ouvrir() as store:
+                    runtime.verify(store)
+            ecrire('c-audit-preuve', 'receipt_json', preuve)
+            with ouvrir() as store:
+                runtime.verify(store)
+            liaison = colonne('c-audit-liaison', 'resources_json')
+            ressources = json.loads(liaison)
+            sauvee = json.loads(ressources[0])
+            sauvee['review_sha256'] = '0' * 64
+            ressources[0] = storage._strict_json(sauvee)
+            ecrire('c-audit-liaison', 'resources_json', storage._strict_json(ressources))
+            with self.assertRaises(storage.IntegrityError):
+                with ouvrir() as store:
+                    runtime.verify(store)
+            ecrire('c-audit-liaison', 'resources_json', liaison)
+            with ouvrir() as store:
+                runtime.verify(store)
+
+        with self.subTest('incident du dernier appel empêche une nouvelle réservation'):
+            def mauvais_modele(http):
+                origine = http.request.side_effect
+
+                def reponse(*args, **kwargs):
+                    origine(*args, **kwargs)
+                    document = json.loads(http.getresponse.return_value.read.return_value)
+                    document['model'] = 'autre/modele-non-demande'
+                    http.getresponse.return_value.read.return_value = storage._strict_json(document).encode()
+
+                http.request.side_effect = reponse
+
+            http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                     cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-stop-seul', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(
+                    transport, 'c-stop-seul', 'ctrl-stop-seul', 'controle-stop-seul', sortie), transport)
+            mauvais_modele(http)
+            resultat = judgment.execute_series(self.data, ['c-stop-seul'], transport)
+            self.assertEqual(dict(stopped=True, error='UNUSABLE_JUDGMENT_PROPOSAL'), resultat)
+            conserve = fige('c-stop-seul')
+            with ouvrir() as store:
+                seul = judgment.inspect_control(store, 'c-stop-seul')
+            self.assertEqual('RECEIVED', seul['state'])
+            self.assertEqual('UNUSABLE_JUDGMENT_PROPOSAL', seul['incident'])
+            self.assertEqual('KNOWN', seul['cost']['status'])
+            self.assertEqual(Decimal('0.001'), Decimal(seul['cost']['amount']))
+            with ouvrir() as store, self.assertRaisesRegex(storage.ConflictError, 'Contrôle arrêté'):
+                judgment.reserve_control(store, demande(
+                    transport, 'c-stop-seul-2', 'ctrl-stop-seul', 'controle-stop-seul', sortie), transport)
+            self.assertEqual(conserve, fige('c-stop-seul'))
+            with ouvrir() as store:
+                self.assertIsNone(store._connection.execute(
+                    'SELECT 1 FROM operations WHERE operation_id=?', ('c-stop-seul-2',)).fetchone())
+
+            http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                     cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-stop-fin', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(
+                    transport, 'c-stop-fin-1', 'ctrl-stop-fin', 'controle-stop-fin', sortie), transport)
+                judgment.reserve_control(store, demande(
+                    transport, 'c-stop-fin-2', 'ctrl-stop-fin', 'controle-stop-fin', sortie), transport)
+            origine = http.request.side_effect
+
+            def second_mauvais(*args, **kwargs):
+                origine(*args, **kwargs)
+                if http.request.call_count < 2:
+                    return
+                document = json.loads(http.getresponse.return_value.read.return_value)
+                document['model'] = 'autre/modele-non-demande'
+                http.getresponse.return_value.read.return_value = storage._strict_json(document).encode()
+
+            http.request.side_effect = second_mauvais
+            resultat = judgment.execute_series(self.data, ['c-stop-fin-1', 'c-stop-fin-2'], transport)
+            self.assertEqual(dict(stopped=True, error='UNUSABLE_JUDGMENT_PROPOSAL'), resultat)
+            self.assertEqual(2, http.request.call_count)
+            premier_fige = fige('c-stop-fin-1')
+            second_fige = fige('c-stop-fin-2')
+            with ouvrir() as store:
+                premier = judgment.inspect_control(store, 'c-stop-fin-1')
+                second = judgment.inspect_control(store, 'c-stop-fin-2')
+            self.assertEqual('SATISFAIT', premier['verdict'])
+            self.assertEqual('KNOWN', premier['cost']['status'])
+            self.assertEqual(Decimal('0.001'), Decimal(premier['cost']['amount']))
+            self.assertEqual('RECEIVED', second['state'])
+            self.assertEqual('UNUSABLE_JUDGMENT_PROPOSAL', second['incident'])
+            self.assertEqual('KNOWN', second['cost']['status'])
+            self.assertEqual(Decimal('0.001'), Decimal(second['cost']['amount']))
+            with ouvrir() as store, self.assertRaisesRegex(storage.ConflictError, 'Contrôle arrêté'):
+                judgment.reserve_control(store, demande(
+                    transport, 'c-stop-fin-3', 'ctrl-stop-fin', 'controle-stop-fin', sortie), transport)
+            self.assertEqual(premier_fige, fige('c-stop-fin-1'))
+            self.assertEqual(second_fige, fige('c-stop-fin-2'))
 
 
 if __name__ == '__main__':

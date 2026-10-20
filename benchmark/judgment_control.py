@@ -2,6 +2,7 @@
 
 La réponse reste une pièce de la liaison. Son rôle `controle-construit` n'entre pas dans la table `pieces`.
 """
+from base64 import b64decode
 from contextlib import closing
 from copy import deepcopy
 from hashlib import sha256
@@ -120,15 +121,28 @@ def _binding(operation):
     return dict(saved, pieces=checked, content=content)
 
 
+def _control_stopped(operation, control_id):
+    """Arrêt durable : reçu synthétique, ou incident hors relance déjà enregistré."""
+    receipt = operation['receipt']
+    if receipt is None:
+        return False
+    saved = json.loads(operation['resources'][0])
+    if saved.get('control_id') != control_id:
+        return False
+    result = receipt.get('result')
+    if type(result) is dict and result.get('control_stop') == STOP:
+        return True
+    observed = receipt.get('observed_configuration')
+    incident = observed.get('incident') if type(observed) is dict else None
+    return bool(incident) and incident not in prep._RETRIED_INCIDENTS
+
+
 def _stopped(store, connection, control_id, operation_id=None):
     for operation in store._operations(connection):
         if operation['engine_version'] != FORMAT or operation['operation_id'] == operation_id:
             continue
-        result = (operation['receipt'] or {}).get('result') if operation['receipt'] else None
-        if type(result) is dict and result.get('control_stop') == STOP:
-            saved = json.loads(operation['resources'][0])
-            if saved.get('control_id') == control_id:
-                return True
+        if _control_stopped(operation, control_id):
+            return True
     return False
 
 
@@ -188,7 +202,7 @@ def _normalize(answer, pieces, content, local, evidence_rule):
         if finding['criterion_id'] in local and finding['status'] != 'INDETERMINE':
             finding.update(status='INDETERMINE', attribution='evidence', evidence=[],
                            finding='Contrôle local requis : données exclues de la projection')
-    planned = {row['id'] for row in content['secondary_criteria']}
+    planned = {row['id']: row for row in content['secondary_criteria']}
     measures = deepcopy(answer['measures'])
     if type(measures) is not list or type(answer['limits']) is not list:
         raise ValueError('Mesures prévues requises')
@@ -197,9 +211,14 @@ def _normalize(answer, pieces, content, local, evidence_rule):
     seen = set()
     for measure in measures:
         _fields(measure, ('criterion_id', 'value', 'unit', 'evidence'), 'measure')
-        if measure['criterion_id'] not in planned or measure['criterion_id'] in seen:
-            raise ValueError('Mesure étrangère au contrat')
+        row = planned.get(measure['criterion_id'])
+        if row is None or measure['criterion_id'] in seen or measure['unit'] != row['unit']:
+            raise ValueError('Mesure ou unité étrangère au contrat')
+        if type(measure['value']) not in (str, bool, int, float, type(None)):
+            raise ValueError('Valeur source de mesure invalide')
         seen.add(measure['criterion_id'])
+        e._evidence(measure['evidence'], resources,
+                    required=measure['value'] not in (None, 'INCONNU', 'UNKNOWN'))
     return dict(findings=findings, measures=measures, limits=list(answer['limits']),
                 proposed_verdict=answer['proposed_verdict'])
 
@@ -242,6 +261,44 @@ def _close_stopped(store, operation_id):
             resources_seen=[], result={'status': 'NOT_SENT', 'control_stop': STOP}),
             dict(status='KNOWN', amount='0', currency=currency, source='Contrôle arrêté avant envoi : aucun appel'))
     return True
+
+
+def _verify_persisted(operation):
+    """Liaison, projection figée et preuves du reçu, même contrôle que les autres jugements."""
+    saved = _binding(operation)
+    receipt = operation['receipt']
+    if receipt is None or storage.not_sent(operation) or storage.ambiguous_expired(operation):
+        return
+    result = receipt['result']
+    if type(result) is dict and result.get('control_stop') == STOP:
+        return
+    wire = operation['resources'][1]
+    observed = receipt['observed_configuration']
+    http = observed.get('http') if type(observed) is dict else None
+    messages = json.loads(wire)['messages']
+    if (type(observed) is not dict or receipt['resources_seen'] != [wire]
+            or observed.get('outgoing') != outgoing.wire_proof(wire, messages)):
+        raise IntegrityError('Reçu sans lien aux octets émis')
+    if type(http) is not dict or 'body_base64' not in http:
+        raise IntegrityError('Octets de réponse divergents')
+    raw = b64decode(http['body_base64'], validate=True)
+    if sha256(raw).hexdigest() != http.get('body_sha256'):
+        raise IntegrityError('Octets de réponse divergents')
+    if type(result) is not dict or 'findings' not in result:
+        return
+    document = json.loads(raw, object_pairs_hook=storage._unique_object)
+    message = document['choices'][0]['message']
+    answer = json.loads(message['content'], object_pairs_hook=storage._unique_object)
+    from .transports.openrouter import OpenRouterJudgment
+    OpenRouterJudgment.validate_answer(answer, message)
+    _, local = _review(saved['request'], saved['pieces'])
+    evidence_rule = operation['requested_configuration'].get('evidence_rule')
+    recomputed = _normalize(answer, saved['pieces'], saved['content'], local, evidence_rule)
+    if (observed.get('incident') is not None or not http.get('complete') or http.get('status') != 200
+            or document.get('model') not in operation['requested_configuration']['model_identities']
+            or document['choices'][0].get('finish_reason') != 'stop' or message.get('tool_calls')
+            or result != recomputed):
+        raise IntegrityError('Proposition divergente de la réponse conservée')
 
 
 def reserve_control(store, request, transport, *, link=None):
