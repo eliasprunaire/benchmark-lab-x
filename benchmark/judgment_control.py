@@ -361,8 +361,17 @@ def resume_control(store, operation_id, transport):
         return next_id
 
 
+def _blocking_incident(data, operation_id):
+    """Incident enregistré hors relance autorisée"""
+    with closing(storage.Store(data)) as store:
+        incident = inspect_control(store, operation_id)['incident']
+    if incident and incident not in prep._RETRIED_INCIDENTS:
+        return incident
+    return None
+
+
 def execute_series(data, operation_ids, transport):
-    """Envoie la série. Une erreur autre qu'une connexion impossible arrête la suite"""
+    """Envoie la série. Un incident hors relance, ou une erreur autre qu'une connexion impossible, arrête la suite"""
     for index, operation_id in enumerate(operation_ids):
         try:
             execute_control(data, operation_id, transport)
@@ -375,4 +384,14 @@ def execute_series(data, operation_ids, transport):
                 for remaining in operation_ids[index:]:
                     _close_stopped(store, remaining)
             return dict(stopped=True, error=type(error).__name__)
+        incident = _blocking_incident(data, operation_id)
+        if incident is None:
+            continue
+        # Incident enregistré hors relance autorisée : l'appel suivant ne part pas
+        logging.getLogger(__name__).warning('CONTROL_SERIES_STOPPED operation=%s error=%s',
+                                           operation_id, incident)
+        with closing(storage.Store(data)) as store:
+            for remaining in operation_ids[index + 1:]:
+                _close_stopped(store, remaining)
+        return dict(stopped=True, error=incident)
     return dict(stopped=False, error=None)

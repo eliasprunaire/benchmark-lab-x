@@ -4648,6 +4648,54 @@ class ParcoursComplet(unittest.TestCase):
                 judgment.reserve_control(store, demande(transport, 'c-arret-3', 'ctrl-arret', 'controle-arret', sortie), transport)
             self.assertEqual(deja, len(appels))
 
+        with self.subTest('identifiant de modèle divergent arrête la série'):
+            http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
+                                     cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-modele', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-modele-1', 'ctrl-modele', 'controle-modele', sortie), transport)
+                judgment.reserve_control(store, demande(transport, 'c-modele-2', 'ctrl-modele', 'controle-modele', sortie), transport)
+            origine = http.request.side_effect
+
+            def autre_modele(*args, **kwargs):
+                origine(*args, **kwargs)
+                document = json.loads(http.getresponse.return_value.read.return_value)
+                document['model'] = 'autre/modele-non-demande'
+                http.getresponse.return_value.read.return_value = storage._strict_json(document).encode()
+
+            http.request.side_effect = autre_modele
+            resultat = judgment.execute_series(self.data, ['c-modele-1', 'c-modele-2'], transport)
+            self.assertEqual(dict(stopped=True, error='UNUSABLE_JUDGMENT_PROPOSAL'), resultat)
+            self.assertEqual(1, http.request.call_count)
+            with ouvrir() as store:
+                premier = judgment.inspect_control(store, 'c-modele-1')
+                second = next(row for row in store.inspect_operations() if row['operation_id'] == 'c-modele-2')
+            self.assertEqual('RECEIVED', premier['state'])
+            self.assertEqual('UNUSABLE_JUDGMENT_PROPOSAL', premier['incident'])
+            self.assertIsNone(premier['verdict'])
+            self.assertEqual('KNOWN', premier['cost']['status'])
+            self.assertEqual(Decimal('0.001'), Decimal(premier['cost']['amount']))
+            self.assertEqual({'status': 'NOT_SENT', 'control_stop': 'JUDGMENT_STOPPED'}, second['receipt']['result'])
+            self.assertEqual('KNOWN', second['observed_cost']['status'])
+            self.assertEqual(Decimal('0'), Decimal(second['observed_cost']['amount']))
+
+        with self.subTest('incident relançable laisse partir l’appel suivant'):
+            http = self.juge_factice(statut=429, cle='fixture-control-key')
+            transport = transport_courant()
+            budget('controle-suite', '5')
+            with ouvrir() as store:
+                judgment.reserve_control(store, demande(transport, 'c-suite-1', 'ctrl-suite', 'controle-suite', sortie), transport)
+                judgment.reserve_control(store, demande(transport, 'c-suite-2', 'ctrl-suite-2', 'controle-suite', sortie), transport)
+            resultat = judgment.execute_series(self.data, ['c-suite-1', 'c-suite-2'], transport)
+            self.assertEqual(dict(stopped=False, error=None), resultat)
+            self.assertEqual(2, http.request.call_count)
+            with ouvrir() as store:
+                premier = judgment.inspect_control(store, 'c-suite-1')
+                second = judgment.inspect_control(store, 'c-suite-2')
+            self.assertEqual('RATE_LIMITED', premier['incident'])
+            self.assertEqual('RATE_LIMITED', second['incident'])
+
         with self.subTest('connexion impossible n’arrête pas la série'):
             http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
                                      cle='fixture-control-key')
