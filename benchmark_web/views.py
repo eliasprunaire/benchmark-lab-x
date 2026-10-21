@@ -417,15 +417,19 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<hr>' + projection_body(comparison, value['selected_links'], level=2)
     elif value.get('kind') == 'constructed_response':
         title = 'Réponse construite'
+        declaree = 'producteur' in value
+        phrase = ('Cette sortie construite déclare son producteur, sa date, sa source et son empreinte. '
+                  if declaree else
+                  'Cette sortie construite ne déclare pas de producteur, de date ni de source. ')
         content = state_block('unk', 'Sortie construite', 'Réponse fournie pour le contrôle',
-            '<p>Cette sortie construite déclare son producteur, sa date, sa source et son empreinte. '
-            'Elle n’est pas un reçu candidat. Ce contrôle ne qualifie pas le juge.</p>')
-        content += section('Renseignements de la sortie construite',
-            '<dl class="kv"><dt>Nom</dt><dd>' + text(value['name']) + '</dd>'
-            '<dt>Producteur</dt><dd>' + text(value['producteur']) + '</dd>'
-            '<dt>Date</dt><dd>' + text(date_lisible_utc(value['date'])) + '</dd>'
-            '<dt>Source</dt><dd>' + text(value['source']) + '</dd>'
-            '<dt>Empreinte</dt><dd><code>' + text(value['empreinte']) + '</code></dd></dl>')
+            '<p>' + phrase + 'Elle n’est pas un reçu candidat. Ce contrôle ne qualifie pas le juge.</p>')
+        rows = '<dt>Nom</dt><dd>' + text(value['name']) + '</dd>'
+        if declaree:
+            rows += ('<dt>Producteur</dt><dd>' + text(value['producteur']) + '</dd>'
+                     '<dt>Date</dt><dd>' + text(date_lisible_utc(value['date'])) + '</dd>'
+                     '<dt>Source</dt><dd>' + text(value['source']) + '</dd>')
+        rows += '<dt>Empreinte</dt><dd><code>' + text(value['empreinte']) + '</code></dd>'
+        content += section('Renseignements de la sortie construite', '<dl class="kv">' + rows + '</dl>')
         content += '<p><a href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a></p>'
     elif 'dossiers' in value:
         title = 'Mes cas d’usage'

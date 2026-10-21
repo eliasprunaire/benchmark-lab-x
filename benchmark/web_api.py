@@ -248,11 +248,12 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                     or viewed['reference_qualifiee'] is not False):
                 raise p.Denied('Ressource inaccessible')
             piece = next(row for row in viewed['pieces'] if row['kind'] == 'reponse')
+            payload = dict(kind='constructed_response', dossier_href='/preparation/dossiers/' + dossier_id,
+                           name=piece['name'], empreinte=piece['sha256'])
             origine = viewed['origine']
-            return 200, dict(kind='constructed_response',
-                             dossier_href='/preparation/dossiers/' + dossier_id,
-                             name=piece['name'], producteur=origine['producteur'], date=origine['date'],
-                             source=origine['source'], empreinte=piece['sha256']), None, None
+            if origine is not None:
+                payload.update(producteur=origine['producteur'], date=origine['date'], source=origine['source'])
+            return 200, payload, None, None
         if path == '/preparation/catalogue':
             return 200, restitution.catalogue(store, session_id), None, None
         if parsed.query and re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/revisions/[1-9][0-9]*', parsed.path):

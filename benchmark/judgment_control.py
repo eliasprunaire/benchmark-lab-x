@@ -31,6 +31,11 @@ _KINDS = ('compte_rendu', 'reponse', 'reference')
 _REFUSED_AUTHORITY = ('Ayo', 'TEST_ONLY')
 
 
+def _sealed(content, origine):
+    """Empreinte des octets conservés : la projection et la provenance fournie"""
+    return value_digest(dict(content=content, origine=origine))
+
+
 def _origine(value):
     """Producteur, date et source fournis : rien n'est inventé"""
     try:
@@ -134,13 +139,20 @@ def _binding(operation):
             or request['requested_configuration'] != operation['requested_configuration']
             or request['provenance'] != PROVENANCE):
         raise IntegrityError('Liaison de contrôle divergente')
-    try:
-        request = dict(request, origine=_origine(request['origine']))
-    except (ValueError, KeyError, TypeError) as error:
-        raise IntegrityError('Provenance de la réponse construite divergente') from error
     content, _ = _review(request, checked)
-    if content != saved['content'] or value_digest(content) != saved['review_sha256']:
+    if content != saved['content']:
         raise IntegrityError('Projection ou sortie divergente')
+    if 'origine' in request:
+        try:
+            origine = _origine(request['origine'])
+        except (ValueError, KeyError, TypeError) as error:
+            raise IntegrityError('Provenance de la réponse construite divergente') from error
+        if _sealed(content, origine) != saved['review_sha256']:
+            raise IntegrityError('Provenance de la réponse construite divergente')
+        request = dict(request, origine=origine)
+    elif value_digest(content) != saved['review_sha256']:
+        # Absence d'origine : sceau historique seul ; un retrait garde le sceau nouveau
+        raise IntegrityError('Provenance de la réponse construite divergente')
     return dict(saved, pieces=checked, content=content, request=request)
 
 
@@ -341,7 +353,7 @@ def reserve_control(store, request, transport, *, link=None):
                              resources=[])
             outgoing_request = dict(outgoing_format=outgoing.FORMAT, outgoing=content)
             wire = transport.prepare(deepcopy(operation), outgoing_request)
-            saved = dict(provenance=PROVENANCE, control_id=request['control_id'], review_sha256=value_digest(content),
+            saved = dict(provenance=PROVENANCE, control_id=request['control_id'], review_sha256=_sealed(content, request['origine']),
                          pieces=pieces, content=content, request=request, reference_qualifiee=False)
             operation['resources'] = [encode(saved), wire] + ([link] if link is not None else [])
             store._reserve_intent(connection, operation, request['budget_id'], request['reserve_amount'],
@@ -409,7 +421,8 @@ def inspect_control(store, operation_id):
             verdict = _verdict(saved['content'], proposal['findings'], output_id)
         return dict(operation_id=operation['operation_id'], control_id=saved['control_id'],
                     dossier_id=operation['dossier_id'],
-                    provenance=saved['provenance'], origine=saved['request']['origine'],
+                    provenance=saved['provenance'],
+                    origine=saved['request']['origine'] if 'origine' in saved['request'] else None,
                     state=operation['state'], review_sha256=saved['review_sha256'],
                     profile_sha256=config.get('profile_sha256'), prompt_sha256=config.get('prompt_sha256'),
                     model=config.get('model'), revision=config.get('revision'),

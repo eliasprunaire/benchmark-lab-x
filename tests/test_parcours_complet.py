@@ -4352,6 +4352,7 @@ class ParcoursComplet(unittest.TestCase):
         from hashlib import sha256
         from benchmark import judgment, runtime
         from benchmark.transports import openrouter
+        from benchmark.validation import digest
 
         class Horloge(datetime):
             @classmethod
@@ -4931,6 +4932,68 @@ class ParcoursComplet(unittest.TestCase):
             ecrire('c-audit-origine', 'resources_json', liaison)
             with ouvrir() as store:
                 runtime.verify(store)
+            for nom, valeur in (
+                    ('producteur', 'Autre opérateur'),
+                    ('date', '2026-11-02T09:00:00+00:00'),
+                    ('source', 'Autre pièce synthétique')):
+                ressources = json.loads(liaison)
+                sauvee = json.loads(ressources[0])
+                sauvee['request']['origine'][nom] = valeur
+                ressources[0] = storage._strict_json(sauvee)
+                ecrire('c-audit-origine', 'resources_json', storage._strict_json(ressources))
+                with self.assertRaises(storage.IntegrityError, msg=nom):
+                    with ouvrir() as store:
+                        runtime.verify(store)
+                ecrire('c-audit-origine', 'resources_json', liaison)
+            ressources = json.loads(liaison)
+            sauvee = json.loads(ressources[0])
+            sauvee['request']['origine']['date'] = '2026-11-02T09:00:00+00:00'
+            sauvee['review_sha256'] = digest(sauvee['content'])
+            ressources[0] = storage._strict_json(sauvee)
+            ecrire('c-audit-origine', 'resources_json', storage._strict_json(ressources))
+            with self.assertRaises(storage.IntegrityError):
+                with ouvrir() as store:
+                    runtime.verify(store)
+            ecrire('c-audit-origine', 'resources_json', liaison)
+            ressources = json.loads(liaison)
+            sauvee = json.loads(ressources[0])
+            del sauvee['request']['origine']
+            ressources[0] = storage._strict_json(sauvee)
+            ecrire('c-audit-origine', 'resources_json', storage._strict_json(ressources))
+            with self.assertRaises(storage.IntegrityError):
+                with ouvrir() as store:
+                    runtime.verify(store)
+            ecrire('c-audit-origine', 'resources_json', liaison)
+            with ouvrir() as store:
+                runtime.verify(store)
+                intact = judgment.inspect_control(store, 'c-audit-origine')
+            self.assertEqual(origine_attendue, intact['origine'])
+            page, _, _ = self.request(dossier + '/controles/c-audit-origine')
+            self.assertIn(origine_attendue['producteur'], page.visible)
+            self.assertIn('21 octobre 2026 à 08:15:00 UTC', page.visible)
+            self.assertIn(origine_attendue['source'], page.visible)
+
+            controle_valide('c-ancien', 'controle-ancien')
+            liaison = colonne('c-ancien', 'resources_json')
+            ressources = json.loads(liaison)
+            sauvee = json.loads(ressources[0])
+            del sauvee['request']['origine']
+            sauvee['review_sha256'] = digest(sauvee['content'])
+            ressources[0] = storage._strict_json(sauvee)
+            ecrire('c-ancien', 'resources_json', storage._strict_json(ressources))
+            with ouvrir() as store:
+                runtime.verify(store)
+                ancien = judgment.inspect_control(store, 'c-ancien')
+            self.assertIsNone(ancien['origine'])
+            self.assertEqual('SATISFAIT', ancien['verdict'])
+            self.assertNotIn('producteur', storage._strict_json(ancien))
+            page, _, _ = self.request(dossier + '/controles/c-ancien')
+            self.assertIn('Réponse construite', page.visible)
+            self.assertIn('ne déclare pas de producteur', page.visible)
+            self.assertIn(empreinte(sortie), page.visible)
+            self.assertNotIn('Producteur', page.visible)
+            self.assertNotIn(origine_attendue['producteur'], page.visible)
+            self.assertNotIn('21 octobre 2026 à 08:15:00 UTC', page.visible)
 
         with self.subTest('incident du dernier appel empêche une nouvelle réservation'):
             def mauvais_modele(http):
