@@ -48,14 +48,14 @@ cd benchmark-lab-x
 uv run python -m benchmark --help
 ```
 
-Pour préparer un environnement privé, copiez le fichier d’exemple puis renseignez uniquement les accès nécessaires :
+Pour préparer un environnement privé, copiez le fichier d’exemple et ne gardez dans `.env` que les URL non secrètes. Les clés du bench viennent de Vault, dans le seul processus lancé :
 
 ```bash
 cp .env.example .env
-uv run --env-file .env python -m benchmark --help
+uv run python -m benchmark.vault_env -- python -m benchmark --help
 ```
 
-Le fichier `.env` reste local et ne doit jamais être versionné. Renseigner une clé ne lance aucun appel et ne crée aucune autorité.
+Le fichier `.env` reste local et ne doit jamais être versionné. Le lanceur retire les noms de clés hérités du shell, puis écrit les champs de `secret/saas/labx-benchmark/benchmark-lab-x/api`. Lire ces champs ne lance aucun modèle.
 
 `python -m benchmark`, `python -m benchmark.runtime` et `benchmark/benchmark-runtime` appellent le même moteur.
 
