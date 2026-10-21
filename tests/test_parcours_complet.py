@@ -4352,6 +4352,7 @@ class ParcoursComplet(unittest.TestCase):
         from hashlib import sha256
         from benchmark import judgment, runtime
         from benchmark.transports import openrouter
+        from benchmark.validation import digest
 
         class Horloge(datetime):
             @classmethod
@@ -4407,11 +4408,14 @@ class ParcoursComplet(unittest.TestCase):
             with closing(storage.Store(self.data)) as store:
                 store.create_budget(identifiant, limite, 'USD')
 
+        origine_attendue = dict(producteur='Opérateur fixture', date='2026-10-21T08:15:00+00:00',
+                                source='Pièce synthétique du parcours')
+
         def demande(transport, operation_id, control_id, budget_id, reponse, locaux=None, secondaires=None):
             return dict(operation_id=operation_id, control_id=control_id, dossier_id=dossier_id, revision=revision,
                         budget_id=budget_id, reserve_amount=transport._quote['reserve_usd'],
                         requested_configuration=transport._quote, provenance='reponse-construite-de-controle',
-                        authority='requester-controle', contrat=contrat(locaux, secondaires),
+                        authority='requester-controle', origine=origine_attendue, contrat=contrat(locaux, secondaires),
                         compte_rendu=piece('cr-c1', 'compte-rendu.md', note),
                         reponse=piece('rep-c1', 'reponse.md', reponse),
                         reference=piece('ref-c1', 'reference.md', reference))
@@ -4428,6 +4432,12 @@ class ParcoursComplet(unittest.TestCase):
             with ouvrir() as store:
                 judgment.reserve_control(store, demande(transport, 'c-accepte', 'ctrl-accepte', 'controle-ok', sortie), transport)
             self.assertEqual(1, len(appels))
+            with ouvrir() as store:
+                reserve = judgment.inspect_control(store, 'c-accepte')
+                brut = json.loads(store._connection.execute(
+                    'SELECT resources_json FROM operations WHERE operation_id=?', ('c-accepte',)).fetchone()[0])
+            self.assertEqual(origine_attendue, reserve['origine'])
+            self.assertEqual(origine_attendue, json.loads(brut[0])['request']['origine'])
             judgment.execute_control(self.data, 'c-accepte', transport)
             self.assertEqual(1, http.request.call_count)
             with ouvrir() as store:
@@ -4440,6 +4450,7 @@ class ParcoursComplet(unittest.TestCase):
                 self.assertEqual(avant, store._connection.execute('SELECT COUNT(*) FROM s5_evaluations').fetchone()[0])
                 runtime.verify(store)
             self.assertEqual('reponse-construite-de-controle', vu['provenance'])
+            self.assertEqual(origine_attendue, vu['origine'])
             self.assertFalse(vu['reference_qualifiee'])
             self.assertEqual('SATISFAIT', vu['verdict'])
             self.assertEqual('SATISFAIT', vu['proposal']['proposed_verdict'])
@@ -4457,6 +4468,19 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn('verdict_attendu', corps)
             self.assertIn(reference, corps)
             self.assertNotIn('emission', vu['proposal'])
+            self.assertNotIn('Opérateur fixture', corps)
+            self.assertNotIn('Pièce synthétique du parcours', corps)
+            page, _, _ = self.request(dossier + '/controles/c-accepte')
+            self.assertIn('Réponse construite', page.visible)
+            self.assertIn('sortie construite', page.visible)
+            self.assertIn(origine_attendue['producteur'], page.visible)
+            self.assertIn('21 octobre 2026 à 08:15:00 UTC', page.visible)
+            self.assertIn(origine_attendue['source'], page.visible)
+            self.assertIn(empreinte(sortie), page.visible)
+            self.assertIn('Elle n’est pas un reçu candidat.', page.visible)
+            self.assertIn('Ce contrôle ne qualifie pas le juge.', page.visible)
+            cas, _, _ = self.request(dossier)
+            self.assertNotIn('Sortie construite', cas.visible)
             with self.assertRaises(storage.ConflictError):
                 judgment.execute_control(self.data, 'c-accepte', transport)
             self.assertEqual(1, http.request.call_count)
@@ -4483,6 +4507,41 @@ class ParcoursComplet(unittest.TestCase):
             with ouvrir() as store, self.assertRaises(ValueError):
                 judgment.reserve_control(store, requete, transport)
             self.assertEqual([], appels)
+
+        with self.subTest('provenance obligatoire absente ou invalide'):
+            http = self.juge_factice(cle='fixture-control-key')
+            transport = transport_courant()
+            appels = surveiller(transport)
+            budget('controle-provenance', '5')
+            base = demande(transport, 'c-prov', 'ctrl-prov', 'controle-provenance', sortie)
+
+            def refuser(requete):
+                with ouvrir() as store:
+                    with self.assertRaises((ValueError, storage.IntegrityError)):
+                        judgment.reserve_control(store, requete, transport)
+                    self.assertIsNone(store._connection.execute(
+                        'SELECT 1 FROM operations WHERE operation_id=?', (requete['operation_id'],)).fetchone())
+
+            for champ in ('producteur', 'date', 'source'):
+                partielle = dict(base['origine'])
+                del partielle[champ]
+                refuser(dict(base, operation_id='c-sans-' + champ, control_id='ctrl-sans-' + champ, origine=partielle))
+            sans = dict(base)
+            del sans['origine']
+            refuser(dict(sans, operation_id='c-sans-origine', control_id='ctrl-sans-origine'))
+            for nom, partielle in (
+                    ('date', dict(base['origine'], date='demain')),
+                    ('producteur', dict(base['origine'], producteur='')),
+                    ('source', dict(base['origine'], source='')),
+                    ('fuseau', dict(base['origine'], date='2026-10-21T08:15:00'))):
+                refuser(dict(base, operation_id='c-inv-' + nom, control_id='ctrl-inv-' + nom, origine=partielle))
+            sans_empreinte = dict(base, operation_id='c-sans-empreinte', control_id='ctrl-sans-empreinte')
+            reponse = dict(sans_empreinte['reponse'])
+            del reponse['sha256']
+            sans_empreinte['reponse'] = reponse
+            refuser(sans_empreinte)
+            self.assertEqual([], appels)
+            self.assertEqual(0, http.request.call_count)
 
         with self.subTest('budget insuffisant bloque l’envoi'):
             transport = transport_courant()
@@ -4621,6 +4680,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual(5, len(serie))
             self.assertEqual(5, http.request.call_count)
             self.assertTrue(all(row['receipt']['observed_configuration']['incident'] == 'RATE_LIMITED' for row in serie))
+            self.assertTrue(all(json.loads(row['resources'][0])['request']['origine'] == origine_attendue for row in serie))
 
         with self.subTest('arrêt empêche les appels suivants'):
             http = self.juge_factice(constat=lambda _critere: ('PASS', 'candidate', 'Contrôle couvert'),
@@ -4859,6 +4919,81 @@ class ParcoursComplet(unittest.TestCase):
             ecrire('c-audit-liaison', 'resources_json', liaison)
             with ouvrir() as store:
                 runtime.verify(store)
+            controle_valide('c-audit-origine', 'controle-audit-origine')
+            liaison = colonne('c-audit-origine', 'resources_json')
+            ressources = json.loads(liaison)
+            sauvee = json.loads(ressources[0])
+            sauvee['request']['origine']['date'] = 'demain'
+            ressources[0] = storage._strict_json(sauvee)
+            ecrire('c-audit-origine', 'resources_json', storage._strict_json(ressources))
+            with self.assertRaises(storage.IntegrityError):
+                with ouvrir() as store:
+                    runtime.verify(store)
+            ecrire('c-audit-origine', 'resources_json', liaison)
+            with ouvrir() as store:
+                runtime.verify(store)
+            for nom, valeur in (
+                    ('producteur', 'Autre opérateur'),
+                    ('date', '2026-11-02T09:00:00+00:00'),
+                    ('source', 'Autre pièce synthétique')):
+                ressources = json.loads(liaison)
+                sauvee = json.loads(ressources[0])
+                sauvee['request']['origine'][nom] = valeur
+                ressources[0] = storage._strict_json(sauvee)
+                ecrire('c-audit-origine', 'resources_json', storage._strict_json(ressources))
+                with self.assertRaises(storage.IntegrityError, msg=nom):
+                    with ouvrir() as store:
+                        runtime.verify(store)
+                ecrire('c-audit-origine', 'resources_json', liaison)
+            ressources = json.loads(liaison)
+            sauvee = json.loads(ressources[0])
+            sauvee['request']['origine']['date'] = '2026-11-02T09:00:00+00:00'
+            sauvee['review_sha256'] = digest(sauvee['content'])
+            ressources[0] = storage._strict_json(sauvee)
+            ecrire('c-audit-origine', 'resources_json', storage._strict_json(ressources))
+            with self.assertRaises(storage.IntegrityError):
+                with ouvrir() as store:
+                    runtime.verify(store)
+            ecrire('c-audit-origine', 'resources_json', liaison)
+            ressources = json.loads(liaison)
+            sauvee = json.loads(ressources[0])
+            del sauvee['request']['origine']
+            ressources[0] = storage._strict_json(sauvee)
+            ecrire('c-audit-origine', 'resources_json', storage._strict_json(ressources))
+            with self.assertRaises(storage.IntegrityError):
+                with ouvrir() as store:
+                    runtime.verify(store)
+            ecrire('c-audit-origine', 'resources_json', liaison)
+            with ouvrir() as store:
+                runtime.verify(store)
+                intact = judgment.inspect_control(store, 'c-audit-origine')
+            self.assertEqual(origine_attendue, intact['origine'])
+            page, _, _ = self.request(dossier + '/controles/c-audit-origine')
+            self.assertIn(origine_attendue['producteur'], page.visible)
+            self.assertIn('21 octobre 2026 à 08:15:00 UTC', page.visible)
+            self.assertIn(origine_attendue['source'], page.visible)
+
+            controle_valide('c-ancien', 'controle-ancien')
+            liaison = colonne('c-ancien', 'resources_json')
+            ressources = json.loads(liaison)
+            sauvee = json.loads(ressources[0])
+            del sauvee['request']['origine']
+            sauvee['review_sha256'] = digest(sauvee['content'])
+            ressources[0] = storage._strict_json(sauvee)
+            ecrire('c-ancien', 'resources_json', storage._strict_json(ressources))
+            with ouvrir() as store:
+                runtime.verify(store)
+                ancien = judgment.inspect_control(store, 'c-ancien')
+            self.assertIsNone(ancien['origine'])
+            self.assertEqual('SATISFAIT', ancien['verdict'])
+            self.assertNotIn('producteur', storage._strict_json(ancien))
+            page, _, _ = self.request(dossier + '/controles/c-ancien')
+            self.assertIn('Réponse construite', page.visible)
+            self.assertIn('ne déclare pas de producteur', page.visible)
+            self.assertIn(empreinte(sortie), page.visible)
+            self.assertNotIn('Producteur', page.visible)
+            self.assertNotIn(origine_attendue['producteur'], page.visible)
+            self.assertNotIn('21 octobre 2026 à 08:15:00 UTC', page.visible)
 
         with self.subTest('incident du dernier appel empêche une nouvelle réservation'):
             def mauvais_modele(http):
