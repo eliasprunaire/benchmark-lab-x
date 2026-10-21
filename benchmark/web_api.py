@@ -232,6 +232,27 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
             if models:
                 value['kind'] = 'campaign_models'
             return 200, value, None, None
+        control_route = re.fullmatch(
+            r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/controles/([A-Za-z0-9_-]{1,128})', parsed.path)
+        if control_route:
+            if parsed.scheme or parsed.netloc or parsed.fragment or parsed.query:
+                raise ValueError('Chemin local requis')
+            dossier_id, operation_id = control_route.groups()
+            p.owner(p.connection_for(store), session_id, dossier_id)
+            from .judgment_control import PROVENANCE, inspect_control
+            try:
+                viewed = inspect_control(store, operation_id)
+            except KeyError:
+                raise p.Denied('Ressource inaccessible') from None
+            if (viewed['dossier_id'] != dossier_id or viewed['provenance'] != PROVENANCE
+                    or viewed['reference_qualifiee'] is not False):
+                raise p.Denied('Ressource inaccessible')
+            piece = next(row for row in viewed['pieces'] if row['kind'] == 'reponse')
+            origine = viewed['origine']
+            return 200, dict(kind='constructed_response',
+                             dossier_href='/preparation/dossiers/' + dossier_id,
+                             name=piece['name'], producteur=origine['producteur'], date=origine['date'],
+                             source=origine['source'], empreinte=piece['sha256']), None, None
         if path == '/preparation/catalogue':
             return 200, restitution.catalogue(store, session_id), None, None
         if parsed.query and re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/revisions/[1-9][0-9]*', parsed.path):

@@ -5,6 +5,7 @@ La réponse reste une pièce de la liaison. Son rôle `controle-construit` n'ent
 from base64 import b64decode
 from contextlib import closing
 from copy import deepcopy
+from datetime import datetime
 from hashlib import sha256
 import json
 import logging
@@ -21,12 +22,29 @@ FORMAT = 'benchmark-lab-x/judgment-control/v1'
 PROVENANCE = 'reponse-construite-de-controle'
 STOP = 'JUDGMENT_STOPPED'
 REQUEST_FIELDS = ('operation_id', 'control_id', 'dossier_id', 'revision', 'budget_id',
-                  'reserve_amount', 'requested_configuration', 'provenance', 'authority',
+                  'reserve_amount', 'requested_configuration', 'provenance', 'origine', 'authority',
                   'contrat', 'compte_rendu', 'reponse', 'reference')
+ORIGINE_FIELDS = ('producteur', 'date', 'source')
 CONTRACT_FIELDS = ('instruction', 'deliverables', 'criteria', 'acceptable_ambiguities', 'specification')
 BINDING_FIELDS = ('provenance', 'control_id', 'review_sha256', 'pieces', 'content', 'request', 'reference_qualifiee')
 _KINDS = ('compte_rendu', 'reponse', 'reference')
 _REFUSED_AUTHORITY = ('Ayo', 'TEST_ONLY')
+
+
+def _origine(value):
+    """Producteur, date et source fournis : rien n'est inventé"""
+    try:
+        _fields(value, ORIGINE_FIELDS, 'provenance de la réponse construite')
+        _text(value['producteur'], 'producteur')
+        _text(value['source'], 'source')
+        date = value['date']
+        _text(date, 'date')
+        moment = datetime.fromisoformat(date)
+    except (ValueError, KeyError, TypeError, AttributeError) as error:
+        raise ValueError('Provenance de la réponse construite requise') from error
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise ValueError('Provenance de la réponse construite requise')
+    return dict(producteur=value['producteur'], date=date, source=value['source'])
 
 
 def _authority(value):
@@ -80,6 +98,7 @@ def _request(value):
         raise ValueError('Révision de contrôle requise')
     if value['provenance'] != PROVENANCE:
         raise ValueError('Provenance de contrôle requise')
+    value['origine'] = _origine(value['origine'])
     _authority(value['authority'])
     _money(value['reserve_amount'])
     if type(value['requested_configuration']) is not dict:
@@ -115,10 +134,14 @@ def _binding(operation):
             or request['requested_configuration'] != operation['requested_configuration']
             or request['provenance'] != PROVENANCE):
         raise IntegrityError('Liaison de contrôle divergente')
+    try:
+        request = dict(request, origine=_origine(request['origine']))
+    except (ValueError, KeyError, TypeError) as error:
+        raise IntegrityError('Provenance de la réponse construite divergente') from error
     content, _ = _review(request, checked)
     if content != saved['content'] or value_digest(content) != saved['review_sha256']:
         raise IntegrityError('Projection ou sortie divergente')
-    return dict(saved, pieces=checked, content=content)
+    return dict(saved, pieces=checked, content=content, request=request)
 
 
 def _control_stopped(operation, control_id):
@@ -385,7 +408,9 @@ def inspect_control(store, operation_id):
         if proposal is not None and not incident and operation['state'] == 'RECEIVED':
             verdict = _verdict(saved['content'], proposal['findings'], output_id)
         return dict(operation_id=operation['operation_id'], control_id=saved['control_id'],
-                    provenance=saved['provenance'], state=operation['state'], review_sha256=saved['review_sha256'],
+                    dossier_id=operation['dossier_id'],
+                    provenance=saved['provenance'], origine=saved['request']['origine'],
+                    state=operation['state'], review_sha256=saved['review_sha256'],
                     profile_sha256=config.get('profile_sha256'), prompt_sha256=config.get('prompt_sha256'),
                     model=config.get('model'), revision=config.get('revision'),
                     pieces=[dict(piece_id=piece['piece_id'], name=piece['name'], sha256=piece['sha256'],
