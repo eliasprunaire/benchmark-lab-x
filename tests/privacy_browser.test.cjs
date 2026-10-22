@@ -77,7 +77,25 @@ example_page = views.render(case, 'csrf').decode()
 consent, controls = render_contribution(case, 'csrf'), render_privacy_controls(case, 'csrf')
 assert consent in example_page and controls in example_page
 launched = example_page.replace(consent, '').replace(controls, render_privacy_controls(case, 'csrf', consent))
-print(json.dumps({**browser_views(), 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
+# Les notices inventées restent dans les fixtures de test
+from pathlib import Path
+from unittest.mock import patch
+with patch.object(views, 'BENCHMARK_REFERENCES', json.loads(Path('tests/fixtures/external-references.json').read_text())):
+    reference_queries = [('', '', ''), ('corriger', 'coding', 'verified'), ('introuvable', '', ''),
+                         ('<script>alert(2)</script>', '', '')]
+    reference_search = {json.dumps(list(query), separators=(',', ':')):
+        views.render(dict(kind='references', **dict(zip(('q', 'category', 'verification'), query))), '').decode()
+        for query in reference_queries}
+    reference_notices = {identity: views.render(dict(kind='references', reference_id=identity), '').decode()
+                         for identity in views.BENCHMARK_REFERENCES}
+    referral = example_view()
+    referral.update(stage='suspended', checks=dict(out_of_scope='coding'), package=None, validation=None)
+    referral['payload']['request'] = 'Besoin privé fictif à ne pas transmettre'
+    reference_referral = views.render(referral, '').decode()
+with patch.object(views, 'BENCHMARK_REFERENCES', {}):
+    reference_empty = views.render(dict(kind='references'), '').decode()
+print(json.dumps({**browser_views(), 'reference_search': reference_search, 'reference_notices': reference_notices,
+                  'reference-referral': reference_referral, 'reference-empty': reference_empty, 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
                   'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT,
@@ -113,6 +131,14 @@ print(json.dumps({**browser_views(), 'data': views.render({'kind': 'privacy_data
       const reply = followupReplies.shift() ?? 'followup';
       if (typeof reply === 'number') {res.writeHead(reply).end(); return;}
       res.setHeader('Content-Type', 'text/html'); res.end(rendered[reply]);
+    } else if (url.pathname === '/evaluations-externes' || url.pathname.startsWith('/evaluations-externes/')) {
+      // Pages de views.render, comme /render : cette fixture ne remplace pas la preuve du serveur Python
+      const html = url.pathname === '/evaluations-externes'
+        ? rendered.reference_search[JSON.stringify(['q', 'category', 'verification'].map(key => url.searchParams.get(key) || ''))]
+        : rendered.reference_notices[url.pathname.split('/').pop()];
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      res.end(html);
     } else if (url.pathname.startsWith('/render/') || url.pathname === rendered.detail_href) {
       const hashes = [rendered.script, rendered.comparison_script, rendered.progress_script]
         .map(script => `'sha256-${createHash('sha256').update(script).digest('base64')}'`).join(' ');
@@ -1197,6 +1223,78 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
   } finally {await context.close();}
 });
 
+test('external references remain readable, searchable and safe without JavaScript, by keyboard at 390 px', async () => {
+  for (const javaScriptEnabled of [false, true]) {
+    const context = await browser.newContext({javaScriptEnabled, viewport: {width: 390, height: 844}});
+    try {
+      const page = await context.newPage(); page.setDefaultTimeout(3000);
+      const external = [], dialogs = [], errors = [];
+      page.on('dialog', dialog => {dialogs.push(dialog.message()); dialog.dismiss();});
+      page.on('pageerror', error => errors.push(error.message));
+      await context.route('https://code.example/**', route => {
+        external.push({url: route.request().url(), referer: route.request().headers().referer});
+        return route.fulfill({status: 200, contentType: 'text/html', body: '<h1>Source fictive</h1>'});
+      });
+      await page.goto(origin + '/render/home');
+      await page.getByRole('navigation', {name: 'Navigation principale'}).getByRole('link', {name: 'Évaluations externes'}).click();
+      assert.equal(await page.locator('main h2').count(), 3);
+      assert.equal(await page.locator('#category').inputValue(), '');
+      assert.equal(await page.locator('#verification').inputValue(), '');
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.getByLabel('Rechercher une évaluation').fill('corriger');
+      await page.getByLabel('Travail mesuré', {exact: true}).selectOption('coding');
+      await page.getByLabel('Vérification éditoriale', {exact: true}).selectOption('verified');
+      await page.getByRole('button', {name: 'Rechercher', exact: true}).click();
+      assert.equal(await page.locator('main h2').count(), 1);
+      assert.equal(await page.locator('#q').inputValue(), 'corriger');
+      assert.equal(await page.locator('#category').inputValue(), 'coding');
+      assert.equal(await page.locator('#verification').inputValue(), 'verified');
+      await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
+      assert.equal(await page.locator('main h2').count(), 3);
+      await page.getByLabel('Rechercher une évaluation').fill('introuvable');
+      await page.getByRole('button', {name: 'Rechercher', exact: true}).click();
+      assert.match(await page.textContent('main'), /Aucune évaluation ne correspond/);
+      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
+      await page.goto(origin + '/evaluations-externes?q=' + encodeURIComponent('<script>alert(2)</script>'));
+      assert.equal(await page.locator('#q').inputValue(), '<script>alert(2)</script>');
+      assert.equal(await page.locator('main script').count(), 0);
+      await page.goto(origin + '/render/reference-empty');
+      assert.match(await page.textContent('main'), /Aucune évaluation externe disponible/);
+      await page.goto(origin + '/evaluations-externes/atelier-inconnu');
+      assert.match(await page.textContent('main'), /Vérification insuffisante/);
+      assert.match(await page.textContent('main'), /Inconnue/);
+      await page.goto(origin + '/evaluations-externes/atelier-retire');
+      assert.match(await page.textContent('main'), /Source retirée/);
+      assert.equal(await page.locator('main a[href^="https:"]').count(), 0);
+      await page.goto(origin + '/render/reference-referral');
+      const target = page.locator('main a[href="/evaluations-externes/atelier-code"]');
+      assert.equal(await target.getAttribute('rel'), 'noreferrer');
+      await target.click();
+      assert.equal(await page.locator('main h1').textContent(), 'Atelier Code fictif <script>alert(1)</script>');
+      assert.equal((await page.textContent('main')).includes('Besoin privé'), false);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Tabulation native : atteindre la source officielle, puis suivre le lien au clavier
+      let focused = false;
+      for (let press = 0; press < 30 && !focused; press++) {
+        await page.keyboard.press('Tab');
+        focused = await page.evaluate(() => document.activeElement.getAttribute('href') === 'https://code.example/evaluation');
+      }
+      assert.ok(focused);
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      mkdirSync('reports/461', {recursive: true});
+      await page.screenshot({path: 'reports/461/notice-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.keyboard.press('Enter');
+      await page.waitForURL('https://code.example/evaluation');
+      assert.deepEqual(external, [{url: 'https://code.example/evaluation', referer: undefined}]);
+      assert.deepEqual(dialogs, []);
+      assert.deepEqual(errors, []);
+      assert.deepEqual(await context.cookies(), []);
+    } finally {await context.close();}
+  }
+});
+
 test('preparation screens preserve navigation, accessible forms and recoverable states', async () => {
   const context = await browser.newContext({javaScriptEnabled: false});
   try {
@@ -1255,8 +1353,9 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       assert.ok(text.includes('Décrire un autre cas d’usage'));
       assert.equal(/Envoyer ma réponse|Choisir les modèles|équipe Bench-X|n’est pas encore/.test(text), false);
       assert.equal(await page.locator('form[action$="/validation"], #availability').count(), 0);
-      assert.equal(await page.locator('a[href="https://matharena.ai/"]').count(), Number(category === 'math'));
-      assert.equal(await page.locator('a[href="https://livecodebench.github.io/"]').count(), Number(category === 'coding'));
+      assert.equal(await page.locator('a[href="/evaluations-externes/matharena"]').count(), Number(category === 'math'));
+      assert.equal(await page.locator('main a[href="/evaluations-externes"]').count(), 1);
+      assert.equal(await page.locator('a[href="/evaluations-externes/livecodebench"]').count(), Number(category === 'coding'));
     }
     for (const reason of ['open', 'interrupted', 'restore']) {
       await page.goto(origin + '/render/suspended-' + reason);

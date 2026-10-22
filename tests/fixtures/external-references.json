@@ -1,0 +1,44 @@
+{
+  "atelier-code": {
+    "name": "Atelier Code fictif <script>alert(1)</script>",
+    "url": "https://code.example/evaluation",
+    "category": "coding",
+    "work": "Corriger un programme fictif",
+    "scope": "Petits programmes inventés",
+    "limits": "Ne mesure pas la maintenance d’un logiciel réel",
+    "version": "fixture-1",
+    "published_at": "2026-01-10",
+    "checked_at": "2026-02-03",
+    "verification": "verified",
+    "availability": "available"
+  },
+  "atelier-inconnu": {
+    "name": "Atelier Inconnu fictif",
+    "url": "https://inconnu.example/",
+    "category": "coding",
+    "work": "Corriger des textes inventés",
+    "verification": "unverified",
+    "availability": "available"
+  },
+  "atelier-maths": {
+    "name": "Atelier Maths fictif",
+    "url": "https://maths.example/",
+    "category": "math",
+    "work": "Résoudre des problèmes inventés",
+    "scope": "Calculs fictifs",
+    "limits": "Ne mesure pas un travail professionnel",
+    "version": "fixture-2",
+    "published_at": "2026-01-12",
+    "checked_at": "2026-02-04",
+    "verification": "verified",
+    "availability": "available"
+  },
+  "atelier-retire": {
+    "name": "Atelier Retiré fictif",
+    "url": "https://retire.example/",
+    "category": "coding",
+    "work": "Ancien exercice fictif",
+    "verification": "unverified",
+    "availability": "withdrawn"
+  }
+}
