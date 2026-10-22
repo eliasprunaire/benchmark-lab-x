@@ -190,17 +190,62 @@ def page_script(value):
 
 
 BENCHMARK_REFERENCES = {
-    # Références historiques uniquement : aucune vérification éditoriale ni sélection élargie approuvée
-    'matharena': {'name': 'MathArena', 'url': 'https://matharena.ai/', 'category': 'math',
-                  'work': 'Raisonnement mathématique et problèmes de compétition',
-                  'availability': 'available', 'verification': 'unverified'},
-    'livecodebench': {'name': 'LiveCodeBench', 'url': 'https://livecodebench.github.io/', 'category': 'coding',
-                      'work': 'Exercices de programmation', 'availability': 'available', 'verification': 'unverified'},
-    'swe-bench': {'name': 'SWE-bench', 'url': 'https://www.swebench.com/', 'category': 'coding',
-                  'work': 'Résolution de problèmes logiciels dans des dépôts de code',
-                  'availability': 'available', 'verification': 'unverified'},
+    # Notices approuvées : MathArena, LiveCodeBench, SWE-bench, MTEB, Artificial Analysis API
+    # Maintenance : Ayo ; HELM reste hors du répertoire ; vérification documentaire : 2026-10-22
+    'matharena': {
+        'name': 'MathArena', 'url': 'https://matharena.ai/', 'category': 'math',
+        'work': 'Résoudre des problèmes mathématiques, notamment issus de compétitions',
+        'scope': 'Résultats par compétition et problème ; sorties consultables sur le site',
+        'limits': 'Ces problèmes ne représentent pas tous les besoins mathématiques professionnels. '
+                  'La synthèse « expected performance » combine observations et estimations. '
+                  'Elle ne doit pas devenir un résultat observé Bench-X. Le classement général n’est pas repris.',
+        'version': 'Propre à chaque compétition ou série ; aucune version unique retenue',
+        'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
+    'livecodebench': {
+        'name': 'LiveCodeBench', 'url': 'https://livecodebench.github.io/', 'category': 'coding',
+        'work': 'Génération de code, réparation, prédiction de résultats et exécution sur des exercices',
+        'scope': 'Problèmes de concours provenant notamment de LeetCode, AtCoder et Codeforces',
+        'limits': 'Un exercice ne représente pas une modification complète d’application. '
+                  'Les périodes permettent des comparaisons temporelles. '
+                  'Elles ne garantissent pas seules l’absence de contamination. '
+                  'La fraîcheur de chaque tableau n’est pas certifiée.',
+        'version': 'Version unique inconnue ; préciser le scénario et la période du tableau consulté',
+        'published_at': '2024 pour l’article initial ; exemples anciens distincts des versions successives',
+        'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
+    'swe-bench': {
+        'name': 'SWE-bench', 'url': 'https://www.swebench.com/', 'category': 'coding',
+        'work': 'Résoudre des problèmes logiciels issus de dépôts',
+        'scope': 'Plusieurs variantes, dont Full, Lite, Verified, Multilingual et Multimodal',
+        'limits': 'La variante, l’environnement et l’agent influencent le résultat. Le nom du modèle ne suffit pas. '
+                  'Le site distingue les résultats exécutés ou vérifiés par son équipe. '
+                  'Les résultats des variantes ne sont pas fusionnés.',
+        'version': 'Nom de la variante à conserver ; aucune version unique retenue',
+        'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
+    'mteb': {
+        'name': 'MTEB', 'url': 'https://github.com/embeddings-benchmark/mteb', 'category': 'retrieval',
+        'work': 'Évaluer des représentations vectorielles et des systèmes de recherche',
+        'scope': 'Tâches, langues et modalités multiples ; documentation et classement liés depuis le dépôt',
+        'limits': 'Un résultat de recherche ne prouve pas la qualité d’une réponse générée à partir des documents. '
+                  'Il faut comparer les mêmes tâches et les mêmes langues. '
+                  'Une moyenne générale ne représente pas automatiquement le corpus du visiteur. '
+                  'Le fonctionnement interactif du classement n’a pas été essayé.',
+        'version': 'Dépend de la tâche, des données et du protocole ; aucune version globale retenue',
+        'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
+    'artificial-analysis-api': {
+        'name': 'Artificial Analysis, performances API',
+        'url': 'https://artificialanalysis.ai/methodology/performance-benchmarking', 'category': 'api',
+        'work': 'Délai avant réception, vitesse de sortie et temps de réponse des services API',
+        'scope': 'Charges et conditions de concurrence définies ; mesures agrégées sur des fenêtres temporelles',
+        'limits': 'La localisation du serveur et la longueur des échanges influencent les mesures. '
+                  'Les résultats ne garantissent ni délai contractuel ni performance depuis le poste du visiteur. '
+                  'Leur indice global n’entre pas dans Bench-X. La date de source concerne la méthode. '
+                  'Les résultats évoluent séparément.',
+        'version': '2.2.0', 'published_at': '2026-03-02',
+        'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
 }
-REFERENCE_CATEGORIES = {'math': 'Mathématiques', 'coding': 'Programmation'}
+REFERENCE_CATEGORIES = {
+    'math': 'Mathématiques', 'coding': 'Programmation',
+    'retrieval': 'Recherche documentaire', 'api': 'Performances des services'}
 REFERENCE_VERIFICATIONS = {'verified': 'Vérifiée', 'unverified': 'Vérification insuffisante'}
 
 
@@ -250,7 +295,10 @@ def render_references(value):
     if value.get('reference_id'):
         reference = BENCHMARK_REFERENCES[value['reference_id']]
         return reference['name'], back + introduction + reference_notice(reference) + need
-    content = introduction + '<p>La sélection initiale et sa maintenance restent à approuver avant ouverture réelle.</p>'
+    content = (introduction
+               + '<p>Ayo est responsable de la maintenance de cette sélection.</p>'
+               + '<p>La vérification documentaire du 22 octobre 2026 couvre l’origine, l’objet et les limites. '
+               + 'La disponibilité d’un lien reste distincte de cette vérification.</p>')
     available = {identity: reference for identity, reference in BENCHMARK_REFERENCES.items()
                  if reference.get('availability') == 'available'}
     categories = {reference['category']: REFERENCE_CATEGORIES.get(reference['category'], reference['category'])

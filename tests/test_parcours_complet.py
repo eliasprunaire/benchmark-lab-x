@@ -344,6 +344,123 @@ class ParcoursComplet(unittest.TestCase):
             self.assertTrue(self.starts.empty())
             self.assertEqual({}, dict(self.cookies))
             self.assertEqual(before, {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()})
+        with patch.object(server, 'preparation_request', side_effect=AssertionError('Relais privé interdit')):
+            before = {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()}
+            index, headers, raw = self.request('/evaluations-externes')
+            self.assertIsNone(headers.get('Set-Cookie'))
+            self.assertEqual('no-referrer', headers['Referrer-Policy'])
+            self.assertNotIn(b'<script', raw)
+            self.assertEqual(raw, self.request('/evaluations-externes', cookies=SimpleCookie('benchmark_session=invalid'))[2])
+            self.assertNotIn(KEY, index.visible)
+            self.assertNotIn('HELM', index.visible)
+            self.assertNotIn('helm', raw.decode().casefold())
+            self.assertIn('ne prouvent pas la réussite sur votre besoin particulier', index.visible)
+            self.assertIn('Ayo est responsable de la maintenance de cette sélection.', index.visible)
+            self.assertIn('La vérification documentaire du 22 octobre 2026 couvre l’origine, l’objet et les limites.', index.visible)
+            self.assertIn('La disponibilité d’un lien reste distincte de cette vérification.', index.visible)
+            self.assertEqual(
+                ['matharena', 'livecodebench', 'swe-bench', 'mteb', 'artificial-analysis-api'],
+                list(views.BENCHMARK_REFERENCES))
+            self.assertEqual(
+                {'math': 'Mathématiques', 'coding': 'Programmation',
+                 'retrieval': 'Recherche documentaire', 'api': 'Performances des services'},
+                views.REFERENCE_CATEGORIES)
+            self.assertEqual(
+                ['MathArena', 'LiveCodeBench', 'SWE-bench', 'MTEB', 'Artificial Analysis, performances API'],
+                [n['text'] for n in index.nodes if n['tag'] == 'h2' and n['main']])
+            options = {n['attrs'].get('value'): n['text'] for n in index.nodes if n['tag'] == 'option'}
+            self.assertEqual('Recherche documentaire', options['retrieval'])
+            self.assertEqual('Performances des services', options['api'])
+            self.assertNotIn('helm', {key.casefold() for key in options if key})
+            notices = {
+                'matharena': (
+                    'https://matharena.ai/',
+                    'Résoudre des problèmes mathématiques, notamment issus de compétitions',
+                    'Résultats par compétition et problème',
+                    'ne représentent pas tous les besoins mathématiques professionnels',
+                    'expected performance',
+                    'aucune version unique retenue',
+                    'Inconnue',
+                    '2026-10-22',
+                    'Le classement général n’est pas repris',
+                ),
+                'livecodebench': (
+                    'https://livecodebench.github.io/',
+                    'Génération de code, réparation, prédiction de résultats et exécution sur des exercices',
+                    'LeetCode, AtCoder et Codeforces',
+                    'ne représente pas une modification complète d’application',
+                    'Version unique inconnue',
+                    '2024 pour l’article initial',
+                    'n’est pas certifiée',
+                    '2026-10-22',
+                ),
+                'swe-bench': (
+                    'https://www.swebench.com/',
+                    'Résoudre des problèmes logiciels issus de dépôts',
+                    'Full, Lite, Verified, Multilingual et Multimodal',
+                    'Le nom du modèle ne suffit pas',
+                    'aucune version unique retenue',
+                    'Inconnue',
+                    '2026-10-22',
+                    'ne sont pas fusionnés',
+                ),
+                'mteb': (
+                    'https://github.com/embeddings-benchmark/mteb',
+                    'Évaluer des représentations vectorielles et des systèmes de recherche',
+                    'Tâches, langues et modalités multiples',
+                    'ne prouve pas la qualité d’une réponse générée',
+                    'aucune version globale retenue',
+                    'Inconnue',
+                    'n’a pas été essayé',
+                    '2026-10-22',
+                ),
+                'artificial-analysis-api': (
+                    'https://artificialanalysis.ai/methodology/performance-benchmarking',
+                    'Délai avant réception, vitesse de sortie et temps de réponse des services API',
+                    'mesures agrégées sur des fenêtres temporelles',
+                    'Leur indice global n’entre pas dans Bench-X',
+                    '2.2.0',
+                    '2026-03-02',
+                    'Les résultats évoluent séparément',
+                    '2026-10-22',
+                ),
+            }
+            for identity, phrases in notices.items():
+                notice, notice_headers, notice_raw = self.request('/evaluations-externes/' + identity)
+                self.assertIsNone(notice_headers.get('Set-Cookie'))
+                self.assertEqual('no-referrer', notice_headers['Referrer-Policy'])
+                self.assertNotIn(b'<script', notice_raw)
+                self.assertNotIn(KEY, notice.visible)
+                self.assertNotIn('Besoin privé', notice.visible)
+                self.assertNotIn('%', notice.visible)
+                self.assertIn('Vérification éditoriale effectuée', notice.visible)
+                self.assertNotIn('Vérification insuffisante', notice.visible)
+                self.assertIn('Source disponible', notice.visible)
+                self.assertIn('ne prouvent pas la réussite sur votre besoin particulier', notice.visible)
+                for phrase in phrases:
+                    self.assertIn(phrase, notice.visible, identity)
+                official = next(n for n in notice.nodes if n['tag'] == 'a' and n['attrs'].get('href') == phrases[0])
+                self.assertEqual({'noreferrer', 'noopener'}, set(official['attrs']['rel'].split()))
+            def titles(page):
+                return [n['text'] for n in page.nodes if n['tag'] == 'h2' and n['main']]
+            retrieval, _, _ = self.request('/evaluations-externes?category=retrieval')
+            self.assertEqual(['MTEB'], titles(retrieval))
+            api_page, _, _ = self.request('/evaluations-externes?' + urlencode({'category': 'api', 'q': 'délai'}))
+            self.assertEqual(['Artificial Analysis, performances API'], titles(api_page))
+            self.assertEqual(['LiveCodeBench', 'SWE-bench'], titles(self.request('/evaluations-externes?category=coding')[0]))
+            self.assertEqual(['MathArena'], titles(self.request('/evaluations-externes?category=math')[0]))
+            self.assertEqual(5, len(titles(self.request('/evaluations-externes?verification=verified')[0])))
+            self.assertIn('Aucune évaluation ne correspond', self.request('/evaluations-externes?verification=unverified')[0].visible)
+            self.assertIn('Aucune évaluation ne correspond', self.request('/evaluations-externes?' + urlencode({'q': 'HELM'}))[0].visible)
+            self.assertEqual(['MTEB'], titles(self.request('/evaluations-externes?' + urlencode({'q': 'vectorielles'}))[0]))
+            self.assertEqual('/preparation', index.link('Décrire mon cas'))
+            self.request('/evaluations-externes/helm', status=404)
+            self.request('/evaluations-externes/helm-classic', status=404)
+            self.request('/evaluations-externes?category=helm', status=400)
+            self.assertEqual([], self.calls)
+            self.assertTrue(self.starts.empty())
+            self.assertEqual({}, dict(self.cookies))
+            self.assertEqual(before, {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()})
 
     def test_repertoire_renvoi_preparation(self):
         references = json.loads((Path(__file__).parent / 'fixtures/external-references.json').read_text())

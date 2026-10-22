@@ -94,8 +94,14 @@ with patch.object(views, 'BENCHMARK_REFERENCES', json.loads(Path('tests/fixtures
     reference_referral = views.render(referral, '').decode()
 with patch.object(views, 'BENCHMARK_REFERENCES', {}):
     reference_empty = views.render(dict(kind='references'), '').decode()
+approved_ids = ('matharena', 'livecodebench', 'swe-bench', 'mteb', 'artificial-analysis-api')
+approved = {'approved-index': views.render(dict(kind='references'), '').decode(),
+            'approved-retrieval': views.render(dict(kind='references', category='retrieval'), '').decode(),
+            'approved-api': views.render(dict(kind='references', category='api', q='API'), '').decode()}
+for identity in approved_ids:
+    approved['approved-' + identity] = views.render(dict(kind='references', reference_id=identity), '').decode()
 print(json.dumps({**browser_views(), 'reference_search': reference_search, 'reference_notices': reference_notices,
-                  'reference-referral': reference_referral, 'reference-empty': reference_empty, 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
+                  'reference-referral': reference_referral, 'reference-empty': reference_empty, **approved, 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
                   'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT,
@@ -1288,6 +1294,58 @@ test('external references remain readable, searchable and safe without JavaScrip
       await page.keyboard.press('Enter');
       await page.waitForURL('https://code.example/evaluation');
       assert.deepEqual(external, [{url: 'https://code.example/evaluation', referer: undefined}]);
+      assert.deepEqual(dialogs, []);
+      assert.deepEqual(errors, []);
+      await page.goto(origin + '/render/approved-index');
+      const approved = await page.textContent('main');
+      for (const name of ['MathArena', 'LiveCodeBench', 'SWE-bench', 'MTEB', 'Artificial Analysis, performances API'])
+        assert.ok(approved.includes(name), name);
+      assert.equal(/HELM/i.test(approved), false);
+      assert.ok(approved.includes('Ayo est responsable de la maintenance de cette sélection.'));
+      assert.ok(approved.includes('22 octobre 2026'));
+      assert.ok(approved.includes('La disponibilité d’un lien reste distincte de cette vérification.'));
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.locator('#category option[value="retrieval"]').textContent(), 'Recherche documentaire');
+      assert.equal(await page.locator('#category option[value="api"]').textContent(), 'Performances des services');
+      assert.equal(await page.locator('#category option').evaluateAll(nodes => nodes.some(node => /helm/i.test(node.value + node.textContent))), false);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/approved-retrieval');
+      assert.equal(await page.locator('main h2').count(), 1);
+      assert.match(await page.textContent('main'), /MTEB/);
+      assert.equal((await page.textContent('main')).includes('MathArena'), false);
+      assert.equal(await page.locator('#category').inputValue(), 'retrieval');
+      await page.goto(origin + '/render/approved-api');
+      assert.match(await page.textContent('main'), /Artificial Analysis, performances API/);
+      assert.match(await page.textContent('main'), /2\.2\.0/);
+      assert.equal((await page.textContent('main')).includes('MTEB'), false);
+      assert.equal(await page.locator('#category').inputValue(), 'api');
+      assert.equal(await page.locator('#q').inputValue(), 'API');
+      await page.goto(origin + '/render/approved-matharena');
+      const matharena = await page.textContent('main');
+      assert.match(matharena, /Inconnue/);
+      assert.match(matharena, /2026-10-22/);
+      assert.match(matharena, /aucune version unique retenue/);
+      assert.match(matharena, /expected performance/);
+      assert.equal(matharena.includes('%'), false);
+      const mathLink = page.locator('main a[href="https://matharena.ai/"]');
+      assert.ok((await mathLink.getAttribute('rel')).split(/\s+/).includes('noreferrer'));
+      assert.ok((await mathLink.getAttribute('rel')).split(/\s+/).includes('noopener'));
+      await page.goto(origin + '/render/approved-livecodebench');
+      assert.match(await page.textContent('main'), /Version unique inconnue/);
+      assert.match(await page.textContent('main'), /n’est pas certifiée/);
+      await page.goto(origin + '/render/approved-swe-bench');
+      assert.match(await page.textContent('main'), /Multimodal/);
+      assert.match(await page.textContent('main'), /Inconnue/);
+      await page.goto(origin + '/render/approved-mteb');
+      assert.match(await page.textContent('main'), /n’a pas été essayé/);
+      assert.equal(await page.locator('main a[href="https://github.com/embeddings-benchmark/mteb"]').count(), 1);
+      await page.goto(origin + '/render/approved-artificial-analysis-api');
+      const apiNotice = await page.textContent('main');
+      assert.match(apiNotice, /2026-03-02/);
+      assert.match(apiNotice, /Leur indice global n’entre pas dans Bench-X/);
+      assert.equal(apiNotice.includes('%'), false);
+      assert.equal(await page.locator('script').count(), 0);
       assert.deepEqual(dialogs, []);
       assert.deepEqual(errors, []);
       assert.deepEqual(await context.cookies(), []);
