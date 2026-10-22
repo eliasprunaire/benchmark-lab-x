@@ -30,6 +30,7 @@ Un jalon porte un nom, jamais un numéro. Les jalons se succèdent sous les noms
 
 Les exigences suivantes du PRD n’ont pas encore de jalon. Les dater demande une décision d’Ayo, reportée dans la matrice.
 
+- répertoire éditorial d’évaluations externes, recherche simple et filtres sans appel modèle ([§10](PRD.md#consulter-des-évaluations-externes))
 - navigation catalogue, tâche, campagne et comparaison des configurations ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
 - consultation publique des seules restitutions approuvées, sans classement universel ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
 - catalogue de tâches versionnées, avec contrat et cas d'essai identifiés ; aucune demande n’y est publiée automatiquement ([§5.1](PRD.md#51-capacités))
