@@ -32,6 +32,7 @@ _ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*', '<poli
 # Motifs servis, essayés dans l'ordre : un chemin absent de cette liste se journalise `<inconnu>`
 _ROUTE_PATTERNS = (
     '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
+    '/evaluations-externes', '/evaluations-externes/<id>',
     '/mentions-legales', '/cgu', '/confidentialite',
     '/preparation', '/preparation/privacy.js', '/preparation/style.css',
     '/preparation/fonts/<police>.woff2', '/preparation/fonts/OFL-<police>.txt',
@@ -530,6 +531,29 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             self.do_GET()
 
         def do_GET(self):
+            reference_path = self.path.split('?', 1)[0]
+            if reference_path == '/evaluations-externes' or reference_path.startswith('/evaluations-externes/'):
+                identity = reference_path.removeprefix('/evaluations-externes').removeprefix('/')
+                if identity and identity not in views.BENCHMARK_REFERENCES:
+                    self.not_found()
+                    return
+                try:
+                    query = parse_qs(urlsplit(self.path).query, keep_blank_values=True, errors='strict', max_num_fields=3)
+                    if (query and identity or set(query) - {'q', 'category', 'verification'}
+                            or any(len(values) != 1 for values in query.values())):
+                        raise ValueError('Recherche invalide')
+                    fields = {key: values[0] for key, values in query.items()}
+                    categories = {reference['category'] for reference in views.BENCHMARK_REFERENCES.values()
+                                  if reference.get('availability') == 'available'}
+                    if (fields.get('category', '') not in categories | {''}
+                            or fields.get('verification', '') not in set(views.REFERENCE_VERIFICATIONS) | {''}):
+                        raise ValueError('Filtre invalide')
+                except ValueError:
+                    self.error_page(400, 'Recherche invalide', 'Modifiez votre recherche ou effacez les filtres.')
+                    return
+                value = {'kind': 'references', 'reference_id': identity, **fields}
+                self.respond(200, views.render(value, '', self.path), 'text/html; charset=utf-8')
+                return
             if self.path in _RESOURCES:
                 raw, media, etag = resources[self.path] if resources else _load_resource(*_RESOURCES[self.path])
                 # `no-cache` garde la copie et la revalide : juste après un déploiement, sans URL à empreinte

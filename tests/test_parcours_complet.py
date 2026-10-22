@@ -273,6 +273,110 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual('#main', focus[0]['attrs'].get('href'))
             self.assertTrue(all(int(n['attrs'].get('tabindex', '0')) <= 0 for n in page.nodes))
 
+    def test_repertoire_externe_public(self):
+        references = json.loads((Path(__file__).parent / 'fixtures/external-references.json').read_text())
+        # Le répertoire ne doit même pas relayer une lecture à l’exécuteur privé
+        with patch.object(views, 'BENCHMARK_REFERENCES', references), \
+                patch.object(server, 'preparation_request', side_effect=AssertionError('Relais privé interdit')):
+            before = {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()}
+            home, _, _ = self.request('/')
+            self.assertTrue(any(n['tag'] == 'a' and n['text'] == 'Évaluations externes' for n in home.nodes))
+            target = home.link('Évaluations externes')
+            page, headers, raw = self.request(target)
+            self.assertEqual('/evaluations-externes', target)
+            self.assertIsNone(headers.get('Set-Cookie'))
+            self.assertEqual('no-referrer', headers['Referrer-Policy'])
+            self.assertEqual(raw, self.request(target, cookies=SimpleCookie('benchmark_session=invalid'))[2])
+            self.assertEqual('/preparation', page.link('Décrire mon cas'))
+            self.assertEqual(3, len([n for n in page.nodes if n['tag'] == 'h2' and n['main']]))
+            notice, _, _ = self.request(page.link('Atelier Code'))
+            for value in ('Petits programmes inventés', 'Ne mesure pas la maintenance', 'fixture-1',
+                          '2026-01-10', '2026-02-03', 'Corriger un programme fictif'):
+                self.assertIn(value, notice.visible)
+            self.assertIn('Source disponible', notice.visible)
+            self.assertIn('ne prouvent pas la réussite sur votre besoin particulier', notice.visible)
+            self.assertIn('<script>alert(1)</script>', notice.visible)
+            self.assertNotIn(b'<script>alert(1)</script>', self.request(target)[2])
+            external = next(n for n in notice.nodes if n['tag'] == 'a' and n['attrs']['href'].startswith('https://code.example'))
+            self.assertIn('noreferrer', external['attrs']['rel'].split())
+            form = page.form('/evaluations-externes')
+            self.assertTrue(all('selected' not in n['attrs'] or not n['attrs'].get('value')
+                                for n in form['nodes'] if n['tag'] == 'option'))
+            filtered, _, _ = self.request(form['action'] + '?' + urlencode(
+                {'q': 'CORRIGER', 'category': 'coding', 'verification': 'verified'}))
+            self.assertEqual(['Atelier Code fictif <script>alert(1)</script>'],
+                             [n['text'] for n in filtered.nodes if n['tag'] == 'h2' and n['main']])
+            self.assertEqual({'coding', 'verified'}, {n['attrs']['value'] for n in filtered.nodes
+                             if n['tag'] == 'option' and 'selected' in n['attrs']})
+            self.assertEqual(raw, self.request(filtered.link('Effacer'))[2])
+            empty, _, _ = self.request(target + '?q=introuvable')
+            self.assertIn('Aucune évaluation ne correspond', empty.visible)
+            self.assertEqual('/preparation', empty.link('Décrire mon cas'))
+            unknown, _, _ = self.request(target + '/atelier-inconnu')
+            self.assertIn('Inconnue', unknown.visible)
+            self.assertIn('Vérification insuffisante', unknown.visible)
+            retired, _, _ = self.request(target + '/atelier-retire')
+            self.assertIn('Source retirée', retired.visible)
+            self.assertNotIn('https://retire.example/', [n['attrs'].get('href') for n in retired.nodes])
+            self.request(target + '/absente', status=404)
+            for query in ('category=absente', 'verification=best', 'q=a&q=b', 'need=prive', 'q=%FF'):
+                self.request(target + '?' + query, status=400)
+            injection = '<script>alert(2)</script>'
+            escaped, _, escaped_raw = self.request(target + '?' + urlencode({'q': injection}))
+            self.assertNotIn(injection.encode(), escaped_raw)
+            self.assertEqual(injection, next(n['attrs']['value'] for n in escaped.nodes if n['attrs'].get('name') == 'q'))
+            for unsafe in ('javascript:alert(1)', '//evil.example/', 'data:text/html,x',
+                           'https://user:password@evil.example/', 'https://evil.example:abc/',
+                           'https://good.example\\@evil.example/', 'https://good.example/\nscript'):
+                with self.subTest(url=unsafe), patch.dict(references['atelier-inconnu'], url=unsafe):
+                    unsafe_page, _, _ = self.request(target + '/atelier-inconnu')
+                    self.assertIn('Lien officiel indisponible', unsafe_page.visible)
+                    self.assertFalse(any(n['attrs'].get('href') == unsafe for n in unsafe_page.nodes))
+                with self.subTest(retired_url=unsafe), patch.dict(references['atelier-retire'], url=unsafe):
+                    retired_page, _, _ = self.request(target + '/atelier-retire')
+                    self.assertIn('Source retirée', retired_page.visible)
+                    self.assertNotIn(unsafe, retired_page.visible)
+            with patch.object(views, 'BENCHMARK_REFERENCES', {}):
+                unavailable, _, _ = self.request(target)
+                self.assertIn('Aucune évaluation externe disponible', unavailable.visible)
+                self.assertEqual('/preparation', unavailable.link('Décrire mon cas'))
+            self.assertEqual([], self.calls)
+            self.assertTrue(self.starts.empty())
+            self.assertEqual({}, dict(self.cookies))
+            self.assertEqual(before, {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()})
+
+    def test_repertoire_renvoi_preparation(self):
+        references = json.loads((Path(__file__).parent / 'fixtures/external-references.json').read_text())
+        def suspended(operation, request):
+            value = response_for(operation)
+            value['cost'].update(amount='0.10', currency='USD', source='Reçu simulé')
+            value['receipt']['result'].update(stage='suspended', package=None, out_of_scope='coding',
+                                              explanation='Épreuve générale, sans tâche de travail concrète')
+            return value
+        with patch.object(views, 'BENCHMARK_REFERENCES', references), patch.object(self, 'prepare', suspended):
+            page, _, _ = self.request('/preparation')
+            self.submit(page, '/access/key', {'key': KEY})
+            page, _, _ = self.request('/preparation')
+            page = self.submit(page, '/dossiers', {'request': 'Besoin privé fictif : une épreuve générale de programmation'})
+            dossier = page.link('Actualiser')
+            prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+            page, _, _ = self.request(dossier)
+            self.assertIn('Bench-X ne peut pas comparer cette tâche', page.visible)
+            self.assertEqual('/evaluations-externes', page.link('Évaluations externes'))
+            target = page.link('Atelier Code')
+            direct = self.request('/evaluations-externes/atelier-code')[2]
+            notice, headers, raw = self.request(target)
+            self.assertEqual(direct, raw)
+            self.assertEqual('no-referrer', headers['Referrer-Policy'])
+            self.assertNotIn('Besoin privé', notice.visible)
+            self.assertNotIn('Atelier Retiré', page.visible)
+            self.assertEqual('/preparation', notice.link('Décrire mon cas'))
+            # Un retrait est immédiatement reflété dans les renvois, sans autre liste à maintenir
+            with patch.dict(references['atelier-code'], availability='withdrawn'):
+                page, _, _ = self.request(dossier)
+                self.assertNotIn('Atelier Code', page.visible)
+                self.assertIn('Source retirée', self.request(target)[0].visible)
+
     def test_parcours_complet(self):
         page, _, _ = self.request('/')
         self.examine(page, '/', 'accueil', 'Décrire mon cas d’usage')
@@ -291,7 +395,7 @@ class ParcoursComplet(unittest.TestCase):
         page = self.submit(page, '/dossiers', {'request': 'Trop court'}, status=400)
         self.examine(page, '/preparation/dossiers', 'erreur de saisie', 'Corriger et renvoyer')
         self.assertIn('Trop court', page.visible)
-        page = self.submit(page, '/dossiers', {'request': 'Transformer des notes de réunion en une liste complète des actions à relire'})
+        page = self.submit(page, '/dossiers', {'request': 'Transformer des notes de réunion sur le code et les mathématiques en une liste complète des actions à relire'})
         dossier = page.link('Actualiser')
         self.examine(page, dossier, 'attente', None)
         self.assertEqual(1, page.visible.count('Actualiser'))
@@ -308,6 +412,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'exemple', 'Oui, c’est le travail à tester')
         self.assertIn('Relever toutes les actions', page.visible)
+        self.assertNotIn('Bench-X ne peut pas comparer cette tâche', page.visible)
         self.assertIn('cette vérification est payée avec votre clé OpenRouter', page.visible)
         position = {key: next(i for i, n in enumerate(page.nodes) if test(n)) for key, test in (
             ('correction', lambda n: n['tag'] == 'details' and n['attrs'].get('class') == 'corr'),

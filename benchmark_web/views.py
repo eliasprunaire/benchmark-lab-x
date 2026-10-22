@@ -6,6 +6,7 @@ forme les vues structurées renvoyées par l'exécuteur.
 from pathlib import Path
 import re
 import secrets
+from urllib.parse import urlsplit
 
 from benchmark.preparation import CONTEXT_MAX, binding
 from benchmark.storage import _strict_json as encode
@@ -189,10 +190,98 @@ def page_script(value):
 
 
 BENCHMARK_REFERENCES = {
-    'math': (('MathArena', 'https://matharena.ai/', 'Raisonnement mathématique et problèmes de compétition'),),
-    'coding': (('LiveCodeBench', 'https://livecodebench.github.io/', 'Exercices de programmation'),
-               ('SWE-bench', 'https://www.swebench.com/', 'Résolution de problèmes logiciels dans des dépôts de code')),
+    # Références historiques uniquement : aucune vérification éditoriale ni sélection élargie approuvée
+    'matharena': {'name': 'MathArena', 'url': 'https://matharena.ai/', 'category': 'math',
+                  'work': 'Raisonnement mathématique et problèmes de compétition',
+                  'availability': 'available', 'verification': 'unverified'},
+    'livecodebench': {'name': 'LiveCodeBench', 'url': 'https://livecodebench.github.io/', 'category': 'coding',
+                      'work': 'Exercices de programmation', 'availability': 'available', 'verification': 'unverified'},
+    'swe-bench': {'name': 'SWE-bench', 'url': 'https://www.swebench.com/', 'category': 'coding',
+                  'work': 'Résolution de problèmes logiciels dans des dépôts de code',
+                  'availability': 'available', 'verification': 'unverified'},
 }
+REFERENCE_CATEGORIES = {'math': 'Mathématiques', 'coding': 'Programmation'}
+REFERENCE_VERIFICATIONS = {'verified': 'Vérifiée', 'unverified': 'Vérification insuffisante'}
+
+
+def reference_verified(reference):
+    return reference.get('verification') == 'verified' and bool(reference.get('checked_at'))
+
+
+def reference_url(reference):
+    url = reference.get('url') or ''
+    # urlsplit découpe une URL mais ne la valide pas ; le navigateur ne reçoit que des liens HTTPS sans authentification
+    if not url or any(c.isspace() or ord(c) < 32 or ord(c) == 127 or c == '\\' for c in url):
+        return None
+    try:
+        parsed = urlsplit(url)
+        if (parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.port is not None and parsed.port != 443
+                or not re.fullmatch(r'[A-Za-z0-9.-]+', parsed.hostname)):
+            return None
+    except ValueError:
+        return None
+    return url
+
+
+def reference_notice(reference):
+    url = reference_url(reference)
+    content = '<dl>' + ''.join('<dt>' + label + '</dt><dd>' + text(reference.get(key) or 'Inconnue') + '</dd>'
+        for key, label in (('work', 'Travail mesuré'), ('scope', 'Portée'), ('limits', 'Limites'),
+                           ('version', 'Version'), ('published_at', 'Date de la source'),
+                           ('checked_at', 'Date de vérification éditoriale'))) + '</dl>'
+    if not reference_verified(reference):
+        content += '<p class="notice">Vérification insuffisante. Cette source n’est pas une recommandation.</p>'
+    else:
+        content += '<p>Vérification éditoriale effectuée.</p>'
+    if reference.get('availability') != 'available':
+        content += '<p class="notice">Source retirée : indisponible.</p><p>Source officielle : ' + text(url or 'Inconnue') + '</p>'
+    elif not url:
+        content += '<p class="notice">Lien officiel indisponible.</p><p>Source officielle : Inconnue.</p>'
+    else:
+        content += '<p>Source disponible.</p><p>Source officielle : <a href="' + text(url) + '" rel="noreferrer noopener">' + text(url) + '</a></p>'
+    return content
+
+
+def render_references(value):
+    back = '<p><a href="/evaluations-externes">Toutes les évaluations externes</a></p>'
+    need = '<p><a href="/preparation">Décrire mon cas d’usage</a></p>'
+    introduction = '<p>Ces évaluations externes ne prouvent pas la réussite sur votre besoin particulier.</p>'
+    if value.get('reference_id'):
+        reference = BENCHMARK_REFERENCES[value['reference_id']]
+        return reference['name'], back + introduction + reference_notice(reference) + need
+    content = introduction + '<p>La sélection initiale et sa maintenance restent à approuver avant ouverture réelle.</p>'
+    available = {identity: reference for identity, reference in BENCHMARK_REFERENCES.items()
+                 if reference.get('availability') == 'available'}
+    categories = {reference['category']: REFERENCE_CATEGORIES.get(reference['category'], reference['category'])
+                  for reference in available.values()}
+    query, category, verification = (value.get(key, '') for key in ('q', 'category', 'verification'))
+    content += ('<form method="get" action="/evaluations-externes"><label for="q">Rechercher une évaluation</label>'
+                '<input type="text" id="q" name="q" value="' + text(query) + '">')
+    for key, label, choices in (('category', 'Travail mesuré', categories),
+                                 ('verification', 'Vérification éditoriale', REFERENCE_VERIFICATIONS)):
+        content += '<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key + '"><option value="">Tous</option>'
+        content += ''.join('<option value="' + text(choice) + '"' + (' selected' if value.get(key) == choice else '')
+                           + '>' + text(name) + '</option>' for choice, name in choices.items()) + '</select>'
+    content += '<button type="submit">Rechercher</button></form><p><a href="/evaluations-externes">Effacer la recherche et les filtres</a></p>'
+    found = []
+    for identity, reference in available.items():
+        if category and reference['category'] != category:
+            continue
+        if verification and reference_verified(reference) != (verification == 'verified'):
+            continue
+        searchable = ' '.join(str(part or '') for key, part in reference.items() if key != 'url').casefold()
+        searchable += ' ' + categories[reference['category']].casefold()
+        if all(term in searchable for term in query.casefold().split()):
+            found.append((identity, reference))
+    for identity, reference in found:
+        content += ('<section><h2><a href="/evaluations-externes/' + text(identity) + '">'
+                    + text(reference['name']) + '</a></h2>' + reference_notice(reference) + '</section>')
+    if not available:
+        content += '<p>Aucune évaluation externe disponible.</p>'
+    elif not found:
+        content += '<p>Aucune évaluation ne correspond à cette recherche. Modifiez la recherche ou les filtres.</p>'
+    return 'Évaluations externes', content + need + '<p><a href="/">Accueil</a></p>'
 
 
 def render_task_index(task):
@@ -286,10 +375,12 @@ def render(value, csrf, path='/preparation', *, error=False):
     navigation = '' if error else preparation_steps(value)
     title = 'Décrire mon cas d’usage'
     # `aria-current` seulement sur l'entrée qui est la page affichée, jamais sur une page descendante ni d'erreur
-    current = None if error else {'home': '/', 'privacy_data': '/preparation/data'}.get(
+    current = None if error else {'home': '/', 'privacy_data': '/preparation/data',
+                                 'references': '/evaluations-externes' if not value.get('reference_id') else None}.get(
         value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
-                   for href, label in (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données')))
+                   for href, label in (('/', 'Accueil'), ('/evaluations-externes', 'Évaluations externes'),
+                                       ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données')))
     if error:
         title = value.get('title') or ('Service momentanément indisponible' if value.get('unavailable') else 'Votre action n’a pas abouti')
         submitted = value.get('form')
@@ -334,6 +425,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, content = render_bootstrap(value)
     elif value.get('kind') == 'legal':
         title, _, content = LEGAL_PAGES[value['path']]
+    elif value.get('kind') == 'references':
+        title, content = render_references(value)
     elif value.get('kind') == 'privacy_data':
         title, content = render_privacy_page(value, csrf)
     elif value.get('kind') == 'access':
@@ -555,11 +648,14 @@ def render(value, csrf, path='/preparation', *, error=False):
                 body = '<p class="notice">' + text(value['notice']) + '</p>' + body
             content += state_block(tone, 'Où j’en suis', heading, body, actions)
         if referral:
-            references = BENCHMARK_REFERENCES.get(referral, ())
+            references = [(identity, reference) for identity, reference in BENCHMARK_REFERENCES.items()
+                          if reference['category'] == referral and reference.get('availability') == 'available']
             if references:
                 content += section('Où comparer ce type de tâche', '<ul>' + ''.join(
-                    '<li><a href="' + href + '" rel="noreferrer">' + label + '</a> : ' + description + '.</li>'
-                    for label, href, description in references) + '</ul>')
+                    '<li><a href="/evaluations-externes/' + text(identity) + '" rel="noreferrer">'
+                    + text(reference['name']) + '</a> : ' + text(reference['work']) + '.</li>'
+                    for identity, reference in references) + '</ul>')
+            content += '<p><a href="/evaluations-externes" rel="noreferrer">Consulter les évaluations externes</a></p>'
             content += '<p><a class="button sec" href="/preparation">Décrire un autre cas d’usage</a></p>'
         links = [] if '>Actualiser</a>' in actions else [f'<a href="{text(path)}">Actualiser</a>']
         if path != url:
