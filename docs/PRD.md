@@ -57,6 +57,7 @@ Qualité ou stabilité ne deviennent des critères que si une tâche les défini
 Le produit réunit les capacités ci-dessous et les [critères d’acceptation produit](#12-critères-dacceptation-produit).
 
 - parcours public de description, clarification et préparation assistée d’un dossier fictif consultable et modifiable
+- répertoire éditorial d’évaluations externes, consultable sans session, clé ni appel modèle
 - catalogue de tâches versionnées, avec contrat et cas d'essai identifiés ; aucune demande n’y est publiée automatiquement
 - plusieurs campagnes, chacune liée à une version de tâche, à ses cas et à un panel figé
 - résultats réellement acquis et évalués sur le catalogue et le panel approuvés
@@ -179,6 +180,18 @@ Le désordre repose sur des pièces dispersées et des noms imparfaits, sans cac
 Le calendrier illustre un suivi mensuel le 5 pour le mois précédent, un point semestriel à partir du 15 juin 2027 et une préparation 30 jours avant la clôture fictive du 31 décembre 2027. Il ne définit aucune échéance légale et ne certifie aucune comptabilité. Préparer un calendrier ne prouve ni son installation ni une sonnerie sur le téléphone ; des pièces textuelles ne testent pas l’OCR. Le dossier doit préciser la relecture et les adaptations recevables sans appeler une correction de fond une simple relecture.
 
 Cette illustration de conception n’est ni un contrat gelé ni une campagne. Les fichiers évoqués dans l’exemple ne sont pas fournis par cette spécification ; ils devront exister avant un aperçu de tâche validable. Une réussite sur ce cas fictif, même validé, ne prouve pas la réussite sur les dossiers réels de l’utilisateur. Un exemple pédagogique public n’est pas réputé inédit pour les modèles.
+
+### Consulter des évaluations externes
+
+Le répertoire d’évaluations externes aide à trouver des sources officielles pertinentes pour un travail recherché. Il reste distinct du catalogue des tâches Bench-X et des comparaisons privées. Une évaluation externe ne prouve pas la réussite sur le besoin particulier du visiteur.
+
+Le visiteur accède au même répertoire depuis l’accueil, un lien direct ou une préparation suspendue. Il consulte les notices, recherche des termes et applique des filtres explicites, sans session, clé, JavaScript ni création de dossier. Aucun filtre de préférence n’est précoché. Aucun score global ni classement préférentiel des sources n’est produit. La recherche ne dépend ni de Jev ni d’un appel modèle.
+
+Chaque notice indique la source officielle, le travail mesuré, sa portée, ses limites, sa version ou date et sa date de vérification éditoriale. Les informations absentes restent inconnues. La sélection initiale couvre des besoins distincts au-delà des trois destinations de réorientation historiques ; elle ne promet aucune exhaustivité. Son contenu et la responsabilité de sa maintenance sont approuvés avant ouverture réelle.
+
+Une recherche sans résultat et un répertoire vide proposent de modifier la recherche ou de décrire un besoin. Une source retirée reste signalée comme indisponible lors d’un accès direct. Une source insuffisamment vérifiée porte cette limite et n’est pas présentée comme recommandée. Ces états conservent l’accès à la description d’un besoin.
+
+La consultation ne transmet aucun besoin privé aux sites externes, y compris dans les URL et les référents HTTP. Les notices ne rendent aucun dossier privé public. Le parcours reste utilisable au clavier et sur petit écran. La collecte automatique de sources, la recherche assistée et la publication d’épreuves Bench-X ne font pas partie de cette capacité.
 
 ### Consulter les résultats
 

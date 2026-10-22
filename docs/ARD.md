@@ -119,6 +119,16 @@ La restitution relie les identités du catalogue, de la tâche et de la campagne
 
 La projection référence les versions de schéma, de présentation, de conclusion et de pièces utilisées. Sa mise à disposition doit être cohérente : une consultation ne mélange pas une conclusion nouvelle avec les pièces d’une publication précédente. Une nouvelle présentation ne relance aucune acquisition et ne modifie aucun verdict ; son exposition exige l’autorité de publication correspondante.
 
+### 4.8 Répertoire d’évaluations externes
+
+Le serveur public sert un répertoire éditorial de notices, distinct des tâches, campagnes et dossiers privés. Chaque notice possède une identité stable, sa source officielle et les métadonnées définies par le [PRD](PRD.md#consulter-des-évaluations-externes). Le statut de disponibilité et la vérification éditoriale restent explicites.
+
+La consultation, la recherche simple et les filtres s’exécutent sur les notices disponibles, sans transport modèle ni résolution de clé. Ils ne créent ni session requise, ni dossier, ni campagne. Le même contenu alimente l’accès direct et les renvois de préparation. Les identifiants et liens proviennent du répertoire ; les textes de recherche ne construisent aucune destination externe.
+
+Le rendu serveur permet l’usage sans JavaScript. Les entrées et textes sont validés et échappés selon les frontières existantes. Les liens externes ne transmettent ni besoin privé ni référent contenant des données privées. Aucun accès aux pièces privées n’est nécessaire pour servir une notice.
+
+Le retrait d’une notice produit un état indisponible explicite, y compris sur son lien direct. Une vérification éditoriale insuffisante reste visible. Le répertoire vide et la recherche sans résultat conservent une sortie vers la description d’un besoin. Cette capacité réutilise le serveur et les harnais existants ; elle ne requiert ni nouveau service, ni Jev, ni acquisition automatique de sources.
+
 ## 5. Flux minimal
 
 ```text
