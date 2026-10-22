@@ -20,6 +20,7 @@ import secrets
 from time import monotonic
 from urllib.parse import parse_qs, urlsplit
 
+from benchmark import editorial
 from benchmark.runtime import encode
 from benchmark.service import executor_health, preparation_request, run
 from benchmark.storage import _unique_object
@@ -33,6 +34,7 @@ _ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*', '<poli
 _ROUTE_PATTERNS = (
     '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
     '/evaluations-externes', '/evaluations-externes/<id>',
+    '/epreuves', '/epreuves/<id>/<id>', '/epreuves/<id>/<id>/pieces/<id>',
     '/mentions-legales', '/cgu', '/confidentialite',
     '/preparation', '/preparation/privacy.js', '/preparation/style.css',
     '/preparation/fonts/<police>.woff2', '/preparation/fonts/OFL-<police>.txt',
@@ -161,8 +163,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
 
     Le journal d'accès est émis au niveau INFO et n'est pas configuré ici : l'appelant
     règle `logging`, comme le fait `runtime.main`, sinon les lignes disparaissent.
-    `public` reste accepté pour le contrat CLI : aucune projection n'est servie tant
-    qu'aucune restitution réelle n'est approuvée (BX-12).
+    `public` reçoit les épreuves éditoriales. Les projections fictives S6 ne sont
+    pas servies tant qu'aucune restitution réelle n'est approuvée (BX-12).
     """
     # Deux questions distinctes : qui relaie le public (BX-15) et qui supervise ; vides, rien n'est ouvert
     trusted_proxies, readiness_clients = _addresses(trusted_proxies), _addresses(readiness_clients)
@@ -553,6 +555,36 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     return
                 value = {'kind': 'references', 'reference_id': identity, **fields}
                 self.respond(200, views.render(value, '', self.path), 'text/html; charset=utf-8')
+                return
+            if reference_path == '/epreuves' or reference_path.startswith('/epreuves/'):
+                if urlsplit(self.path).query:
+                    self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                    return
+                try:
+                    if reference_path == '/epreuves':
+                        kind, payload = 'page', editorial.catalog_view(public)
+                    else:
+                        version_path = re.fullmatch(r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})', reference_path)
+                        piece = re.fullmatch(
+                            r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/pieces/([A-Za-z0-9_-]{1,128})',
+                            reference_path)
+                        if version_path:
+                            kind, payload = 'page', editorial.version_view(public, *version_path.groups())
+                        elif piece:
+                            kind, payload = 'piece', editorial.piece_bytes(public, *piece.groups())
+                        else:
+                            self.not_found()
+                            return
+                except editorial.NotFound:
+                    self.not_found()
+                    return
+                except ValueError:
+                    self.not_found()
+                    return
+                if kind == 'piece':
+                    self.respond(200, payload, 'text/plain; charset=utf-8')
+                else:
+                    self.respond(200, views.render(payload, '', reference_path), 'text/html; charset=utf-8')
                 return
             if self.path in _RESOURCES:
                 raw, media, etag = resources[self.path] if resources else _load_resource(*_RESOURCES[self.path])
