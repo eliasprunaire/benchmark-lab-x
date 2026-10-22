@@ -76,7 +76,7 @@ La sélection d’un modèle ne prouve ni sa disponibilité ni sa compatibilité
 
 Les assistants d’accueil, de préparation et de jugement sont sélectionnés séparément du panel candidat. Aucun assistant n’est déclaré qualifié, disponible ou moins cher sans preuve. Le responsable peut retenir un profil OpenRouter déjà approuvé au démarrage, sans modifier le code ; un fichier de profil ne promeut aucun essai en assistant de production. Les essais de préparation examinent la fidélité au besoin vague, l’utilité des questions, l’absence de besoins inventés, la cohérence et la vérifiabilité du cas, ainsi que la conservation des accords lors des modifications. Coûts et provenance sont examinés séparément de cette qualité ; identifiants, méthode d’essai et budget doivent être décidés avant les appels.
 
-Restent ouverts avant réalisation ou ouverture des fonctions concernées : protection contre les abus, articulation des campagnes réelles, publication et alimentation du catalogue. Les sessions, la conservation et le financement personnel suivent les décisions ci-dessous. La confidentialité demeure la règle avant autorisation de publication. Les frontières d’accès et le composant portant l’assistance sont à préciser dans l’[ARD](ARD.md#121-frontières-du-produit). Ces inconnues n’annulent pas le cap produit ; elles n’autorisent aucun choix implicite de compte, quota, prix ou publication automatique.
+Restent ouverts avant réalisation ou ouverture des fonctions concernées : protection contre les abus, articulation des campagnes réelles et publication des résultats. La publication d’épreuves éditoriales suit la politique ci-dessous. Les sessions, la conservation et le financement personnel suivent les décisions ci-dessous. La confidentialité demeure la règle avant autorisation de publication. Les frontières d’accès et le composant portant l’assistance sont à préciser dans l’[ARD](ARD.md#121-frontières-du-produit). Ces inconnues n’annulent pas le cap produit ; elles n’autorisent aucun choix implicite de compte, quota, prix ou publication automatique.
 
 ### 5.2 Extensions
 
@@ -192,6 +192,16 @@ Chaque notice indique la source officielle, le travail mesuré, sa portée, ses 
 Une recherche sans résultat et un répertoire vide proposent de modifier la recherche ou de décrire un besoin. Une source retirée reste signalée comme indisponible lors d’un accès direct. Une source insuffisamment vérifiée porte cette limite et n’est pas présentée comme recommandée. Ces états conservent l’accès à la description d’un besoin.
 
 La consultation ne transmet aucun besoin privé aux sites externes, y compris dans les URL et les référents HTTP. Les notices ne rendent aucun dossier privé public. Le parcours reste utilisable au clavier et sur petit écran. La collecte automatique de sources, la recherche assistée et la publication d’épreuves Bench-X ne font pas partie de cette capacité.
+
+### Publier et consulter une épreuve éditoriale
+
+Le catalogue public accueille des épreuves fictives sélectionnées explicitement. Ayo approuve leur publication, sous une autorité distincte de la maintenance des sources externes. Les dossiers privés et les contributions ne l’alimentent pas automatiquement.
+
+Une opération opérateur explicite soumet une version et ses pièces publiques à cette approbation. Une interface d’administration complète n’est pas exigée. La publication ne demande ni campagne ni résultat préalable. Une épreuve non qualifiée peut être consultée avec son état exact et ses limites ; sa publication ne la qualifie pas.
+
+Le lecteur consulte le catalogue et chaque version sans clé, session ni JavaScript. La notice présente le travail évalué, les cas, les pièces publiées, la version et l’état de qualification. L’absence de résultats publiés reste explicite. Le catalogue vide permet de revenir à la description d’un besoin.
+
+Le retrait vise une version précise. Elle quitte le catalogue disponible ; ses anciennes URL signalent son indisponibilité et ses pièces ne sont plus servies. Aucune nouvelle reprise de cette version n’est admise. Les autres versions et l’historique de décision sont conservés. Le retrait ne promet pas l’effacement des copies externes.
 
 ### Consulter les résultats
 
