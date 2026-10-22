@@ -119,6 +119,16 @@ La restitution relie les identités du catalogue, de la tâche et de la campagne
 
 La projection référence les versions de schéma, de présentation, de conclusion et de pièces utilisées. Sa mise à disposition doit être cohérente : une consultation ne mélange pas une conclusion nouvelle avec les pièces d’une publication précédente. Une nouvelle présentation ne relance aucune acquisition et ne modifie aucun verdict ; son exposition exige l’autorité de publication correspondante.
 
+### 4.7.1 Publication d’une épreuve éditoriale
+
+Une publication d’épreuve référence une identité de tâche, une version documentaire immuable, sa notice et les pièces publiques explicitement sélectionnées. Elle ne requiert aucune campagne. Son état de qualification reste distinct de l’approbation de publication ; une version documentaire non qualifiée ne vaut pas contrat approuvé pour exécution.
+
+L’opération opérateur vérifie l’autorité applicable et les octets approuvés avant d’activer un paquet complet. Ce paquet conserve les pièces publiques indépendamment des dossiers temporaires. Le serveur public lit seulement ce paquet et son état de publication. Il n’accède ni aux références du juge ni aux données privées pour servir la notice.
+
+Les primitives existantes de sélection, d’empreinte, de validation et d’activation atomique sont réutilisées. Les projections fictives historiques conservent leurs formats et leur autorité de test. Elles ne deviennent pas des publications éditoriales par changement de libellé. Aucun nouveau service ni interface d’administration complète n’est requis.
+
+Le retrait conserve une trace liée à la version, sans modifier ses octets approuvés. L’accès public à la notice, aux pièces et l’admission d’une nouvelle reprise vérifient cet état. Une ancienne URL ne contourne pas le retrait. Une nouvelle version ne remplace pas silencieusement une version antérieure.
+
 ### 4.8 Répertoire d’évaluations externes
 
 Le serveur public sert un répertoire éditorial de notices, distinct des tâches, campagnes et dossiers privés. Chaque notice possède une identité stable, sa source officielle et les métadonnées définies par le [PRD](PRD.md#consulter-des-évaluations-externes). Le statut de disponibilité et la vérification éditoriale restent explicites.
@@ -159,7 +169,7 @@ Chaque tâche, version, cas, campagne, contrat, conditions communes, configurati
 - la sortie au reçu d'acquisition
 - le verdict à la sortie, au contrat, à la référence et à la méthode utilisés, ainsi qu’à ses preuves
 - la vue de décision aux seuls verdicts compatibles
-- la publication à la vue et aux preuves explicitement approuvées
+- la publication à la version éditoriale ou à la vue de restitution et aux pièces explicitement approuvées
 
 Un libellé public n'est pas une clé de jointure. La sortie brute et les preuves déjà enregistrées ne sont pas corrigées silencieusement.
 
