@@ -1,10 +1,11 @@
 """Publication, lecture et retrait d’une épreuve éditoriale.
 
 Ce module ne connaît ni campagne, ni stockage privé, ni qualification réelle.
-Il vérifie une autorité et des octets déjà soumis, puis les conserve dans le
-seul répertoire public. Les projections fictives historiques restent dans
-`publications` : une autorité de test, un nom ou d’autres octets ne les y font
-pas entrer, et l’inverse non plus.
+Il vérifie une autorité et des octets déjà soumis. L’admission et le lecteur
+de production n’ouvrent que le répertoire public, et seulement pour l’autorité
+désignée. L’activation de fixture réutilise la même validation dans un
+répertoire séparé : elle ne devient pas une consultation de production.
+Les projections fictives historiques restent dans `publications`.
 """
 from copy import deepcopy
 from hashlib import sha256
@@ -17,9 +18,9 @@ from .validation import identifier, _hash, _texts
 
 SCHEMA = 'benchmark-lab-x/editorial-trial/v1'
 _ROOT = 'editorial-trials'
+_FIXTURE_ROOT = 'editorial-fixture'
 _FIXTURE = ('approbateur-fictif-epreuve', 'FIXTURE_EDITORIAL_TRIAL')
 _PRODUCTION = ('Ayo', 'EDITORIAL_TRIAL')
-_ACTORS = (_FIXTURE, _PRODUCTION)
 _QUALIFICATION = ('ABSENT', 'QUALIFIED', 'BLOCKED')
 _MANIFEST = {'schema_version', 'task_id', 'version_id', 'title', 'work', 'cases', 'limits',
              'qualification_status', 'results_published', 'pieces'}
@@ -46,14 +47,16 @@ def fixture_withdrawal(package_sha256, task_id, version_id):
                 scope='editorial-withdrawal', task_id=task_id, version_id=version_id)
 
 
-def _publish_approval(approval, identity):
+def _document(actor, identity):
+    return dict(actor=actor[0], authority_id=actor[1], package_sha256=identity, scope='editorial-trial')
+
+
+def _publish_approval(approval, identity, actor):
     if type(approval) is not dict or not approval:
         raise ValueError('Autorité absente')
     if type(approval.get('package_sha256')) is str and approval['package_sha256'] != identity:
         raise ValueError('Approbation visant d’autres octets')
-    expected = [dict(actor=actor, authority_id=authority_id, package_sha256=identity, scope='editorial-trial')
-                for actor, authority_id in _ACTORS]
-    if approval not in expected:
+    if approval != _document(actor, identity):
         raise ValueError('Autorité éditoriale refusée')
 
 
@@ -105,13 +108,13 @@ def _manifest(raw):
     return manifest
 
 
-def _validated(bundle, approval):
+def _validated(bundle, approval, actor):
     if type(bundle) is not dict or set(bundle) != {'manifest', 'files', 'package_sha256'}:
         raise ValueError('Paquet incomplet')
     raw, identity, files = bundle['manifest'], bundle['package_sha256'], bundle['files']
     if type(raw) is not bytes or type(identity) is not str or sha256(raw).hexdigest() != identity:
         raise ValueError('Manifeste divergent')
-    _publish_approval(approval, identity)
+    _publish_approval(approval, identity, actor)
     manifest = _manifest(raw)
     if type(files) is not dict:
         raise ValueError('Paquet incomplet')
@@ -159,11 +162,11 @@ def _bytes(fd, name):
     return raw
 
 
-def _read_record(fd, task_id, version_id):
+def _read_record(fd, task_id, version_id, actor):
     manifest_raw = _bytes(fd, 'manifest.json')
     identity = sha256(manifest_raw).hexdigest()
     publication = _decode(_bytes(fd, 'approval.json'))
-    _publish_approval(publication, identity)
+    _publish_approval(publication, identity, actor)
     manifest = _manifest(manifest_raw)
     if (manifest['task_id'], manifest['version_id']) != (task_id, version_id):
         raise ValueError('Identité divergente')
@@ -184,7 +187,7 @@ def _open_child(parent, name):
 
 
 def _ensure_dir(parent, name):
-    if name != _ROOT:
+    if name not in (_ROOT, _FIXTURE_ROOT):
         identifier(name)
     try:
         return _open_child(parent, name)
@@ -193,11 +196,11 @@ def _ensure_dir(parent, name):
         return _open_child(parent, name)
 
 
-def _open_version(root, task_id, version_id):
+def _open_version(root, task_id, version_id, root_name):
     identifier(task_id)
     identifier(version_id)
     try:
-        trials = _open_child(root, _ROOT)
+        trials = _open_child(root, root_name)
     except FileNotFoundError:
         raise NotFound() from None
     try:
@@ -216,12 +219,12 @@ def _open_version(root, task_id, version_id):
         os.close(trials)
 
 
-def _load(destination, task_id, version_id):
+def _load(destination, task_id, version_id, actor, root_name):
     root = _directory(destination)
     try:
-        folder = _open_version(root, task_id, version_id)
+        folder = _open_version(root, task_id, version_id, root_name)
         try:
-            return _read_record(folder, task_id, version_id)
+            return _read_record(folder, task_id, version_id, actor)
         finally:
             os.close(folder)
     finally:
@@ -233,7 +236,7 @@ def _same(record, bundle, approval):
     return record['manifest_raw'] == bundle['manifest'] and record['approval'] == approval and found == bundle['files']
 
 
-def _activate(parent, manifest, bundle, approval):
+def _activate(parent, manifest, bundle, approval, actor):
     task_id, version_id = manifest['task_id'], manifest['version_id']
     try:
         existing = _open_child(parent, version_id)
@@ -241,7 +244,7 @@ def _activate(parent, manifest, bundle, approval):
         existing = None
     if existing is not None:
         try:
-            record = _read_record(existing, task_id, version_id)
+            record = _read_record(existing, task_id, version_id, actor)
             if record['withdrawn']:
                 raise ValueError('Version retirée')
             if not _same(record, bundle, approval):
@@ -261,7 +264,7 @@ def _activate(parent, manifest, bundle, approval):
         for name, raw in bundle['files'].items():
             _write(folder, name, raw)
         os.fsync(folder)
-        record = _read_record(folder, task_id, version_id)
+        record = _read_record(folder, task_id, version_id, actor)
         if record['withdrawn'] or not _same(record, bundle, approval):
             raise ValueError('Paquet incomplet')
         os.rename(stage, version_id, src_dir_fd=parent, dst_dir_fd=parent)
@@ -277,17 +280,16 @@ def _activate(parent, manifest, bundle, approval):
             os.rmdir(stage, dir_fd=parent)
 
 
-def publish(destination, bundle, approval):
-    """Active un paquet complet ou refuse avant qu’une version ne devienne visible"""
+def _publish(destination, bundle, approval, actor, root_name):
     bundle, approval = deepcopy(bundle), deepcopy(approval)
-    manifest = _validated(bundle, approval)
+    manifest = _validated(bundle, approval, actor)
     root = _directory(destination)
     try:
-        trials = _ensure_dir(root, _ROOT)
+        trials = _ensure_dir(root, root_name)
         try:
             task = _ensure_dir(trials, manifest['task_id'])
             try:
-                _activate(task, manifest, bundle, approval)
+                _activate(task, manifest, bundle, approval, actor)
             finally:
                 os.close(task)
         finally:
@@ -296,14 +298,24 @@ def publish(destination, bundle, approval):
         os.close(root)
 
 
-def withdraw(destination, task_id, version_id, approval):
+def publish(destination, bundle, approval):
+    """Active un paquet complet sous l’autorité de production, ou refuse avant toute écriture"""
+    _publish(destination, bundle, approval, _PRODUCTION, _ROOT)
+
+
+def fixture_publish(destination, bundle, approval):
+    """Active un paquet de fixture hors du répertoire lu par la production"""
+    _publish(destination, bundle, approval, _FIXTURE, _FIXTURE_ROOT)
+
+
+def _withdraw(destination, task_id, version_id, approval, actor, root_name):
     """Conserve la trace du retrait sans modifier les octets approuvés"""
     approval = deepcopy(approval)
     root = _directory(destination)
     try:
-        folder = _open_version(root, task_id, version_id)
+        folder = _open_version(root, task_id, version_id, root_name)
         try:
-            record = _read_record(folder, task_id, version_id)
+            record = _read_record(folder, task_id, version_id, actor)
             expected = _withdrawal_document(record['approval'], record['identity'], task_id, version_id)
             if approval != expected:
                 if type(approval) is dict and type(approval.get('package_sha256')) is str and approval['package_sha256'] != record['identity']:
@@ -328,7 +340,7 @@ def withdraw(destination, task_id, version_id, approval):
                 os.rename(pointer, 'withdrawal.json', src_dir_fd=folder, dst_dir_fd=folder)
                 written = False
                 os.fsync(folder)
-                again = _read_record(folder, task_id, version_id)
+                again = _read_record(folder, task_id, version_id, actor)
                 if again['manifest_raw'] != before or {piece['file']: piece['raw'] for piece in again['pieces']} != pieces or not again['withdrawn']:
                     raise ValueError('Octets approuvés modifiés')
             finally:
@@ -343,15 +355,34 @@ def withdraw(destination, task_id, version_id, approval):
         os.close(root)
 
 
-def reprise_admission(destination, task_id, version_id):
-    """Identité publiée admissible pour une reprise future, sans copier le paquet"""
+def withdraw(destination, task_id, version_id, approval):
+    """Retire une version de production sans modifier ses octets approuvés"""
+    _withdraw(destination, task_id, version_id, approval, _PRODUCTION, _ROOT)
+
+
+def fixture_withdraw(destination, task_id, version_id, approval):
+    """Retire une version de fixture sans modifier ses octets approuvés"""
+    _withdraw(destination, task_id, version_id, approval, _FIXTURE, _FIXTURE_ROOT)
+
+
+def _reprise(destination, task_id, version_id, actor, root_name):
     try:
-        record = _load(destination, task_id, version_id)
+        record = _load(destination, task_id, version_id, actor, root_name)
     except NotFound:
         raise ValueError('Version publiée requise') from None
     if record['withdrawn']:
         raise ValueError('Nouvelle reprise refusée')
     return dict(task_id=task_id, version_id=version_id, package_sha256=record['identity'])
+
+
+def reprise_admission(destination, task_id, version_id):
+    """Identité de production admissible pour une reprise future, sans copier le paquet"""
+    return _reprise(destination, task_id, version_id, _PRODUCTION, _ROOT)
+
+
+def fixture_reprise(destination, task_id, version_id):
+    """Identité de fixture admissible pour une reprise future, sans copier le paquet"""
+    return _reprise(destination, task_id, version_id, _FIXTURE, _FIXTURE_ROOT)
 
 
 def _is_id(name):
@@ -362,13 +393,13 @@ def _is_id(name):
     return True
 
 
-def catalog_view(destination):
-    """Versions encore disponibles. Une version retirée ou illisible n’y figure pas."""
+def _catalog(destination, actor, root_name):
+    """Versions encore disponibles. Une version retirée, illisible ou d’une autre autorité n’y figure pas."""
     entries = []
     root = _directory(destination)
     try:
         try:
-            trials = _open_child(root, _ROOT)
+            trials = _open_child(root, root_name)
         except FileNotFoundError:
             return dict(kind='editorial', versions=[])
         try:
@@ -385,7 +416,7 @@ def catalog_view(destination):
                             continue
                         record = None
                         try:
-                            record = _read_record(folder, task_id, version_id)
+                            record = _read_record(folder, task_id, version_id, actor)
                         except (OSError, ValueError):
                             record = None
                         finally:
@@ -402,8 +433,8 @@ def catalog_view(destination):
     return dict(kind='editorial', versions=entries)
 
 
-def version_view(destination, task_id, version_id):
-    record = _load(destination, task_id, version_id)
+def _version(destination, task_id, version_id, actor, root_name):
+    record = _load(destination, task_id, version_id, actor, root_name)
     if record['withdrawn']:
         return dict(kind='editorial', withdrawn=True, task_id=task_id, version_id=version_id)
     manifest = record['manifest']
@@ -413,12 +444,42 @@ def version_view(destination, task_id, version_id):
                 pieces=[dict(id=piece['id'], label=piece['label'], text=piece['text']) for piece in record['pieces']])
 
 
-def piece_bytes(destination, task_id, version_id, piece_id):
+def _piece(destination, task_id, version_id, piece_id, actor, root_name):
     identifier(piece_id)
-    record = _load(destination, task_id, version_id)
+    record = _load(destination, task_id, version_id, actor, root_name)
     if record['withdrawn']:
         raise NotFound()
     for piece in record['pieces']:
         if piece['id'] == piece_id:
             return piece['raw']
     raise NotFound()
+
+
+def catalog_view(destination):
+    """Versions de production encore disponibles"""
+    return _catalog(destination, _PRODUCTION, _ROOT)
+
+
+def version_view(destination, task_id, version_id):
+    """Notice de production, ou version retirée sans son contenu"""
+    return _version(destination, task_id, version_id, _PRODUCTION, _ROOT)
+
+
+def piece_bytes(destination, task_id, version_id, piece_id):
+    """Octets d’une pièce de production encore disponible"""
+    return _piece(destination, task_id, version_id, piece_id, _PRODUCTION, _ROOT)
+
+
+def fixture_catalog(destination):
+    """Versions de fixture encore disponibles, hors du lecteur de production"""
+    return _catalog(destination, _FIXTURE, _FIXTURE_ROOT)
+
+
+def fixture_version(destination, task_id, version_id):
+    """Notice de fixture, hors du lecteur de production"""
+    return _version(destination, task_id, version_id, _FIXTURE, _FIXTURE_ROOT)
+
+
+def fixture_piece(destination, task_id, version_id, piece_id):
+    """Octets d’une pièce de fixture, hors du lecteur de production"""
+    return _piece(destination, task_id, version_id, piece_id, _FIXTURE, _FIXTURE_ROOT)

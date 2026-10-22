@@ -118,14 +118,14 @@ editorial_piece = 'Pièce <script>alert(1)</script>'
 with tempfile.TemporaryDirectory() as editorial_dir:
     editorial_dir = str(Path(editorial_dir).resolve())
     packed, packed_approval = editorial_bundle('version-1', editorial_title, editorial_piece)
-    editorial.publish(editorial_dir, packed, packed_approval)
+    editorial.fixture_publish(editorial_dir, packed, packed_approval)
     editorial_pages = {
-        '/epreuves': views.render(editorial.catalog_view(editorial_dir), '').decode(),
+        '/epreuves': views.render(editorial.fixture_catalog(editorial_dir), '').decode(),
         '/epreuves/tache-fictive/version-1': views.render(
-            editorial.version_view(editorial_dir, 'tache-fictive', 'version-1'), '').decode()}
-    editorial.withdraw(editorial_dir, 'tache-fictive', 'version-1',
-                       editorial.fixture_withdrawal(packed['package_sha256'], 'tache-fictive', 'version-1'))
-    editorial_withdrawn = views.render(editorial.version_view(editorial_dir, 'tache-fictive', 'version-1'), '').decode()
+            editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode()}
+    editorial.fixture_withdraw(editorial_dir, 'tache-fictive', 'version-1',
+                               editorial.fixture_withdrawal(packed['package_sha256'], 'tache-fictive', 'version-1'))
+    editorial_withdrawn = views.render(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode()
 with tempfile.TemporaryDirectory() as empty_dir:
     editorial_empty = views.render(editorial.catalog_view(str(Path(empty_dir).resolve())), '').decode()
 print(json.dumps({**browser_views(), 'reference_search': reference_search, 'reference_notices': reference_notices,
@@ -168,7 +168,7 @@ print(json.dumps({**browser_views(), 'reference_search': reference_search, 'refe
       if (typeof reply === 'number') {res.writeHead(reply).end(); return;}
       res.setHeader('Content-Type', 'text/html'); res.end(rendered[reply]);
     } else if (url.pathname === '/epreuves' || url.pathname.startsWith('/epreuves/')) {
-      // HTML de views.render : la preuve HTTP du paquet reste dans le serveur Python
+      // HTML de la fixture isolée : la preuve HTTP du lecteur de production reste dans le serveur Python
       if (url.pathname.endsWith('/pieces/consigne')) {
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         res.setHeader('X-Content-Type-Options', 'nosniff');
