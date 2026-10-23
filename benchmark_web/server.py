@@ -34,7 +34,7 @@ _ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*', '<poli
 _ROUTE_PATTERNS = (
     '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
     '/evaluations-externes', '/evaluations-externes/<id>',
-    '/epreuves', '/epreuves/<id>/<id>', '/epreuves/<id>/<id>/pieces/<id>',
+    '/epreuves', '/epreuves/<id>/<id>', '/epreuves/<id>/<id>/pieces/<id>', '/epreuves/<id>/<id>/copie',
     '/mentions-legales', '/cgu', '/confidentialite',
     '/preparation', '/preparation/privacy.js', '/preparation/style.css',
     '/preparation/fonts/<police>.woff2', '/preparation/fonts/OFL-<police>.txt',
@@ -282,6 +282,87 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             # Ligne de requête refusée avant les en-têtes : aucun navigateur à servir, et `self.headers` peut manquer
             self.respond(code, {'error': 'Cette requête n’a pas pu être traitée.'}, headers=headers)
 
+        def copy_from_editorial(self):
+            """Créer un dossier privé depuis une version publiée, sans clé ni appel modèle"""
+            reference_path = self.path.split('?', 1)[0]
+            match = re.fullmatch(
+                r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/copie', reference_path)
+            if self.command != 'POST' or urlsplit(self.path).query or match is None:
+                self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                return
+            expected = public_url.rstrip('/') if public_url else f'http://{address}:{port}'
+            if self.headers.get('Origin') not in (None, expected) or \
+                    self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin', 'none'):
+                self.error_page(403, 'Copie refusée', 'Cette demande ne vient pas de Bench-X.')
+                return
+            try:
+                length = self.headers.get('Content-Length', '')
+                if not length.isdecimal() or not 0 < int(length) <= 4096 or self.headers.get('Transfer-Encoding'):
+                    raise ValueError('Corps invalide')
+                try:
+                    raw = self.rfile.read(int(length))
+                except TimeoutError:
+                    self.log_request('<abandon>')
+                    self.close_connection = True
+                    return
+                if len(raw) != int(length) or self.headers.get_content_type() != 'application/x-www-form-urlencoded':
+                    raise ValueError('Corps invalide')
+                values = parse_qs(raw.decode('utf-8'), keep_blank_values=True, strict_parsing=True)
+                if any(len(items) != 1 for items in values.values()):
+                    raise ValueError('Champ répété')
+                body = {key: items[0] for key, items in values.items()}
+                if body != {'copy': '1'}:
+                    raise ValueError('Formulaire invalide')
+            except (ValueError, UnicodeError):
+                self.error_page(400, 'Copie impossible',
+                                'Ce formulaire ne peut pas être traité. Rechargez l’épreuve, puis réessayez.')
+                return
+            try:
+                source = editorial.copy_bundle(public, *match.groups())
+            except editorial.NotFound:
+                self.error_page(404, 'Épreuve introuvable',
+                                'Cette version publiée n’existe plus. Aucun dossier n’a été créé.')
+                return
+            except ValueError as error:
+                messages = {
+                    'Nouvelle reprise refusée': 'Cette version est retirée : aucune nouvelle copie n’est admise.',
+                    'Autorité éditoriale refusée': 'La version publiée n’a pas une autorité valide. Aucun dossier n’a été créé.',
+                    'Approbation visant d’autres octets': 'La version publiée ne correspond plus à son approbation. Aucun dossier n’a été créé.',
+                    'Paquet incomplet': 'Le paquet publié est incomplet. Aucun dossier n’a été créé.',
+                    'Octets divergents': 'Le paquet publié ne correspond plus à ses empreintes. Aucun dossier n’a été créé.',
+                    'Manifeste divergent': 'Le paquet publié ne correspond plus à ses empreintes. Aucun dossier n’a été créé.',
+                    'Sélection publique fermée': 'Le paquet publié contient un contenu non autorisé. Aucun dossier n’a été créé.',
+                    'Pièce illisible': 'Le paquet publié contient une pièce illisible. Aucun dossier n’a été créé.',
+                    'Identité divergente': 'La version publiée ne correspond plus à son identité. Aucun dossier n’a été créé.',
+                }
+                self.error_page(409, 'Copie impossible', messages.get(
+                    str(error), 'La copie n’a pas pu être créée. Aucun dossier n’a été modifié.'))
+                return
+            cookies = SimpleCookie(self.headers.get('Cookie', ''))
+            cookie = cookies.get('benchmark_session')
+            token = cookie.value if cookie else None
+            dossier_id = secrets.token_hex(16)
+            try:
+                result = preparation_request(socket_path, 'POST', '/preparation/copies', token,
+                                             {'dossier_id': dossier_id, 'action_id': secrets.token_hex(16),
+                                              'source': source})
+            except OSError:
+                self.error_page(503, 'Service momentanément indisponible',
+                                'La copie n’a pas pu être enregistrée. Réessayez dans un instant.')
+                return
+            if result['status'] >= 400:
+                message = (result['value'].get('error') if isinstance(result['value'], dict)
+                           else 'La copie n’a pas pu être créée.')
+                self.error_page(result['status'], 'Copie impossible', message)
+                return
+            created_id = result['value'].get('dossier_id') if isinstance(result['value'], dict) else dossier_id
+            if not isinstance(created_id, str) or re.fullmatch(r'[A-Za-z0-9_-]{1,128}', created_id) is None:
+                created_id = dossier_id
+            headers = {'Location': '/preparation/dossiers/' + created_id}
+            if result.get('cookie'):
+                headers['Set-Cookie'] = _session_cookie(result['cookie'])
+            self.respond(303, b'', 'text/html; charset=utf-8', headers)
+
         def preparation(self):
             if re.fullmatch(r'/preparation/fonts/(OFL-)?[A-Za-z]+\.(woff2|txt)', self.path) and self.command in ('GET', 'HEAD'):
                 self.respond(404, {'error': 'NOT_FOUND'})
@@ -397,6 +478,14 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 result = preparation_request(socket_path, 'GET' if self.command == 'HEAD' else self.command,
                                              self.path, token, body, management_token=management_token)
                 relayed = True
+                value = result.get('value')
+                if type(value) is dict and type(value.get('source')) is dict:
+                    source = value['source']
+                    try:
+                        value['source_notice'] = editorial.source_notice(
+                            public, source['task_id'], source['version_id'], source)
+                    except (editorial.NotFound, ValueError, KeyError, TypeError):
+                        value['source_notice'] = {'withdrawn': None, 'reports': [], 'unavailable': True}
                 headers = {}
                 if result.get('cookie'):
                     token = result['cookie']
@@ -526,6 +615,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
         def do_POST(self):
             if self.path == '/preparation' or self.path.startswith('/preparation/'):
                 self.preparation()
+            elif self.path.split('?', 1)[0].startswith('/epreuves/'):
+                self.copy_from_editorial()
             else:
                 self.not_found()
 

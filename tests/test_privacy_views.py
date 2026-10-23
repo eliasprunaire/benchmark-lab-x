@@ -195,6 +195,19 @@ def browser_views():
                                 expires_at=expiry + 'T00:00:00Z', status=status)])
     for name, path in (('safe', '/preparation?view=1'), ('unsafe', '//evil.test')):
         examples['bootstrap-' + name] = dict(kind='session_bootstrap', return_path=path)
+    # #465 : copie privée d’une épreuve publiée, sans package ni qualification importée
+    copy = deepcopy(example_view())
+    copy.update(stage='draft', package=None, validation=None, qualified=False)
+    copy['payload'] = dict(copy['payload'], request='')
+    copy.pop('criteria', None)
+    copy['source'] = dict(task_id='tache-fictive', version_id='version-1', title='Tableau <script>alert(1)</script>',
+                          work='Préparer un tableau par opération', cases=['Cinq débits inventés'],
+                          limits=['Ne certifie aucune comptabilité'], qualification_status='QUALIFIED',
+                          pieces=[dict(id='consigne', label='Consigne',
+                                       text='Pièce source <script>alert(1)</script>')])
+    copy['source_notice'] = dict(withdrawn=False, reports=[dict(
+        summary='Erreur signalée <script>alert(2)</script>', reported_at='2026-10-23T10:00:00+00:00')])
+    examples['copy-dossier'] = copy
     rendered = {name: views.render(value, 'csrf', error=bool(value.get('error'))).decode()
                 for name, value in examples.items()}
     for name, source, version in (('checkout', 'abcdef0123456789', ''),

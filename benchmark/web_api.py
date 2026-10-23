@@ -35,6 +35,12 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
             store.close_expired_ambiguous(p._now())
         except (storage.SchemaError, sqlite3.Error) as error:
             logging.getLogger(__name__).warning('AMBIGUOUS_CLOSE_SKIPPED error=%s', type(error).__name__)
+        if path == '/preparation/copies':
+            # La copie se crée sans clé : une première demande ouvre sa session, protégée par l’origine au web
+            try:
+                p.session(store, token)
+            except p.Denied:
+                _, _, token = p.session(store, None, create=True)
     if enabled and method == 'GET' and path == '/preparation/activity':
         try:
             session_id, csrf, _ = p.session(store, token)
@@ -193,6 +199,10 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                      'dossiers': [{'dossier_id': d, 'revision': r,
                                    'need': store.get_dossier(d, r)['request']} for d, r in rows
                                   if privacy.visible(store._connection, session_id, d)]}, (None if token == current_token else current_token), None
+    if method == 'POST' and path == '/preparation/copies':
+        session_id, csrf, current_token = p.session(store, token)
+        dossier_id, created = p.copy_from_publication(store, session_id, body)
+        return (201 if created else 200), {'dossier_id': dossier_id, 'created': created}, current_token, None
     session_id, csrf, _ = p.session(store, token)
     campaign_reference = None
     access_paths = ('/preparation/access', '/preparation/access/disconnect', '/preparation/access/key')
