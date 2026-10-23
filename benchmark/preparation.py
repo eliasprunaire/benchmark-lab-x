@@ -164,6 +164,99 @@ def connection_for(store):
     return connection
 
 
+_COPY_FIELDS = ('task_id', 'version_id', 'package_sha256', 'manifest', 'pieces')
+
+
+def _source_document(bundle):
+    """Copie exacte validée d’une épreuve publiée, sans autorité ni qualification importées"""
+    from . import editorial
+    if type(bundle) is not dict or not set(_COPY_FIELDS) <= set(bundle):
+        raise Denied('COPY_SOURCE_INVALID')
+    try:
+        source = editorial.copy_document({key: bundle[key] for key in _COPY_FIELDS})
+    except ValueError:
+        raise Denied('COPY_SOURCE_INVALID') from None
+    for key in ('title', 'work', 'cases', 'limits', 'qualification_status'):
+        if key in bundle and bundle[key] != source[key]:
+            raise Denied('COPY_SOURCE_INVALID')
+    return source
+
+
+def _source_of(connection, dossier_id):
+    """Source documentaire conservée à la première révision du dossier, ou None"""
+    row = connection.execute('SELECT checks_json FROM s2_revisions WHERE dossier_id=? AND revision=1',
+                             (dossier_id,)).fetchone()
+    if row is None:
+        return None
+    checks = json.loads(row[0], object_pairs_hook=_unique_object)
+    stored = checks.get('source')
+    if stored is None:
+        return None
+    if type(stored) is not dict or set(stored) != set(_COPY_FIELDS) | {'copied_at'}:
+        raise IntegrityError('Copie de source invalide')
+    source = _source_document({key: stored[key] for key in _COPY_FIELDS})
+    if type(stored['copied_at']) is not str:
+        raise IntegrityError('Copie de source invalide')
+    source['copied_at'] = stored['copied_at']
+    return source
+
+
+def _copy(store, connection, session_id, dossier_id, body):
+    """Créer un dossier privé depuis une copie publiée, sans clé, appel ni réservation"""
+    if type(body) is not dict or set(body) != {'dossier_id', 'action_id', 'source'}:
+        raise ValueError('Formulaire invalide')
+    identifier(dossier_id)
+    identifier(body['action_id'])
+    source = _source_document(body['source'])
+    checks_json = encode({'source': {key: source[key] for key in _COPY_FIELDS} | {'copied_at': _now().isoformat()},
+                          'copy': {'action_id': body['action_id']}, 'fields': []})
+    with _transaction(connection, write=True):
+        same = connection.execute(
+            "SELECT d.dossier_id FROM s2_dossiers d JOIN s2_revisions r ON r.dossier_id=d.dossier_id AND r.revision=1 "
+            "WHERE d.session_id=? AND json_extract(r.checks_json, '$.source.task_id')=? "
+            "AND json_extract(r.checks_json, '$.source.version_id')=? "
+            "AND json_extract(r.checks_json, '$.source.package_sha256')=? ORDER BY d.rowid LIMIT 1",
+            (session_id, source['task_id'], source['version_id'], source['package_sha256'])).fetchone()
+        if same is not None:
+            kept = _source_of(connection, same[0])
+            if kept is None or any(kept[key] != source[key] for key in _COPY_FIELDS):
+                raise IntegrityError('Copie de source divergente')
+            return same[0], False
+        existing = connection.execute('SELECT session_id,current_revision FROM s2_dossiers WHERE dossier_id=?',
+                                      (dossier_id,)).fetchone()
+        if existing:
+            owner(connection, session_id, dossier_id)
+            row = connection.execute('SELECT checks_json FROM s2_revisions WHERE dossier_id=? AND revision=1',
+                                     (dossier_id,)).fetchone()
+            if row is None:
+                raise IntegrityError('Copie sans première révision')
+            stored = json.loads(row[0], object_pairs_hook=_unique_object)
+            kept = stored.get('source')
+            if (stored.get('copy', {}).get('action_id') == body['action_id']
+                    and type(kept) is dict
+                    and all(kept.get(key) == source[key] for key in _COPY_FIELDS)):
+                return dossier_id, False
+            raise ConflictError('Dossier déjà créé')
+        payload = dict(request='', clarifications=[], reformulation='', validated_assumptions=[],
+                       fictional_parameters={}, state='EN_ATTENTE')
+        store.save_dossier(dossier_id, 1, payload)
+        connection.execute('INSERT INTO s2_dossiers VALUES (?,?,?)', (dossier_id, session_id, 1))
+        from .privacy import register_dossier
+        register_dossier(connection, session_id, dossier_id)
+        connection.execute('INSERT INTO s2_revisions VALUES (?,?,?, ?,NULL,NULL,?,?)',
+                           (dossier_id, 1, 'draft', 'Copie d’une épreuve publiée : décrivez votre besoin.',
+                            '[]', checks_json))
+        return dossier_id, True
+
+
+def copy_from_publication(store, session_id, body):
+    """Créer le dossier privé d’une copie publiée, sans transport ni opération"""
+    connection = connection_for(store)
+    if type(body) is not dict or type(body.get('dossier_id')) is not str:
+        raise ValueError('Formulaire invalide')
+    return _copy(store, connection, session_id, body['dossier_id'], body)
+
+
 def admission(store, connection=None, *, transport=None):
     """Autorité d'appel, portée par le transport lié à la session et à sa clé
 
@@ -916,6 +1009,10 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
                 for campaign in result['campaigns']:
                     campaign['evaluations'] = evaluations(store, connection, dossier_id, campaign['campaign_id'])
         result['cases'] = _cases(store, connection, session_id, dossier_id)
+        source = _source_of(connection, dossier_id)
+        if source is not None:
+            result['source'] = {key: source[key] for key in (
+                'task_id', 'version_id', 'title', 'work', 'cases', 'limits', 'qualification_status', 'pieces')}
         if include_history:
             from .restitution import _task_index
             result['current_revision'] = current
@@ -1126,6 +1223,7 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
                 (dossier_id, existing[1])).fetchone()[0])
             if checks.get('out_of_scope') is not None:
                 raise Denied('OUT_OF_SCOPE')
+        document = _source_of(connection, dossier_id) if existing else None
         # Création revérifiée sous l'écriture ; chaque échange suivant rappelle le contrat hérité au préparateur
         inherited = (_case_contract(connection, dossier_id) if existing else
                      _inherited_contract(connection, session_id, body['case_of']) if 'case_of' in body else None)
@@ -1155,11 +1253,15 @@ def submit(store, session_id, dossier_id, body, source, transport, *, enforce_li
                                (dossier_id, revision, 'draft', '', '[]', '{}'))
         operation_id = secrets.token_hex(16)
         context = store.get_dossier(dossier_id, revision)
+        if document is not None and not context['request'] and len(message) < REQUEST_MIN:
+            raise Denied('TEXT_TOO_SHORT', 'message')
         row = connection.execute('SELECT stage,explanation,package_json,package_sha256 FROM s2_revisions WHERE dossier_id=? AND revision=?',
                                  (dossier_id, revision)).fetchone()
         # Exact context lives in immutable operation resources, distinct from the candidate package
         request = dict(message=message, kind=kind, payload=context, stage=row[0], explanation=row[1],
                        package=None if row[2] is None else json.loads(row[2]))
+        if document is not None:
+            request['source'] = document
         request['pieces_seen'] = []
         if request['package'] is not None:
             package_check(store, dossier_id, revision, request['package'], row[3])
@@ -1945,7 +2047,10 @@ def publish(store, operation, request, response):
                          else 'Marqueur de fiction interdit dans le paquet candidat')
     dossier_id, before = operation['dossier_id'], operation['revision']
     payload = deepcopy(request['payload'])
-    if request['kind'] == 'clarify':
+    if request.get('source') is not None and not payload['request'] and request['kind'] == 'clarify':
+        # Le premier besoin d’une copie devient la demande personnelle, jamais une précision de l’épreuve source
+        payload['request'] = request['message']
+    elif request['kind'] == 'clarify':
         payload['clarifications'].append(request['message'])
         # The answer remains attributed user input, never an assistant-invented agreement
         payload['validated_assumptions'].append({'question': request['explanation'], 'answer': request['message']})
@@ -2050,6 +2155,8 @@ def verify_preparation(store, connection):
             raise IntegrityError('Orientation hors périmètre incohérente')
         if raw is not None:
             package_check(store, dossier_id, revision, json.loads(raw), digest)
+    for (dossier_id,) in connection.execute('SELECT dossier_id FROM s2_dossiers').fetchall():
+        _source_of(connection, dossier_id)
     for dossier_id, revision, digest, session_id, date in connection.execute('SELECT * FROM s2_validations').fetchall():
         if not connection.execute('SELECT 1 FROM s2_dossiers d JOIN s2_revisions r USING(dossier_id) '
                                   'WHERE d.dossier_id=? AND d.session_id=? AND r.revision=? AND r.package_sha256=? AND r.stage=?',

@@ -119,6 +119,10 @@ with tempfile.TemporaryDirectory() as editorial_dir:
     editorial_dir = str(Path(editorial_dir).resolve())
     packed, packed_approval = editorial_bundle('version-1', editorial_title, editorial_piece)
     editorial.fixture_publish(editorial_dir, packed, packed_approval)
+    editorial.fixture_report(editorial_dir, 'tache-fictive', 'version-1', dict(
+        actor='approbateur-fictif-epreuve', authority_id='FIXTURE_EDITORIAL_TRIAL', scope='editorial-report',
+        package_sha256=packed['package_sha256'], task_id='tache-fictive', version_id='version-1',
+        summary='Erreur de fixture <script>alert(3)</script>', reported_at='2026-10-23T10:00:00+00:00'))
     editorial_pages = {
         '/epreuves': views.render(editorial.fixture_catalog(editorial_dir), '').decode(),
         '/epreuves/tache-fictive/version-1': views.render(
@@ -1421,6 +1425,8 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.match(text, /Cinq débits inventés/);
       assert.match(text, /Ne certifie aucune comptabilité/);
       assert.match(text, /Pièce <script>alert\(1\)<\/script>/);
+      assert.match(text, /Erreur de fixture <script>alert\(3\)<\/script>/);
+      assert.match(text, /Signalement éditorial/);
       assert.equal(text.includes('Qualification réussie'), false);
       assert.equal(await page.locator('main script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -1435,6 +1441,46 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       await page.screenshot({path: 'reports/463/epreuve-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
       await page.keyboard.press('Enter');
       assert.match(await page.locator('body').innerText(), /Pièce <script>alert\(1\)<\/script>/);
+      await page.goto(origin + '/epreuves/tache-fictive/version-1');
+      const copyLink = page.getByRole('link', {name: 'Créer mon dossier privé'});
+      await copyLink.focus();
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/copy-confirmation');
+      const confirmation = await page.textContent('main');
+      assert.match(confirmation, /Épreuve source/);
+      assert.match(confirmation, /Tableau <script>alert\(1\)<\/script>/);
+      assert.match(confirmation, /Erreur signalée <script>alert\(2\)<\/script>/);
+      assert.match(confirmation, /Pièces copiées/);
+      assert.match(confirmation, /Créer mon dossier privé/);
+      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      const copyButton = page.getByRole('button', {name: 'Créer mon dossier privé'});
+      await copyButton.focus();
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      await page.screenshot({path: 'reports/465/confirmation-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.goto(origin + '/render/copy-dossier');
+      const copied = await page.textContent('main');
+      assert.match(copied, /Épreuve source/);
+      assert.match(copied, /Tableau <script>alert\(1\)<\/script>/);
+      assert.match(copied, /Pièce source <script>alert\(1\)<\/script>/);
+      assert.match(copied, /Erreur signalée <script>alert\(2\)<\/script>/);
+      assert.match(copied, /Sa qualification publiée ne qualifie pas ce dossier/);
+      assert.match(copied, /La copie reste consultable sans clé/);
+      assert.equal(await page.locator('script[src*="privacy.js"]').count(), 1);
+      assert.equal(await page.locator('main script:not([src])').count(), 1);
+      assert.equal(await page.locator('main img, main script[src*="alert"]').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      let sourceFocused = false;
+      for (let press = 0; press < 40 && !sourceFocused; press++) {
+        await page.keyboard.press('Tab');
+        sourceFocused = await page.evaluate(() => document.activeElement?.tagName === 'SUMMARY');
+      }
+      assert.ok(sourceFocused, 'pièce source non atteinte au clavier');
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      mkdirSync('reports/465', {recursive: true});
+      await page.screenshot({path: 'reports/465/copie-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
       await page.goto(origin + '/render/editorial-empty');
       assert.match(await page.textContent('main'), /Aucune épreuve publiée/);
       assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
@@ -1443,6 +1489,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       const withdrawn = await page.textContent('main');
       assert.match(withdrawn, /Cette version est retirée/);
       assert.match(withdrawn, /Aucune nouvelle reprise/);
+      assert.match(withdrawn, /Erreur de fixture <script>alert\(3\)<\/script>/);
       assert.equal(withdrawn.includes('Pièce <script>'), false);
       assert.equal(withdrawn.includes('Tableau'), false);
       assert.equal(await page.locator('main a[href*="/pieces/"]').count(), 0);

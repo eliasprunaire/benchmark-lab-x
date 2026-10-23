@@ -8,11 +8,14 @@ répertoire séparé : elle ne devient pas une consultation de production.
 Les projections fictives historiques restent dans `publications`.
 """
 from copy import deepcopy
+from datetime import datetime
 from hashlib import sha256
+import fcntl
 import os
 import secrets
+from typing import Any
 
-from .publications import _decode, _directory, _read, _write
+from .publications import _decode, _directory, _listdir, _read, _write
 from .storage import _strict_json as encode, _text
 from .validation import identifier, _hash, _texts
 
@@ -25,6 +28,9 @@ _QUALIFICATION = ('ABSENT', 'QUALIFIED', 'BLOCKED')
 _MANIFEST = {'schema_version', 'task_id', 'version_id', 'title', 'work', 'cases', 'limits',
              'qualification_status', 'results_published', 'pieces'}
 _PIECE = {'file', 'sha256', 'label'}
+_COPY_FIELDS = {'task_id', 'version_id', 'package_sha256', 'manifest', 'pieces'}
+_COPY_PIECE_FIELDS = {'id', 'label', 'file', 'sha256', 'text'}
+_REPORT_TEXT = 2000
 _FIXED = {'manifest.json', 'approval.json'}
 
 
@@ -108,6 +114,55 @@ def _manifest(raw):
     return manifest
 
 
+def copy_document(bundle):
+    """Valide la copie exacte d’une épreuve publiée, sans lire aucun stockage privé"""
+    if type(bundle) is not dict or set(bundle) != _COPY_FIELDS:
+        raise ValueError('Paquet incomplet')
+    task_id, version_id = bundle['task_id'], bundle['version_id']
+    identity, manifest_raw = bundle['package_sha256'], bundle['manifest']
+    identifier(task_id)
+    identifier(version_id)
+    _hash(identity)
+    if type(manifest_raw) is not str:
+        raise ValueError('Paquet incomplet')
+    raw = manifest_raw.encode('utf-8')
+    if sha256(raw).hexdigest() != identity:
+        raise ValueError('Manifeste divergent')
+    manifest = _manifest(raw)
+    if (manifest['task_id'], manifest['version_id']) != (task_id, version_id):
+        raise ValueError('Identité divergente')
+    pieces = bundle['pieces']
+    declared = manifest['pieces']
+    if type(pieces) is not list or len(pieces) != len(declared):
+        raise ValueError('Paquet incomplet')
+    seen = set()
+    copied = []
+    for piece in pieces:
+        if type(piece) is not dict or set(piece) != _COPY_PIECE_FIELDS:
+            raise ValueError('Paquet incomplet')
+        pid = piece['id']
+        identifier(pid)
+        if pid in seen or pid not in declared:
+            raise ValueError('Sélection publique fermée')
+        seen.add(pid)
+        source = declared[pid]
+        if piece['file'] != source['file'] or piece['label'] != source['label']:
+            raise ValueError('Sélection publique fermée')
+        _hash(piece['sha256'])
+        if piece['sha256'] != source['sha256']:
+            raise ValueError('Octets divergents')
+        if type(piece['text']) is not str or sha256(piece['text'].encode('utf-8')).hexdigest() != piece['sha256']:
+            raise ValueError('Octets divergents')
+        copied.append(dict(id=pid, label=piece['label'], file=piece['file'],
+                           sha256=piece['sha256'], text=piece['text']))
+    if seen != set(declared):
+        raise ValueError('Paquet incomplet')
+    return dict(task_id=task_id, version_id=version_id, package_sha256=identity, manifest=manifest_raw,
+                title=manifest['title'], work=manifest['work'], cases=list(manifest['cases']),
+                limits=list(manifest['limits']), qualification_status=manifest['qualification_status'],
+                pieces=copied)
+
+
 def _validated(bundle, approval, actor):
     if type(bundle) is not dict or set(bundle) != {'manifest', 'files', 'package_sha256'}:
         raise ValueError('Paquet incomplet')
@@ -135,11 +190,13 @@ def _validated(bundle, approval, actor):
 
 
 def _names(fd, pieces):
-    names = set(os.listdir(fd))
+    names = set(_listdir(fd))
     allowed = set(_FIXED)
     allowed.update(piece['file'] for piece in pieces.values())
     if 'withdrawal.json' in names:
         allowed.add('withdrawal.json')
+    if 'report.json' in names:
+        allowed.add('report.json')
     if names != allowed:
         raise ValueError('Sélection publique fermée')
 
@@ -153,6 +210,34 @@ def _withdrawal(fd, publication, identity, task_id, version_id):
     if found != _withdrawal_document(publication, identity, task_id, version_id):
         raise ValueError('Retrait divergent')
     return True
+
+
+def _report_document(publication, identity, task_id, version_id):
+    return dict(actor=publication['actor'], authority_id=publication['authority_id'], package_sha256=identity,
+                scope='editorial-report', task_id=task_id, version_id=version_id)
+
+
+def _read_report(fd, publication, identity, task_id, version_id):
+    try:
+        raw = _read(fd, 'report.json')
+    except FileNotFoundError:
+        return None
+    found = _decode(raw)
+    expected = _report_document(publication, identity, task_id, version_id)
+    if (type(found) is not dict or set(found) != set(expected) | {'summary', 'reported_at'}
+            or {key: found[key] for key in expected} != expected):
+        raise ValueError('Signalement divergent')
+    if type(found['summary']) is not str or not found['summary'].strip() or len(found['summary']) > _REPORT_TEXT:
+        raise ValueError('Signalement divergent')
+    if type(found['reported_at']) is not str:
+        raise ValueError('Signalement divergent')
+    try:
+        reported = datetime.fromisoformat(found['reported_at'])
+    except ValueError:
+        raise ValueError('Signalement divergent') from None
+    if reported.tzinfo is None:
+        raise ValueError('Signalement divergent')
+    return dict(summary=found['summary'], reported_at=found['reported_at'])
 
 
 def _bytes(fd, name):
@@ -178,8 +263,9 @@ def _read_record(fd, task_id, version_id, actor):
             raise ValueError('Octets divergents')
         pieces.append(dict(id=pid, label=piece['label'], file=piece['file'], raw=raw, text=raw.decode('utf-8')))
     withdrawn = _withdrawal(fd, publication, identity, task_id, version_id)
+    report = _read_report(fd, publication, identity, task_id, version_id)
     return dict(identity=identity, manifest_raw=manifest_raw, approval=publication, manifest=manifest,
-                pieces=pieces, withdrawn=withdrawn)
+                pieces=pieces, withdrawn=withdrawn, report=report)
 
 
 def _open_child(parent, name):
@@ -231,6 +317,47 @@ def _load(destination, task_id, version_id, actor, root_name):
         os.close(root)
 
 
+def _copy(destination, task_id, version_id, actor, root_name):
+    """Copie exacte d’une version encore disponible, sous verrou partagé avec le retrait"""
+    root = _directory(destination)
+    try:
+        folder = _open_version(root, task_id, version_id, root_name)
+        fcntl.flock(folder, fcntl.LOCK_SH)
+        try:
+            record = _read_record(folder, task_id, version_id, actor)
+            if record['withdrawn']:
+                raise ValueError('Nouvelle reprise refusée')
+            bundle = dict(
+                task_id=task_id, version_id=version_id, package_sha256=record['identity'],
+                manifest=record['manifest_raw'].decode('utf-8'),
+                pieces=[dict(id=piece['id'], label=piece['label'], file=piece['file'],
+                             sha256=sha256(piece['raw']).hexdigest(), text=piece['text'])
+                        for piece in record['pieces']])
+            return copy_document(bundle)
+        finally:
+            fcntl.flock(folder, fcntl.LOCK_UN)
+            os.close(folder)
+    finally:
+        os.close(root)
+
+
+def _notice(destination, task_id, version_id, source, actor, root_name):
+    """Signalements applicables à la filiation, vérifiée par la notice et les pièces conservées"""
+    if type(source) is not dict:
+        raise ValueError('Filiation divergente')
+    record = _load(destination, task_id, version_id, actor, root_name)
+    manifest = record['manifest']
+    kept = [(piece['id'], piece['label'], piece['text']) for piece in record['pieces']]
+    shown = [(piece.get('id'), piece.get('label'), piece.get('text'))
+             for piece in source.get('pieces', []) if type(piece) is dict]
+    if (any(manifest[key] != source.get(key) for key in (
+            'title', 'work', 'cases', 'limits', 'qualification_status'))
+            or sorted(kept) != sorted(shown)):
+        raise ValueError('Filiation divergente')
+    return dict(task_id=task_id, version_id=version_id, withdrawn=record['withdrawn'],
+                reports=[] if record['report'] is None else [record['report']])
+
+
 def _same(record, bundle, approval):
     found = {piece['file']: piece['raw'] for piece in record['pieces']}
     return record['manifest_raw'] == bundle['manifest'] and record['approval'] == approval and found == bundle['files']
@@ -273,7 +400,7 @@ def _activate(parent, manifest, bundle, approval, actor):
     finally:
         if folder is not None:
             if staged:
-                for name in os.listdir(folder):
+                for name in _listdir(folder):
                     os.unlink(name, dir_fd=folder)
             os.close(folder)
         if staged:
@@ -314,6 +441,7 @@ def _withdraw(destination, task_id, version_id, approval, actor, root_name):
     root = _directory(destination)
     try:
         folder = _open_version(root, task_id, version_id, root_name)
+        fcntl.flock(folder, fcntl.LOCK_EX)
         try:
             record = _read_record(folder, task_id, version_id, actor)
             expected = _withdrawal_document(record['approval'], record['identity'], task_id, version_id)
@@ -350,6 +478,7 @@ def _withdraw(destination, task_id, version_id, approval, actor, root_name):
                     except FileNotFoundError:
                         pass
         finally:
+            fcntl.flock(folder, fcntl.LOCK_UN)
             os.close(folder)
     finally:
         os.close(root)
@@ -385,6 +514,91 @@ def fixture_reprise(destination, task_id, version_id):
     return _reprise(destination, task_id, version_id, _FIXTURE, _FIXTURE_ROOT)
 
 
+def copy_bundle(destination, task_id, version_id):
+    """Copie exacte d’une version de production encore disponible"""
+    return _copy(destination, task_id, version_id, _PRODUCTION, _ROOT)
+
+
+def source_notice(destination, task_id, version_id, source):
+    """État de retrait et signalements attribués à la version source, même après retrait"""
+    return _notice(destination, task_id, version_id, source, _PRODUCTION, _ROOT)
+
+
+def _report(destination, task_id, version_id, approval, actor, root_name):
+    """Conserve un signalement attribué à la version, sans modifier ses octets approuvés"""
+    approval = deepcopy(approval)
+    root = _directory(destination)
+    try:
+        folder = _open_version(root, task_id, version_id, root_name)
+        fcntl.flock(folder, fcntl.LOCK_EX)
+        try:
+            record = _read_record(folder, task_id, version_id, actor)
+            expected = _report_document(record['approval'], record['identity'], task_id, version_id)
+            if (type(approval) is not dict or set(approval) != set(expected) | {'summary', 'reported_at'}
+                    or {key: approval[key] for key in expected} != expected):
+                if (type(approval) is dict and type(approval.get('package_sha256')) is str
+                        and approval['package_sha256'] != record['identity']):
+                    raise ValueError('Approbation visant d’autres octets')
+                raise ValueError('Autorité éditoriale refusée')
+            if (type(approval['summary']) is not str or not approval['summary'].strip()
+                    or len(approval['summary']) > _REPORT_TEXT):
+                raise ValueError('Signalement invalide')
+            if type(approval['reported_at']) is not str:
+                raise ValueError('Signalement invalide')
+            try:
+                reported = datetime.fromisoformat(approval['reported_at'])
+            except ValueError:
+                raise ValueError('Signalement invalide') from None
+            if reported.tzinfo is None:
+                raise ValueError('Signalement invalide')
+            raw = encode(approval).encode()
+            try:
+                current = _read(folder, 'report.json')
+            except FileNotFoundError:
+                current = None
+            if current is not None:
+                if current != raw:
+                    raise ValueError('Signalement déjà conservé')
+                return
+            before = record['manifest_raw']
+            pieces = {piece['file']: piece['raw'] for piece in record['pieces']}
+            pointer = '.r-' + secrets.token_hex(16)
+            written = False
+            try:
+                _write(folder, pointer, raw)
+                written = True
+                os.rename(pointer, 'report.json', src_dir_fd=folder, dst_dir_fd=folder)
+                written = False
+                os.fsync(folder)
+                again = _read_record(folder, task_id, version_id, actor)
+                if (again['manifest_raw'] != before
+                        or {piece['file']: piece['raw'] for piece in again['pieces']} != pieces
+                        or again['report'] != dict(summary=approval['summary'],
+                                                   reported_at=approval['reported_at'])):
+                    raise ValueError('Octets approuvés modifiés')
+            finally:
+                if written:
+                    try:
+                        os.unlink(pointer, dir_fd=folder)
+                    except FileNotFoundError:
+                        pass
+        finally:
+            fcntl.flock(folder, fcntl.LOCK_UN)
+            os.close(folder)
+    finally:
+        os.close(root)
+
+
+def report(destination, task_id, version_id, approval):
+    """Signalement éditorial de production, attribué à la version source"""
+    _report(destination, task_id, version_id, approval, _PRODUCTION, _ROOT)
+
+
+def fixture_report(destination, task_id, version_id, approval):
+    """Signalement éditorial de fixture, hors du lecteur de production"""
+    _report(destination, task_id, version_id, approval, _FIXTURE, _FIXTURE_ROOT)
+
+
 def _is_id(name):
     try:
         identifier(name)
@@ -403,13 +617,13 @@ def _catalog(destination, actor, root_name):
         except FileNotFoundError:
             return dict(kind='editorial', versions=[])
         try:
-            for task_id in sorted(name for name in os.listdir(trials) if _is_id(name)):
+            for task_id in sorted(name for name in _listdir(trials) if _is_id(name)):
                 try:
                     task = _open_child(trials, task_id)
                 except OSError:
                     continue
                 try:
-                    for version_id in sorted(name for name in os.listdir(task) if _is_id(name)):
+                    for version_id in sorted(name for name in _listdir(task) if _is_id(name)):
                         try:
                             folder = _open_child(task, version_id)
                         except OSError:
@@ -435,13 +649,16 @@ def _catalog(destination, actor, root_name):
 
 def _version(destination, task_id, version_id, actor, root_name):
     record = _load(destination, task_id, version_id, actor, root_name)
+    value: dict[str, Any] = dict(kind='editorial', withdrawn=record['withdrawn'], task_id=task_id,
+                                 version_id=version_id, report=record['report'])
     if record['withdrawn']:
-        return dict(kind='editorial', withdrawn=True, task_id=task_id, version_id=version_id)
+        return value
     manifest = record['manifest']
-    return dict(kind='editorial', withdrawn=False, task_id=task_id, version_id=version_id, title=manifest['title'],
-                work=manifest['work'], cases=list(manifest['cases']), limits=list(manifest['limits']),
-                qualification_status=manifest['qualification_status'],
-                pieces=[dict(id=piece['id'], label=piece['label'], text=piece['text']) for piece in record['pieces']])
+    value.update(title=manifest['title'], work=manifest['work'], cases=list(manifest['cases']),
+                 limits=list(manifest['limits']), qualification_status=manifest['qualification_status'],
+                 pieces=[dict(id=piece['id'], label=piece['label'], text=piece['text'])
+                         for piece in record['pieces']])
+    return value
 
 
 def _piece(destination, task_id, version_id, piece_id, actor, root_name):

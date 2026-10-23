@@ -278,6 +278,9 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                 raise ValueError('Activité invalide')
             return 200, privacy.activity(store, session_id, body.get('dossier_id'),
                                          campaign_id=body.get('campaign_id')), token, None
+    if method == 'POST' and path == '/preparation/copies':
+        dossier_id, created = p.copy_from_publication(store, session_id, body)
+        return (201 if created else 200), {'dossier_id': dossier_id, 'created': created}, None, None
     if method == 'POST' and (path == '/preparation/dossiers' or
             re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/(messages|validation)', path)):
         if transport is None or (path.endswith('/validation') and qualification_transport is None):

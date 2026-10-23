@@ -333,6 +333,7 @@ def denied_response(error):
         'TOO_SOON': 'Vous venez d’envoyer un message. Patientez un peu avant le suivant.',
         'SOURCE_RATE_LIMIT': 'La limite d’envois par heure est atteinte. Réessayez plus tard.',
         'SOURCE_MISSING': 'Cet envoi n’a pas pu être vérifié. Rechargez la page, puis renvoyez-le.',
+        'COPY_SOURCE_INVALID': 'La copie demandée ne correspond plus au paquet publié. Aucun dossier n’a été créé.',
         'ACCESS_KEY_REJECTED': 'OpenRouter n’a pas pu vérifier cette clé. Votre clé précédente reste en place.',
         'ACCESS_CAP_REQUIRED': 'Utilisez une clé OpenRouter avec un plafond non renouvelable de 50 USD maximum et un solde disponible.',
         'ACCESS_REQUIRED': 'Ajoutez votre clé OpenRouter avant de lancer la comparaison.',
@@ -364,7 +365,8 @@ def denied_response(error):
             + ('sa borne publiée' if refused['reason'] == 'bound' else 'ce que sa fenêtre de contexte laisse après cet exemple')
             + f" : {refused['bound']} jetons au plus. Indiquez une limite plus basse dans « Ajuster la limite de "
             "sortie par modèle ». Rien n’a été enregistré.")
-    status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG', 'SOURCE_MISSING', 'OUTPUT_LIMIT_ABOVE_BOUND') else 403
+    status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG', 'SOURCE_MISSING', 'COPY_SOURCE_INVALID',
+                                   'OUTPUT_LIMIT_ABOVE_BOUND') else 403
     result = {'status': status, 'value': {'error': messages.get(error.code, generic),
               'error_code': error.code, 'error_field': error.field}}
     if error.findings is not None:

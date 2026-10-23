@@ -153,6 +153,25 @@ def closed_preparation(content):
                 fictional_parameters={text(k): text(v) for k, v in parameters.items()}, previous_candidate=previous)
 
 
+def published_source(source):
+    """Contexte documentaire d’une épreuve publiée reprise, sans sa qualification ni ses résultats"""
+    if type(source) is not dict:
+        raise ValueError('Source publiée requise')
+    lines = ['', '', 'Épreuve publiée reprise comme source documentaire. Sa qualification et ses résultats ne '
+                     's’appliquent pas à ce dossier : adapte-la au besoin personnel sans la recopier telle quelle.',
+             'Titre : ' + text(source['title']), 'Travail évalué : ' + text(source['work'])]
+    for label, values in (('Cas', source['cases']), ('Limites', source['limits'])):
+        lines.append(label + ' :')
+        lines.extend('- ' + text(value) for value in values)
+    lines.append('Qualification publiée : ' + text(source['qualification_status']))
+    lines.append('Pièces :')
+    for piece in source['pieces']:
+        if type(piece) is not dict:
+            raise ValueError('Pièce source requise')
+        lines.extend(['--- ' + text(piece['label']) + ' ---', text(piece['text'])])
+    return '\n'.join(lines)
+
+
 def preparation(request):
     if not {'payload', 'message', 'kind'} <= request.keys():
         raise ValueError('Contexte de préparation incomplet')
@@ -161,7 +180,10 @@ def preparation(request):
     if type(parameters) is not dict:
         raise ValueError('Paramètres fictifs textuels requis')
     previous = candidate(request['package'], request['pieces_seen']) if request.get('package') else None
-    return closed_preparation(dict(request=payload['request'], message=request['message'],
+    message = request['message']
+    if request.get('source') is not None:
+        message += published_source(request['source'])
+    return closed_preparation(dict(request=payload['request'], message=message,
                                    reformulation=payload['reformulation'], clarifications=payload['clarifications'],
                                    validated_assumptions=payload['validated_assumptions'],
                                    fictional_parameters=parameters, previous_candidate=previous))

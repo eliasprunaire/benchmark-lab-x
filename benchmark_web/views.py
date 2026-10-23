@@ -8,7 +8,7 @@ import re
 import secrets
 from urllib.parse import urlsplit
 
-from benchmark.preparation import CONTEXT_MAX, binding
+from benchmark.preparation import CONTEXT_MAX, REQUEST_MIN, binding
 from benchmark.storage import _strict_json as encode
 
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
@@ -288,12 +288,23 @@ def reference_notice(reference):
     return content
 
 
+def editorial_report(report):
+    """Signalement éditorial attribué à la version, jamais une réécriture de ses octets"""
+    if not report:
+        return ''
+    return state_block('warn', 'Signalement éditorial', 'Erreur signalée sur cette version',
+                       '<p>' + text(report['summary']) + '</p><p class="hint">Attribué à la version source le '
+                       + text(date_lisible_utc(report['reported_at'])) + '. Ce signalement ne corrige pas les pièces '
+                       'ni les preuves déjà conservées.</p>')
+
+
 def render_editorial(value):
     need = '<p><a href="/preparation">Décrire mon cas d’usage</a></p>'
     back = '<p><a href="/epreuves">Toutes les épreuves</a></p>'
     if value.get('withdrawn'):
         content = ('<p class="note">Cette version est retirée. Son contenu et ses pièces ne sont plus disponibles.</p>'
                    '<p>Aucune nouvelle reprise de cette version n’est admise.</p>')
+        content += editorial_report(value.get('report'))
         return 'Version retirée', back + content + need
     if not value.get('version_id'):
         content = ''
@@ -314,6 +325,7 @@ def render_editorial(value):
         content += '<p>Les preuves de qualification ne font pas partie de cette publication.</p>'
     content += '<p class="note">Aucun résultat publié.</p>'
     content += '<p>Cette publication ne qualifie pas l’épreuve et n’autorise aucune exécution.</p>'
+    content += editorial_report(value.get('report'))
     content += '<h2>Cas</h2><ul>' + ''.join('<li>' + text(case) + '</li>' for case in value['cases']) + '</ul>'
     content += '<h2>Limites</h2><ul>' + ''.join('<li>' + text(limit) + '</li>' for limit in value['limits']) + '</ul>'
     content += '<h2>Pièces</h2>'
@@ -321,6 +333,11 @@ def render_editorial(value):
     for piece in value['pieces']:
         content += ('<section><h3><a href="' + base + '/pieces/' + text(piece['id']) + '">' + text(piece['label']) + '</a></h3>'
                     '<pre class="proof-content">' + text(piece['text']) + '</pre></section>')
+    copy_base = '/preparation/copies/' + text(value['task_id']) + '/' + text(value['version_id'])
+    content += section('Préparer mon dossier privé',
+                       '<p>Cette copie conserve exactement la notice et les pièces ci-dessus. Elle ne demande ni clé '
+                       'ni appel aux modèles : vous décrirez ensuite votre besoin et ce qui diffère de cette épreuve.</p>'
+                       '<p><a class="button" href="' + copy_base + '">Créer mon dossier privé</a></p>')
     return value['title'], back + content + need
 
 
@@ -439,6 +456,52 @@ def preparation_steps(value):
     return content + '<small>Cas d’usage privé · pièces entièrement inventées</small></nav>'
 
 
+def render_source_copy(source, notice, *, future=False):
+    """Notice et pièces exactes conservées dans le dossier, distinctes du besoin personnel"""
+    labels = {'ABSENT': 'Qualification absente', 'QUALIFIED': 'Qualification réussie', 'BLOCKED': 'Qualification bloquée'}
+    status = labels.get(source.get('qualification_status'), 'Qualification absente')
+    content = ('<p class="note">Cette épreuve publiée ' + ('sera conservée' if future else 'est conservée')
+               + ' dans votre dossier avec sa version et son '
+               'empreinte. Sa qualification publiée ne qualifie pas ce dossier : le contrat et la référence de '
+               'votre nouvel exemple seront construits puis vérifiés séparément.</p>'
+               '<dl><dt>Titre</dt><dd>' + text(source['title']) + '</dd>'
+               '<dt>Travail évalué</dt><dd>' + text(source['work']) + '</dd>'
+               '<dt>Version source</dt><dd>' + text(source['version_id']) + '</dd>'
+               '<dt>Qualification publiée</dt><dd>' + text(status) + '</dd></dl>')
+    if source.get('cases'):
+        content += '<h3>Cas de l’épreuve source</h3>' + listing(source['cases'])
+    if source.get('limits'):
+        content += '<h3>Limites de l’épreuve source</h3>' + listing(source['limits'])
+    content += '<h3>Pièces ' + ('copiées' if future else 'conservées') + '</h3>'
+    for piece in source.get('pieces', []):
+        content += ('<details class="example-content"><summary>Lire « ' + text(piece['label']) + ' »</summary>'
+                    '<div class="example-text">' + text(piece['text']) + '</div></details>')
+    if notice.get('withdrawn'):
+        content += ('<p class="notice">Cette version n’est plus disponible au catalogue. Votre copie et ses pièces '
+                    'restent conservées dans ce dossier.</p>')
+    if notice.get('unavailable'):
+        content += '<p class="notice">L’état et les signalements de la source sont momentanément indisponibles.</p>'
+    for report in notice.get('reports', []):
+        content += editorial_report(report)
+    return section('Épreuve source', content, 'source')
+
+
+def render_copy_source(value, csrf):
+    """Confirmation de la copie sous le chemin privé, avec le jeton de la session existante"""
+    source = value['source']
+    path = '/preparation/copies/' + text(source['task_id']) + '/' + text(source['version_id'])
+    content = ('<p class="note">Cette copie conservera exactement la notice et les pièces ci-dessous. '
+               'Aucune clé ni aucun appel aux modèles n’est nécessaire ; vous décrirez ensuite votre besoin.</p>')
+    content += render_source_copy(source, value.get('source_notice') or {}, future=True)
+    content += section('Créer le dossier privé', form(
+        csrf, path, {'copy': '1'},
+        '<p>Le dossier restera privé dans ce navigateur. Sa qualification publiée ne qualifie pas le nouveau dossier.</p>'
+        '<button type="submit">Créer mon dossier privé</button>'))
+    content += ('<p><a href="/epreuves/' + text(source['task_id']) + '/' + text(source['version_id'])
+                + '">Retour à l’épreuve</a></p>')
+    return 'Créer mon dossier privé', content
+
+
 def render(value, csrf, path='/preparation', *, error=False):
     """Native HTML forms, inert evidence and a fixed comparison focus script"""
     def field_attributes(name):
@@ -461,7 +524,8 @@ def render(value, csrf, path='/preparation', *, error=False):
     # `aria-current` seulement sur l'entrée qui est la page affichée, jamais sur une page descendante ni d'erreur
     current = None if error else {'home': '/', 'privacy_data': '/preparation/data',
                                  'references': '/evaluations-externes' if not value.get('reference_id') else None,
-                                 'editorial': '/epreuves' if not value.get('version_id') else None}.get(
+                                 'editorial': '/epreuves' if not value.get('version_id') else None,
+                                 'copy_source': '/preparation'}.get(
         value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
                    for href, label in (('/', 'Accueil'), ('/evaluations-externes', 'Évaluations externes'),
@@ -486,7 +550,8 @@ def render(value, csrf, path='/preparation', *, error=False):
                 HONEYPOT +
                 '<button type="submit">Corriger et renvoyer</button>')
         elif type(submitted) is dict and 'message' in submitted:
-            content += form(csrf, path, {key: submitted[key] for key in ('action_id', 'revision', 'kind')},
+            content += form(csrf, path, {key: str(submitted.get(key, '')) for key in ('action_id', 'revision')}
+                            | {'kind': str(submitted.get('kind', 'clarify'))},
                 '<label for="message">Votre précision ou correction</label>'
                 '<textarea id="message" name="message" required maxlength="1000" rows="4"' + field_attributes('message') + '>' + text(submitted['message']) + '</textarea>' + field_error('message') +
                 HONEYPOT +
@@ -550,6 +615,8 @@ def render(value, csrf, path='/preparation', *, error=False):
     elif value.get('kind') == 'campaign_launch':
         title = 'Vérifier puis lancer la comparaison'
         content = render_campaign_launch_operator(value, csrf)
+    elif value.get('kind') == 'copy_source':
+        title, content = render_copy_source(value, csrf)
     elif value.get('kind') == 'home':
         title = 'Quel modèle d’IA pour votre travail ?'
         content = '<div class="hero"><p class="lead note">Décrivez une tâche de votre travail. '
@@ -648,8 +715,10 @@ def render(value, csrf, path='/preparation', *, error=False):
     else:
         dossier_id, revision = value['dossier_id'], value['revision']
         url = '/preparation/dossiers/' + dossier_id
+        source = value.get('source')
+        source_notice = value.get('source_notice') or {}
         title = ('Votre cas d’usage' if value['validation'] else 'Est-ce le travail que vous voulez tester ?'
-                 if value['package'] else 'Précisons votre besoin')
+                 if value['package'] else 'Votre dossier privé' if source else 'Précisons votre besoin')
         prior_revision = revision != value.get('current_revision', revision)
         snapshot = '/revisions/' in path and any(c['task']['revision'] == revision and c['attempts']
                                                 for c in value.get('campaigns', []))
@@ -669,6 +738,9 @@ def render(value, csrf, path='/preparation', *, error=False):
                   'suspended': ('err', 'Préparation arrêtée', 'Renvoyez votre message pour relancer la préparation.' if can_submit
                                 else 'Vous pourrez renvoyer votre message quand l’envoi sera de nouveau possible.')}
         tone, heading, next_step = stages[value['stage']]
+        if source and value['stage'] == 'draft':
+            tone, heading, next_step = ('action', 'Copie enregistrée',
+                'Décrivez votre besoin et ce qui diffère de l’épreuve source pour préparer votre exemple.')
         if referral:
             title = 'Tâche hors du champ de Bench-X'
             tone, heading, next_step = ('unk', 'Bench-X ne peut pas comparer cette tâche',
@@ -752,16 +824,33 @@ def render(value, csrf, path='/preparation', *, error=False):
             links.append(f'<a href="{text(url)}/revisions/{revision - 1}">Version précédente</a>')
         if links:
             content += '<p class="hint">' + ' · '.join(links) + '</p>'
-        if editable and value['package'] is None:
-            content += section('Votre réponse', form(csrf, url + '/messages',
-                {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
-                '<label for="message">Votre réponse à l’assistant</label><textarea id="message" name="message" rows="3" required maxlength="1000"' + disabled + '></textarea>' + HONEYPOT +
-                '<button type="submit"' + disabled + '>Envoyer ma réponse</button>'))
         payload = value['payload']
-        content += section('Votre besoin', '<p>' + text(payload['request']) + '</p>', 'besoin')
+        if source:
+            content += render_source_copy(source, source_notice)
+        content += section('Votre besoin', ('<p>' + text(payload['request']) + '</p>') if payload['request']
+                           else '<p>Votre besoin personnel n’est pas encore décrit.</p>', 'besoin')
+        if editable and value['package'] is None:
+            if source and not payload['request']:
+                need_disabled = '' if can_submit and editable else ' disabled'
+                content += section('Décrivez votre besoin', form(csrf, url + '/messages',
+                    {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
+                    '<p id="source-need-help" class="hint">Dites ce que vous voulez comparer et ce qui diffère de '
+                    'l’épreuve source. La notice et les pièces conservées ne changent pas. La préparation est payée '
+                    'avec votre clé OpenRouter.</p>'
+                    + ('' if can_submit else '<p class="hint"><a href="/preparation/access">Ajoutez votre clé OpenRouter</a> '
+                       'pour préparer cet exemple. La copie reste consultable sans clé.</p>') +
+                    '<label for="message">Votre besoin personnel</label>'
+                    '<textarea id="message" name="message" rows="4" required minlength="' + str(REQUEST_MIN)
+                    + '" maxlength="1000" aria-describedby="source-need-help"' + need_disabled + '></textarea>' + HONEYPOT +
+                    '<button type="submit"' + need_disabled + '>Préparer mon exemple</button>'))
+            else:
+                content += section('Votre réponse', form(csrf, url + '/messages',
+                    {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
+                    '<label for="message">Votre réponse à l’assistant</label><textarea id="message" name="message" rows="3" required maxlength="1000"' + disabled + '></textarea>' + HONEYPOT +
+                    '<button type="submit"' + disabled + '>Envoyer ma réponse</button>'))
         if value.get('task_index'):
             content += '<details><summary>Historique des versions et des comparaisons</summary>' + render_task_index(value['task_index']) + '</details>'
-        if value.get('message') and 'message' in value['message']:
+        if value.get('message') and 'message' in value['message'] and not source:
             content += section('Votre message à l’origine de cette version', '<p>' + text(value['message']['message']) + '</p>')
         if payload['clarifications'] or payload['validated_assumptions']:
             agreements = listing(payload['clarifications']) if payload['clarifications'] else ''
