@@ -129,6 +129,16 @@ Les primitives existantes de sélection, d’empreinte, de validation et d’act
 
 Le retrait conserve une trace liée à la version, sans modifier ses octets approuvés. L’accès public à la notice, aux pièces et l’admission d’une nouvelle reprise vérifient cet état. Une ancienne URL ne contourne pas le retrait. Une nouvelle version ne remplace pas silencieusement une version antérieure.
 
+### 4.7.2 Copie privée d’une épreuve publiée
+
+L’admission de copie vérifie la version publiée, son autorité, ses empreintes et son absence de retrait. Le dossier privé conserve une copie autonome de la notice et des pièces publiques exactes. Sa filiation lie l’identité de tâche, la version documentaire et l’empreinte du paquet source. Une URL seule ne suffit pas. Le transfert ne donne au serveur public aucun accès direct au stockage privé.
+
+La copie réutilise les contrôles de session, de propriétaire, d’intégrité et de conservation du parcours privé. Elle ne résout aucun transport fournisseur et ne réserve aucun appel. Un paquet incomplet ne devient pas un dossier utilisable. La répétition de la même demande de copie ne crée pas de doublon. Le contrôle du retrait et la conservation de la source doivent rester cohérents lors de demandes concurrentes.
+
+La source documentaire reste distincte du besoin personnel et des révisions préparées. Le préparateur reçoit les contenus utiles comme contexte, sans importer d’autorité de qualification ni de référence réservée au juge. Le contrat et la référence de la nouvelle instance suivent la préparation et la qualification existantes. Les preuves, résultats et coûts des anciennes campagnes gardent leurs identités.
+
+Le signalement éditorial d’une erreur est attribué et lié à la version source. Il reste distinct des octets immuables de publication et des preuves privées. La consultation privée expose les signalements applicables à cette filiation, y compris après un retrait ordinaire. Aucun inventaire public des copies privées n’est créé. Le mécanisme ne requiert ni collecte automatique ni nouveau service.
+
 ### 4.8 Répertoire d’évaluations externes
 
 Le serveur public sert un répertoire éditorial de notices, distinct des tâches, campagnes et dossiers privés. Chaque notice possède une identité stable, sa source officielle et les métadonnées définies par le [PRD](PRD.md#consulter-des-évaluations-externes). Le statut de disponibilité et la vérification éditoriale restent explicites.

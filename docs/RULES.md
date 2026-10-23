@@ -177,6 +177,12 @@ Le coût ne compense jamais une non-admissibilité. Une mesure valide d’une so
 
 **Retrait éditorial.** Une décision de retrait identifie la version concernée et conserve sa trace. Elle ferme son accès public et celui de ses pièces, y compris par leurs anciennes URL, et interdit les nouvelles reprises. L’indisponibilité reste visible sans exposer le contenu retiré. Les autres versions et les preuves historiques restent inchangées. Aucune suppression de copies externes n’est garantie.
 
+**Copie éditoriale privée.** La sélection et la copie d’une version publiée ne requièrent aucune clé et n’autorisent aucun appel. La copie conserve la notice et les pièces exactes, leur version et leur empreinte. La demande personnelle et ses adaptations restent distinctes de la source documentaire. L’accès personnel précède le premier appel de préparation ou de qualification ; les autorités existantes restent applicables.
+
+**Qualification de la copie.** Une qualification publiée ne qualifie pas le dossier dérivé. Le contrat et la référence propres à la nouvelle instance sont construits puis qualifiés avant lancement. Les accords non touchés sont conservés ; les modifications suivent les validations applicables. Les campagnes antérieures ne changent ni de version, ni de résultats, ni de coûts.
+
+**Retrait et erreur de source.** Un retrait antérieur à l’admission interdit une nouvelle copie. Les copies antérieurement admises survivent au retrait éditorial ordinaire sous leur politique privée de conservation. Une erreur connue est signalée par l’autorité éditoriale avec attribution à la version source. Cet avertissement reste visible dans les copies concernées ; il ne réécrit aucune preuve et ne constitue aucune requalification automatique.
+
 ## 11. KISS et évolution
 
 **Règle KISS.** Une complexité entre seulement lorsqu'une itération antérieure démontre le besoin qu'elle résout.
