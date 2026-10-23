@@ -917,6 +917,9 @@ class ParcoursComplet(unittest.TestCase):
             and_terms = search({'q': 'tableau textes'})
             self.assertIn('Tableau des débits', and_terms.visible)
             self.assertNotIn('Note de synthèse', and_terms.visible)
+            # Le texte des pièces n'alimente ni la recherche ni les caractéristiques
+            piece_only = search({'q': 'relève'})
+            self.assertIn('Aucune épreuve ne correspond à cette recherche', piece_only.visible)
             missing_terms = search({'q': 'textes synthèse'})
             self.assertIn('Aucune épreuve ne correspond à cette recherche', missing_terms.visible)
             self.assertNotIn('Aucune épreuve publiée', missing_terms.visible)
