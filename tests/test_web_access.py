@@ -186,6 +186,8 @@ class WebServerCase(unittest.TestCase):
         root = Path(self.temporary.name)
         public = root / 'public'
         public.mkdir()
+        # Le lecteur public refuse un ancêtre symbolique : le répertoire de fixture est résolu
+        public = public.resolve()
         self.executor = FakeExecutor(root / 'executor.sock')
         self.executor.__enter__()
         self.port = _port()
@@ -610,6 +612,21 @@ class AccessServerTests(WebServerCase):
             self.assertNotIn(b'Error response', response, attendu)
             self.assertNotIn(b'<html', response, attendu)
 
+    def test_resultats_publics_absents_sans_relais_ni_cookie(self):
+        """#466 : une adresse de restitution sans paquet reste un 404 public, sans session ni exécuteur"""
+        for path in ('/epreuves/tache-fictive/version-1/campagnes/campagne-1',
+                     '/epreuves/tache-fictive/version-1/campagnes/campagne-1/pieces/output-a'):
+            for method in ('GET', 'HEAD'):
+                with self.subTest(path=path, method=method):
+                    status, headers, raw = self.request(method, path, headers={'Accept': 'text/html'})
+                    self.assertEqual(404, status)
+                    self.assertIsNone(headers.get('Set-Cookie'))
+                    self.assertEqual('no-referrer', headers['Referrer-Policy'])
+                    self.assertEqual('nosniff', headers['X-Content-Type-Options'])
+                    if method == 'GET':
+                        self.assertIn('<html lang="fr">', raw.decode())
+        self.assertTrue(self.executor.requests.empty())
+
 class ProbeTests(WebServerCase):
     """Critère BX-13 : vivacité publique et muette, disponibilité réservée au plan d'administration"""
     web_options = {'readiness_clients': ('::ffff:127.0.0.1',), 'trusted_proxies': ('192.0.2.30',),
@@ -818,7 +835,13 @@ class RouteCanonicalizationTests(unittest.TestCase):
                 ('/epreuves?q=tableau&langue=Fran%C3%A7ais&outil=Tableur', '/epreuves'),
                 ('/epreuves/tache-fictive/version-1', '/epreuves/<id>/<id>'),
                 ('/epreuves/tache-fictive/version-1?q=tableau', '/epreuves/<id>/<id>'),
-                ('/epreuves/tache-fictive/version-1/pieces/consigne', '/epreuves/<id>/<id>/pieces/<id>')):
+                ('/epreuves/tache-fictive/version-1/pieces/consigne', '/epreuves/<id>/<id>/pieces/<id>'),
+                ('/epreuves/tache-fictive/version-1/campagnes/campagne-1',
+                 '/epreuves/<id>/<id>/campagnes/<id>'),
+                ('/epreuves/tache-fictive/version-1/campagnes/campagne-1?sort=cost&direction=desc',
+                 '/epreuves/<id>/<id>/campagnes/<id>'),
+                ('/epreuves/tache-fictive/version-1/campagnes/campagne-1/pieces/output-a',
+                 '/epreuves/<id>/<id>/campagnes/<id>/pieces/<id>')):
             self.assertEqual(expected, canonical_route(path), path)
 
     def test_un_chemin_non_servi_ne_ressort_jamais(self):

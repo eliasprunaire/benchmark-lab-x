@@ -10,6 +10,7 @@ from .validation import identifier
 from .acquisition import campaigns as c
 from .acquisition.recovery import NO_PROGRESS
 from . import evaluation as e, model_catalogue, preparation as p, qualification as q, storage
+from . import public_results
 from .publications import SCHEMA, PRESENTATION_VERSION, _decode
 from .storage import ConflictError, IntegrityError, _strict_json as encode
 
@@ -647,3 +648,220 @@ def preview_view(store, session_id, dossier_id, campaign_id, *, piece_ids, prese
         return dict(kind='projection_preview', comparison=p.page_view(value), pieces=list(links.values()),
                     selected_links={pid: links[pid]['href'] for pid in piece_ids},
                     manifest=_decode(bundle['manifest']), projection_sha256=bundle['projection_sha256'])
+
+
+def _criterion_labels(value):
+    """Libellés publics des critères, jamais leurs identifiants internes"""
+    labels = {}
+    for row in value['rows']:
+        specification = row['qualification']['contract']['specification']
+        items = ([item for criterion in specification['obligations']
+                  for item in [criterion] + criterion.get('elements', [])]
+                 + specification['eliminatory_errors'] + specification['secondary_criteria'])
+        for item in items:
+            labels[item['id']] = item.get('description') or item.get('measure') or item.get('label')
+    return labels
+
+
+def _case_positions(cases):
+    """« Exemple N » : le numéro porté par l’identifiant `case-N`, sinon le rang du cas"""
+    positions = {}
+    for number, case in enumerate(cases, 1):
+        suffix = case['id'].removeprefix('case-')
+        positions[case['id']] = int(suffix) if case['id'].startswith('case-') and suffix.isdigit() \
+            and int(suffix) > 0 else number
+    return positions
+
+
+def _proof_name(store, row, link, candidates):
+    """Nom publiable d’une preuve : une référence réservée au juge reste générique"""
+    pid = link['piece_id']
+    if pid == row.get('output_piece_id'):
+        return 'Réponse de ' + candidates[row['configuration_id']]
+    if store.get_piece(pid)['role'] == 'judge':
+        return 'Pièce réservée à l’évaluation'
+    return link['name']
+
+
+def _piece_label(store, value, pid, candidates):
+    for row in value['rows']:
+        if row.get('output_piece_id') == pid:
+            return 'Réponse de ' + candidates[row['configuration_id']]
+    return store.get_piece(pid)['name']
+
+
+def _public_row(store, row, panel_positions, case_positions, columns, labels, obligations, selected, candidates):
+    """Une réponse enregistrée, projetée sur les seuls champs publics du contrat"""
+    metrics = {}
+    for public_id, column in columns:
+        metric = (row['cost'] if 'criterion_id' not in column else
+                  next(measure for measure in row['measures']
+                       if measure['criterion_id'] == column['criterion_id']))
+        metrics[public_id] = dict(value=metric['value'], unit=metric['unit'], rank=metric['rank'],
+                                  reason=metric['reason'])
+    states = e.states(row['findings'], row['output_piece_id'], row['verdict'])
+    review = row['judgment']['professional_review']
+    judgment = dict(mode=row['judgment']['mode'],
+                    professional_review=None if review == 'ABSENTE' else
+                    {key: review[key] for key in ('author', 'phase', 'scope')},
+                    cost=dict(value=row['judgment']['cost']['amount'],
+                              unit=row['judgment']['cost']['currency'],
+                              status=row['judgment']['cost']['status']))
+    public = dict(panel_position=panel_positions[row['configuration_id']],
+                  case_position=case_positions[row['case_id']],
+                  verdict=row['verdict'], reason=row['reason'],
+                  next_action=row['decision'].get('next_action'),
+                  findings=[dict(label=labels.get(finding['criterion_id']) or 'Critère du contrat',
+                                 status=finding['status'], finding=finding['finding'])
+                            for finding in row['findings']],
+                  measures=[dict(label=(measure.get('definition', {}).get('measure')
+                                        or measure.get('definition', {}).get('label')
+                                        or labels.get(measure['criterion_id']) or 'Critère du contrat'),
+                                 value=measure['value'], unit=measure['unit'], status=measure['status'],
+                                 reason=measure['reason']) for measure in row['measures']],
+                  metrics=metrics,
+                  states={criterion['id']: e.criterion_state(states, criterion['id'])
+                          for criterion in obligations},
+                  created_at=row['created_at'], responsible=row['responsible'], judgment=judgment,
+                  limits=list(row['limits']),
+                  proofs=[dict(name=_proof_name(store, row, link, candidates),
+                               piece_id=link['piece_id'] if link['piece_id'] in selected else None)
+                          for link in row['proof_links']])
+    for key in ('repetition', 'recovery_limit', 'relaunch'):
+        if key in row:
+            public[key] = row[key]
+    return public
+
+
+def _public_pending(value, panel_positions, case_positions):
+    """Attentes nommées sans identifiant de tentative ; les autres restent des inconnues"""
+    pending, other = [], []
+    for item in value['pending_attempts']:
+        configuration, case = item.get('configuration_id'), item.get('case_id')
+        if configuration not in panel_positions or case not in case_positions:
+            other.append(item['next_action'])
+            continue
+        pending.append(dict(panel_position=panel_positions[configuration],
+                            case_position=case_positions[case],
+                            repetition=item.get('repetition'), state=item['state'],
+                            next_action=item['next_action'], cause=item.get('cause')))
+    return pending, other
+
+
+def _public_unknowns(value, rows, pending, other):
+    coverage, unknowns = value['coverage'], list(dict.fromkeys(other))
+    if coverage['not_started']:
+        count = coverage['not_started']
+        unknowns.append(str(count) + (' essai prévu n’a pas été lancé.' if count == 1
+                                      else ' essais prévus n’ont pas été lancés.'))
+    undecided = sum(row['verdict'] is None for row in rows)
+    if undecided:
+        unknowns.append(str(undecided) + (' réponse n’a pas de verdict concluant : elle n’est pas un échec.'
+                                          if undecided == 1 else
+                                          ' réponses n’ont pas de verdict concluant : elles ne sont pas des échecs.'))
+    unknown_costs = sum(row['metrics']['cost']['value'] is None for row in rows)
+    if unknown_costs:
+        unknowns.append('Coût observé inconnu pour ' + str(unknown_costs)
+                        + (' réponse : aucun rang de coût.' if unknown_costs == 1
+                           else ' réponses : aucun rang de coût.'))
+    if value['economic_status'] != 'COMPLETE':
+        unknowns.append('Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables.')
+    if pending:
+        unknowns.append('Certaines réponses restent sans verdict ou sans réponse exploitable ; leur état est indiqué ci-dessous.')
+    return list(dict.fromkeys(unknowns))
+
+
+def _public_bundle(store, connection, value, piece_ids, task_id, version_id):
+    """Projection fermée d’une comparaison enregistrée, liée à la version éditoriale copiée"""
+    if type(piece_ids) is not list or any(type(pid) is not str for pid in piece_ids) or len(set(piece_ids)) != len(piece_ids):
+        raise ValueError('Liste explicite de pièces uniques requise')
+    source = p._source_of(connection, value['task']['dossier_id'])
+    if source is None:
+        raise ValueError('Rattachement éditorial absent')
+    if (source['task_id'], source['version_id']) != (task_id, version_id):
+        raise ValueError('Rattachement éditorial divergent')
+    if not set(piece_ids) <= _publishable(store, value):
+        raise p.Denied('Pièce non liée à la restitution ou réservée à l’évaluation')
+    selected = {pid: 'piece-' + identifier(pid) + '.txt' for pid in sorted(piece_ids)}
+    files = {name: store.read_piece(pid) for pid, name in selected.items()}
+    names = model_catalogue.display_names(store)
+    candidates = {configuration['id']: names.get(configuration['model'], configuration['model'])
+                  for configuration in value['panel']}
+    panel_positions = {configuration['id']: number
+                       for number, configuration in enumerate(value['panel'], 1)}
+    case_positions = _case_positions(value['cases'])
+    labels = _criterion_labels(value)
+    obligations = value['obligations']
+    columns = [('cost' if 'criterion_id' not in column else 'criterion-' + str(number), column)
+               for number, column in enumerate(value['columns'], 1)]
+    rows = [_public_row(store, row, panel_positions, case_positions, columns, labels,
+                        obligations, set(selected), candidates) for row in value['rows']]
+    pending, other = _public_pending(value, panel_positions, case_positions)
+    observed = {criterion['id']: {row['states'][criterion['id']] for row in rows} for criterion in obligations}
+    conditions = dict(pi={key: value['conditions']['pi'][key] for key in ('package', 'version', 'status')},
+                      environment={key: 'INCONNU' if item is None else str(item)
+                                   for key, item in value['conditions']['environment'].items()},
+                      tools=list(value['conditions']['tools']), packages=list(value['conditions']['packages']),
+                      skills=list(value['conditions']['skills']), frozen_at=value['conditions']['frozen_at'])
+    manifest = dict(
+        schema_version=public_results.SCHEMA, presentation_version=public_results.PRESENTATION_VERSION,
+        task=dict(task_id=task_id, version_id=version_id, package_sha256=source['package_sha256']),
+        campaign_id=value['campaign_id'], contract_sha256=value['contract_sha256'],
+        title=source['title'], work=source['work'],
+        conclusion=dict(text=value['conclusion']['text'], attribution=value['conclusion']['attribution'],
+                        limits=list(value['conclusion']['limits'])),
+        coverage={key: value['coverage'][key] for key in (
+            'planned_cells', 'attempted_cells', 'evaluated_attempts', 'decided_attempts', 'not_started')},
+        economic_status=value['economic_status'], conditions=conditions,
+        cost_basis=dict(scope=value['cost_basis']['scope'], attempts=value['cost_basis']['attempts'],
+                        unit=value['cost_basis']['unit'],
+                        conversion=None if value['cost_basis']['conversion'] is None else
+                        {key: value['cost_basis']['conversion'][key]
+                         for key in ('source', 'date', 'formula')}),
+        cases=[dict(position=position) for position in case_positions.values()],
+        panel=[dict(position=number, **{key: configuration[key] for key in (
+                   'provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters', 'effort')},
+                   name=candidates[configuration['id']],
+                   **{key: configuration[key] for key in (
+                       'effort_requested', 'effort_choice', 'output_bound', 'effort_limit')
+                      if key in configuration})
+               for number, configuration in enumerate(value['panel'], 1)],
+        columns=[dict(id=public_id, label=(column['definition'].get('measure')
+                                          or column['definition'].get('label') or public_id),
+                      unit=column['unit'], favorable=column['favorable'], proof=column['proof'],
+                      cost='criterion_id' not in column) for public_id, column in columns],
+        obligations=[dict(id=criterion['id'], label=labels.get(criterion['id']) or 'Critère du contrat',
+                          states=[state for state in ('PASS', 'FAIL', 'INDETERMINE')
+                                  if not rows or state in observed[criterion['id']]])
+                     for criterion in obligations],
+        rows=rows, pending=pending,
+        acquisition_dates=[date for date in value['acquisition_dates'] if date],
+        unknowns=_public_unknowns(value, rows, pending, other),
+        restrictions=[public_results.RESTRICTION_PUBLIQUE,
+                      'La saisie initiale du besoin, les messages privés, les références réservées au juge et les '
+                      'journaux bruts ne sont publiés ni ici ni dans les pièces retenues.'],
+        pieces={pid: dict(file=name, sha256=sha256(files[name]).hexdigest(),
+                          label=_piece_label(store, value, pid, candidates))
+                for pid, name in selected.items()})
+    raw = encode(manifest).encode('utf-8')
+    return dict(manifest=raw, files=files, projection_sha256=sha256(raw).hexdigest())
+
+
+def results_bundle(store, dossier_id, campaign_id, *, piece_ids, task_id, version_id):
+    """Construire le paquet public d’une campagne sans nouvel appel ni nouvelle évaluation
+
+    Opération opérateur : le propriétaire du dossier est résolu pour relire la
+    comparaison enregistrée avec les mêmes calculs et les mêmes sélections que la
+    consultation privée. L’activation exige ensuite l’autorité de publication.
+    """
+    identifier(dossier_id)
+    identifier(campaign_id)
+    identifier(task_id)
+    identifier(version_id)
+    with store.read_snapshot() as connection:
+        e.connection_for(store)
+        row = connection.execute('SELECT session_id FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()
+        if row is None:
+            raise p.Denied('Dossier inaccessible')
+        value = _comparison(store, connection, row[0], dossier_id, campaign_id, {})
+        return _public_bundle(store, connection, value, piece_ids, task_id, version_id)

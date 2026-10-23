@@ -17,6 +17,7 @@ from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MO
 from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, listing, montant_lisible,
                         personal_key_form, section, state_block, text)
 from .projection import candidate_names, piece_name, projection_body
+from .results_views import render_results
 from .legal_views import LEGAL_PAGES
 from .privacy_views import (PRIVACY_SCRIPT, render_privacy_page, render_privacy_controls,
                             render_contribution, render_contributions, render_bootstrap)
@@ -335,7 +336,7 @@ def editorial_characteristics(entry):
             ('Difficulté', editorial_characteristic(entry, 'difficulty')),
             ('Version', entry.get('version_id') or 'Inconnue'),
             ('Qualification', EDITORIAL_STATUS.get(entry.get('qualification_status'), 'Qualification absente')),
-            ('Résultats publiés', 'Résultats publiés' if entry.get('results_published') else 'Aucun résultat publié'))
+            ('Résultats publiés', 'Résultats publiés' if entry.get('results') else 'Aucun résultat publié'))
 
 
 def editorial_fields(entry):
@@ -415,7 +416,31 @@ def render_editorial(value):
         content += '<p>Aucune preuve de qualification n’est publiée.</p>'
     else:
         content += '<p>Les preuves de qualification ne font pas partie de cette publication.</p>'
-    content += '<p class="note">Aucun résultat publié.</p>'
+    campaigns = value.get('results') or []
+    if campaigns:
+        content += ('<section><h2>Résultats publiés</h2><p class="hint">Chaque campagne est une restitution '
+                    'approuvée séparément. Elle ne fusionne pas ses résultats avec une autre campagne.</p><ul>')
+        for campaign in campaigns:
+            href = ('/epreuves/' + text(value['task_id']) + '/' + text(value['version_id'])
+                    + '/campagnes/' + text(campaign['campaign_id']))
+            shown = ('Campagne du ' + date_lisible_utc(campaign['frozen_at']) + ' · ' + campaign['pi']['package']
+                     + ' ' + campaign['pi']['version'] + ' · '
+                     + str(campaign['coverage']['evaluated_attempts'])
+                     + (' réponse évaluée' if campaign['coverage']['evaluated_attempts'] == 1 else ' réponses évaluées')
+                     + ' sur ' + str(campaign['coverage']['planned_cells'])
+                     + (' essai prévu' if campaign['coverage']['planned_cells'] == 1 else ' essais prévus') + ' · coûts '
+                     + ('complets' if campaign['economic_status'] == 'COMPLETE' else 'incomplets'))
+            content += '<li><a href="' + href + '">' + text(shown) + '</a></li>'
+        content += '</ul>'
+        if len({(campaign.get('contract_sha256'), campaign.get('cases'),
+                 tuple(sorted((campaign.get('environment') or {}).items())),
+                 campaign['pi']['package'], campaign['pi']['version'], campaign['unit'])
+                for campaign in campaigns}) > 1:
+            content += ('<p class="note">Ces campagnes n’ont pas le même contrat, périmètre d’exemples, environnement, '
+                        'harnais ou unité de coût : leurs résultats ne se comparent pas directement.</p>')
+        content += '</section>'
+    else:
+        content += '<p class="note">Aucun résultat publié.</p>'
     content += ('<p>Cette publication ne qualifie pas l’épreuve et n’autorise aucune exécution. '
                 'La difficulté déclarée ne prouve aucune capacité mesurée.</p>')
     content += editorial_report(value.get('report'))
@@ -673,6 +698,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, content = render_references(value)
     elif value.get('kind') == 'editorial':
         title, content = render_editorial(value)
+    elif value.get('kind') == 'results':
+        title, content = render_results(value)
     elif value.get('kind') == 'privacy_data':
         title, content = render_privacy_page(value, csrf)
     elif value.get('kind') == 'access':

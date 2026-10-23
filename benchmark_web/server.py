@@ -21,6 +21,7 @@ from time import monotonic
 from urllib.parse import parse_qs, urlsplit
 
 from benchmark import editorial
+from benchmark import public_results
 from benchmark.runtime import encode
 from benchmark.service import executor_health, preparation_request, run
 from benchmark.storage import _unique_object
@@ -35,6 +36,7 @@ _ROUTE_PATTERNS = (
     '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
     '/evaluations-externes', '/evaluations-externes/<id>',
     '/epreuves', '/epreuves/<id>/<id>', '/epreuves/<id>/<id>/pieces/<id>',
+    '/epreuves/<id>/<id>/campagnes/<id>', '/epreuves/<id>/<id>/campagnes/<id>/pieces/<id>',
     '/mentions-legales', '/cgu', '/confidentialite',
     '/preparation', '/preparation/privacy.js', '/preparation/style.css',
     '/preparation/fonts/<police>.woff2', '/preparation/fonts/OFL-<police>.txt',
@@ -723,7 +725,14 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 piece = re.fullmatch(
                     r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/pieces/([A-Za-z0-9_-]{1,128})',
                     reference_path)
-                if version_path is None and piece is None and reference_path != '/epreuves':
+                campaign = re.fullmatch(
+                    r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/campagnes/([A-Za-z0-9_-]{1,128})',
+                    reference_path)
+                campaign_piece = re.fullmatch(
+                    r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/campagnes/'
+                    r'([A-Za-z0-9_-]{1,128})/pieces/([A-Za-z0-9_-]{1,128})', reference_path)
+                if version_path is None and piece is None and campaign is None and campaign_piece is None \
+                        and reference_path != '/epreuves':
                     self.not_found()
                     return
                 if piece is not None:
@@ -737,6 +746,36 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                         return
                     self.respond(200, payload, 'text/plain; charset=utf-8')
                     return
+                if campaign_piece is not None:
+                    if urlsplit(self.path).query:
+                        self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                        return
+                    try:
+                        payload = public_results.piece_bytes(public, *campaign_piece.groups())
+                    except (public_results.NotFound, ValueError):
+                        self.not_found()
+                        return
+                    self.respond(200, payload, 'text/plain; charset=utf-8')
+                    return
+                if campaign is not None:
+                    try:
+                        filters = public_results.query_parameters(urlsplit(self.path).query)
+                    except ValueError:
+                        self.error_page(400, 'Filtre invalide',
+                                        'Modifiez votre recherche ou effacez les filtres.')
+                        return
+                    task_id, version_id, campaign_id = campaign.groups()
+                    try:
+                        payload = public_results.view(public, task_id, version_id, campaign_id, filters)
+                    except public_results.Invalid:
+                        self.error_page(400, 'Filtre invalide',
+                                        'Modifiez votre recherche ou effacez les filtres.')
+                        return
+                    except (public_results.NotFound, ValueError):
+                        self.not_found()
+                        return
+                    self.respond(200, views.render(payload, '', reference_path), 'text/html; charset=utf-8')
+                    return
                 try:
                     criteria = editorial.search_criteria(_editorial_query(self.path))
                 except (ValueError, UnicodeError):
@@ -745,9 +784,19 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 try:
                     if reference_path == '/epreuves':
                         payload = editorial.search_view(public, criteria)
+                        for entry in payload['versions']:
+                            try:
+                                entry['results'] = public_results.published(
+                                    public, entry['task_id'], entry['version_id'])
+                            except (LookupError, ValueError):
+                                entry['results'] = []
                     elif version_path is not None:
                         payload = editorial.version_view(public, *version_path.groups())
                         payload['criteria'] = criteria
+                        try:
+                            payload['results'] = public_results.published(public, *version_path.groups())
+                        except (LookupError, ValueError):
+                            payload['results'] = []
                     else:
                         self.not_found()
                         return
