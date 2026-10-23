@@ -288,6 +288,42 @@ def reference_notice(reference):
     return content
 
 
+def render_editorial(value):
+    need = '<p><a href="/preparation">Décrire mon cas d’usage</a></p>'
+    back = '<p><a href="/epreuves">Toutes les épreuves</a></p>'
+    if value.get('withdrawn'):
+        content = ('<p class="note">Cette version est retirée. Son contenu et ses pièces ne sont plus disponibles.</p>'
+                   '<p>Aucune nouvelle reprise de cette version n’est admise.</p>')
+        return 'Version retirée', back + content + need
+    if not value.get('version_id'):
+        content = ''
+        for entry in value.get('versions', []):
+            href = '/epreuves/' + text(entry['task_id']) + '/' + text(entry['version_id'])
+            content += ('<section><h2><a href="' + href + '">' + text(entry['title']) + '</a></h2>'
+                        '<p>Version ' + text(entry['version_id']) + '</p></section>')
+        if not content:
+            content = '<p>Aucune épreuve publiée.</p>'
+        return 'Épreuves', content + need
+    labels = {'ABSENT': 'Qualification absente', 'QUALIFIED': 'Qualification réussie', 'BLOCKED': 'Qualification bloquée'}
+    status = labels.get(value.get('qualification_status'), 'Qualification absente')
+    content = '<dl><dt>Travail évalué</dt><dd>' + text(value['work']) + '</dd><dt>Version</dt><dd>' + text(value['version_id']) + '</dd></dl>'
+    content += '<p class="note">' + text(status) + '.</p>'
+    if value.get('qualification_status') == 'ABSENT':
+        content += '<p>Aucune preuve de qualification n’est publiée.</p>'
+    else:
+        content += '<p>Les preuves de qualification ne font pas partie de cette publication.</p>'
+    content += '<p class="note">Aucun résultat publié.</p>'
+    content += '<p>Cette publication ne qualifie pas l’épreuve et n’autorise aucune exécution.</p>'
+    content += '<h2>Cas</h2><ul>' + ''.join('<li>' + text(case) + '</li>' for case in value['cases']) + '</ul>'
+    content += '<h2>Limites</h2><ul>' + ''.join('<li>' + text(limit) + '</li>' for limit in value['limits']) + '</ul>'
+    content += '<h2>Pièces</h2>'
+    base = '/epreuves/' + text(value['task_id']) + '/' + text(value['version_id'])
+    for piece in value['pieces']:
+        content += ('<section><h3><a href="' + base + '/pieces/' + text(piece['id']) + '">' + text(piece['label']) + '</a></h3>'
+                    '<pre class="proof-content">' + text(piece['text']) + '</pre></section>')
+    return value['title'], back + content + need
+
+
 def render_references(value):
     back = '<p><a href="/evaluations-externes">Toutes les évaluations externes</a></p>'
     need = '<p><a href="/preparation">Décrire mon cas d’usage</a></p>'
@@ -424,10 +460,12 @@ def render(value, csrf, path='/preparation', *, error=False):
     title = 'Décrire mon cas d’usage'
     # `aria-current` seulement sur l'entrée qui est la page affichée, jamais sur une page descendante ni d'erreur
     current = None if error else {'home': '/', 'privacy_data': '/preparation/data',
-                                 'references': '/evaluations-externes' if not value.get('reference_id') else None}.get(
+                                 'references': '/evaluations-externes' if not value.get('reference_id') else None,
+                                 'editorial': '/epreuves' if not value.get('version_id') else None}.get(
         value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
                    for href, label in (('/', 'Accueil'), ('/evaluations-externes', 'Évaluations externes'),
+                                       ('/epreuves', 'Épreuves'),
                                        ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données')))
     if error:
         title = value.get('title') or ('Service momentanément indisponible' if value.get('unavailable') else 'Votre action n’a pas abouti')
@@ -475,6 +513,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, _, content = LEGAL_PAGES[value['path']]
     elif value.get('kind') == 'references':
         title, content = render_references(value)
+    elif value.get('kind') == 'editorial':
+        title, content = render_editorial(value)
     elif value.get('kind') == 'privacy_data':
         title, content = render_privacy_page(value, csrf)
     elif value.get('kind') == 'access':

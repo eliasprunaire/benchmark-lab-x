@@ -1,6 +1,7 @@
 """Parcours HTTP local sur données contrôlées, sans participant ni appel fournisseur"""
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from html.parser import HTMLParser
 from http.client import HTTPConnection
 from http.cookies import SimpleCookie
@@ -19,7 +20,7 @@ from urllib.parse import urlencode, urlsplit
 
 from benchmark.acquisition import execution
 from benchmark.acquisition import campaigns
-from benchmark import evaluation, model_catalogue, preparation as prep
+from benchmark import editorial, evaluation, model_catalogue, preparation as prep
 from benchmark import provider_access, qualification, service, storage
 from benchmark_web import projection, server, views
 from tests.test_configurations import NOW, model
@@ -89,6 +90,7 @@ class ParcoursComplet(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix='s12-')
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name).resolve()
+        self.public = root
         self.data, self.sock = root / 'private', root / 'executor.sock'
         storage.initialize(self.data)
         storage.initialize_preparation(self.data)
@@ -457,6 +459,271 @@ class ParcoursComplet(unittest.TestCase):
             self.request('/evaluations-externes/helm', status=404)
             self.request('/evaluations-externes/helm-classic', status=404)
             self.request('/evaluations-externes?category=helm', status=400)
+            self.assertEqual([], self.calls)
+            self.assertTrue(self.starts.empty())
+            self.assertEqual({}, dict(self.cookies))
+            self.assertEqual(before, {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()})
+
+    def test_epreuve_editoriale_publique(self):
+        task, version, other = 'tache-fictive', 'version-1', 'version-2'
+        title = 'Tableau <script>alert(1)</script>'
+        work, case, limit = ('Préparer un tableau par opération', 'Cinq débits de janvier 2027', 'Ne certifie aucune comptabilité')
+        piece = 'Relève les opérations inventées <script>piece</script>'
+        label = 'Consigne'
+
+        def bundle(version_id, *, title=title, piece=piece, pieces=None, qualification='ABSENT', results_published=False, extra=None, drop=()):
+            pieces = pieces or {'consigne': (label, piece)}
+            files, declared = {}, {}
+            for pid, (name, body) in pieces.items():
+                filename = 'piece-' + pid + '.txt'
+                raw = body.encode()
+                files[filename] = raw
+                declared[pid] = {'file': filename, 'sha256': sha256(raw).hexdigest(), 'label': name}
+            manifest = {'schema_version': editorial.SCHEMA, 'task_id': task, 'version_id': version_id,
+                        'title': title, 'work': work, 'cases': [case], 'limits': [limit],
+                        'qualification_status': qualification, 'results_published': results_published, 'pieces': declared}
+            if extra:
+                manifest.update(extra)
+            for key in drop:
+                manifest.pop(key)
+            raw = storage._strict_json(manifest).encode()
+            identity = sha256(raw).hexdigest()
+            return {'manifest': raw, 'package_sha256': identity, 'files': dict(files)}, editorial.fixture_approval(identity)
+
+        def refused(trial, approval, message, operation=editorial.publish):
+            with self.assertRaises(ValueError) as raised:
+                operation(self.public, trial, approval)
+            self.assertEqual(message, str(raised.exception))
+
+        def designated(identity):
+            return dict(actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=identity, scope='editorial-trial')
+
+        def designated_withdrawal(identity, version_id):
+            return dict(actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=identity,
+                        scope='editorial-withdrawal', task_id=task, version_id=version_id)
+
+        with patch.object(server, 'preparation_request', side_effect=AssertionError('Relais privé interdit')):
+            before = {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()}
+            home, _, _ = self.request('/')
+            self.assertEqual('/epreuves', home.link('Épreuves'))
+            empty, headers, raw = self.request('/epreuves')
+            self.assertIsNone(headers.get('Set-Cookie'))
+            self.assertEqual('no-referrer', headers['Referrer-Policy'])
+            self.assertNotIn(b'<script', raw)
+            self.assertIn('Aucune épreuve publiée', empty.visible)
+            self.assertEqual('/preparation', empty.link('Décrire mon cas d’usage'))
+            self.assertEqual(['/epreuves'], [n['attrs']['href'] for n in empty.nodes if n['attrs'].get('aria-current') == 'page'])
+            self.assertEqual(raw, self.request('/epreuves', cookies=SimpleCookie('benchmark_session=invalid'))[2])
+            leaked, _, leaked_raw = self.request('/epreuves?besoin=prive', status=400)
+            self.assertNotIn('prive', leaked.visible)
+            self.assertNotIn(b'prive', leaked_raw)
+            trial, approval = bundle(version)
+            refused(trial, approval, 'Autorité éditoriale refusée')
+            self.assertFalse((self.public / 'editorial-trials').exists())
+            refused(trial, None, 'Autorité absente')
+            refused(trial, {}, 'Autorité absente')
+            refused(trial, dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
+                                projection_sha256=trial['package_sha256'], catalogue=False), 'Autorité éditoriale refusée')
+            refused(trial, dict(actor='Ayo', authority_id='Ayo', package_sha256=trial['package_sha256'],
+                                scope='editorial-trial'), 'Autorité éditoriale refusée')
+            refused(trial, dict(actor='Ayo', authority_id='TEST_ONLY_EDITORIAL_TRIAL', package_sha256=trial['package_sha256'],
+                                scope='editorial-trial'), 'Autorité éditoriale refusée')
+            refused(trial, dict(approval, package_sha256='f' * 64), 'Approbation visant d’autres octets')
+            held, _ = bundle(version)
+            held['files'].pop('piece-consigne.txt')
+            refused(held, designated(held['package_sha256']), 'Paquet incomplet')
+            self.assertFalse((self.public / 'editorial-trials').exists())
+            self.assertFalse((self.public / 'editorial-fixture').exists())
+            missing, missing_approval = bundle(version)
+            missing['files'].pop('piece-consigne.txt')
+            refused(missing, missing_approval, 'Paquet incomplet', editorial.fixture_publish)
+            altered, altered_approval = bundle(version)
+            altered['files']['piece-consigne.txt'] = b'octets alteres'
+            refused(altered, altered_approval, 'Octets divergents', editorial.fixture_publish)
+            forbidden, forbidden_approval = bundle(version, extra={
+                'judge_reference': 'passage réservé au juge', 'private': 'besoin privé', 'secret': 'clef',
+                'journal': 'journal brut', 'contribution': 'copie non autorisée'})
+            refused(forbidden, forbidden_approval, 'Sélection publique fermée', editorial.fixture_publish)
+            role_manifest = json.loads(trial['manifest'])
+            role_manifest['pieces']['consigne']['role'] = 'judge'
+            role_raw = storage._strict_json(role_manifest).encode()
+            refused({'manifest': role_raw, 'package_sha256': sha256(role_raw).hexdigest(), 'files': trial['files']},
+                    editorial.fixture_approval(sha256(role_raw).hexdigest()), 'Sélection publique fermée',
+                    editorial.fixture_publish)
+            refused(*bundle(version, results_published=True), 'Sélection publique fermée', editorial.fixture_publish)
+            self.assertFalse((self.public / 'editorial-trials').exists())
+            self.assertFalse((self.public / 'editorial-fixture').exists())
+            with tempfile.TemporaryDirectory(prefix='epreuve-source-') as source:
+                source_piece = Path(source) / 'piece-consigne.txt'
+                source_piece.write_bytes(piece.encode())
+                trial['files']['piece-consigne.txt'] = source_piece.read_bytes()
+                editorial.fixture_publish(self.public, trial, approval)
+            self.assertFalse(Path(source).exists())
+            self.assertFalse((self.public / 'editorial-trials').exists())
+            piece_url = '/epreuves/' + task + '/' + version + '/pieces/consigne'
+            catalog, headers, raw = self.request('/epreuves')
+            hidden, piece_headers, hidden_raw = self.request(piece_url, status=404)
+            absent, absent_headers, absent_raw = self.request('/epreuves/' + task + '/' + version, status=404)
+            self.assertIsNone(headers.get('Set-Cookie'))
+            self.assertIsNone(piece_headers.get('Set-Cookie'))
+            self.assertIsNone(absent_headers.get('Set-Cookie'))
+            self.assertEqual('no-referrer', headers['Referrer-Policy'])
+            self.assertEqual(raw, self.request('/epreuves', cookies=SimpleCookie('benchmark_session=invalid'))[2])
+            self.assertNotIn(b'<script', raw)
+            self.assertNotIn(title.encode(), raw)
+            self.assertNotIn(piece.encode(), hidden_raw)
+            self.assertNotIn(piece.encode(), absent_raw)
+            self.assertNotIn(title, catalog.visible)
+            self.assertNotIn(piece, hidden.visible)
+            self.assertNotIn(title, absent.visible)
+            self.assertIn('Aucune épreuve publiée', catalog.visible)
+            self.assertNotIn(KEY, catalog.visible)
+            self.assertEqual([], editorial.catalog_view(self.public)['versions'])
+            with self.assertRaises(ValueError) as raised:
+                editorial.reprise_admission(self.public, task, version)
+            self.assertEqual('Version publiée requise', str(raised.exception))
+            notice = editorial.fixture_version(self.public, task, version)
+            self.assertEqual(title, notice['title'])
+            self.assertEqual(work, notice['work'])
+            self.assertEqual([case], notice['cases'])
+            self.assertEqual([limit], notice['limits'])
+            self.assertEqual(version, notice['version_id'])
+            self.assertEqual('ABSENT', notice['qualification_status'])
+            self.assertEqual([(label, piece)], [(item['label'], item['text']) for item in notice['pieces']])
+            self.assertFalse(notice['withdrawn'])
+            self.assertEqual(piece.encode(), editorial.fixture_piece(self.public, task, version, 'consigne'))
+            stored = self.public / 'editorial-fixture' / task / version
+            manifest_bytes = (stored / 'manifest.json').read_bytes()
+            piece_bytes = (stored / 'piece-consigne.txt').read_bytes()
+            self.assertEqual(piece.encode(), piece_bytes)
+            deposited = self.public / 'editorial-trials' / task / version
+            deposited.mkdir(parents=True)
+            for item in stored.iterdir():
+                (deposited / item.name).write_bytes(item.read_bytes())
+            self.assertEqual([], editorial.catalog_view(self.public)['versions'])
+            deposited_page, deposited_headers, deposited_raw = self.request('/epreuves/' + task + '/' + version, status=404)
+            _, deposited_piece_headers, deposited_piece = self.request(piece_url, status=404)
+            self.assertIsNone(deposited_headers.get('Set-Cookie'))
+            self.assertIsNone(deposited_piece_headers.get('Set-Cookie'))
+            self.assertNotIn(piece.encode(), deposited_raw)
+            self.assertNotIn(piece.encode(), deposited_piece)
+            self.assertNotIn(title, deposited_page.visible)
+            self.assertNotIn(work, deposited_page.visible)
+            self.assertIn('Aucune épreuve publiée', self.request('/epreuves')[0].visible)
+            with self.assertRaises(ValueError) as raised:
+                editorial.reprise_admission(self.public, task, version)
+            self.assertEqual('Autorité éditoriale refusée', str(raised.exception))
+            with self.assertRaises(ValueError) as raised:
+                editorial.withdraw(self.public, task, version, editorial.fixture_withdrawal(
+                    trial['package_sha256'], task, version))
+            self.assertEqual('Autorité éditoriale refusée', str(raised.exception))
+            self.assertEqual(manifest_bytes, (deposited / 'manifest.json').read_bytes())
+            placed = self.public / 'editorial-trials'
+            for child in sorted(placed.rglob('*'), key=lambda path: len(path.parts), reverse=True):
+                child.rmdir() if child.is_dir() else child.unlink()
+            placed.rmdir()
+            self.assertIn('Aucune épreuve publiée', self.request('/epreuves')[0].visible)
+            with tempfile.TemporaryDirectory(prefix='epreuve-source-') as source:
+                source_piece = Path(source) / 'piece-consigne.txt'
+                source_piece.write_bytes(piece.encode())
+                published = {'manifest': trial['manifest'], 'package_sha256': trial['package_sha256'],
+                             'files': {'piece-consigne.txt': source_piece.read_bytes()}}
+                editorial.publish(self.public, published, designated(published['package_sha256']))
+            self.assertFalse(Path(source).exists())
+            page, headers, raw = self.request('/epreuves/' + task + '/' + version)
+            _, piece_headers, piece_raw = self.request(piece_url)
+            self.assertIsNone(headers.get('Set-Cookie'))
+            self.assertIsNone(piece_headers.get('Set-Cookie'))
+            self.assertEqual('no-referrer', headers['Referrer-Policy'])
+            self.assertEqual('text/plain; charset=utf-8', piece_headers['Content-Type'])
+            self.assertEqual(piece.encode(), piece_raw)
+            self.assertEqual(raw, self.request('/epreuves/' + task + '/' + version,
+                                               cookies=SimpleCookie('benchmark_session=invalid'))[2])
+            self.assertNotIn(b'<script', raw)
+            self.assertNotIn(title.encode(), raw)
+            for value in (title, work, case, limit, 'Version ' + version, label, piece,
+                          'Qualification absente', 'Aucune preuve de qualification n’est publiée',
+                          'Aucun résultat publié', 'n’autorise aucune exécution'):
+                self.assertIn(value, page.visible)
+            self.assertNotIn('Qualification réussie', page.visible)
+            self.assertNotIn(KEY, page.visible)
+            self.assertEqual([], [n['attrs']['href'] for n in page.nodes if n['attrs'].get('aria-current') == 'page'])
+            self.assertEqual('/preparation', page.link('Décrire mon cas d’usage'))
+            self.assertEqual('/epreuves', page.link('Toutes les épreuves'))
+            catalog, _, _ = self.request('/epreuves')
+            self.assertIn(title, catalog.visible)
+            self.assertNotIn('Aucune épreuve publiée', catalog.visible)
+            stored = self.public / 'editorial-trials' / task / version
+            manifest_bytes = (stored / 'manifest.json').read_bytes()
+            piece_bytes = (stored / 'piece-consigne.txt').read_bytes()
+            self.assertEqual(piece.encode(), piece_bytes)
+            blocked, _ = bundle('version-interdite', extra={'journal': 'journal brut'})
+            refused(blocked, designated(blocked['package_sha256']), 'Sélection publique fermée')
+            self.assertFalse((self.public / 'editorial-trials' / task / 'version-interdite').exists())
+            self.assertEqual(raw, self.request('/epreuves/' + task + '/' + version)[2])
+            self.assertEqual(manifest_bytes, (stored / 'manifest.json').read_bytes())
+            replacement, _ = bundle(version, title='Tableau remplacé')
+            refused(replacement, designated(replacement['package_sha256']), 'Version existante divergente')
+            self.assertEqual(manifest_bytes, (stored / 'manifest.json').read_bytes())
+            revised, _ = bundle(other, title='Tableau révisé', piece='Deuxième version des opérations')
+            editorial.publish(self.public, revised, designated(revised['package_sha256']))
+            self.assertEqual(raw, self.request('/epreuves/' + task + '/' + version)[2])
+            self.assertEqual(piece.encode(), self.request(piece_url)[2])
+            both, _, _ = self.request('/epreuves')
+            self.assertIn(title, both.visible)
+            self.assertIn('Tableau révisé', both.visible)
+            self.assertIn('Version ' + version, both.visible)
+            self.assertIn('Version ' + other, both.visible)
+            self.assertEqual(trial['package_sha256'], editorial.reprise_admission(self.public, task, version)['package_sha256'])
+            self.assertEqual(before, {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()})
+            refused_withdrawal = dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
+                                      package_sha256=trial['package_sha256'], scope='editorial-withdrawal',
+                                      task_id=task, version_id=version)
+            with self.assertRaises(ValueError) as raised:
+                editorial.withdraw(self.public, task, version, refused_withdrawal)
+            self.assertEqual('Autorité éditoriale refusée', str(raised.exception))
+            with self.assertRaises(ValueError) as raised:
+                editorial.withdraw(self.public, task, version, dict(
+                    designated_withdrawal(trial['package_sha256'], version), package_sha256='a' * 64))
+            self.assertEqual('Approbation visant d’autres octets', str(raised.exception))
+            self.assertEqual(raw, self.request('/epreuves/' + task + '/' + version)[2])
+            second_raw = self.request('/epreuves/' + task + '/' + other)[2]
+            editorial.withdraw(self.public, task, version, designated_withdrawal(trial['package_sha256'], version))
+            self.assertEqual(manifest_bytes, (stored / 'manifest.json').read_bytes())
+            self.assertEqual(piece_bytes, (stored / 'piece-consigne.txt').read_bytes())
+            withdrawn, withdrawn_headers, withdrawn_raw = self.request('/epreuves/' + task + '/' + version)
+            self.assertIsNone(withdrawn_headers.get('Set-Cookie'))
+            self.assertIn('Cette version est retirée', withdrawn.visible)
+            self.assertIn('ne sont plus disponibles', withdrawn.visible)
+            self.assertIn('Aucune nouvelle reprise de cette version n’est admise', withdrawn.visible)
+            self.assertNotIn(title, withdrawn.visible)
+            self.assertNotIn(piece, withdrawn.visible)
+            self.assertNotIn(work, withdrawn.visible)
+            self.assertNotIn(b'<script', withdrawn_raw)
+            hidden, _, hidden_raw = self.request(piece_url, status=404)
+            self.assertNotIn(piece.encode(), hidden_raw)
+            self.assertNotIn(piece, hidden.visible)
+            self.assertEqual(second_raw, self.request('/epreuves/' + task + '/' + other)[2])
+            self.assertEqual('Deuxième version des opérations'.encode(),
+                             self.request('/epreuves/' + task + '/' + other + '/pieces/consigne')[2])
+            self.assertEqual('text/plain; charset=utf-8',
+                             self.request('/epreuves/' + task + '/' + other + '/pieces/consigne')[1]['Content-Type'])
+            remaining, _, _ = self.request('/epreuves')
+            self.assertNotIn(title, remaining.visible)
+            self.assertNotIn(piece, remaining.visible)
+            self.assertIn('Tableau révisé', remaining.visible)
+            self.assertNotIn('Version ' + version, remaining.visible)
+            with self.assertRaises(ValueError) as raised:
+                editorial.reprise_admission(self.public, task, version)
+            self.assertEqual('Nouvelle reprise refusée', str(raised.exception))
+            self.assertEqual(revised['package_sha256'], editorial.reprise_admission(self.public, task, other)['package_sha256'])
+            reactivated, _ = bundle(version, title='Tableau réactivé')
+            refused(reactivated, designated(reactivated['package_sha256']), 'Version retirée')
+            self.assertIn('Cette version est retirée', self.request('/epreuves/' + task + '/' + version)[0].visible)
+            self.assertEqual(second_raw, self.request('/epreuves/' + task + '/' + other)[2])
+            self.assertNotIn(piece.encode(), self.request(piece_url, status=404)[2])
+            self.request('/publications/' + 'a' * 64 + '/index.html', status=404)
+            self.assertFalse((self.public / 'active.json').exists())
             self.assertEqual([], self.calls)
             self.assertTrue(self.starts.empty())
             self.assertEqual({}, dict(self.cookies))
@@ -895,7 +1162,7 @@ class ParcoursComplet(unittest.TestCase):
     # relié depuis une comparaison évaluée dans tests/test_s10_regressions.py) ; les contributions exigent la migration
     # de confidentialité, absente de cette fixture (leur page est couverte par tests/test_privacy_http.py)
     ATTEIGNABLES = frozenset((
-        '/', '/mentions-legales', '/cgu', '/confidentialite',
+        '/', '/epreuves', '/mentions-legales', '/cgu', '/confidentialite',
         '/preparation', '/preparation/data', '/preparation/catalogue',
         '/preparation/access', '/preparation/dossiers/<id>', '/preparation/dossiers/<id>/revisions/<n>',
         '/preparation/dossiers/<id>/configurations',

@@ -100,7 +100,37 @@ approved = {'approved-index': views.render(dict(kind='references'), '').decode()
             'approved-api': views.render(dict(kind='references', category='api', q='API'), '').decode()}
 for identity in approved_ids:
     approved['approved-' + identity] = views.render(dict(kind='references', reference_id=identity), '').decode()
+from hashlib import sha256
+from benchmark import editorial, storage
+import tempfile
+def editorial_bundle(version, title, body):
+    raw_piece = body.encode()
+    filename = 'piece-consigne.txt'
+    manifest = {'schema_version': editorial.SCHEMA, 'task_id': 'tache-fictive', 'version_id': version,
+                'title': title, 'work': 'Préparer un tableau fictif', 'cases': ['Cinq débits inventés'],
+                'limits': ['Ne certifie aucune comptabilité'], 'qualification_status': 'ABSENT', 'results_published': False,
+                'pieces': {'consigne': {'file': filename, 'sha256': sha256(raw_piece).hexdigest(), 'label': 'Consigne'}}}
+    encoded = storage._strict_json(manifest).encode()
+    identity = sha256(encoded).hexdigest()
+    return {'manifest': encoded, 'package_sha256': identity, 'files': {filename: raw_piece}}, editorial.fixture_approval(identity)
+editorial_title = 'Tableau <script>alert(1)</script>'
+editorial_piece = 'Pièce <script>alert(1)</script>'
+with tempfile.TemporaryDirectory() as editorial_dir:
+    editorial_dir = str(Path(editorial_dir).resolve())
+    packed, packed_approval = editorial_bundle('version-1', editorial_title, editorial_piece)
+    editorial.fixture_publish(editorial_dir, packed, packed_approval)
+    editorial_pages = {
+        '/epreuves': views.render(editorial.fixture_catalog(editorial_dir), '').decode(),
+        '/epreuves/tache-fictive/version-1': views.render(
+            editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode()}
+    editorial.fixture_withdraw(editorial_dir, 'tache-fictive', 'version-1',
+                               editorial.fixture_withdrawal(packed['package_sha256'], 'tache-fictive', 'version-1'))
+    editorial_withdrawn = views.render(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode()
+with tempfile.TemporaryDirectory() as empty_dir:
+    editorial_empty = views.render(editorial.catalog_view(str(Path(empty_dir).resolve())), '').decode()
 print(json.dumps({**browser_views(), 'reference_search': reference_search, 'reference_notices': reference_notices,
+                  'editorial_pages': editorial_pages, 'editorial-empty': editorial_empty,
+                  'editorial-withdrawn': editorial_withdrawn, 'editorial_piece': editorial_piece,
                   'reference-referral': reference_referral, 'reference-empty': reference_empty, **approved, 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
@@ -137,6 +167,20 @@ print(json.dumps({**browser_views(), 'reference_search': reference_search, 'refe
       const reply = followupReplies.shift() ?? 'followup';
       if (typeof reply === 'number') {res.writeHead(reply).end(); return;}
       res.setHeader('Content-Type', 'text/html'); res.end(rendered[reply]);
+    } else if (url.pathname === '/epreuves' || url.pathname.startsWith('/epreuves/')) {
+      // HTML de la fixture isolée : la preuve HTTP du lecteur de production reste dans le serveur Python
+      if (url.pathname.endsWith('/pieces/consigne')) {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Security-Policy', "default-src 'none'; base-uri 'none'; form-action 'self'");
+        res.end(rendered.editorial_piece);
+        return;
+      }
+      const html = rendered.editorial_pages[url.pathname];
+      if (!html) {res.writeHead(404).end('introuvable'); return;}
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      res.end(html);
     } else if (url.pathname === '/evaluations-externes' || url.pathname.startsWith('/evaluations-externes/')) {
       // Pages de views.render, comme /render : cette fixture ne remplace pas la preuve du serveur Python
       const html = url.pathname === '/evaluations-externes'
@@ -1349,6 +1393,63 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.deepEqual(dialogs, []);
       assert.deepEqual(errors, []);
       assert.deepEqual(await context.cookies(), []);
+    } finally {await context.close();}
+  }
+});
+
+test('an editorial trial stays readable without JavaScript, by keyboard at 390 px', async () => {
+  for (const javaScriptEnabled of [false, true]) {
+    const context = await browser.newContext({javaScriptEnabled, viewport: {width: 390, height: 844}});
+    try {
+      const page = await context.newPage();
+      page.setDefaultTimeout(3000);
+      const dialogs = [], errors = [];
+      page.on('dialog', dialog => {dialogs.push(dialog.message()); dialog.dismiss();});
+      page.on('pageerror', error => errors.push(error.message));
+      await page.goto(origin + '/render/home');
+      await page.getByRole('navigation', {name: 'Navigation principale'}).getByRole('link', {name: 'Épreuves', exact: true}).click();
+      assert.match(await page.textContent('main'), /Tableau <script>alert\(1\)<\/script>/);
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.getByRole('link', {name: 'Tableau <script>alert(1)</script>'}).click();
+      assert.equal(await page.locator('h1').textContent(), 'Tableau <script>alert(1)</script>');
+      const text = await page.textContent('main');
+      assert.match(text, /Qualification absente/);
+      assert.match(text, /Aucune preuve de qualification/);
+      assert.match(text, /Aucun résultat publié/);
+      assert.match(text, /Cinq débits inventés/);
+      assert.match(text, /Ne certifie aucune comptabilité/);
+      assert.match(text, /Pièce <script>alert\(1\)<\/script>/);
+      assert.equal(text.includes('Qualification réussie'), false);
+      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      let focused = false;
+      for (let press = 0; press < 40 && !focused; press++) {
+        await page.keyboard.press('Tab');
+        focused = await page.evaluate(() => document.activeElement?.getAttribute('href')?.endsWith('/pieces/consigne'));
+      }
+      assert.ok(focused, 'lien de pièce non atteint au clavier');
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      mkdirSync('reports/463', {recursive: true});
+      await page.screenshot({path: 'reports/463/epreuve-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.keyboard.press('Enter');
+      assert.match(await page.locator('body').innerText(), /Pièce <script>alert\(1\)<\/script>/);
+      await page.goto(origin + '/render/editorial-empty');
+      assert.match(await page.textContent('main'), /Aucune épreuve publiée/);
+      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/editorial-withdrawn');
+      const withdrawn = await page.textContent('main');
+      assert.match(withdrawn, /Cette version est retirée/);
+      assert.match(withdrawn, /Aucune nouvelle reprise/);
+      assert.equal(withdrawn.includes('Pièce <script>'), false);
+      assert.equal(withdrawn.includes('Tableau'), false);
+      assert.equal(await page.locator('main a[href*="/pieces/"]').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      assert.deepEqual(dialogs, []);
+      assert.deepEqual(errors, []);
     } finally {await context.close();}
   }
 });

@@ -813,7 +813,10 @@ class RouteCanonicalizationTests(unittest.TestCase):
                 ('/preparation/dossiers/d1/archive/items/record?snapshot=s7&part=0',
                  '/preparation/dossiers/<id>/archive/items/record'),
                 ('/mentions-legales', '/mentions-legales'), ('/cgu', '/cgu'),
-                ('/confidentialite', '/confidentialite')):
+                ('/confidentialite', '/confidentialite'),
+                ('/epreuves', '/epreuves'),
+                ('/epreuves/tache-fictive/version-1', '/epreuves/<id>/<id>'),
+                ('/epreuves/tache-fictive/version-1/pieces/consigne', '/epreuves/<id>/<id>/pieces/<id>')):
             self.assertEqual(expected, canonical_route(path), path)
 
     def test_un_chemin_non_servi_ne_ressort_jamais(self):
