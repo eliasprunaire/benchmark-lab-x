@@ -306,7 +306,9 @@ EDITORIAL_FILTERS = (('entree', 'Entrées'), ('langue', 'Langue'), ('outil', 'Ou
 
 def editorial_criteria_query(criteria):
     """Chaîne de requête stable des seuls critères actifs"""
-    return urlencode([(key, value) for key, value in (criteria or {}).items() if value])
+    criteria = criteria or {}
+    keys = ('q',) + tuple(key for key, _ in EDITORIAL_FILTERS)
+    return urlencode([(key, criteria.get(key, '')) for key in keys if criteria.get(key)])
 
 
 def editorial_characteristic(entry, key):
