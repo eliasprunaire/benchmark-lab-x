@@ -374,6 +374,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     pending: list[dict] = [dict(attempt_id=a['operation_id'], verdict=None,
                     state='REVIEW_REQUIRED' if a['state'] == 'RECEIVED' and a['incident'] is None else 'EXECUTION_REQUIRED',
                     next_action='Cette réponse doit être relue et son évaluation terminée avant de conclure.',
+                    candidate_cost=a['observed_cost'],
                     **({'observations': observations[a['operation_id']]} if a['operation_id'] in observations else {}))
                for a in visible if a['operation_id'] not in latest]
     if pending and connection.execute('SELECT 1 FROM s2_comparison_contracts WHERE contract_sha256=?',
@@ -690,6 +691,26 @@ def _piece_label(store, value, pid, candidates):
     return store.get_piece(pid)['name']
 
 
+def _sort_key(metric):
+    """Valeur ordonnable selon les règles existantes : le sens annoncé, pas le rang favorable"""
+    if metric['rank'] is None:
+        return None
+    try:
+        return format(_metric_number(metric), 'f')
+    except (ValueError, ArithmeticError):
+        return None
+
+
+def _public_configuration(row):
+    """Configuration demandée, observée et sources, avec l'inconnu explicite"""
+    def values(document, default):
+        return {field: default if document.get(field) in (None, 'INCONNU', 'UNKNOWN') else document[field]
+                for field in public_results.CONFIGURATION_FIELDS}
+    return dict(requested=values(row['requested_configuration'], 'INCONNU'),
+                observed=values(row['observed_configuration'], 'INCONNU'),
+                sources=values(row['observation_sources'], 'INCONNU'))
+
+
 def _public_row(store, row, panel_positions, case_positions, columns, labels, obligations, selected, candidates):
     """Une réponse enregistrée, projetée sur les seuls champs publics du contrat"""
     metrics = {}
@@ -698,7 +719,7 @@ def _public_row(store, row, panel_positions, case_positions, columns, labels, ob
                   next(measure for measure in row['measures']
                        if measure['criterion_id'] == column['criterion_id']))
         metrics[public_id] = dict(value=metric['value'], unit=metric['unit'], rank=metric['rank'],
-                                  reason=metric['reason'])
+                                  reason=metric['reason'], key=_sort_key(metric))
     states = e.states(row['findings'], row['output_piece_id'], row['verdict'])
     review = row['judgment']['professional_review']
     judgment = dict(mode=row['judgment']['mode'],
@@ -722,6 +743,7 @@ def _public_row(store, row, panel_positions, case_positions, columns, labels, ob
                   metrics=metrics,
                   states={criterion['id']: e.criterion_state(states, criterion['id'])
                           for criterion in obligations},
+                  configuration=_public_configuration(row),
                   created_at=row['created_at'], responsible=row['responsible'], judgment=judgment,
                   limits=list(row['limits']),
                   proofs=[dict(name=_proof_name(store, row, link, candidates),
@@ -741,10 +763,18 @@ def _public_pending(value, panel_positions, case_positions):
         if configuration not in panel_positions or case not in case_positions:
             other.append(item['next_action'])
             continue
+        cost = item.get('candidate_cost')
         pending.append(dict(panel_position=panel_positions[configuration],
                             case_position=case_positions[case],
                             repetition=item.get('repetition'), state=item['state'],
-                            next_action=item['next_action'], cause=item.get('cause')))
+                            next_action=item['next_action'], cause=item.get('cause'),
+                            cost=dict(value=None if cost is None else cost.get('amount'),
+                                      unit='INCONNU' if cost is None or not cost.get('currency')
+                                      else cost['currency'],
+                                      status='UNKNOWN' if cost is None or cost.get('status') not in ('KNOWN', 'UNKNOWN')
+                                      else cost['status'],
+                                      source='Aucun reçu de coût' if cost is None
+                                      else cost.get('source') or 'INCONNU')))
     return pending, other
 
 

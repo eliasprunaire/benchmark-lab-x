@@ -1661,7 +1661,7 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       await page.goto(origin + '/render/published-results-filtered');
       const filtered = await page.textContent('main');
       assert.match(filtered, /1 réponse affichée sur 2/);
-      assert.equal(await page.locator('tbody tr').count(), 1);
+      assert.equal(await page.locator('.comparison-results > .table-scroll > table > tbody > tr').count(), 1);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/published-results');
       // Un dépliant puis la preuve publiée restent utilisables au clavier, sans JavaScript

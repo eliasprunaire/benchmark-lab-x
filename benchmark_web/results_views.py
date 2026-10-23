@@ -5,12 +5,15 @@ ni dossier, ni pièce réservée au juge. Il partage les fragments du parcours p
 pour les verdicts, les montants et les dates, et n’ajoute aucun script.
 """
 from .campaign_views import effort_label
-from .fragments import (badge, date_lisible_utc, jour_lisible, listing, montant_lisible, section,
-                        text, valeur_mesure)
+from .fragments import (badge, date_lisible_utc, jour_lisible, listing, montant_lisible, readable_fields,
+                        section, text, valeur_mesure)
 
 STATES = {'PASS': 'respectée', 'FAIL': 'non respectée', 'INDETERMINE': 'non vérifiable'}
 VERDICT_LABELS = {'SATISFAIT': 'Satisfait', 'NE SATISFAIT PAS': 'Ne satisfait pas', None: 'À reprendre'}
 TRI_LABELS = {'asc': 'ordre croissant', 'desc': 'ordre décroissant'}
+CONFIGURATION_LABELS = (('provider', 'Fournisseur'), ('model', 'Modèle'), ('revision', 'Révision'),
+                        ('access', 'Accès'), ('channel_id', 'Canal'), ('route', 'Route'),
+                        ('parameters', 'Paramètres'), ('effort', 'Effort de raisonnement'))
 
 
 def _panel(value):
@@ -151,10 +154,41 @@ def _proofs(value, row):
     return content + '</ul>'
 
 
+def _config_cell(value, unknown='Inconnu'):
+    if value in (None, 'INCONNU', 'UNKNOWN'):
+        return text(unknown)
+    if type(value) is dict:
+        return readable_fields(value)
+    return text(value)
+
+
+def _configuration_table(row):
+    configuration = row['configuration']
+    content = ('<div class="table-scroll"><table class="config-table"><caption>Configuration demandée, observée '
+               'et source de chaque observation.</caption><thead><tr><th scope="col">Caractéristique</th>'
+               '<th scope="col">Demandée</th><th scope="col">Observée</th><th scope="col">Source</th></tr></thead><tbody>')
+    unknown = []
+    for field, label in CONFIGURATION_LABELS:
+        requested = configuration['requested'][field]
+        observed = configuration['observed'][field]
+        source = configuration['sources'][field]
+        if observed in (None, 'INCONNU', 'UNKNOWN'):
+            unknown.append(label)
+        content += ('<tr><th scope="row">' + text(label) + '</th><td>' + _config_cell(requested)
+                    + '</td><td>' + _config_cell(observed) + '</td><td>' + _config_cell(source, 'Inconnue') + '</td></tr>')
+    content += '</tbody></table></div>'
+    if unknown:
+        content += '<p class="hint">Observations inconnues : ' + text(', '.join(unknown)) + '.</p>'
+    return content
+
+
 def _row_detail(value, row):
     panel = _panel(value)
     content = '<details><summary>Détail et preuves</summary>'
     content += '<p><strong>' + text(_candidate(panel[row['panel_position']])) + '</strong></p>'
+    if row['next_action']:
+        content += '<p>' + text(row['next_action']) + '</p>'
+    content += _configuration_table(row)
     content += '<p><strong>Constats</strong></p>' + listing(
         finding['label'] + ' : ' + STATES[finding['status']] + ' · ' + finding['finding']
         for finding in row['findings'])
@@ -246,8 +280,12 @@ def _pending(value):
             prefix = _example(item['case_position']) + ' : '
         attempt = ', essai ' + str(item['repetition']) if item['repetition'] else ''
         details = [item['cause'] or 'cause non établie par le reçu'] if item['cause'] else []
+        cost = item['cost']
+        shown = 'Inconnu' if cost['value'] is None else montant_lisible(cost['value']) + ' ' + cost['unit']
+        source = 'Inconnue' if cost['source'] in ('INCONNU', 'UNKNOWN') else cost['source']
         content += '<li>' + text(prefix + _candidate(panel[item['panel_position']]) + attempt + '. '
-                                 + item['next_action'] + (' (' + ' ; '.join(details) + ')' if details else '')) + '</li>'
+                                 + item['next_action'] + (' (' + ' ; '.join(details) + ')' if details else '')
+                                 + ' Coût observé : ' + shown + ' · source : ' + source + '.') + '</li>'
     return content + '</ul></section>'
 
 

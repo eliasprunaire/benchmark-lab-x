@@ -27,8 +27,9 @@ from tests.test_configurations import NOW, model
 from tests.test_openrouter_qualification import QualificationTransport
 from tests.test_provider_access import AccessTransport, KEY, SECRET
 from tests.test_s2_review_regressions import SessionAssistant, response_for
-from tests.test_s4_regressions import response
-from tests.test_s3_regressions import ACTOR, check, specification
+from tests.test_s4_regressions import inputs, manifest, response
+from tests.test_s3_regressions import ACTOR, AUTHORITY, check, specification
+from tests.test_s5_regressions import EVALUATION_AUTHORITY, RESPONSIBLE, findings
 from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 # Lectures complètes du registre tolérées pour un lancement : une par transaction, pas une par contrôle (#528)
@@ -1560,7 +1561,12 @@ class ParcoursComplet(unittest.TestCase):
         title = 'Tableau <script>alert(1)</script>'
         work = 'Préparer un tableau par opération'
 
-        def cout_inconnu(value, model):
+        def comportement(value, model):
+            observed = value['receipt']['observed_configuration']
+            if model == 'openai/gpt-5.6-sol':
+                observed['provider'] = 'fournisseur-observe'
+                observed['sources'] = dict(observed.get('sources') or {},
+                                           provider='HTTP response JSON /openrouter_metadata')
             if model == 'mistralai/mistral-small-2603':
                 value['cost'].update(status='UNKNOWN', amount=None)
 
@@ -1572,7 +1578,7 @@ class ParcoursComplet(unittest.TestCase):
             return findings
 
         dossier, _ = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent',
-                                   ajuste=ajuste, comportement=cout_inconnu,
+                                   ajuste=ajuste, comportement=comportement,
                                    qualifier=lambda: self.copie_qualifiee(title=title, work=work))
         trial = editorial.reprise_admission(self.public, task, version)
         dossier_id = dossier.rsplit('/', 1)[1]
@@ -1593,16 +1599,21 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(page.link('Lancer l’évaluation'))
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
-        # Troisième campagne partielle : une réponse vide, sans verdict
+        # Troisième campagne partielle : deux réponses vides, coût connu et coût inconnu
         page, _, _ = self.request(dossier + '/configurations')
         recap = self.submit(page, '/configurations', {
-            'models': ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'], 'tier': 'low'})
+            'models': ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603',
+                       'deepseek/deepseek-v4.1-flash'], 'tier': 'low'})
 
         def partiel(operation, request):
             value = self.candidate(operation, request)
-            if request['requested_configuration']['model'] == 'mistralai/mistral-small-2603':
+            model = request['requested_configuration']['model']
+            if model in ('deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'):
                 value['receipt']['result']['output'] = ''
+            if model == 'mistralai/mistral-small-2603':
                 value['cost'].update(status='KNOWN', amount='0.10')
+            elif model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='UNKNOWN', amount=None)
             return value
 
         self.submit(recap, '/start', {})
@@ -1640,7 +1651,7 @@ class ParcoursComplet(unittest.TestCase):
             partial_outputs = sorted({row['output_piece_id'] for row in partial_comparison['rows']
                                       if row['output_piece_id']})
             self.assertEqual(1, len(partial_comparison['rows']))
-            self.assertTrue(partial_comparison['pending_attempts'])
+            self.assertEqual(2, len(partial_comparison['pending_attempts']))
             judge = sorted({link['piece_id'] for row in comparison['rows'] for link in row['proof_links']
                             if store.get_piece(link['piece_id'])['role'] == 'judge'
                             and link['piece_id'] not in outputs})
@@ -1772,6 +1783,11 @@ class ParcoursComplet(unittest.TestCase):
                 self.assertNotIn(private_value, main)
         self.assertIn('un filtre ne change ni les verdicts ni la population', page.visible.lower())
         self.assertIn('pièce non publiée', main.lower())
+        # Configuration demandée, observée et sources : différence et inconnue explicites
+        page_raw = raw.decode()
+        self.assertIn('fournisseur-observe', page_raw)
+        self.assertRegex(page_raw, r'Fournisseur</th><td>OpenRouter</td><td>fournisseur-observe</td>')
+        self.assertRegex(page_raw, r'Observations inconnues :[^<]*Effort de raisonnement')
 
         piece_url = first + '/pieces/' + selected[0]
         _, piece_headers, piece_raw = self.request(piece_url, cookies=SimpleCookie())
@@ -1808,9 +1824,11 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, second_raw.count(b'<tr id="reponse-'))
         self.assertIn('coûts complets', page.visible.lower())
         page, _, partial_raw = self.request(partial)
-        self.assertIn('Réponses évaluées : 1 · essais lancés : 2 sur 2', page.visible)
+        self.assertIn('Réponses évaluées : 1 · essais lancés : 3 sur 3', page.visible)
         self.assertIn('Réponses en attente ou incidents', page.visible)
         self.assertIn('Aucune réponse exploitable', page.visible)
+        self.assertIn('Coût observé : 0,10 USD', page.visible)
+        self.assertIn('Coût observé : Inconnu', page.visible)
         self.assertIn('Comparaison des coûts incomplète', page.visible)
         self.assertEqual(1, partial_raw.count(b'<tr id="reponse-'))
         self.assertEqual({first, second}, {node['attrs']['href'] for node in page.nodes
@@ -1885,6 +1903,96 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual('Épreuve retirée', str(raised.exception))
         self.assertEqual(manifest_bytes, (stored / first_id / 'manifest.json').read_bytes())
         self.assertEqual(second_manifest, (stored / second_id / 'manifest.json').read_bytes())
+
+    def test_tri_numerique_resultats_publics(self):
+        """#466 : le tri public suit le sens annoncé, les égalités et les inconnues"""
+        from benchmark import restitution
+        task, version = 'tache-fictive', 'version-1'
+        dossier, page, _ = self.copie_preparee()
+        dossier_id = dossier.rsplit('/', 1)[1]
+        self.submit(page, '/validation', {})
+        with closing(storage.Store(self.data)) as store:
+            revision = store._connection.execute(
+                'SELECT current_revision FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
+            reference = store._connection.execute(
+                "SELECT piece_id FROM pieces WHERE dossier_id=? AND revision=? AND role='judge'",
+                (dossier_id, revision)).fetchone()[0]
+            spec = specification(reference)
+            spec['secondary_criteria'] = [
+                {'id': 'C1', 'measure': 'Nombre d’actions', 'unit': 'actions',
+                 'proof': 'Chaque action du tableau, recomptée', 'favorable': 'higher',
+                 'aggregation': None},
+                {'id': 'C2', 'measure': 'Points vérifiés', 'unit': 'points',
+                 'proof': 'Passages vérifiés dans le tableau', 'favorable': 'higher',
+                 'aggregation': None}]
+            contract = qualification.draft(store, dossier_id, revision, spec)
+            receipt = qualification.qualify(store, contract['contract_sha256'], reviewer=ACTOR, check=check)
+            qualification.approve(store, contract['contract_sha256'], receipt['qualification_id'],
+                                  actor=ACTOR, authority=AUTHORITY)
+            campaign = manifest(contract, 'numeric')
+            campaign['panel'] = [dict(campaign['panel'][0], id=ident, channel_id='fixture-channel-' + ident,
+                                      model='fictional-' + ident)
+                                 for ident in ('x', 'y', 'z')]
+            campaign['plan'] = [dict(cell_id=ident, case_id='notes', configuration_id=ident)
+                                for ident in ('x', 'y', 'z')]
+            campaign['attempt_policy'] = dict(retries=False, order=['x', 'y', 'z'], reason='Declared local order')
+            campaign = campaigns.create(store, campaign)
+            store.create_budget('local-comparison', '40', 'TEST')
+            authority, evidence = inputs(campaign, cells=['x', 'y', 'z'])
+            authority['reserve_amounts']['z'] = '7'
+            campaigns.admit(store, 'numeric', authority, evidence)
+            values = {'x': (2, 1), 'y': (2, 1), 'z': (10, 'INCONNU')}
+
+            def report(ctx, resources):
+                value = findings(ctx, resources)
+                output = ctx['attempt']['output_piece_id']
+                proof = [dict(piece_id=output, sha256=sha256(resources[output]).hexdigest(),
+                              passage=resources[output].decode())]
+                first, second = values[resources[output].decode().removeprefix('Sortie ')]
+                value['measures'] = [dict(criterion_id='C1', value=first, unit='actions', evidence=proof),
+                                     dict(criterion_id='C2', value=second, unit='points', evidence=proof)]
+                return value
+
+            def transport(operation, request):
+                value = response(operation, request)
+                value['receipt']['result']['output'] = 'Sortie ' + request['requested_configuration']['channel_id'].removeprefix('fixture-channel-')
+                value['cost'].update(status='KNOWN', amount='2', currency='TEST')
+                return value
+
+            for ident in ('x', 'y', 'z'):
+                attempts = campaigns.reserve(store, 'numeric', ident, 'attempt-' + ident)
+                execution.execute(self.data, attempts['operation_id'], transport)
+                evaluation.evaluate(store, 'numeric', attempts['operation_id'], responsible=RESPONSIBLE,
+                                    authority=EVALUATION_AUTHORITY, check=report)
+            campaigns.stop(store, 'numeric')
+        campaign_id = 'numeric'
+        url = '/epreuves/' + task + '/' + version + '/campagnes/' + campaign_id
+        with closing(storage.Store(self.data)) as store:
+            session = store._connection.execute(
+                'SELECT session_id FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
+            comparison = restitution.comparison(store, session, dossier_id, campaign_id)
+            self.assertEqual(3, len(comparison['rows']))
+            outputs = sorted({row['output_piece_id'] for row in comparison['rows'] if row['output_piece_id']})
+            self.assertEqual(3, len(outputs))
+            bundle = restitution.results_bundle(store, dossier_id, campaign_id, piece_ids=outputs,
+                                                task_id=task, version_id=version)
+        public_results.publish(self.public, bundle, public_results.approval(bundle['projection_sha256']))
+        manifest_doc = json.loads(bundle['manifest'])
+        numeric = next(column['id'] for column in manifest_doc['columns'] if column['label'] == 'Nombre d’actions')
+        precision = next(column['id'] for column in manifest_doc['columns'] if column['label'] == 'Points vérifiés')
+
+        def order(extra):
+            raw = self.request(url + extra)[2]
+            return [int(number) for number in re.findall(rb'<tr id="reponse-(\d+)-1"', raw)]
+
+        # Valeurs 2, 2 et 10 : croissant suit les valeurs, décroissant les inverse, l'égalité reste stable
+        self.assertEqual([1, 2, 3], order('?sort=' + numeric))
+        self.assertEqual([3, 1, 2], order('?sort=' + numeric + '&direction=desc'))
+        # Valeurs 1, 1 et inconnue : l'inconnue reste sans rang, dans les deux sens
+        self.assertEqual([1, 2, 3], order('?sort=' + precision))
+        self.assertEqual([1, 2, 3], order('?sort=' + precision + '&direction=desc'))
+        page = self.request(url + '?sort=' + precision)[0]
+        self.assertIn('Non comparable : Mesure non relevée ou sans preuve', page.visible)
 
     def test_copie_epreuve_expiration_et_purge(self):
         """#465 : la copie et sa source suivent les règles privées de conservation, sans réactivation"""
@@ -4605,13 +4713,14 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotRegex(next(n for n in page.nodes if n['tag'] == 'main')['text'], self.PROMESSE)
 
     def comparer(self, qualites, mesure, *, constat=None, ajuste=None, comportement=None,
-                 models=('openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'), repetitions=None, qualifier=None):
+                 models=('openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'), repetitions=None,
+                 qualifier=None, criteria=None):
         """Comparaison sans reprise de modèles satisfaisants, coûts connus sauf `comportement(valeur, modèle)`
 
         `mesure(critère, sortie)` rend la valeur du juge pour chaque critère de qualité nommé dans
         `qualites` ; la réponse de mistral-small se reconnaît à sa sortie `SORTIE_C`
         """
-        self.criteria = {'eliminatory': [], 'obligations': ['Toutes les actions présentes'], 'quality': [
+        self.criteria = criteria or {'eliminatory': [], 'obligations': ['Toutes les actions présentes'], 'quality': [
             {'label': label, 'scale': ['excellent', 'acceptable', 'faible'], 'favorable': 'excellent'} for label in qualites]}
         self.juge_factice(constat or (lambda critere: ('PASS', 'candidate', 'Exigence respectée')),
                           mesure=lambda critere, sortie: mesure(critere['measure'], sortie), ajuste=ajuste)

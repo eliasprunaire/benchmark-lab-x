@@ -12,6 +12,7 @@ Les formats fictifs historiques (`publications`, S6) gardent leur autorité prop
 """
 from copy import deepcopy
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import fcntl
 import math
@@ -44,13 +45,17 @@ _COLUMN = {'id', 'label', 'unit', 'favorable', 'proof', 'cost'}
 _OBLIGATION = {'id', 'label', 'states'}
 _ROW = {'panel_position', 'case_position', 'repetition', 'recovery_limit', 'relaunch', 'verdict',
         'reason', 'next_action', 'findings', 'measures', 'metrics', 'states', 'created_at',
-        'responsible', 'judgment', 'limits', 'proofs'}
+        'responsible', 'judgment', 'limits', 'proofs', 'configuration'}
 _ROW_REQUIRED = _ROW - {'repetition', 'recovery_limit', 'relaunch'}
+CONFIGURATION_FIELDS = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', 'parameters',
+                        'effort')
+_CONFIGURATION = {'requested', 'observed', 'sources'}
 _FINDING = {'label', 'status', 'finding'}
 _MEASURE = {'label', 'value', 'unit', 'status', 'reason'}
-_METRIC = {'value', 'unit', 'rank', 'reason'}
+_METRIC = {'value', 'unit', 'rank', 'reason', 'key'}
 _JUDGMENT = {'mode', 'professional_review', 'cost'}
-_PENDING = {'panel_position', 'case_position', 'repetition', 'state', 'next_action', 'cause'}
+_PENDING = {'panel_position', 'case_position', 'repetition', 'state', 'next_action', 'cause', 'cost'}
+_COST = {'value', 'unit', 'status', 'source'}
 _PIECE = {'file', 'sha256', 'label'}
 _FIXED = {'manifest.json', 'approval.json'}
 _FILE = re.compile(r'piece-[A-Za-z0-9_-]+\.txt\Z')
@@ -147,6 +152,40 @@ def _value(value, label):
 def _text_value(value, label):
     if value is not None:
         _text(value, label)
+
+
+def _number_text(value, label):
+    if type(value) is not str or re.fullmatch(
+            r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?', value) is None:
+        raise ValueError('Valeur numérique invalide : ' + label)
+    try:
+        number = Decimal(value)
+    except InvalidOperation:
+        raise ValueError('Valeur numérique invalide : ' + label) from None
+    if not number.is_finite():
+        raise ValueError('Valeur numérique invalide : ' + label)
+
+
+def _configuration(value):
+    _fields(value, _CONFIGURATION, 'configuration')
+    for section in ('requested', 'observed', 'sources'):
+        _fields(value[section], CONFIGURATION_FIELDS, 'configuration ' + section)
+    for field in CONFIGURATION_FIELDS:
+        for section in ('requested', 'observed', 'sources'):
+            item = value[section][field]
+            if field == 'parameters' and type(item) is dict:
+                encode(item)
+            else:
+                _text(item, 'configuration')
+
+
+def _cost(value, label):
+    _fields(value, _COST, label)
+    _value(value['value'], label)
+    _text(value['unit'], label)
+    if value['status'] not in ('KNOWN', 'UNKNOWN'):
+        raise ValueError('État de coût invalide : ' + label)
+    _text(value['source'], label)
 
 
 def _manifest(raw):
@@ -274,6 +313,7 @@ def _manifest(raw):
         raise ValueError('Paquet incomplet : réponses')
     for row in rows:
         _optional(row, _ROW, _ROW_REQUIRED, 'réponse')
+        _configuration(row['configuration'])
         if type(row['panel_position']) is not int or row['panel_position'] not in panel_positions:
             raise ValueError('Paquet incomplet : modèle de réponse')
         if type(row['case_position']) is not int or row['case_position'] not in positions:
@@ -320,10 +360,15 @@ def _manifest(raw):
             _value(metric['value'], 'valeur par colonne')
             _text(metric['unit'], 'unité par colonne')
             _rank(metric['rank'], 'rang')
+            _text_value(metric['key'], 'clé de tri')
+            if metric['key'] is not None:
+                _number_text(metric['key'], 'clé de tri')
             if metric['reason'] is not None:
                 _text(metric['reason'], 'motif de rang')
             elif metric['rank'] is None:
                 raise ValueError('Paquet incomplet : mesure classable sans rang')
+            if metric['rank'] is None and metric['key'] is not None:
+                raise ValueError('Paquet incomplet : clé sans rang')
         states = row['states']
         if type(states) is not dict or set(states) != obligation_ids:
             raise ValueError('Paquet incomplet : états par exigence')
@@ -369,6 +414,7 @@ def _manifest(raw):
         _text(item['state'], 'état en attente')
         _text(item['next_action'], 'prochaine action en attente')
         _text_value(item['cause'], 'cause en attente')
+        _cost(item['cost'], 'coût en attente')
     dates = manifest['acquisition_dates']
     if type(dates) is not list:
         raise ValueError('Paquet incomplet : dates')
@@ -839,9 +885,10 @@ def _ordered(rows, query, cases):
     ordered = []
     for case in cases:
         group = [row for row in rows if row['case_position'] == case['position']]
-        known = [row for row in group if row['metrics'][column]['rank'] is not None]
-        unknown = [row for row in group if row['metrics'][column]['rank'] is None]
-        known.sort(key=lambda row: row['metrics'][column]['rank'], reverse=query.get('direction') == 'desc')
+        known = [row for row in group if row['metrics'][column]['key'] is not None]
+        unknown = [row for row in group if row['metrics'][column]['key'] is None]
+        known.sort(key=lambda row: Decimal(row['metrics'][column]['key']),
+                   reverse=query.get('direction') == 'desc')
         ordered.extend(known + unknown)
     return ordered
 

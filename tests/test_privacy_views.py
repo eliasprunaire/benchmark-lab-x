@@ -241,8 +241,19 @@ def results_view(*, withdrawn=False, unavailable=None, filtered=False):
         {'id': 'criterion-2', 'label': 'Clarté du tableau', 'unit': 'descriptif', 'favorable': 'higher',
          'proof': 'Passages de la sortie cités exactement', 'cost': False},
     ]
+    configuration = {
+        'requested': {'provider': 'openrouter', 'model': 'openai/gpt-5.6-sol', 'revision': 'rev-a',
+                      'access': 'API', 'channel_id': 'openrouter', 'route': '/chat/completions',
+                      'parameters': {'max_tokens': 4096}, 'effort': 'high'},
+        'observed': {'provider': 'fournisseur-observé', 'model': 'INCONNU', 'revision': 'rev-a',
+                     'access': 'INCONNU', 'channel_id': 'openrouter', 'route': 'INCONNU',
+                     'parameters': 'INCONNU', 'effort': 'INCONNU'},
+        'sources': {'provider': 'HTTP response JSON', 'model': 'INCONNU', 'revision': 'HTTP response JSON',
+                    'access': 'INCONNU', 'channel_id': 'request parameter', 'route': 'INCONNU',
+                    'parameters': 'INCONNU', 'effort': 'INCONNU'}}
     rows = [
         {'panel_position': 1, 'case_position': 1, 'verdict': 'SATISFAIT', 'reason': 'Toutes les exigences sont respectées.',
+         'configuration': configuration,
          'next_action': None,
          'findings': [{'label': 'Toutes les actions présentes', 'status': 'PASS',
                        'finding': 'Les actions et leur responsable figurent dans le tableau <script>alert(2)</script>.'}],
@@ -258,6 +269,7 @@ def results_view(*, withdrawn=False, unavailable=None, filtered=False):
                     {'name': 'Pièce réservée à l’évaluation', 'piece_id': None}]},
         {'panel_position': 2, 'case_position': 1, 'verdict': 'NE SATISFAIT PAS',
          'reason': 'Une exigence n’est pas respectée : les actions sont omises.', 'next_action': None,
+         'configuration': configuration,
          'findings': [{'label': 'Toutes les actions présentes', 'status': 'FAIL',
                        'finding': 'Une action annoncée par la consigne manque au tableau.'}],
          'measures': [{'label': 'Clarté du tableau', 'value': 'faible', 'unit': 'descriptif',
