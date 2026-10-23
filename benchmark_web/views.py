@@ -361,26 +361,42 @@ def render_editorial(value):
                    'pas les épreuves par proximité sémantique.</p>'
                    '<p>Les caractéristiques sont déclarées avec chaque version. Une information absente reste '
                    'inconnue ; elle ne prouve ni absence d’outil ni qualification.</p>')
+        filters = value.get('filters') or {}
+
+        def active_unavailable(key):
+            active = criteria.get(key)
+            return bool(active) and active not in filters.get(key, [])
+
         content += ('<form method="get" action="/epreuves"><label for="q">Rechercher une épreuve</label>'
                     '<input type="text" id="q" name="q" maxlength="200" value="' + text(criteria.get('q', '')) + '">')
-        filters = value.get('filters') or {}
         for key, label in EDITORIAL_FILTERS:
             content += ('<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key
                         + '"><option value="">Tous</option>')
-            for option in filters.get(key, []):
-                shown = EDITORIAL_STATUS.get(option, option) if key == 'qualification' else option
+            proposed = list(filters.get(key, []))
+            options = proposed + ([criteria[key]] if active_unavailable(key) else [])
+            for option in options:
+                shown = str(EDITORIAL_STATUS.get(option, option) if key == 'qualification' else option)
+                if active_unavailable(key) and option not in proposed:
+                    shown += ' (indisponible)'
                 content += ('<option value="' + text(option) + '"'
                             + (' selected' if criteria.get(key) == option else '') + '>' + text(shown) + '</option>')
             content += '</select>'
         content += '<button type="submit">Rechercher</button></form>'
         content += '<p><a href="/epreuves">Effacer la recherche et les filtres</a></p>'
-        if value.get('searched') and value.get('total'):
+        if value.get('searched'):
             content += '<section><h2>Critères actifs</h2><dl class="active-criteria">'
             for key, label in (('q', 'Recherche'),) + EDITORIAL_FILTERS:
                 if criteria.get(key):
-                    shown = EDITORIAL_STATUS.get(criteria[key], criteria[key]) if key == 'qualification' else criteria[key]
+                    shown = str(EDITORIAL_STATUS.get(criteria[key], criteria[key])
+                                if key == 'qualification' else criteria[key])
+                    if key != 'q' and active_unavailable(key):
+                        shown += ' (indisponible)'
                     content += '<dt>' + text(label) + '</dt><dd>' + text(shown) + '</dd>'
-            content += '</dl></section>'
+            content += '</dl>'
+            if any(active_unavailable(key) for key, _ in EDITORIAL_FILTERS):
+                content += ('<p class="hint">Une valeur marquée indisponible ne correspond à aucune version '
+                            'publique disponible. Elle reste active jusqu’à sa modification ou son effacement.</p>')
+            content += '</section>'
         for entry in value.get('versions', []):
             href = '/epreuves/' + entry['task_id'] + '/' + entry['version_id']
             if query:

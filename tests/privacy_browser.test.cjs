@@ -117,6 +117,8 @@ def editorial_bundle(version, title, body, *, characteristics=None, schema=None)
     return {'manifest': encoded, 'package_sha256': identity, 'files': {filename: raw_piece}}, editorial.fixture_approval(identity)
 editorial_title = 'Tableau <script>alert(1)</script>'
 editorial_piece = 'Pièce <script>alert(1)</script>'
+editorial_long_tool = 'Tableur ' + 'de contrôle ' * 16 + 'o'
+assert len(editorial_long_tool) == 201
 editorial_search_fields = ('q', 'entree', 'langue', 'outil', 'difficulte', 'qualification')
 with tempfile.TemporaryDirectory() as editorial_dir:
     editorial_dir = str(Path(editorial_dir).resolve())
@@ -131,8 +133,13 @@ with tempfile.TemporaryDirectory() as editorial_dir:
         characteristics={'expected_result': 'Note de synthèse', 'inputs': ['Textes fournis'],
                          'language': 'Français', 'tools': ['Tableur'], 'difficulty': 'Facile'})
     editorial.fixture_publish(editorial_dir, packed_two, packed_two_approval)
+    packed_long, packed_long_approval = editorial_bundle(
+        'version-longue', 'Version longue', 'Pièce de la version longue',
+        characteristics={'expected_result': 'Note longue', 'inputs': ['Textes fournis'],
+                         'language': 'Français', 'tools': [editorial_long_tool], 'difficulty': 'Facile'})
+    editorial.fixture_publish(editorial_dir, packed_long, packed_long_approval)
     editorial_queries = ({}, {'q': 'note'}, {'q': 'note', 'langue': 'Français', 'outil': 'Tableur'},
-                         {'q': 'introuvable'})
+                         {'q': 'introuvable'}, {'outil': editorial_long_tool})
     editorial_search = {
         json.dumps([query.get(key, '') for key in editorial_search_fields], ensure_ascii=False, separators=(',', ':')):
             views.render(editorial.fixture_search(editorial_dir, query), '').decode()
@@ -153,6 +160,24 @@ with tempfile.TemporaryDirectory() as editorial_dir:
     editorial.fixture_withdraw(editorial_dir, 'tache-fictive', 'version-1',
                                editorial.fixture_withdrawal(packed['package_sha256'], 'tache-fictive', 'version-1'))
     editorial_withdrawn = views.render(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode()
+with tempfile.TemporaryDirectory() as unavailable_dir:
+    unavailable_dir = str(Path(unavailable_dir).resolve())
+    packed_retired, packed_retired_approval = editorial_bundle(
+        'version-tableur-retire', 'Version au tableur retiré', 'Pièce du tableur retiré',
+        characteristics={'language': 'Français', 'tools': ['Tableur retiré']})
+    editorial.fixture_publish(unavailable_dir, packed_retired, packed_retired_approval)
+    packed_available, packed_available_approval = editorial_bundle(
+        'version-disponible', 'Note disponible', 'Pièce de la note disponible',
+        characteristics={'expected_result': 'Note disponible', 'language': 'Français', 'tools': ['Tableur']})
+    editorial.fixture_publish(unavailable_dir, packed_available, packed_available_approval)
+    editorial.fixture_withdraw(unavailable_dir, 'tache-fictive', 'version-tableur-retire',
+                               editorial.fixture_withdrawal(packed_retired['package_sha256'],
+                                                            'tache-fictive', 'version-tableur-retire'))
+    editorial_unavailable = views.render(
+        editorial.fixture_search(unavailable_dir, {'outil': 'Tableur retiré'}), '').decode()
+    editorial_search[json.dumps(['note', '', '', 'Tableur retiré', '', ''], ensure_ascii=False,
+                                separators=(',', ':'))] = views.render(
+        editorial.fixture_search(unavailable_dir, {'q': 'note', 'outil': 'Tableur retiré'}), '').decode()
 with tempfile.TemporaryDirectory() as empty_dir:
     editorial_empty = views.render(editorial.catalog_view(str(Path(empty_dir).resolve())), '').decode()
 print(json.dumps({**browser_views(), 'reference_search': reference_search, 'reference_notices': reference_notices,
@@ -160,6 +185,7 @@ print(json.dumps({**browser_views(), 'reference_search': reference_search, 'refe
                   'editorial-version-search': editorial_version_search,
                   'editorial-empty': editorial_empty,
                   'editorial-withdrawn': editorial_withdrawn, 'editorial_piece': editorial_piece,
+                  'editorial-unavailable': editorial_unavailable, 'editorial-long-tool': editorial_long_tool,
                   'reference-referral': reference_referral, 'reference-empty': reference_empty, **approved, 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
@@ -182,7 +208,7 @@ print(json.dumps({**browser_views(), 'reference_search': reference_search, 'refe
                   'launch_timeout': views.render(dict(RESPONSE_TIMEOUT), '', '/preparation/dossiers/d1/campaigns/c1/start',
                                                  error=True).decode(),
                   'progress_script': views.PREPARATION_PROGRESS_SCRIPT}))
-`], {encoding: 'utf8'}));
+`], {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024}));
   server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     res.setHeader('Cache-Control', 'no-store');
@@ -1481,6 +1507,36 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       mkdirSync('reports/464', {recursive: true});
       await page.screenshot({path: 'reports/464/recherche-mobile-'
         + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      // Une valeur longue proposée reste sélectionnable et utilisable
+      await page.goto(origin + '/epreuves');
+      await page.getByLabel('Outil').selectOption(rendered['editorial-long-tool']);
+      await page.getByRole('button', {name: 'Rechercher'}).click();
+      const longResult = await page.textContent('main');
+      assert.match(longResult, /Version longue/);
+      assert.match(longResult, /Critères actifs/);
+      assert.equal(new URL(page.url()).searchParams.get('outil'), rendered['editorial-long-tool']);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Un filtre devenu indisponible reste sélectionné lors d'une nouvelle soumission
+      await page.goto(origin + '/render/editorial-unavailable');
+      assert.equal(await page.getByLabel('Outil').inputValue(), 'Tableur retiré');
+      assert.match(await page.locator('option[value="Tableur retiré"]').textContent(), /indisponible/);
+      await page.getByLabel('Rechercher une épreuve').fill('note');
+      await page.getByRole('button', {name: 'Rechercher'}).click();
+      const retained = await page.textContent('main');
+      assert.match(retained, /Critères actifs/);
+      assert.match(retained, /Tableur retiré \(indisponible\)/);
+      assert.match(retained, /Aucune épreuve ne correspond à cette recherche/);
+      assert.equal(retained.includes('Version au tableur retiré'), false);
+      assert.equal(new URL(page.url()).searchParams.get('outil'), 'Tableur retiré');
+      assert.equal(await page.getByLabel('Outil').inputValue(), 'Tableur retiré');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({path: 'reports/464/filtre-indisponible-mobile-'
+        + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
+      assert.equal(await page.getByLabel('Outil').inputValue(), '');
+      const cleared = await page.textContent('main');
+      assert.match(cleared, /Note <script>alert\(4\)<\/script>/);
+      assert.equal(cleared.includes('Version au tableur retiré'), false);
       await page.goto(origin + '/epreuves');
       await page.getByRole('link', {name: 'Tableau <script>alert(1)</script>'}).click();
       assert.equal(await page.locator('h1').textContent(), 'Tableau <script>alert(1)</script>');

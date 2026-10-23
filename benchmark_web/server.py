@@ -131,7 +131,7 @@ def _source_fingerprint(headers, client_address, salt, trusted_proxies):
 
 
 def _editorial_query(path):
-    """Seuls les paramètres de recherche prévus, une valeur chacun, texte UTF-8 borné"""
+    """Seuls les paramètres de recherche prévus, une valeur chacun, texte UTF-8"""
     try:
         query = parse_qs(urlsplit(path).query, keep_blank_values=True, errors='strict',
                          max_num_fields=len(editorial.SEARCH_PARAMETERS))

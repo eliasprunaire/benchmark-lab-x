@@ -33,7 +33,7 @@ _MANIFEST = {'schema_version', 'task_id', 'version_id', 'title', 'work', 'cases'
 # Caractéristiques facultatives : leur absence reste inconnue, une liste vide déclare une absence
 _CHARACTERISTICS = ('expected_result', 'inputs', 'language', 'tools', 'difficulty')
 SEARCH_PARAMETERS = ('q', 'entree', 'langue', 'outil', 'difficulte', 'qualification')
-_SEARCH_LIMIT = 200
+_QUERY_LIMIT = 200
 _PIECE = {'file', 'sha256', 'label'}
 _COPY_FIELDS = {'task_id', 'version_id', 'package_sha256', 'manifest', 'pieces'}
 _COPY_PIECE_FIELDS = {'id', 'label', 'file', 'sha256', 'text'}
@@ -688,13 +688,17 @@ def _searchable(entry):
 
 
 def search_criteria(criteria):
-    """Valide et normalise les seuls paramètres de recherche prévus"""
+    """Valide et normalise les paramètres ; seul le texte libre reste borné en longueur.
+
+    Les valeurs de filtres proposées viennent des caractéristiques publiées : elles
+    doivent rester utilisables même lorsqu'elles dépassent la borne du texte libre.
+    """
     if type(criteria) is not dict or set(criteria) - set(SEARCH_PARAMETERS):
         raise ValueError('Recherche invalide')
     normalized = {}
     for key in SEARCH_PARAMETERS:
         value = criteria.get(key, '')
-        if type(value) is not str or len(value) > _SEARCH_LIMIT:
+        if type(value) is not str or (key == 'q' and len(value) > _QUERY_LIMIT):
             raise ValueError('Recherche invalide')
         try:
             value.encode('utf-8', errors='strict')

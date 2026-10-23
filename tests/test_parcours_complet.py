@@ -84,16 +84,42 @@ class Page(HTMLParser):
     def form(self, suffix):
         return next(f for f in self.forms if f['action'].endswith(suffix))
 
-    def options(self, name):
-        """Valeurs proposées par un choix natif, dans l'ordre du document"""
+    def choices(self, name):
+        """Options natives d'un choix, dans l'ordre du document"""
         index = next(index for index, node in enumerate(self.nodes)
                      if node['tag'] == 'select' and node['attrs'].get('name') == name)
-        values = []
+        choices = []
         for node in self.nodes[index + 1:]:
             if node['tag'] == 'select':
                 break
             if node['tag'] == 'option':
-                values.append(node['attrs']['value'])
+                choices.append(node)
+        return choices
+
+    def options(self, name):
+        """Valeurs proposées par un choix natif, dans l'ordre du document"""
+        return [node['attrs']['value'] for node in self.choices(name)]
+
+    def form_values(self, suffix):
+        """Valeurs réellement soumises par les contrôles natifs, option sélectionnée comprise"""
+        form = self.form(suffix)
+        values = {}
+        for index, node in enumerate(form['nodes']):
+            name = node['attrs'].get('name')
+            if not name:
+                continue
+            if node['tag'] == 'input':
+                values[name] = node['attrs'].get('value', '')
+            elif node['tag'] == 'select':
+                options = []
+                for after in form['nodes'][index + 1:]:
+                    if after['tag'] == 'select':
+                        break
+                    if after['tag'] == 'option':
+                        options.append(after)
+                chosen = next((option for option in options if 'selected' in option['attrs']),
+                              options[0] if options else None)
+                values[name] = '' if chosen is None else chosen['attrs'].get('value', '')
         return values
 
     def field(self, label):
@@ -552,7 +578,8 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual('/preparation', empty.link('Décrire mon cas d’usage'))
             empty_search, _, _ = self.request('/epreuves?q=tableau')
             self.assertIn('Aucune épreuve publiée', empty_search.visible)
-            self.assertNotIn('Critères actifs', empty_search.visible)
+            self.assertIn('Critères actifs', empty_search.visible)
+            self.assertEqual('/epreuves', empty_search.link('Effacer la recherche et les filtres'))
             self.assertEqual('/preparation', empty_search.link('Décrire mon cas d’usage'))
             self.assertEqual([], empty_search.options('langue')[1:])
             self.assertEqual(['/epreuves'], [n['attrs']['href'] for n in empty.nodes if n['attrs'].get('aria-current') == 'page'])
@@ -947,7 +974,10 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIn('Aucune épreuve ne correspond à cette recherche', mismatch.visible)
             unknown_value = search({'langue': 'Klingon'})
             self.assertIn('Aucune épreuve ne correspond à cette recherche', unknown_value.visible)
-            self.assertNotIn('Klingon', unknown_value.options('langue'))
+            unavailable = next(node for node in unknown_value.choices('langue')
+                               if node['attrs']['value'] == 'Klingon')
+            self.assertIn('selected', unavailable['attrs'])
+            self.assertIn('indisponible', unavailable['text'])
 
             # Ouverture exacte, critères conservés, copie toujours filiation de la version choisie
             result_link = combined.link('Tableau des débits')
@@ -1004,6 +1034,66 @@ class ParcoursComplet(unittest.TestCase):
                                              for path in self.public.rglob('*') if path.is_file()})
             self.assertEqual(before_private, {str(path.relative_to(self.data)): path.read_bytes()
                                               for path in self.data.rglob('*') if path.is_file()})
+
+    def test_recherche_conserve_un_filtre_indisponible(self):
+        """#464 : un filtre actif reste soumis jusqu'à sa modification ou son effacement volontaire"""
+        task = 'tache-fictive'
+        tableur = self.publier_epreuve('version-tableur', title='Tableau au tableur',
+                                       characteristics={'tools': ['Tableur'], 'language': 'Français'})
+        self.publier_epreuve('version-autre', title='Note sans tableur',
+                             characteristics={'tools': [], 'language': 'Anglais'})
+        path = '/epreuves?' + urlencode({'outil': 'Tableur'})
+        filtered, _, _ = self.request(path)
+        self.assertIn('Tableau au tableur', filtered.visible)
+        self.assertNotIn('Note sans tableur', filtered.visible)
+        self.assertEqual('Tableur', filtered.form_values('/epreuves')['outil'])
+        editorial.withdraw(self.public, task, 'version-tableur', dict(
+            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=tableur['package_sha256'],
+            scope='editorial-withdrawal', task_id=task, version_id='version-tableur'))
+        retained, _, _ = self.request(path)
+        self.assertIn('Aucune épreuve ne correspond à cette recherche', retained.visible)
+        self.assertNotIn('Tableau au tableur', retained.visible)
+        self.assertIn('Tableur (indisponible)', retained.visible)
+        choice = next(node for node in retained.choices('outil') if node['attrs']['value'] == 'Tableur')
+        self.assertIn('selected', choice['attrs'])
+        self.assertIn('indisponible', choice['text'])
+        fields = retained.form_values('/epreuves')
+        self.assertEqual('Tableur', fields['outil'])
+        self.assertNotIn('Tableur', self.request('/epreuves')[0].options('outil'))
+        # Modifier le texte recherché soumet réellement le filtre conservé
+        fields['q'] = 'note'
+        changed, _, _ = self.request('/epreuves?' + urlencode(fields))
+        self.assertIn('Critères actifs', changed.visible)
+        self.assertIn('Tableur (indisponible)', changed.visible)
+        self.assertIn('Aucune épreuve ne correspond à cette recherche', changed.visible)
+        self.assertNotIn('Note sans tableur', changed.visible)
+        self.assertEqual('Tableur', changed.form_values('/epreuves')['outil'])
+        # Effacement volontaire : le filtre et la recherche disparaissent ensemble
+        cleared, _, _ = self.request(changed.link('Effacer la recherche et les filtres'))
+        self.assertNotIn('Critères actifs', cleared.visible)
+        self.assertEqual('', cleared.form_values('/epreuves')['outil'])
+        self.assertIn('Note sans tableur', cleared.visible)
+        self.assertNotIn('Tableau au tableur', cleared.visible)
+
+    def test_recherche_caracteristique_longue_utilisable(self):
+        """#464 : toute valeur proposée par le formulaire reste utilisable par la recherche"""
+        long_tool = 'Tableur ' + 'de contrôle ' * 16 + 'o'
+        self.assertEqual(201, len(long_tool))
+        self.publier_epreuve('version-longue', title='Version longue',
+                             characteristics={'tools': [long_tool], 'language': 'Français'})
+        page, _, _ = self.request('/epreuves')
+        self.assertIn(long_tool, page.options('outil'))
+        self.assertIn(long_tool, page.visible)
+        fields = page.form_values('/epreuves')
+        self.assertEqual('', fields['outil'])
+        fields['outil'] = long_tool
+        result, _, _ = self.request('/epreuves?' + urlencode(fields))
+        self.assertIn('Version longue', result.visible)
+        self.assertIn('Critères actifs', result.visible)
+        self.assertIn(long_tool, result.visible)
+        self.assertIn(long_tool, result.options('outil'))
+        self.assertEqual(long_tool, result.form_values('/epreuves')['outil'])
+        self.request('/epreuves?q=' + 'a' * 201, status=400)
 
     def construire_epreuve(self, version='version-1', *, qualification='ABSENT', title='Tableau des opérations',
                            work='Préparer un tableau par opération', cases=('Cinq débits de janvier 2027',),
