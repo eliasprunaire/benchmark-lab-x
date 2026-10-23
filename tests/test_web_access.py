@@ -815,7 +815,9 @@ class RouteCanonicalizationTests(unittest.TestCase):
                 ('/mentions-legales', '/mentions-legales'), ('/cgu', '/cgu'),
                 ('/confidentialite', '/confidentialite'),
                 ('/epreuves', '/epreuves'),
+                ('/epreuves?q=tableau&langue=Fran%C3%A7ais&outil=Tableur', '/epreuves'),
                 ('/epreuves/tache-fictive/version-1', '/epreuves/<id>/<id>'),
+                ('/epreuves/tache-fictive/version-1?q=tableau', '/epreuves/<id>/<id>'),
                 ('/epreuves/tache-fictive/version-1/pieces/consigne', '/epreuves/<id>/<id>/pieces/<id>')):
             self.assertEqual(expected, canonical_route(path), path)
 

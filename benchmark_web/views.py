@@ -6,7 +6,7 @@ forme les vues structurées renvoyées par l'exécuteur.
 from pathlib import Path
 import re
 import secrets
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from benchmark.preparation import CONTEXT_MAX, REQUEST_MIN, binding
 from benchmark.storage import _strict_json as encode
@@ -298,33 +298,126 @@ def editorial_report(report):
                        'ni les preuves déjà conservées.</p>')
 
 
+EDITORIAL_STATUS = {'ABSENT': 'Qualification absente', 'QUALIFIED': 'Qualification réussie',
+                    'BLOCKED': 'Qualification bloquée'}
+EDITORIAL_FILTERS = (('entree', 'Entrées'), ('langue', 'Langue'), ('outil', 'Outil'),
+                     ('difficulte', 'Difficulté'), ('qualification', 'Qualification'))
+
+
+def editorial_criteria_query(criteria):
+    """Chaîne de requête stable des seuls critères actifs"""
+    criteria = criteria or {}
+    keys = ('q',) + tuple(key for key, _ in EDITORIAL_FILTERS)
+    return urlencode([(key, criteria.get(key, '')) for key in keys if criteria.get(key)])
+
+
+def editorial_characteristic(entry, key):
+    """Valeur déclarée, absence explicite ou inconnue, sans substitution entre champs"""
+    value = entry.get(key)
+    if key in ('inputs', 'tools'):
+        if value is None:
+            return 'Inconnues' if key == 'inputs' else 'Inconnus'
+        if not value:
+            return 'Aucune entrée déclarée' if key == 'inputs' else 'Aucun outil déclaré'
+        return ', '.join(value)
+    if value is None:
+        return 'Inconnue' if key in ('language', 'difficulty') else 'Inconnu'
+    return value
+
+
+def editorial_characteristics(entry):
+    """Les huit informations restent distinctes, y compris la qualification et les résultats"""
+    return (('Travail évalué', entry.get('work') or 'Inconnu'),
+            ('Résultat attendu', editorial_characteristic(entry, 'expected_result')),
+            ('Entrées', editorial_characteristic(entry, 'inputs')),
+            ('Langue', editorial_characteristic(entry, 'language')),
+            ('Outils', editorial_characteristic(entry, 'tools')),
+            ('Difficulté', editorial_characteristic(entry, 'difficulty')),
+            ('Version', entry.get('version_id') or 'Inconnue'),
+            ('Qualification', EDITORIAL_STATUS.get(entry.get('qualification_status'), 'Qualification absente')),
+            ('Résultats publiés', 'Résultats publiés' if entry.get('results_published') else 'Aucun résultat publié'))
+
+
+def editorial_fields(entry):
+    return '<dl class="editorial-characteristics">' + ''.join(
+        '<dt>' + text(label) + '</dt><dd>' + text(value) + '</dd>'
+        for label, value in editorial_characteristics(entry)) + '</dl>'
+
+
 def render_editorial(value):
     need = '<p><a href="/preparation">Décrire mon cas d’usage</a></p>'
-    back = '<p><a href="/epreuves">Toutes les épreuves</a></p>'
+    criteria = value.get('criteria') or {}
+    query = editorial_criteria_query(criteria)
+    back_href = '/epreuves' + ('?' + query if query else '')
+    back = '<p>' + (('<a href="' + text(back_href) + '">Retour aux résultats</a> · ') if query else '')
+    back += '<a href="/epreuves">Toutes les épreuves</a></p>'
     if value.get('withdrawn'):
         content = ('<p class="note">Cette version est retirée. Son contenu et ses pièces ne sont plus disponibles.</p>'
                    '<p>Aucune nouvelle reprise de cette version n’est admise.</p>')
         content += editorial_report(value.get('report'))
         return 'Version retirée', back + content + need
     if not value.get('version_id'):
-        content = ''
+        content = ('<p>La recherche porte sur le texte des notices publiques. Elle est déterministe et ne classe '
+                   'pas les épreuves par proximité sémantique.</p>'
+                   '<p>Les caractéristiques sont déclarées avec chaque version. Une information absente reste '
+                   'inconnue ; elle ne prouve ni absence d’outil ni qualification.</p>')
+        filters = value.get('filters') or {}
+
+        def active_unavailable(key):
+            active = criteria.get(key)
+            return bool(active) and active not in filters.get(key, [])
+
+        content += ('<form method="get" action="/epreuves"><label for="q">Rechercher une épreuve</label>'
+                    '<input type="text" id="q" name="q" maxlength="200" value="' + text(criteria.get('q', '')) + '">')
+        for key, label in EDITORIAL_FILTERS:
+            content += ('<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key
+                        + '"><option value="">Tous</option>')
+            proposed = list(filters.get(key, []))
+            options = proposed + ([criteria[key]] if active_unavailable(key) else [])
+            for option in options:
+                shown = str(EDITORIAL_STATUS.get(option, option) if key == 'qualification' else option)
+                if active_unavailable(key) and option not in proposed:
+                    shown += ' (indisponible)'
+                content += ('<option value="' + text(option) + '"'
+                            + (' selected' if criteria.get(key) == option else '') + '>' + text(shown) + '</option>')
+            content += '</select>'
+        content += '<button type="submit">Rechercher</button></form>'
+        content += '<p><a href="/epreuves">Effacer la recherche et les filtres</a></p>'
+        if value.get('searched'):
+            content += '<section><h2>Critères actifs</h2><dl class="active-criteria">'
+            for key, label in (('q', 'Recherche'),) + EDITORIAL_FILTERS:
+                if criteria.get(key):
+                    shown = str(EDITORIAL_STATUS.get(criteria[key], criteria[key])
+                                if key == 'qualification' else criteria[key])
+                    if key != 'q' and active_unavailable(key):
+                        shown += ' (indisponible)'
+                    content += '<dt>' + text(label) + '</dt><dd>' + text(shown) + '</dd>'
+            content += '</dl>'
+            if any(active_unavailable(key) for key, _ in EDITORIAL_FILTERS):
+                content += ('<p class="hint">Une valeur marquée indisponible ne correspond à aucune version '
+                            'publique disponible. Elle reste active jusqu’à sa modification ou son effacement.</p>')
+            content += '</section>'
         for entry in value.get('versions', []):
-            href = '/epreuves/' + text(entry['task_id']) + '/' + text(entry['version_id'])
-            content += ('<section><h2><a href="' + href + '">' + text(entry['title']) + '</a></h2>'
-                        '<p>Version ' + text(entry['version_id']) + '</p></section>')
-        if not content:
-            content = '<p>Aucune épreuve publiée.</p>'
+            href = '/epreuves/' + entry['task_id'] + '/' + entry['version_id']
+            if query:
+                href += '?' + query
+            content += ('<section><h2><a href="' + text(href) + '">' + text(entry['title']) + '</a></h2>'
+                        + editorial_fields(entry) + '</section>')
+        if not value.get('total'):
+            content += '<p>Aucune épreuve publiée.</p>'
+        elif not value.get('versions'):
+            content += ('<p>Aucune épreuve ne correspond à cette recherche. Modifiez ou effacez les critères.</p>')
         return 'Épreuves', content + need
-    labels = {'ABSENT': 'Qualification absente', 'QUALIFIED': 'Qualification réussie', 'BLOCKED': 'Qualification bloquée'}
-    status = labels.get(value.get('qualification_status'), 'Qualification absente')
-    content = '<dl><dt>Travail évalué</dt><dd>' + text(value['work']) + '</dd><dt>Version</dt><dd>' + text(value['version_id']) + '</dd></dl>'
+    status = EDITORIAL_STATUS.get(value.get('qualification_status'), 'Qualification absente')
+    content = editorial_fields(value)
     content += '<p class="note">' + text(status) + '.</p>'
     if value.get('qualification_status') == 'ABSENT':
         content += '<p>Aucune preuve de qualification n’est publiée.</p>'
     else:
         content += '<p>Les preuves de qualification ne font pas partie de cette publication.</p>'
     content += '<p class="note">Aucun résultat publié.</p>'
-    content += '<p>Cette publication ne qualifie pas l’épreuve et n’autorise aucune exécution.</p>'
+    content += ('<p>Cette publication ne qualifie pas l’épreuve et n’autorise aucune exécution. '
+                'La difficulté déclarée ne prouve aucune capacité mesurée.</p>')
     content += editorial_report(value.get('report'))
     content += '<h2>Cas</h2><ul>' + ''.join('<li>' + text(case) + '</li>' for case in value['cases']) + '</ul>'
     content += '<h2>Limites</h2><ul>' + ''.join('<li>' + text(limit) + '</li>' for limit in value['limits']) + '</ul>'

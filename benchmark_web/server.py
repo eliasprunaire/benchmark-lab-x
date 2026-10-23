@@ -130,6 +130,18 @@ def _source_fingerprint(headers, client_address, salt, trusted_proxies):
     return sha256(salt + b'\n' + normalized.encode()).hexdigest()
 
 
+def _editorial_query(path):
+    """Seuls les paramètres de recherche prévus, une valeur chacun, texte UTF-8"""
+    try:
+        query = parse_qs(urlsplit(path).query, keep_blank_values=True, errors='strict',
+                         max_num_fields=len(editorial.SEARCH_PARAMETERS))
+    except (ValueError, UnicodeError):
+        raise ValueError('Recherche invalide') from None
+    if set(query) - set(editorial.SEARCH_PARAMETERS) or any(len(values) != 1 for values in query.values()):
+        raise ValueError('Recherche invalide')
+    return {key: values[0] for key, values in query.items()}
+
+
 def _return_path(value):
     if type(value) is not str or not value.isascii() or '\\' in value:
         raise ValueError('Chemin de retour invalide')
@@ -707,34 +719,45 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 self.respond(200, views.render(value, '', self.path), 'text/html; charset=utf-8')
                 return
             if reference_path == '/epreuves' or reference_path.startswith('/epreuves/'):
-                if urlsplit(self.path).query:
-                    self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                version_path = re.fullmatch(r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})', reference_path)
+                piece = re.fullmatch(
+                    r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/pieces/([A-Za-z0-9_-]{1,128})',
+                    reference_path)
+                if version_path is None and piece is None and reference_path != '/epreuves':
+                    self.not_found()
+                    return
+                if piece is not None:
+                    if urlsplit(self.path).query:
+                        self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                        return
+                    try:
+                        payload = editorial.piece_bytes(public, *piece.groups())
+                    except (editorial.NotFound, ValueError):
+                        self.not_found()
+                        return
+                    self.respond(200, payload, 'text/plain; charset=utf-8')
+                    return
+                try:
+                    criteria = editorial.search_criteria(_editorial_query(self.path))
+                except (ValueError, UnicodeError):
+                    self.error_page(400, 'Recherche invalide', 'Modifiez votre recherche ou effacez les filtres.')
                     return
                 try:
                     if reference_path == '/epreuves':
-                        kind, payload = 'page', editorial.catalog_view(public)
+                        payload = editorial.search_view(public, criteria)
+                    elif version_path is not None:
+                        payload = editorial.version_view(public, *version_path.groups())
+                        payload['criteria'] = criteria
                     else:
-                        version_path = re.fullmatch(r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})', reference_path)
-                        piece = re.fullmatch(
-                            r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/pieces/([A-Za-z0-9_-]{1,128})',
-                            reference_path)
-                        if version_path:
-                            kind, payload = 'page', editorial.version_view(public, *version_path.groups())
-                        elif piece:
-                            kind, payload = 'piece', editorial.piece_bytes(public, *piece.groups())
-                        else:
-                            self.not_found()
-                            return
+                        self.not_found()
+                        return
                 except editorial.NotFound:
                     self.not_found()
                     return
                 except ValueError:
                     self.not_found()
                     return
-                if kind == 'piece':
-                    self.respond(200, payload, 'text/plain; charset=utf-8')
-                else:
-                    self.respond(200, views.render(payload, '', reference_path), 'text/html; charset=utf-8')
+                self.respond(200, views.render(payload, '', reference_path), 'text/html; charset=utf-8')
                 return
             if self.path in _RESOURCES:
                 raw, media, etag = resources[self.path] if resources else _load_resource(*_RESOURCES[self.path])
