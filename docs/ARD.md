@@ -147,6 +147,16 @@ Les caractéristiques décrites dans le [PRD](PRD.md#trouver-une-épreuve-par-se
 
 La projection de recherche conserve une entrée distincte par version disponible et ne transforme aucun ordre d’affichage en préférence. La notice, ses pièces et la copie utilisent leurs contrôles existants d’autorité, d’intégrité et de retrait. Le rendu serveur réutilise les protections et harnais web existants. La recherche ne modifie ni qualification, ni preuve, ni état de publication de résultats.
 
+### 4.7.4 Publication des résultats d’une épreuve
+
+L’opération opérateur construit une projection publique fermée à partir des restitutions existantes. Elle conserve les verdicts et observations sans nouvelle acquisition ni évaluation. Elle exclut la saisie initiale, les messages privés, les références réservées au juge, les secrets, les journaux bruts et les pièces étrangères. La projection privée ne devient pas publique par simple changement de visibilité.
+
+Le paquet autonome relie la version éditoriale exacte, son empreinte, la campagne, son contrat, la restitution et les pièces sélectionnées. L’approbation d’Ayo vise ces identités et les octets exacts. L’admission vérifie leur cohérence et la disponibilité de l’épreuve avant activation complète. Les primitives existantes d’empreinte, de sélection et d’activation sont réutilisées ; les formats fictifs historiques gardent leur autorité de test.
+
+Le serveur public lit seulement les paquets approuvés et leurs états de publication. La consultation ne dépend pas d’un accès au stockage privé. Elle conserve les conditions, dates, couverture, incidents, inconnues et restrictions nécessaires à la conclusion. Une autre campagne reste une restitution distincte ; les tris et filtres ne recalculent pas les verdicts ni les populations de référence.
+
+La présence de résultats est une projection des publications accessibles liées à la version. Elle ne réécrit aucun ancien manifeste éditorial. Le lecteur vérifie l’intégrité et les retraits de la restitution et de l’épreuve, y compris pour les accès directs aux pièces. Le retrait d’une restitution ferme seulement celle-ci ; le retrait de l’épreuve ferme l’accès public à toutes ses restitutions. Les paquets et décisions restent identifiables sans exposer les contenus retirés.
+
 ### 4.8 Répertoire d’évaluations externes
 
 Le serveur public sert un répertoire éditorial de notices, distinct des tâches, campagnes et dossiers privés. Chaque notice possède une identité stable, sa source officielle et les métadonnées définies par le [PRD](PRD.md#consulter-des-évaluations-externes). Le statut de disponibilité et la vérification éditoriale restent explicites.

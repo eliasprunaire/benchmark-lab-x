@@ -169,6 +169,12 @@ Le coût ne compense jamais une non-admissibilité. Une mesure valide d’une so
 
 **Publication explicite.** L’approbation lie les octets de la projection et les pièces publiables à leur périmètre. Elle ne publie pas les données privées acquises ensuite. Une modification de la projection exige l’autorité correspondante et conserve la traçabilité de la version remplacée. Une page locale, une CI verte ou une PR ouverte ne constitue pas une publication officielle. Intégration Git, exécution produit, appels candidats et budget, provisionnement et publication gardent des autorités distinctes.
 
+**Autorité de restitution publique.** Ayo approuve les octets d’une restitution, ses pièces et son rattachement exact à une version d’épreuve et une campagne. L’autorité éditoriale de l’épreuve, une autorité fictive ou un consentement de contribution ne vaut pas cette approbation. Un paquet incomplet, divergent ou rattaché sans preuve n’est pas activé.
+
+**Périmètre publié.** La restitution conserve toutes les observations nécessaires à sa conclusion, y compris incidents, couverture partielle et coûts inconnus. Une sélection de pièces ne sélectionne pas seulement les résultats favorables. Les restrictions sont explicites ; elles ne révèlent aucune campagne privée non autorisée. Saisie initiale, secrets, journaux bruts, références réservées au juge et pièces étrangères restent exclus. Les verdicts enregistrés et les anciens manifestes éditoriaux ne sont pas réécrits.
+
+**Retrait des résultats.** Le retrait d’une restitution ferme sa consultation et ses pièces, anciennes URL comprises, sans retirer l’épreuve ni les autres restitutions. Le retrait de l’épreuve ferme aussi ses restitutions publiques. La trace du retrait et les preuves historiques restent conservées. Aucun lien direct ne contourne ces états.
+
 **Autorité éditoriale.** Ayo approuve explicitement une version d’épreuve fictive et ses pièces publiques exactes. Cette autorité reste distincte de la qualification, des appels, des campagnes et de la maintenance des sources externes. Une autorité de test, un nom public ou une approbation visant d’autres octets ne l’accorde pas.
 
 **Publication sans campagne.** Une épreuve peut être publiée sans résultat et sans qualification réussie, avec ces états explicitement visibles. Cette publication n’approuve aucun contrat d’exécution, ne qualifie aucune méthode et n’autorise aucun appel. Les preuves de qualification absentes restent absentes.
