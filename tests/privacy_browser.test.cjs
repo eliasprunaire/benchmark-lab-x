@@ -103,18 +103,21 @@ for identity in approved_ids:
 from hashlib import sha256
 from benchmark import editorial, storage
 import tempfile
-def editorial_bundle(version, title, body):
+def editorial_bundle(version, title, body, *, characteristics=None, schema=None):
     raw_piece = body.encode()
     filename = 'piece-consigne.txt'
-    manifest = {'schema_version': editorial.SCHEMA, 'task_id': 'tache-fictive', 'version_id': version,
+    manifest = {'schema_version': schema or editorial.SCHEMA, 'task_id': 'tache-fictive', 'version_id': version,
                 'title': title, 'work': 'Préparer un tableau fictif', 'cases': ['Cinq débits inventés'],
                 'limits': ['Ne certifie aucune comptabilité'], 'qualification_status': 'ABSENT', 'results_published': False,
                 'pieces': {'consigne': {'file': filename, 'sha256': sha256(raw_piece).hexdigest(), 'label': 'Consigne'}}}
+    if characteristics is not None:
+        manifest.update(characteristics)
     encoded = storage._strict_json(manifest).encode()
     identity = sha256(encoded).hexdigest()
     return {'manifest': encoded, 'package_sha256': identity, 'files': {filename: raw_piece}}, editorial.fixture_approval(identity)
 editorial_title = 'Tableau <script>alert(1)</script>'
 editorial_piece = 'Pièce <script>alert(1)</script>'
+editorial_search_fields = ('q', 'entree', 'langue', 'outil', 'difficulte', 'qualification')
 with tempfile.TemporaryDirectory() as editorial_dir:
     editorial_dir = str(Path(editorial_dir).resolve())
     packed, packed_approval = editorial_bundle('version-1', editorial_title, editorial_piece)
@@ -123,17 +126,39 @@ with tempfile.TemporaryDirectory() as editorial_dir:
         actor='approbateur-fictif-epreuve', authority_id='FIXTURE_EDITORIAL_TRIAL', scope='editorial-report',
         package_sha256=packed['package_sha256'], task_id='tache-fictive', version_id='version-1',
         summary='Erreur de fixture <script>alert(3)</script>', reported_at='2026-10-23T10:00:00+00:00'))
+    packed_two, packed_two_approval = editorial_bundle(
+        'version-2', 'Note <script>alert(4)</script>', 'Pièce de la note',
+        characteristics={'expected_result': 'Note de synthèse', 'inputs': ['Textes fournis'],
+                         'language': 'Français', 'tools': ['Tableur'], 'difficulty': 'Facile'})
+    editorial.fixture_publish(editorial_dir, packed_two, packed_two_approval)
+    editorial_queries = ({}, {'q': 'note'}, {'q': 'note', 'langue': 'Français', 'outil': 'Tableur'},
+                         {'q': 'introuvable'})
+    editorial_search = {
+        json.dumps([query.get(key, '') for key in editorial_search_fields], ensure_ascii=False, separators=(',', ':')):
+            views.render(editorial.fixture_search(editorial_dir, query), '').decode()
+        for query in editorial_queries}
     editorial_pages = {
         '/epreuves': views.render(editorial.fixture_catalog(editorial_dir), '').decode(),
         '/epreuves/tache-fictive/version-1': views.render(
-            editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode()}
+            editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode(),
+        '/epreuves/tache-fictive/version-2': views.render(
+            editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-2'), '').decode()}
+    editorial_version_search = {
+        '/epreuves/tache-fictive/version-2|' + json.dumps(['note', '', '', '', '', ''], ensure_ascii=False, separators=(',', ':')):
+            views.render(dict(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-2'),
+                              criteria={'q': 'note'}), '').decode(),
+        '/epreuves/tache-fictive/version-2|' + json.dumps(['note', '', 'Français', 'Tableur', '', ''], ensure_ascii=False, separators=(',', ':')):
+            views.render(dict(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-2'),
+                              criteria={'q': 'note', 'langue': 'Français', 'outil': 'Tableur'}), '').decode()}
     editorial.fixture_withdraw(editorial_dir, 'tache-fictive', 'version-1',
                                editorial.fixture_withdrawal(packed['package_sha256'], 'tache-fictive', 'version-1'))
     editorial_withdrawn = views.render(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode()
 with tempfile.TemporaryDirectory() as empty_dir:
     editorial_empty = views.render(editorial.catalog_view(str(Path(empty_dir).resolve())), '').decode()
 print(json.dumps({**browser_views(), 'reference_search': reference_search, 'reference_notices': reference_notices,
-                  'editorial_pages': editorial_pages, 'editorial-empty': editorial_empty,
+                  'editorial_pages': editorial_pages, 'editorial-search': editorial_search,
+                  'editorial-version-search': editorial_version_search,
+                  'editorial-empty': editorial_empty,
                   'editorial-withdrawn': editorial_withdrawn, 'editorial_piece': editorial_piece,
                   'reference-referral': reference_referral, 'reference-empty': reference_empty, **approved, 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
@@ -180,7 +205,13 @@ print(json.dumps({**browser_views(), 'reference_search': reference_search, 'refe
         res.end(rendered.editorial_piece);
         return;
       }
-      const html = rendered.editorial_pages[url.pathname];
+      const fields = ['q', 'entree', 'langue', 'outil', 'difficulte', 'qualification']
+        .map(key => url.searchParams.get(key) || '');
+      const searchKey = JSON.stringify(fields);
+      const html = url.pathname === '/epreuves' && url.search
+        ? rendered['editorial-search'][searchKey]
+        : (rendered['editorial-version-search'][url.pathname + '|' + searchKey]
+           ?? rendered.editorial_pages[url.pathname]);
       if (!html) {res.writeHead(404).end('introuvable'); return;}
       res.setHeader('Content-Type', 'text/html');
       res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
@@ -1416,6 +1447,41 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.equal(await page.locator('main script, main img').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Recherche native, filtres combinés, critères visibles et effaçables, sans JavaScript
+      const searchField = page.getByLabel('Rechercher une épreuve');
+      await searchField.focus();
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      await searchField.fill('note');
+      await page.getByLabel('Langue').selectOption('Français');
+      await page.getByLabel('Outil').selectOption('Tableur');
+      await page.getByRole('button', {name: 'Rechercher'}).click();
+      assert.match(page.url(), /q=note/);
+      const filtered = await page.textContent('main');
+      assert.match(filtered, /Critères actifs/);
+      assert.match(filtered, /Français/);
+      assert.match(filtered, /Tableur/);
+      assert.equal(filtered.includes('Tableau <script>alert(1)</script>'), false);
+      assert.equal(filtered.includes('Note <script>alert(4)</script>'), true);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.getByRole('link', {name: 'Note <script>alert(4)</script>'}).click();
+      assert.equal(await page.locator('h1').textContent(), 'Note <script>alert(4)</script>');
+      assert.match(await page.textContent('main'), /Retour aux résultats/);
+      await page.getByRole('link', {name: 'Retour aux résultats'}).click();
+      assert.match(await page.textContent('main'), /Critères actifs/);
+      await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
+      assert.equal(new URL(page.url()).search, '');
+      assert.equal(await page.getByLabel('Rechercher une épreuve').inputValue(), '');
+      assert.match(await page.textContent('main'), /Tableau <script>alert\(1\)<\/script>/);
+      await page.getByLabel('Rechercher une épreuve').fill('introuvable');
+      await page.getByRole('button', {name: 'Rechercher'}).click();
+      const withoutResult = await page.textContent('main');
+      assert.match(withoutResult, /Aucune épreuve ne correspond à cette recherche/);
+      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true})
+        .getAttribute('href'), '/preparation');
+      mkdirSync('reports/464', {recursive: true});
+      await page.screenshot({path: 'reports/464/recherche-mobile-'
+        + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.goto(origin + '/epreuves');
       await page.getByRole('link', {name: 'Tableau <script>alert(1)</script>'}).click();
       assert.equal(await page.locator('h1').textContent(), 'Tableau <script>alert(1)</script>');
       const text = await page.textContent('main');

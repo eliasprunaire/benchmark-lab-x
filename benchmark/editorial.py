@@ -6,6 +6,8 @@ de production n’ouvrent que le répertoire public, et seulement pour l’autor
 désignée. L’activation de fixture réutilise la même validation dans un
 répertoire séparé : elle ne devient pas une consultation de production.
 Les projections fictives historiques restent dans `publications`.
+Le schéma v2 ajoute des caractéristiques facultatives. Le lecteur accepte encore
+les paquets v1 sans compléter leurs inconnues ni modifier leurs octets.
 """
 from copy import deepcopy
 from datetime import datetime
@@ -19,7 +21,8 @@ from .publications import _decode, _directory, _listdir, _read, _write
 from .storage import _strict_json as encode, _text
 from .validation import identifier, _hash, _texts
 
-SCHEMA = 'benchmark-lab-x/editorial-trial/v1'
+SCHEMA = 'benchmark-lab-x/editorial-trial/v2'
+SCHEMA_V1 = 'benchmark-lab-x/editorial-trial/v1'
 _ROOT = 'editorial-trials'
 _FIXTURE_ROOT = 'editorial-fixture'
 _FIXTURE = ('approbateur-fictif-epreuve', 'FIXTURE_EDITORIAL_TRIAL')
@@ -27,6 +30,10 @@ _PRODUCTION = ('Ayo', 'EDITORIAL_TRIAL')
 _QUALIFICATION = ('ABSENT', 'QUALIFIED', 'BLOCKED')
 _MANIFEST = {'schema_version', 'task_id', 'version_id', 'title', 'work', 'cases', 'limits',
              'qualification_status', 'results_published', 'pieces'}
+# Caractéristiques facultatives : leur absence reste inconnue, une liste vide déclare une absence
+_CHARACTERISTICS = ('expected_result', 'inputs', 'language', 'tools', 'difficulty')
+SEARCH_PARAMETERS = ('q', 'entree', 'langue', 'outil', 'difficulte', 'qualification')
+_SEARCH_LIMIT = 200
 _PIECE = {'file', 'sha256', 'label'}
 _COPY_FIELDS = {'task_id', 'version_id', 'package_sha256', 'manifest', 'pieces'}
 _COPY_PIECE_FIELDS = {'id', 'label', 'file', 'sha256', 'text'}
@@ -80,9 +87,18 @@ def _manifest(raw):
         raise ValueError('Paquet incomplet') from None
     if type(manifest) is not dict:
         raise ValueError('Paquet incomplet')
-    if set(manifest) - _MANIFEST:
-        raise ValueError('Sélection publique fermée')
-    if set(manifest) != _MANIFEST or manifest['schema_version'] != SCHEMA:
+    schema = manifest.get('schema_version')
+    if schema == SCHEMA_V1:
+        if set(manifest) - _MANIFEST:
+            raise ValueError('Sélection publique fermée')
+        if set(manifest) != _MANIFEST:
+            raise ValueError('Paquet incomplet')
+    elif schema == SCHEMA:
+        if set(manifest) - _MANIFEST - set(_CHARACTERISTICS):
+            raise ValueError('Sélection publique fermée')
+        if not _MANIFEST <= set(manifest):
+            raise ValueError('Paquet incomplet')
+    else:
         raise ValueError('Paquet incomplet')
     identifier(manifest['task_id'])
     identifier(manifest['version_id'])
@@ -94,6 +110,20 @@ def _manifest(raw):
         raise ValueError('État de qualification invalide')
     if manifest['results_published'] is not False:
         raise ValueError('Sélection publique fermée')
+    for key in _CHARACTERISTICS:
+        if key not in manifest:
+            continue
+        if key in ('inputs', 'tools'):
+            _texts(manifest[key], key, unique=True)
+            values = manifest[key]
+        else:
+            _text(manifest[key], key)
+            if not manifest[key].strip():
+                raise ValueError('Texte vide : ' + key)
+            values = [manifest[key]]
+        if any(value != value.strip() or any(ord(character) < 32 or ord(character) == 127
+                                             for character in value) for value in values):
+            raise ValueError('Caractéristique invalide : ' + key)
     pieces = manifest['pieces']
     if type(pieces) is not dict or not pieces:
         raise ValueError('Paquet incomplet')
@@ -607,7 +637,99 @@ def _is_id(name):
     return True
 
 
-def _catalog(destination, actor, root_name):
+def _entry(record):
+    """Projection publique d’une version : chaque caractéristique absente reste inconnue"""
+    manifest = record['manifest']
+    entry = dict(task_id=manifest['task_id'], version_id=manifest['version_id'], title=manifest['title'],
+                 work=manifest['work'], cases=list(manifest['cases']), limits=list(manifest['limits']),
+                 qualification_status=manifest['qualification_status'],
+                 results_published=manifest['results_published'])
+    for key in _CHARACTERISTICS:
+        entry[key] = manifest.get(key)
+    return entry
+
+
+def _filter_values(entries):
+    """Valeurs proposées par les seules versions admises : aucune valeur inconnue ni implicite"""
+    def declared(field):
+        values = set()
+        for entry in entries:
+            value = entry[field]
+            if value is None:
+                continue
+            if type(value) is list:
+                values.update(value)
+            else:
+                values.add(value)
+        return sorted(values, key=lambda value: (value.casefold(), value))
+
+    return {
+        'entree': declared('inputs'),
+        'langue': declared('language'),
+        'outil': declared('tools'),
+        'difficulte': declared('difficulty'),
+        'qualification': [status for status in _QUALIFICATION
+                          if any(entry['qualification_status'] == status for entry in entries)],
+    }
+
+
+def _searchable(entry):
+    """Texte de la notice publique, sans qualification ni résultat pour ne pas les confondre"""
+    parts = [entry['title'], entry['work'], entry['version_id'], *entry['cases'], *entry['limits']]
+    for key in _CHARACTERISTICS:
+        value = entry[key]
+        if value is None:
+            continue
+        if type(value) is list:
+            parts.extend(value)
+        else:
+            parts.append(value)
+    return '\n'.join(parts).casefold()
+
+
+def search_criteria(criteria):
+    """Valide et normalise les seuls paramètres de recherche prévus"""
+    if type(criteria) is not dict or set(criteria) - set(SEARCH_PARAMETERS):
+        raise ValueError('Recherche invalide')
+    normalized = {}
+    for key in SEARCH_PARAMETERS:
+        value = criteria.get(key, '')
+        if type(value) is not str or len(value) > _SEARCH_LIMIT:
+            raise ValueError('Recherche invalide')
+        try:
+            value.encode('utf-8', errors='strict')
+        except UnicodeError:
+            raise ValueError('Recherche invalide') from None
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError('Recherche invalide')
+        normalized[key] = value.strip()
+    if normalized['qualification'] not in ('', *_QUALIFICATION):
+        raise ValueError('Recherche invalide')
+    return normalized
+
+
+def _matches(entry, criteria):
+    """Tous les termes et tous les filtres explicites, sans classement sémantique"""
+    if criteria['qualification'] and entry['qualification_status'] != criteria['qualification']:
+        return False
+    for key, field, multiple in (('entree', 'inputs', True), ('langue', 'language', False),
+                                 ('outil', 'tools', True), ('difficulte', 'difficulty', False)):
+        wanted = criteria[key]
+        if not wanted:
+            continue
+        value = entry[field]
+        if value is None:
+            return False
+        if multiple:
+            if wanted.casefold() not in {item.casefold() for item in value}:
+                return False
+        elif value.casefold() != wanted.casefold():
+            return False
+    searchable = _searchable(entry)
+    return all(term in searchable for term in criteria['q'].casefold().split())
+
+
+def _catalog(destination, actor, root_name) -> dict[str, Any]:
     """Versions encore disponibles. Une version retirée, illisible ou d’une autre autorité n’y figure pas."""
     entries = []
     root = _directory(destination)
@@ -637,14 +759,21 @@ def _catalog(destination, actor, root_name):
                             os.close(folder)
                         if record is None or record['withdrawn']:
                             continue
-                        entries.append(dict(task_id=task_id, version_id=version_id, title=record['manifest']['title']))
+                        entries.append(_entry(record))
                 finally:
                     os.close(task)
         finally:
             os.close(trials)
     finally:
         os.close(root)
-    return dict(kind='editorial', versions=entries)
+    return dict(kind='editorial', versions=entries, total=len(entries), filters=_filter_values(entries))
+
+
+def _search(destination, criteria, actor, root_name):
+    criteria = search_criteria(criteria)
+    catalog = _catalog(destination, actor, root_name)
+    return dict(catalog, versions=[entry for entry in catalog['versions'] if _matches(entry, criteria)],
+                criteria=criteria, searched=any(criteria.values()))
 
 
 def _version(destination, task_id, version_id, actor, root_name):
@@ -656,8 +785,10 @@ def _version(destination, task_id, version_id, actor, root_name):
     manifest = record['manifest']
     value.update(title=manifest['title'], work=manifest['work'], cases=list(manifest['cases']),
                  limits=list(manifest['limits']), qualification_status=manifest['qualification_status'],
+                 results_published=manifest['results_published'],
                  pieces=[dict(id=piece['id'], label=piece['label'], text=piece['text'])
                          for piece in record['pieces']])
+    value.update({key: manifest.get(key) for key in _CHARACTERISTICS})
     return value
 
 
@@ -674,7 +805,12 @@ def _piece(destination, task_id, version_id, piece_id, actor, root_name):
 
 def catalog_view(destination):
     """Versions de production encore disponibles"""
-    return _catalog(destination, _PRODUCTION, _ROOT)
+    return dict(_catalog(destination, _PRODUCTION, _ROOT), criteria={}, searched=False)
+
+
+def search_view(destination, criteria):
+    """Recherche déterministe sur les notices publiques, avec filtres explicites"""
+    return _search(destination, criteria, _PRODUCTION, _ROOT)
 
 
 def version_view(destination, task_id, version_id):
@@ -689,7 +825,12 @@ def piece_bytes(destination, task_id, version_id, piece_id):
 
 def fixture_catalog(destination):
     """Versions de fixture encore disponibles, hors du lecteur de production"""
-    return _catalog(destination, _FIXTURE, _FIXTURE_ROOT)
+    return dict(_catalog(destination, _FIXTURE, _FIXTURE_ROOT), criteria={}, searched=False)
+
+
+def fixture_search(destination, criteria):
+    """Recherche de fixture, hors du lecteur de production"""
+    return _search(destination, criteria, _FIXTURE, _FIXTURE_ROOT)
 
 
 def fixture_version(destination, task_id, version_id):

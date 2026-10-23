@@ -84,6 +84,24 @@ class Page(HTMLParser):
     def form(self, suffix):
         return next(f for f in self.forms if f['action'].endswith(suffix))
 
+    def options(self, name):
+        """Valeurs proposées par un choix natif, dans l'ordre du document"""
+        index = next(index for index, node in enumerate(self.nodes)
+                     if node['tag'] == 'select' and node['attrs'].get('name') == name)
+        values = []
+        for node in self.nodes[index + 1:]:
+            if node['tag'] == 'select':
+                break
+            if node['tag'] == 'option':
+                values.append(node['attrs']['value'])
+        return values
+
+    def field(self, label):
+        """Texte du premier couple dt/dd portant ce libellé"""
+        index = next(index for index, node in enumerate(self.nodes)
+                     if node['tag'] == 'dt' and node['text'].strip() == label)
+        return next(node['text'].strip() for node in self.nodes[index + 1:] if node['tag'] == 'dd')
+
 
 class ParcoursComplet(unittest.TestCase):
     def setUp(self):
@@ -532,6 +550,11 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(b'<script', raw)
             self.assertIn('Aucune épreuve publiée', empty.visible)
             self.assertEqual('/preparation', empty.link('Décrire mon cas d’usage'))
+            empty_search, _, _ = self.request('/epreuves?q=tableau')
+            self.assertIn('Aucune épreuve publiée', empty_search.visible)
+            self.assertNotIn('Critères actifs', empty_search.visible)
+            self.assertEqual('/preparation', empty_search.link('Décrire mon cas d’usage'))
+            self.assertEqual([], empty_search.options('langue')[1:])
             self.assertEqual(['/epreuves'], [n['attrs']['href'] for n in empty.nodes if n['attrs'].get('aria-current') == 'page'])
             self.assertEqual(raw, self.request('/epreuves', cookies=SimpleCookie('benchmark_session=invalid'))[2])
             leaked, _, leaked_raw = self.request('/epreuves?besoin=prive', status=400)
@@ -749,11 +772,241 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual({}, dict(self.cookies))
             self.assertEqual(before, {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()})
 
-    def publier_epreuve(self, version='version-1', *, qualification='ABSENT', title='Tableau des opérations',
-                        work='Préparer un tableau par opération', cases=('Cinq débits de janvier 2027',),
-                        limits=('Ne certifie aucune comptabilité',),
-                        pieces=None, task='tache-fictive'):
-        """Épreuve de production approuvée par l’autorité éditoriale de test"""
+    def test_recherche_epreuves_editoriales(self):
+        """#464 : recherche déterministe, filtres déclarés, versions exactes et critères conservés"""
+        task = 'tache-fictive'
+        calc_characteristics = {'expected_result': 'Tableau des débits', 'inputs': ['Textes fournis'],
+                                'language': 'Français', 'tools': ['Tableur'], 'difficulty': 'Facile'}
+        redac_characteristics = {'expected_result': 'Note de synthèse', 'inputs': ['Bibliothèque figée'],
+                                 'language': 'Anglais', 'tools': [], 'difficulty': 'Difficile'}
+        calc = self.publier_epreuve('version-calcul', title='Tableau des débits',
+                                    work='Préparer un tableau par opération',
+                                    characteristics=calc_characteristics)
+        redac = self.publier_epreuve('version-redaction', title='Note de synthèse',
+                                     work='Rédiger une note de synthèse', qualification='QUALIFIED',
+                                     characteristics=redac_characteristics)
+        old = self.publier_epreuve('version-ancienne', title='Ancienne épreuve', schema=editorial.SCHEMA_V1)
+        enriched = self.publier_epreuve('version-enrichie', title='Ancienne épreuve enrichie',
+                                        characteristics={'language': 'Français'})
+        retired = self.publier_epreuve('version-retiree', title='Épreuve retirée',
+                                       characteristics={'language': 'Langue retirée', 'tools': ['Outil retiré']})
+        editorial.withdraw(self.public, task, 'version-retiree', dict(
+            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=retired['package_sha256'],
+            scope='editorial-withdrawal', task_id=task, version_id='version-retiree'))
+        # Autorité fictive et paquet déposé hors de son répertoire : jamais candidats publics
+        fixture = self.construire_epreuve('version-fictive', title='Épreuve fictive',
+                                          characteristics={'language': 'Langue fictive', 'tools': ['Outil fictif']})
+        editorial.fixture_publish(self.public, fixture, editorial.fixture_approval(fixture['package_sha256']))
+        deposited = self.public / 'editorial-trials' / task / 'version-fictive'
+        deposited.mkdir(parents=True)
+        for item in (self.public / 'editorial-fixture' / task / 'version-fictive').iterdir():
+            (deposited / item.name).write_bytes(item.read_bytes())
+        # Paquet malformé dans le répertoire public : illisible, donc jamais candidat
+        invalid = self.public / 'editorial-trials' / task / 'version-invalide'
+        invalid.mkdir()
+        (invalid / 'manifest.json').write_text('{"language":"Langue invalide"}')
+        # Dossiers privés et contributions voisins : aucune lecture pour servir la recherche
+        private_bundle = self.construire_epreuve('version-privee', title='Épreuve privée',
+                                                 characteristics={'language': 'Langue privée'})
+        editorial.publish(self.data, private_bundle, dict(
+            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=private_bundle['package_sha256'],
+            scope='editorial-trial'))
+        contributed = self.construire_epreuve('version-contribuee', title='Contribution voisine',
+                                              characteristics={'language': 'Langue contribuée'})
+        contribution = self.public / 'contributions' / task / 'version-contribuee'
+        contribution.mkdir(parents=True)
+        (contribution / 'manifest.json').write_bytes(contributed['manifest'])
+        for name, raw in contributed['files'].items():
+            (contribution / name).write_bytes(raw)
+        # Enrichir une version existante exige une nouvelle version approuvée
+        attempt = self.construire_epreuve('version-ancienne', title='Ancienne épreuve',
+                                          characteristics={'language': 'Français'})
+        with self.assertRaises(ValueError) as raised:
+            editorial.publish(self.public, attempt, dict(
+                actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=attempt['package_sha256'],
+                scope='editorial-trial'))
+        self.assertEqual('Version existante divergente', str(raised.exception))
+        old_folder = self.public / 'editorial-trials' / task / 'version-ancienne'
+        old_manifest = (old_folder / 'manifest.json').read_bytes()
+        old_piece = (old_folder / 'piece-consigne.txt').read_bytes()
+        self.assertEqual(old['package_sha256'], sha256(old_manifest).hexdigest())
+
+        def query_path(fields):
+            return '/epreuves?' + urlencode([(key, fields[key]) for key in editorial.SEARCH_PARAMETERS
+                                             if fields.get(key)])
+
+        def search(fields):
+            return self.request(query_path(fields))[0]
+
+        with patch.object(server, 'preparation_request', side_effect=AssertionError('Relais privé interdit')):
+            before_public = {str(path.relative_to(self.public)): path.read_bytes()
+                             for path in self.public.rglob('*') if path.is_file()}
+            before_private = {str(path.relative_to(self.data)): path.read_bytes()
+                              for path in self.data.rglob('*') if path.is_file()}
+            with closing(storage.Store(self.data)) as store:
+                before_operations = store._connection.execute('SELECT count(*) FROM operations').fetchone()[0]
+
+            catalog, catalog_headers, catalog_raw = self.request('/epreuves')
+            self.assertIsNone(catalog_headers.get('Set-Cookie'))
+            self.assertEqual('no-referrer', catalog_headers['Referrer-Policy'])
+            self.assertNotIn(b'<script', catalog_raw)
+            for value in ('Tableau des débits', 'Note de synthèse', 'Ancienne épreuve', 'Ancienne épreuve enrichie',
+                          'Version version-calcul', 'Version version-redaction', 'Version version-ancienne',
+                          'Version version-enrichie', 'Résultat attendu', 'Entrées', 'Langue', 'Outils',
+                          'Difficulté', 'Qualification', 'Résultats publiés', 'Aucun résultat publié',
+                          'Textes fournis', 'Bibliothèque figée', 'Français', 'Anglais', 'Tableur',
+                          'Aucun outil déclaré'):
+                self.assertIn(value, catalog.visible)
+            self.assertNotIn('Épreuve retirée', catalog.visible)
+            self.assertNotIn('Épreuve fictive', catalog.visible)
+            self.assertNotIn('Épreuve privée', catalog.visible)
+            self.assertNotIn('Contribution voisine', catalog.visible)
+            self.assertNotIn('Langue invalide', catalog.visible)
+            self.assertNotIn('Langue privée', catalog.visible)
+            self.assertNotIn('Langue contribuée', catalog.visible)
+            self.assertEqual(['', 'Anglais', 'Français'], catalog.options('langue'))
+            self.assertEqual(['', 'Tableur'], catalog.options('outil'))
+            self.assertEqual(['', 'Bibliothèque figée', 'Textes fournis'], catalog.options('entree'))
+            self.assertEqual(['', 'Difficile', 'Facile'], catalog.options('difficulte'))
+            self.assertEqual(['', 'ABSENT', 'QUALIFIED'], catalog.options('qualification'))
+            self.assertNotIn('Langue fictive', catalog.options('langue'))
+            self.assertNotIn('Outil fictif', catalog.options('outil'))
+            self.assertNotIn('Langue retirée', catalog.options('langue'))
+            self.assertNotIn('Outil retiré', catalog.options('outil'))
+            for absent in ('Langue invalide', 'Langue privée', 'Langue contribuée'):
+                self.assertNotIn(absent, catalog.options('langue'))
+
+            # Chaque caractéristique reste distincte sur la notice exacte
+            calc_page = self.request('/epreuves/' + task + '/version-calcul')[0]
+            self.assertEqual('Tableau des débits', calc_page.field('Résultat attendu'))
+            self.assertEqual('Textes fournis', calc_page.field('Entrées'))
+            self.assertEqual('Français', calc_page.field('Langue'))
+            self.assertEqual('Tableur', calc_page.field('Outils'))
+            self.assertEqual('Facile', calc_page.field('Difficulté'))
+            self.assertEqual('version-calcul', calc_page.field('Version'))
+            self.assertEqual('Qualification absente', calc_page.field('Qualification'))
+            self.assertEqual('Aucun résultat publié', calc_page.field('Résultats publiés'))
+            redac_page = self.request('/epreuves/' + task + '/version-redaction')[0]
+            self.assertEqual('Aucun outil déclaré', redac_page.field('Outils'))
+            self.assertEqual('Qualification réussie', redac_page.field('Qualification'))
+            self.assertEqual('Aucun résultat publié', redac_page.field('Résultats publiés'))
+            old_page = self.request('/epreuves/' + task + '/version-ancienne')[0]
+            self.assertEqual('Inconnu', old_page.field('Résultat attendu'))
+            self.assertEqual('Inconnues', old_page.field('Entrées'))
+            self.assertEqual('Inconnue', old_page.field('Langue'))
+            self.assertEqual('Inconnus', old_page.field('Outils'))
+            self.assertEqual('Inconnue', old_page.field('Difficulté'))
+            self.assertEqual('version-ancienne', old_page.field('Version'))
+            self.assertEqual('Qualification absente', old_page.field('Qualification'))
+            self.assertEqual('Aucun résultat publié', old_page.field('Résultats publiés'))
+            enriched_page = self.request('/epreuves/' + task + '/version-enrichie')[0]
+            self.assertEqual('Français', enriched_page.field('Langue'))
+            self.assertEqual('Inconnu', enriched_page.field('Résultat attendu'))
+            self.assertEqual('Inconnus', enriched_page.field('Outils'))
+            self.assertEqual('version-enrichie', enriched_page.field('Version'))
+
+            # Recherche seule : tous les termes, aucun classement, critères visibles et effaçables
+            found = search({'q': 'textes fournis'})
+            self.assertIn('Critères actifs', found.visible)
+            self.assertIn('textes fournis', found.visible)
+            self.assertIn('Tableau des débits', found.visible)
+            self.assertNotIn('Note de synthèse', found.visible)
+            self.assertNotIn('Ancienne épreuve', found.visible)
+            self.assertEqual('/epreuves', found.link('Effacer la recherche et les filtres'))
+            self.assertEqual(['', 'Anglais', 'Français'], found.options('langue'))
+            and_terms = search({'q': 'tableau textes'})
+            self.assertIn('Tableau des débits', and_terms.visible)
+            self.assertNotIn('Note de synthèse', and_terms.visible)
+            missing_terms = search({'q': 'textes synthèse'})
+            self.assertIn('Aucune épreuve ne correspond à cette recherche', missing_terms.visible)
+            self.assertNotIn('Aucune épreuve publiée', missing_terms.visible)
+            self.assertEqual('/epreuves', missing_terms.link('Effacer la recherche et les filtres'))
+            self.assertEqual('/preparation', missing_terms.link('Décrire mon cas d’usage'))
+
+            # Filtres explicites, combinés et valeurs déclarées uniquement
+            for fields, present, absent in (
+                    ({'entree': 'Bibliothèque figée'}, 'Note de synthèse', 'Tableau des débits'),
+                    ({'langue': 'Anglais'}, 'Note de synthèse', 'Tableau des débits'),
+                    ({'outil': 'Tableur'}, 'Tableau des débits', 'Note de synthèse'),
+                    ({'difficulte': 'Difficile'}, 'Note de synthèse', 'Tableau des débits'),
+                    ({'qualification': 'QUALIFIED'}, 'Note de synthèse', 'Tableau des débits'),
+                    ({'qualification': 'ABSENT'}, 'Tableau des débits', 'Note de synthèse')):
+                filtered = search(fields)
+                self.assertIn(present, filtered.visible, fields)
+                self.assertNotIn(absent, filtered.visible, fields)
+                self.assertIn('Critères actifs', filtered.visible, fields)
+            combined_fields = {'q': 'tableau textes', 'entree': 'Textes fournis', 'langue': 'Français',
+                               'outil': 'Tableur', 'difficulte': 'Facile'}
+            combined = search(combined_fields)
+            self.assertIn('Tableau des débits', combined.visible)
+            self.assertNotIn('Note de synthèse', combined.visible)
+            mismatch = search({'langue': 'Français', 'qualification': 'QUALIFIED'})
+            self.assertIn('Aucune épreuve ne correspond à cette recherche', mismatch.visible)
+            unknown_value = search({'langue': 'Klingon'})
+            self.assertIn('Aucune épreuve ne correspond à cette recherche', unknown_value.visible)
+            self.assertNotIn('Klingon', unknown_value.options('langue'))
+
+            # Ouverture exacte, critères conservés, copie toujours filiation de la version choisie
+            result_link = combined.link('Tableau des débits')
+            self.assertEqual('/epreuves/' + task + '/version-calcul?' + urlencode(
+                [(key, combined_fields[key]) for key in editorial.SEARCH_PARAMETERS if combined_fields.get(key)]),
+                result_link)
+            notice = self.request(result_link)[0]
+            self.assertEqual(query_path(combined_fields), notice.link('Retour aux résultats'))
+            self.assertEqual('/epreuves', notice.link('Toutes les épreuves'))
+            self.assertEqual('/preparation/copies/' + task + '/version-calcul', notice.link('Créer mon dossier privé'))
+            self.assertEqual('Textes fournis', notice.field('Entrées'))
+            source = editorial.copy_bundle(self.public, task, 'version-calcul')
+            self.assertEqual(calc['package_sha256'], source['package_sha256'])
+            copied = json.loads(source['manifest'])
+            self.assertEqual('Tableau des débits', copied['expected_result'])
+            self.assertEqual(['Tableur'], copied['tools'])
+
+            # Paramètres et contenus hostiles : refus ou échappement, jamais d'exécution
+            for path in ('/epreuves?besoin=prive', '/epreuves?q=a&q=b', '/epreuves?q=' + 'a' * 201,
+                         '/epreuves?qualification=INVALIDE', '/epreuves?q=%ff', '/epreuves?q=%00',
+                         '/epreuves/' + task + '/version-calcul?x=1',
+                         '/epreuves/' + task + '/version-calcul?q=a&q=b'):
+                rejected, _, rejected_raw = self.request(path, status=400)
+                self.assertNotIn(b'<script', rejected_raw, path)
+                self.assertNotIn('prive', rejected.visible, path)
+            hostile_path = query_path({'q': '<script>alert(9)</script>'})
+            hostile, _, hostile_raw = self.request(hostile_path)
+            self.assertNotIn(b'<script', hostile_raw)
+            self.assertIn('<script>alert(9)</script>', hostile.visible)
+
+            # Retrait : absent des résultats et des valeurs proposées
+            after_withdrawal, _, _ = self.request('/epreuves')
+            self.assertNotIn('Épreuve retirée', after_withdrawal.visible)
+            self.assertNotIn('Langue retirée', after_withdrawal.options('langue'))
+            self.assertNotIn('Outil retiré', after_withdrawal.options('outil'))
+            retired_search = search({'langue': 'Langue retirée'})
+            self.assertIn('Aucune épreuve ne correspond à cette recherche', retired_search.visible)
+            self.assertNotIn('Épreuve retirée', retired_search.visible)
+            self.request('/epreuves/' + task + '/version-retiree', status=200)
+
+            # Aucune clé, session, écriture ni appel : les octets publiés restent identiques
+            self.assertEqual([], self.calls)
+            self.assertTrue(self.starts.empty())
+            self.assertEqual({}, dict(self.cookies))
+            with closing(storage.Store(self.data)) as store:
+                self.assertEqual(before_operations,
+                                 store._connection.execute('SELECT count(*) FROM operations').fetchone()[0])
+            self.assertEqual(old_manifest, (old_folder / 'manifest.json').read_bytes())
+            self.assertEqual(old_piece, (old_folder / 'piece-consigne.txt').read_bytes())
+            self.assertEqual(old['package_sha256'], sha256((old_folder / 'manifest.json').read_bytes()).hexdigest())
+            self.assertEqual(enriched['package_sha256'], sha256(
+                (self.public / 'editorial-trials' / task / 'version-enrichie' / 'manifest.json').read_bytes()).hexdigest())
+            self.assertEqual(before_public, {str(path.relative_to(self.public)): path.read_bytes()
+                                             for path in self.public.rglob('*') if path.is_file()})
+            self.assertEqual(before_private, {str(path.relative_to(self.data)): path.read_bytes()
+                                              for path in self.data.rglob('*') if path.is_file()})
+
+    def construire_epreuve(self, version='version-1', *, qualification='ABSENT', title='Tableau des opérations',
+                           work='Préparer un tableau par opération', cases=('Cinq débits de janvier 2027',),
+                           limits=('Ne certifie aucune comptabilité',),
+                           pieces=None, task='tache-fictive', characteristics=None, schema=None):
+        """Paquet éditorial complet, avant toute approbation"""
         pieces = pieces or {'consigne': ('Consigne', 'Relève les opérations inventées')}
         files, declared = {}, {}
         for pid, (label, body) in pieces.items():
@@ -761,14 +1014,26 @@ class ParcoursComplet(unittest.TestCase):
             raw = body.encode()
             files[filename] = raw
             declared[pid] = {'file': filename, 'sha256': sha256(raw).hexdigest(), 'label': label}
-        manifest = {'schema_version': editorial.SCHEMA, 'task_id': task, 'version_id': version,
+        manifest = {'schema_version': schema or editorial.SCHEMA, 'task_id': task, 'version_id': version,
                     'title': title, 'work': work, 'cases': list(cases), 'limits': list(limits),
                     'qualification_status': qualification, 'results_published': False, 'pieces': declared}
+        if characteristics is not None:
+            manifest.update(characteristics)
         raw = storage._strict_json(manifest).encode()
         identity = sha256(raw).hexdigest()
-        bundle = {'manifest': raw, 'package_sha256': identity, 'files': files}
+        return {'manifest': raw, 'package_sha256': identity, 'files': files}
+
+    def publier_epreuve(self, version='version-1', *, qualification='ABSENT', title='Tableau des opérations',
+                        work='Préparer un tableau par opération', cases=('Cinq débits de janvier 2027',),
+                        limits=('Ne certifie aucune comptabilité',),
+                        pieces=None, task='tache-fictive', characteristics=None, schema=None):
+        """Épreuve de production approuvée par l’autorité éditoriale de test"""
+        bundle = self.construire_epreuve(version, qualification=qualification, title=title, work=work,
+                                         cases=cases, limits=limits, pieces=pieces, task=task,
+                                         characteristics=characteristics, schema=schema)
         editorial.publish(self.public, bundle, dict(
-            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=identity, scope='editorial-trial'))
+            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=bundle['package_sha256'],
+            scope='editorial-trial'))
         return bundle
 
     def ajouter_cle(self):
