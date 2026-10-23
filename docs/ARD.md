@@ -139,6 +139,14 @@ La source documentaire reste distincte du besoin personnel et des révisions pr�
 
 Le signalement éditorial d’une erreur est attribué et lié à la version source. Il reste distinct des octets immuables de publication et des preuves privées. La consultation privée expose les signalements applicables à cette filiation, y compris après un retrait ordinaire. Aucun inventaire public des copies privées n’est créé. Le mécanisme ne requiert ni collecte automatique ni nouveau service.
 
+### 4.7.3 Recherche dans les épreuves éditoriales
+
+La recherche lit uniquement les paquets publics admis par le lecteur éditorial existant. Le serveur valide les paramètres, puis combine recherche textuelle sur les notices et filtres explicites. Les résultats et valeurs de filtres excluent les versions retirées ou invalides, les dossiers privés et les contributions. Aucun transport modèle, accès personnel ou nouveau service n’est nécessaire.
+
+Les caractéristiques décrites dans le [PRD](PRD.md#trouver-une-épreuve-par-ses-caractéristiques) appartiennent à la version approuvée. L’évolution du format conserve la lecture des anciens paquets et leur identité. Elle ne réécrit pas leurs manifestes et ne complète pas leurs inconnues. L’ajout de caractéristiques à une publication existante suit la création et l’approbation d’une nouvelle version.
+
+La projection de recherche conserve une entrée distincte par version disponible et ne transforme aucun ordre d’affichage en préférence. La notice, ses pièces et la copie utilisent leurs contrôles existants d’autorité, d’intégrité et de retrait. Le rendu serveur réutilise les protections et harnais web existants. La recherche ne modifie ni qualification, ni preuve, ni état de publication de résultats.
+
 ### 4.8 Répertoire d’évaluations externes
 
 Le serveur public sert un répertoire éditorial de notices, distinct des tâches, campagnes et dossiers privés. Chaque notice possède une identité stable, sa source officielle et les métadonnées définies par le [PRD](PRD.md#consulter-des-évaluations-externes). Le statut de disponibilité et la vérification éditoriale restent explicites.

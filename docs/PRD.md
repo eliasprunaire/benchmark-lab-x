@@ -203,6 +203,18 @@ Le lecteur consulte le catalogue et chaque version sans clé, session ni JavaScr
 
 Le retrait vise une version précise. Elle quitte le catalogue disponible ; ses anciennes URL signalent son indisponibilité et ses pièces ne sont plus servies. Aucune nouvelle reprise de cette version n’est admise. Les autres versions et l’historique de décision sont conservés. Le retrait ne promet pas l’effacement des copies externes.
 
+### Trouver une épreuve par ses caractéristiques
+
+Le lecteur recherche un travail parmi les versions éditoriales publiques disponibles, sans clé, session ni appel modèle. La recherche textuelle déterministe porte sur la notice publique. Elle se combine avec des filtres explicites et évolutifs, sans taxonomie fermée des métiers ni préférence inférée. Elle ne classe pas les épreuves par proximité sémantique.
+
+La notice distingue résultat attendu, entrées, langue connue ou inconnue, outils, difficulté, version, qualification et présence de résultats. Les caractéristiques sont déclarées éditorialement et approuvées avec la version. Aucune caractéristique n’est déduite automatiquement des pièces. Une information absente reste inconnue ; elle ne signifie ni absence d’outil ni qualification absente. La difficulté déclarée ne prouve aucune capacité mesurée.
+
+Chaque version disponible apparaît séparément et conduit à sa notice exacte. Le lecteur conserve ses critères pendant la navigation et peut les effacer. Une recherche vide permet de modifier les critères ou de décrire un nouvel exemple. Les formulaires restent utilisables sans JavaScript, au clavier et sur écran étroit.
+
+Les anciennes versions restent consultables sans modification de leurs octets ni de leurs empreintes. Les nouvelles caractéristiques absentes y restent inconnues. Les dossiers privés et contributions ne fournissent ni résultat de recherche ni valeur de filtre. Le retrait est revérifié à la consultation et à la copie.
+
+La recherche n’autorise aucune publication de résultats. Leur absence reste distincte de la qualification. La recherche assistée et la restitution de campagnes publiques relèvent de capacités séparées.
+
 ### Préparer depuis une épreuve publiée
 
 Le lecteur peut créer son dossier privé depuis une version publiée, sans clé ni appel modèle. Cette action copie exactement la notice et les pièces publiques sélectionnées. Elle conserve leur version source et leur filiation. La copie devient accessible seulement à sa session, selon les règles de conservation privée existantes.
