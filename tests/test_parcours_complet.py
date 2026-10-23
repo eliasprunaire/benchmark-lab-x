@@ -20,15 +20,16 @@ from urllib.parse import urlencode, urlsplit
 
 from benchmark.acquisition import execution
 from benchmark.acquisition import campaigns
-from benchmark import editorial, evaluation, model_catalogue, preparation as prep
+from benchmark import editorial, evaluation, model_catalogue, preparation as prep, public_results
 from benchmark import provider_access, qualification, service, storage
 from benchmark_web import projection, server, views
 from tests.test_configurations import NOW, model
 from tests.test_openrouter_qualification import QualificationTransport
 from tests.test_provider_access import AccessTransport, KEY, SECRET
 from tests.test_s2_review_regressions import SessionAssistant, response_for
-from tests.test_s4_regressions import response
-from tests.test_s3_regressions import ACTOR, check, specification
+from tests.test_s4_regressions import inputs, manifest, response
+from tests.test_s3_regressions import ACTOR, AUTHORITY, check, specification
+from tests.test_s5_regressions import EVALUATION_AUTHORITY, RESPONSIBLE, findings
 from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa: F401  réseau local seul, blocage borné
 
 # Lectures complètes du registre tolérées pour un lancement : une par transaction, pas une par contrôle (#528)
@@ -1141,10 +1142,11 @@ class ParcoursComplet(unittest.TestCase):
         result, headers, raw = self.request(form['action'], form['fields'], status=status)
         return result, headers, raw
 
-    def copie_preparee(self, *, qualification='ABSENT', version='version-1'):
+    def copie_preparee(self, *, qualification='ABSENT', version='version-1',
+                       title='Tableau des opérations', work='Préparer un tableau par opération'):
         """Copie sans clé, puis accès personnel et première préparation du besoin personnel"""
         task = 'tache-fictive'
-        bundle = self.publier_epreuve(version, qualification=qualification)
+        bundle = self.publier_epreuve(version, qualification=qualification, title=title, work=work)
         _, headers, _ = self.copie_epreuve(version, task=task)
         dossier = headers['Location']
         self.ajouter_cle()
@@ -1456,40 +1458,43 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual([call for call in self.calls if call[0] == 'candidat'], [])
         self.assertTrue(self.starts.empty())
 
+    def copie_qualifiee(self, version='version-1', title='Tableau des opérations',
+                        work='Préparer un tableau par opération'):
+        """#465 : copie publiée, besoin personnel, précision, correction et qualification propre"""
+        dossier, page, bundle = self.copie_preparee(qualification='QUALIFIED', version=version,
+                                                    title=title, work=work)
+        self.assertNotIn('Choisir les modèles', page.visible)
+        # Une précision puis une correction conservent le besoin personnel et les accords non touchés
+        page = self.submit(page, '/messages', {'kind': 'clarify',
+            'message': 'Conserver les décisions et les actions de chaque note.'})
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        page, _, _ = self.request(dossier)
+        page = self.submit(page, '/messages', {'kind': 'correct',
+            'message': 'Présenter aussi le responsable de chaque action.'})
+        prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
+        with closing(storage.Store(self.data)) as store:
+            dossier_id = dossier.rsplit('/', 1)[1]
+            current = store._connection.execute(
+                'SELECT current_revision FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
+            payload = store.get_dossier(dossier_id, current)
+            self.assertEqual('Comparer des notes de réunion et produire la liste des actions à relire',
+                             payload['request'])
+            self.assertIn('Conserver les décisions et les actions de chaque note.', payload['clarifications'])
+            self.assertTrue(payload['validated_assumptions'])
+            source = json.loads(store._connection.execute(
+                'SELECT checks_json FROM s2_revisions WHERE dossier_id=? AND revision=1',
+                (dossier_id,)).fetchone()[0])['source']
+            self.assertEqual(bundle['package_sha256'], source['package_sha256'])
+        page, _, _ = self.request(dossier)
+        self.submit(page, '/validation', {})
+        prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
+        self.assertEqual(1, len(self.qualifier.calls))
+        return dossier
+
     def test_copie_epreuve_jusqu_aux_resultats_prives(self):
         """#465 : copie, besoin personnel, qualification propre, lancement et résultats privés"""
-        def copie_qualifiee():
-            dossier, page, bundle = self.copie_preparee(qualification='QUALIFIED')
-            self.assertNotIn('Choisir les modèles', page.visible)
-            # Une précision puis une correction conservent le besoin personnel et les accords non touchés
-            page = self.submit(page, '/messages', {'kind': 'clarify',
-                'message': 'Conserver les décisions et les actions de chaque note.'})
-            prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
-            page, _, _ = self.request(dossier)
-            page = self.submit(page, '/messages', {'kind': 'correct',
-                'message': 'Présenter aussi le responsable de chaque action.'})
-            prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
-            with closing(storage.Store(self.data)) as store:
-                dossier_id = dossier.rsplit('/', 1)[1]
-                current = store._connection.execute(
-                    'SELECT current_revision FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
-                payload = store.get_dossier(dossier_id, current)
-                self.assertEqual('Comparer des notes de réunion et produire la liste des actions à relire',
-                                 payload['request'])
-                self.assertIn('Conserver les décisions et les actions de chaque note.', payload['clarifications'])
-                self.assertTrue(payload['validated_assumptions'])
-                source = json.loads(store._connection.execute(
-                    'SELECT checks_json FROM s2_revisions WHERE dossier_id=? AND revision=1',
-                    (dossier_id,)).fetchone()[0])['source']
-                self.assertEqual(bundle['package_sha256'], source['package_sha256'])
-            page, _, _ = self.request(dossier)
-            self.submit(page, '/validation', {})
-            prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
-            self.assertEqual(1, len(self.qualifier.calls))
-            return dossier
-
         dossier, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent',
-                                      qualifier=copie_qualifiee)
+                                      qualifier=self.copie_qualifiee)
         resultats = Page(html.encode())
         self.assertIn('Modèle A', resultats.visible)
         self.assertIn('Modèle C', resultats.visible)
@@ -1548,6 +1553,446 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(any('Relève les opérations inventées' in n['text'] for n in page.nodes
                             if n['tag'] == 'div' and 'example-text' in n['attrs'].get('class', '')))
         self.request(comparison, status=200)
+
+    def test_resultats_publics_epreuve(self):
+        """#466 : restitution approuvée, lecture publique autonome, preuves et retraits"""
+        from benchmark import automatic_judgment as auto, restitution
+        task, version = 'tache-fictive', 'version-1'
+        title = 'Tableau <script>alert(1)</script>'
+        work = 'Préparer un tableau par opération'
+
+        def comportement(value, model):
+            observed = value['receipt']['observed_configuration']
+            if model == 'openai/gpt-5.6-sol':
+                observed['provider'] = 'fournisseur-observe'
+                observed['sources'] = dict(observed.get('sources') or {},
+                                           provider='HTTP response JSON /openrouter_metadata')
+            if model == 'mistralai/mistral-small-2603':
+                value['cost'].update(status='UNKNOWN', amount=None)
+
+        def ajuste(vue, findings):
+            # Un modèle échoue : sa ligne et son coût inconnu restent publics, sans sélection favorable
+            if vue['output']['content'] == self.SORTIE_C:
+                return [dict(finding, status='FAIL', attribution='candidate',
+                             finding='Une action annoncée par la consigne manque au tableau.') for finding in findings]
+            return findings
+
+        dossier, _ = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent',
+                                   ajuste=ajuste, comportement=comportement,
+                                   qualifier=lambda: self.copie_qualifiee(title=title, work=work))
+        trial = editorial.reprise_admission(self.public, task, version)
+        dossier_id = dossier.rsplit('/', 1)[1]
+        first_id, second_id, partial_id = dossier_id + '-c1', dossier_id + '-c2', dossier_id + '-c3'
+        first = '/epreuves/' + task + '/' + version + '/campagnes/' + first_id
+        second = '/epreuves/' + task + '/' + version + '/campagnes/' + second_id
+        partial = '/epreuves/' + task + '/' + version + '/campagnes/' + partial_id
+        # Deuxième campagne de la même épreuve, aux deux mêmes modèles et coûts connus
+        page, _, _ = self.request(dossier + '/configurations')
+        recap = self.submit(page, '/configurations', {
+            'models': ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'], 'tier': 'low'})
+        self.submit(recap, '/start', {})
+        execution.execute_launch(
+            self.data, self.starts.get_nowait()['candidate_attempts'],
+            transport_factory=lambda channel, key: self.candidate, access_secret=SECRET,
+            access_transport=self.access)
+        page, _, _ = self.request(dossier)
+        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        self.submit(page, '/evaluate', {})
+        auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
+        # Troisième campagne partielle : deux réponses vides, coût connu et coût inconnu
+        page, _, _ = self.request(dossier + '/configurations')
+        recap = self.submit(page, '/configurations', {
+            'models': ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603',
+                       'deepseek/deepseek-v4.1-flash'], 'tier': 'low'})
+
+        def partiel(operation, request):
+            value = self.candidate(operation, request)
+            model = request['requested_configuration']['model']
+            if model in ('deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'):
+                value['receipt']['result']['output'] = ''
+            if model == 'mistralai/mistral-small-2603':
+                value['cost'].update(status='KNOWN', amount='0.10')
+            elif model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='UNKNOWN', amount=None)
+            return value
+
+        self.submit(recap, '/start', {})
+        execution.execute_launch(
+            self.data, self.starts.get_nowait()['candidate_attempts'],
+            transport_factory=lambda channel, key: partiel, access_secret=SECRET,
+            access_transport=self.access)
+        page, _, _ = self.request(dossier)
+        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        self.submit(page, '/evaluate', {})
+        auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
+        # Quatrième campagne seulement préparée : jamais publiée
+        page, _, _ = self.request(dossier + '/configurations')
+        self.submit(page, '/configurations', {
+            'models': ['deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'], 'tier': 'low'})
+        third_id = dossier_id + '-c4'
+        third = '/epreuves/' + task + '/' + version + '/campagnes/' + third_id
+        self.assertTrue(self.starts.empty())
+
+        with closing(storage.Store(self.data)) as store:
+            session = store._connection.execute(
+                'SELECT session_id FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
+            revision = store._connection.execute(
+                'SELECT current_revision FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
+            private = store.get_dossier(dossier_id, revision)
+            need = private['request']
+            reformulation = private['reformulation'] if isinstance(private.get('reformulation'), str) else \
+                json.dumps(private.get('reformulation'), ensure_ascii=False, sort_keys=True)
+            comparison = restitution.comparison(store, session, dossier_id, first_id)
+            second_comparison = restitution.comparison(store, session, dossier_id, second_id)
+            partial_comparison = restitution.comparison(store, session, dossier_id, partial_id)
+            outputs = sorted({row['output_piece_id'] for row in comparison['rows'] if row['output_piece_id']})
+            second_outputs = sorted({row['output_piece_id'] for row in second_comparison['rows']
+                                     if row['output_piece_id']})
+            partial_outputs = sorted({row['output_piece_id'] for row in partial_comparison['rows']
+                                      if row['output_piece_id']})
+            self.assertEqual(1, len(partial_comparison['rows']))
+            self.assertEqual(2, len(partial_comparison['pending_attempts']))
+            judge = sorted({link['piece_id'] for row in comparison['rows'] for link in row['proof_links']
+                            if store.get_piece(link['piece_id'])['role'] == 'judge'
+                            and link['piece_id'] not in outputs})
+            self.assertTrue(outputs)
+            self.assertTrue(judge)
+            selected, unselected = outputs[:1], outputs[1:]
+            selected_text = store.read_piece(selected[0])
+            judge_text = store.read_piece(judge[0]).decode()
+        with closing(storage.Store(self.data)) as store:
+            one = restitution.results_bundle(store, dossier_id, first_id, piece_ids=selected,
+                                             task_id=task, version_id=version)
+            two = restitution.results_bundle(store, dossier_id, second_id, piece_ids=second_outputs,
+                                             task_id=task, version_id=version)
+            three = restitution.results_bundle(store, dossier_id, partial_id, piece_ids=partial_outputs,
+                                               task_id=task, version_id=version)
+            with self.assertRaises(ValueError) as raised:
+                restitution.results_bundle(store, dossier_id, first_id, piece_ids=judge[:1],
+                                           task_id=task, version_id=version)
+            self.assertEqual('Pièce non liée à la restitution ou réservée à l’évaluation', str(raised.exception))
+            with self.assertRaises(ValueError) as raised:
+                restitution.results_bundle(store, dossier_id, first_id, piece_ids=selected,
+                                           task_id=task, version_id='version-2')
+            self.assertEqual('Rattachement éditorial divergent', str(raised.exception))
+            with self.assertRaises(prep.Denied) as raised:
+                restitution.results_bundle(store, dossier_id, dossier_id + '-c99', piece_ids=selected,
+                                           task_id=task, version_id=version)
+            self.assertEqual('Campagne inaccessible', str(raised.exception))
+
+        def refused(bundle, approved, message, operation=public_results.publish):
+            with self.assertRaises(ValueError) as raised:
+                operation(self.public, bundle, approved)
+            self.assertEqual(message, str(raised.exception))
+
+        # Autorités distinctes, paquets incomplets ou altérés : rien n’est activé
+        self.assertFalse((self.public / 'published-results').exists())
+        refused(two, None, 'Autorité absente')
+        refused(two, {}, 'Autorité absente')
+        refused(two, dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
+                          projection_sha256=two['projection_sha256'], catalogue=False),
+                'Autorité de publication refusée')
+        refused(two, dict(actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=two['projection_sha256'],
+                          scope='editorial-trial'), 'Autorité de publication refusée')
+        refused(two, public_results.fixture_approval(two['projection_sha256']), 'Autorité de publication refusée')
+        refused(two, dict(public_results.approval(two['projection_sha256']), package_sha256='f' * 64),
+                'Approbation visant d’autres octets')
+        refused({'manifest': two['manifest'] + b' ', 'files': two['files'],
+                 'projection_sha256': two['projection_sha256']}, public_results.approval(two['projection_sha256']),
+                'Manifeste divergent')
+        refused({'manifest': two['manifest'], 'files': {}, 'projection_sha256': two['projection_sha256']},
+                public_results.approval(two['projection_sha256']), 'Paquet incomplet')
+        altered_files = dict(two['files'])
+        altered_files[sorted(altered_files)[0]] = b'octets alteres'
+        refused({'manifest': two['manifest'], 'files': altered_files, 'projection_sha256': two['projection_sha256']},
+                public_results.approval(two['projection_sha256']), 'Octets divergents')
+        extra = dict(two['files'], **{'piece-etrangere.txt': b'piece etrangere'})
+        refused({'manifest': two['manifest'], 'files': extra, 'projection_sha256': two['projection_sha256']},
+                public_results.approval(two['projection_sha256']), 'Sélection publique fermée')
+        changed = json.loads(two['manifest'])
+        changed['task']['package_sha256'] = 'f' * 64
+        raw = storage._strict_json(changed).encode()
+        rebased = {'manifest': raw, 'files': two['files'], 'projection_sha256': sha256(raw).hexdigest()}
+        refused(rebased, public_results.approval(rebased['projection_sha256']), 'Rattachement divergent')
+        self.assertFalse((self.public / 'published-results').exists())
+
+        self.assertEqual(selected, list(json.loads(one['manifest'])['pieces']))
+        self.assertEqual(second_outputs, list(json.loads(two['manifest'])['pieces']))
+        # Publication autorisée : trois restitutions distinctes de la même épreuve
+        public_results.publish(self.public, one, public_results.approval(one['projection_sha256']))
+        public_results.publish(self.public, two, public_results.approval(two['projection_sha256']))
+        public_results.publish(self.public, three, public_results.approval(three['projection_sha256']))
+        public_results.publish(self.public, one, public_results.approval(one['projection_sha256']))
+        divergent = json.loads(one['manifest'])
+        divergent['work'] = 'Autre travail'
+        raw = storage._strict_json(divergent).encode()
+        with self.assertRaises(ValueError) as raised:
+            public_results.publish(self.public, {'manifest': raw, 'files': one['files'],
+                                                'projection_sha256': sha256(raw).hexdigest()},
+                                   public_results.approval(sha256(raw).hexdigest()))
+        self.assertEqual('Restitution existante divergente', str(raised.exception))
+        trial_files = {path.relative_to(self.public / 'editorial-trials'): path.read_bytes()
+                       for path in (self.public / 'editorial-trials').rglob('*') if path.is_file()}
+        # Une lecture divergente est refusée : pièce altérée puis manifeste altéré, sans contenu servi
+        stored = self.public / 'published-results' / task / version
+        piece_path = stored / first_id / ('piece-' + selected[0] + '.txt')
+        original_piece = piece_path.read_bytes()
+        piece_path.write_bytes(b'octets alteres')
+        self.request(first, status=404)
+        self.request(first + '/pieces/' + selected[0], status=404)
+        piece_path.write_bytes(original_piece)
+        manifest_path = stored / first_id / 'manifest.json'
+        original_manifest = manifest_path.read_bytes()
+        manifest_path.write_bytes(original_manifest + b' ')
+        self.request(first, status=404)
+        manifest_path.write_bytes(original_manifest)
+        self.request(first)
+        self.assertEqual({first_id, second_id, partial_id},
+                         {campaign['campaign_id'] for campaign in
+                          public_results.published(self.public, task, version)})
+
+        page, _, raw = self.request('/epreuves/' + task + '/' + version)
+        self.assertIn('Résultats publiés', page.visible)
+        links = [node['attrs']['href'] for node in page.nodes
+                 if node['tag'] == 'a' and 'Campagne du' in node['text']]
+        self.assertEqual([first, second, partial], links)
+        self.assertNotIn(b'<script', raw)
+        self.assertNotIn(need.encode(), raw)
+        self.assertNotIn(KEY.encode(), raw)
+        catalog, _, _ = self.request('/epreuves')
+        self.assertIn(title, catalog.visible)
+        self.assertEqual('Résultats publiés', catalog.field('Résultats publiés'))
+        self.assertNotIn('Aucun résultat publié', catalog.visible)
+
+        page, headers, raw = self.request(first, cookies=SimpleCookie())
+        self.assertIsNone(headers.get('Set-Cookie'))
+        self.assertEqual('no-referrer', headers['Referrer-Policy'])
+        self.assertIn("default-src 'none'", headers['Content-Security-Policy'])
+        self.assertIn("form-action 'self'", headers['Content-Security-Policy'])
+        self.assertNotIn(b'<script', raw)
+        main = next(node for node in page.nodes if node['tag'] == 'main')['text']
+        for value in (title, work, 'Modèle A', 'Modèle C', 'Satisfait', 'Ne satisfait pas',
+                      'Une action annoncée par la consigne manque au tableau.',
+                      'Réponses évaluées : 2 · essais lancés : 2 sur 2',
+                      'Comparaison des coûts incomplète', 'Coût observé inconnu pour 1 réponse',
+                      'Conditions communes', 'Campagne du', 'Toutes les épreuves'):
+            self.assertIn(value, page.visible)
+        for private_value in (need, reformulation or '', KEY, judge_text, 'operation_id', 'body_base64',
+                             'receipt', '/preparation/dossiers/'):
+            if private_value:
+                self.assertNotIn(private_value, main)
+        self.assertIn('un filtre ne change ni les verdicts ni la population', page.visible.lower())
+        self.assertIn('pièce non publiée', main.lower())
+        # Configuration demandée, observée et sources : différence et inconnue explicites
+        page_raw = raw.decode()
+        self.assertIn('fournisseur-observe', page_raw)
+        self.assertRegex(page_raw, r'Fournisseur</th><td>OpenRouter</td><td>fournisseur-observe</td>')
+        self.assertRegex(page_raw, r'Observations inconnues :[^<]*Effort de raisonnement')
+
+        piece_url = first + '/pieces/' + selected[0]
+        _, piece_headers, piece_raw = self.request(piece_url, cookies=SimpleCookie())
+        self.assertEqual('text/plain; charset=utf-8', piece_headers['Content-Type'])
+        self.assertEqual(selected_text, piece_raw)
+        with self.assertRaises(public_results.NotFound):
+            public_results.piece_bytes(self.public, task, version, first_id, unselected[0])
+        for pid in unselected + judge:
+            self.request(first + '/pieces/' + pid, status=404)
+        # Aucune autre campagne privée n’est exposée
+        self.request(third, status=404)
+        self.assertNotIn(third_id, raw.decode())
+
+        self.assertEqual(2, raw.count(b'<tr id="reponse-'))
+        self.assertEqual(1, self.request(first + '?configuration=1')[2].count(b'<tr id="reponse-'))
+        self.assertEqual(1, self.request(first + '?verdict=SATISFAIT')[2].count(b'<tr id="reponse-'))
+        self.assertEqual(1, self.request(first + '?verdict=NE%20SATISFAIT%20PAS')[2].count(b'<tr id="reponse-'))
+        self.assertIn('Aucune réponse ne correspond à ces filtres',
+                      self.request(first + '?verdict=A_REPRENDRE')[0].visible)
+        self.request(first + '?sort=cost')
+        self.request(first + '?sort=cost&direction=desc')
+        obligation = json.loads(one['manifest'])['obligations'][0]
+        self.request(first + '?obligation=' + obligation['id'] + ':PASS')
+        self.request(first + '?sort=inconnu', status=400)
+        self.request(first + '?sort=cost&sort=cost', status=400)
+        rejected, _, rejected_raw = self.request(first + '?besoin=prive', status=400)
+        self.assertNotIn(b'prive', rejected_raw)
+        self.assertNotIn('prive', rejected.visible)
+
+        page, _, second_raw = self.request(second)
+        self.assertIn('Campagne du', page.visible)
+        self.assertEqual({first, partial}, {node['attrs']['href'] for node in page.nodes
+                                           if node['tag'] == 'a' and 'Campagne du' in node['text']})
+        self.assertEqual(2, second_raw.count(b'<tr id="reponse-'))
+        self.assertIn('coûts complets', page.visible.lower())
+        page, _, partial_raw = self.request(partial)
+        self.assertIn('Réponses évaluées : 1 · essais lancés : 3 sur 3', page.visible)
+        self.assertIn('Réponses en attente ou incidents', page.visible)
+        self.assertIn('Aucune réponse exploitable', page.visible)
+        self.assertIn('Coût observé : 0,10 USD', page.visible)
+        self.assertIn('Coût observé : Inconnu', page.visible)
+        self.assertIn('Comparaison des coûts incomplète', page.visible)
+        self.assertEqual(1, partial_raw.count(b'<tr id="reponse-'))
+        self.assertEqual({first, second}, {node['attrs']['href'] for node in page.nodes
+                                           if node['tag'] == 'a' and 'Campagne du' in node['text']})
+
+        # Lecture autonome : le stockage privé source a disparu et le relais privé est interdit
+        moved = self.data.with_name(self.data.name + '-absent')
+        try:
+            with patch.object(server, 'preparation_request', side_effect=AssertionError('Relais privé interdit')):
+                self.data.rename(moved)
+                try:
+                    self.request(first)
+                    self.request(piece_url)
+                    self.request('/epreuves/' + task + '/' + version)
+                finally:
+                    moved.rename(self.data)
+        finally:
+            if moved.exists() and not self.data.exists():
+                moved.rename(self.data)
+
+        # Anciens manifestes éditoriaux inchangés par l’ajout de résultats
+        self.assertEqual(trial_files, {path.relative_to(self.public / 'editorial-trials'): path.read_bytes()
+                                       for path in (self.public / 'editorial-trials').rglob('*') if path.is_file()})
+        manifest_bytes = (stored / first_id / 'manifest.json').read_bytes()
+        second_manifest = (stored / second_id / 'manifest.json').read_bytes()
+        piece_bytes = (stored / first_id / ('piece-' + selected[0] + '.txt')).read_bytes()
+
+        # Retrait d’une restitution : l’épreuve et l’autre restitution restent disponibles
+        with self.assertRaises(ValueError) as raised:
+            public_results.withdraw(self.public, task, version, first_id, public_results.fixture_withdrawal(
+                one['projection_sha256'], task, version, first_id))
+        self.assertEqual('Autorité de publication refusée', str(raised.exception))
+        with self.assertRaises(ValueError) as raised:
+            public_results.withdraw(self.public, task, version, first_id, dict(
+                public_results.withdrawal(one['projection_sha256'], task, version, first_id),
+                package_sha256='a' * 64))
+        self.assertEqual('Approbation visant d’autres octets', str(raised.exception))
+        decision = public_results.withdrawal(one['projection_sha256'], task, version, first_id)
+        public_results.withdraw(self.public, task, version, first_id, decision)
+        public_results.withdraw(self.public, task, version, first_id, decision)
+        withdrawn, _, withdrawn_raw = self.request(first)
+        self.assertIn('Cette restitution est retirée', withdrawn.visible)
+        self.assertNotIn('Modèle A', withdrawn.visible)
+        self.assertNotIn(b'<script', withdrawn_raw)
+        self.request(piece_url, status=404)
+        self.request(first + '/pieces/' + 'a' * 32, status=404)
+        self.assertIn('Campagne du', self.request(second)[0].visible)
+        trial_page = self.request('/epreuves/' + task + '/' + version)[0]
+        self.assertIn(title, trial_page.visible)
+        self.assertNotIn(first, [node['attrs']['href'] for node in trial_page.nodes if node['tag'] == 'a'])
+        self.assertEqual(manifest_bytes, (stored / first_id / 'manifest.json').read_bytes())
+        self.assertEqual(piece_bytes, (stored / first_id / ('piece-' + selected[0] + '.txt')).read_bytes())
+        self.assertEqual({second_id, partial_id}, {campaign['campaign_id']
+                                                   for campaign in public_results.published(self.public, task, version)})
+
+        # Retrait de l’épreuve : toutes ses restitutions deviennent inaccessibles, octets conservés
+        editorial.withdraw(self.public, task, version, dict(
+            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=trial['package_sha256'],
+            scope='editorial-withdrawal', task_id=task, version_id=version))
+        self.assertIn('Cette version est retirée',
+                      self.request('/epreuves/' + task + '/' + version)[0].visible)
+        for campaign in (first, second, partial):
+            page, _, raw = self.request(campaign)
+            self.assertIn('Cette épreuve est retirée', page.visible)
+            self.assertNotIn('Modèle A', page.visible)
+            self.assertNotIn(b'<script', raw)
+            for pid in (selected[0], second_outputs[0], partial_outputs[0]):
+                self.request(campaign + '/pieces/' + pid, status=404)
+        self.assertEqual([], public_results.published(self.public, task, version))
+        with self.assertRaises(ValueError) as raised:
+            public_results.publish(self.public, two, public_results.approval(two['projection_sha256']))
+        self.assertEqual('Épreuve retirée', str(raised.exception))
+        self.assertEqual(manifest_bytes, (stored / first_id / 'manifest.json').read_bytes())
+        self.assertEqual(second_manifest, (stored / second_id / 'manifest.json').read_bytes())
+
+    def test_tri_numerique_resultats_publics(self):
+        """#466 : le tri public suit le sens annoncé, les égalités et les inconnues"""
+        from benchmark import restitution
+        task, version = 'tache-fictive', 'version-1'
+        dossier, page, _ = self.copie_preparee()
+        dossier_id = dossier.rsplit('/', 1)[1]
+        self.submit(page, '/validation', {})
+        with closing(storage.Store(self.data)) as store:
+            revision = store._connection.execute(
+                'SELECT current_revision FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
+            reference = store._connection.execute(
+                "SELECT piece_id FROM pieces WHERE dossier_id=? AND revision=? AND role='judge'",
+                (dossier_id, revision)).fetchone()[0]
+            spec = specification(reference)
+            spec['secondary_criteria'] = [
+                {'id': 'C1', 'measure': 'Nombre d’actions', 'unit': 'actions',
+                 'proof': 'Chaque action du tableau, recomptée', 'favorable': 'higher',
+                 'aggregation': None},
+                {'id': 'C2', 'measure': 'Points vérifiés', 'unit': 'points',
+                 'proof': 'Passages vérifiés dans le tableau', 'favorable': 'higher',
+                 'aggregation': None}]
+            contract = qualification.draft(store, dossier_id, revision, spec)
+            receipt = qualification.qualify(store, contract['contract_sha256'], reviewer=ACTOR, check=check)
+            qualification.approve(store, contract['contract_sha256'], receipt['qualification_id'],
+                                  actor=ACTOR, authority=AUTHORITY)
+            campaign = manifest(contract, 'numeric')
+            campaign['panel'] = [dict(campaign['panel'][0], id=ident, channel_id='fixture-channel-' + ident,
+                                      model='fictional-' + ident)
+                                 for ident in ('x', 'y', 'z')]
+            campaign['plan'] = [dict(cell_id=ident, case_id='notes', configuration_id=ident)
+                                for ident in ('x', 'y', 'z')]
+            campaign['attempt_policy'] = dict(retries=False, order=['x', 'y', 'z'], reason='Declared local order')
+            campaign = campaigns.create(store, campaign)
+            store.create_budget('local-comparison', '40', 'TEST')
+            authority, evidence = inputs(campaign, cells=['x', 'y', 'z'])
+            authority['reserve_amounts']['z'] = '7'
+            campaigns.admit(store, 'numeric', authority, evidence)
+            values = {'x': (2, 1), 'y': (2, 1), 'z': (10, 'INCONNU')}
+
+            def report(ctx, resources):
+                value = findings(ctx, resources)
+                output = ctx['attempt']['output_piece_id']
+                proof = [dict(piece_id=output, sha256=sha256(resources[output]).hexdigest(),
+                              passage=resources[output].decode())]
+                first, second = values[resources[output].decode().removeprefix('Sortie ')]
+                value['measures'] = [dict(criterion_id='C1', value=first, unit='actions', evidence=proof),
+                                     dict(criterion_id='C2', value=second, unit='points', evidence=proof)]
+                return value
+
+            def transport(operation, request):
+                value = response(operation, request)
+                value['receipt']['result']['output'] = 'Sortie ' + request['requested_configuration']['channel_id'].removeprefix('fixture-channel-')
+                value['cost'].update(status='KNOWN', amount='2', currency='TEST')
+                return value
+
+            for ident in ('x', 'y', 'z'):
+                attempts = campaigns.reserve(store, 'numeric', ident, 'attempt-' + ident)
+                execution.execute(self.data, attempts['operation_id'], transport)
+                evaluation.evaluate(store, 'numeric', attempts['operation_id'], responsible=RESPONSIBLE,
+                                    authority=EVALUATION_AUTHORITY, check=report)
+            campaigns.stop(store, 'numeric')
+        campaign_id = 'numeric'
+        url = '/epreuves/' + task + '/' + version + '/campagnes/' + campaign_id
+        with closing(storage.Store(self.data)) as store:
+            session = store._connection.execute(
+                'SELECT session_id FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
+            comparison = restitution.comparison(store, session, dossier_id, campaign_id)
+            self.assertEqual(3, len(comparison['rows']))
+            outputs = sorted({row['output_piece_id'] for row in comparison['rows'] if row['output_piece_id']})
+            self.assertEqual(3, len(outputs))
+            bundle = restitution.results_bundle(store, dossier_id, campaign_id, piece_ids=outputs,
+                                                task_id=task, version_id=version)
+        public_results.publish(self.public, bundle, public_results.approval(bundle['projection_sha256']))
+        manifest_doc = json.loads(bundle['manifest'])
+        numeric = next(column['id'] for column in manifest_doc['columns'] if column['label'] == 'Nombre d’actions')
+        precision = next(column['id'] for column in manifest_doc['columns'] if column['label'] == 'Points vérifiés')
+
+        def order(extra):
+            raw = self.request(url + extra)[2]
+            return [int(number) for number in re.findall(rb'<tr id="reponse-(\d+)-1"', raw)]
+
+        # Valeurs 2, 2 et 10 : croissant suit les valeurs, décroissant les inverse, l'égalité reste stable
+        self.assertEqual([1, 2, 3], order('?sort=' + numeric))
+        self.assertEqual([3, 1, 2], order('?sort=' + numeric + '&direction=desc'))
+        # Valeurs 1, 1 et inconnue : l'inconnue reste sans rang, dans les deux sens
+        self.assertEqual([1, 2, 3], order('?sort=' + precision))
+        self.assertEqual([1, 2, 3], order('?sort=' + precision + '&direction=desc'))
+        page = self.request(url + '?sort=' + precision)[0]
+        self.assertIn('Non comparable : Mesure non relevée ou sans preuve', page.visible)
 
     def test_copie_epreuve_expiration_et_purge(self):
         """#465 : la copie et sa source suivent les règles privées de conservation, sans réactivation"""
@@ -4267,17 +4712,18 @@ class ParcoursComplet(unittest.TestCase):
         """Tout le texte principal, dépliants compris, sans promesse de meilleur modèle ni de fiabilité générale"""
         self.assertNotRegex(next(n for n in page.nodes if n['tag'] == 'main')['text'], self.PROMESSE)
 
-    def comparer(self, qualites, mesure, *, constat=None, comportement=None,
-                 models=('openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'), repetitions=None, qualifier=None):
+    def comparer(self, qualites, mesure, *, constat=None, ajuste=None, comportement=None,
+                 models=('openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'), repetitions=None,
+                 qualifier=None, criteria=None):
         """Comparaison sans reprise de modèles satisfaisants, coûts connus sauf `comportement(valeur, modèle)`
 
         `mesure(critère, sortie)` rend la valeur du juge pour chaque critère de qualité nommé dans
         `qualites` ; la réponse de mistral-small se reconnaît à sa sortie `SORTIE_C`
         """
-        self.criteria = {'eliminatory': [], 'obligations': ['Toutes les actions présentes'], 'quality': [
+        self.criteria = criteria or {'eliminatory': [], 'obligations': ['Toutes les actions présentes'], 'quality': [
             {'label': label, 'scale': ['excellent', 'acceptable', 'faible'], 'favorable': 'excellent'} for label in qualites]}
         self.juge_factice(constat or (lambda critere: ('PASS', 'candidate', 'Exigence respectée')),
-                          mesure=lambda critere, sortie: mesure(critere['measure'], sortie))
+                          mesure=lambda critere, sortie: mesure(critere['measure'], sortie), ajuste=ajuste)
 
         def reponse(value, model, limit, suivi):
             if model == 'mistralai/mistral-small-2603':

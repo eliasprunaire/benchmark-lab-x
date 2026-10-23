@@ -30,7 +30,7 @@ import json
 from benchmark import restitution
 from benchmark_web import projection, views
 from benchmark_web.server import RESPONSE_TIMEOUT
-from tests.test_privacy_views import example_view, browser_views
+from tests.test_privacy_views import example_view, browser_views, results_view
 from tests.test_s10_regressions import S10ProofTests as proof
 proof.setUpClass()
 try:
@@ -180,7 +180,11 @@ with tempfile.TemporaryDirectory() as unavailable_dir:
         editorial.fixture_search(unavailable_dir, {'q': 'note', 'outil': 'Tableur retiré'}), '').decode()
 with tempfile.TemporaryDirectory() as empty_dir:
     editorial_empty = views.render(editorial.catalog_view(str(Path(empty_dir).resolve())), '').decode()
-print(json.dumps({**browser_views(), 'reference_search': reference_search, 'reference_notices': reference_notices,
+print(json.dumps({**browser_views(), 'published-results': views.render(results_view(), '').decode(),
+                  'published-results-filtered': views.render(results_view(filtered=True), '').decode(),
+                  'published-results-withdrawn': views.render(results_view(withdrawn=True), '').decode(),
+                  'published-results-trial-withdrawn': views.render(results_view(unavailable='trial-withdrawn'), '').decode(),
+                  'reference_search': reference_search, 'reference_notices': reference_notices,
                   'editorial_pages': editorial_pages, 'editorial-search': editorial_search,
                   'editorial-version-search': editorial_version_search,
                   'editorial-empty': editorial_empty,
@@ -224,6 +228,12 @@ print(json.dumps({**browser_views(), 'reference_search': reference_search, 'refe
       res.setHeader('Content-Type', 'text/html'); res.end(rendered[reply]);
     } else if (url.pathname === '/epreuves' || url.pathname.startsWith('/epreuves/')) {
       // HTML de la fixture isolée : la preuve HTTP du lecteur de production reste dans le serveur Python
+      if (url.pathname.endsWith('/pieces/output-a')) {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.end('Réponse publique de la fixture');
+        return;
+      }
       if (url.pathname.endsWith('/pieces/consigne')) {
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
         res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -1617,6 +1627,75 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.equal(await page.locator('main a[href*="/pieces/"]').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      assert.deepEqual(dialogs, []);
+      assert.deepEqual(errors, []);
+    } finally {await context.close();}
+  }
+});
+
+test('published results stay readable without JavaScript, by keyboard at 390 px', async () => {
+  for (const javaScriptEnabled of [false, true]) {
+    const context = await browser.newContext({javaScriptEnabled, viewport: {width: 390, height: 844}});
+    try {
+      const page = await context.newPage();
+      page.setDefaultTimeout(3000);
+      const dialogs = [], errors = [];
+      page.on('dialog', dialog => {dialogs.push(dialog.message()); dialog.dismiss();});
+      page.on('pageerror', error => errors.push(error.message));
+      await page.goto(origin + '/render/published-results');
+      const main = await page.textContent('main');
+      assert.match(main, /Tableau <script>alert\(1\)<\/script>/);
+      assert.match(main, /Modèle <script>alert\(1\)<\/script>/);
+      assert.match(main, /Préparer un tableau par opération/);
+      assert.match(main, /Satisfait/);
+      assert.match(main, /Ne satisfait pas/);
+      assert.match(main, /Coût observé inconnu pour 1 réponse/);
+      assert.match(main, /pièce non publiée/i);
+      assert.match(main, /un filtre ne change ni les verdicts ni la population/i);
+      assert.match(main, /Réponses évaluées : 2 · essais lancés : 2 sur 2/);
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Filtres natifs visibles, un seul tableau à une ligne sur la vue filtrée
+      assert.equal(await page.locator('#filter-configuration').count(), 1);
+      await page.goto(origin + '/render/published-results-filtered');
+      const filtered = await page.textContent('main');
+      assert.match(filtered, /1 réponse affichée sur 2/);
+      assert.equal(await page.locator('.comparison-results > .table-scroll > table > tbody > tr').count(), 1);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/published-results');
+      // Un dépliant puis la preuve publiée restent utilisables au clavier, sans JavaScript
+      let focused = false;
+      for (let press = 0; press < 60 && !focused; press++) {
+        await page.keyboard.press('Tab');
+        focused = await page.evaluate(() => document.activeElement?.tagName === 'SUMMARY');
+      }
+      assert.ok(focused, 'dépliant non atteint au clavier');
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      await page.getByText('Détail et preuves').first().click();
+      let proofFocused = false;
+      for (let press = 0; press < 40 && !proofFocused; press++) {
+        await page.keyboard.press('Tab');
+        proofFocused = await page.evaluate(() => document.activeElement?.getAttribute('href')?.endsWith('/pieces/output-a'));
+      }
+      assert.ok(proofFocused, 'preuve publiée non atteinte au clavier');
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      const proof = page.getByRole('link', {name: /Réponse de Modèle/});
+      mkdirSync('reports/466', {recursive: true});
+      await page.screenshot({path: 'reports/466/resultats-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await proof.click();
+      assert.match(await page.locator('body').innerText(), /Réponse publique de la fixture/);
+      // États de retrait : aucun contenu retiré, retour vers l’épreuve et le catalogue
+      await page.goto(origin + '/render/published-results-withdrawn');
+      const withdrawn = await page.textContent('main');
+      assert.match(withdrawn, /Cette restitution est retirée/);
+      assert.equal(withdrawn.includes('Modèle <script>'), false);
+      assert.match(withdrawn, /Retour à l’épreuve/);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/published-results-trial-withdrawn');
+      const trialWithdrawn = await page.textContent('main');
+      assert.match(trialWithdrawn, /Cette épreuve est retirée/);
+      assert.equal(trialWithdrawn.includes('Tableau'), false);
       assert.deepEqual(dialogs, []);
       assert.deepEqual(errors, []);
     } finally {await context.close();}

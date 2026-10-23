@@ -534,6 +534,25 @@ def _reprise(destination, task_id, version_id, actor, root_name):
     return dict(task_id=task_id, version_id=version_id, package_sha256=record['identity'])
 
 
+def _version_state(destination, task_id, version_id, actor, root_name):
+    """Identité et retrait d’une version, sans exposer sa notice ni ses pièces"""
+    identifier(task_id)
+    identifier(version_id)
+    record = _load(destination, task_id, version_id, actor, root_name)
+    return dict(task_id=task_id, version_id=version_id, package_sha256=record['identity'],
+                withdrawn=record['withdrawn'])
+
+
+def version_state(destination, task_id, version_id):
+    """Identité de production et état de retrait, pour un rattachement de résultats"""
+    return _version_state(destination, task_id, version_id, _PRODUCTION, _ROOT)
+
+
+def fixture_version_state(destination, task_id, version_id):
+    """Identité de fixture et état de retrait, hors du lecteur de production"""
+    return _version_state(destination, task_id, version_id, _FIXTURE, _FIXTURE_ROOT)
+
+
 def reprise_admission(destination, task_id, version_id):
     """Identité de production admissible pour une reprise future, sans copier le paquet"""
     return _reprise(destination, task_id, version_id, _PRODUCTION, _ROOT)
