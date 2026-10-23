@@ -32,7 +32,7 @@ Les exigences suivantes du PRD n’ont pas encore de jalon. Les dater demande un
 
 - répertoire éditorial d’évaluations externes, recherche simple et filtres sans appel modèle ([§10](PRD.md#consulter-des-évaluations-externes))
 - navigation catalogue, tâche, campagne et comparaison des configurations ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
-- consultation publique des seules restitutions approuvées, sans classement universel ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
+- consultation publique des seules restitutions approuvées, sans classement universel ; autorisation distincte, paquet autonome et retrait des résultats ([§10](PRD.md#publier-les-résultats-dune-épreuve)) ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
 - catalogue de tâches versionnées, avec contrat et cas d'essai identifiés ; aucune demande n’y est publiée automatiquement ([§5.1](PRD.md#51-capacités)) ; publication, consultation et retrait des épreuves éditoriales ([§10](PRD.md#publier-et-consulter-une-épreuve-éditoriale))
 - recherche textuelle et filtres explicites parmi les versions éditoriales publiques, sans appel modèle ([§10](PRD.md#trouver-une-épreuve-par-ses-caractéristiques))
 - copie privée d’une épreuve publiée, adaptation du besoin, qualification propre et signalement des erreurs de source ([§10](PRD.md#préparer-depuis-une-épreuve-publiée))

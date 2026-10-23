@@ -225,6 +225,16 @@ La préparation construit le contrat et la référence propres au dossier. Elle 
 
 Une source retirée ou un paquet incomplet ou altéré interdit une nouvelle copie. Un retrait éditorial ordinaire laisse les copies privées antérieures sous leurs propres règles de conservation. Une erreur connue fait l’objet d’un signalement éditorial attribué à la version source. Les copies concernées affichent cet avertissement sans modifier leurs pièces, leurs verdicts ni leurs coûts historiques. Ce signalement ne vaut ni correction ni nouvelle qualification.
 
+### Publier les résultats d’une épreuve
+
+Ayo approuve explicitement la restitution d’une campagne et ses pièces publiques exactes par une opération opérateur. Cette autorité est distincte de la publication de l’épreuve. Elle ne publie ni campagnes futures, ni dossiers des lecteurs, ni contributions privées. Aucune interface d’administration complète n’est exigée.
+
+La restitution publiée forme un paquet autonome, rattaché à une version éditoriale et à une campagne identifiées. Elle conserve les observations et verdicts enregistrés, sans les recalculer ni réécrire l’épreuve. Toutes les observations nécessaires à la conclusion restent représentées. Les restrictions de preuve et leur effet sur la vérification publique sont explicités, sans révéler les autres campagnes privées.
+
+Le lecteur ouvre les campagnes autorisées depuis l’épreuve, puis leurs résultats et preuves, sans clé, session ni JavaScript. L’absence de résultat public reste explicite. La présence de résultats accessibles dépend des publications disponibles, sans modifier les octets des anciennes versions d’épreuve.
+
+Le retrait d’une restitution ferme ses pages et ses pièces, y compris leurs anciennes URL, sans retirer l’épreuve ni les autres restitutions. Le retrait de l’épreuve ferme aussi l’accès public aux restitutions rattachées. Ces opérations conservent les traces de décision et ne modifient pas les preuves historiques. Elles ne garantissent aucun effacement des copies externes.
+
 ### Consulter les résultats
 
 Le catalogue permet de chercher un travail proche de son besoin et d’identifier ses versions et campagnes publiées. La page tâche explique le contexte métier, la famille de travail, le résultat attendu et son usage, les cas, leur charge et leurs difficultés concrètes, la couverture recherchée et les exclusions. Pour une recherche documentaire, elle distingue l’exploitation de textes utiles fournis, la recherche dans une bibliothèque figée et la consultation externe autorisée. Les compétences sollicitées et les limites de reproduction diffèrent ; aucune de ces modalités ne présume un connecteur disponible. Elle distingue l’existence d’une tâche de la présence de résultats approuvés.
