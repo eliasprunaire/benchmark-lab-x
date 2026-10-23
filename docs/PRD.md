@@ -203,6 +203,16 @@ Le lecteur consulte le catalogue et chaque version sans clé, session ni JavaScr
 
 Le retrait vise une version précise. Elle quitte le catalogue disponible ; ses anciennes URL signalent son indisponibilité et ses pièces ne sont plus servies. Aucune nouvelle reprise de cette version n’est admise. Les autres versions et l’historique de décision sont conservés. Le retrait ne promet pas l’effacement des copies externes.
 
+### Préparer depuis une épreuve publiée
+
+Le lecteur peut créer son dossier privé depuis une version publiée, sans clé ni appel modèle. Cette action copie exactement la notice et les pièces publiques sélectionnées. Elle conserve leur version source et leur filiation. La copie devient accessible seulement à sa session, selon les règles de conservation privée existantes.
+
+Le lecteur précise son besoin et ses écarts avec l’épreuve. Le texte éditorial reste distinct de cette demande personnelle. La copie documentaire reste intacte ; les adaptations constituent le nouvel exemple. Les accords non touchés sont conservés.
+
+La préparation construit le contrat et la référence propres au dossier. Elle exige l’accès personnel avant son premier appel et annonce les appels de qualification. Le dossier suit ensuite la validation, la qualification et le lancement expressément autorisé du parcours existant. Le statut de qualification publié ne dispense jamais cette nouvelle instance de qualification. Aucun résultat ni coût antérieur ne lui est réattribué.
+
+Une source retirée ou un paquet incomplet ou altéré interdit une nouvelle copie. Un retrait éditorial ordinaire laisse les copies privées antérieures sous leurs propres règles de conservation. Une erreur connue fait l’objet d’un signalement éditorial attribué à la version source. Les copies concernées affichent cet avertissement sans modifier leurs pièces, leurs verdicts ni leurs coûts historiques. Ce signalement ne vaut ni correction ni nouvelle qualification.
+
 ### Consulter les résultats
 
 Le catalogue permet de chercher un travail proche de son besoin et d’identifier ses versions et campagnes publiées. La page tâche explique le contexte métier, la famille de travail, le résultat attendu et son usage, les cas, leur charge et leurs difficultés concrètes, la couverture recherchée et les exclusions. Pour une recherche documentaire, elle distingue l’exploitation de textes utiles fournis, la recherche dans une bibliothèque figée et la consultation externe autorisée. Les compétences sollicitées et les limites de reproduction diffèrent ; aucune de ces modalités ne présume un connecteur disponible. Elle distingue l’existence d’une tâche de la présence de résultats approuvés.
