@@ -208,6 +208,8 @@ def browser_views():
     copy['source_notice'] = dict(withdrawn=False, reports=[dict(
         summary='Erreur signalée <script>alert(2)</script>', reported_at='2026-10-23T10:00:00+00:00')])
     examples['copy-dossier'] = copy
+    examples['copy-confirmation'] = {'kind': 'copy_source', 'source': copy['source'],
+                                     'source_notice': copy['source_notice']}
     rendered = {name: views.render(value, 'csrf', error=bool(value.get('error'))).decode()
                 for name, value in examples.items()}
     for name, source, version in (('checkout', 'abcdef0123456789', ''),

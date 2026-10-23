@@ -226,9 +226,24 @@ class ParcoursComplet(unittest.TestCase):
                              currency='USD', source='Reçu candidat simulé S12')
         return value
 
-    def request(self, path, fields=None, *, cookies=None, status=200, json_response=False):
+    @staticmethod
+    def cookie_header(jar, path):
+        """En-tête Cookie selon la portée réelle des cookies, comme un navigateur"""
+        target = urlsplit(path).path
+        values = []
+        for morsel in jar.values():
+            scope = morsel['path'] or '/'
+            if scope == '/' or target == scope or target.startswith(scope.rstrip('/') + '/'):
+                values.append(morsel.key + '=' + morsel.value)
+        return '; '.join(values)
+
+    def request(self, path, fields=None, *, cookies=None, status=200, json_response=False,
+                extra_headers=None):
         self.clock += timedelta(minutes=1)
-        headers = {'Cookie': (self.cookies if cookies is None else cookies).output(header='', sep=';').strip()}
+        headers = dict(extra_headers or {})
+        cookie_header = self.cookie_header(self.cookies if cookies is None else cookies, path)
+        if cookie_header:
+            headers['Cookie'] = cookie_header
         body = None if fields is None else urlencode(fields, doseq=True).encode()
         if body is not None:
             headers['Content-Type'] = 'application/x-www-form-urlencoded'
@@ -763,7 +778,8 @@ class ParcoursComplet(unittest.TestCase):
 
     def copie_epreuve(self, version='version-1', *, status=303, task='tache-fictive'):
         page, _, _ = self.request('/epreuves/' + task + '/' + version)
-        form = page.form('/copie')
+        confirmation, _, _ = self.request(page.link('Créer mon dossier privé'))
+        form = next(item for item in confirmation.forms if '/copies/' in item['action'])
         result, headers, raw = self.request(form['action'], form['fields'], status=status)
         return result, headers, raw
 
@@ -792,14 +808,24 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn("form-action 'self'", public_headers['Content-Security-Policy'])
         self.assertIn('Créer mon dossier privé', public.visible)
         self.assertIn('Qualification réussie', public.visible)
-        form = public.form('/copie')
-        self.assertEqual({'copy': '1'}, form['fields'])
+        link = public.link('Créer mon dossier privé')
+        self.assertEqual('/preparation/copies/' + task + '/' + version, link)
+        # Le cookie privé n’est pas envoyé à la page publique, mais l’est au chemin de confirmation
+        self.assertNotIn('benchmark_session', self.cookie_header(self.cookies, '/epreuves/' + task + '/' + version))
+        confirmation, confirm_headers, _ = self.request(link)
+        self.assertTrue(confirm_headers.get('Set-Cookie'))
+        self.assertIn('benchmark_session', self.cookie_header(self.cookies, link))
+        session = self.cookies['benchmark_session'].value
+        self.assertIn('Épreuve source', confirmation.visible)
+        form = next(item for item in confirmation.forms if '/copies/' in item['action'])
+        self.assertIn('csrf_token', form['fields'])
+        self.assertEqual('1', form['fields']['copy'])
         self.assertEqual([], self.calls)
         self.assertTrue(self.starts.empty())
         with closing(storage.Store(self.data)) as store:
             before = store._connection.execute('SELECT count(*) FROM operations').fetchone()[0]
         page, headers, raw = self.request(form['action'], form['fields'], status=303)
-        self.assertTrue(headers.get('Set-Cookie'))
+        self.assertEqual(session, self.cookies['benchmark_session'].value)
         self.assertEqual('no-store', headers['Cache-Control'])
         dossier = headers['Location']
         self.assertRegex(dossier, r'^/preparation/dossiers/[A-Za-z0-9_-]{1,128}$')
@@ -853,6 +879,72 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual([], self.calls)
         self.assertTrue(self.starts.empty())
 
+    def test_copie_conserve_la_session_existante(self):
+        """#465 : la copie depuis le chemin privé ne remplace pas la session qui portait les anciens dossiers"""
+        old_dossier, old_page = self.exemple()
+        self.assertIn('Transformer des notes de réunion', old_page.visible)
+        session = self.cookies['benchmark_session'].value
+        calls = list(self.calls)
+        task, version = 'tache-fictive', 'version-1'
+        self.publier_epreuve(version)
+        public, _, _ = self.request('/epreuves/' + task + '/' + version)
+        self.assertNotIn('benchmark_session', self.cookie_header(
+            self.cookies, '/epreuves/' + task + '/' + version))
+        link = public.link('Créer mon dossier privé')
+        self.assertIn('benchmark_session', self.cookie_header(self.cookies, link))
+        confirmation, _, _ = self.request(link)
+        self.assertEqual(session, self.cookies['benchmark_session'].value)
+        self.assertIn('Épreuve source', confirmation.visible)
+        form = next(item for item in confirmation.forms if '/copies/' in item['action'])
+        _, headers, _ = self.request(form['action'], form['fields'], status=303)
+        dossier = headers['Location']
+        self.assertEqual(session, self.cookies['benchmark_session'].value)
+        self.assertEqual(calls, self.calls)
+        self.assertTrue(self.starts.empty())
+        # L’ancien dossier reste accessible avec la même session
+        previous, _, _ = self.request(old_dossier)
+        self.assertIn('Transformer des notes de réunion', previous.visible)
+        # Renvoi de la confirmation : même dossier, aucune copie de plus
+        again, again_headers, _ = self.request(form['action'], form['fields'], status=303)
+        self.assertEqual(dossier, again_headers['Location'])
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(2, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
+        # Une autre session ne voit ni l’ancien dossier ni la copie
+        _, foreign_headers, _ = self.request('/preparation', cookies=SimpleCookie())
+        foreign = SimpleCookie(foreign_headers['Set-Cookie'])
+        for private in (old_dossier, dossier):
+            denied, _, denied_raw = self.request(private, cookies=foreign, status=403)
+            self.assertNotIn(b'Transformer des notes', denied_raw)
+            self.assertNotIn(b'Tableau des op', denied_raw)
+        self.assertEqual(session, self.cookies['benchmark_session'].value)
+        self.request(old_dossier)
+        self.request(dossier)
+
+    def test_copie_session_privacy_bootstrap(self):
+        """#465 : sous confidentialité S7, la confirmation ouvre la session par le mécanisme existant"""
+        from benchmark import privacy
+        task, version = 'tache-fictive', 'version-1'
+        self.publier_epreuve(version)
+        privacy.migrate(self.data, SECRET, 'test-465-bootstrap')
+        public, _, _ = self.request('/epreuves/' + task + '/' + version)
+        link = public.link('Créer mon dossier privé')
+        bootstrap, _, _ = self.request(link)
+        self.assertIn('Ouvrir mon espace', bootstrap.visible)
+        form = bootstrap.form('/session/open')
+        self.assertEqual(link, form['fields']['return_path'])
+        _, headers, _ = self.request(form['action'], form['fields'], status=303, extra_headers={
+            'Origin': 'https://fixture.example', 'Sec-Fetch-Site': 'same-origin'})
+        self.assertEqual(link, headers['Location'])
+        confirmation, _, _ = self.request(link)
+        self.assertIn('Épreuve source', confirmation.visible)
+        form = next(item for item in confirmation.forms if '/copies/' in item['action'])
+        _, headers, _ = self.request(form['action'], form['fields'], status=303)
+        dossier = headers['Location']
+        page, _, _ = self.request(dossier)
+        self.assertIn('Épreuve source', page.visible)
+        self.assertEqual([], self.calls)
+        self.assertTrue(self.starts.empty())
+
     def test_copie_epreuve_refus_invalides_et_doublon(self):
         """#465 : source retirée, altérée, incomplète ou substituée ; aucune copie partielle"""
         task, version = 'tache-fictive', 'version-1'
@@ -860,19 +952,36 @@ class ParcoursComplet(unittest.TestCase):
         _, headers, _ = self.copie_epreuve(version)
         dossier = headers['Location']
         with closing(storage.Store(self.data)) as store:
-            count = lambda: store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0]
-            self.assertEqual(1, count())
-        # Champ de source substitué ou paramètre : refus avant tout relais
-        copy_path = '/epreuves/' + task + '/' + version + '/copie'
-        for fields in ({'copy': '1', 'task_id': 'autre'}, {'copy': '1', 'version_id': 'version-2'},
-                       {'copy': '1', 'dossier_id': 'a' * 32}, {'dossier_id': 'a' * 32, 'action_id': 'b' * 32}):
+            self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
+        # Session et jeton d’une version encore disponible, sans créer sa copie
+        self.publier_epreuve('version-6')
+        confirmation, _, _ = self.request('/preparation/copies/' + task + '/version-6')
+        form = next(item for item in confirmation.forms if '/copies/' in item['action'])
+        csrf = form['fields']['csrf_token']
+        # Anciennes routes de copie directe : aucune ne relaie une source fournie par le client
+        self.request('/epreuves/' + task + '/' + version + '/copie', {'copy': '1'}, status=404)
+        source = editorial.copy_bundle(self.public, task, version)
+        for extra in ({}, {'csrf_token': csrf}):
+            self.request('/preparation/copies', {
+                'dossier_id': 'a' * 32, 'action_id': 'b' * 32, 'source': source} | extra, status=404)
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
+        # Contrôle commun : jeton absent ou invalide, origine étrangère
+        copy_path = '/preparation/copies/' + task + '/version-6'
+        self.request(copy_path, {'copy': '1'}, status=400)
+        self.request(copy_path, {'csrf_token': 'a' * 64, 'copy': '1'}, status=403)
+        for fields in ({'csrf_token': csrf, 'copy': '1', 'task_id': 'autre'},
+                       {'csrf_token': csrf, 'copy': '1', 'source': source},
+                       {'csrf_token': csrf, 'copy': '0'}):
             self.request(copy_path, fields, status=400)
-        self.request(copy_path + '?x=1', {'copy': '1'}, status=400)
+        self.request(copy_path + '?x=1', form['fields'], status=400)
+        self.request(copy_path, form['fields'], status=403, extra_headers={'Origin': 'https://evil.example'})
+        self.request(copy_path, form['fields'], status=403,
+                     extra_headers={'Sec-Fetch-Site': 'cross-site'})
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
         # Version non publiée et autorité de fixture : introuvables pour le lecteur de production
-        self.request('/epreuves/' + task + '/absente/copie', {'copy': '1'}, status=404)
-        fixture, fixture_approval = None, None
+        self.request('/preparation/copies/' + task + '/absente', form['fields'], status=404)
         raw_piece = b'Version de fixture'
         manifest = {'schema_version': editorial.SCHEMA, 'task_id': task, 'version_id': 'fixture-1',
                     'title': 'Fixture', 'work': 'Fixture', 'cases': ['Fixture'], 'limits': ['Fixture'],
@@ -884,26 +993,21 @@ class ParcoursComplet(unittest.TestCase):
         fixture = {'manifest': raw, 'package_sha256': sha256(raw).hexdigest(),
                    'files': {'piece-consigne.txt': raw_piece}}
         editorial.fixture_publish(self.public, fixture, fixture_approval)
-        self.request('/epreuves/' + task + '/fixture-1/copie', {'copy': '1'}, status=404)
+        self.request('/preparation/copies/' + task + '/fixture-1', form['fields'], status=404)
         # Retrait avant admission : refus explicite, aucune copie
-        editorial.withdraw(self.public, task, version, dict(
-            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=bundle['package_sha256'],
-            scope='editorial-withdrawal', task_id=task, version_id=version))
-        refused, _, refused_raw = self.request(copy_path, {'copy': '1'}, status=409)
+        self.publier_epreuve('version-2')
+        editorial.withdraw(self.public, task, 'version-2', dict(
+            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=editorial.reprise_admission(
+                self.public, task, 'version-2')['package_sha256'],
+            scope='editorial-withdrawal', task_id=task, version_id='version-2'))
+        refused, _, refused_raw = self.request(
+            '/preparation/copies/' + task + '/version-2', form['fields'], status=409)
         self.assertIn('Cette version est retirée', refused.visible)
         self.assertNotIn('Relève les op'.encode(), refused_raw)
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
-        # La copie antérieure conserve ses pièces et ne dépend plus des URL publiques
-        private, _, private_raw = self.request(dossier)
-        self.assertIn('Épreuve source', private.visible)
-        self.assertIn('n’est plus disponible au catalogue', private.visible)
-        self.assertTrue(any('Relève les opérations inventées' in n['text'] for n in private.nodes
-                            if n['tag'] == 'div' and 'example-text' in n['attrs'].get('class', '')))
-        self.assertNotIn(b'<script>alert', private_raw)
-        self.assertNotIn(b'<script>piece', private_raw)
         # Paquet altéré, incomplet ou d’une autre autorité : refus avant écriture
-        for other, mutate in (('version-2', 'bytes'), ('version-3', 'missing'), ('version-4', 'authority')):
+        for other, mutate in (('version-3', 'bytes'), ('version-4', 'missing'), ('version-5', 'authority')):
             self.publier_epreuve(other)
             folder = self.public / 'editorial-trials' / task / other
             piece = folder / 'piece-consigne.txt'
@@ -915,18 +1019,47 @@ class ParcoursComplet(unittest.TestCase):
                 approval = json.loads((folder / 'approval.json').read_text())
                 approval['actor'] = 'approbateur-fictif-S6'
                 (folder / 'approval.json').write_text(storage._strict_json(approval))
-            refused, _, _ = self.request('/epreuves/' + task + '/' + other + '/copie', {'copy': '1'}, status=409)
+            refused, _, _ = self.request('/preparation/copies/' + task + '/' + other,
+                                         form['fields'], status=409)
             self.assertIn('Aucun dossier n’a été créé', refused.visible)
             with closing(storage.Store(self.data)) as store:
                 self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
+        # Parcours autorisé : même session, même jeton, aucun appel ni coût
+        _, success_headers, _ = self.request(copy_path, form['fields'], status=303)
+        copied = success_headers['Location']
+        self.assertEqual([], self.calls)
+        self.assertTrue(self.starts.empty())
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(2, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
+            self.assertEqual(0, store._connection.execute('SELECT count(*) FROM operations').fetchone()[0])
+        again, again_headers, _ = self.request(copy_path, form['fields'], status=303)
+        self.assertEqual(copied, again_headers['Location'])
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(2, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
+        # Retrait de la première version : sa copie antérieure reste consultable
+        editorial.withdraw(self.public, task, version, dict(
+            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=bundle['package_sha256'],
+            scope='editorial-withdrawal', task_id=task, version_id=version))
+        self.request('/preparation/copies', {
+            'csrf_token': csrf, 'dossier_id': 'c' * 32, 'action_id': 'd' * 32, 'source': source}, status=404)
+        self.request('/preparation/copies/' + task + '/' + version, form['fields'], status=409)
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(2, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
+        private, _, private_raw = self.request(dossier)
+        self.assertIn('Épreuve source', private.visible)
+        self.assertIn('n’est plus disponible au catalogue', private.visible)
+        self.assertTrue(any('Relève les opérations inventées' in n['text'] for n in private.nodes
+                            if n['tag'] == 'div' and 'example-text' in n['attrs'].get('class', '')))
+        self.assertNotIn(b'<script>alert', private_raw)
+        self.assertNotIn(b'<script>piece', private_raw)
         # Le retrait et la copie se linéarisent sous verrou : une copie commencée avant le retrait aboutit
         import fcntl
-        self.publier_epreuve('version-5')
-        folder = self.public / 'editorial-trials' / task / 'version-5'
+        self.publier_epreuve('version-7')
+        folder = self.public / 'editorial-trials' / task / 'version-7'
         fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY)
         fcntl.flock(fd, fcntl.LOCK_EX)
         result = []
-        thread = threading.Thread(target=lambda: result.append(editorial.copy_bundle(self.public, task, 'version-5')))
+        thread = threading.Thread(target=lambda: result.append(editorial.copy_bundle(self.public, task, 'version-7')))
         thread.start()
         thread.join(.2)
         self.assertTrue(thread.is_alive(), 'La copie a ignoré le verrou de retrait')
@@ -934,12 +1067,12 @@ class ParcoursComplet(unittest.TestCase):
         os.close(fd)
         thread.join(3)
         self.assertFalse(thread.is_alive())
-        self.assertEqual('version-5', result[0]['version_id'])
-        editorial.withdraw(self.public, task, 'version-5', dict(
+        self.assertEqual('version-7', result[0]['version_id'])
+        editorial.withdraw(self.public, task, 'version-7', dict(
             actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=result[0]['package_sha256'],
-            scope='editorial-withdrawal', task_id=task, version_id='version-5'))
+            scope='editorial-withdrawal', task_id=task, version_id='version-7'))
         with self.assertRaises(ValueError) as raised:
-            editorial.copy_bundle(self.public, task, 'version-5')
+            editorial.copy_bundle(self.public, task, 'version-7')
         self.assertEqual('Nouvelle reprise refusée', str(raised.exception))
 
     def test_copie_epreuve_qualification_refusee_bloque_le_lancement(self):

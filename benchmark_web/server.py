@@ -34,12 +34,12 @@ _ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*', '<poli
 _ROUTE_PATTERNS = (
     '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
     '/evaluations-externes', '/evaluations-externes/<id>',
-    '/epreuves', '/epreuves/<id>/<id>', '/epreuves/<id>/<id>/pieces/<id>', '/epreuves/<id>/<id>/copie',
+    '/epreuves', '/epreuves/<id>/<id>', '/epreuves/<id>/<id>/pieces/<id>',
     '/mentions-legales', '/cgu', '/confidentialite',
     '/preparation', '/preparation/privacy.js', '/preparation/style.css',
     '/preparation/fonts/<police>.woff2', '/preparation/fonts/OFL-<police>.txt',
     '/preparation/data', '/preparation/privacy', '/preparation/activity', '/preparation/catalogue',
-    '/preparation/session/open',
+    '/preparation/session/open', '/preparation/copies/<id>/<id>',
     '/preparation/access', '/preparation/access/key', '/preparation/access/disconnect',
     '/preparation/contributions', '/preparation/contributions/<id>/withdraw',
     '/preparation/dossiers', '/preparation/dossiers/<id>',
@@ -283,12 +283,21 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             self.respond(code, {'error': 'Cette requête n’a pas pu être traitée.'}, headers=headers)
 
         def copy_from_editorial(self):
-            """Créer un dossier privé depuis une version publiée, sans clé ni appel modèle"""
+            """Confirmer puis créer une copie privée depuis une version publiée, sans clé ni appel modèle"""
             reference_path = self.path.split('?', 1)[0]
             match = re.fullmatch(
-                r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/copie', reference_path)
-            if self.command != 'POST' or urlsplit(self.path).query or match is None:
+                r'/preparation/copies/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})', reference_path)
+            if urlsplit(self.path).query or match is None:
                 self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                return
+            task_id, version_id = match.groups()
+            cookies = SimpleCookie(self.headers.get('Cookie', ''))
+            cookie = cookies.get('benchmark_session')
+            token = cookie.value if cookie else None
+            if self.command in ('GET', 'HEAD'):
+                return self.copy_confirmation(task_id, version_id, token, reference_path)
+            if self.command != 'POST':
+                self.error_page(405, 'Requête non acceptée', 'Cette page ne prend qu’une confirmation.')
                 return
             expected = public_url.rstrip('/') if public_url else f'http://{address}:{port}'
             if self.headers.get('Origin') not in (None, expected) or \
@@ -311,41 +320,25 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 if any(len(items) != 1 for items in values.values()):
                     raise ValueError('Champ répété')
                 body = {key: items[0] for key, items in values.items()}
-                if body != {'copy': '1'}:
+                if set(body) != {'csrf_token', 'copy'} or body['copy'] != '1' or \
+                        re.fullmatch(r'[0-9a-f]{64}', body['csrf_token']) is None:
                     raise ValueError('Formulaire invalide')
             except (ValueError, UnicodeError):
                 self.error_page(400, 'Copie impossible',
-                                'Ce formulaire ne peut pas être traité. Rechargez l’épreuve, puis réessayez.')
+                                'Ce formulaire ne peut pas être traité. Rechargez la confirmation, puis réessayez.')
                 return
-            try:
-                source = editorial.copy_bundle(public, *match.groups())
-            except editorial.NotFound:
-                self.error_page(404, 'Épreuve introuvable',
-                                'Cette version publiée n’existe plus. Aucun dossier n’a été créé.')
+            if token is None:
+                self.error_page(403, 'Session requise',
+                                'Votre session a expiré. Ouvrez de nouveau la confirmation de copie.')
                 return
-            except ValueError as error:
-                messages = {
-                    'Nouvelle reprise refusée': 'Cette version est retirée : aucune nouvelle copie n’est admise.',
-                    'Autorité éditoriale refusée': 'La version publiée n’a pas une autorité valide. Aucun dossier n’a été créé.',
-                    'Approbation visant d’autres octets': 'La version publiée ne correspond plus à son approbation. Aucun dossier n’a été créé.',
-                    'Paquet incomplet': 'Le paquet publié est incomplet. Aucun dossier n’a été créé.',
-                    'Octets divergents': 'Le paquet publié ne correspond plus à ses empreintes. Aucun dossier n’a été créé.',
-                    'Manifeste divergent': 'Le paquet publié ne correspond plus à ses empreintes. Aucun dossier n’a été créé.',
-                    'Sélection publique fermée': 'Le paquet publié contient un contenu non autorisé. Aucun dossier n’a été créé.',
-                    'Pièce illisible': 'Le paquet publié contient une pièce illisible. Aucun dossier n’a été créé.',
-                    'Identité divergente': 'La version publiée ne correspond plus à son identité. Aucun dossier n’a été créé.',
-                }
-                self.error_page(409, 'Copie impossible', messages.get(
-                    str(error), 'La copie n’a pas pu être créée. Aucun dossier n’a été modifié.'))
+            source = self._copy_source(task_id, version_id)
+            if source is None:
                 return
-            cookies = SimpleCookie(self.headers.get('Cookie', ''))
-            cookie = cookies.get('benchmark_session')
-            token = cookie.value if cookie else None
             dossier_id = secrets.token_hex(16)
             try:
-                result = preparation_request(socket_path, 'POST', '/preparation/copies', token,
-                                             {'dossier_id': dossier_id, 'action_id': secrets.token_hex(16),
-                                              'source': source})
+                result = preparation_request(socket_path, 'POST', '/preparation/copies', token, {
+                    'csrf_token': body['csrf_token'], 'dossier_id': dossier_id,
+                    'action_id': secrets.token_hex(16), 'source': source})
             except OSError:
                 self.error_page(503, 'Service momentanément indisponible',
                                 'La copie n’a pas pu être enregistrée. Réessayez dans un instant.')
@@ -362,6 +355,69 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             if result.get('cookie'):
                 headers['Set-Cookie'] = _session_cookie(result['cookie'])
             self.respond(303, b'', 'text/html; charset=utf-8', headers)
+
+        def _copy_source(self, task_id, version_id):
+            """Source admise depuis le paquet public, jamais depuis le corps de la requête"""
+            try:
+                return editorial.copy_bundle(public, task_id, version_id)
+            except editorial.NotFound:
+                self.error_page(404, 'Épreuve introuvable',
+                                'Cette version publiée n’existe plus. Aucun dossier n’a été créé.')
+            except ValueError as error:
+                messages = {
+                    'Nouvelle reprise refusée': 'Cette version est retirée : aucune nouvelle copie n’est admise.',
+                    'Autorité éditoriale refusée': 'La version publiée n’a pas une autorité valide. Aucun dossier n’a été créé.',
+                    'Approbation visant d’autres octets': 'La version publiée ne correspond plus à son approbation. Aucun dossier n’a été créé.',
+                    'Paquet incomplet': 'Le paquet publié est incomplet. Aucun dossier n’a été créé.',
+                    'Octets divergents': 'Le paquet publié ne correspond plus à ses empreintes. Aucun dossier n’a été créé.',
+                    'Manifeste divergent': 'Le paquet publié ne correspond plus à ses empreintes. Aucun dossier n’a été créé.',
+                    'Sélection publique fermée': 'Le paquet publié contient un contenu non autorisé. Aucun dossier n’a été créé.',
+                    'Pièce illisible': 'Le paquet publié contient une pièce illisible. Aucun dossier n’a été créé.',
+                    'Identité divergente': 'La version publiée ne correspond plus à son identité. Aucun dossier n’a été créé.',
+                }
+                self.error_page(409, 'Copie impossible', messages.get(
+                    str(error), 'La copie n’a pas pu être créée. Aucun dossier n’a été modifié.'))
+            return None
+
+        def copy_confirmation(self, task_id, version_id, token, path):
+            """Créer ou réutiliser la session privée sous le chemin du cookie, puis confirmer"""
+            source = self._copy_source(task_id, version_id)
+            if source is None:
+                return
+            try:
+                result = preparation_request(socket_path, 'GET', '/preparation', token)
+            except OSError:
+                self.error_page(503, 'Service momentanément indisponible',
+                                'La confirmation de copie ne peut pas s’afficher. Réessayez dans un instant.')
+                return
+            if result['status'] >= 400:
+                message = (result['value'].get('error') if isinstance(result['value'], dict)
+                           else 'La confirmation de copie ne peut pas s’afficher.')
+                self.error_page(result['status'], 'Copie impossible', message)
+                return
+            if isinstance(result['value'], dict) and result['value'].get('kind') == 'session_bootstrap':
+                # Première visite sous confidentialité S7 : le mécanisme existant ouvre la session
+                page = views.render(dict(result['value'], return_path=path), '', path)
+                headers = {}
+                if result.get('cookie'):
+                    headers['Set-Cookie'] = _session_cookie(result['cookie'])
+                self.respond(200, page, 'text/html; charset=utf-8', headers)
+                return
+            csrf = result['value'].get('csrf_token') if isinstance(result['value'], dict) else None
+            if not isinstance(csrf, str) or re.fullmatch(r'[0-9a-f]{64}', csrf) is None:
+                self.error_page(503, 'Service momentanément indisponible',
+                                'La confirmation de copie ne peut pas s’afficher. Réessayez dans un instant.')
+                return
+            try:
+                notice = editorial.source_notice(public, task_id, version_id, source)
+            except (editorial.NotFound, ValueError, KeyError, TypeError):
+                notice = {'withdrawn': None, 'reports': [], 'unavailable': True}
+            page = views.render({'kind': 'copy_source', 'source': source, 'source_notice': notice},
+                                csrf, path)
+            headers = {}
+            if result.get('cookie'):
+                headers['Set-Cookie'] = _session_cookie(result['cookie'])
+            self.respond(200, page, 'text/html; charset=utf-8', headers)
 
         def preparation(self):
             if re.fullmatch(r'/preparation/fonts/(OFL-)?[A-Za-z]+\.(woff2|txt)', self.path) and self.command in ('GET', 'HEAD'):
@@ -613,10 +669,13 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                              'application/json' if wants_json else 'text/html; charset=utf-8')
 
         def do_POST(self):
-            if self.path == '/preparation' or self.path.startswith('/preparation/'):
-                self.preparation()
-            elif self.path.split('?', 1)[0].startswith('/epreuves/'):
+            path = self.path.split('?', 1)[0]
+            if path == '/preparation/copies' or path == '/preparation/copies/':
+                self.not_found()
+            elif path.startswith('/preparation/copies/'):
                 self.copy_from_editorial()
+            elif self.path == '/preparation' or self.path.startswith('/preparation/'):
+                self.preparation()
             else:
                 self.not_found()
 
@@ -686,6 +745,12 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             if self.path == '/preparation/privacy':
                 # Ancienne notice du parcours privé, remplacée par la politique publique (BX-08)
                 self.respond(301, b'', 'text/html; charset=utf-8', {'Location': '/confidentialite'})
+                return
+            if reference_path == '/preparation/copies' or reference_path == '/preparation/copies/':
+                self.not_found()
+                return
+            if reference_path.startswith('/preparation/copies/'):
+                self.copy_from_editorial()
                 return
             if self.path == '/preparation' or self.path.startswith('/preparation/'):
                 self.preparation()

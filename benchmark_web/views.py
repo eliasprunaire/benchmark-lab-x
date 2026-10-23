@@ -333,12 +333,11 @@ def render_editorial(value):
     for piece in value['pieces']:
         content += ('<section><h3><a href="' + base + '/pieces/' + text(piece['id']) + '">' + text(piece['label']) + '</a></h3>'
                     '<pre class="proof-content">' + text(piece['text']) + '</pre></section>')
+    copy_base = '/preparation/copies/' + text(value['task_id']) + '/' + text(value['version_id'])
     content += section('Préparer mon dossier privé',
                        '<p>Cette copie conserve exactement la notice et les pièces ci-dessus. Elle ne demande ni clé '
                        'ni appel aux modèles : vous décrirez ensuite votre besoin et ce qui diffère de cette épreuve.</p>'
-                       '<form method="post" action="' + base + '/copie">'
-                       '<input type="hidden" name="copy" value="1">'
-                       '<button type="submit">Créer mon dossier privé</button></form>')
+                       '<p><a class="button" href="' + copy_base + '">Créer mon dossier privé</a></p>')
     return value['title'], back + content + need
 
 
@@ -457,11 +456,12 @@ def preparation_steps(value):
     return content + '<small>Cas d’usage privé · pièces entièrement inventées</small></nav>'
 
 
-def render_source_copy(source, notice):
+def render_source_copy(source, notice, *, future=False):
     """Notice et pièces exactes conservées dans le dossier, distinctes du besoin personnel"""
     labels = {'ABSENT': 'Qualification absente', 'QUALIFIED': 'Qualification réussie', 'BLOCKED': 'Qualification bloquée'}
     status = labels.get(source.get('qualification_status'), 'Qualification absente')
-    content = ('<p class="note">Cette épreuve publiée est conservée dans votre dossier avec sa version et son '
+    content = ('<p class="note">Cette épreuve publiée ' + ('sera conservée' if future else 'est conservée')
+               + ' dans votre dossier avec sa version et son '
                'empreinte. Sa qualification publiée ne qualifie pas ce dossier : le contrat et la référence de '
                'votre nouvel exemple seront construits puis vérifiés séparément.</p>'
                '<dl><dt>Titre</dt><dd>' + text(source['title']) + '</dd>'
@@ -472,7 +472,7 @@ def render_source_copy(source, notice):
         content += '<h3>Cas de l’épreuve source</h3>' + listing(source['cases'])
     if source.get('limits'):
         content += '<h3>Limites de l’épreuve source</h3>' + listing(source['limits'])
-    content += '<h3>Pièces conservées</h3>'
+    content += '<h3>Pièces ' + ('copiées' if future else 'conservées') + '</h3>'
     for piece in source.get('pieces', []):
         content += ('<details class="example-content"><summary>Lire « ' + text(piece['label']) + ' »</summary>'
                     '<div class="example-text">' + text(piece['text']) + '</div></details>')
@@ -484,6 +484,22 @@ def render_source_copy(source, notice):
     for report in notice.get('reports', []):
         content += editorial_report(report)
     return section('Épreuve source', content, 'source')
+
+
+def render_copy_source(value, csrf):
+    """Confirmation de la copie sous le chemin privé, avec le jeton de la session existante"""
+    source = value['source']
+    path = '/preparation/copies/' + text(source['task_id']) + '/' + text(source['version_id'])
+    content = ('<p class="note">Cette copie conservera exactement la notice et les pièces ci-dessous. '
+               'Aucune clé ni aucun appel aux modèles n’est nécessaire ; vous décrirez ensuite votre besoin.</p>')
+    content += render_source_copy(source, value.get('source_notice') or {}, future=True)
+    content += section('Créer le dossier privé', form(
+        csrf, path, {'copy': '1'},
+        '<p>Le dossier restera privé dans ce navigateur. Sa qualification publiée ne qualifie pas le nouveau dossier.</p>'
+        '<button type="submit">Créer mon dossier privé</button>'))
+    content += ('<p><a href="/epreuves/' + text(source['task_id']) + '/' + text(source['version_id'])
+                + '">Retour à l’épreuve</a></p>')
+    return 'Créer mon dossier privé', content
 
 
 def render(value, csrf, path='/preparation', *, error=False):
@@ -508,7 +524,8 @@ def render(value, csrf, path='/preparation', *, error=False):
     # `aria-current` seulement sur l'entrée qui est la page affichée, jamais sur une page descendante ni d'erreur
     current = None if error else {'home': '/', 'privacy_data': '/preparation/data',
                                  'references': '/evaluations-externes' if not value.get('reference_id') else None,
-                                 'editorial': '/epreuves' if not value.get('version_id') else None}.get(
+                                 'editorial': '/epreuves' if not value.get('version_id') else None,
+                                 'copy_source': '/preparation'}.get(
         value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
                    for href, label in (('/', 'Accueil'), ('/evaluations-externes', 'Évaluations externes'),
@@ -598,6 +615,8 @@ def render(value, csrf, path='/preparation', *, error=False):
     elif value.get('kind') == 'campaign_launch':
         title = 'Vérifier puis lancer la comparaison'
         content = render_campaign_launch_operator(value, csrf)
+    elif value.get('kind') == 'copy_source':
+        title, content = render_copy_source(value, csrf)
     elif value.get('kind') == 'home':
         title = 'Quel modèle d’IA pour votre travail ?'
         content = '<div class="hero"><p class="lead note">Décrivez une tâche de votre travail. '
