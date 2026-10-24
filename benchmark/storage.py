@@ -638,6 +638,12 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
             if _expected_schema(tuple(catalogue)) != _expected_schema(tuple(catalogue_schema_objects())):
                 raise SchemaError('structure du catalogue de modèles non prise en charge')
             rows = [row for row in rows if row[2] != 's2_model_catalogue']
+        semantic = [row for row in rows if row[2] == 's2_semantic_requests']
+        if semantic:
+            from .semantic_help import schema_objects as semantic_schema_objects
+            if _expected_schema(tuple(semantic)) != _expected_schema(tuple(semantic_schema_objects())):
+                raise SchemaError('structure de l’aide sémantique non prise en charge')
+            rows = [row for row in rows if row[2] != 's2_semantic_requests']
         # Compare all schema objects, including constraints and automatic indexes
         expected = [
             ("table", "dossier_revisions", "dossier_revisions", _SCHEMA[0]),

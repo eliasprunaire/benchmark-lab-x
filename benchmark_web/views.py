@@ -469,7 +469,8 @@ def render_references(value):
     content = (introduction
                + '<p>Ayo est responsable de la maintenance de cette sélection.</p>'
                + '<p>La vérification documentaire du 22 octobre 2026 couvre l’origine, l’objet et les limites. '
-               + 'La disponibilité d’un lien reste distincte de cette vérification.</p>')
+               + 'La disponibilité d’un lien reste distincte de cette vérification.</p>'
+               + '<p><a href="/evaluations-externes/aide">Demander une aide sémantique facultative</a></p>')
     available = {identity: reference for identity, reference in BENCHMARK_REFERENCES.items()
                  if reference.get('availability') == 'available'}
     categories = {reference['category']: REFERENCE_CATEGORIES.get(reference['category'], reference['category'])
@@ -501,6 +502,152 @@ def render_references(value):
     elif not found:
         content += '<p>Aucune évaluation ne correspond à cette recherche. Modifiez la recherche ou les filtres.</p>'
     return 'Évaluations externes', content + need + '<p><a href="/">Accueil</a></p>'
+
+
+HELP_LABELS = {'correspond': 'Correspondance forte', 'partiel': 'Correspondance partielle'}
+HELP_REASONS = {
+    'DISABLED': 'Le service d’aide est désactivé. La recherche simple reste disponible.',
+    'FINANCE': 'Aucune preuve financière n’est établie pour cette aide. Aucun appel n’a été émis.',
+    'BUDGET': 'L’enveloppe commune de cette aide ne permet plus cet envoi. Aucun appel n’a été émis.',
+    'RATE': 'Trop de demandes simultanées ou trop rapprochées. Réessayez dans un instant. Aucun appel n’a été émis.',
+    'CONTEXT': 'La formulation et les notices dépassent les limites de contexte. Raccourcissez la formulation. '
+               'Aucun appel n’a été émis.',
+    'TIMEOUT': 'L’aide n’a pas répondu dans le délai de dix secondes. Aucun nouvel essai n’est lancé automatiquement.',
+    'RATE_LIMITED': 'TypeSafe limite temporairement les demandes. Aucun nouvel essai n’est lancé automatiquement.',
+    'OVERLOADED': 'TypeSafe est temporairement surchargé. Aucun nouvel essai n’est lancé automatiquement.',
+    'KEY_REJECTED': 'L’accès à TypeSafe est refusé. Aucun nouvel essai n’est lancé automatiquement.',
+    'PROVIDER_ERROR': 'TypeSafe n’a pas pu répondre. Aucun nouvel essai n’est lancé automatiquement.',
+    'INVALID_RESPONSE': 'La réponse de TypeSafe est inexploitable. Aucune suggestion n’en est tirée.',
+    'INTERRUPTED': 'L’aide a été interrompue. Elle ne sera pas relancée.',
+    'RECORD_FAILED': 'Le reçu de l’aide n’a pas pu être conservé. Aucune suggestion n’est affichée.',
+    'CONFLICT': 'Cette demande ne correspond pas au reçu conservé.',
+    'INVALID_REQUEST': 'La demande est incomplète. Corrigez-la et renvoyez-la.',
+}
+HELP_INTRO = (
+    '<p>Cette aide facultative compare votre formulation au travail mesuré par les notices publiques '
+    'admissibles. Elle utilise TypeSafe et son modèle Jev. Elle ne remplace pas la recherche simple : '
+    'celle-ci reste disponible sans cette aide.</p>'
+    '<div class="note"><p><strong>Données transmises :</strong> la formulation que vous soumettez et les '
+    'informations publiques utiles des notices retenues. Aucun dossier privé, contribution, référence de '
+    'jugement, historique, clé ni cookie n’est transmis.</p>'
+    '<p>TypeSafe traite ces données selon son traitement standard. Bench-X ne promet ni absence de '
+    'conservation, ni localisation exclusivement européenne, ni absence d’entraînement. N’écrivez aucune '
+    'information personnelle ou confidentielle : cette consigne ne garantit pas leur absence.</p>'
+    '<p>Bench-X finance cette aide sur une enveloppe limitée, distincte des clés OpenRouter personnelles. '
+    'Seuls des reçus techniques et comptables sont conservés, sans le texte recherché. Une probabilité ne '
+    'prouve ni adéquation, ni qualification, et cette aide ne lance aucune campagne.</p></div>')
+
+
+def help_notices():
+    """Champs publics utiles, sans URL ni indicateur éditorial, pour la seule aide facultative"""
+    notices = []
+    for identity, reference in BENCHMARK_REFERENCES.items():
+        if reference.get('availability') != 'available' or not reference_verified(reference):
+            continue
+        item = {'id': identity}
+        for key in ('name', 'category', 'work', 'scope', 'limits', 'version'):
+            value = reference.get(key)
+            if isinstance(value, str) and value:
+                item[key] = value
+        item['name'] = reference.get('name') or 'Inconnue'
+        notices.append(item)
+    return notices
+
+
+def help_form(value):
+    submission_id = value.get('submission_id')
+    if type(submission_id) is not str or re.fullmatch('[0-9a-f]{32}', submission_id) is None:
+        return ''
+    formulation = value.get('formulation')
+    formulation = formulation if type(formulation) is str else ''
+    return ('<form method="post" action="/evaluations-externes/aide">'
+            '<input type="hidden" name="submission_id" value="' + text(submission_id) + '">'
+            '<label for="formulation">Formulation à comparer</label>'
+            '<p id="formulation-help" class="hint">Décrivez le travail recherché, sans information '
+            'personnelle ni confidentielle. Une demande peut contenir plusieurs travaux.</p>'
+            '<textarea id="formulation" name="formulation" required rows="5" '
+            'aria-describedby="formulation-help">' + text(formulation) + '</textarea>'
+            + HONEYPOT +
+            '<button type="submit">Demander l’aide</button></form>')
+
+
+def render_semantic_help(value):
+    stage = value.get('stage')
+    content = HELP_INTRO
+    if stage in ('form', 'unavailable'):
+        content += help_form(value)
+    if stage == 'suggestions':
+        content += '<section><h2>Suggestions</h2>'
+        content += ('<p class="hint">Chaque notice est appréciée indépendamment. Les correspondances '
+                    'reposent sur des critères fermés et les champs publiés. Aucune suggestion ne '
+                    'qualifie une source.</p>')
+        suggestions = value.get('suggestions') or []
+        for suggestion in suggestions:
+            reference = suggestion.get('reference') or {}
+            label = HELP_LABELS.get(suggestion.get('label'), 'Correspondance')
+            content += ('<section><h2><a href="/evaluations-externes/' + text(suggestion['id']) + '">'
+                        + text(reference.get('name') or 'Inconnue') + '</a></h2>'
+                        + '<p class="note">' + text(label) + '. Cette appréciation ne prouve ni adéquation '
+                        'ni qualification.</p>' + reference_notice(reference) + '</section>')
+        if not suggestions:
+            content += '<p>Aucune suggestion.</p>'
+        content += '</section>'
+    elif stage == 'none':
+        content += ('<p role="status">Aucune notice ne correspond à cette formulation. '
+                    'La recherche simple reste disponible.</p>')
+    if value.get('dropped'):
+        content += ('<p class="hint">Une suggestion a été retirée : sa notice n’est plus disponible '
+                    'ou sa vérification éditoriale ne suffit plus.</p>')
+    elif stage == 'pending':
+        content += state_block('wait', 'Aide sémantique', 'Aide en cours',
+                               '<p>La demande est enregistrée. Cette page ne relance aucun appel ; '
+                               'actualisez-la dans un instant.</p>')
+    elif stage == 'unavailable':
+        content += state_block('unk', 'Aide sémantique', 'Aide indisponible',
+                               '<p>' + text(HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
+                               + '</p>')
+    if value.get('receipt'):
+        receipt = value['receipt']
+        cost = receipt.get('cost') or {}
+        content += ('<details><summary>Reçu technique de cette demande</summary><dl>'
+                    '<dt>Usage</dt><dd>' + text(receipt.get('usage')) + '</dd>'
+                    '<dt>Version des questions</dt><dd>' + text(receipt.get('questions_version')) + '</dd>'
+                    '<dt>Modèle demandé</dt><dd>' + text(receipt.get('model_requested')) + '</dd>'
+                    '<dt>Modèle observé</dt><dd>' + text(receipt.get('model_observed') or 'Inconnu') + '</dd>'
+                    '<dt>Notices appréciées</dt><dd>' + text(', '.join(receipt.get('notices') or []) or 'Aucune') + '</dd>'
+                    '<dt>Jetons d’entrée</dt><dd>' + text(receipt.get('input_tokens') if receipt.get('input_tokens') is not None else 'Inconnus') + '</dd>'
+                    '<dt>Jetons de sortie</dt><dd>' + text(receipt.get('output_tokens') if receipt.get('output_tokens') is not None else 'Inconnus') + '</dd>'
+                    '<dt>Coût calculé</dt><dd>' + text(
+                        'inconnu' if cost.get('status') != 'KNOWN'
+                        else montant_lisible(cost.get('amount')) + ' ' + str(cost.get('currency'))) + '</dd>'
+                    '<dt>Base du coût</dt><dd>' + text(cost.get('source') or 'Inconnue') + '</dd>'
+                    '</dl><p class="hint">Un coût calculé depuis les jetons reçus et le tarif daté reste '
+                    'distinct d’une facture. Un coût inconnu conserve sa réserve.</p></details>')
+    content += ('<p><a href="/evaluations-externes/aide">Nouvelle demande</a> · '
+                '<a href="/evaluations-externes">Recherche simple</a> · '
+                '<a href="/preparation">Décrire mon cas d’usage</a></p>')
+    return 'Aide sémantique facultative', content
+
+
+def semantic_help_view(value):
+    """Projection de l'aide : les notices retirées ou non vérifiées disparaissent avant affichage"""
+    status = value.get('status')
+    stage = {'suggestions': 'suggestions', 'none': 'none',
+             'unavailable': 'unavailable', 'pending': 'pending'}.get(status, 'unavailable')
+    suggestions, dropped = [], False
+    for suggestion in value.get('suggestions') or []:
+        reference = BENCHMARK_REFERENCES.get(suggestion.get('notice_id'))
+        if (not reference or reference.get('availability') != 'available'
+                or not reference_verified(reference)):
+            dropped = True
+            continue
+        suggestions.append({'id': suggestion['notice_id'], 'label': suggestion.get('label'),
+                            'reference': reference})
+    if stage == 'suggestions' and not suggestions:
+        stage = 'none'
+    return {'kind': 'references_help', 'stage': stage, 'reason': value.get('reason'),
+            'receipt': value.get('receipt'), 'suggestions': suggestions,
+            'dropped': dropped}
 
 
 def render_task_index(task):
@@ -642,6 +789,7 @@ def render(value, csrf, path='/preparation', *, error=False):
     # `aria-current` seulement sur l'entrée qui est la page affichée, jamais sur une page descendante ni d'erreur
     current = None if error else {'home': '/', 'privacy_data': '/preparation/data',
                                  'references': '/evaluations-externes' if not value.get('reference_id') else None,
+                                 'references_help': None,
                                  'editorial': '/epreuves' if not value.get('version_id') else None,
                                  'copy_source': '/preparation'}.get(
         value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)
@@ -696,6 +844,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, _, content = LEGAL_PAGES[value['path']]
     elif value.get('kind') == 'references':
         title, content = render_references(value)
+    elif value.get('kind') == 'references_help':
+        title, content = render_semantic_help(value)
     elif value.get('kind') == 'editorial':
         title, content = render_editorial(value)
     elif value.get('kind') == 'results':
