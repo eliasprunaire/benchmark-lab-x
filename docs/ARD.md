@@ -115,6 +115,10 @@ L'évaluation s'applique à un cas et une tentative identifiés. Le verdict port
 
 Responsabilité : présenter les évaluations, les classements par critère, les filtres et la complétude de la comparaison des coûts, selon les [règles](RULES.md#7-ordre-de-décision). Chaque colonne ordonnable référence sa définition contractuelle et ses preuves ; les valeurs inconnues ou incompatibles sont sans rang, les égalités conservées. La vue expose le périmètre filtré sans modifier les sorties, reçus, verdicts ou populations des statistiques déjà calculées. Elle ne fusionne pas des couvertures incompatibles. Elle peut produire l’aide économique conditionnelle définie dans les règles, à partir des observations complètes avant filtrage, sans nouveau stockage ni appel modèle. Le score pondéré personnalisé reste différé selon le PRD ; aucun moteur ni formule n’est ajouté avant sa décision.
 
+La priorité privée est un paramètre de consultation validé côté serveur : conseil par défaut, coût observé ou critère secondaire ordonnable du contrat. Une sélection invalide est refusée explicitement, sans substitution silencieuse. La restitution réutilise les mesures, les ordres contractuels et les contrôles existants, avant les filtres d’affichage. Le rendu conserve la priorité et permet son effacement, y compris sans JavaScript.
+
+Aucun stockage de préférence, nouvel appel, nouvelle évaluation ni moteur de classement distinct n’est requis. La consultation des campagnes enregistrées conserve leurs octets et leurs preuves. Les projections publiques restent hors de cette capacité.
+
 ### 4.7 Restitution
 
 La restitution relie les identités du catalogue, de la tâche et de la campagne au parcours du [PRD](PRD.md#10-restitution-publique). La publication est une projection approuvée et identifiée de cette restitution et de ses pièces autorisées, séparée des données privées et de l’état d’exécution.
@@ -253,8 +257,10 @@ Les campagnes déjà enregistrées conservent leurs questions, panels, schémas 
 - fabriquer des répétitions ou une stabilité
 - déduire un rang qualitatif des `FAIL G-001`
 - transformer un `PASS` de qualification du harnais en `PASS` produit
-- produire une baseline, un coût par résultat acceptable ou un conseil borné aux qualités et coûts observés
+- produire une baseline ou un coût par résultat acceptable
 - remplacer une inconnue par une estimation
+
+Le conseil privé reste permis sur les observations enregistrées qui satisfont les gardes de la [section 8 des règles](RULES.md#8-coût-et-bénéfices). Une priorité de consultation ne réécrit ni contrat ni verdict historique.
 
 ## 10. Sécurité et autorité
 

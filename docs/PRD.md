@@ -16,7 +16,7 @@ L'[ARD](ARD.md) fixe le contrat d'architecture. Les [règles](RULES.md) portent 
 
 **FAIT ÉTABLI** : le besoin originel est de permettre à la communauté du Lab-X de tester elle-même des solutions d'IA sur des tâches utiles, avec des preuves lisibles plutôt qu'un palmarès repris d'un tiers.
 
-L’utilisateur décrit un travail qu’il souhaite comparer. Le produit l’aide à le préciser et construit un dossier fictif qu’il peut examiner et modifier avant de valider le besoin représenté. Une campagne autorisée compare ensuite les configurations de modèle sous le même harnais Pi. Résultats, preuves, qualités et coûts observés alimentent des classements par critère et des filtres. Le produit peut conseiller une configuration conforme qui n’est moins bonne qu’aucune autre réponse conforme sur les critères de qualité. Entre réponses de même qualité, il retient la moins coûteuse. Il ne fabrique aucun score combiné, ne désigne pas de gagnant lorsque les qualités restent incomparables et un coût faible ne rend pas une sortie erronée utilisable.
+L’utilisateur décrit un travail qu’il souhaite comparer. Le produit l’aide à le préciser et construit un dossier fictif qu’il peut examiner et modifier avant de valider le besoin représenté. Une campagne autorisée compare ensuite les configurations de modèle sous le même harnais Pi. Résultats, preuves, qualités et coûts observés alimentent des classements par critère et des filtres. Par défaut, le produit peut conseiller une configuration conforme qui n’est moins bonne qu’aucune autre réponse conforme sur les critères de qualité. Entre réponses de même qualité, il retient la moins coûteuse. Une priorité explicite peut départager les compromis selon la section 7. Le produit ne fabrique aucun score combiné. Un coût faible ne rend pas une sortie erronée utilisable.
 
 Le nom du modèle ne suffit toutefois pas comme preuve. Le modèle est l'identifiant principal présenté, mais le verdict s'applique à sa configuration observée sous les conditions de test communes déclarées. Aucun effet que le fournisseur, l'effort, Pi ou ses réglages peuvent influencer n'est attribué au seul modèle.
 
@@ -103,6 +103,14 @@ Le [gabarit de carte](task-template.md) matérialise ce contrat. La méthode de 
 L’évaluation établit les verdicts avant la comparaison. L’utilisateur consulte ensuite les mesures et coûts connus au moyen de classements par critère et de filtres, selon l’[ordre de décision](RULES.md#7-ordre-de-décision). Une mesure valide reste visible pour une sortie non admissible ; son rang ne change pas le verdict et le coût ne rend pas cette sortie utilisable.
 
 La comparaison peut fournir une aide au choix économique conditionnelle selon les [règles](RULES.md#8-coût-et-bénéfices). Elle ne désigne pas de meilleur modèle en général et ne transforme pas les observations descriptives en score de qualité. Chaque tri annonce son critère et son périmètre ; les valeurs inconnues ou incompatibles restent sans rang. Les filtres ne changent pas le contrat, les verdicts ou le dénominateur d’une statistique déjà calculée. Sans règle d’agrégation préalable, les résultats restent par cas et tentative. La conclusion reste bornée à la tâche, à sa version et aux observations de la campagne.
+
+### Priorité de consultation privée
+
+Dans les résultats privés, le lecteur peut conserver le conseil par défaut, privilégier le coût observé ou choisir un critère secondaire ordonnable. Ce critère appartient au contrat gelé. Le choix reste explicite, visible et réversible, sans préférence inférée depuis le besoin.
+
+La priorité au coût retient l’unique réponse conforme la moins coûteuse. La priorité à un critère retient sa meilleure valeur, puis départage ses égalités par le coût. Les [règles](RULES.md#8-coût-et-bénéfices) maintiennent les gardes de preuve et expliquent les abstentions. Le conseil expose les compromis sur les autres critères, sans affaiblir les obligations.
+
+Le lecteur peut changer cette priorité sur une campagne enregistrée sans modifier son contrat, ses verdicts, ses coûts ni ses preuves. Les filtres ne changent pas la population du conseil. Sur plusieurs cas, une même configuration doit être retenue dans chaque cas, sans somme ni moyenne. Cette capacité ne s’étend pas aux restitutions publiques et ne produit aucun score pondéré.
 
 ## 8. Preuve et transparence
 
@@ -292,6 +300,7 @@ Les choix techniques relèvent de l'ARD. Le backlog et son avancement relèvent 
 | Les preuves permettent une conclusion | chaque verdict conduit à son contrat, ses constats et ses pièces ; observations et évaluation restent distinguées |
 | Une campagne est partielle ou indéterminée | couverture prévue et acquise, incidents et inconnues sont lisibles sans succès ni échec inventé |
 | Une sortie erronée coûte peu ; des mesures sont égales, manquantes ou incompatibles | verdicts visibles pendant le tri, égalités conservées, valeurs non classables sans rang et comparaison incomplète signalée |
+| Le lecteur choisit une priorité dans ses résultats privés | priorité visible et réversible, choix expliqué ou abstention motivée, gardes préservés, aucune modification des preuves ni appel modèle |
 | Un filtre est appliqué après résultat | périmètre affiché, verdicts et population des statistiques inchangés ; aucune nouvelle agrégation implicite |
 | Aucune configuration n’est admissible | aucune option désignée comme utilisable ; dépenses et mesures valides restent consultables |
 | Une pièce est privée ou du contenu candidat est affiché | la limite de vérification est visible et le parcours ne donne aucun accès privé non autorisé ni exécution active |
