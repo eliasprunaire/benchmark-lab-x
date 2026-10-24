@@ -14,6 +14,7 @@ import socket
 import socketserver
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlencode, urlsplit
@@ -2244,6 +2245,10 @@ class ParcoursComplet(unittest.TestCase):
                 'confiance hors bornes': (mutated(lambda value: value['answers']['n1'].update(
                     confidence=2)), 'inexploitable'),
                 'corps incomplet': (mutated(lambda value: None, complete=False), 'inexploitable'),
+                'choix en liste': (mutated(lambda value: value['answers']['n1'].update(choice=[])),
+                                   'inexploitable'),
+                'choix en objet': (mutated(lambda value: value['answers']['n1'].update(choice={})),
+                                   'inexploitable'),
                 'limite de debit': (mutated(lambda value: None, status=429), 'limite temporairement'),
                 'surcharge': (mutated(lambda value: None, status=529), 'surchargé'),
             }
@@ -2255,9 +2260,29 @@ class ParcoursComplet(unittest.TestCase):
                     self.assertIn(expected, failed.visible)
                     self.assertNotIn('Correspondance forte', failed.visible)
                     calls = len(transport.wires)
+                    request_id = failed_path.rsplit('/', 1)[1]
+                    receipt_store = storage.Store(self.data)
+                    try:
+                        receipt_code, receipt_value = semantic_help.receipt(
+                            receipt_store, request_id)
+                    finally:
+                        receipt_store.close()
+                    expected_reason = {'limite de debit': 'RATE_LIMITED',
+                                       'surcharge': 'OVERLOADED'}.get(
+                                           name, 'INVALID_RESPONSE')
+                    self.assertEqual(200, receipt_code)
+                    self.assertEqual(('unavailable', expected_reason),
+                                     (receipt_value['status'], receipt_value['reason']))
+                    self.assertEqual('UNKNOWN', receipt_value['receipt']['cost']['status'])
+                    inspect_store = storage.Store(self.data)
+                    try:
+                        self.assertNotEqual('0', semantic_help.inspect(
+                            inspect_store)['budget']['reserved'])
+                    finally:
+                        inspect_store.close()
                     again, again_path = self.help_submit(
                         'Corriger un programme fictif',
-                        submission_id=failed_path.rsplit('/', 1)[1])
+                        submission_id=request_id)
                     self.assertEqual(failed_path, again_path)
                     self.assertEqual(calls, len(transport.wires))
             # Le délai ne rejoue rien non plus
@@ -2431,6 +2456,82 @@ class ParcoursComplet(unittest.TestCase):
         else:
             self.fail('réserve inconnue libérée')
         self.assertEqual(1, len(semantic_help.inspect(store)['requests']))
+        # Une réponse tardive termine la demande en TIMEOUT, sans suggestion, et garde sa réserve
+        self.assertEqual(10, semantic_help.TIMEOUT_SECONDS)
+        late_data = self.semantic_data()
+        late_store = storage.Store(late_data)
+        self.addCleanup(late_store.close)
+        late_entered = [threading.Event(), threading.Event()]
+        late_finished = threading.Event()
+        late_calls = []
+        finished = {'count': 0}
+        finished_lock = threading.Lock()
+        def late(wire):
+            late_calls.append(wire)
+            late_entered[len(late_calls) - 1].set()
+            time.sleep(0.6)
+            with finished_lock:
+                finished['count'] += 1
+                if finished['count'] == 2:
+                    late_finished.set()
+            return success(wire)
+        late_transport = TypeSafeFixture(late)
+        late_results = []
+        def late_submit(request_id):
+            thread_store = storage.Store(late_data)
+            try:
+                late_results.append(semantic_help.handle(
+                    thread_store, body(request_id), late_transport, concurrent_config,
+                    usage='repertoire'))
+            finally:
+                thread_store.close()
+        with patch.object(semantic_help, 'TIMEOUT_SECONDS', 0.15):
+            first_late = threading.Thread(target=late_submit, args=('d' * 32,))
+            first_late.start()
+            self.assertTrue(late_entered[0].wait(3))
+            self.clock += timedelta(seconds=2)
+            second_late = threading.Thread(target=late_submit, args=('e' * 32,))
+            second_late.start()
+            self.assertTrue(late_entered[1].wait(3))
+            first_late.join(3)
+            second_late.join(3)
+            self.assertEqual([('unavailable', 'TIMEOUT')] * 2,
+                             [(result[1]['status'], result[1]['reason'])
+                              for result in late_results])
+            self.assertEqual(2, len(late_calls))
+            late_state = semantic_help.inspect(late_store)
+            self.assertEqual(['RECEIVED', 'RECEIVED'],
+                             [row['state'] for row in late_state['requests']])
+            self.assertEqual(['UNKNOWN', 'UNKNOWN'],
+                             [row['cost_status'] for row in late_state['requests']])
+            self.assertNotEqual('0', late_state['budget']['reserved'])
+            # Les deux appels tardifs comptent encore dans la limite commune
+            self.clock += timedelta(seconds=2)
+            third_transport = TypeSafeFixture(success)
+            try:
+                semantic_help.handle(late_store, body('f' * 32), third_transport,
+                                     concurrent_config, usage='repertoire')
+            except semantic_help.Unavailable as error:
+                self.assertEqual(('RATE', 429), (error.reason, error.code))
+            else:
+                self.fail('appel tardif ignoré dans la limite de concurrence')
+            self.assertEqual([], third_transport.wires)
+            self.assertTrue(late_finished.wait(2))
+            # Les places se libèrent une fois les appels abandonnés terminés
+            fourth = None
+            for _ in range(20):
+                self.clock += timedelta(seconds=2)
+                try:
+                    fourth = semantic_help.handle(late_store, body('1' * 32),
+                                                  TypeSafeFixture(success), concurrent_config,
+                                                  usage='repertoire')
+                    break
+                except semantic_help.Unavailable as error:
+                    self.assertEqual('RATE', error.reason)
+                    time.sleep(0.05)
+            self.assertIsNotNone(fourth)
+            self.assertEqual((200, 'suggestions'), (fourth[0], fourth[1]['status']))
+            time.sleep(0.1)
         # Deux soumissions concurrentes de la même demande n'émettent qu'une fois
         duplicate_data = self.semantic_data()
         duplicate_entered = threading.Event()

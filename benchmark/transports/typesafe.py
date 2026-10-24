@@ -34,6 +34,13 @@ class TypeSafeSystemOne:
             raise ValueError('Délai TypeSafe invalide')
         self._timeout = timeout
 
+    @staticmethod
+    def _remaining(deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('Délai TypeSafe dépassé')
+        return remaining
+
     def post(self, wire: str) -> dict:
         if type(wire) is not str or not wire:
             raise ValueError('Corps TypeSafe requis')
@@ -41,25 +48,51 @@ class TypeSafeSystemOne:
             raise ValueError('Clé présente dans le corps sortant')
         started = datetime.now(timezone.utc).isoformat()
         clock = time.monotonic()
+        deadline = clock + self._timeout
         connection = HTTPSConnection(HOST, timeout=self._timeout)
         try:
+            connection.timeout = self._remaining(deadline)
             try:
                 connection.connect()
             except OSError as error:
                 raise NotSent('Connexion à TypeSafe impossible') from error
+            sock = connection.sock
+            if sock is not None:
+                sock.settimeout(self._remaining(deadline))
             connection.request('POST', PATH, body=wire.encode(), headers={
                 'Authorization': 'Bearer ' + self._key,
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'})
+            if sock is not None:
+                sock.settimeout(self._remaining(deadline))
             response = connection.getresponse()
             status = response.status
+            chunks, size, complete = [], 0, True
             try:
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
-                complete = response.length in (None, 0)
+                while True:
+                    if sock is not None:
+                        sock.settimeout(self._remaining(deadline))
+                    chunk = response.read1(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    size += len(chunk)
+                    if size > MAX_RESPONSE_BYTES:
+                        complete = False
+                        break
+                if size > MAX_RESPONSE_BYTES:
+                    raw = b''.join(chunks)[:MAX_RESPONSE_BYTES]
+                else:
+                    raw = b''.join(chunks)
+                    complete = complete and response.length in (None, 0)
+                    if (getattr(response, 'chunked', False)
+                            and getattr(response, 'chunk_left', None) is not None):
+                        complete = False
             except IncompleteRead as error:
-                raw, complete = error.partial, False
-            if len(raw) > MAX_RESPONSE_BYTES:
-                raw, complete = raw[:MAX_RESPONSE_BYTES], False
+                raw = b''.join(chunks + [error.partial])[:MAX_RESPONSE_BYTES]
+                complete = False
+            if time.monotonic() > deadline:
+                raise TimeoutError('Délai TypeSafe dépassé')
         finally:
             connection.close()
         # Une clé réfléchie ne peut pas entrer dans un reçu ni dans une réponse exploitable

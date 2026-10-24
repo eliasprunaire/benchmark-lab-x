@@ -17,7 +17,9 @@ from decimal import Decimal, InvalidOperation
 import json
 import logging
 import os
+import queue
 import re
+import threading
 import time
 from typing import Any, Protocol
 
@@ -34,6 +36,8 @@ QUESTION_CONTEXT_LIMIT = 32768
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 TIMEOUT_SECONDS = 10
 MAX_CONCURRENT_EMISSIONS = 2
+# Places d'émission réellement tenues jusqu'au retour du transport, réponse tardive comprise
+_EMISSION_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_EMISSIONS)
 MIN_EMISSION_INTERVAL = 1
 BUDGET_ID = 'typesafe-semantic-aid'
 BUDGET_USD = '1.00'
@@ -414,8 +418,11 @@ def _validated(raw, complete, question_ids: list[str], usage: str) -> dict:
     for question_id in question_ids:
         answer = answers[question_id]
         if (type(answer) is not dict
-                or set(answer) != {'type', 'choice', 'confidence', 'probabilities'}
-                or answer['type'] != 'choice' or answer['choice'] not in criteria):
+                or set(answer) != {'type', 'choice', 'confidence', 'probabilities'}):
+            raise InvalidResponse('réponse de choix invalide')
+        answer_type, choice = answer['type'], answer['choice']
+        if (type(answer_type) is not str or answer_type != 'choice'
+                or type(choice) is not str or choice not in criteria):
             raise InvalidResponse('réponse de choix invalide')
         confidence = _as_decimal(answer['confidence'])
         if confidence is None or not confidence.is_finite() or not 0 <= confidence <= 1:
@@ -432,8 +439,8 @@ def _validated(raw, complete, question_ids: list[str], usage: str) -> dict:
         if abs(total - 1) > Decimal('0.000001'):
             raise InvalidResponse('probabilités incohérentes')
         checked[question_id] = {
-            'label': answer['choice'],
-            'probability': str(probabilities[answer['choice']]),
+            'label': choice,
+            'probability': str(probabilities[choice]),
             'probabilities': {label: str(probabilities[label]) for label in criteria}}
     usage_block = value['usage']
     if (type(usage_block) is not dict or set(usage_block) != {'input_tokens', 'output_tokens'}
@@ -500,6 +507,46 @@ def _result(row: dict) -> dict:
             'suggestions': row['outcome'].get('suggestions', []), 'receipt': receipt}
 
 
+def _emit_with_deadline(transport, wire: str, deadline: float):
+    """Appeler le transport une fois, sans dépasser l'échéance globale.
+
+    Le fil d'appel détient une place de concurrence jusqu'à son retour réel :
+    une réponse tardive ne produit rien et ne rend pas sa place avant d'être
+    terminée. Le fil principal rend la demande indisponible à l'échéance.
+    """
+    results: queue.Queue = queue.Queue(maxsize=1)
+
+    def emit():
+        try:
+            results.put(('response', transport.post(wire)))
+        except TimeoutError as error:
+            results.put(('timeout', error))
+        except OSError as error:
+            results.put(('oserror', error))
+        except Exception as error:  # une panne de transport ne laisse pas la demande ouverte
+            results.put(('error', error))
+        finally:
+            _EMISSION_SLOTS.release()
+
+    thread = threading.Thread(target=emit, name='semantic-help-call', daemon=True)
+    try:
+        thread.start()
+    except Exception:
+        _EMISSION_SLOTS.release()
+        return None, 'INTERRUPTED'
+    try:
+        kind, payload = results.get(timeout=max(0.0, deadline - time.monotonic()))
+    except queue.Empty:
+        return None, 'TIMEOUT'
+    if time.monotonic() > deadline:
+        return None, 'TIMEOUT'
+    if kind == 'response':
+        return payload, None
+    if kind == 'timeout':
+        return None, 'TIMEOUT'
+    return None, 'INTERRUPTED'
+
+
 def _wait(store, request_id: str) -> dict | None:
     deadline = time.monotonic() + TIMEOUT_SECONDS + 1
     while time.monotonic() < deadline:
@@ -551,6 +598,8 @@ def handle(store, body, transport: Transport | None, config: Configuration | Non
     now = _now()
     question_ids = list(questions)
     notice_ids = [notice_id for notice_id, _ in closed]
+    if not _EMISSION_SLOTS.acquire(blocking=False):
+        raise Unavailable('RATE', 429)
     try:
         with _transaction(connection, write=True):
             _close_rows(connection, now, stale_only=True)
@@ -583,6 +632,7 @@ def handle(store, body, transport: Transport | None, config: Configuration | Non
                  MODEL, 'UNKNOWN', CURRENCY, encode({'status': 'pending', 'answers': {}}),
                  now.isoformat(), now.isoformat()))
     except Unavailable as error:
+        _EMISSION_SLOTS.release()
         if error.reason != 'CONFLICT':
             raise
         waited = _wait(store, request_id)
@@ -590,35 +640,43 @@ def handle(store, body, transport: Transport | None, config: Configuration | Non
             return 202, {'kind': 'semantic_help', 'request_id': request_id, 'status': 'pending'}
         return 200, _result(waited)
     except storage.BudgetError as error:
+        _EMISSION_SLOTS.release()
         raise Unavailable('BUDGET', 429) from error
+    except BaseException:
+        _EMISSION_SLOTS.release()
+        raise
 
+    deadline = time.monotonic() + TIMEOUT_SECONDS
+    response, reason = _emit_with_deadline(transport, wire, deadline)
     model, tokens = None, None
     cost_status, cost_amount = 'UNKNOWN', None
-    try:
-        response = transport.post(wire)
-    except TimeoutError:
+    if reason is not None:
+        outcome = _unavailable(reason)
+    elif response is None:
         outcome = _unavailable('TIMEOUT')
-    except OSError:
-        outcome = _unavailable('INTERRUPTED')
+    elif type(response) is not dict or not {'status', 'body', 'complete'} <= set(response):
+        outcome = _unavailable('TIMEOUT' if time.monotonic() > deadline else 'INVALID_RESPONSE')
+    elif time.monotonic() > deadline:
+        outcome = _unavailable('TIMEOUT')
+    elif response['status'] != 200:
+        incident = {401: 'KEY_REJECTED', 413: 'CONTEXT', 429: 'RATE_LIMITED',
+                    529: 'OVERLOADED'}.get(response['status'], 'PROVIDER_ERROR')
+        if (response['status'] == 400 and type(response['body']) is bytes
+                and b'max_tokens_exceeded' in response['body']):
+            incident = 'CONTEXT'
+        outcome = _unavailable(incident)
     else:
-        outcome = _unavailable('INVALID_RESPONSE')
-        if type(response) is not dict or not {'status', 'body', 'complete'} <= set(response):
+        try:
+            checked = _validated(response['body'], response['complete'], question_ids, usage)
+        except (InvalidResponse, TypeError, ValueError, KeyError):
             outcome = _unavailable('INVALID_RESPONSE')
-        elif response['status'] != 200:
-            incident = {401: 'KEY_REJECTED', 413: 'CONTEXT', 429: 'RATE_LIMITED',
-                        529: 'OVERLOADED'}.get(response['status'], 'PROVIDER_ERROR')
-            if (response['status'] == 400 and type(response['body']) is bytes
-                    and b'max_tokens_exceeded' in response['body']):
-                incident = 'CONTEXT'
-            outcome = _unavailable(incident)
         else:
-            try:
-                checked = _validated(response['body'], response['complete'], question_ids, usage)
-            except InvalidResponse:
-                outcome = _unavailable('INVALID_RESPONSE')
+            if time.monotonic() > deadline:
+                outcome = _unavailable('TIMEOUT')
             else:
                 threshold = config.usages[usage].threshold
-                outcome = _outcome(checked, closed, threshold if threshold is not None else Decimal(0))
+                outcome = _outcome(checked, closed,
+                                   threshold if threshold is not None else Decimal(0))
                 cost_status = 'KNOWN'
                 cost_amount = _cost(tariff, checked['input_tokens'])
                 tokens = (checked['input_tokens'], checked['output_tokens'])
