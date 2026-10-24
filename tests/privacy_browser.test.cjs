@@ -49,6 +49,21 @@ try:
     for item in failed['qualification']['contract']['specification']['obligations']:
         item['description'] += ' <img src=x onerror=alert(1)>'
     attempt['results'] = views.render(results, '').decode()
+    # Priorité explicite : le formulaire existant, le compromis et l'échappement des libellés du contrat
+    priority = restitution.comparison(proof.store, proof.sid, 'fixture', 'comparison',
+                                      query={'priority': 'duration'})
+    priority['abstention'] = None
+    priority['recommendation'] = {
+        'configuration': priority['panel'][1], 'amount': '0.10001', 'unit': 'TEST',
+        'basis': 'priority_criterion', 'priority': 'duration',
+        'quality': [{'measure': 'Durée fictive'}], 'count': 3,
+        'compromises': [dict(measure='Précision <img src=x onerror=alert(1)>', value='acceptable',
+                             unit='descriptif', best='excellent', best_unit='descriptif',
+                             configuration=priority['panel'][0])],
+        'detail_href': priority['rows'][0]['detail_href']}
+    duration = next(column for column in priority['columns'] if column['id'] == 'duration')
+    duration['definition']['measure'] = 'Durée <script>alert(4)</script>'
+    attempt['results_priority'] = views.render(priority, '').decode()
     attempt['preview'] = views.render(restitution.preview_view(proof.store, proof.sid, 'fixture', 'comparison',
                                                                piece_ids=[], presentation=projection), '').decode()
 finally:
@@ -1058,6 +1073,61 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     const page = await off.newPage(); page.setDefaultTimeout(3000);
     await page.goto(origin + '/render/data');
     assert.doesNotMatch(await page.locator('main').innerText(), /Chargement/);
+  } finally {await off.close();}
+  assert.deepEqual(failures, []);
+});
+
+test('priority advice stays native, escaped, keyboard reachable and readable at 390 px', async () => {
+  const failures = [];
+  const context = await browser.newContext({viewport: {width: 390, height: 844}, hasTouch: true, isMobile: true});
+  try {
+    const page = await context.newPage(); page.setDefaultTimeout(3000);
+    page.on('pageerror', error => failures.push(error.message));
+    page.on('console', message => {if (/Content Security Policy/.test(message.text())) failures.push(message.text());});
+    await page.goto(origin + '/render/results_priority');
+    await page.evaluate(() => document.fonts.ready);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
+    const select = page.locator('#filter-priority');
+    assert.equal(await select.count(), 1, 'priorité absente du formulaire');
+    assert.match(await page.locator('#filters > summary').innerText(), /Conseil/);
+    assert.equal(await select.inputValue(), 'duration');
+    assert.deepEqual(await page.locator('#filter-priority option').evaluateAll(options => options.map(option => option.value)),
+                     ['', 'cost', 'duration', 'present']);
+    assert.match(await page.locator('label[for="filter-priority"]').innerText(), /Priorité du conseil/);
+    // La priorité et son compromis restent visibles ; les libellés du contrat restent du texte
+    const advice = page.locator('.economic-choice');
+    assert.match(await advice.innerText(), /Priorité choisie/);
+    assert.match(await advice.innerText(), /Compromis sur/);
+    assert.equal(await advice.locator('img, script').count(), 0, 'compromis interprété comme HTML');
+    assert.equal(await page.locator('#filter-priority img, #filter-priority script').count(), 0,
+                 'libellé de critère interprété comme HTML');
+    assert.match(await advice.innerText(), /<img src=x onerror=alert\(1\)>/);
+    assert.match(await select.textContent(), /<script>alert\(4\)<\/script>/);
+    // GET natif : le contrôle et le bouton vivent dans le formulaire existant
+    const form = page.locator('form[action$="#filters"]');
+    assert.equal(await form.getAttribute('method'), 'get');
+    assert.equal(await form.locator('select#filter-priority, button[type="submit"]').count(), 2);
+    // Clavier : la priorité puis le bouton sont atteignables dans l'ordre natif
+    const reached = [];
+    for (let press = 0; press < 120 && reached.length < 2; press++) {
+      await page.keyboard.press('Tab');
+      const target = await page.evaluate(() => document.activeElement?.id === 'filter-priority' ? 'filter-priority'
+        : document.activeElement?.textContent?.trim() === 'Appliquer' ? 'Appliquer' : '');
+      if (target && !reached.includes(target)) reached.push(target);
+    }
+    assert.deepEqual(reached, ['filter-priority', 'Appliquer']);
+    mkdirSync('reports/privacy-browser', {recursive: true});
+    await page.screenshot({path: 'reports/privacy-browser/priority-mobile.png', fullPage: true});
+  } finally {await context.close();}
+  // Sans JavaScript, le choix reste lisible et soumissible
+  const off = await browser.newContext({javaScriptEnabled: false, viewport: {width: 390, height: 844}});
+  try {
+    const page = await off.newPage(); page.setDefaultTimeout(3000);
+    await page.goto(origin + '/render/results_priority');
+    assert.equal(await page.locator('#filter-priority').count(), 1);
+    assert.equal(await page.locator('#filter-priority').inputValue(), 'duration');
+    assert.equal(await page.locator('form[action$="#filters"] button[type="submit"]').isVisible(), true);
+    assert.match(await page.locator('.economic-choice').innerText(), /Compromis sur/);
   } finally {await off.close();}
   assert.deepEqual(failures, []);
 });
