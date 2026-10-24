@@ -22,7 +22,35 @@ _LAUNCHING_LOCK = threading.Lock()
 def dispatch(store, method, path, token, body, source, transport, *, qualification_transport=None, candidate_transport=None,
              candidate_identity=None, judgment_transport=None,
              access_secret=None, access_transport=None, presentation=None,
-             management_token=None):
+             management_token=None, semantic_transport=None, semantic_config=None):
+    # Aide sémantique publique : aucune session, aucun cookie et aucun secret personnel.
+    # Le service désactivé refuse avant toute lecture de stockage, de secret ou d'appel.
+    if path == '/semantic-help/requests' and method == 'POST':
+        from . import semantic_help
+        try:
+            if type(body) is not dict or set(body) != {'usage', 'submission_id', 'formulation', 'notices'}:
+                raise semantic_help.InvalidRequest('Demande fermée requise')
+            usage = body['usage']
+            if usage not in semantic_help.USAGES:
+                raise semantic_help.InvalidRequest('Usage inconnu')
+            code, value = semantic_help.handle(
+                store, {key: body[key] for key in ('submission_id', 'formulation', 'notices')},
+                semantic_transport, semantic_config, usage=usage)
+            return code, value, None, None
+        except semantic_help.Unavailable as error:
+            return error.code, {'kind': 'semantic_help', 'status': 'unavailable',
+                                'reason': error.reason}, None, None
+        except semantic_help.InvalidRequest:
+            return 400, {'kind': 'semantic_help', 'status': 'invalid',
+                         'reason': 'INVALID_REQUEST'}, None, None
+    receipt_route = re.fullmatch(r'/semantic-help/requests/([0-9a-f]{32})', path)
+    if method == 'GET' and receipt_route:
+        from . import semantic_help
+        try:
+            code, value = semantic_help.receipt(store, receipt_route[1])
+        except semantic_help.InvalidRequest:
+            raise p.Denied('NOT_FOUND') from None
+        return code, value, None, None
     from . import privacy
     enabled = privacy.available(store._connection_checked())
     if method == 'GET' and path == '/preparation/data':

@@ -14,6 +14,7 @@ import socket
 import socketserver
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlencode, urlsplit
@@ -21,7 +22,7 @@ from urllib.parse import urlencode, urlsplit
 from benchmark.acquisition import execution
 from benchmark.acquisition import campaigns
 from benchmark import editorial, evaluation, model_catalogue, preparation as prep, public_results
-from benchmark import provider_access, qualification, service, storage
+from benchmark import provider_access, qualification, semantic_help, service, storage
 from benchmark_web import projection, server, views
 from tests.test_configurations import NOW, model
 from tests.test_openrouter_qualification import QualificationTransport
@@ -130,6 +131,40 @@ class Page(HTMLParser):
         return next(node['text'].strip() for node in self.nodes[index + 1:] if node['tag'] == 'dd')
 
 
+TYPESAFE_PROBABILITIES = {
+    'correspond': {'correspond': 0.9, 'partiel': 0.05, 'sans_correspondance': 0.05},
+    'partiel': {'correspond': 0.3, 'partiel': 0.6, 'sans_correspondance': 0.1},
+    'sans_correspondance': {'correspond': 0.05, 'partiel': 0.05, 'sans_correspondance': 0.9},
+}
+
+
+def typesafe_document(wire, labels=None, *, model='jev-1.13.0', input_tokens=120,
+                      output_tokens=12):
+    """Réponse TypeSafe fictive, construite sur les questions réellement envoyées"""
+    questions = list(json.loads(wire)['questions'])
+    labels = labels or ['sans_correspondance'] * len(questions)
+    answers = {}
+    for question, label in zip(questions, labels):
+        probabilities = TYPESAFE_PROBABILITIES[label]
+        answers[question] = {'type': 'choice', 'choice': label, 'confidence': 0.8,
+                             'probabilities': dict(probabilities)}
+    return storage._strict_json({'model': model, 'answers': answers,
+                                 'usage': {'input_tokens': input_tokens,
+                                           'output_tokens': output_tokens}}).encode()
+
+
+class TypeSafeFixture:
+    def __init__(self, handler=None):
+        self.wires = []
+        self.handler = handler
+
+    def post(self, wire):
+        self.wires.append(wire)
+        if self.handler is not None:
+            return self.handler(wire)
+        return {'status': 200, 'body': typesafe_document(wire), 'complete': True}
+
+
 class ParcoursComplet(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix='s12-')
@@ -143,10 +178,12 @@ class ParcoursComplet(unittest.TestCase):
         campaigns.initialize(self.data)
         evaluation.initialize(self.data)
         provider_access.initialize(self.data)
+        semantic_help.initialize(self.data)
         self.starts = queue.Queue()
         self.calls = []
         self.clock = NOW
         self.enterContext(patch.object(prep, '_now', side_effect=lambda: self.clock))
+        self.enterContext(patch.object(semantic_help, '_now', side_effect=lambda: self.clock))
         self.enterContext(patch.object(model_catalogue, '_now', return_value=NOW))
         self.enterContext(patch.dict(prep._SOURCE_ACCEPTED, {}, clear=True))
         self.access = AccessTransport()
@@ -162,6 +199,8 @@ class ParcoursComplet(unittest.TestCase):
             judgment_transport=SessionAssistant(lambda operation, request: self.fail('Jugement non prévu'),
                                                 {'model': 'juge/factice', 'reserve_usd': '0.1'}))
         self.bound = None
+        # Aide sémantique : désactivée par défaut ; un test l'active avec un transport fictif
+        self.semantic = (None, None)
         with closing(storage.Store(self.data)) as store:
             rows =[model('openai/gpt-5.6-sol', 'openai', ['high']),
                     model('deepseek/deepseek-v4.1-flash', 'deepseek', []),
@@ -185,7 +224,9 @@ class ParcoursComplet(unittest.TestCase):
                         code, value, cookie, start, *bound = service.personal_dispatch(
                             store, message, 'a' * 40, candidate_identity=test.identity,
                             candidate_transport=test.candidate, access_secret=SECRET,
-                            access_transport=test.access, presentation=projection, **test.assistants)
+                            access_transport=test.access, presentation=projection,
+                            semantic_config=test.semantic[0], semantic_transport=test.semantic[1],
+                            **test.assistants)
                         if start:
                             # Les travaux lancés partent avec les assistants liés à la session, comme dans l'exécuteur
                             test.bound = bound
@@ -313,6 +354,30 @@ class ParcoursComplet(unittest.TestCase):
         result, headers, _ = self.request(form['action'], form['fields'] | values, status=status)
         return self.request(headers['Location'])[0] if status == 303 else result
 
+    def enable_semantic(self, transport=None, *, enabled=('repertoire',), tariff='10',
+                        threshold='0.5'):
+        self.semantic = (semantic_help.configure({
+            'format': semantic_help.PROFILE_FORMAT,
+            'tariff': None if tariff is None else {
+                'input_usd_per_million_tokens': tariff, 'currency': 'USD',
+                'effective_at': '2026-10-24', 'source': 'https://fixture.example/tarif'},
+            'usages': {usage: {'enabled': usage in enabled,
+                               'suggestion_threshold': threshold if usage in enabled else None}
+                       for usage in semantic_help.USAGES}}), transport or TypeSafeFixture())
+        return self.semantic[1]
+
+    def help_submit(self, formulation, *, status=303, submission_id=None):
+        page, _, _ = self.request('/evaluations-externes/aide')
+        form = page.form('/evaluations-externes/aide')
+        fields = dict(form['fields'])
+        if submission_id is not None:
+            fields['submission_id'] = submission_id
+        result, headers, _ = self.request(form['action'], fields | {'formulation': formulation},
+                                          status=status)
+        if status == 303:
+            return self.request(headers['Location'])[0], headers['Location']
+        return result, None
+
     def examine(self, page, route, state, primary):
         with self.subTest(route=route, état=state):
             headings = [n for n in page.nodes if n['tag'] == 'h1']
@@ -407,10 +472,31 @@ class ParcoursComplet(unittest.TestCase):
                 unavailable, _, _ = self.request(target)
                 self.assertIn('Aucune évaluation externe disponible', unavailable.visible)
                 self.assertEqual('/preparation', unavailable.link('Décrire mon cas'))
+            # L'aide annonce TypeSafe et les données transmises avant tout envoi ; la lecture ne relaie rien
+            help_page, help_headers, help_raw = self.request('/evaluations-externes/aide')
+            self.assertIsNone(help_headers.get('Set-Cookie'))
+            self.assertEqual('no-referrer', help_headers['Referrer-Policy'])
+            for value in ('TypeSafe', 'Jev', 'formulation', 'Aucun dossier privé',
+                          'aucune information personnelle ou confidentielle',
+                          'reste disponible', 'Demander l’aide'):
+                self.assertIn(value, help_page.visible)
+            help_form = help_page.form('/evaluations-externes/aide')
+            self.assertRegex(help_form['fields']['submission_id'], r'^[0-9a-f]{32}$')
+            self.assertEqual(['formulation'],
+                             [n['attrs'].get('name') for n in help_form['nodes'] if n['tag'] == 'textarea'])
+            self.assertNotIn(b'<script', help_raw)
             self.assertEqual([], self.calls)
             self.assertTrue(self.starts.empty())
             self.assertEqual({}, dict(self.cookies))
             self.assertEqual(before, {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()})
+        # Service désactivé : la soumission ne résout aucun secret et n'émet aucun appel
+        disabled, _, _ = self.request('/evaluations-externes/aide',
+                                      {'submission_id': 'a' * 32, 'formulation': 'Corriger un programme'},
+                                      status=200)
+        self.assertIn('Aide indisponible', disabled.visible)
+        self.assertIn('désactivé', disabled.visible)
+        self.assertEqual([], self.calls)
+        self.assertTrue(self.starts.empty())
         with patch.object(server, 'preparation_request', side_effect=AssertionError('Relais privé interdit')):
             before = {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()}
             index, headers, raw = self.request('/evaluations-externes')
@@ -2059,11 +2145,536 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn('Besoin privé', notice.visible)
             self.assertNotIn('Atelier Retiré', page.visible)
             self.assertEqual('/preparation', notice.link('Décrire mon cas'))
+            # L'aide reste séparée du renvoi : elle ne reçoit ni le besoin privé ni sa trace
+            aid_page, _, aid_raw = self.request('/evaluations-externes/aide')
+            self.assertNotIn('Besoin privé', aid_page.visible)
+            self.assertNotIn(b'Besoin priv', aid_raw)
+            self.assertEqual('/preparation', aid_page.link('Décrire mon cas d’usage'))
+            index_page, _, _ = self.request('/evaluations-externes')
+            self.assertIn('/evaluations-externes/aide',
+                          [node['attrs'].get('href') for node in index_page.nodes])
             # Un retrait est immédiatement reflété dans les renvois, sans autre liste à maintenir
             with patch.dict(references['atelier-code'], availability='withdrawn'):
                 page, _, _ = self.request(dossier)
                 self.assertNotIn('Atelier Code', page.visible)
                 self.assertIn('Source retirée', self.request(target)[0].visible)
+
+    def semantic_data(self):
+        temporary = tempfile.TemporaryDirectory(prefix='semantic-')
+        self.addCleanup(temporary.cleanup)
+        data = Path(temporary.name).resolve() / 'private'
+        storage.initialize(data)
+        storage.initialize_preparation(data)
+        semantic_help.initialize(data)
+        return data
+
+    def test_aide_semantique_repertoire(self):
+        references = json.loads((Path(__file__).parent / 'fixtures/external-references.json').read_text())
+        formulation = 'Corriger un programme fictif et résoudre un calcul inventé'
+        def two_suggestions(wire):
+            return {'status': 200, 'body': typesafe_document(wire, ['correspond', 'partiel']),
+                    'complete': True}
+        with patch.object(views, 'BENCHMARK_REFERENCES', references):
+            transport = self.enable_semantic(TypeSafeFixture(two_suggestions))
+            page, path = self.help_submit(formulation)
+            self.assertIn('Correspondance forte', page.visible)
+            self.assertIn('Correspondance partielle', page.visible)
+            self.assertIn('Atelier Code fictif', page.visible)
+            self.assertIn('Atelier Maths fictif', page.visible)
+            self.assertIn('ne prouve ni adéquation', page.visible)
+            self.assertTrue(any(n['tag'] == 'summary' and 'Reçu technique' in n['text']
+                            for n in page.nodes))
+            self.assertEqual(1, len(transport.wires))
+            document = json.loads(transport.wires[0])
+            self.assertEqual({'model', 'state', 'questions'}, set(document))
+            self.assertEqual('jev-1.13.0', document['model'])
+            self.assertEqual(formulation, document['state']['formulation'])
+            self.assertEqual(['n1', 'n2'], [notice['ref'] for notice in document['state']['notices']])
+            for notice in document['state']['notices']:
+                self.assertNotIn('id', notice)
+                self.assertIn('name', notice)
+                self.assertIn('work', notice)
+                for key in ('url', 'checked_at', 'verification', 'availability', 'published_at'):
+                    self.assertNotIn(key, notice)
+            wire = transport.wires[0]
+            for absent in ('https://code.example', 'https://maths.example', KEY,
+                           'benchmark_session', 'dossier', 'Référence de jugement'):
+                self.assertNotIn(absent, wire)
+            self.assertEqual(2, len(document['questions']))
+            self.assertTrue(all(question['type'] == 'choice'
+                                for question in document['questions'].values()))
+            # Aucun texte recherché ni URL de notice ne subsiste dans les fichiers durables
+            for stored in self.data.rglob('*'):
+                if stored.is_file():
+                    payload = stored.read_bytes()
+                    self.assertNotIn(formulation.encode(), payload, stored.name)
+                    self.assertNotIn(b'https://code.example', payload, stored.name)
+            # Une notice retirée après émission disparaît avant affichage et ouverture
+            with patch.dict(references['atelier-code'], {'availability': 'withdrawn'}):
+                removed, _, _ = self.request(path)
+                self.assertNotIn('Atelier Code fictif', removed.visible)
+                self.assertIn('Une suggestion a été retirée', removed.visible)
+                self.assertNotIn('/evaluations-externes/atelier-code',
+                                 [node['attrs'].get('href') for node in removed.nodes])
+                self.assertIn('Source retirée',
+                              self.request('/evaluations-externes/atelier-code')[0].visible)
+            # Aucune correspondance reste distinct d'une aide indisponible
+            self.enable_semantic(TypeSafeFixture())
+            none, _ = self.help_submit('Un besoin sans rapport avec le répertoire')
+            self.assertIn('Aucune notice ne correspond', none.visible)
+            self.assertNotIn('Aide indisponible', none.visible)
+            # Réponses invalides et incidents : aucune suggestion inventée, aucun nouvel appel
+            def mutated(change, *, status=200, complete=True):
+                def handler(wire):
+                    document = json.loads(typesafe_document(wire))
+                    change(document)
+                    return {'status': status, 'body': json.dumps(document).encode(),
+                            'complete': complete}
+                return handler
+            cases = {
+                'modele divergent': (mutated(lambda value: value.update(model='jev-1.14.0')), 'inexploitable'),
+                'reponse partielle': (mutated(lambda value: value['answers'].pop('n2')), 'inexploitable'),
+                'identifiant inconnu': (mutated(lambda value: value['answers'].update(
+                    inconnue=value['answers']['n1'])), 'inexploitable'),
+                'structure invalide': (mutated(lambda value: value['answers']['n1'].pop('probabilities')),
+                                       'inexploitable'),
+                'probabilite non finie': (mutated(lambda value: value['answers']['n1']['probabilities'].update(
+                    partiel=float('nan'))), 'inexploitable'),
+                'probabilites incoherentes': (mutated(lambda value: value['answers']['n1']['probabilities'].update(
+                    correspond=0.9, partiel=0.9, sans_correspondance=0.9)), 'inexploitable'),
+                'confiance hors bornes': (mutated(lambda value: value['answers']['n1'].update(
+                    confidence=2)), 'inexploitable'),
+                'corps incomplet': (mutated(lambda value: None, complete=False), 'inexploitable'),
+                'choix en liste': (mutated(lambda value: value['answers']['n1'].update(choice=[])),
+                                   'inexploitable'),
+                'choix en objet': (mutated(lambda value: value['answers']['n1'].update(choice={})),
+                                   'inexploitable'),
+                'limite de debit': (mutated(lambda value: None, status=429), 'limite temporairement'),
+                'surcharge': (mutated(lambda value: None, status=529), 'surchargé'),
+            }
+            for name, (handler, expected) in cases.items():
+                with self.subTest(cas=name):
+                    transport = self.enable_semantic(TypeSafeFixture(handler))
+                    failed, failed_path = self.help_submit('Corriger un programme fictif')
+                    self.assertIn('Aide indisponible', failed.visible)
+                    self.assertIn(expected, failed.visible)
+                    self.assertNotIn('Correspondance forte', failed.visible)
+                    calls = len(transport.wires)
+                    request_id = failed_path.rsplit('/', 1)[1]
+                    receipt_store = storage.Store(self.data)
+                    try:
+                        receipt_code, receipt_value = semantic_help.receipt(
+                            receipt_store, request_id)
+                    finally:
+                        receipt_store.close()
+                    expected_reason = {'limite de debit': 'RATE_LIMITED',
+                                       'surcharge': 'OVERLOADED'}.get(
+                                           name, 'INVALID_RESPONSE')
+                    self.assertEqual(200, receipt_code)
+                    self.assertEqual(('unavailable', expected_reason),
+                                     (receipt_value['status'], receipt_value['reason']))
+                    self.assertEqual('UNKNOWN', receipt_value['receipt']['cost']['status'])
+                    inspect_store = storage.Store(self.data)
+                    try:
+                        self.assertNotEqual('0', semantic_help.inspect(
+                            inspect_store)['budget']['reserved'])
+                    finally:
+                        inspect_store.close()
+                    again, again_path = self.help_submit(
+                        'Corriger un programme fictif',
+                        submission_id=request_id)
+                    self.assertEqual(failed_path, again_path)
+                    self.assertEqual(calls, len(transport.wires))
+            # Le délai ne rejoue rien non plus
+            def timeout(_):
+                raise TimeoutError('délai fictif')
+            transport = self.enable_semantic(TypeSafeFixture(timeout))
+            failed, failed_path = self.help_submit('Corriger un programme fictif')
+            self.assertIn('délai de dix secondes', failed.visible)
+            self.assertEqual(1, len(transport.wires))
+            # Un répertoire sans notice admissible rend une réponse valide sans suggestion, sans appel
+            empty_transport = self.enable_semantic(TypeSafeFixture())
+            with patch.object(views, 'BENCHMARK_REFERENCES', {}):
+                empty, _, _ = self.request('/evaluations-externes/aide',
+                                           {'submission_id': 'b' * 32,
+                                            'formulation': 'Corriger un programme fictif'}, status=200)
+                self.assertIn('Aucune notice ne correspond', empty.visible)
+                self.assertNotIn('Aide indisponible', empty.visible)
+            self.assertEqual([], empty_transport.wires)
+            # Protections HTTP et absence de texte dans l'adresse ou le corps des pages
+            _, headers, raw = self.request('/evaluations-externes/aide')
+            self.assertEqual('no-store', headers['Cache-Control'])
+            self.assertEqual('nosniff', headers['X-Content-Type-Options'])
+            self.assertEqual('no-referrer', headers['Referrer-Policy'])
+            self.assertIn("default-src 'none'", headers['Content-Security-Policy'])
+            self.assertNotIn(b'<script', raw)
+            self.request('/evaluations-externes/aide?q=prive', status=400)
+            self.request('/evaluations-externes/aide/' + 'f' * 32, status=404)
+            cross = self.request('/evaluations-externes/aide',
+                                 {'submission_id': 'a' * 32, 'formulation': 'Corriger un programme'},
+                                 status=400,
+                                 extra_headers={'Origin': 'https://evil.example',
+                                                'Sec-Fetch-Site': 'cross-site'})
+            self.assertIn('incomplète', cross[0].visible)
+            injection = '<script>alert(9)</script>'
+            self.enable_semantic(tariff=None)
+            form_page, _, _ = self.request('/evaluations-externes/aide')
+            form = form_page.form('/evaluations-externes/aide')
+            escaped, _, escaped_raw = self.request(
+                form['action'], form['fields'] | {'formulation': injection}, status=200)
+            self.assertIn(injection, escaped.visible)
+            self.assertNotIn(injection.encode(), escaped_raw)
+            self.assertIn(b'&lt;script&gt;', escaped_raw)
+
+    def test_aide_semantique_finance_limites_et_redemarrage(self):
+        data = self.semantic_data()
+        notices = [{'id': 'code', 'name': 'Code fictif', 'category': 'coding',
+                    'work': 'Corriger un programme fictif', 'version': 'fixture-1'},
+                   {'id': 'maths', 'name': 'Maths fictif', 'category': 'math',
+                    'work': 'Résoudre un calcul fictif', 'version': 'fixture-2'}]
+        def body(request_id, formulation='Corriger un programme fictif'):
+            return {'submission_id': request_id, 'formulation': formulation, 'notices': notices}
+        def success(wire):
+            return {'status': 200, 'body': typesafe_document(wire, ['correspond', 'partiel'],
+                                                             input_tokens=1000),
+                    'complete': True}
+        store = storage.Store(data)
+        self.addCleanup(store.close)
+        # Un tarif absent bloque avant tout envoi et ne réserve rien
+        no_tariff = semantic_help.configure({
+            'format': semantic_help.PROFILE_FORMAT, 'tariff': None,
+            'usages': {'repertoire': {'enabled': True, 'suggestion_threshold': '0.5'},
+                       'epreuves': {'enabled': False, 'suggestion_threshold': None}}})
+        transport = TypeSafeFixture(success)
+        code, value = semantic_help.handle(store, body('1' * 32), transport, no_tariff,
+                                           usage='repertoire')
+        self.assertEqual((503, 'FINANCE', 0, []),
+                         (code, value['reason'], len(transport.wires),
+                          semantic_help.inspect(store)['requests']))
+        # Une base restaurée n'admet aucune émission avant vérification
+        marker = store._root / 'restore.json'
+        marker.write_text('{"state": "RESTORED_RECONCILIATION_REQUIRED"}')
+        try:
+            code, value = semantic_help.handle(store, body('0' * 32), transport, no_tariff,
+                                               usage='repertoire')
+        finally:
+            marker.unlink()
+        self.assertEqual((503, 'RESTORE_PENDING', 0),
+                         (code, value['reason'], len(transport.wires)))
+        # Le dépassement de contexte est refusé sans troncature ni appel
+        config = semantic_help.configure({
+            'format': semantic_help.PROFILE_FORMAT,
+            'tariff': {'input_usd_per_million_tokens': '10', 'currency': 'USD',
+                       'effective_at': '2026-10-24', 'source': 'https://fixture.example/tarif'},
+            'usages': {'repertoire': {'enabled': True, 'suggestion_threshold': '0.5'},
+                       'epreuves': {'enabled': True, 'suggestion_threshold': '0.5'}}})
+        for length, label in ((40000, 'question'), (70000, 'requête')):
+            with self.subTest(limite=label):
+                try:
+                    semantic_help.handle(store, body('2' * 32, 'x' * length), transport, config,
+                                         usage='repertoire')
+                except semantic_help.Unavailable as error:
+                    self.assertEqual(('CONTEXT', 413), (error.reason, error.code))
+                else:
+                    self.fail('dépassement de contexte accepté')
+        self.assertEqual([], semantic_help.inspect(store)['requests'])
+        # Enveloppe commune : la consommation de l'un bloque l'autre usage
+        budget_config = semantic_help.configure({
+            'format': semantic_help.PROFILE_FORMAT,
+            'tariff': {'input_usd_per_million_tokens': '500', 'currency': 'USD',
+                       'effective_at': '2026-10-24', 'source': 'https://fixture.example/tarif'},
+            'usages': {'repertoire': {'enabled': True, 'suggestion_threshold': '0.5'},
+                       'epreuves': {'enabled': True, 'suggestion_threshold': '0.5'}}})
+        transport = TypeSafeFixture(success)
+        code, value = semantic_help.handle(store, body('3' * 32), transport, budget_config,
+                                           usage='repertoire')
+        self.assertEqual((200, 'suggestions'), (code, value['status']))
+        state = semantic_help.inspect(store)
+        self.assertEqual('0.5', state['budget']['spent'])
+        self.clock += timedelta(seconds=2)
+        try:
+            semantic_help.handle(store, body('4' * 32), transport, budget_config, usage='epreuves')
+        except semantic_help.Unavailable as error:
+            self.assertEqual(('BUDGET', 429), (error.reason, error.code))
+        else:
+            self.fail('enveloppe partagée non appliquée')
+        self.assertEqual(1, len(transport.wires))
+        self.assertEqual(1, len(semantic_help.inspect(store)['requests']))
+        # Le second usage fictif réutilise la même intégration et ses propres questions versionnées
+        catalogue_data = self.semantic_data()
+        catalogue_store = storage.Store(catalogue_data)
+        self.addCleanup(catalogue_store.close)
+        catalogue_transport = TypeSafeFixture(success)
+        code, value = semantic_help.handle(
+            catalogue_store, body('e' * 32), catalogue_transport, budget_config, usage='epreuves')
+        self.assertEqual((200, 'suggestions', 'epreuves-v1'),
+                         (code, value['status'], value['receipt']['questions_version']))
+        self.assertEqual('epreuves-v1', value['receipt']['questions_version'])
+        self.assertIn('épreuve éditoriale',
+                      json.loads(catalogue_transport.wires[0])['questions']['n1']['instructions']['question'])
+
+    def test_aide_semantique_incident_concurrence_et_redemarrage(self):
+        data = self.semantic_data()
+        notices = [{'id': 'code', 'name': 'Code fictif', 'work': 'Corriger un programme fictif'}]
+        def body(request_id, formulation='Corriger un programme fictif'):
+            return {'submission_id': request_id, 'formulation': formulation, 'notices': notices}
+        tight_config = semantic_help.configure({
+            'format': semantic_help.PROFILE_FORMAT,
+            'tariff': {'input_usd_per_million_tokens': '900', 'currency': 'USD',
+                       'effective_at': '2026-10-24', 'source': 'https://fixture.example/tarif'},
+            'usages': {'repertoire': {'enabled': True, 'suggestion_threshold': '0.5'},
+                       'epreuves': {'enabled': False, 'suggestion_threshold': None}}})
+        concurrent_config = semantic_help.configure({
+            'format': semantic_help.PROFILE_FORMAT,
+            'tariff': {'input_usd_per_million_tokens': '10', 'currency': 'USD',
+                       'effective_at': '2026-10-24', 'source': 'https://fixture.example/tarif'},
+            'usages': {'repertoire': {'enabled': True, 'suggestion_threshold': '0.5'},
+                       'epreuves': {'enabled': True, 'suggestion_threshold': '0.5'}}})
+        def success(wire):
+            return {'status': 200, 'body': typesafe_document(wire, ['correspond'],
+                                                             input_tokens=1000), 'complete': True}
+        # Un incident 529 laisse un coût inconnu et conserve sa réserve
+        store = storage.Store(data)
+        self.addCleanup(store.close)
+        incident = TypeSafeFixture(lambda _: {'status': 529, 'body': b'', 'complete': True})
+        code, value = semantic_help.handle(store, body('5' * 32), incident, tight_config,
+                                           usage='repertoire')
+        self.assertEqual((200, 'unavailable', 'OVERLOADED'),
+                         (code, value['status'], value['reason']))
+        self.assertEqual('UNKNOWN', value['receipt']['cost']['status'])
+        state = semantic_help.inspect(store)
+        self.assertEqual('UNKNOWN', state['requests'][0]['cost_status'])
+        self.assertNotEqual('0', state['budget']['reserved'])
+        self.assertEqual('0', state['budget']['spent'])
+        self.assertEqual('OVERLOADED', semantic_help.receipt(store, '5' * 32)[1]['reason'])
+        self.clock += timedelta(seconds=2)
+        try:
+            semantic_help.handle(store, body('6' * 32), TypeSafeFixture(success), tight_config,
+                                 usage='repertoire')
+        except semantic_help.Unavailable as error:
+            self.assertEqual('BUDGET', error.reason)
+        else:
+            self.fail('réserve inconnue libérée')
+        self.assertEqual(1, len(semantic_help.inspect(store)['requests']))
+        # Une réponse tardive termine la demande en TIMEOUT, sans suggestion, et garde sa réserve
+        self.assertEqual(10, semantic_help.TIMEOUT_SECONDS)
+        late_data = self.semantic_data()
+        late_store = storage.Store(late_data)
+        self.addCleanup(late_store.close)
+        late_entered = [threading.Event(), threading.Event()]
+        late_finished = threading.Event()
+        late_calls = []
+        finished = {'count': 0}
+        finished_lock = threading.Lock()
+        def late(wire):
+            late_calls.append(wire)
+            late_entered[len(late_calls) - 1].set()
+            time.sleep(0.6)
+            with finished_lock:
+                finished['count'] += 1
+                if finished['count'] == 2:
+                    late_finished.set()
+            return success(wire)
+        late_transport = TypeSafeFixture(late)
+        late_results = []
+        def late_submit(request_id):
+            thread_store = storage.Store(late_data)
+            try:
+                late_results.append(semantic_help.handle(
+                    thread_store, body(request_id), late_transport, concurrent_config,
+                    usage='repertoire'))
+            finally:
+                thread_store.close()
+        with patch.object(semantic_help, 'TIMEOUT_SECONDS', 0.15):
+            first_late = threading.Thread(target=late_submit, args=('d' * 32,))
+            first_late.start()
+            self.assertTrue(late_entered[0].wait(3))
+            self.clock += timedelta(seconds=2)
+            second_late = threading.Thread(target=late_submit, args=('e' * 32,))
+            second_late.start()
+            self.assertTrue(late_entered[1].wait(3))
+            first_late.join(3)
+            second_late.join(3)
+            self.assertEqual([('unavailable', 'TIMEOUT')] * 2,
+                             [(result[1]['status'], result[1]['reason'])
+                              for result in late_results])
+            self.assertEqual([[], []], [result[1]['suggestions'] for result in late_results])
+            self.assertEqual(2, len(late_calls))
+            late_state = semantic_help.inspect(late_store)
+            self.assertEqual(['RECEIVED', 'RECEIVED'],
+                             [row['state'] for row in late_state['requests']])
+            self.assertEqual(['UNKNOWN', 'UNKNOWN'],
+                             [row['cost_status'] for row in late_state['requests']])
+            self.assertNotEqual('0', late_state['budget']['reserved'])
+            # Les deux appels tardifs comptent encore dans la limite commune
+            self.clock += timedelta(seconds=2)
+            third_transport = TypeSafeFixture(success)
+            try:
+                semantic_help.handle(late_store, body('f' * 32), third_transport,
+                                     concurrent_config, usage='repertoire')
+            except semantic_help.Unavailable as error:
+                self.assertEqual(('RATE', 429), (error.reason, error.code))
+            else:
+                self.fail('appel tardif ignoré dans la limite de concurrence')
+            self.assertEqual([], third_transport.wires)
+            self.assertTrue(late_finished.wait(2))
+            # Les places se libèrent une fois les appels abandonnés terminés
+            fourth = None
+            for _ in range(20):
+                self.clock += timedelta(seconds=2)
+                try:
+                    fourth = semantic_help.handle(late_store, body('1' * 32),
+                                                  TypeSafeFixture(success), concurrent_config,
+                                                  usage='repertoire')
+                    break
+                except semantic_help.Unavailable as error:
+                    self.assertEqual('RATE', error.reason)
+                    time.sleep(0.05)
+            self.assertIsNotNone(fourth)
+            self.assertEqual((200, 'suggestions'), (fourth[0], fourth[1]['status']))
+            time.sleep(0.1)
+        # Deux soumissions concurrentes de la même demande n'émettent qu'une fois
+        duplicate_data = self.semantic_data()
+        duplicate_entered = threading.Event()
+        duplicate_release = threading.Event()
+        duplicate_calls = []
+        def duplicate(wire):
+            duplicate_calls.append(wire)
+            duplicate_entered.set()
+            duplicate_release.wait(5)
+            return success(wire)
+        duplicate_transport = TypeSafeFixture(duplicate)
+        duplicate_results = []
+        def duplicate_submit():
+            thread_store = storage.Store(duplicate_data)
+            try:
+                duplicate_results.append(semantic_help.handle(
+                    thread_store, body('d' * 32), duplicate_transport, concurrent_config,
+                    usage='repertoire'))
+            finally:
+                thread_store.close()
+        duplicate_first = threading.Thread(target=duplicate_submit)
+        duplicate_first.start()
+        self.assertTrue(duplicate_entered.wait(3))
+        duplicate_second = threading.Thread(target=duplicate_submit)
+        duplicate_second.start()
+        duplicate_release.set()
+        duplicate_first.join(5)
+        duplicate_second.join(5)
+        self.assertFalse(duplicate_first.is_alive() or duplicate_second.is_alive())
+        self.assertEqual(1, len(duplicate_calls))
+        self.assertEqual([200, 200], [result[0] for result in duplicate_results])
+        # Deux émissions simultanées au plus, une nouvelle par seconde ; l'autre usage partage la limite
+        concurrent_data = self.semantic_data()
+        concurrent_store = storage.Store(concurrent_data)
+        self.addCleanup(concurrent_store.close)
+        entered = [threading.Event(), threading.Event()]
+        release = threading.Event()
+        active = []
+        clock = {'value': self.clock}
+        patcher = patch.object(semantic_help, '_now', side_effect=lambda: clock['value'])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        base = clock['value']
+        def blocking(wire):
+            active.append(wire)
+            entered[len(active) - 1].set()
+            release.wait(5)
+            return success(wire)
+        blocking_transport = TypeSafeFixture(blocking)
+        results = []
+        def submit(request_id):
+            thread_store = storage.Store(concurrent_data)
+            try:
+                results.append(semantic_help.handle(thread_store, body(request_id),
+                                                    blocking_transport, concurrent_config,
+                                                    usage='repertoire'))
+            finally:
+                thread_store.close()
+        first = threading.Thread(target=submit, args=('7' * 32,))
+        first.start()
+        self.assertTrue(entered[0].wait(3))
+        clock['value'] = base + timedelta(seconds=2)
+        second = threading.Thread(target=submit, args=('8' * 32,))
+        second.start()
+        self.assertTrue(entered[1].wait(3))
+        clock['value'] = base + timedelta(seconds=4)
+        refused = None
+        try:
+            semantic_help.handle(concurrent_store, body('9' * 32), TypeSafeFixture(success),
+                                 concurrent_config, usage='epreuves')
+        except semantic_help.Unavailable as error:
+            refused = error
+        finally:
+            release.set()
+        self.assertIsNotNone(refused, 'troisième émission simultanée acceptée')
+        self.assertEqual(('RATE', 429), (refused.reason, refused.code))
+        first.join(5)
+        second.join(5)
+        self.assertEqual([200, 200], [result[0] for result in results])
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertEqual(2, len(active))
+        # Une nouvelle émission immédiate après la seconde est refusée par la fréquence
+        clock['value'] = base + timedelta(seconds=2, milliseconds=100)
+        try:
+            semantic_help.handle(concurrent_store, body('a' * 32), TypeSafeFixture(success),
+                                 concurrent_config, usage='repertoire')
+        except semantic_help.Unavailable as error:
+            self.assertEqual(('RATE', 429), (error.reason, error.code))
+        else:
+            self.fail('fréquence partagée non appliquée')
+        # Interruption en vol : clôture au démarrage, reçu conservé, aucune réémission
+        restart_data = self.semantic_data()
+        restart_config = semantic_help.configure({
+            'format': semantic_help.PROFILE_FORMAT,
+            'tariff': {'input_usd_per_million_tokens': '10', 'currency': 'USD',
+                       'effective_at': '2026-10-24', 'source': 'https://fixture.example/tarif'},
+            'usages': {'repertoire': {'enabled': True, 'suggestion_threshold': '0.5'},
+                       'epreuves': {'enabled': False, 'suggestion_threshold': None}}})
+        lane = threading.Event()
+        hold = threading.Event()
+        calls = []
+        def hanging(wire):
+            calls.append(wire)
+            lane.set()
+            hold.wait(5)
+            return success(wire)
+        hanging_transport = TypeSafeFixture(hanging)
+        restart_store = storage.Store(restart_data)
+        self.addCleanup(restart_store.close)
+        outcome = []
+        def emit():
+            thread_store = storage.Store(restart_data)
+            try:
+                outcome.append(semantic_help.handle(thread_store, body('b' * 32),
+                                                   hanging_transport, restart_config,
+                                                   usage='repertoire'))
+            finally:
+                thread_store.close()
+        worker = threading.Thread(target=emit)
+        worker.start()
+        self.assertTrue(lane.wait(3))
+        startup = storage.Store(restart_data)
+        self.addCleanup(startup.close)
+        self.assertEqual(1, semantic_help.close_interrupted(startup))
+        hold.set()
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(1, len(calls))
+        self.assertEqual(503, outcome[0][0])
+        again = semantic_help.handle(restart_store, body('b' * 32), hanging_transport,
+                                     restart_config, usage='repertoire')
+        self.assertEqual(200, again[0])
+        self.assertEqual(('unavailable', 'INTERRUPTED'),
+                         (again[1]['status'], again[1]['reason']))
+        self.assertEqual(1, len(calls))
+        # Une nouvelle demande volontaire après incident garde le reçu précédent
+        clock['value'] += timedelta(seconds=2)
+        self.clock += timedelta(seconds=2)
+        fresh = semantic_help.handle(restart_store, body('c' * 32), TypeSafeFixture(success),
+                                     restart_config, usage='repertoire')
+        self.assertEqual((200, 'suggestions'), (fresh[0], fresh[1]['status']))
+        self.assertEqual(2, len(semantic_help.inspect(restart_store)['requests']))
 
     def test_parcours_complet(self):
         page, _, _ = self.request('/')

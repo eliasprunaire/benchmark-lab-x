@@ -345,7 +345,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     campaign_actions = ('create-campaign', 'inspect-campaign', 'admit-campaign', 'stop-campaign', 'resume-campaign')
     campaign_actions += ('inspect-attempt-status',)
-    parser.add_argument('action', choices=campaign_actions + ('migrate-privacy', 'privacy-status', 'purge-privacy', 'reconcile-privacy', 'reserve-judgment', 'execute-judgment', 'inspect-judgment', 'calibrate-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'initialize-qualification', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
+    parser.add_argument('action', choices=campaign_actions + ('migrate-privacy', 'privacy-status', 'purge-privacy', 'reconcile-privacy', 'reserve-judgment', 'execute-judgment', 'inspect-judgment', 'calibrate-judgment', 'inspect-pi', 'prepare-recovery', 'prepare-candidate-configuration', 'inspect-model-profile', 'reserve-candidate', 'execute-candidate', 'prepare-review', 'prepare-evaluation', 'evaluate-attempt', 'initialize-reconciliation', 'reconcile-cost', 'inspect-cost', 'forecast-prices', 'initialize-provider-access', 'initialize-evaluations', 'inspect-evaluation', 'initialize-campaigns', 'initialize-qualification', 'inspect-qualification', 'approve-qualification', 'initialize-preparation', 'initialize-semantic-help', 'initialize', 'verify', 'status', 'maintenance', 'quiescence', 'backup', 'verify-backup', 'restore', 'web', 'executor'))
     parser.add_argument('--data', type=Path)
     parser.add_argument('--migration-id')
     parser.add_argument('--journal-sha256')
@@ -372,6 +372,8 @@ def main(argv=None):
     parser.add_argument('--qualification-assistant', metavar='ALIAS_OR_PROFILE',
                         help='Alias qualification ou chemin du profil JSON local approuvé')
     parser.add_argument('--judgment-profile', metavar='ALIAS_OR_PROFILE')
+    parser.add_argument('--semantic-help-profile', type=Path, metavar='PROFIL',
+                        help='Profil JSON de l’aide sémantique facultative ; sans lui, le service reste désactivé')
     parser.add_argument('--candidate-pi', action='store_true', help='Charger le transport candidat Pi/OpenRouter dans l’exécuteur privé')
     parser.add_argument('--candidate-provider', choices=('openrouter', 'anthropic', 'deepseek', 'zai', 'openai', 'moonshot', 'dashscope', 'tokenhub'), default='openrouter',
                         help='Canal candidat explicitement admis ; les API officielles sont un dernier recours')
@@ -400,6 +402,8 @@ def main(argv=None):
             raise ValueError('Assistant réservé à l’exécuteur')
         if args.qualification_assistant is not None and args.action != 'executor':
             raise ValueError('Qualificateur réservé à l’exécuteur')
+        if args.semantic_help_profile is not None and args.action not in ('executor', 'initialize-semantic-help'):
+            raise ValueError('Profil d’aide sémantique réservé à l’exécuteur')
         if args.lock_wait is not None and args.action != 'purge-privacy':
             raise ValueError('Fenêtre de verrou réservée à la purge')
         if args.action == 'purge-privacy':
@@ -480,6 +484,19 @@ def main(argv=None):
                         assistant.quote()
                     # Juge des témoins : son relevé figé au démarrage, comme les autres
                     qualification_transport._control_quote = qualification_transport.controller().quote()
+                # Aide sémantique : le profil seul active chaque usage ; sans profil, aucun secret n'est lu
+                semantic_config = None
+                semantic_transport = None
+                if args.semantic_help_profile is not None:
+                    from . import semantic_help
+                    semantic_config = semantic_help.load_profile(args.semantic_help_profile)
+                    if any(usage.enabled for usage in semantic_config.usages.values()):
+                        typesafe_key = os.environ.pop('TYPESAFE_API_KEY', '')
+                        if typesafe_key:
+                            from .transports.typesafe import TypeSafeSystemOne
+                            semantic_transport = TypeSafeSystemOne(typesafe_key)
+                        else:
+                            logging.getLogger(__name__).warning('SEMANTIC_HELP_KEY_ABSENT')
                 from functools import partial
                 from .model_catalogue import MAX_RESPONSE_BYTES
                 from .transports.prices import fetch_public
@@ -490,7 +507,8 @@ def main(argv=None):
                                candidate_transport_factory=candidate_factory,
                                candidate_identity=candidate_identity,
                                access_secret=access_secret, access_transport=OpenRouterAccess(),
-                               presentation=import_module(args.presentation))
+                               presentation=import_module(args.presentation),
+                               semantic_transport=semantic_transport, semantic_config=semantic_config)
             return 0
         if args.data is None:
             raise ValueError('Données requises')
@@ -518,6 +536,10 @@ def main(argv=None):
             from .provider_access import initialize as initialize_provider_access
             initialize_provider_access(args.data)
             result = {'state': 'PROVIDER_ACCESS_INITIALIZED'}
+        elif args.action == 'initialize-semantic-help':
+            from . import semantic_help
+            result = dict(semantic_help.initialize(args.data),
+                          state='SEMANTIC_HELP_INITIALIZED_SERVICE_DISABLED')
         elif args.action == 'verify-backup':
             result = verify_backup(args.data)
         elif args.action in ('backup', 'restore'):

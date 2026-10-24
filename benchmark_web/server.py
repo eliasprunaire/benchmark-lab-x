@@ -34,7 +34,8 @@ _ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*', '<poli
 # Motifs servis, essayés dans l'ordre : un chemin absent de cette liste se journalise `<inconnu>`
 _ROUTE_PATTERNS = (
     '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
-    '/evaluations-externes', '/evaluations-externes/<id>',
+    '/evaluations-externes', '/evaluations-externes/aide', '/evaluations-externes/aide/<id>',
+    '/evaluations-externes/<id>',
     '/epreuves', '/epreuves/<id>/<id>', '/epreuves/<id>/<id>/pieces/<id>',
     '/epreuves/<id>/<id>/campagnes/<id>', '/epreuves/<id>/<id>/campagnes/<id>/pieces/<id>',
     '/mentions-legales', '/cgu', '/confidentialite',
@@ -682,9 +683,108 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 self.respond(503, value if wants_json else views.render(value, '', error=True),
                              'application/json' if wants_json else 'text/html; charset=utf-8')
 
+        def evaluations_help(self):
+            """Soumission volontaire : le web ne détient ni clé TypeSafe ni texte durable"""
+            wants_json = 'application/json' in self.headers.get('Accept', '')
+            try:
+                expected = public_url.rstrip('/') if public_url else f'http://{address}:{port}'
+                if (self.headers.get('Origin') not in (None, expected)
+                        or self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin', 'none')):
+                    raise ValueError('Origine invalide')
+                if urlsplit(self.path).query:
+                    raise ValueError('Adresse invalide')
+                length = self.headers.get('Content-Length', '')
+                if (not length.isdecimal() or not 0 < int(length) <= 524288
+                        or self.headers.get('Transfer-Encoding')):
+                    raise ValueError('Corps invalide')
+                raw = self.rfile.read(int(length))
+                if len(raw) != int(length) or self.headers.get_content_type() != \
+                        'application/x-www-form-urlencoded':
+                    raise ValueError('Corps invalide')
+                values = parse_qs(raw.decode('utf-8'), keep_blank_values=True, strict_parsing=True)
+                if any(len(items) != 1 for items in values.values()) or set(values) - {
+                        'submission_id', 'formulation', 'website'}:
+                    raise ValueError('Champ répété ou inconnu')
+                fields = {key: items[0] for key, items in values.items()}
+                if fields.pop('website', ''):
+                    value = {'kind': 'references_help', 'stage': 'none'}
+                    self.respond(200, value if wants_json else views.render(value, ''),
+                                 'application/json' if wants_json else 'text/html; charset=utf-8')
+                    return
+                submission_id = fields.get('submission_id', '')
+                formulation = fields.get('formulation', '')
+                if (re.fullmatch('[0-9a-f]{32}', submission_id) is None
+                        or not formulation.strip() or len(formulation) > 65536):
+                    raise ValueError('Demande invalide')
+            except TimeoutError:
+                self.log_request('<abandon>')
+                self.close_connection = True
+                return
+            except (ValueError, UnicodeError, TypeError):
+                value = {'kind': 'references_help', 'stage': 'unavailable',
+                         'reason': 'INVALID_REQUEST'}
+                self.respond(400, value if wants_json else views.render(value, ''),
+                             'application/json' if wants_json else 'text/html; charset=utf-8')
+                return
+            try:
+                result = preparation_request(socket_path, 'POST', '/semantic-help/requests', None, {
+                    'usage': 'repertoire', 'submission_id': submission_id,
+                    'formulation': formulation, 'notices': views.help_notices()})
+                value = result.get('value')
+                if (result['status'] < 400 and type(value) is dict
+                        and type(value.get('request_id')) is str
+                        and re.fullmatch('[0-9a-f]{32}', value['request_id'])):
+                    self.respond(303, b'', 'text/html; charset=utf-8',
+                                 {'Location': '/evaluations-externes/aide/' + value['request_id']})
+                    return
+                if wants_json:
+                    self.respond(result['status'], value, 'application/json')
+                    return
+                if type(value) is dict and value.get('status') in ('none', 'suggestions'):
+                    self.respond(200, views.render(views.semantic_help_view(value), '',
+                                                   '/evaluations-externes/aide'),
+                                 'text/html; charset=utf-8')
+                    return
+                reason = value.get('reason') if type(value) is dict else None
+                page = {'kind': 'references_help', 'stage': 'unavailable', 'reason': reason,
+                        'submission_id': submission_id, 'formulation': formulation}
+                self.respond(200, views.render(page, ''), 'text/html; charset=utf-8')
+            except OSError:
+                value = {'kind': 'references_help', 'stage': 'unavailable',
+                         'reason': 'PROVIDER_ERROR', 'submission_id': submission_id,
+                         'formulation': formulation}
+                self.respond(503, value if wants_json else views.render(value, ''),
+                             'application/json' if wants_json else 'text/html; charset=utf-8')
+
+        def evaluations_help_receipt(self, request_id):
+            if urlsplit(self.path).query:
+                self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                return
+            try:
+                result = preparation_request(socket_path, 'GET',
+                                             '/semantic-help/requests/' + request_id, None)
+            except OSError:
+                self.respond(503, views.render({'kind': 'references_help', 'stage': 'unavailable',
+                                                'reason': 'PROVIDER_ERROR'}, ''),
+                             'text/html; charset=utf-8')
+                return
+            if result['status'] == 404:
+                self.not_found()
+                return
+            value = result.get('value')
+            if type(value) is not dict:
+                self.not_found()
+                return
+            page = views.semantic_help_view(value)
+            self.respond(200 if result['status'] < 400 else 503,
+                         views.render(page, '', '/evaluations-externes/aide/' + request_id),
+                         'text/html; charset=utf-8')
+
         def do_POST(self):
             path = self.path.split('?', 1)[0]
-            if path == '/preparation/copies' or path == '/preparation/copies/':
+            if path == '/evaluations-externes/aide':
+                self.evaluations_help()
+            elif path == '/preparation/copies' or path == '/preparation/copies/':
                 self.not_found()
             elif path.startswith('/preparation/copies/'):
                 self.copy_from_editorial()
@@ -698,6 +798,18 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
 
         def do_GET(self):
             reference_path = self.path.split('?', 1)[0]
+            if reference_path == '/evaluations-externes/aide':
+                if urlsplit(self.path).query:
+                    self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                    return
+                value = {'kind': 'references_help', 'stage': 'form',
+                         'submission_id': secrets.token_hex(16)}
+                self.respond(200, views.render(value, '', reference_path), 'text/html; charset=utf-8')
+                return
+            help_receipt = re.fullmatch(r'/evaluations-externes/aide/([0-9a-f]{32})', reference_path)
+            if help_receipt is not None:
+                self.evaluations_help_receipt(help_receipt[1])
+                return
             if reference_path == '/evaluations-externes' or reference_path.startswith('/evaluations-externes/'):
                 identity = reference_path.removeprefix('/evaluations-externes').removeprefix('/')
                 if identity and identity not in views.BENCHMARK_REFERENCES:

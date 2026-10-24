@@ -92,6 +92,22 @@ with patch.object(views, 'BENCHMARK_REFERENCES', json.loads(Path('tests/fixtures
     referral.update(stage='suspended', checks=dict(out_of_scope='coding'), package=None, validation=None)
     referral['payload']['request'] = 'Besoin privé fictif à ne pas transmettre'
     reference_referral = views.render(referral, '').decode()
+    reference_help = views.render(dict(kind='references_help', stage='form',
+                                       submission_id='a' * 32), '').decode()
+    reference_help_result = views.render(dict(
+        kind='references_help', stage='suggestions',
+        suggestions=[{'id': 'atelier-code', 'label': 'correspond',
+                      'reference': views.BENCHMARK_REFERENCES['atelier-code']},
+                     {'id': 'atelier-maths', 'label': 'partiel',
+                      'reference': views.BENCHMARK_REFERENCES['atelier-maths']}],
+        receipt={'usage': 'repertoire', 'questions_version': 'repertoire-v1',
+                 'model_requested': 'jev-1.13.0', 'model_observed': 'jev-1.13.0',
+                 'notices': ['atelier-code', 'atelier-maths'], 'input_tokens': 120,
+                 'cost': {'status': 'KNOWN', 'amount': '0.000005', 'currency': 'USD',
+                          'source': 'Calcul local : jetons d’entrée reçus × tarif daté ; hors facture'}}),
+        '').decode()
+    reference_help_unavailable = views.render(dict(
+        kind='references_help', stage='unavailable', reason='DISABLED'), '').decode()
 with patch.object(views, 'BENCHMARK_REFERENCES', {}):
     reference_empty = views.render(dict(kind='references'), '').decode()
 approved_ids = ('matharena', 'livecodebench', 'swe-bench', 'mteb', 'artificial-analysis-api')
@@ -190,7 +206,9 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
                   'editorial-empty': editorial_empty,
                   'editorial-withdrawn': editorial_withdrawn, 'editorial_piece': editorial_piece,
                   'editorial-unavailable': editorial_unavailable, 'editorial-long-tool': editorial_long_tool,
-                  'reference-referral': reference_referral, 'reference-empty': reference_empty, **approved, 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
+                  'reference-referral': reference_referral, 'reference-empty': reference_empty,
+                  'reference_help': reference_help, 'reference_help_result': reference_help_result,
+                  'reference_help_unavailable': reference_help_unavailable, **approved, 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
                   'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT,
@@ -216,7 +234,7 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
   server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     res.setHeader('Cache-Control', 'no-store');
-    if (req.method === 'POST') {
+    if (req.method === 'POST' && url.pathname !== '/evaluations-externes/aide') {
       let raw = ''; for await (const chunk of req) raw += chunk;
       const body = req.headers['content-type']?.includes('application/json') ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw));
       posts.push({path: url.pathname, body});
@@ -252,6 +270,19 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
       res.setHeader('Content-Type', 'text/html');
       res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
       res.end(html);
+    } else if (url.pathname === '/evaluations-externes/aide') {
+      if (req.method === 'POST') {
+        req.on('data', () => {});
+        req.on('end', () => {res.writeHead(303, {Location: '/evaluations-externes/aide/result'}); res.end();});
+        return;
+      }
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      res.end(rendered.reference_help);
+    } else if (url.pathname === '/evaluations-externes/aide/result') {
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      res.end(rendered.reference_help_result);
     } else if (url.pathname === '/evaluations-externes' || url.pathname.startsWith('/evaluations-externes/')) {
       // Pages de views.render, comme /render : cette fixture ne remplace pas la preuve du serveur Python
       const html = url.pathname === '/evaluations-externes'
@@ -1411,6 +1442,46 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.deepEqual(external, [{url: 'https://code.example/evaluation', referer: undefined}]);
       assert.deepEqual(dialogs, []);
       assert.deepEqual(errors, []);
+      // Aide sémantique : information avant envoi, clavier, 390 px et fonctionnement sans JavaScript
+      await page.goto(origin + '/evaluations-externes/aide');
+      const help = await page.textContent('main');
+      for (const value of ['TypeSafe', 'Jev', 'formulation', 'Aucun dossier privé',
+                           'aucune information personnelle ou confidentielle',
+                           'reste disponible', 'Demander l’aide'])
+        assert.ok(help.includes(value), value);
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      const formulationField = page.getByLabel('Formulation à comparer');
+      await formulationField.fill('Corriger un programme fictif et résoudre un calcul inventé');
+      assert.equal(await formulationField.inputValue(), 'Corriger un programme fictif et résoudre un calcul inventé');
+      await formulationField.focus();
+      let submitFocused = false;
+      for (let press = 0; press < 5 && !submitFocused; press++) {
+        await page.keyboard.press('Tab');
+        submitFocused = await page.evaluate(() => document.activeElement.textContent.trim() === 'Demander l’aide');
+      }
+      assert.ok(submitFocused, 'bouton de l’aide inaccessible au clavier');
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      mkdirSync('reports/462', {recursive: true});
+      await page.screenshot({path: 'reports/462/aide-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.keyboard.press('Enter');
+      await page.waitForURL('**/evaluations-externes/aide/result');
+      const suggestions = await page.textContent('main');
+      assert.match(suggestions, /Correspondance forte/);
+      assert.match(suggestions, /Correspondance partielle/);
+      assert.match(suggestions, /Atelier Code fictif/);
+      assert.match(suggestions, /Atelier Maths fictif/);
+      assert.match(suggestions, /ne prouve ni adéquation/);
+      assert.equal(await page.locator('main details summary').filter({hasText: 'Reçu technique'}).count(), 1);
+      assert.equal(await page.locator('main a[href="/evaluations-externes"]').count(), 1);
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({path: 'reports/462/suggestions-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.goto(origin + '/render/reference_help_unavailable');
+      assert.match(await page.textContent('main'), /Aide indisponible/);
+      assert.match(await page.textContent('main'), /désactivé/);
+      assert.equal(await page.locator('main a[href="/evaluations-externes"]').count(), 1);
       await page.goto(origin + '/render/approved-index');
       const approved = await page.textContent('main');
       for (const name of ['MathArena', 'LiveCodeBench', 'SWE-bench', 'MTEB', 'Artificial Analysis, performances API'])
