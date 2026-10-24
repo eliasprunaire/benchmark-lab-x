@@ -430,11 +430,18 @@ def priority_href(value, query):
     return value['href'] + ('?' + urlencode(params) if params else '') + '#filters'
 
 
-def tradeoff_sentence(item, names):
-    """Compromis explicite : la réponse retenue est moins bonne qu'une autre réponse conforme"""
+def tradeoff_sentence(item, names, panel):
+    """Compromis explicite : la réponse retenue est moins bonne qu'une autre réponse conforme
+
+    Deux configurations du même modèle se distinguent par le candidat entier, effort compris
+    """
+    configuration = item['configuration']
+    label = (candidate_label(configuration, names)
+             if sum(other['model'] == configuration['model'] for other in panel.values()) > 1
+             else model_name(configuration, names))
     return ('Compromis sur « ' + item['measure'] + ' » : la réponse retenue vaut '
             + valeur_mesure(item['value'], item.get('unit')) + ', alors que '
-            + model_name(item['configuration'], names) + ' vaut '
+            + label + ' vaut '
             + valeur_mesure(item['best'], item.get('best_unit')) + '.')
 
 
@@ -634,12 +641,12 @@ def render_comparison(value):
                 content += 'Nous retenons la meilleure valeur observée sur ce critère, selon le sens fixé par le contrat. '
                 content += 'En cas d’égalité, le coût observé le plus bas départage.</p>'
             for item in choice.get('compromises', []):
-                content += '<p class="priority-tradeoff">' + text(tradeoff_sentence(item, names)) + '</p>'
+                content += '<p class="priority-tradeoff">' + text(tradeoff_sentence(item, names, panel)) + '</p>'
             if 'cases' in choice:
                 for item in choice['cases']:
                     for trade in item.get('compromises', []):
                         content += '<p class="priority-tradeoff">' + text(
-                            'Exemple ' + str(number(item['case_id'])) + ' : ' + tradeoff_sentence(trade, names)) + '</p>'
+                            'Exemple ' + str(number(item['case_id'])) + ' : ' + tradeoff_sentence(trade, names, panel)) + '</p>'
             content += '<p class="hint">Ce conseil ne compare que des réponses qui satisfont toutes les obligations : '
             content += 'aucune obligation non satisfaite n’est compensée.</p>'
             content += '<p><a href="' + text(priority_href(value, query)) + '">Revenir au conseil par défaut</a></p>'

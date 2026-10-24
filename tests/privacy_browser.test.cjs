@@ -1869,6 +1869,32 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       assert.ok(focused, 'dépliant non atteint au clavier');
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
       await page.getByText('Détail et preuves').first().click();
+      // Détail ouvert : la colonne Modèle garde des mots entiers, jamais une lettre par ligne
+      const column = await page.evaluate(() => {
+        const table = document.querySelector('section.comparison-results > .table-scroll > table');
+        const splitWords = node => {
+          const range = document.createRange(), lines = [];
+          for (let index = 0; index < node.length; index++) {
+            range.setStart(node, index);
+            range.setEnd(node, index + 1);
+            const top = Math.round(range.getBoundingClientRect().top);
+            const line = lines.find(item => Math.abs(item.top - top) < 2);
+            if (line) line.last = index;
+            else lines.push({top, first: index, last: index});
+          }
+          return lines.slice(1).filter(line => /\p{L}/u.test(node.data[line.first - 1] ?? '')
+            && /\p{L}/u.test(node.data[line.first] ?? ''))
+            .map(line => node.data.slice(line.first, line.last + 1));
+        };
+        const header = table.querySelector('thead th');
+        const name = table.querySelector('tbody th strong');
+        return {head: splitWords(header.firstChild), name: splitWords(name.firstChild),
+                width: Math.round(table.querySelector('tbody th').getBoundingClientRect().width),
+                characters: name.firstChild.length, scroll: table.parentElement.scrollWidth};
+      });
+      assert.deepEqual(column.head, [], 'en-tête de la colonne Modèle coupé entre deux lettres : ' + JSON.stringify(column));
+      assert.deepEqual(column.name, [], 'nom du modèle coupé entre deux lettres : ' + JSON.stringify(column));
+      assert.ok(column.scroll > 390, 'le tableau ne défile plus horizontalement : ' + JSON.stringify(column));
       let proofFocused = false;
       for (let press = 0; press < 40 && !proofFocused; press++) {
         await page.keyboard.press('Tab');

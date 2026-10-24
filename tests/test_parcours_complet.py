@@ -6029,6 +6029,76 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(appels, self.calls)
         self.assertTrue(self.starts.empty())
 
+        # Deux configurations du même modèle, efforts low puis high : le compromis nomme celle
+        # qui obtient la meilleure qualité
+        from tests.test_s3_regressions import fixture
+        _, view, _ = fixture(self.data)
+        with closing(storage.Store(self.data)) as store:
+            reference = store._connection.execute(
+                "SELECT piece_id FROM pieces WHERE dossier_id='fixture' AND revision=? AND role='judge'",
+                (view['revision'],)).fetchone()[0]
+            sid, _, token = prep.session(store, None, create=True)
+            for table in ('s2_dossiers', 's2_validations'):
+                store._connection.execute(f'UPDATE {table} SET session_id=? WHERE dossier_id=?', (sid, 'fixture'))
+            cookies = SimpleCookie('benchmark_session=' + token)
+            spec = specification(reference)
+            spec['secondary_criteria'] = [dict(id='clarte', measure='Éléments vérifiés', proof='Sortie conservée',
+                                               unit='éléments', favorable='higher', aggregation=None)]
+            candidate = qualification.draft(store, 'fixture', view['revision'], spec)
+            qualified = qualification.qualify(store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
+            qualification.approve(store, candidate['contract_sha256'], qualified['qualification_id'],
+                                  actor=ACTOR, authority=AUTHORITY)
+            store.create_budget('efforts-distincts', '40', 'TEST')
+            value = manifest(candidate, 'efforts-distincts')
+            shared = dict(value['panel'][0], id='x-low', model='openai/gpt-5.6-sol', effort='low',
+                          channel_id='fixture-channel-x-low', parameters={'reasoning': {'effort': 'low'}})
+            high = dict(shared, id='x-high', effort='high', channel_id='fixture-channel-x-high',
+                        parameters={'reasoning': {'effort': 'high'}})
+            value['panel'] = [shared, high, dict(value['panel'][1], id='y', channel_id='fixture-channel-y')]
+            cells = ['x-low', 'x-high', 'y']
+            value['plan'] = [dict(cell_id=cell, case_id='notes', configuration_id=cell) for cell in cells]
+            value['attempt_policy'] = dict(retries=False, order=cells, reason='Declared local order')
+            snapshot = campaigns.create(store, value)
+            authority, evidence = inputs(snapshot, cells=cells, budget='efforts-distincts')
+            authority['reserve_amounts'] = {cell: '7' for cell in cells}
+            campaigns.admit(store, 'efforts-distincts', authority, evidence)
+            costs = {'fixture-channel-x-low': '0.10', 'fixture-channel-y': '0.20', 'fixture-channel-x-high': '0.30'}
+            clarity = {'x-low': '1', 'y': '1', 'x-high': '2'}
+
+            def report(ctx, resources):
+                configuration = next(cell['configuration_id'] for cell in ctx['campaign']['cells']
+                                     if cell['cell_id'] == ctx['attempt']['cell_id'])
+                piece = ctx['attempt']['output_piece_id']
+                proof = [dict(piece_id=piece, sha256=sha256(resources[piece]).hexdigest(),
+                              passage=resources[piece].decode())]
+                result = findings(ctx, resources)
+                result['measures'] = [dict(criterion_id=definition['id'], value=clarity[configuration],
+                                           unit=definition['unit'], evidence=proof)
+                                      for definition in ctx['qualification']['contract']['specification']['secondary_criteria']]
+                return result
+
+            def transport(operation, request):
+                channel = request['requested_configuration']['channel_id']
+                value = response(operation, request)
+                value['receipt']['result']['output'] = 'Action : relire | Responsable : Camille · ' + channel
+                value['cost'].update(status='KNOWN', amount=costs[channel], currency='TEST')
+                return value
+
+            for cell in cells:
+                attempts = campaigns.reserve(store, 'efforts-distincts', cell, 'attempt-' + cell)
+                execution.execute(self.data, attempts['operation_id'], transport)
+                evaluation.evaluate(store, 'efforts-distincts', attempts['operation_id'], responsible=RESPONSIBLE,
+                                    authority=EVALUATION_AUTHORITY, check=report)
+            campaigns.stop(store, 'efforts-distincts')
+        ambiguous, _, ambiguous_raw = self.request('/preparation/dossiers/fixture/campaigns/efforts-distincts?priority=cost',
+                                                   cookies=cookies)
+        self.assertIn('Notre conseil', ambiguous.visible)
+        self.assertIn('Modèle A', ambiguous.visible)
+        tradeoff = re.search(r'<p class="priority-tradeoff">(.*?)</p>', ambiguous_raw.decode()).group(1)
+        self.assertIn('Modèle A · Niveau de raisonnement : Élevé (high) vaut', tradeoff)
+        self.assertNotIn('alors que Modèle A vaut', tradeoff)
+        self.assertNotIn('Faible (low)', tradeoff)
+
     def test_conseil_exige_un_cas_complet_et_plusieurs_reponses_satisfaisantes(self):
         """Le vrai serveur restitue les preuves sans les modifier
 
