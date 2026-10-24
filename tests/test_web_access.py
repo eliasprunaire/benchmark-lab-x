@@ -835,6 +835,9 @@ class RouteCanonicalizationTests(unittest.TestCase):
                 ('/mentions-legales', '/mentions-legales'), ('/cgu', '/cgu'),
                 ('/confidentialite', '/confidentialite'),
                 ('/epreuves', '/epreuves'),
+                ('/epreuves/aide', '/epreuves/aide'),
+                ('/epreuves/aide?q=formulation-privee', '/epreuves/aide'),
+                ('/epreuves/aide/resultat/' + 'a' * 32, '/epreuves/aide/resultat/<id>'),
                 ('/epreuves?q=tableau&langue=Fran%C3%A7ais&outil=Tableur', '/epreuves'),
                 ('/epreuves/tache-fictive/version-1', '/epreuves/<id>/<id>'),
                 ('/epreuves/tache-fictive/version-1?q=tableau', '/epreuves/<id>/<id>'),
@@ -1028,17 +1031,27 @@ class AccessJournalTests(WebServerCase):
         self.assertEqual(503, status)
         self.executor.raw_response = None
 
+        status, _, _ = self.request('GET', '/epreuves/aide?q=formulation-privee',
+                                    headers={'Accept': 'application/json'})
+        self.assertEqual(400, status)
+        status, _, _ = self.request('GET', '/epreuves/aide/resultat/' + 'a' * 32,
+                                    headers={'Accept': 'application/json'})
+        self.assertEqual(404, status)
+
         lines = self.lines()[start:]
-        self.assertEqual(6, len(lines), lines)
+        self.assertEqual(8, len(lines), lines)
         self.assertEqual(
             [('GET', '/preparation/access', '200'), ('PUT', '/preparation', '405'),
              ('GET', '<inconnu>', '404'), ('POST', '/preparation/dossiers', '400'),
-             ('GET', '/preparation/dossiers/<id>', '403'), ('GET', '/preparation', '503')],
+             ('GET', '/preparation/dossiers/<id>', '403'), ('GET', '/preparation', '503'),
+             ('GET', '/epreuves/aide', '400'), ('GET', '/epreuves/aide/resultat/<id>', '404')],
             [self.parsed(line) for line in lines])
         for line in lines:
             self.assertNotIn(dossier, line)
             self.assertNotIn('b' * 64, line)
+            self.assertNotIn('a' * 32, line)
             self.assertNotIn('saisie', line)
+            self.assertNotIn('formulation-privee', line)
             self.assertNotIn('?', line)
 
     def test_un_refus_avant_l_analyse_laisse_une_ligne_sans_chemin(self):

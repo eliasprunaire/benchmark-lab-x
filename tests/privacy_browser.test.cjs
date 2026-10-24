@@ -166,6 +166,21 @@ with tempfile.TemporaryDirectory() as editorial_dir:
             editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode(),
         '/epreuves/tache-fictive/version-2': views.render(
             editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-2'), '').decode()}
+    editorial_help_versions = editorial.fixture_catalog(editorial_dir)['versions']
+    editorial_help_form = views.render({'kind': 'editorial_help', 'stage': 'form',
+                                        'submission_id': 'a' * 32}, '').decode()
+    editorial_help_value = {
+        'status': 'suggestions',
+        'suggestions': [{'notice_id': packed['package_sha256'], 'label': 'correspond'},
+                        {'notice_id': packed_two['package_sha256'], 'label': 'partiel'}],
+        'receipt': {'usage': 'epreuves', 'questions_version': 'epreuves-v1',
+                    'model_requested': 'jev-1.13.0', 'model_observed': 'jev-1.13.0',
+                    'notices': [packed['package_sha256'], packed_two['package_sha256']],
+                    'input_tokens': 120,
+                    'cost': {'status': 'KNOWN', 'amount': '0.000005', 'currency': 'USD',
+                             'source': 'Calcul local : jetons d’entrée reçus × tarif daté ; hors facture'}}}
+    editorial_help_result = views.render(
+        views.editorial_help_view(editorial_help_value, editorial_help_versions), '').decode()
     editorial_version_search = {
         '/epreuves/tache-fictive/version-2|' + json.dumps(['note', '', '', '', '', ''], ensure_ascii=False, separators=(',', ':')):
             views.render(dict(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-2'),
@@ -176,6 +191,9 @@ with tempfile.TemporaryDirectory() as editorial_dir:
     editorial.fixture_withdraw(editorial_dir, 'tache-fictive', 'version-1',
                                editorial.fixture_withdrawal(packed['package_sha256'], 'tache-fictive', 'version-1'))
     editorial_withdrawn = views.render(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode()
+    editorial_help_withdrawn = views.render(
+        views.editorial_help_view(editorial_help_value,
+                                  editorial.fixture_catalog(editorial_dir)['versions']), '').decode()
 with tempfile.TemporaryDirectory() as unavailable_dir:
     unavailable_dir = str(Path(unavailable_dir).resolve())
     packed_retired, packed_retired_approval = editorial_bundle(
@@ -203,6 +221,9 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
                   'reference_search': reference_search, 'reference_notices': reference_notices,
                   'editorial_pages': editorial_pages, 'editorial-search': editorial_search,
                   'editorial-version-search': editorial_version_search,
+                  'editorial-help': editorial_help_form,
+                  'editorial-help-result': editorial_help_result,
+                  'editorial-help-withdrawn': editorial_help_withdrawn,
                   'editorial-empty': editorial_empty,
                   'editorial-withdrawn': editorial_withdrawn, 'editorial_piece': editorial_piece,
                   'editorial-unavailable': editorial_unavailable, 'editorial-long-tool': editorial_long_tool,
@@ -1684,6 +1705,40 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
       mkdirSync('reports/465', {recursive: true});
       await page.screenshot({path: 'reports/465/copie-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.goto(origin + '/render/editorial-help');
+      const helpForm = await page.textContent('main');
+      assert.match(helpForm, /TypeSafe/);
+      assert.match(helpForm, /Données transmises/);
+      assert.match(helpForm, /Recherche simple/);
+      const formulation = page.getByLabel('Formulation à comparer');
+      await formulation.focus();
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/editorial-help-result');
+      const helpResult = await page.textContent('main');
+      assert.match(helpResult, /Correspondance forte/);
+      assert.match(helpResult, /Correspondance partielle/);
+      assert.match(helpResult, /Cette appréciation ne prouve ni adéquation ni qualification/);
+      assert.match(helpResult, /Résultat attendu/);
+      assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-1"]').count(), 1);
+      assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-2"]').count(), 1);
+      assert.equal(await page.locator('main script').count(), 0);
+      const suggestion = page.locator('main a[href="/epreuves/tache-fictive/version-2"]');
+      await suggestion.focus();
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      mkdirSync('reports/467', {recursive: true});
+      await page.screenshot({path: 'reports/467/aide-catalogue-mobile-'
+        + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.goto(origin + '/render/editorial-help-withdrawn');
+      const withdrawnHelp = await page.textContent('main');
+      assert.match(withdrawnHelp, /Une suggestion a été retirée/);
+      assert.equal(withdrawnHelp.includes('Tableau <script>alert(1)</script>'), false);
+      assert.match(withdrawnHelp, /Note <script>alert\(4\)<\/script>/);
+      assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-1"]').count(), 0);
+      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/editorial-empty');
       assert.match(await page.textContent('main'), /Aucune épreuve publiée/);
       assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');

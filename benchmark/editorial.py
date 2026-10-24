@@ -662,7 +662,8 @@ def _entry(record):
     entry = dict(task_id=manifest['task_id'], version_id=manifest['version_id'], title=manifest['title'],
                  work=manifest['work'], cases=list(manifest['cases']), limits=list(manifest['limits']),
                  qualification_status=manifest['qualification_status'],
-                 results_published=manifest['results_published'])
+                 results_published=manifest['results_published'],
+                 package_sha256=record['identity'])
     for key in _CHARACTERISTICS:
         entry[key] = manifest.get(key)
     return entry
