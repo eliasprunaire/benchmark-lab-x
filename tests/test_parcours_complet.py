@@ -2326,6 +2326,16 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual((503, 'FINANCE', 0, []),
                          (code, value['reason'], len(transport.wires),
                           semantic_help.inspect(store)['requests']))
+        # Une base restaurée n'admet aucune émission avant vérification
+        marker = store._root / 'restore.json'
+        marker.write_text('{"state": "RESTORED_RECONCILIATION_REQUIRED"}')
+        try:
+            code, value = semantic_help.handle(store, body('0' * 32), transport, no_tariff,
+                                               usage='repertoire')
+        finally:
+            marker.unlink()
+        self.assertEqual((503, 'RESTORE_PENDING', 0),
+                         (code, value['reason'], len(transport.wires)))
         # Le dépassement de contexte est refusé sans troncature ni appel
         config = semantic_help.configure({
             'format': semantic_help.PROFILE_FORMAT,

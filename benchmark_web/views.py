@@ -521,6 +521,8 @@ HELP_REASONS = {
     'INTERRUPTED': 'L’aide a été interrompue. Elle ne sera pas relancée.',
     'RECORD_FAILED': 'Le reçu de l’aide n’a pas pu être conservé. Aucune suggestion n’est affichée.',
     'CONFLICT': 'Cette demande ne correspond pas au reçu conservé.',
+    'RESTORE_PENDING': 'Les données sont en attente de vérification après restauration. '
+                       'Aucun appel n’a été émis.',
     'INVALID_REQUEST': 'La demande est incomplète. Corrigez-la et renvoyez-la.',
 }
 HELP_INTRO = (

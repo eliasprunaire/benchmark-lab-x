@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import json
 import logging
+import os
 import re
 import time
 from typing import Any, Protocol
@@ -539,6 +540,9 @@ def handle(store, body, transport: Transport | None, config: Configuration | Non
     if not closed:
         return 200, {'kind': 'semantic_help', 'status': 'none', 'reason': None,
                      'suggestions': [], 'receipt': None}
+    if os.path.lexists(store._root / 'restore.json'):
+        return 503, {'kind': 'semantic_help', 'status': 'unavailable',
+                     'reason': 'RESTORE_PENDING'}
     if config.tariff is None:
         return 503, {'kind': 'semantic_help', 'status': 'unavailable', 'reason': 'FINANCE'}
     wire, questions, closed = _projection(usage, body['formulation'], closed)
