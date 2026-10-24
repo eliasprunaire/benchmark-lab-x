@@ -197,7 +197,7 @@ def browser_views():
         examples['bootstrap-' + name] = dict(kind='session_bootstrap', return_path=path)
     # #465 : copie privée d’une épreuve publiée, sans package ni qualification importée
     copy = deepcopy(example_view())
-    copy.update(stage='draft', package=None, validation=None, qualified=False)
+    copy.update(stage='draft', package=None, validation=None, qualified=False, operations=0)
     copy['payload'] = dict(copy['payload'], request='')
     copy.pop('criteria', None)
     copy['source'] = dict(task_id='tache-fictive', version_id='version-1', title='Tableau <script>alert(1)</script>',
