@@ -193,7 +193,7 @@ dl.kv dd { margin: 0; }
 .comparison-filters > form { padding: .25rem 1.2rem 1.2rem; }
 .filter-grid > div { min-width: 0; }
 .filter-advanced { margin: 1rem 0; }
-.comparison-results th:first-child { width: 27%; overflow-wrap: anywhere; }
+.comparison-results th:first-child { width: 27%; }
 .comparison-results td:last-child { width: 8rem; }
 .comparison-results td .hint { font-size: .85rem; }
 .filter-grid label { margin-top: .2rem; }
