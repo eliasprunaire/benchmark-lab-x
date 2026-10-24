@@ -361,7 +361,8 @@ def render_editorial(value):
         content = ('<p>La recherche porte sur le texte des notices publiques. Elle est déterministe et ne classe '
                    'pas les épreuves par proximité sémantique.</p>'
                    '<p>Les caractéristiques sont déclarées avec chaque version. Une information absente reste '
-                   'inconnue ; elle ne prouve ni absence d’outil ni qualification.</p>')
+                   'inconnue ; elle ne prouve ni absence d’outil ni qualification.</p>'
+                   '<p><a href="/epreuves/aide">Demander une aide sémantique facultative</a></p>')
         filters = value.get('filters') or {}
 
         def active_unavailable(key):
@@ -556,13 +557,13 @@ def help_notices():
     return notices
 
 
-def help_form(value):
+def help_form(value, action='/evaluations-externes/aide'):
     submission_id = value.get('submission_id')
     if type(submission_id) is not str or re.fullmatch('[0-9a-f]{32}', submission_id) is None:
         return ''
     formulation = value.get('formulation')
     formulation = formulation if type(formulation) is str else ''
-    return ('<form method="post" action="/evaluations-externes/aide">'
+    return ('<form method="post" action="' + text(action) + '">'
             '<input type="hidden" name="submission_id" value="' + text(submission_id) + '">'
             '<label for="formulation">Formulation à comparer</label>'
             '<p id="formulation-help" class="hint">Décrivez le travail recherché, sans information '
@@ -571,6 +572,30 @@ def help_form(value):
             'aria-describedby="formulation-help">' + text(formulation) + '</textarea>'
             + HONEYPOT +
             '<button type="submit">Demander l’aide</button></form>')
+
+
+def render_help_receipt(receipt):
+    """Reçu technique commun, sans texte recherché ni identifiant brut de notice"""
+    if not receipt:
+        return ''
+    cost = receipt.get('cost') or {}
+    notices = receipt.get('notice_labels')
+    if notices is None:
+        notices = receipt.get('notices') or []
+    return ('<details><summary>Reçu technique de cette demande</summary><dl>'
+            '<dt>Usage</dt><dd>' + text(receipt.get('usage')) + '</dd>'
+            '<dt>Version des questions</dt><dd>' + text(receipt.get('questions_version')) + '</dd>'
+            '<dt>Modèle demandé</dt><dd>' + text(receipt.get('model_requested')) + '</dd>'
+            '<dt>Modèle observé</dt><dd>' + text(receipt.get('model_observed') or 'Inconnu') + '</dd>'
+            '<dt>Notices appréciées</dt><dd>' + text(', '.join(notices) or 'Aucune') + '</dd>'
+            '<dt>Jetons d’entrée</dt><dd>' + text(receipt.get('input_tokens') if receipt.get('input_tokens') is not None else 'Inconnus') + '</dd>'
+            '<dt>Jetons de sortie</dt><dd>' + text(receipt.get('output_tokens') if receipt.get('output_tokens') is not None else 'Inconnus') + '</dd>'
+            '<dt>Coût calculé</dt><dd>' + text(
+                'inconnu' if cost.get('status') != 'KNOWN'
+                else montant_lisible(cost.get('amount')) + ' ' + str(cost.get('currency'))) + '</dd>'
+            '<dt>Base du coût</dt><dd>' + text(cost.get('source') or 'Inconnue') + '</dd>'
+            '</dl><p class="hint">Un coût calculé depuis les jetons reçus et le tarif daté reste '
+            'distinct d’une facture. Un coût inconnu conserve sa réserve.</p></details>')
 
 
 def render_semantic_help(value):
@@ -608,23 +633,7 @@ def render_semantic_help(value):
         content += state_block('unk', 'Aide sémantique', 'Aide indisponible',
                                '<p>' + text(HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
                                + '</p>')
-    if value.get('receipt'):
-        receipt = value['receipt']
-        cost = receipt.get('cost') or {}
-        content += ('<details><summary>Reçu technique de cette demande</summary><dl>'
-                    '<dt>Usage</dt><dd>' + text(receipt.get('usage')) + '</dd>'
-                    '<dt>Version des questions</dt><dd>' + text(receipt.get('questions_version')) + '</dd>'
-                    '<dt>Modèle demandé</dt><dd>' + text(receipt.get('model_requested')) + '</dd>'
-                    '<dt>Modèle observé</dt><dd>' + text(receipt.get('model_observed') or 'Inconnu') + '</dd>'
-                    '<dt>Notices appréciées</dt><dd>' + text(', '.join(receipt.get('notices') or []) or 'Aucune') + '</dd>'
-                    '<dt>Jetons d’entrée</dt><dd>' + text(receipt.get('input_tokens') if receipt.get('input_tokens') is not None else 'Inconnus') + '</dd>'
-                    '<dt>Jetons de sortie</dt><dd>' + text(receipt.get('output_tokens') if receipt.get('output_tokens') is not None else 'Inconnus') + '</dd>'
-                    '<dt>Coût calculé</dt><dd>' + text(
-                        'inconnu' if cost.get('status') != 'KNOWN'
-                        else montant_lisible(cost.get('amount')) + ' ' + str(cost.get('currency'))) + '</dd>'
-                    '<dt>Base du coût</dt><dd>' + text(cost.get('source') or 'Inconnue') + '</dd>'
-                    '</dl><p class="hint">Un coût calculé depuis les jetons reçus et le tarif daté reste '
-                    'distinct d’une facture. Un coût inconnu conserve sa réserve.</p></details>')
+    content += render_help_receipt(value.get('receipt'))
     content += ('<p><a href="/evaluations-externes/aide">Nouvelle demande</a> · '
                 '<a href="/evaluations-externes">Recherche simple</a> · '
                 '<a href="/preparation">Décrire mon cas d’usage</a></p>')
@@ -650,6 +659,94 @@ def semantic_help_view(value):
     return {'kind': 'references_help', 'stage': stage, 'reason': value.get('reason'),
             'receipt': value.get('receipt'), 'suggestions': suggestions,
             'dropped': dropped}
+
+
+def editorial_help_notices(versions):
+    """Champs publics utiles à l’aide catalogue, sans qualification, résultat ni caractéristique inventée"""
+    notices = []
+    for entry in versions:
+        identity = entry.get('package_sha256')
+        if type(identity) is not str or re.fullmatch(r'[0-9a-f]{64}', identity) is None:
+            continue
+        item = {'id': identity, 'name': entry.get('title') or 'Inconnue',
+                'work': entry.get('work') or 'Inconnu', 'version': entry.get('version_id')}
+        scope = entry.get('expected_result')
+        if type(scope) is str and scope:
+            item['scope'] = scope
+        if entry.get('limits'):
+            item['limits'] = '\n'.join(entry['limits'])
+        notices.append(item)
+    return notices
+
+
+def editorial_help_view(value, versions):
+    """Projection de l’aide catalogue : chaque suggestion est revérifiée contre le catalogue courant"""
+    available = {entry['package_sha256']: entry for entry in versions
+                 if type(entry.get('package_sha256')) is str}
+    status = value.get('status')
+    stage = {'suggestions': 'suggestions', 'none': 'none',
+             'unavailable': 'unavailable', 'pending': 'pending'}.get(status, 'unavailable')
+    suggestions, dropped = [], False
+    for suggestion in value.get('suggestions') or []:
+        entry = available.get(suggestion.get('notice_id'))
+        if entry is None:
+            dropped = True
+            continue
+        suggestions.append({'id': suggestion['notice_id'], 'label': suggestion.get('label'),
+                            'entry': entry})
+    if stage == 'suggestions' and not suggestions:
+        stage = 'none'
+    receipt = value.get('receipt')
+    if type(receipt) is dict:
+        receipt = dict(receipt)
+        receipt['notice_labels'] = [
+            available[identity]['task_id'] + ' / ' + available[identity]['version_id']
+            if identity in available else 'Version retirée ou indisponible'
+            for identity in (receipt.get('notices') or [])]
+    return {'kind': 'editorial_help', 'stage': stage, 'reason': value.get('reason'),
+            'receipt': receipt, 'suggestions': suggestions, 'dropped': dropped}
+
+
+def render_editorial_help(value):
+    stage = value.get('stage')
+    content = HELP_INTRO
+    if stage in ('form', 'unavailable'):
+        content += help_form(value, '/epreuves/aide')
+    if stage == 'suggestions':
+        content += '<section><h2>Suggestions</h2>'
+        content += ('<p class="hint">Chaque version est appréciée indépendamment. Les correspondances '
+                    'reposent sur des critères fermés et les champs publics. Aucune suggestion ne '
+                    'qualifie une épreuve.</p>')
+        for suggestion in value.get('suggestions') or []:
+            entry = suggestion.get('entry') or {}
+            label = HELP_LABELS.get(suggestion.get('label'), 'Correspondance')
+            href = ('/epreuves/' + text(entry.get('task_id', '')) + '/'
+                    + text(entry.get('version_id', '')))
+            content += ('<section><h2><a href="' + href + '">' + text(entry.get('title') or 'Inconnue')
+                        + '</a></h2><p class="note">' + text(label) + '. Cette appréciation ne prouve ni '
+                        'adéquation ni qualification.</p>' + editorial_fields(entry) + '</section>')
+        if not value.get('suggestions'):
+            content += '<p>Aucune suggestion.</p>'
+        content += '</section>'
+    elif stage == 'none':
+        content += ('<p role="status">Aucune épreuve ne correspond à cette formulation. '
+                    'La recherche simple reste disponible.</p>')
+    if value.get('dropped'):
+        content += ('<p class="hint">Une suggestion a été retirée : sa version n’est plus disponible '
+                    'ou son paquet ne correspond plus à son empreinte.</p>')
+    elif stage == 'pending':
+        content += state_block('wait', 'Aide sémantique', 'Aide en cours',
+                               '<p>La demande est enregistrée. Cette page ne relance aucun appel ; '
+                               'actualisez-la dans un instant.</p>')
+    elif stage == 'unavailable':
+        content += state_block('unk', 'Aide sémantique', 'Aide indisponible',
+                               '<p>' + text(HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
+                               + '</p>')
+    content += render_help_receipt(value.get('receipt'))
+    content += ('<p><a href="/epreuves/aide">Nouvelle demande</a> · '
+                '<a href="/epreuves">Recherche simple</a> · '
+                '<a href="/preparation">Décrire mon cas d’usage</a></p>')
+    return 'Aide sémantique facultative', content
 
 
 def render_task_index(task):
@@ -793,6 +890,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                                  'references': '/evaluations-externes' if not value.get('reference_id') else None,
                                  'references_help': None,
                                  'editorial': '/epreuves' if not value.get('version_id') else None,
+                                 'editorial_help': None,
                                  'copy_source': '/preparation'}.get(
         value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
@@ -850,6 +948,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, content = render_semantic_help(value)
     elif value.get('kind') == 'editorial':
         title, content = render_editorial(value)
+    elif value.get('kind') == 'editorial_help':
+        title, content = render_editorial_help(value)
     elif value.get('kind') == 'results':
         title, content = render_results(value)
     elif value.get('kind') == 'privacy_data':

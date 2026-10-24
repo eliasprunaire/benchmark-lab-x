@@ -378,6 +378,18 @@ class ParcoursComplet(unittest.TestCase):
             return self.request(headers['Location'])[0], headers['Location']
         return result, None
 
+    def editorial_help_submit(self, formulation, *, status=303, submission_id=None):
+        page, _, _ = self.request('/epreuves/aide')
+        form = page.form('/epreuves/aide')
+        fields = dict(form['fields'])
+        if submission_id is not None:
+            fields['submission_id'] = submission_id
+        result, headers, _ = self.request(form['action'], fields | {'formulation': formulation},
+                                          status=status)
+        if status == 303:
+            return self.request(headers['Location'])[0], headers['Location']
+        return result, None
+
     def examine(self, page, route, state, primary):
         with self.subTest(route=route, état=state):
             headings = [n for n in page.nodes if n['tag'] == 'h1']
@@ -989,6 +1001,16 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn('Outil retiré', catalog.options('outil'))
             for absent in ('Langue invalide', 'Langue privée', 'Langue contribuée'):
                 self.assertNotIn(absent, catalog.options('langue'))
+
+            # L’aide facultative part du catalogue sans relais privé ni texte dans l’adresse
+            help_link = catalog.link('Demander une aide sémantique facultative')
+            self.assertEqual('/epreuves/aide', help_link)
+            help_page, help_headers, help_raw = self.request(help_link)
+            self.assertIsNone(help_headers.get('Set-Cookie'))
+            self.assertNotIn(b'<script', help_raw)
+            self.assertEqual('/epreuves/aide', help_page.form('/epreuves/aide')['action'])
+            self.assertIn('TypeSafe', help_page.visible)
+            self.request('/epreuves/aide?q=formule-privee', status=400)
 
             # Chaque caractéristique reste distincte sur la notice exacte
             calc_page = self.request('/epreuves/' + task + '/version-calcul')[0]
@@ -2675,6 +2697,381 @@ class ParcoursComplet(unittest.TestCase):
                                      restart_config, usage='repertoire')
         self.assertEqual((200, 'suggestions'), (fresh[0], fresh[1]['status']))
         self.assertEqual(2, len(semantic_help.inspect(restart_store)['requests']))
+
+    def test_aide_semantique_epreuves_desactivee(self):
+        """#467 : service désactivé, la recherche, les filtres, l’ouverture et la copie restent disponibles"""
+        task = 'tache-fictive'
+        self.publier_epreuve('version-calcul', title='Tableau des débits',
+                             characteristics={'language': 'Français', 'tools': ['Tableur']})
+        transport = TypeSafeFixture()
+        # L’exécuteur reçoit un transport fictif mais aucune configuration : aucune émission ne peut partir
+        self.semantic = (None, transport)
+
+        found, _, _ = self.request('/epreuves?' + urlencode({'q': 'tableau', 'langue': 'Français'}))
+        self.assertIn('Tableau des débits', found.visible)
+        self.assertIn('Critères actifs', found.visible)
+        opened = self.request('/epreuves/' + task + '/version-calcul')[0]
+        self.assertIn('Tableau des débits', opened.visible)
+        self.assertIn('Créer mon dossier privé', opened.visible)
+
+        disabled, _ = self.editorial_help_submit('Lister les mouvements mensuels d’un compte fictif',
+                                                  status=200)
+        self.assertIn('Aide indisponible', disabled.visible)
+        self.assertIn('désactivé', disabled.visible)
+        self.assertIn('Recherche simple', disabled.visible)
+        self.assertEqual([], transport.wires)
+        self.assertEqual([], self.access.verifications)
+        self.assertEqual([], self.calls)
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual([], semantic_help.inspect(store)['requests'])
+
+        # La recherche et la copie restent disponibles après le refus de l’aide
+        again = self.request('/epreuves?' + urlencode({'q': 'tableau'}))[0]
+        self.assertIn('Tableau des débits', again.visible)
+        result, headers, _ = self.copie_epreuve('version-calcul')
+        self.assertRegex(headers['Location'], r'^/preparation/dossiers/[A-Za-z0-9_-]{1,128}$')
+        self.assertEqual([], transport.wires)
+        self.assertEqual([], self.access.verifications)
+        self.assertEqual([], self.calls)
+        self.assertTrue(self.starts.empty())
+
+    def test_aide_semantique_epreuves(self):
+        """#467 : formulation différente, suggestions publiques exactes, retrait et copie"""
+        task = 'tache-fictive'
+        formulation = 'Lister les mouvements mensuels d’un compte fictif'
+        calcul = self.publier_epreuve(
+            'version-calcul', title='Tableau des débits', work='Préparer un tableau par opération',
+            characteristics={'expected_result': 'Tableau des débits', 'inputs': ['Textes fournis'],
+                             'language': 'Français', 'tools': ['Tableur'], 'difficulty': 'Facile'})
+        redaction = self.publier_epreuve(
+            'version-redaction', title='Note de synthèse', work='Rédiger une note de synthèse',
+            qualification='QUALIFIED',
+            characteristics={'expected_result': 'Note de synthèse', 'inputs': ['Bibliothèque figée'],
+                             'language': 'Anglais', 'tools': [], 'difficulty': 'Difficile'})
+        old = self.publier_epreuve('version-ancienne', title='Ancienne épreuve', schema=editorial.SCHEMA_V1)
+        retired = self.publier_epreuve('version-retiree', title='Épreuve retirée',
+                                       characteristics={'language': 'Langue retirée'})
+        editorial.withdraw(self.public, task, 'version-retiree', dict(
+            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=retired['package_sha256'],
+            scope='editorial-withdrawal', task_id=task, version_id='version-retiree'))
+        # Autorité fictive déposée hors de son répertoire : jamais candidate
+        fixture = self.construire_epreuve('version-fictive', title='Épreuve fictive',
+                                          characteristics={'language': 'Langue fictive'})
+        editorial.fixture_publish(self.public, fixture, editorial.fixture_approval(fixture['package_sha256']))
+        deposited = self.public / 'editorial-trials' / task / 'version-fictive'
+        deposited.mkdir(parents=True)
+        for item in (self.public / 'editorial-fixture' / task / 'version-fictive').iterdir():
+            (deposited / item.name).write_bytes(item.read_bytes())
+        # Paquet malformé et paquet altéré : illisibles ou divergents, donc jamais candidats
+        invalid = self.public / 'editorial-trials' / task / 'version-invalide'
+        invalid.mkdir()
+        (invalid / 'manifest.json').write_text('{"language":"Langue invalide"}')
+        altered = self.publier_epreuve('version-alteree', title='Épreuve altérée',
+                                       characteristics={'language': 'Langue altérée'})
+        altered_piece = self.public / 'editorial-trials' / task / 'version-alteree' / 'piece-consigne.txt'
+        altered_piece.write_text('Octets altérés')
+        # Dossier privé et contribution voisine : jamais lus pour servir l’aide
+        private_bundle = self.construire_epreuve('version-privee', title='Épreuve privée',
+                                                 characteristics={'language': 'Langue privée'})
+        editorial.publish(self.data, private_bundle, dict(
+            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=private_bundle['package_sha256'],
+            scope='editorial-trial'))
+        contributed = self.construire_epreuve('version-contribuee', title='Contribution voisine',
+                                              characteristics={'language': 'Langue contribuée'})
+        contribution = self.public / 'contributions' / task / 'version-contribuee'
+        contribution.mkdir(parents=True)
+        (contribution / 'manifest.json').write_bytes(contributed['manifest'])
+        for name, raw in contributed['files'].items():
+            (contribution / name).write_bytes(raw)
+
+        before_public = {str(path.relative_to(self.public / 'editorial-trials')): path.read_bytes()
+                         for path in (self.public / 'editorial-trials').rglob('*') if path.is_file()}
+
+        def suggest(wire):
+            document = json.loads(wire)
+            labels = [{'Préparer un tableau par opération': 'correspond',
+                       'Rédiger une note de synthèse': 'partiel'}.get(
+                           notice['work'], 'sans_correspondance')
+                      for notice in document['state']['notices']]
+            return {'status': 200, 'body': typesafe_document(wire, labels), 'complete': True}
+
+        transport = self.enable_semantic(TypeSafeFixture(suggest), enabled=('epreuves',))
+        page, path = self.editorial_help_submit(formulation)
+        self.assertRegex(path, r'^/epreuves/aide/resultat/[0-9a-f]{32}$')
+        self.assertNotIn(formulation, path)
+        self.assertIn('Tableau des débits', page.visible)
+        self.assertIn('Correspondance forte', page.visible)
+        self.assertIn('Note de synthèse', page.visible)
+        self.assertIn('Correspondance partielle', page.visible)
+        self.assertIn('Cette appréciation ne prouve ni adéquation ni qualification', page.visible)
+        self.assertIn('Tableau des débits', page.visible)
+        self.assertNotIn('Aide indisponible', page.visible)
+        self.assertNotIn('0.9', page.visible)
+        self.assertNotIn('0.6', page.visible)
+        self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b')
+        for absent in ('Épreuve retirée', 'Épreuve fictive', 'Épreuve altérée', 'Épreuve privée',
+                       'Contribution voisine', 'Langue retirée', 'Langue fictive', 'Langue altérée',
+                       'Langue privée', 'Langue contribuée', 'Langue invalide'):
+            self.assertNotIn(absent, page.visible)
+        self.assertEqual('/epreuves', page.link('Recherche simple'))
+        self.assertEqual('/preparation', page.link('Décrire mon cas d’usage'))
+        self.assertEqual([], page.forms)
+        self.assertEqual('/epreuves/tache-fictive/version-calcul', page.link('Tableau des débits'))
+        rendered = ' '.join(node['text'] for node in page.nodes if not node['hidden'])
+        self.assertIn('epreuves', rendered)
+        self.assertIn('epreuves-v1', rendered)
+        self.assertIn('tache-fictive / version-calcul', rendered)
+
+        self.assertEqual(1, len(transport.wires))
+        document = json.loads(transport.wires[0])
+        self.assertEqual({'model', 'state', 'questions'}, set(document))
+        self.assertEqual('jev-1.13.0', document['model'])
+        self.assertEqual(formulation, document['state']['formulation'])
+        notices = document['state']['notices']
+        self.assertEqual(3, len(notices))
+        self.assertEqual({'Tableau des débits', 'Note de synthèse', 'Ancienne épreuve'},
+                         {notice['name'] for notice in notices})
+        for notice in notices:
+            self.assertNotIn('id', notice)
+            self.assertLessEqual(set(notice),
+                                 {'ref', 'name', 'work', 'scope', 'limits', 'version'})
+            for absent in ('category', 'expected_result', 'inputs', 'language', 'tools',
+                           'difficulty', 'task_id', 'version_id', 'package_sha256',
+                           'qualification_status', 'results_published', 'cases'):
+                self.assertNotIn(absent, notice)
+        calcul_notice = next(notice for notice in notices if notice['name'] == 'Tableau des débits')
+        self.assertEqual('Tableau des débits', calcul_notice['scope'])
+        self.assertEqual('Préparer un tableau par opération', calcul_notice['work'])
+        self.assertEqual('Ne certifie aucune comptabilité', calcul_notice['limits'])
+        self.assertEqual('version-calcul', calcul_notice['version'])
+        wire = transport.wires[0]
+        for absent in ('Épreuve retirée', 'Langue retirée', 'Épreuve fictive', 'Langue fictive',
+                       'Épreuve altérée', 'Langue altérée', 'Épreuve privée', 'Langue privée',
+                       'Contribution voisine', 'Langue contribuée', 'Langue invalide',
+                       'version-invalide', 'version-fictive', 'version-privee', 'version-retiree',
+                       'version-alteree', KEY, SECRET.hex(), 'benchmark_session',
+                       AUTHORITY['authority_id'], ACTOR, 'Référence de jugement'):
+            self.assertNotIn(absent, wire)
+
+        request_id = path.rsplit('/', 1)[1]
+        with closing(storage.Store(self.data)) as store:
+            code, value = semantic_help.receipt(store, request_id)
+        self.assertEqual(200, code)
+        self.assertEqual(('epreuves', 'epreuves-v1'),
+                         (value['receipt']['usage'], value['receipt']['questions_version']))
+        self.assertNotIn(formulation, json.dumps(value))
+        for stored in list(self.data.rglob('*')) + list(self.public.rglob('*')):
+            if stored.is_file():
+                self.assertNotIn(formulation.encode(), stored.read_bytes(), stored)
+        # Aucune correspondance reste distincte d’une aide indisponible et ne force aucun choix
+        none_transport = self.enable_semantic(TypeSafeFixture(), enabled=('epreuves',))
+        none_page, none_path = self.editorial_help_submit('Un besoin sans rapport avec les épreuves')
+        self.assertIn('Aucune épreuve ne correspond', none_page.visible)
+        self.assertNotIn('Aide indisponible', none_page.visible)
+        self.assertEqual('/epreuves', none_page.link('Recherche simple'))
+        self.assertEqual('/preparation', none_page.link('Décrire mon cas d’usage'))
+        self.assertEqual(1, len(none_transport.wires))
+        self.assertRegex(none_path, r'^/epreuves/aide/resultat/[0-9a-f]{32}$')
+
+        # La copie part de la suggestion exacte et conserve version et empreinte
+        version_page = self.request(page.link('Tableau des débits'))[0]
+        self.assertEqual('/preparation/copies/tache-fictive/version-calcul',
+                         version_page.link('Créer mon dossier privé'))
+        confirmation = self.request(version_page.link('Créer mon dossier privé'))[0]
+        copy_form = next(item for item in confirmation.forms if '/copies/' in item['action'])
+        with closing(storage.Store(self.data)) as store:
+            before_operations = store._connection.execute(
+                'SELECT count(*) FROM operations').fetchone()[0]
+        _, copy_headers, _ = self.request(copy_form['action'], copy_form['fields'], status=303)
+        dossier = copy_headers['Location']
+        with closing(storage.Store(self.data)) as store:
+            source = json.loads(store._connection.execute(
+                'SELECT checks_json FROM s2_revisions WHERE dossier_id=? AND revision=1',
+                (dossier.rsplit('/', 1)[1],)).fetchone()[0])['source']
+            self.assertEqual(('tache-fictive', 'version-calcul'),
+                             (source['task_id'], source['version_id']))
+            self.assertEqual(calcul['package_sha256'],
+                             sha256(source['manifest'].encode()).hexdigest())
+            self.assertEqual(0, store._connection.execute(
+                'SELECT count(*) FROM s2_validations').fetchone()[0])
+            self.assertEqual(before_operations, store._connection.execute(
+                'SELECT count(*) FROM operations').fetchone()[0])
+        copied_page = self.request(dossier)[0]
+        self.assertIn('Qualification absente', copied_page.visible)
+        self.assertIn('Sa qualification publiée ne qualifie pas ce dossier', copied_page.visible)
+        self.assertIn('version-calcul', copied_page.visible)
+        need = copied_page.form('/messages')
+        self.request(dossier + '/messages',
+                     need['fields'] | {'message': 'Un besoin assez long pour être préparé'},
+                     status=403)
+        self.assertEqual([], self.calls)
+        self.assertEqual([], self.access.verifications)
+
+        # Retrait après soumission : affichage, ouverture et copie revérifient l’état
+        calc_folder = self.public / 'editorial-trials' / task / 'version-calcul'
+        calc_manifest = (calc_folder / 'manifest.json').read_bytes()
+        calc_piece = (calc_folder / 'piece-consigne.txt').read_bytes()
+        editorial.withdraw(self.public, task, 'version-calcul', dict(
+            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=calcul['package_sha256'],
+            scope='editorial-withdrawal', task_id=task, version_id='version-calcul'))
+        removed = self.request(path)[0]
+        self.assertIn('Une suggestion a été retirée', removed.visible)
+        self.assertNotIn('Tableau des débits', removed.visible)
+        self.assertIn('Note de synthèse', removed.visible)
+        self.assertNotIn('version-calcul', removed.visible)
+        self.assertNotIn('/epreuves/tache-fictive/version-calcul',
+                         [node['attrs'].get('href') for node in removed.nodes])
+        opened = self.request('/epreuves/' + task + '/version-calcul')[0]
+        self.assertIn('Cette version est retirée', opened.visible)
+        self.assertNotIn('Tableau des débits', opened.visible)
+        self.assertNotIn('Relève les opérations inventées', opened.visible)
+        refused_copy = self.request('/preparation/copies/' + task + '/version-calcul', status=409)[0]
+        self.assertIn('Cette version est retirée', refused_copy.visible)
+        refused_post = self.request(
+            '/preparation/copies/' + task + '/version-calcul',
+            {'csrf_token': 'a' * 64, 'copy': '1'}, status=409)[0]
+        self.assertIn('Cette version est retirée', refused_post.visible)
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(1, store._connection.execute(
+                'SELECT count(*) FROM s2_dossiers').fetchone()[0])
+        self.assertEqual(calc_manifest, (calc_folder / 'manifest.json').read_bytes())
+        self.assertEqual(calc_piece, (calc_folder / 'piece-consigne.txt').read_bytes())
+        after_public = {str(path.relative_to(self.public / 'editorial-trials')): path.read_bytes()
+                        for path in (self.public / 'editorial-trials').rglob('*') if path.is_file()}
+        self.assertEqual({key: raw for key, raw in before_public.items()
+                          if not key.endswith('withdrawal.json')},
+                         {key: raw for key, raw in after_public.items()
+                          if not key.endswith('withdrawal.json')})
+        self.assertIn('Cette version n’est plus disponible au catalogue',
+                      self.request(dossier)[0].visible)
+        self.assertEqual([], self.calls)
+
+        # Protections HTTP et absence de texte recherché dans l’adresse et les pages
+        form_page, headers, raw = self.request('/epreuves/aide')
+        self.assertEqual('no-store', headers['Cache-Control'])
+        self.assertEqual('nosniff', headers['X-Content-Type-Options'])
+        self.assertEqual('no-referrer', headers['Referrer-Policy'])
+        self.assertIn("default-src 'none'", headers['Content-Security-Policy'])
+        self.assertIn("form-action 'self'", headers['Content-Security-Policy'])
+        self.assertNotIn(b'<script', raw)
+        self.assertIsNone(headers.get('Set-Cookie'))
+        self.assertEqual('/epreuves/aide', form_page.form('/epreuves/aide')['action'])
+        self.request('/epreuves/aide?q=prive', status=400)
+        cross = self.request('/epreuves/aide',
+                             {'submission_id': 'a' * 32, 'formulation': 'Formulation fictive'},
+                             status=400,
+                             extra_headers={'Origin': 'https://evil.example',
+                                            'Sec-Fetch-Site': 'cross-site'})
+        self.assertIn('incomplète', cross[0].visible)
+        self.request('/epreuves/aide',
+                     {'submission_id': 'a' * 32, 'formulation': 'Formulation fictive',
+                      'inconnu': '1'}, status=400)
+        wires = len(none_transport.wires)
+        honeypot = self.request('/epreuves/aide',
+                                {'submission_id': 'a' * 32, 'formulation': 'Formulation fictive',
+                                 'website': 'robot'})[0]
+        self.assertIn('Aucune épreuve ne correspond', honeypot.visible)
+        self.assertEqual(wires, len(none_transport.wires))
+        injection = '<script>alert(9)</script>'
+        escaped_transport = self.enable_semantic(tariff=None, enabled=('epreuves',))
+        escaped, _, escaped_raw = self.request(
+            '/epreuves/aide',
+            {'submission_id': 'b' * 32, 'formulation': injection}, status=200)
+        self.assertIn(injection, escaped.visible)
+        self.assertNotIn(injection.encode(), escaped_raw)
+        self.assertIn(b'&lt;script&gt;', escaped_raw)
+        self.assertEqual([], escaped_transport.wires)
+
+    def test_aide_semantique_epreuves_budget_partage(self):
+        """#467 : le catalogue utilise l’enveloppe commune et ses limites, sans budget séparé"""
+        self.publier_epreuve('version-calcul', title='Tableau des débits',
+                             work='Préparer un tableau par opération')
+
+        def success(wire):
+            return {'status': 200, 'body': typesafe_document(wire, ['correspond'],
+                                                              input_tokens=2000),
+                    'complete': True}
+
+        transport = self.enable_semantic(TypeSafeFixture(success),
+                                         enabled=('repertoire', 'epreuves'), tariff='450')
+        page, path = self.editorial_help_submit('Lister les mouvements mensuels d’un compte fictif')
+        self.assertIn('Correspondance forte', page.visible)
+        self.assertEqual(1, len(transport.wires))
+        with closing(storage.Store(self.data)) as store:
+            state = semantic_help.inspect(store)
+            self.assertEqual('epreuves', state['requests'][0]['usage'])
+            self.assertEqual('0.9', state['budget']['spent'])
+            self.assertEqual(1, len(state['requests']))
+        references = json.loads((Path(__file__).parent / 'fixtures/external-references.json').read_text())
+        with patch.object(views, 'BENCHMARK_REFERENCES', references):
+            blocked, _ = self.help_submit('Corriger un programme fictif', status=200)
+        self.assertIn('Aide indisponible', blocked.visible)
+        self.assertIn('enveloppe commune', blocked.visible)
+        self.assertEqual(1, len(transport.wires))
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(1, len(semantic_help.inspect(store)['requests']))
+
+    def test_aide_semantique_epreuves_refus_sans_rejeu(self):
+        """#467 : réponse invalide, panne et délai suivent les refus communs, sans suggestion tardive"""
+        self.publier_epreuve('version-calcul', title='Tableau des débits',
+                             work='Préparer un tableau par opération')
+        formulation = 'Lister les mouvements mensuels d’un compte fictif'
+
+        def mutated(change, *, status=200, complete=True):
+            def handler(wire):
+                document = json.loads(typesafe_document(wire))
+                change(document)
+                return {'status': status, 'body': json.dumps(document).encode(),
+                        'complete': complete}
+            return handler
+
+        def failure(handler, expected, reason):
+            transport = self.enable_semantic(TypeSafeFixture(handler), enabled=('epreuves',))
+            page, path = self.editorial_help_submit(formulation)
+            self.assertIn('Aide indisponible', page.visible)
+            self.assertIn(expected, page.visible)
+            self.assertNotIn('Correspondance forte', page.visible)
+            request_id = path.rsplit('/', 1)[1]
+            with closing(storage.Store(self.data)) as store:
+                code, value = semantic_help.receipt(store, request_id)
+            self.assertEqual((200, 'unavailable', reason),
+                             (code, value['status'], value['reason']))
+            self.assertEqual(1, len(transport.wires))
+            again, again_path = self.editorial_help_submit(
+                formulation, submission_id=request_id)
+            self.assertEqual(path, again_path)
+            self.assertEqual(1, len(transport.wires))
+            self.assertIn('Aide indisponible', again.visible)
+
+        failure(mutated(lambda value: value.update(model='jev-1.14.0')),
+                'inexploitable', 'INVALID_RESPONSE')
+        failure(lambda _: {'status': 529, 'body': b'', 'complete': True},
+                'surchargé', 'OVERLOADED')
+
+        def late(wire):
+            time.sleep(0.4)
+            return {'status': 200, 'body': typesafe_document(wire, ['correspond']),
+                    'complete': True}
+
+        transport = self.enable_semantic(TypeSafeFixture(late), enabled=('epreuves',))
+        with patch.object(semantic_help, 'TIMEOUT_SECONDS', 0.2):
+            page, path = self.editorial_help_submit(formulation)
+            self.assertIn('Aide indisponible', page.visible)
+            self.assertIn('délai de dix secondes', page.visible)
+            self.assertNotIn('Correspondance forte', page.visible)
+            self.assertEqual(1, len(transport.wires))
+            time.sleep(0.5)
+            late_page = self.request(path)[0]
+            self.assertIn('délai de dix secondes', late_page.visible)
+            self.assertNotIn('Correspondance forte', late_page.visible)
+            request_id = path.rsplit('/', 1)[1]
+            again, again_path = self.editorial_help_submit(
+                formulation, submission_id=request_id)
+            self.assertEqual(path, again_path)
+            self.assertEqual(1, len(transport.wires))
+        with closing(storage.Store(self.data)) as store:
+            final = semantic_help.receipt(store, request_id)[1]
+        self.assertEqual(('unavailable', 'TIMEOUT'), (final['status'], final['reason']))
 
     def test_parcours_complet(self):
         page, _, _ = self.request('/')

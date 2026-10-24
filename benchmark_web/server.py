@@ -36,7 +36,8 @@ _ROUTE_PATTERNS = (
     '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
     '/evaluations-externes', '/evaluations-externes/aide', '/evaluations-externes/aide/<id>',
     '/evaluations-externes/<id>',
-    '/epreuves', '/epreuves/<id>/<id>', '/epreuves/<id>/<id>/pieces/<id>',
+    '/epreuves', '/epreuves/aide', '/epreuves/aide/resultat/<id>',
+    '/epreuves/<id>/<id>', '/epreuves/<id>/<id>/pieces/<id>',
     '/epreuves/<id>/<id>/campagnes/<id>', '/epreuves/<id>/<id>/campagnes/<id>/pieces/<id>',
     '/mentions-legales', '/cgu', '/confidentialite',
     '/preparation', '/preparation/privacy.js', '/preparation/style.css',
@@ -780,10 +781,129 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                          views.render(page, '', '/evaluations-externes/aide/' + request_id),
                          'text/html; charset=utf-8')
 
+        def editorial_help(self):
+            """Soumission volontaire au catalogue : ni clé TypeSafe ni texte durable dans le web"""
+            wants_json = 'application/json' in self.headers.get('Accept', '')
+            try:
+                expected = public_url.rstrip('/') if public_url else f'http://{address}:{port}'
+                if (self.headers.get('Origin') not in (None, expected)
+                        or self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin', 'none')):
+                    raise ValueError('Origine invalide')
+                if urlsplit(self.path).query:
+                    raise ValueError('Adresse invalide')
+                length = self.headers.get('Content-Length', '')
+                if (not length.isdecimal() or not 0 < int(length) <= 524288
+                        or self.headers.get('Transfer-Encoding')):
+                    raise ValueError('Corps invalide')
+                raw = self.rfile.read(int(length))
+                if len(raw) != int(length) or self.headers.get_content_type() != \
+                        'application/x-www-form-urlencoded':
+                    raise ValueError('Corps invalide')
+                values = parse_qs(raw.decode('utf-8'), keep_blank_values=True, strict_parsing=True)
+                if any(len(items) != 1 for items in values.values()) or set(values) - {
+                        'submission_id', 'formulation', 'website'}:
+                    raise ValueError('Champ répété ou inconnu')
+                fields = {key: items[0] for key, items in values.items()}
+                if fields.pop('website', ''):
+                    value = {'kind': 'editorial_help', 'stage': 'none'}
+                    self.respond(200, value if wants_json else views.render(value, ''),
+                                 'application/json' if wants_json else 'text/html; charset=utf-8')
+                    return
+                submission_id = fields.get('submission_id', '')
+                formulation = fields.get('formulation', '')
+                if (re.fullmatch('[0-9a-f]{32}', submission_id) is None
+                        or not formulation.strip() or len(formulation) > 65536):
+                    raise ValueError('Demande invalide')
+            except TimeoutError:
+                self.log_request('<abandon>')
+                self.close_connection = True
+                return
+            except (ValueError, UnicodeError, TypeError):
+                value = {'kind': 'editorial_help', 'stage': 'unavailable',
+                         'reason': 'INVALID_REQUEST'}
+                self.respond(400, value if wants_json else views.render(value, ''),
+                             'application/json' if wants_json else 'text/html; charset=utf-8')
+                return
+            try:
+                versions = editorial.catalog_view(public).get('versions', [])
+            except OSError:
+                self.respond(503, views.render({'kind': 'editorial_help', 'stage': 'unavailable',
+                                                'reason': 'PROVIDER_ERROR'}, ''),
+                             'text/html; charset=utf-8')
+                return
+            notices = views.editorial_help_notices(versions)
+            if not notices:
+                value = {'kind': 'editorial_help', 'stage': 'none'}
+                self.respond(200, value if wants_json else views.render(value, ''),
+                             'application/json' if wants_json else 'text/html; charset=utf-8')
+                return
+            try:
+                result = preparation_request(socket_path, 'POST', '/semantic-help/requests', None, {
+                    'usage': 'epreuves', 'submission_id': submission_id,
+                    'formulation': formulation, 'notices': notices})
+                value = result.get('value')
+                if (result['status'] < 400 and type(value) is dict
+                        and type(value.get('request_id')) is str
+                        and re.fullmatch('[0-9a-f]{32}', value['request_id'])):
+                    self.respond(303, b'', 'text/html; charset=utf-8',
+                                 {'Location': '/epreuves/aide/resultat/' + value['request_id']})
+                    return
+                if wants_json:
+                    self.respond(result['status'], value, 'application/json')
+                    return
+                if type(value) is dict and value.get('status') in ('none', 'suggestions'):
+                    self.respond(200, views.render(views.editorial_help_view(value, versions), '',
+                                                   '/epreuves/aide'),
+                                 'text/html; charset=utf-8')
+                    return
+                reason = value.get('reason') if type(value) is dict else None
+                page = {'kind': 'editorial_help', 'stage': 'unavailable', 'reason': reason,
+                        'submission_id': submission_id, 'formulation': formulation}
+                self.respond(200, views.render(page, ''), 'text/html; charset=utf-8')
+            except OSError:
+                value = {'kind': 'editorial_help', 'stage': 'unavailable',
+                         'reason': 'PROVIDER_ERROR', 'submission_id': submission_id,
+                         'formulation': formulation}
+                self.respond(503, value if wants_json else views.render(value, ''),
+                             'application/json' if wants_json else 'text/html; charset=utf-8')
+
+        def editorial_help_receipt(self, request_id):
+            if urlsplit(self.path).query:
+                self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                return
+            try:
+                result = preparation_request(socket_path, 'GET',
+                                             '/semantic-help/requests/' + request_id, None)
+            except OSError:
+                self.respond(503, views.render({'kind': 'editorial_help', 'stage': 'unavailable',
+                                                'reason': 'PROVIDER_ERROR'}, ''),
+                             'text/html; charset=utf-8')
+                return
+            if result['status'] == 404:
+                self.not_found()
+                return
+            value = result.get('value')
+            if type(value) is not dict:
+                self.not_found()
+                return
+            try:
+                versions = editorial.catalog_view(public).get('versions', [])
+            except OSError:
+                self.respond(503, views.render({'kind': 'editorial_help', 'stage': 'unavailable',
+                                                'reason': 'PROVIDER_ERROR'}, ''),
+                             'text/html; charset=utf-8')
+                return
+            page = views.editorial_help_view(value, versions)
+            self.respond(200 if result['status'] < 400 else 503,
+                         views.render(page, '', '/epreuves/aide/resultat/' + request_id),
+                         'text/html; charset=utf-8')
+
         def do_POST(self):
             path = self.path.split('?', 1)[0]
             if path == '/evaluations-externes/aide':
                 self.evaluations_help()
+            elif path == '/epreuves/aide':
+                self.editorial_help()
             elif path == '/preparation/copies' or path == '/preparation/copies/':
                 self.not_found()
             elif path.startswith('/preparation/copies/'):
@@ -831,6 +951,18 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     return
                 value = {'kind': 'references', 'reference_id': identity, **fields}
                 self.respond(200, views.render(value, '', self.path), 'text/html; charset=utf-8')
+                return
+            if reference_path == '/epreuves/aide':
+                if urlsplit(self.path).query:
+                    self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                    return
+                value = {'kind': 'editorial_help', 'stage': 'form',
+                         'submission_id': secrets.token_hex(16)}
+                self.respond(200, views.render(value, '', reference_path), 'text/html; charset=utf-8')
+                return
+            editorial_receipt = re.fullmatch(r'/epreuves/aide/resultat/([0-9a-f]{32})', reference_path)
+            if editorial_receipt is not None:
+                self.editorial_help_receipt(editorial_receipt[1])
                 return
             if reference_path == '/epreuves' or reference_path.startswith('/epreuves/'):
                 version_path = re.fullmatch(r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})', reference_path)
