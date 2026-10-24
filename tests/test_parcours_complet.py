@@ -5616,6 +5616,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Aucune réponse exploitable', html)
         self.assertNotIn('Notre conseil', html)
         self.assertIn('Une reprise a été demandée pour un modèle.', html)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        priorite, _, _ = self.request(comparison + '?priority=cost')
+        self.assertNotIn('Notre conseil', priorite.visible)
+        self.assertIn('Une reprise a été demandée pour un modèle.', priorite.visible)
 
     def depenses(self, html):
         """Récapitulatif des dépenses de la comparaison : texte entier et lignes de chaque phase"""
@@ -5909,6 +5913,122 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Coûtobservé0,10USD', conseil.visible.replace(' ', ''))
         self.assertIn('Coût complet connu', self.depenses(html)[0])
 
+    def test_priorite_explicite_departage_les_compromis(self):
+        """Issue #326 : le lecteur choisit une priorité explicite, visible et réversible
+
+        Modes d'échec couverts :
+        1. le conseil par défaut change, ou une priorité effacée ne revient pas au défaut ;
+        2. le coût écarte une qualité meilleure sans montrer le compromis secondaire ;
+        3. le critère choisi ignore son sens favorable, ou un autre critère départage implicitement ;
+        4. un filtre masque la ligne conseillée et le conseil est recalculé sur la population filtrée ;
+        5. une priorité inconnue ou un critère absent est remplacé en silence par le défaut ;
+        6. la consultation modifie les preuves, coûts, verdicts ou appelle un fournisseur ;
+        7. le parcours privé s'ouvre sans session, ou la restitution publique accepte cette priorité
+        """
+        def mesure(critere, sortie):
+            if critere == 'Clarté du tableau':
+                return 'acceptable' if sortie == self.SORTIE_C else 'excellent'
+            return 'excellent' if sortie == self.SORTIE_C else 'acceptable'
+
+        def comportement(value, model):
+            if model == 'openai/gpt-5.6-sol':
+                value['cost'].update(amount='0.30')
+
+        dossier, defaut = self.comparer(['Clarté du tableau', 'Concision du tableau'], mesure,
+                                        comportement=comportement)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        with closing(storage.Store(self.data)) as store:
+            operations = store.inspect_operations()
+            database = list(store._connection.iterdump())
+        appels = list(self.calls)
+        # Sans priorité : le compromis croisé reste non départagé
+        self.assertIn('Pas de conseil', defaut)
+        self.assertIn('Aucune réponse n’est la meilleure sur tous les critères de qualité.', defaut)
+        _, _, raw = self.request(comparison, json_response=True)
+        initial = json.loads(raw)
+        self.assertIsNone(initial['priority'])
+        self.assertIsNone(initial['recommendation'])
+        self.assertEqual('tradeoff', initial['abstention']['reason'])
+        quality = [column for column in initial['columns'] if 'criterion_id' in column]
+        self.assertEqual(['Clarté du tableau', 'Concision du tableau'],
+                         [column['definition']['measure'] for column in quality])
+        clarte, concision = quality
+        # Priorité au coût : la réponse conforme la moins chère, avec le compromis de clarté
+        cout, _, raw = self.request(comparison + '?priority=cost')
+        self.assertIn('Notre conseil', cout.visible)
+        self.assertIn('Modèle C', cout.visible)
+        self.assertIn('Priorité choisie : coût observé.', cout.visible)
+        self.assertIn('Compromis sur « Clarté du tableau » : la réponse retenue vaut acceptable, '
+                      'alors que Modèle A vaut excellent.', cout.visible)
+        self.assertIn('aucune obligation non satisfaite n’est compensée', cout.visible)
+        self.assertIn('Revenir au conseil par défaut', cout.visible)
+        self.assertIn('Coûtobservé0,10USD', cout.visible.replace(' ', ''))
+        _, _, raw = self.request(comparison + '?priority=cost', json_response=True)
+        cout_json = json.loads(raw)
+        self.assertEqual(('cost', 'priority_cost', 'mistralai/mistral-small-2603', '0.10', 'USD'), (
+            cout_json['priority'], cout_json['recommendation']['basis'],
+            cout_json['recommendation']['configuration']['model'],
+            cout_json['recommendation']['amount'], cout_json['recommendation']['unit']))
+        self.assertEqual('Clarté du tableau', cout_json['recommendation']['compromises'][0]['measure'])
+        # Priorité à la clarté : le sens favorable du contrat, puis le coût seulement pour ses égalités
+        clarte_page, _, _ = self.request(comparison + '?priority=' + clarte['id'])
+        self.assertIn('Notre conseil', clarte_page.visible)
+        self.assertIn('Modèle A', clarte_page.visible)
+        self.assertIn('Priorité choisie : Clarté du tableau.', clarte_page.visible)
+        self.assertIn('Compromis sur « Concision du tableau » : la réponse retenue vaut acceptable, '
+                      'alors que Modèle C vaut excellent.', clarte_page.visible)
+        self.assertIn('Coûtobservé0,30USD', clarte_page.visible.replace(' ', ''))
+        _, _, raw = self.request(comparison + '?priority=' + clarte['id'], json_response=True)
+        self.assertEqual(('priority_criterion', 'openai/gpt-5.6-sol'),
+                         (json.loads(raw)['recommendation']['basis'],
+                          json.loads(raw)['recommendation']['configuration']['model']))
+        # Priorité à la concision : l'autre réponse l'emporte, sans départage par la clarté
+        concision_page, _, _ = self.request(comparison + '?priority=' + concision['id'])
+        self.assertIn('Modèle C', concision_page.visible)
+        self.assertIn('Priorité choisie : Concision du tableau.', concision_page.visible)
+        self.assertIn('Compromis sur « Clarté du tableau » : la réponse retenue vaut acceptable, '
+                      'alors que Modèle A vaut excellent.', concision_page.visible)
+        # Effacement : le défaut revient sans substitution implicite
+        efface, _, raw = self.request(comparison + '?priority=')
+        self.assertIn('Pas de conseil', efface.visible)
+        self.assertIn('Aucune réponse n’est la meilleure sur tous les critères de qualité.', efface.visible)
+        self.assertRegex(raw.decode().split('<select id="filter-priority"', 1)[1].split('</select>', 1)[0],
+                         r'<option value="" selected>Conseil par défaut</option>')
+        # Le lien de retour garde le défaut, et le formulaire garde la priorité pendant la consultation
+        retour = cout.link('Revenir au conseil par défaut')
+        self.assertEqual(comparison + '#filters', retour)
+        self.assertIn('Pas de conseil', self.request(retour)[0].visible)
+        options = re.search(r'name="configuration">(.*?)</select>', defaut).group(1)
+        filtre = re.findall(r'<option value="([^"]+)">Modèle A', options)[0]
+        filtree, _, filtree_raw = self.request(comparison + '?priority=cost&configuration=' + filtre)
+        self.assertIn('1 réponse affichée sur 2', filtree.visible)
+        self.assertIn('Notre conseil', filtree.visible)
+        self.assertIn('Modèle C', filtree.visible)
+        self.assertIn('Modèle A', filtree_raw.decode().split('<tbody>')[1].split('</tbody>')[0])
+        self.assertNotIn('Modèle C</strong>', filtree_raw.decode().split('<tbody>')[1].split('</tbody>')[0])
+        self.assertEqual({'priority': 'cost', 'configuration': filtre},
+                         json.loads(self.request(comparison + '?priority=cost&configuration=' + filtre,
+                                                 json_response=True)[2])['filter_scope'])
+        detail_href = filtree.link('Détail et preuves')
+        attempt_id = re.search(r'/attempts/([^?]+)', detail_href).group(1)
+        detail = self.request(detail_href)[0]
+        self.assertEqual(comparison + '?priority=cost&configuration=' + filtre + '#attempt-' + attempt_id,
+                         detail.link('Revenir aux résultats'))
+        # Priorité invalide ou critère absent : refus explicite, jamais le conseil par défaut
+        for query in ('inconnu', 'Q3', 'case', 'cost&priority=cost'):
+            with self.subTest(query=query):
+                self.request(comparison + '?priority=' + query, status=400)
+        # Le parcours privé et la restitution publique restent fermés à ce paramètre
+        self.request(comparison + '?priority=cost', cookies=SimpleCookie(), status=403)
+        with self.assertRaises(ValueError):
+            public_results.query_parameters('priority=cost')
+        # La consultation n'écrit rien, n'émet aucun appel et ne lance aucun travail
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(operations, store.inspect_operations())
+            self.assertEqual(database, list(store._connection.iterdump()))
+        self.assertEqual(appels, self.calls)
+        self.assertTrue(self.starts.empty())
+
     def test_conseil_exige_un_cas_complet_et_plusieurs_reponses_satisfaisantes(self):
         """Le vrai serveur restitue les preuves sans les modifier
 
@@ -6049,20 +6169,175 @@ class ParcoursComplet(unittest.TestCase):
                             if scenario == 'multi-tradeoff':
                                 self.assertIn('Exemple 2 : aucune réponse n’est la meilleure sur tous les critères de qualité.',
                                               page.visible)
+                        # La même priorité s'applique séparément à chaque cas, sans somme ni moyenne
+                        priorite = None
+                        if directions == ('lower',) and scenario == 'complete':
+                            priorite = ('complete', path + '?priority=lower')
+                        elif directions == ('lower',) and scenario == 'equal-quality':
+                            priorite = ('equal-quality', path + '?priority=lower')
+                        elif directions == ('lower',) and scenario == 'equal-final':
+                            priorite = ('equal-final', path + '?priority=lower')
+                        elif scenario == 'multi-agree':
+                            priorite = ('agree', path + '?priority=higher')
+                        elif scenario == 'multi-disagree':
+                            priorite = ('disagree', path + '?priority=higher')
+                        elif scenario in ('multi-case', 'single-eligible'):
+                            priorite = ('few', path + '?priority=cost')
+                        elif scenario in ('unstarted', 'pending'):
+                            priorite = ('incomplete', path + '?priority=cost')
+                        if priorite:
+                            kind, priorite_path = priorite
+                            _, _, priorite_raw = self.request(priorite_path, cookies=cookies, json_response=True)
+                            choix = json.loads(priorite_raw)
+                            priorite_page, _, _ = self.request(priorite_path, cookies=cookies)
+                            self.assertEqual(before, store.inspect_operations())
+                            if kind == 'complete':
+                                # Le critère décroissant l'emporte sur un coût plus bas
+                                self.assertEqual(('fictional-x', 'priority_criterion', '3'),
+                                                 (choix['recommendation']['configuration']['model'],
+                                                  choix['recommendation']['basis'], choix['recommendation']['amount']))
+                                self.assertIn('Priorité choisie : Durée fictive.', priorite_page.visible)
+                            elif kind == 'equal-quality':
+                                # Valeurs égales sur le critère : le coût départage seulement cette égalité
+                                self.assertEqual(('fictional-y', 'priority_criterion', '2'),
+                                                 (choix['recommendation']['configuration']['model'],
+                                                  choix['recommendation']['basis'], choix['recommendation']['amount']))
+                            elif kind == 'equal-final':
+                                # Même valeur et même coût : aucun autre critère ne départage
+                                self.assertIsNone(choix['recommendation'])
+                                self.assertEqual(('criterion_tie', None),
+                                                 (choix['abstention']['reason'], choix['abstention']['case_id']))
+                                self.assertIn('Plusieurs réponses ont la meilleure valeur sur le critère choisi '
+                                              'et le même coût observé.', priorite_page.visible)
+                            elif kind == 'agree':
+                                self.assertEqual('fictional-x', choix['recommendation']['configuration']['model'])
+                                self.assertNotIn('amount', choix['recommendation'])
+                                self.assertEqual([('notes', '3', 'priority_criterion'),
+                                                  ('other', '2', 'priority_criterion')],
+                                                 [(item['case_id'], item['amount'], item['basis'])
+                                                  for item in choix['recommendation']['cases']])
+                                self.assertIn('Ce conseil repose sur 2 exemples', priorite_page.visible)
+                            elif kind == 'disagree':
+                                self.assertIsNone(choix['recommendation'])
+                                self.assertEqual('disagreement', choix['abstention']['reason'])
+                                self.assertEqual([('notes', 'fictional-x'), ('other', 'fictional-y')],
+                                                 [(item['case_id'], item['configuration']['model'])
+                                                  for item in choix['abstention']['choices']])
+                                self.assertIn('Les exemples ne désignent pas le même modèle', priorite_page.visible)
+                            elif kind == 'few':
+                                self.assertIsNone(choix['recommendation'])
+                                self.assertEqual(('few', 'notes' if scenario == 'multi-case' else None),
+                                                 (choix['abstention']['reason'], choix['abstention']['case_id']))
+                            elif kind == 'incomplete':
+                                self.assertIsNone(choix['recommendation'])
+                                self.assertEqual(('incomplete', None),
+                                                 (choix['abstention']['reason'], choix['abstention']['case_id']))
+                        if scenario == 'multi-disagree':
+                            # Le coût est appliqué cas par cas : l'exemple 2 départage deux coûts égaux
+                            _, _, priorite_raw = self.request(path + '?priority=cost', cookies=cookies,
+                                                              json_response=True)
+                            choix = json.loads(priorite_raw)
+                            self.assertIsNone(choix['recommendation'])
+                            self.assertEqual(('cost_tie', 'other'),
+                                             (choix['abstention']['reason'], choix['abstention']['case_id']))
+
+            # Un critère non ordonnable du contrat ne peut pas fonder une priorité
+            spec = specification(reference)
+            spec['secondary_criteria'] = [
+                dict(id='duration', measure='Durée fictive', proof='Sortie conservée', unit='s',
+                     favorable='lower', aggregation=None),
+                dict(id='comment', measure='Commentaire fictif', proof='Sortie conservée', unit='descriptif',
+                     favorable='lower', aggregation=None),
+            ]
+            candidate = qualification.draft(store, 'fixture', view['revision'], spec)
+            qualified = qualification.qualify(store, candidate['contract_sha256'], reviewer=ACTOR, check=check)
+            qualification.approve(store, candidate['contract_sha256'], qualified['qualification_id'],
+                                  actor=ACTOR, authority=AUTHORITY)
+            campaign_id = 'non-orderable'
+            store.create_budget(campaign_id, '100', 'TEST')
+            m = manifest(candidate, campaign_id)
+            snapshot = campaigns.create(store, m)
+            authority, evidence = inputs(snapshot, budget=campaign_id)
+            authority['reserve_amounts'] = {'x': '7', 'y': '7'}
+            campaigns.admit(store, campaign_id, authority, evidence)
+            for cell in ('x', 'y'):
+                attempt = campaign_id + '-' + cell
+                campaigns.reserve(store, campaign_id, cell, attempt)
+                execution.execute(self.data, attempt, response)
+
+                def report(ctx, resources):
+                    result = findings(ctx, resources)
+                    piece = ctx['attempt']['output_piece_id']
+                    result['measures'] = [
+                        dict(criterion_id='duration', value='1', unit='s',
+                             evidence=[dict(piece_id=piece, sha256=sha256(resources[piece]).hexdigest(),
+                                            passage=resources[piece].decode())]),
+                        dict(criterion_id='comment', value='lisible', unit='descriptif',
+                             evidence=[dict(piece_id=piece, sha256=sha256(resources[piece]).hexdigest(),
+                                            passage=resources[piece].decode())]),
+                    ]
+                    return result
+
+                evaluation.evaluate(store, campaign_id, attempt, responsible=RESPONSIBLE,
+                                    authority=EVALUATION_AUTHORITY, check=report)
+            path = '/preparation/dossiers/fixture/campaigns/' + campaign_id
+            self.request(path + '?priority=duration', cookies=cookies)
+            self.request(path + '?priority=comment', cookies=cookies, status=400)
 
     def test_pas_de_conseil_avec_une_reponse_absente(self):
-        """Deux réponses satisfaisantes départageables ; la troisième n'a pas de réponse exploitable"""
+        """Deux réponses satisfaisantes départageables ; la troisième n'a pas de réponse exploitable
+
+        La priorité au coût ne conseille jamais la réponse non conforme la moins chère.
+        """
         def comportement(value, model):
             if model == 'deepseek/deepseek-v4.1-flash':
                 value['receipt']['result'].update(output=None, incident='PROVIDER_RESPONSE_INCOMPLETE')
                 value['cost'].update(status='KNOWN', amount='0.05')
-        _, html = self.comparer(['Clarté du tableau'],
-                                lambda critere, sortie: 'acceptable' if sortie == self.SORTIE_C else 'excellent',
-                                comportement=comportement,
-                                models=('openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'))
+            elif model == 'mistralai/mistral-small-2603':
+                value['cost'].update(amount='0.20')
+        dossier, html = self.comparer(['Clarté du tableau'],
+                                      lambda critere, sortie: 'acceptable' if sortie == self.SORTIE_C else 'excellent',
+                                      comportement=comportement,
+                                      models=('openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash',
+                                              'mistralai/mistral-small-2603'))
         self.assertIn('Satisfait : 2', html)
         self.assertIn('Aucune réponse exploitable pour Modèle B', html)
         self.assertNotIn('Notre conseil', html)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        priorite, _, _ = self.request(comparison + '?priority=cost')
+        self.assertNotIn('Notre conseil', priorite.visible)
+        self.assertIn('Toutes les réponses prévues ne sont pas évaluées.', priorite.visible)
+
+    def test_priorite_au_cout_ne_conseille_jamais_une_reponse_non_conforme(self):
+        """La réponse non conforme la moins chère reste éliminatoire, même avec la priorité au coût"""
+        def ajuste(content, findings):
+            if content['output']['content'].strip() == 'Action omise':
+                return [dict(finding, status='FAIL', attribution='candidate', finding='Action omise')
+                        for finding in findings]
+            return findings
+
+        def comportement(value, model):
+            if model == 'deepseek/deepseek-v4.1-flash':
+                value['cost'].update(status='KNOWN', amount='0.05')
+            elif model == 'mistralai/mistral-small-2603':
+                value['cost'].update(amount='0.20')
+
+        dossier, html = self.comparer(['Clarté du tableau'],
+                                      lambda critere, sortie: 'excellent' if sortie == self.SORTIE_C else 'acceptable',
+                                      ajuste=ajuste, comportement=comportement,
+                                      models=('openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash',
+                                              'mistralai/mistral-small-2603'))
+        self.assertIn('Ne satisfait pas : 1', html)
+        # Par défaut, la meilleure clarté l'emporte malgré son coût
+        defaut = Page(html.split('<aside class="economic-choice"')[1].split('</aside>')[0].encode())
+        self.assertIn('Modèle C', defaut.visible)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        cout, _, _ = self.request(comparison + '?priority=cost')
+        conseil = cout.visible.split('Notre conseil')[1].split('Ce conseil repose')[0]
+        self.assertIn('Modèle A', conseil)
+        self.assertNotIn('Modèle B', conseil)
+        self.assertIn('Compromis sur « Clarté du tableau » : la réponse retenue vaut acceptable, '
+                      'alors que Modèle C vaut excellent.', conseil)
 
     def test_pas_de_conseil_avec_plusieurs_essais(self):
         """Issue #455 : les conditions du conseil départagé par le coût, avec deux essais par modèle
@@ -6072,29 +6347,65 @@ class ParcoursComplet(unittest.TestCase):
         def comportement(value, model):
             if model == 'openai/gpt-5.6-sol':
                 value['cost'].update(amount='0.30')
-        _, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent',
-                                comportement=comportement, repetitions=2)
+        dossier, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent',
+                                      comportement=comportement, repetitions=2)
         self.assertEqual(4, html.count('<tr id="attempt-'))
         self.assertNotIn('Notre conseil', html)
         self.assertIn('Un modèle compte plus d’un essai sur un même exemple.', html)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        priorite, _, _ = self.request(comparison + '?priority=cost')
+        self.assertNotIn('Notre conseil', priorite.visible)
+        self.assertIn('Un modèle compte plus d’un essai sur un même exemple.', priorite.visible)
 
     def test_pas_de_conseil_a_egalite_finale(self):
-        _, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent')
+        dossier, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent')
         self.assertEqual(2, html.count('<tr id="attempt-'))
         self.assertNotIn('class="out"', html)
         self.assertNotIn('Notre conseil', html)
+        self.assertIn('Plusieurs réponses ont la même qualité et le même coût.', html)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        cout, _, _ = self.request(comparison + '?priority=cost')
+        self.assertNotIn('Notre conseil', cout.visible)
+        self.assertIn('Plusieurs réponses conformes ont le coût observé le plus bas.', cout.visible)
+        self.assertIn('Priorité choisie', cout.visible)
+        self.assertIn('coût observé', cout.visible)
+        _, _, raw = self.request(comparison, json_response=True)
+        criterion = next(column['id'] for column in json.loads(raw)['columns'] if 'criterion_id' in column)
+        critere, _, _ = self.request(comparison + '?priority=' + criterion)
+        self.assertNotIn('Notre conseil', critere.visible)
+        self.assertIn('Plusieurs réponses ont la meilleure valeur sur le critère choisi et le même coût observé.',
+                      critere.visible)
 
     def test_pas_de_conseil_avec_un_cout_inconnu(self):
         def comportement(value, model):
             if model == 'mistralai/mistral-small-2603':
                 value['cost'].update(status='UNKNOWN', amount=None)
-        _, html = self.comparer(['Clarté du tableau'],
-                                lambda critere, sortie: 'acceptable' if sortie == self.SORTIE_C else 'excellent',
-                                comportement=comportement)
+        dossier, html = self.comparer(['Clarté du tableau'],
+                                      lambda critere, sortie: 'acceptable' if sortie == self.SORTIE_C else 'excellent',
+                                      comportement=comportement)
         self.assertNotIn('class="out"', html)
         self.assertIn('Comparaison des coûts incomplète', html)
         self.assertNotIn('Notre conseil', html)
         self.assertIn('La qualité ou le coût d’une réponse qui satisfait l’exemple n’est pas connu.', html)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        _, _, raw = self.request(comparison, json_response=True)
+        criterion = next(column['id'] for column in json.loads(raw)['columns'] if 'criterion_id' in column)
+        for priorite in ('cost', criterion):
+            with self.subTest(priorite=priorite):
+                page, _, _ = self.request(comparison + '?priority=' + priorite)
+                self.assertNotIn('Notre conseil', page.visible)
+                self.assertIn('La qualité ou le coût d’une réponse qui satisfait l’exemple n’est pas connu.',
+                              page.visible)
+
+    def test_pas_de_conseil_sans_critere_secondaire_meme_avec_priorite(self):
+        """L'absence de critère secondaire interdit le conseil, y compris pour la priorité au coût"""
+        dossier, html = self.comparer([], lambda critere, sortie: 'excellent')
+        self.assertNotIn('Notre conseil', html)
+        self.assertIn('Aucun critère de qualité ne compare les réponses.', html)
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        priorite, _, _ = self.request(comparison + '?priority=cost')
+        self.assertNotIn('Notre conseil', priorite.visible)
+        self.assertIn('Aucun critère de qualité ne compare les réponses.', priorite.visible)
 
     def test_pas_de_conseil_quand_les_qualites_se_croisent(self):
         def mesure(critere, sortie):
@@ -6503,6 +6814,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Réponse obtenue à la tentative 4, après un incident fournisseur', html)
         self.assertIn('Notre conseil', html)
         self.assertNotIn('Une reprise a été demandée', html)
+        # L'exception #533 vaut aussi pour une priorité explicite : la relance renvoie la même demande
+        priorite, _, _ = self.request(suivi.removesuffix('/conditions') + '?priority=cost')
+        self.assertIn('Notre conseil', priorite.visible)
+        self.assertIn('Priorité choisie : coût observé.', priorite.visible)
         self.assertNotIn('Reprise après arrêt pour longueur', html)
         texte, phases = self.depenses(html)
         # Essai d'origine et deux premières relances, remplacés : seules les relances portent ce libellé

@@ -21,7 +21,7 @@ ATTRIBUTION = (
 NO_USABLE_RESPONSE = 'Aucune réponse exploitable de ce modèle : il n’est pas évalué et n’entre pas dans la comparaison.'
 LIMIT = 'Ces résultats portent sur un exemple inventé. Ils ne se transposent pas tels quels à vos dossiers réels et ne s’additionnent pas avec ceux d’autres cas ou d’autres comparaisons.'
 VERDICTS = ('SATISFAIT', 'NE SATISFAIT PAS', 'A_REPRENDRE', 'INDETERMINE')
-FILTERS = ('case', 'sort', 'direction', 'verdict', 'obligation', 'configuration')
+FILTERS = ('case', 'sort', 'direction', 'verdict', 'obligation', 'configuration', 'priority')
 # Refus figé d'une reprise pour longueur que l'exécuteur n'a pas tentée (#526) ; un autre refus reste tu
 DECLINED = {NO_PROGRESS: 'la reprise n’a pas allongé la réponse coupée'}
 
@@ -103,6 +103,8 @@ def _queries(query, campaign, spec, columns):
         'configuration': {x['id'] for x in campaign['panel']},
         'obligation': {x['id'] + ':' + status for x in spec['obligations']
                        for status in ('PASS', 'FAIL', 'INDETERMINE')},
+        # Le coût reste réservé ; un critère n'est proposé que s'il est ordonnable dans le contrat gelé
+        'priority': {'cost'} | {x['id'] for x in columns if 'criterion_id' in x},
     }
     if any(k not in allowed or v not in allowed[k] for k, v in query.items()):
         raise ValueError('Filtre ou tri hors contrat')
@@ -137,7 +139,38 @@ def _rank(rows, columns):
                 metric['rank'] = 1 + sum(other > value if higher else other < value for other in values)
 
 
-def _case_choice(rows, quality):
+def _criterion_label(column):
+    return column['definition'].get('measure') or column['definition'].get('label') or column['id']
+
+
+def _favorable_high(column):
+    """`_metric_number` oriente toute échelle ordinale vers la meilleure valeur ; un nombre suit son sens"""
+    return bool(column['definition'].get('scale')) or column['favorable'] in ('higher', 'yes')
+
+
+def _compromises(row, eligible, quality, chosen):
+    """Critères secondaires où la réponse retenue est moins bonne que la meilleure réponse conforme"""
+    result = []
+    for column in quality:
+        if chosen is not None and column['id'] == chosen['id']:
+            continue
+        higher = _favorable_high(column)
+        metric = _metric(row, column)
+        value = _metric_number(metric)
+        values = [_metric_number(_metric(other, column)) for other in eligible]
+        best = max(values) if higher else min(values)
+        if (value >= best if higher else value <= best):
+            continue
+        other = next(candidate for candidate in eligible
+                     if _metric_number(_metric(candidate, column)) == best)
+        best_metric = _metric(other, column)
+        result.append(dict(measure=_criterion_label(column), value=metric['value'], unit=metric['unit'],
+                           best=best_metric['value'], best_unit=best_metric['unit'],
+                           configuration=deepcopy(other['requested_configuration'])))
+    return result
+
+
+def _case_choice(rows, quality, priority=None):
     """Apply the single-case rule to one example: its retained row and basis, or the reason of abstention"""
     if len({row['configuration_id'] for row in rows}) != len(rows):
         return 'repeated'
@@ -149,6 +182,26 @@ def _case_choice(rows, quality):
     if (any(row['cost']['rank'] is None for row in eligible)
             or any(_metric(row, column)['rank'] is None for row in eligible for column in quality)):
         return 'unknown'
+    if priority is not None and 'criterion_id' not in priority:
+        # Priorité au coût : aucune autre mesure ne départage une égalité finale
+        cheapest = min(_metric_number(row['cost']) for row in eligible)
+        winners = [row for row in eligible if _metric_number(row['cost']) == cheapest]
+        if len(winners) != 1:
+            return 'cost_tie'
+        return winners[0], 'priority_cost', len(eligible), _compromises(winners[0], eligible, quality, None)
+    if priority is not None:
+        # Priorité à un critère : son sens favorable gelé, puis le coût pour départager ses égalités
+        higher = _favorable_high(priority)
+        values = [_metric_number(_metric(row, priority)) for row in eligible]
+        best = max(values) if higher else min(values)
+        winners = [row for row, value in zip(eligible, values) if value == best]
+        if len(winners) > 1:
+            cheapest = min(_metric_number(row['cost']) for row in winners)
+            winners = [row for row in winners if _metric_number(row['cost']) == cheapest]
+            if len(winners) != 1:
+                return 'criterion_tie'
+        return (winners[0], 'priority_criterion', len(eligible),
+                _compromises(winners[0], eligible, quality, priority))
     quality_vectors = {}
     for row in eligible:
         values = []
@@ -172,10 +225,10 @@ def _case_choice(rows, quality):
     if len(winners) != 1:
         return 'tie'
     basis = ('equal_quality_cost' if len(set(quality_vectors.values())) == 1 else 'quality_then_cost')
-    return winners[0], basis, len(eligible)
+    return winners[0], basis, len(eligible), []
 
 
-def _recommendation(rows, columns, cases, cells, pending, recovered):
+def _recommendation(rows, columns, cases, cells, pending, recovered, priority=None):
     """Recommend the configuration the single-case rule retains on every example, or say why not
 
     Décision D06 d'Ayo (#458) : chaque exemple est lu seul ; aucune somme de coûts ni score entre exemples
@@ -195,22 +248,25 @@ def _recommendation(rows, columns, cases, cells, pending, recovered):
     quality = [column for column in columns if 'criterion_id' in column]
     choices = []
     for case, group in groups:
-        choice = _case_choice(group, quality)
+        choice = _case_choice(group, quality, priority)
         if type(choice) is str:
             return abstain(choice, case)
         choices.append((case, *choice))
-    if len({row['configuration_id'] for _, row, _, _ in choices}) != 1:
+    if len({row['configuration_id'] for _, row, _, _, _ in choices}) != 1:
         return abstain('disagreement', choices=[dict(case_id=case['id'], configuration=deepcopy(row['requested_configuration']))
-                                                for case, row, _, _ in choices])
+                                                for case, row, _, _, _ in choices])
     definitions = [deepcopy(column['definition']) for column in quality]
+    priority_id = None if priority is None else priority['id']
     if len(choices) == 1:
-        _, row, basis, count = choices[0]
+        _, row, basis, count, compromises = choices[0]
         return dict(configuration=deepcopy(row['requested_configuration']), count=count,
-                    amount=row['cost']['value'], unit=row['cost']['unit'], basis=basis,
-                    quality=definitions, detail_href=row['detail_href']), None
-    return dict(configuration=deepcopy(choices[0][1]['requested_configuration']), basis='each_case', quality=definitions,
+                    amount=row['cost']['value'], unit=row['cost']['unit'], basis=basis, priority=priority_id,
+                    quality=definitions, compromises=compromises, detail_href=row['detail_href']), None
+    return dict(configuration=deepcopy(choices[0][1]['requested_configuration']), basis='each_case',
+                priority=priority_id, quality=definitions,
                 cases=[dict(case_id=case['id'], amount=row['cost']['value'], unit=row['cost']['unit'], basis=basis,
-                            count=count, detail_href=row['detail_href']) for case, row, basis, count in choices]), None
+                            count=count, compromises=compromises, detail_href=row['detail_href'])
+                       for case, row, basis, count, compromises in choices]), None
 
 
 EXPENSE_GROUPS = ('compared', 'other_attempts', 'judgment', 'probes', 'preparation', 'qualification')
@@ -321,6 +377,11 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                      else 'lower' if type(scale) is list else measure['favorable'])
         columns.append(dict(id=key, criterion_id=measure['id'], definition=definition,
                             unit=definition['unit'], favorable=favorable, proof=definition['proof']))
+    # Priorité de consultation : le coût ou un critère secondaire ordonnable du contrat gelé, jamais un substitut
+    priority_id = query.get('priority')
+    priority = next((column for column in columns if column['id'] == priority_id), None) if priority_id else None
+    if priority_id and priority is None:
+        raise ValueError('Critère de priorité absent ou non ordonnable')
     _queries(query, campaign, spec, columns)
     records = e.projection(store, connection, dossier_id, campaign_id)
     from . import automatic_judgment as auto
@@ -501,8 +562,9 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
         ordered.extend(group)
     payload = store.get_dossier(dossier_id, contract['revision'])
     # Calculé sur toutes les réponses, indépendamment des filtres
-    recommendation, abstention = _recommendation(rows, columns, campaign['cases'], campaign['cells'], pending, recovered)
-    return dict(kind='comparison', visibility='private', catalogue_admission=False,
+    recommendation, abstention = _recommendation(rows, columns, campaign['cases'], campaign['cells'], pending,
+                                                recovered, priority)
+    return dict(kind='comparison', visibility='private', catalogue_admission=False, priority=priority_id,
                 campaign_id=campaign_id, contract_sha256=campaign['contract_sha256'], task=campaign['task'],
                 need=payload['request'], reformulation=payload['reformulation'],
                 result_expected=spec['result_expected'], human_work=contract['package']['human_work'],
