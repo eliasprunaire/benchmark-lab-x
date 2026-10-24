@@ -185,13 +185,27 @@ Cette illustration de conception n’est ni un contrat gelé ni une campagne. Le
 
 Le répertoire d’évaluations externes aide à trouver des sources officielles pertinentes pour un travail recherché. Il reste distinct du catalogue des tâches Bench-X et des comparaisons privées. Une évaluation externe ne prouve pas la réussite sur le besoin particulier du visiteur.
 
-Le visiteur accède au même répertoire depuis l’accueil, un lien direct ou une préparation suspendue. Il consulte les notices, recherche des termes et applique des filtres explicites, sans session, clé, JavaScript ni création de dossier. Aucun filtre de préférence n’est précoché. Aucun score global ni classement préférentiel des sources n’est produit. La recherche ne dépend ni de Jev ni d’un appel modèle.
+Le visiteur accède au même répertoire depuis l’accueil, un lien direct ou une préparation suspendue. Il consulte les notices, recherche des termes et applique des filtres explicites, sans session, clé, JavaScript ni création de dossier. Aucun filtre de préférence n’est précoché. Aucun score global ni classement préférentiel des sources n’est produit. La recherche simple ne dépend ni de Jev ni d’un appel modèle.
 
 Chaque notice indique la source officielle, le travail mesuré, sa portée, ses limites, sa version ou date et sa date de vérification éditoriale. Les informations absentes restent inconnues. La sélection initiale couvre des besoins distincts au-delà des trois destinations de réorientation historiques ; elle ne promet aucune exhaustivité. Son contenu et la responsabilité de sa maintenance sont approuvés avant ouverture réelle.
 
 Une recherche sans résultat et un répertoire vide proposent de modifier la recherche ou de décrire un besoin. Une source retirée reste signalée comme indisponible lors d’un accès direct. Une source insuffisamment vérifiée porte cette limite et n’est pas présentée comme recommandée. Ces états conservent l’accès à la description d’un besoin.
 
 La consultation ne transmet aucun besoin privé aux sites externes, y compris dans les URL et les référents HTTP. Les notices ne rendent aucun dossier privé public. Le parcours reste utilisable au clavier et sur petit écran. La collecte automatique de sources, la recherche assistée et la publication d’épreuves Bench-X ne font pas partie de cette capacité.
+
+### Demander une aide sémantique facultative
+
+Le lecteur peut demander des suggestions dans le répertoire externe ou dans le catalogue d’épreuves. La recherche simple reste indépendante de cette aide. Un bouton explicite annonce TypeSafe, les données transmises et leur traitement avant l’envoi. Aucun appel ne part pendant la frappe ou la consultation ordinaire.
+
+Seules la formulation soumise et les informations utiles des notices publiques admissibles sont transmises. Dossiers privés, contributions, références du juge, historique, clés et cookies restent exclus. La formulation doit rester générale, sans information personnelle ou confidentielle. Cette consigne ne garantit pas l’absence de contenu sensible.
+
+Chaque notice est appréciée indépendamment ; plusieurs correspondances ou aucune suggestion sont recevables. Les correspondances et différences reposent sur les champs publiés ou des critères fermés. Aucune justification libre n’est inventée. Une probabilité ne prouve ni adéquation, ni qualification, ni comparabilité. L’aide ne refuse aucun besoin, ne force aucun parcours et ne lance aucune campagne. Le lecteur garde l’accès à la préparation d’un nouvel exemple. Aucun opérateur ne valide individuellement les suggestions.
+
+Le classement est éphémère. Les notices restent soumises aux contrôles de disponibilité, d’intégrité et de retrait avant affichage, ouverture et copie. L’aide ne modifie ni version, ni caractéristique éditoriale, ni résultat. Une réponse valide sans correspondance affiche une absence de suggestion. Une panne, un délai dépassé ou une réponse invalide affiche une aide indisponible. Les deux états conservent la recherche simple et ses filtres, sans secours génératif.
+
+Bench-X finance cette aide sur un compte TypeSafe dédié, distinct des clés personnelles OpenRouter. Les textes recherchés ne sont pas conservés dans des journaux durables locaux. Seuls les reçus techniques et comptables nécessaires subsistent, sans ces textes. Le traitement standard du fournisseur est annoncé ; aucune absence de conservation ni localisation exclusivement européenne n’est promise sans engagement applicable. L’absence d’entraînement ne prouve pas l’absence de conservation.
+
+Le service est désactivé par défaut. Son activation exige une autorisation distincte, un compte et un traitement des données vérifiés, une enveloppe et une qualification propre à chaque usage. Les seuils sont établis sur les formulations françaises avant activation ; aucun seuil arbitraire n’est réputé qualifié. Une preuve fictive établit le fonctionnement logiciel seulement. Les limites communes relèvent de l’[ARD](ARD.md#49-aide-sémantique-commune) et les autorités des [règles](RULES.md#3-périmètre-produit).
 
 ### Publier et consulter une épreuve éditoriale
 
@@ -205,7 +219,7 @@ Le retrait vise une version précise. Elle quitte le catalogue disponible ; ses 
 
 ### Trouver une épreuve par ses caractéristiques
 
-Le lecteur recherche un travail parmi les versions éditoriales publiques disponibles, sans clé, session ni appel modèle. La recherche textuelle déterministe porte sur la notice publique. Elle se combine avec des filtres explicites et évolutifs, sans taxonomie fermée des métiers ni préférence inférée. Elle ne classe pas les épreuves par proximité sémantique.
+Le lecteur recherche un travail parmi les versions éditoriales publiques disponibles, sans clé, session ni appel modèle. La recherche textuelle déterministe porte sur la notice publique. Elle se combine avec des filtres explicites et évolutifs, sans taxonomie fermée des métiers ni préférence inférée. Cette recherche simple ne classe pas les épreuves par proximité sémantique.
 
 La notice distingue résultat attendu, entrées, langue connue ou inconnue, outils, difficulté, version, qualification et présence de résultats. Les caractéristiques sont déclarées éditorialement et approuvées avec la version. Aucune caractéristique n’est déduite automatiquement des pièces. Une information absente reste inconnue ; elle ne signifie ni absence d’outil ni qualification absente. La difficulté déclarée ne prouve aucune capacité mesurée.
 
@@ -261,6 +275,7 @@ Les choix techniques relèvent de l'ARD. Le backlog et son avancement relèvent 
 
 | Situation à vérifier | Résultat attendu |
 |---|---|
+| Une aide sémantique est demandée | envoi volontaire et borné, suggestions indépendantes ou absentes, indisponibilité distincte, recherche simple préservée |
 | Le besoin est vague ou non évaluable | questions utiles, reformulation fidèle ; proposition de périmètre soumise à accord ou arrêt motivé |
 | L’utilisateur examine ou modifie l’exemple | pièces existantes liées au paquet, limites visibles, accords préservés, contrôles affectés refaits et nouvelle validation |
 | Le dossier comporte une ambiguïté ou une pièce manquante | aucune réponse devinée ; alternatives et incertitudes recevables exposées, comme le rapprochement collectif Despins |

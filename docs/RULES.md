@@ -28,6 +28,8 @@ Ces règles préservent les contrats déjà scellés et n'autorisent aucune exé
 
 **Canal API et secours officiel.** OpenRouter reste le canal normal des appels modèles du produit. Après diagnostic et épuisement des routes de secours utilisables du même modèle, l’API officielle peut servir de dernier recours sous configuration et admission distinctes, selon l’[ARD](ARD.md#3-pi-comme-frontière-constante). L’admission propriétaire initiale peut préautoriser exactement cette dérivation, sa preuve de canal et sa réserve ; le moteur l’enchaîne alors sans nouvelle interaction. L’identité exacte disponible, les paramètres, l’accès, le budget et les preuves doivent être établis. Un alias redirigé vers une autre version ne constitue pas un secours. Les contrats déjà scellés restent inchangés.
 
+**Exception de recherche sémantique.** L’aide facultative du répertoire et du catalogue utilise une intégration TypeSafe commune, financée par Bench-X. Elle est distincte du parcours personnel OpenRouter. Son autorité, son enveloppe et ses limites suivent l’[ARD](ARD.md#49-aide-sémantique-commune). Une configuration ou un contrat approuvé ne vaut pas activation, émission ou dépense. Le service reste désactivé sans autorisation distincte.
+
 **Pi obligatoire.** Pi est le harnais commun de chaque comparaison candidate. Son choix n'est pas rouvert par une revue de configuration. Cette contrainte ne choisit pas le transport de l’assistance de préparation ou de jugement.
 
 **Conditions de test communes.** L’objet défini par l’[ARD](ARD.md#42-conditions-de-test-communes) est gelé avant le premier candidat et référencé par toutes les configurations comparées. Une condition commune modifiée ouvre une nouvelle comparaison. Un paramètre propre au candidat ne doit pas être présenté comme une condition partagée.
@@ -157,6 +159,8 @@ Le coût ne compense jamais une non-admissibilité. Une mesure valide d’une so
 
 **Contrôle du lot gelé #549.** Par décision d’Ayo, la première proposition de jugement inexploitable arrête le contrôle de ce lot. Une réponse complète dont le format ou les preuves sont invalides donne `UNUSABLE_JUDGMENT_PROPOSAL`, sans relance de cette proposition. Le reçu, la cause et le coût restent conservés ; les appels suivants du contrôle ne partent pas. L’arrêt persiste après reprise du processus et interdit une nouvelle réservation du même contrôle. Il ne prouve aucune erreur de la sortie examinée et ne qualifie pas le juge. Les reprises techniques déjà autorisées pour les incidents fournisseur restent inchangées, dans leurs bornes et sous leurs autorités existantes. Cette règle concerne seulement le contrôle #549 ; elle ne modifie ni les autres jugements assistés ni les contrats déjà scellés.
 
+**Aide sémantique facultative.** Une demande produit au plus une émission, sans reprise ni secours automatique. Les règles de relance des candidats et des assistants de préparation ou jugement ne s’y appliquent pas. Une interruption ne prouve ni absence de traitement ni absence de coût. Les reçus et réserves restent attribuables sans conserver le texte recherché. Une double soumission ou un redémarrage ne réémet aucune intention. L’indisponibilité technique se distingue d’une réponse valide sans suggestion.
+
 ## 10. Restitution
 
 **Lecture publique.** Le parcours et ses critères d’accessibilité sont définis par le [PRD](PRD.md#10-restitution-publique). L’ordre de calcul reste celui de la section 7, quel que soit l’agencement des écrans.
@@ -182,6 +186,8 @@ Le coût ne compense jamais une non-admissibilité. Une mesure valide d’une so
 **Sélection publique fermée.** Seuls la notice et les contenus fictifs explicitement approuvés sont publiables. Les références du juge, données privées, secrets, journaux et contributions non autorisées restent exclus. Une pièce manquante, une empreinte divergente ou une autorité invalide empêche l’activation ; aucune publication partielle n’est exposée.
 
 **Retrait éditorial.** Une décision de retrait identifie la version concernée et conserve sa trace. Elle ferme son accès public et celui de ses pièces, y compris par leurs anciennes URL, et interdit les nouvelles reprises. L’indisponibilité reste visible sans exposer le contenu retiré. Les autres versions et les preuves historiques restent inchangées. Aucune suppression de copies externes n’est garantie.
+
+**Suggestion sans autorité métier.** L’aide sémantique n’approuve ni besoin, ni épreuve, ni comparabilité et ne lance aucun candidat. Sa probabilité ne constitue pas une preuve de réussite. Une absence de suggestion laisse la préparation accessible. Les contrôles éditoriaux restent applicables ; aucune réponse du fournisseur ne rend admissible une notice retirée ou privée.
 
 **Caractéristiques de recherche.** Les caractéristiques d’une épreuve sont déclarées et approuvées avec sa version publique. La recherche ne les infère ni des pièces ni du besoin du visiteur. Une valeur inconnue reste distincte d’une absence explicitement déclarée. Résultat attendu, entrées, langue, outils, difficulté, version, qualification et présence de résultats ne se substituent pas les uns aux autres. Aucun filtre ne constitue une qualification ou une preuve de comparabilité.
 
