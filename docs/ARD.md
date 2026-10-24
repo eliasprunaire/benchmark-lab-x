@@ -26,6 +26,8 @@ L’architecture est indépendante des modèles et de leurs versions commerciale
 
 Les appels engagés pour un demandeur peuvent être imputés à un accès fournisseur que ce demandeur fournit lui-même, en saisissant une clé personnelle dans le parcours. C’est le seul mécanisme d’accès du demandeur : l’ancienne autorisation déléguée est retirée. L’architecture exige que la clé soit reçue, conservé et utilisé par l’exécuteur seul, lié à la session du demandeur, révocable par lui, jamais transmis au serveur public, aux pages, aux journaux ni aux reçus publics. Le plafond non renouvelable de la clé OpenRouter est la seule limite financière du parcours financé par le demandeur. Préparation, correction, qualification, vérification des modèles, comparaison et jugement utilisent cette même clé, sans plafond local quotidien, par navigateur ou par campagne. Les estimations, réservations et coûts restent enregistrés pour le suivi, sans constituer une seconde limite. Cette imputation ne modifie ni la séparation des autorités de validation, de qualification et de lancement, ni les exigences de reçu et de preuve.
 
+L’aide sémantique de recherche constitue une exception bornée au canal OpenRouter et au financement personnel. Elle utilise directement TypeSafe selon la [section 4.9](#49-aide-sémantique-commune). Cette exception ne concerne ni préparation, ni qualification d’épreuve, ni candidat, ni jugement.
+
 ### 3.1 Identité de l'environnement d'exécution
 
 Chaque campagne doit figer le paquet ou fork Pi, sa version exécutée, les empreintes nécessaires, les paquets, outils, skills, contexte, réglages, environnement et date de gel. Les paramètres demandés et observés restent distincts.
@@ -166,6 +168,22 @@ La consultation, la recherche simple et les filtres s’exécutent sur les notic
 Le rendu serveur permet l’usage sans JavaScript. Les entrées et textes sont validés et échappés selon les frontières existantes. Les liens externes ne transmettent ni besoin privé ni référent contenant des données privées. Aucun accès aux pièces privées n’est nécessaire pour servir une notice.
 
 Le retrait d’une notice produit un état indisponible explicite, y compris sur son lien direct. Une vérification éditoriale insuffisante reste visible. Le répertoire vide et la recherche sans résultat conservent une sortie vers la description d’un besoin. Cette capacité réutilise le serveur et les harnais existants ; elle ne requiert ni nouveau service, ni Jev, ni acquisition automatique de sources.
+
+### 4.9 Aide sémantique commune
+
+Le répertoire externe et le catalogue d’épreuves utilisent une seule intégration TypeSafe dans l’exécuteur existant. Chaque usage conserve ses questions versionnées et sa qualification distincte. Les lecteurs publics existants fournissent les seules notices admissibles. Aucun nouveau microservice, collecte de sources ou index privé n’est requis.
+
+Le serveur relaie la demande volontaire sans recevoir la clé TypeSafe. L’exécuteur construit une projection fermée : formulation soumise et champs publics utiles. Les identifiants de correspondance proviennent du serveur ; aucune destination n’est construite depuis une sortie libre. Les textes soumis restent des données, jamais des instructions ou une autorité. Les questions indépendantes par notice permettent une absence de suggestion. Le modèle demandé et observé, les identifiants, la complétude et les probabilités finies sont contrôlés avant usage. Aucun modèle, alias mobile ou fournisseur de secours n’est substitué.
+
+La configuration initiale fixe `jev-1.13.0`, sans alias mobile. Elle conserve un tarif daté, les limites et les questions propres à chaque usage. Les limites ordinaires retenues sont 64k jetons par requête et 32k par question, contexte compris. Leur application et la borne de réservation doivent être justifiées avant émission. Aucun contexte étendu, troncature silencieuse ou découpage multipliant les appels n’est permis. Un dépassement demande une formulation plus courte ou des filtres supplémentaires ; il ne sélectionne pas silencieusement un sous-ensemble.
+
+L’enveloppe initiale commune est de 1 USD de consommation API, sans renouvellement automatique. Elle ne constitue pas une autorisation d’émission. Le payeur TypeSafe est distinct des clés personnelles. L’exécuteur réserve avant émission sous contrôle transactionnel commun aux deux usages. Un tarif ou une borne de coût non établi empêche l’envoi. Le coût calculé depuis les jetons et le tarif reste distinct d’une facture. Un coût inconnu conserve sa réserve ; il ne devient pas nul. La recharge automatique du compte doit rester désactivée ; le contrôle local ne garantit pas la facture fournisseur.
+
+Une demande autorise au plus une émission, sans reprise automatique, y compris après 429, surcharge, interruption ou redémarrage. Les reprises implicites du SDK sont désactivées. Le délai maximal est de 10 secondes. Les deux usages partagent deux émissions simultanées au maximum et une nouvelle émission par seconde au maximum. Il n’existe aucune file d’attente durable. Une double soumission de la même demande ne produit pas deux émissions. Une nouvelle demande volontaire garde les mêmes contrôles de financement et de fréquence.
+
+Une intention et sa réservation précèdent l’envoi. Les reçus attribuent l’opération à son usage, au modèle demandé et observé, aux questions, aux notices, aux jetons et au tarif. Ils conservent la chronologie, l’incident et le coût connu ou inconnu, sans texte recherché, secret, cookie ou historique privé. Le contenu recherché ne persiste pas dans les journaux, les URL ou les reçus durables. Une empreinte ne constitue pas une promesse d’anonymat. Une émission incertaine garde sa réserve et ne repart pas. Une réponse tardive ne réactive pas une demande terminée.
+
+L’admissibilité des notices est revérifiée avant affichage, ouverture et copie. Les correspondances restent temporaires et n’altèrent aucun paquet publié. Une réponse invalide ou une limite atteinte ferme seulement l’aide concernée ; les recherches simples restent utilisables. Un interrupteur désactivé interdit toute émission et toute résolution de secret. L’activation de chaque usage exige son autorisation et sa qualification en français ; celle du répertoire ne qualifie pas celle des épreuves.
 
 ## 5. Flux minimal
 
