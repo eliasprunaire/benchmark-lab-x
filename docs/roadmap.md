@@ -39,6 +39,7 @@ Les exigences suivantes du PRD n’ont pas encore de jalon. Les dater demande un
 - copie privée d’une épreuve publiée, adaptation du besoin, qualification propre et signalement des erreurs de source ([§10](PRD.md#préparer-depuis-une-épreuve-publiée))
 - résultats réellement acquis et évalués sur le catalogue et le panel approuvés ([§5.1](PRD.md#51-capacités))
 - classements par critère et filtres combinés, sans note pondérée ni désignation automatique du meilleur modèle ([§5.1](PRD.md#51-capacités), [§7](PRD.md#7-ordre-de-décision))
+- priorité explicite et réversible du conseil privé : coût observé ou critère secondaire ordonnable, sans score pondéré ([§7](PRD.md#priorité-de-consultation-privée))
 - secours officiel candidat en dernier recours selon les conditions de l’ARD ([§5.1](PRD.md#51-capacités))
 - suivi des tentatives, incidents, coûts et preuves, sans relance implicite hors la relance automatique bornée des appels assistés ([§5.1](PRD.md#51-capacités))
 - un à trois essais par modèle et par exemple, choisis par l’utilisateur avant le lancement, chacun jugé et affiché séparément ([§5.1](PRD.md#51-capacités))
