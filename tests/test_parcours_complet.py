@@ -2498,6 +2498,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual([('unavailable', 'TIMEOUT')] * 2,
                              [(result[1]['status'], result[1]['reason'])
                               for result in late_results])
+            self.assertEqual([[], []], [result[1]['suggestions'] for result in late_results])
             self.assertEqual(2, len(late_calls))
             late_state = semantic_help.inspect(late_store)
             self.assertEqual(['RECEIVED', 'RECEIVED'],
