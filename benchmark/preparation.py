@@ -945,6 +945,9 @@ def view(store, session_id, dossier_id, revision=None, *, include_history=False)
                                        (dossier_id, revision - 1, 'RECEIVED')).fetchone()
         result['message'] = None if completed is None else json.loads(completed[0])
         result['observed_cost'] = None if completed is None else json.loads(completed[1])
+        # Un dossier encore sans opération n'a rien envoyé : la page ne parle pas d'un coût inconnu
+        result['operations'] = connection.execute(
+            'SELECT count(*) FROM operations WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
         if completed is not None:
             operation = store._operation_for_update(connection, completed[2], ('RECEIVED',))
             observed = operation['receipt']['observed_configuration'] or {}

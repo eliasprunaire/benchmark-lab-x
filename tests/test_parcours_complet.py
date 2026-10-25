@@ -1324,10 +1324,23 @@ class ParcoursComplet(unittest.TestCase):
         need = page.form('/messages')
         self.assertEqual(['message'], [n['attrs'].get('name') for n in need['nodes'] if n['tag'] == 'textarea'])
         self.assertIn('Ajoutez votre clé OpenRouter', page.visible)
+        # Zéro opération : la page nomme l’absence d’appel au lieu de suggérer une dépense non rapprochée
+        self.assertIn('Aucun appel modèle effectué pour ce dossier.', page.visible)
+        self.assertNotIn('justificatif', page.visible)
+        self.assertNotIn('Coût observé', page.visible)
         # La copie reste refusée sans clé : aucun appel ni dossier partiel
         self.request(dossier + '/messages', need['fields'] | {'message': 'Un besoin assez long pour être préparé'},
                      status=403)
         self.assertEqual([], self.calls)
+        # Rechargement sans clé et sans besoin envoyé : même état, aucun appel fictif déclenché
+        reloaded, _, _ = self.request(dossier)
+        self.assertIn('Aucun appel modèle effectué pour ce dossier.', reloaded.visible)
+        self.assertNotIn('justificatif', reloaded.visible)
+        with closing(storage.Store(self.data)) as store:
+            self.assertEqual(0, store._connection.execute(
+                'SELECT count(*) FROM operations WHERE dossier_id=?', (dossier_id,)).fetchone()[0])
+        self.assertEqual([], self.calls)
+        self.assertTrue(self.starts.empty())
         # Renvoi de la même demande : même dossier, aucune révision ni opération de plus
         again, again_headers, _ = self.request(form['action'], form['fields'], status=303)
         self.assertEqual(dossier, again_headers['Location'])
@@ -1610,6 +1623,9 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         self.assertIn('Épreuve source', page.visible)
         self.assertIn('Qualification réussie', page.visible)
+        # Le coût observé d’une opération reçue reste affiché tel quel, jamais remplacé par un zéro
+        self.assertIn('Coût observé de cette préparation : 0,10 USD', page.visible)
+        self.assertNotIn('Aucun appel modèle effectué pour ce dossier.', page.visible)
         self.assertTrue(any('Relève les opérations inventées' in n['text'] for n in page.nodes
                             if n['tag'] == 'div' and 'example-text' in n['attrs'].get('class', '')))
         # La comparaison appartient au nouveau dossier, pas à la source
@@ -1661,6 +1677,25 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(any('Relève les opérations inventées' in n['text'] for n in page.nodes
                             if n['tag'] == 'div' and 'example-text' in n['attrs'].get('class', '')))
         self.request(comparison, status=200)
+
+    def test_copie_epreuve_cout_inconnu_reste_inconnu(self):
+        """#315 : une opération reçue au coût inconnu garde cette inconnue, sans zéro ni absence d’appel"""
+        def cout_inconnu(operation, request):
+            value = self.prepare(operation, request)
+            value['cost'].update(status='UNKNOWN', amount=None, currency='USD', source='Reçu simulé sans coût')
+            return value
+        self.assistants['transport'] = SessionAssistant(cout_inconnu, {'model': 'factice'})
+        dossier, page, _ = self.copie_preparee()
+        self.assertIn('Coût observé de cette préparation : inconnu. Source : Reçu simulé sans coût.', page.visible)
+        self.assertNotIn('Coût observé de cette préparation : 0', page.visible)
+        self.assertNotIn('Aucun appel modèle effectué pour ce dossier.', page.visible)
+        reloaded, _, _ = self.request(dossier)
+        self.assertIn('Coût observé de cette préparation : inconnu.', reloaded.visible)
+        self.assertNotIn('Coût observé de cette préparation : 0', reloaded.visible)
+        with closing(storage.Store(self.data)) as store:
+            operations = store.inspect_operations()
+            self.assertEqual(['UNKNOWN'], [operation['observed_cost']['status'] for operation in operations])
+            self.assertEqual([None], [operation['observed_cost']['amount'] for operation in operations])
 
     def test_resultats_publics_epreuve(self):
         """#466 : restitution approuvée, lecture publique autonome, preuves et retraits"""

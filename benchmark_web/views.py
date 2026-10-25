@@ -1288,6 +1288,9 @@ def render(value, csrf, path='/preparation', *, error=False):
             cost = value['observed_cost']
             content += '<p>Coût observé de cette préparation : ' + text(
                 'inconnu' if cost['status'] == 'UNKNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']) + '. Source : ' + text(cost['source']) + '.</p>'
+        elif value.get('operations') == 0:
+            # Zéro opération : aucune dépense à rapprocher, pas même une dépense inconnue
+            content += '<p>Aucun appel modèle effectué pour ce dossier.</p>'
         else:
             content += '<p>Coût observé : inconnu, faute de justificatif de coût reçu pour cette préparation.</p>'
         if value.get('cost_reconciliation'):
