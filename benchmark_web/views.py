@@ -1152,7 +1152,8 @@ def render(value, csrf, path='/preparation', *, error=False):
             actions = f'<a class="button" href="{text(target)}">{text(label)}</a>'
         elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
             actions = f'<a class="button" href="{text(url)}/configurations">Choisir les modèles</a>'
-        content = '<p class="tag">Exemple inventé · version ' + text(revision) + '</p>'
+        example_mark = 'Copie d’épreuve' if source and value['package'] is None else 'Exemple inventé'
+        content = '<p class="tag">' + text(example_mark + ' · version ' + str(revision)) + '</p>'
         if snapshot:
             title = 'Exemple utilisé pour la comparaison'
             tone, heading, next_step = 'done', 'Exemple déjà testé', 'Vous consultez l’exemple tel qu’il a été testé. Ses résultats restent disponibles.'
@@ -1408,8 +1409,13 @@ def render(value, csrf, path='/preparation', *, error=False):
             'restore': 'Service momentanément indisponible, réessayez plus tard.',
             'unresolved': 'Envois fermés : le résultat ou le coût d’un appel précédent n’est pas encore connu.'}
         # L'encadré porte l'état seul (DESIGN.md) : le motif suffit, sans titre ni note de financement
+        reason = reasons[state['reason']]
+        if state['reason'] == 'access' and value.get('source') and value.get('package') is None:
+            # Copie sans exemple préparé : la lecture n'exige ni clé ni appel, la clé sert ensuite
+            reason = ('Votre copie est enregistrée. Vous pouvez la consulter sans clé ni appel aux modèles ; '
+                      'la clé OpenRouter servira à préparer votre exemple.')
         content = ('<aside id="availability" class="availability" aria-label="État de la préparation"><p>'
-                   + text(reasons[state['reason']]) + '</p></aside>' + content)
+                   + text(reason) + '</p></aside>' + content)
     script = page_script(value) if not error else None
     if script is not None and value.get('kind') == 'campaign_launch' and value['campaign']['attempts']:
         content += '<script>' + script + '</script>'

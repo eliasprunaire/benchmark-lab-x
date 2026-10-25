@@ -1762,6 +1762,21 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.match(copied, /Erreur signalée <script>alert\(2\)<\/script>/);
       assert.match(copied, /Sa qualification publiée ne qualifie pas ce dossier/);
       assert.match(copied, /La copie reste consultable sans clé/);
+      // Copie sans exemple préparé : son état et la consultation sans clé sont dits au premier écran
+      assert.match(copied, /Copie d’épreuve · version 1/);
+      assert.equal(copied.includes('Exemple inventé'), false);
+      assert.match(copied, /Votre copie est enregistrée\./);
+      assert.match(copied, /sans clé ni appel aux modèles/);
+      assert.match(copied, /servira à préparer votre exemple/);
+      assert.equal(copied.includes('Ajoutez votre clé OpenRouter pour préparer un exemple.'), false);
+      assert.match(copied, /Aucun appel modèle effectué pour ce dossier/);
+      await page.reload();
+      const reloadedCopy = await page.textContent('main');
+      assert.match(reloadedCopy, /Copie d’épreuve · version 1/);
+      assert.match(reloadedCopy, /Épreuve source/);
+      assert.match(reloadedCopy, /Pièce source <script>alert\(1\)<\/script>/);
+      assert.match(reloadedCopy, /Qualification réussie/);
+      assert.match(reloadedCopy, /Aucun appel modèle effectué pour ce dossier/);
       assert.equal(await page.locator('script[src*="privacy.js"]').count(), 1);
       assert.equal(await page.locator('main script:not([src])').count(), 1);
       assert.equal(await page.locator('main img, main script[src*="alert"]').count(), 0);
