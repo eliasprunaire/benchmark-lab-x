@@ -65,7 +65,7 @@ def child_environment(parent, secrets, public=None):
 
 
 def vault_read(field):
-    binary = os.environ.get("VAULT_BIN", "/opt/homebrew/bin/vault")
+    binary = os.environ.get("VAULT_BIN", "vault")
     completed = subprocess.run(
         [binary, "kv", "get", f"-field={field}", VAULT_PATH],
         check=False,

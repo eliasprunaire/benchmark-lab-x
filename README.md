@@ -74,6 +74,8 @@ uv run --with-requirements benchmark/requirements.lock \
 
 Les transports sont simulés dans les tests. Un résultat vert prouve les comportements couverts sur l’environnement observé ; il ne prouve pas un accès fournisseur, une campagne réelle, un déploiement ou une publication.
 
+Le lanceur `benchmark.vault_env` appelle `vault` résolu par le `PATH`. Définir `VAULT_BIN` remplace ce binaire par un chemin précis.
+
 ## Architecture du dépôt
 
 ```text
