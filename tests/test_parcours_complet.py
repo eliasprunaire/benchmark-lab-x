@@ -10,8 +10,11 @@ import os
 from pathlib import Path
 import queue
 import re
+import signal
 import socket
 import socketserver
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -8311,6 +8314,50 @@ class ParcoursComplet(unittest.TestCase):
                     transport, 'c-stop-fin-3', 'ctrl-stop-fin', 'controle-stop-fin', sortie), transport)
             self.assertEqual(premier_fige, fige('c-stop-fin-1'))
             self.assertEqual(second_fige, fige('c-stop-fin-2'))
+
+    def test_lanceur_vault_injecte_les_cles_dans_le_fils_seulement(self):
+        # Vault est remplacé par un binaire factice : le lanceur pose les clés dans le fils seulement
+        racine = Path(__file__).resolve().parents[1]
+        factice = self.public / 'vault'
+        factice.write_text(f'#!{sys.executable}\n'
+                           'import os, sys\n'
+                           'champ = [a for a in sys.argv if a.startswith("-field=")][0].split("=", 1)[1]\n'
+                           'print("" if champ == os.environ["CHAMP_VIDE"] else "factice-" + champ)\n')
+        factice.chmod(0o755)
+        fichier_env = self.public / '.env'
+        fichier_env.write_text('DASHSCOPE_BASE_URL=https://dash.example\nOPENROUTER_API_KEY=ignoree\n')
+        marque = self.public / 'fils-lance'
+
+        def lancer(champ_vide, commande):
+            environnement = dict(os.environ, OPENROUTER_API_KEY='agent-fictif', VAULT_BIN=str(factice),
+                                 BENCHMARK_ENV_FILE=str(fichier_env), CHAMP_VIDE=champ_vide)
+            processus = subprocess.Popen([sys.executable, '-m', 'benchmark.vault_env', '--', *commande],
+                                         cwd=racine, env=environnement, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, text=True, start_new_session=True)
+            try:
+                sortie, erreur = processus.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                os.killpg(os.getpgid(processus.pid), signal.SIGKILL)
+                processus.communicate()
+                raise
+            return processus.returncode, sortie, erreur
+
+        enfant = [sys.executable, '-c',
+                  'import json, os; print(json.dumps({k: os.environ.get(k) for k in '
+                  '["OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "DASHSCOPE_BASE_URL"]}))']
+        code, sortie, erreur = lancer('aucun', enfant)
+        self.assertEqual(0, code, erreur)
+        observe = json.loads(sortie)
+        self.assertEqual('factice-openrouter_benchmark', observe['OPENROUTER_API_KEY'])
+        self.assertEqual('factice-deepseek_benchmark', observe['DEEPSEEK_API_KEY'])
+        self.assertEqual('https://dash.example', observe['DASHSCOPE_BASE_URL'])
+
+        # Un champ Vault vide arrête le lanceur avant le fils
+        enfant_marque = [sys.executable, '-c', f'open({str(marque)!r}, "w").close()']
+        code, _, erreur = lancer('mistral_benchmark', enfant_marque)
+        self.assertNotEqual(0, code)
+        self.assertIn('mistral_benchmark', erreur)
+        self.assertFalse(marque.exists(), 'le fils ne doit pas se lancer')
 
 
 if __name__ == '__main__':
