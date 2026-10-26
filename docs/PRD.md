@@ -16,7 +16,7 @@ L'[ARD](ARD.md) fixe le contrat d'architecture. Les [règles](RULES.md) portent 
 
 **FAIT ÉTABLI** : le besoin originel est de permettre à la communauté du Lab-X de tester elle-même des solutions d'IA sur des tâches utiles, avec des preuves lisibles plutôt qu'un palmarès repris d'un tiers.
 
-L’utilisateur décrit un travail qu’il souhaite comparer. Le produit l’aide à le préciser et construit un dossier fictif qu’il peut examiner et modifier avant de valider le besoin représenté. Une campagne autorisée compare ensuite les configurations de modèle sous le même harnais Pi. Résultats, preuves, qualités et coûts observés alimentent des classements par critère et des filtres. Le produit peut conseiller une configuration conforme qui n’est moins bonne qu’aucune autre réponse conforme sur les critères de qualité. Entre réponses de même qualité, il retient la moins coûteuse. Il ne fabrique aucun score combiné, ne désigne pas de gagnant lorsque les qualités restent incomparables et un coût faible ne rend pas une sortie erronée utilisable.
+L’utilisateur décrit un travail qu’il souhaite comparer. Le produit l’aide à le préciser et construit un dossier fictif qu’il peut examiner et modifier avant de valider le besoin représenté. Une campagne autorisée compare ensuite les configurations de modèle sous le même harnais Pi. Résultats, preuves, qualités et coûts observés alimentent des classements par critère et des filtres. Par défaut, le produit peut conseiller une configuration conforme qui n’est moins bonne qu’aucune autre réponse conforme sur les critères de qualité. Entre réponses de même qualité, il retient la moins coûteuse. Une priorité explicite peut départager les compromis selon la section 7. Le produit ne fabrique aucun score combiné. Un coût faible ne rend pas une sortie erronée utilisable.
 
 Le nom du modèle ne suffit toutefois pas comme preuve. Le modèle est l'identifiant principal présenté, mais le verdict s'applique à sa configuration observée sous les conditions de test communes déclarées. Aucun effet que le fournisseur, l'effort, Pi ou ses réglages peuvent influencer n'est attribué au seul modèle.
 
@@ -57,6 +57,7 @@ Qualité ou stabilité ne deviennent des critères que si une tâche les défini
 Le produit réunit les capacités ci-dessous et les [critères d’acceptation produit](#12-critères-dacceptation-produit).
 
 - parcours public de description, clarification et préparation assistée d’un dossier fictif consultable et modifiable
+- répertoire éditorial d’évaluations externes, consultable sans session, clé ni appel modèle
 - catalogue de tâches versionnées, avec contrat et cas d'essai identifiés ; aucune demande n’y est publiée automatiquement
 - plusieurs campagnes, chacune liée à une version de tâche, à ses cas et à un panel figé
 - résultats réellement acquis et évalués sur le catalogue et le panel approuvés
@@ -75,7 +76,7 @@ La sélection d’un modèle ne prouve ni sa disponibilité ni sa compatibilité
 
 Les assistants d’accueil, de préparation et de jugement sont sélectionnés séparément du panel candidat. Aucun assistant n’est déclaré qualifié, disponible ou moins cher sans preuve. Le responsable peut retenir un profil OpenRouter déjà approuvé au démarrage, sans modifier le code ; un fichier de profil ne promeut aucun essai en assistant de production. Les essais de préparation examinent la fidélité au besoin vague, l’utilité des questions, l’absence de besoins inventés, la cohérence et la vérifiabilité du cas, ainsi que la conservation des accords lors des modifications. Coûts et provenance sont examinés séparément de cette qualité ; identifiants, méthode d’essai et budget doivent être décidés avant les appels.
 
-Restent ouverts avant réalisation ou ouverture des fonctions concernées : protection contre les abus, articulation des campagnes réelles, publication et alimentation du catalogue. Les sessions, la conservation et le financement personnel suivent les décisions ci-dessous. La confidentialité demeure la règle avant autorisation de publication. Les frontières d’accès et le composant portant l’assistance sont à préciser dans l’[ARD](ARD.md#121-frontières-du-produit). Ces inconnues n’annulent pas le cap produit ; elles n’autorisent aucun choix implicite de compte, quota, prix ou publication automatique.
+Restent ouverts avant réalisation ou ouverture des fonctions concernées : protection contre les abus, articulation des campagnes réelles et publication des résultats. La publication d’épreuves éditoriales suit la politique ci-dessous. Les sessions, la conservation et le financement personnel suivent les décisions ci-dessous. La confidentialité demeure la règle avant autorisation de publication. Les frontières d’accès et le composant portant l’assistance sont à préciser dans l’[ARD](ARD.md#121-frontières-du-produit). Ces inconnues n’annulent pas le cap produit ; elles n’autorisent aucun choix implicite de compte, quota, prix ou publication automatique.
 
 ### 5.2 Extensions
 
@@ -102,6 +103,14 @@ Le [gabarit de carte](task-template.md) matérialise ce contrat. La méthode de 
 L’évaluation établit les verdicts avant la comparaison. L’utilisateur consulte ensuite les mesures et coûts connus au moyen de classements par critère et de filtres, selon l’[ordre de décision](RULES.md#7-ordre-de-décision). Une mesure valide reste visible pour une sortie non admissible ; son rang ne change pas le verdict et le coût ne rend pas cette sortie utilisable.
 
 La comparaison peut fournir une aide au choix économique conditionnelle selon les [règles](RULES.md#8-coût-et-bénéfices). Elle ne désigne pas de meilleur modèle en général et ne transforme pas les observations descriptives en score de qualité. Chaque tri annonce son critère et son périmètre ; les valeurs inconnues ou incompatibles restent sans rang. Les filtres ne changent pas le contrat, les verdicts ou le dénominateur d’une statistique déjà calculée. Sans règle d’agrégation préalable, les résultats restent par cas et tentative. La conclusion reste bornée à la tâche, à sa version et aux observations de la campagne.
+
+### Priorité de consultation privée
+
+Dans les résultats privés, le lecteur peut conserver le conseil par défaut, privilégier le coût observé ou choisir un critère secondaire ordonnable. Ce critère appartient au contrat gelé. Le choix reste explicite, visible et réversible, sans préférence inférée depuis le besoin.
+
+La priorité au coût retient l’unique réponse conforme la moins coûteuse. La priorité à un critère retient sa meilleure valeur, puis départage ses égalités par le coût. Les [règles](RULES.md#8-coût-et-bénéfices) maintiennent les gardes de preuve et expliquent les abstentions. Le conseil expose les compromis sur les autres critères, sans affaiblir les obligations.
+
+Le lecteur peut changer cette priorité sur une campagne enregistrée sans modifier son contrat, ses verdicts, ses coûts ni ses preuves. Les filtres ne changent pas la population du conseil. Sur plusieurs cas, une même configuration doit être retenue dans chaque cas, sans somme ni moyenne. Cette capacité ne s’étend pas aux restitutions publiques et ne produit aucun score pondéré.
 
 ## 8. Preuve et transparence
 
@@ -180,6 +189,74 @@ Le calendrier illustre un suivi mensuel le 5 pour le mois précédent, un point 
 
 Cette illustration de conception n’est ni un contrat gelé ni une campagne. Les fichiers évoqués dans l’exemple ne sont pas fournis par cette spécification ; ils devront exister avant un aperçu de tâche validable. Une réussite sur ce cas fictif, même validé, ne prouve pas la réussite sur les dossiers réels de l’utilisateur. Un exemple pédagogique public n’est pas réputé inédit pour les modèles.
 
+### Consulter des évaluations externes
+
+Le répertoire d’évaluations externes aide à trouver des sources officielles pertinentes pour un travail recherché. Il reste distinct du catalogue des tâches Bench-X et des comparaisons privées. Une évaluation externe ne prouve pas la réussite sur le besoin particulier du visiteur.
+
+Le visiteur accède au même répertoire depuis l’accueil, un lien direct ou une préparation suspendue. Il consulte les notices, recherche des termes et applique des filtres explicites, sans session, clé, JavaScript ni création de dossier. Aucun filtre de préférence n’est précoché. Aucun score global ni classement préférentiel des sources n’est produit. La recherche simple ne dépend ni de Jev ni d’un appel modèle.
+
+Chaque notice indique la source officielle, le travail mesuré, sa portée, ses limites, sa version ou date et sa date de vérification éditoriale. Les informations absentes restent inconnues. La sélection initiale couvre des besoins distincts au-delà des trois destinations de réorientation historiques ; elle ne promet aucune exhaustivité. Son contenu et la responsabilité de sa maintenance sont approuvés avant ouverture réelle.
+
+Une recherche sans résultat et un répertoire vide proposent de modifier la recherche ou de décrire un besoin. Une source retirée reste signalée comme indisponible lors d’un accès direct. Une source insuffisamment vérifiée porte cette limite et n’est pas présentée comme recommandée. Ces états conservent l’accès à la description d’un besoin.
+
+La consultation ne transmet aucun besoin privé aux sites externes, y compris dans les URL et les référents HTTP. Les notices ne rendent aucun dossier privé public. Le parcours reste utilisable au clavier et sur petit écran. La collecte automatique de sources, la recherche assistée et la publication d’épreuves Bench-X ne font pas partie de cette capacité.
+
+### Demander une aide sémantique facultative
+
+Le lecteur peut demander des suggestions dans le répertoire externe ou dans le catalogue d’épreuves. La recherche simple reste indépendante de cette aide. Un bouton explicite annonce TypeSafe, les données transmises et leur traitement avant l’envoi. Aucun appel ne part pendant la frappe ou la consultation ordinaire.
+
+Seules la formulation soumise et les informations utiles des notices publiques admissibles sont transmises. Dossiers privés, contributions, références du juge, historique, clés et cookies restent exclus. La formulation doit rester générale, sans information personnelle ou confidentielle. Cette consigne ne garantit pas l’absence de contenu sensible.
+
+Chaque notice est appréciée indépendamment ; plusieurs correspondances ou aucune suggestion sont recevables. Les correspondances et différences reposent sur les champs publiés ou des critères fermés. Aucune justification libre n’est inventée. Une probabilité ne prouve ni adéquation, ni qualification, ni comparabilité. L’aide ne refuse aucun besoin, ne force aucun parcours et ne lance aucune campagne. Le lecteur garde l’accès à la préparation d’un nouvel exemple. Aucun opérateur ne valide individuellement les suggestions.
+
+Le classement est éphémère. Les notices restent soumises aux contrôles de disponibilité, d’intégrité et de retrait avant affichage, ouverture et copie. L’aide ne modifie ni version, ni caractéristique éditoriale, ni résultat. Une réponse valide sans correspondance affiche une absence de suggestion. Une panne, un délai dépassé ou une réponse invalide affiche une aide indisponible. Les deux états conservent la recherche simple et ses filtres, sans secours génératif.
+
+Bench-X finance cette aide sur un compte TypeSafe dédié, distinct des clés personnelles OpenRouter. Les textes recherchés ne sont pas conservés dans des journaux durables locaux. Seuls les reçus techniques et comptables nécessaires subsistent, sans ces textes. Le traitement standard du fournisseur est annoncé ; aucune absence de conservation ni localisation exclusivement européenne n’est promise sans engagement applicable. L’absence d’entraînement ne prouve pas l’absence de conservation.
+
+Le service est désactivé par défaut. Son activation exige une autorisation distincte, un compte et un traitement des données vérifiés, une enveloppe et une qualification propre à chaque usage. Les seuils sont établis sur les formulations françaises avant activation ; aucun seuil arbitraire n’est réputé qualifié. Une preuve fictive établit le fonctionnement logiciel seulement. Les limites communes relèvent de l’[ARD](ARD.md#49-aide-sémantique-commune) et les autorités des [règles](RULES.md#3-périmètre-produit).
+
+### Publier et consulter une épreuve éditoriale
+
+Le catalogue public accueille des épreuves fictives sélectionnées explicitement. Ayo approuve leur publication, sous une autorité distincte de la maintenance des sources externes. Les dossiers privés et les contributions ne l’alimentent pas automatiquement.
+
+Une opération opérateur explicite soumet une version et ses pièces publiques à cette approbation. Une interface d’administration complète n’est pas exigée. La publication ne demande ni campagne ni résultat préalable. Une épreuve non qualifiée peut être consultée avec son état exact et ses limites ; sa publication ne la qualifie pas.
+
+Le lecteur consulte le catalogue et chaque version sans clé, session ni JavaScript. La notice présente le travail évalué, les cas, les pièces publiées, la version et l’état de qualification. L’absence de résultats publiés reste explicite. Le catalogue vide permet de revenir à la description d’un besoin.
+
+Le retrait vise une version précise. Elle quitte le catalogue disponible ; ses anciennes URL signalent son indisponibilité et ses pièces ne sont plus servies. Aucune nouvelle reprise de cette version n’est admise. Les autres versions et l’historique de décision sont conservés. Le retrait ne promet pas l’effacement des copies externes.
+
+### Trouver une épreuve par ses caractéristiques
+
+Le lecteur recherche un travail parmi les versions éditoriales publiques disponibles, sans clé, session ni appel modèle. La recherche textuelle déterministe porte sur la notice publique. Elle se combine avec des filtres explicites et évolutifs, sans taxonomie fermée des métiers ni préférence inférée. Cette recherche simple ne classe pas les épreuves par proximité sémantique.
+
+La notice distingue résultat attendu, entrées, langue connue ou inconnue, outils, difficulté, version, qualification et présence de résultats. Les caractéristiques sont déclarées éditorialement et approuvées avec la version. Aucune caractéristique n’est déduite automatiquement des pièces. Une information absente reste inconnue ; elle ne signifie ni absence d’outil ni qualification absente. La difficulté déclarée ne prouve aucune capacité mesurée.
+
+Chaque version disponible apparaît séparément et conduit à sa notice exacte. Le lecteur conserve ses critères pendant la navigation et peut les effacer. Une recherche vide permet de modifier les critères ou de décrire un nouvel exemple. Les formulaires restent utilisables sans JavaScript, au clavier et sur écran étroit.
+
+Les anciennes versions restent consultables sans modification de leurs octets ni de leurs empreintes. Les nouvelles caractéristiques absentes y restent inconnues. Les dossiers privés et contributions ne fournissent ni résultat de recherche ni valeur de filtre. Le retrait est revérifié à la consultation et à la copie.
+
+La recherche n’autorise aucune publication de résultats. Leur absence reste distincte de la qualification. La recherche assistée et la restitution de campagnes publiques relèvent de capacités séparées.
+
+### Préparer depuis une épreuve publiée
+
+Le lecteur peut créer son dossier privé depuis une version publiée, sans clé ni appel modèle. Cette action copie exactement la notice et les pièces publiques sélectionnées. Elle conserve leur version source et leur filiation. La copie devient accessible seulement à sa session, selon les règles de conservation privée existantes.
+
+Le lecteur précise son besoin et ses écarts avec l’épreuve. Le texte éditorial reste distinct de cette demande personnelle. La copie documentaire reste intacte ; les adaptations constituent le nouvel exemple. Les accords non touchés sont conservés.
+
+La préparation construit le contrat et la référence propres au dossier. Elle exige l’accès personnel avant son premier appel et annonce les appels de qualification. Le dossier suit ensuite la validation, la qualification et le lancement expressément autorisé du parcours existant. Le statut de qualification publié ne dispense jamais cette nouvelle instance de qualification. Aucun résultat ni coût antérieur ne lui est réattribué.
+
+Une source retirée ou un paquet incomplet ou altéré interdit une nouvelle copie. Un retrait éditorial ordinaire laisse les copies privées antérieures sous leurs propres règles de conservation. Une erreur connue fait l’objet d’un signalement éditorial attribué à la version source. Les copies concernées affichent cet avertissement sans modifier leurs pièces, leurs verdicts ni leurs coûts historiques. Ce signalement ne vaut ni correction ni nouvelle qualification.
+
+### Publier les résultats d’une épreuve
+
+Ayo approuve explicitement la restitution d’une campagne et ses pièces publiques exactes par une opération opérateur. Cette autorité est distincte de la publication de l’épreuve. Elle ne publie ni campagnes futures, ni dossiers des lecteurs, ni contributions privées. Aucune interface d’administration complète n’est exigée.
+
+La restitution publiée forme un paquet autonome, rattaché à une version éditoriale et à une campagne identifiées. Elle conserve les observations et verdicts enregistrés, sans les recalculer ni réécrire l’épreuve. Toutes les observations nécessaires à la conclusion restent représentées. Les restrictions de preuve et leur effet sur la vérification publique sont explicités, sans révéler les autres campagnes privées.
+
+Le lecteur ouvre les campagnes autorisées depuis l’épreuve, puis leurs résultats et preuves, sans clé, session ni JavaScript. L’absence de résultat public reste explicite. La présence de résultats accessibles dépend des publications disponibles, sans modifier les octets des anciennes versions d’épreuve.
+
+Le retrait d’une restitution ferme ses pages et ses pièces, y compris leurs anciennes URL, sans retirer l’épreuve ni les autres restitutions. Le retrait de l’épreuve ferme aussi l’accès public aux restitutions rattachées. Ces opérations conservent les traces de décision et ne modifient pas les preuves historiques. Elles ne garantissent aucun effacement des copies externes.
+
 ### Consulter les résultats
 
 Le catalogue permet de chercher un travail proche de son besoin et d’identifier ses versions et campagnes publiées. La page tâche explique le contexte métier, la famille de travail, le résultat attendu et son usage, les cas, leur charge et leurs difficultés concrètes, la couverture recherchée et les exclusions. Pour une recherche documentaire, elle distingue l’exploitation de textes utiles fournis, la recherche dans une bibliothèque figée et la consultation externe autorisée. Les compétences sollicitées et les limites de reproduction diffèrent ; aucune de ces modalités ne présume un connecteur disponible. Elle distingue l’existence d’une tâche de la présence de résultats approuvés.
@@ -206,6 +283,7 @@ Les choix techniques relèvent de l'ARD. Le backlog et son avancement relèvent 
 
 | Situation à vérifier | Résultat attendu |
 |---|---|
+| Une aide sémantique est demandée | envoi volontaire et borné, suggestions indépendantes ou absentes, indisponibilité distincte, recherche simple préservée |
 | Le besoin est vague ou non évaluable | questions utiles, reformulation fidèle ; proposition de périmètre soumise à accord ou arrêt motivé |
 | L’utilisateur examine ou modifie l’exemple | pièces existantes liées au paquet, limites visibles, accords préservés, contrôles affectés refaits et nouvelle validation |
 | Le dossier comporte une ambiguïté ou une pièce manquante | aucune réponse devinée ; alternatives et incertitudes recevables exposées, comme le rapprochement collectif Despins |
@@ -222,6 +300,7 @@ Les choix techniques relèvent de l'ARD. Le backlog et son avancement relèvent 
 | Les preuves permettent une conclusion | chaque verdict conduit à son contrat, ses constats et ses pièces ; observations et évaluation restent distinguées |
 | Une campagne est partielle ou indéterminée | couverture prévue et acquise, incidents et inconnues sont lisibles sans succès ni échec inventé |
 | Une sortie erronée coûte peu ; des mesures sont égales, manquantes ou incompatibles | verdicts visibles pendant le tri, égalités conservées, valeurs non classables sans rang et comparaison incomplète signalée |
+| Le lecteur choisit une priorité dans ses résultats privés | priorité visible et réversible, choix expliqué ou abstention motivée, gardes préservés, aucune modification des preuves ni appel modèle |
 | Un filtre est appliqué après résultat | périmètre affiché, verdicts et population des statistiques inchangés ; aucune nouvelle agrégation implicite |
 | Aucune configuration n’est admissible | aucune option désignée comme utilisable ; dépenses et mesures valides restent consultables |
 | Une pièce est privée ou du contenu candidat est affiché | la limite de vérification est visible et le parcours ne donne aucun accès privé non autorisé ni exécution active |

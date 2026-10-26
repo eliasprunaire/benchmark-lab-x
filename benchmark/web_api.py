@@ -22,7 +22,35 @@ _LAUNCHING_LOCK = threading.Lock()
 def dispatch(store, method, path, token, body, source, transport, *, qualification_transport=None, candidate_transport=None,
              candidate_identity=None, judgment_transport=None,
              access_secret=None, access_transport=None, presentation=None,
-             management_token=None):
+             management_token=None, semantic_transport=None, semantic_config=None):
+    # Aide sémantique publique : aucune session, aucun cookie et aucun secret personnel.
+    # Le service désactivé refuse avant toute lecture de stockage, de secret ou d'appel.
+    if path == '/semantic-help/requests' and method == 'POST':
+        from . import semantic_help
+        try:
+            if type(body) is not dict or set(body) != {'usage', 'submission_id', 'formulation', 'notices'}:
+                raise semantic_help.InvalidRequest('Demande fermée requise')
+            usage = body['usage']
+            if usage not in semantic_help.USAGES:
+                raise semantic_help.InvalidRequest('Usage inconnu')
+            code, value = semantic_help.handle(
+                store, {key: body[key] for key in ('submission_id', 'formulation', 'notices')},
+                semantic_transport, semantic_config, usage=usage)
+            return code, value, None, None
+        except semantic_help.Unavailable as error:
+            return error.code, {'kind': 'semantic_help', 'status': 'unavailable',
+                                'reason': error.reason}, None, None
+        except semantic_help.InvalidRequest:
+            return 400, {'kind': 'semantic_help', 'status': 'invalid',
+                         'reason': 'INVALID_REQUEST'}, None, None
+    receipt_route = re.fullmatch(r'/semantic-help/requests/([0-9a-f]{32})', path)
+    if method == 'GET' and receipt_route:
+        from . import semantic_help
+        try:
+            code, value = semantic_help.receipt(store, receipt_route[1])
+        except semantic_help.InvalidRequest:
+            raise p.Denied('NOT_FOUND') from None
+        return code, value, None, None
     from . import privacy
     enabled = privacy.available(store._connection_checked())
     if method == 'GET' and path == '/preparation/data':
@@ -232,6 +260,28 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
             if models:
                 value['kind'] = 'campaign_models'
             return 200, value, None, None
+        control_route = re.fullmatch(
+            r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/controles/([A-Za-z0-9_-]{1,128})', parsed.path)
+        if control_route:
+            if parsed.scheme or parsed.netloc or parsed.fragment or parsed.query:
+                raise ValueError('Chemin local requis')
+            dossier_id, operation_id = control_route.groups()
+            p.owner(p.connection_for(store), session_id, dossier_id)
+            from .judgment_control import PROVENANCE, inspect_control
+            try:
+                viewed = inspect_control(store, operation_id)
+            except KeyError:
+                raise p.Denied('Ressource inaccessible') from None
+            if (viewed['dossier_id'] != dossier_id or viewed['provenance'] != PROVENANCE
+                    or viewed['reference_qualifiee'] is not False):
+                raise p.Denied('Ressource inaccessible')
+            piece = next(row for row in viewed['pieces'] if row['kind'] == 'reponse')
+            payload = dict(kind='constructed_response', dossier_href='/preparation/dossiers/' + dossier_id,
+                           name=piece['name'], empreinte=piece['sha256'])
+            origine = viewed['origine']
+            if origine is not None:
+                payload.update(producteur=origine['producteur'], date=origine['date'], source=origine['source'])
+            return 200, payload, None, None
         if path == '/preparation/catalogue':
             return 200, restitution.catalogue(store, session_id), None, None
         if parsed.query and re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/revisions/[1-9][0-9]*', parsed.path):
@@ -256,6 +306,9 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                 raise ValueError('Activité invalide')
             return 200, privacy.activity(store, session_id, body.get('dossier_id'),
                                          campaign_id=body.get('campaign_id')), token, None
+    if method == 'POST' and path == '/preparation/copies':
+        dossier_id, created = p.copy_from_publication(store, session_id, body)
+        return (201 if created else 200), {'dossier_id': dossier_id, 'created': created}, None, None
     if method == 'POST' and (path == '/preparation/dossiers' or
             re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/(messages|validation)', path)):
         if transport is None or (path.endswith('/validation') and qualification_transport is None):

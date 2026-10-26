@@ -30,7 +30,7 @@ import json
 from benchmark import restitution
 from benchmark_web import projection, views
 from benchmark_web.server import RESPONSE_TIMEOUT
-from tests.test_privacy_views import example_view, browser_views
+from tests.test_privacy_views import example_view, browser_views, results_view
 from tests.test_s10_regressions import S10ProofTests as proof
 proof.setUpClass()
 try:
@@ -49,6 +49,21 @@ try:
     for item in failed['qualification']['contract']['specification']['obligations']:
         item['description'] += ' <img src=x onerror=alert(1)>'
     attempt['results'] = views.render(results, '').decode()
+    # Priorité explicite : le formulaire existant, le compromis et l'échappement des libellés du contrat
+    priority = restitution.comparison(proof.store, proof.sid, 'fixture', 'comparison',
+                                      query={'priority': 'duration'})
+    priority['abstention'] = None
+    priority['recommendation'] = {
+        'configuration': priority['panel'][1], 'amount': '0.10001', 'unit': 'TEST',
+        'basis': 'priority_criterion', 'priority': 'duration',
+        'quality': [{'measure': 'Durée fictive'}], 'count': 3,
+        'compromises': [dict(measure='Précision <img src=x onerror=alert(1)>', value='acceptable',
+                             unit='descriptif', best='excellent', best_unit='descriptif',
+                             configuration=priority['panel'][0])],
+        'detail_href': priority['rows'][0]['detail_href']}
+    duration = next(column for column in priority['columns'] if column['id'] == 'duration')
+    duration['definition']['measure'] = 'Durée <script>alert(4)</script>'
+    attempt['results_priority'] = views.render(priority, '').decode()
     attempt['preview'] = views.render(restitution.preview_view(proof.store, proof.sid, 'fixture', 'comparison',
                                                                piece_ids=[], presentation=projection), '').decode()
 finally:
@@ -77,7 +92,159 @@ example_page = views.render(case, 'csrf').decode()
 consent, controls = render_contribution(case, 'csrf'), render_privacy_controls(case, 'csrf')
 assert consent in example_page and controls in example_page
 launched = example_page.replace(consent, '').replace(controls, render_privacy_controls(case, 'csrf', consent))
-print(json.dumps({**browser_views(), 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
+# Les notices inventées restent dans les fixtures de test
+from pathlib import Path
+from unittest.mock import patch
+with patch.object(views, 'BENCHMARK_REFERENCES', json.loads(Path('tests/fixtures/external-references.json').read_text())):
+    reference_queries = [('', '', ''), ('corriger', 'coding', 'verified'), ('introuvable', '', ''),
+                         ('<script>alert(2)</script>', '', '')]
+    reference_search = {json.dumps(list(query), separators=(',', ':')):
+        views.render(dict(kind='references', **dict(zip(('q', 'category', 'verification'), query))), '').decode()
+        for query in reference_queries}
+    reference_notices = {identity: views.render(dict(kind='references', reference_id=identity), '').decode()
+                         for identity in views.BENCHMARK_REFERENCES}
+    referral = example_view()
+    referral.update(stage='suspended', checks=dict(out_of_scope='coding'), package=None, validation=None)
+    referral['payload']['request'] = 'Besoin privé fictif à ne pas transmettre'
+    reference_referral = views.render(referral, '').decode()
+    reference_help = views.render(dict(kind='references_help', stage='form',
+                                       submission_id='a' * 32), '').decode()
+    reference_help_result = views.render(dict(
+        kind='references_help', stage='suggestions',
+        suggestions=[{'id': 'atelier-code', 'label': 'correspond',
+                      'reference': views.BENCHMARK_REFERENCES['atelier-code']},
+                     {'id': 'atelier-maths', 'label': 'partiel',
+                      'reference': views.BENCHMARK_REFERENCES['atelier-maths']}],
+        receipt={'usage': 'repertoire', 'questions_version': 'repertoire-v1',
+                 'model_requested': 'jev-1.13.0', 'model_observed': 'jev-1.13.0',
+                 'notices': ['atelier-code', 'atelier-maths'], 'input_tokens': 120,
+                 'cost': {'status': 'KNOWN', 'amount': '0.000005', 'currency': 'USD',
+                          'source': 'Calcul local : jetons d’entrée reçus × tarif daté ; hors facture'}}),
+        '').decode()
+    reference_help_unavailable = views.render(dict(
+        kind='references_help', stage='unavailable', reason='DISABLED'), '').decode()
+with patch.object(views, 'BENCHMARK_REFERENCES', {}):
+    reference_empty = views.render(dict(kind='references'), '').decode()
+approved_ids = ('matharena', 'livecodebench', 'swe-bench', 'mteb', 'artificial-analysis-api')
+approved = {'approved-index': views.render(dict(kind='references'), '').decode(),
+            'approved-retrieval': views.render(dict(kind='references', category='retrieval'), '').decode(),
+            'approved-api': views.render(dict(kind='references', category='api', q='API'), '').decode()}
+for identity in approved_ids:
+    approved['approved-' + identity] = views.render(dict(kind='references', reference_id=identity), '').decode()
+from hashlib import sha256
+from benchmark import editorial, storage
+import tempfile
+def editorial_bundle(version, title, body, *, characteristics=None, schema=None):
+    raw_piece = body.encode()
+    filename = 'piece-consigne.txt'
+    manifest = {'schema_version': schema or editorial.SCHEMA, 'task_id': 'tache-fictive', 'version_id': version,
+                'title': title, 'work': 'Préparer un tableau fictif', 'cases': ['Cinq débits inventés'],
+                'limits': ['Ne certifie aucune comptabilité'], 'qualification_status': 'ABSENT', 'results_published': False,
+                'pieces': {'consigne': {'file': filename, 'sha256': sha256(raw_piece).hexdigest(), 'label': 'Consigne'}}}
+    if characteristics is not None:
+        manifest.update(characteristics)
+    encoded = storage._strict_json(manifest).encode()
+    identity = sha256(encoded).hexdigest()
+    return {'manifest': encoded, 'package_sha256': identity, 'files': {filename: raw_piece}}, editorial.fixture_approval(identity)
+editorial_title = 'Tableau <script>alert(1)</script>'
+editorial_piece = 'Pièce <script>alert(1)</script>'
+editorial_long_tool = 'Tableur ' + 'de contrôle ' * 16 + 'o'
+assert len(editorial_long_tool) == 201
+editorial_search_fields = ('q', 'entree', 'langue', 'outil', 'difficulte', 'qualification')
+with tempfile.TemporaryDirectory() as editorial_dir:
+    editorial_dir = str(Path(editorial_dir).resolve())
+    packed, packed_approval = editorial_bundle('version-1', editorial_title, editorial_piece)
+    editorial.fixture_publish(editorial_dir, packed, packed_approval)
+    editorial.fixture_report(editorial_dir, 'tache-fictive', 'version-1', dict(
+        actor='approbateur-fictif-epreuve', authority_id='FIXTURE_EDITORIAL_TRIAL', scope='editorial-report',
+        package_sha256=packed['package_sha256'], task_id='tache-fictive', version_id='version-1',
+        summary='Erreur de fixture <script>alert(3)</script>', reported_at='2026-10-23T10:00:00+00:00'))
+    packed_two, packed_two_approval = editorial_bundle(
+        'version-2', 'Note <script>alert(4)</script>', 'Pièce de la note',
+        characteristics={'expected_result': 'Note de synthèse', 'inputs': ['Textes fournis'],
+                         'language': 'Français', 'tools': ['Tableur'], 'difficulty': 'Facile'})
+    editorial.fixture_publish(editorial_dir, packed_two, packed_two_approval)
+    packed_long, packed_long_approval = editorial_bundle(
+        'version-longue', 'Version longue', 'Pièce de la version longue',
+        characteristics={'expected_result': 'Note longue', 'inputs': ['Textes fournis'],
+                         'language': 'Français', 'tools': [editorial_long_tool], 'difficulty': 'Facile'})
+    editorial.fixture_publish(editorial_dir, packed_long, packed_long_approval)
+    editorial_queries = ({}, {'q': 'note'}, {'q': 'note', 'langue': 'Français', 'outil': 'Tableur'},
+                         {'q': 'introuvable'}, {'outil': editorial_long_tool})
+    editorial_search = {
+        json.dumps([query.get(key, '') for key in editorial_search_fields], ensure_ascii=False, separators=(',', ':')):
+            views.render(editorial.fixture_search(editorial_dir, query), '').decode()
+        for query in editorial_queries}
+    editorial_pages = {
+        '/epreuves': views.render(editorial.fixture_catalog(editorial_dir), '').decode(),
+        '/epreuves/tache-fictive/version-1': views.render(
+            editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode(),
+        '/epreuves/tache-fictive/version-2': views.render(
+            editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-2'), '').decode()}
+    editorial_help_versions = editorial.fixture_catalog(editorial_dir)['versions']
+    editorial_help_form = views.render({'kind': 'editorial_help', 'stage': 'form',
+                                        'submission_id': 'a' * 32}, '').decode()
+    editorial_help_value = {
+        'status': 'suggestions',
+        'suggestions': [{'notice_id': packed['package_sha256'], 'label': 'correspond'},
+                        {'notice_id': packed_two['package_sha256'], 'label': 'partiel'}],
+        'receipt': {'usage': 'epreuves', 'questions_version': 'epreuves-v1',
+                    'model_requested': 'jev-1.13.0', 'model_observed': 'jev-1.13.0',
+                    'notices': [packed['package_sha256'], packed_two['package_sha256']],
+                    'input_tokens': 120,
+                    'cost': {'status': 'KNOWN', 'amount': '0.000005', 'currency': 'USD',
+                             'source': 'Calcul local : jetons d’entrée reçus × tarif daté ; hors facture'}}}
+    editorial_help_result = views.render(
+        views.editorial_help_view(editorial_help_value, editorial_help_versions), '').decode()
+    editorial_version_search = {
+        '/epreuves/tache-fictive/version-2|' + json.dumps(['note', '', '', '', '', ''], ensure_ascii=False, separators=(',', ':')):
+            views.render(dict(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-2'),
+                              criteria={'q': 'note'}), '').decode(),
+        '/epreuves/tache-fictive/version-2|' + json.dumps(['note', '', 'Français', 'Tableur', '', ''], ensure_ascii=False, separators=(',', ':')):
+            views.render(dict(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-2'),
+                              criteria={'q': 'note', 'langue': 'Français', 'outil': 'Tableur'}), '').decode()}
+    editorial.fixture_withdraw(editorial_dir, 'tache-fictive', 'version-1',
+                               editorial.fixture_withdrawal(packed['package_sha256'], 'tache-fictive', 'version-1'))
+    editorial_withdrawn = views.render(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode()
+    editorial_help_withdrawn = views.render(
+        views.editorial_help_view(editorial_help_value,
+                                  editorial.fixture_catalog(editorial_dir)['versions']), '').decode()
+with tempfile.TemporaryDirectory() as unavailable_dir:
+    unavailable_dir = str(Path(unavailable_dir).resolve())
+    packed_retired, packed_retired_approval = editorial_bundle(
+        'version-tableur-retire', 'Version au tableur retiré', 'Pièce du tableur retiré',
+        characteristics={'language': 'Français', 'tools': ['Tableur retiré']})
+    editorial.fixture_publish(unavailable_dir, packed_retired, packed_retired_approval)
+    packed_available, packed_available_approval = editorial_bundle(
+        'version-disponible', 'Note disponible', 'Pièce de la note disponible',
+        characteristics={'expected_result': 'Note disponible', 'language': 'Français', 'tools': ['Tableur']})
+    editorial.fixture_publish(unavailable_dir, packed_available, packed_available_approval)
+    editorial.fixture_withdraw(unavailable_dir, 'tache-fictive', 'version-tableur-retire',
+                               editorial.fixture_withdrawal(packed_retired['package_sha256'],
+                                                            'tache-fictive', 'version-tableur-retire'))
+    editorial_unavailable = views.render(
+        editorial.fixture_search(unavailable_dir, {'outil': 'Tableur retiré'}), '').decode()
+    editorial_search[json.dumps(['note', '', '', 'Tableur retiré', '', ''], ensure_ascii=False,
+                                separators=(',', ':'))] = views.render(
+        editorial.fixture_search(unavailable_dir, {'q': 'note', 'outil': 'Tableur retiré'}), '').decode()
+with tempfile.TemporaryDirectory() as empty_dir:
+    editorial_empty = views.render(editorial.catalog_view(str(Path(empty_dir).resolve())), '').decode()
+print(json.dumps({**browser_views(), 'published-results': views.render(results_view(), '').decode(),
+                  'published-results-filtered': views.render(results_view(filtered=True), '').decode(),
+                  'published-results-withdrawn': views.render(results_view(withdrawn=True), '').decode(),
+                  'published-results-trial-withdrawn': views.render(results_view(unavailable='trial-withdrawn'), '').decode(),
+                  'reference_search': reference_search, 'reference_notices': reference_notices,
+                  'editorial_pages': editorial_pages, 'editorial-search': editorial_search,
+                  'editorial-version-search': editorial_version_search,
+                  'editorial-help': editorial_help_form,
+                  'editorial-help-result': editorial_help_result,
+                  'editorial-help-withdrawn': editorial_help_withdrawn,
+                  'editorial-empty': editorial_empty,
+                  'editorial-withdrawn': editorial_withdrawn, 'editorial_piece': editorial_piece,
+                  'editorial-unavailable': editorial_unavailable, 'editorial-long-tool': editorial_long_tool,
+                  'reference-referral': reference_referral, 'reference-empty': reference_empty,
+                  'reference_help': reference_help, 'reference_help_result': reference_help_result,
+                  'reference_help_unavailable': reference_help_unavailable, **approved, 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
                   'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT,
@@ -99,11 +266,11 @@ print(json.dumps({**browser_views(), 'data': views.render({'kind': 'privacy_data
                   'launch_timeout': views.render(dict(RESPONSE_TIMEOUT), '', '/preparation/dossiers/d1/campaigns/c1/start',
                                                  error=True).decode(),
                   'progress_script': views.PREPARATION_PROGRESS_SCRIPT}))
-`], {encoding: 'utf8'}));
+`], {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024}));
   server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     res.setHeader('Cache-Control', 'no-store');
-    if (req.method === 'POST') {
+    if (req.method === 'POST' && url.pathname !== '/evaluations-externes/aide') {
       let raw = ''; for await (const chunk of req) raw += chunk;
       const body = req.headers['content-type']?.includes('application/json') ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw));
       posts.push({path: url.pathname, body});
@@ -113,6 +280,53 @@ print(json.dumps({**browser_views(), 'data': views.render({'kind': 'privacy_data
       const reply = followupReplies.shift() ?? 'followup';
       if (typeof reply === 'number') {res.writeHead(reply).end(); return;}
       res.setHeader('Content-Type', 'text/html'); res.end(rendered[reply]);
+    } else if (url.pathname === '/epreuves' || url.pathname.startsWith('/epreuves/')) {
+      // HTML de la fixture isolée : la preuve HTTP du lecteur de production reste dans le serveur Python
+      if (url.pathname.endsWith('/pieces/output-a')) {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.end('Réponse publique de la fixture');
+        return;
+      }
+      if (url.pathname.endsWith('/pieces/consigne')) {
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Security-Policy', "default-src 'none'; base-uri 'none'; form-action 'self'");
+        res.end(rendered.editorial_piece);
+        return;
+      }
+      const fields = ['q', 'entree', 'langue', 'outil', 'difficulte', 'qualification']
+        .map(key => url.searchParams.get(key) || '');
+      const searchKey = JSON.stringify(fields);
+      const html = url.pathname === '/epreuves' && url.search
+        ? rendered['editorial-search'][searchKey]
+        : (rendered['editorial-version-search'][url.pathname + '|' + searchKey]
+           ?? rendered.editorial_pages[url.pathname]);
+      if (!html) {res.writeHead(404).end('introuvable'); return;}
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      res.end(html);
+    } else if (url.pathname === '/evaluations-externes/aide') {
+      if (req.method === 'POST') {
+        req.on('data', () => {});
+        req.on('end', () => {res.writeHead(303, {Location: '/evaluations-externes/aide/result'}); res.end();});
+        return;
+      }
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      res.end(rendered.reference_help);
+    } else if (url.pathname === '/evaluations-externes/aide/result') {
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      res.end(rendered.reference_help_result);
+    } else if (url.pathname === '/evaluations-externes' || url.pathname.startsWith('/evaluations-externes/')) {
+      // Pages de views.render, comme /render : cette fixture ne remplace pas la preuve du serveur Python
+      const html = url.pathname === '/evaluations-externes'
+        ? rendered.reference_search[JSON.stringify(['q', 'category', 'verification'].map(key => url.searchParams.get(key) || ''))]
+        : rendered.reference_notices[url.pathname.split('/').pop()];
+      res.setHeader('Content-Type', 'text/html');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      res.end(html);
     } else if (url.pathname.startsWith('/render/') || url.pathname === rendered.detail_href) {
       const hashes = [rendered.script, rendered.comparison_script, rendered.progress_script]
         .map(script => `'sha256-${createHash('sha256').update(script).digest('base64')}'`).join(' ');
@@ -863,6 +1077,61 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
   assert.deepEqual(failures, []);
 });
 
+test('priority advice stays native, escaped, keyboard reachable and readable at 390 px', async () => {
+  const failures = [];
+  const context = await browser.newContext({viewport: {width: 390, height: 844}, hasTouch: true, isMobile: true});
+  try {
+    const page = await context.newPage(); page.setDefaultTimeout(3000);
+    page.on('pageerror', error => failures.push(error.message));
+    page.on('console', message => {if (/Content Security Policy/.test(message.text())) failures.push(message.text());});
+    await page.goto(origin + '/render/results_priority');
+    await page.evaluate(() => document.fonts.ready);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
+    const select = page.locator('#filter-priority');
+    assert.equal(await select.count(), 1, 'priorité absente du formulaire');
+    assert.match(await page.locator('#filters > summary').innerText(), /Conseil/);
+    assert.equal(await select.inputValue(), 'duration');
+    assert.deepEqual(await page.locator('#filter-priority option').evaluateAll(options => options.map(option => option.value)),
+                     ['', 'cost', 'duration', 'present']);
+    assert.match(await page.locator('label[for="filter-priority"]').innerText(), /Priorité du conseil/);
+    // La priorité et son compromis restent visibles ; les libellés du contrat restent du texte
+    const advice = page.locator('.economic-choice');
+    assert.match(await advice.innerText(), /Priorité choisie/);
+    assert.match(await advice.innerText(), /Compromis sur/);
+    assert.equal(await advice.locator('img, script').count(), 0, 'compromis interprété comme HTML');
+    assert.equal(await page.locator('#filter-priority img, #filter-priority script').count(), 0,
+                 'libellé de critère interprété comme HTML');
+    assert.match(await advice.innerText(), /<img src=x onerror=alert\(1\)>/);
+    assert.match(await select.textContent(), /<script>alert\(4\)<\/script>/);
+    // GET natif : le contrôle et le bouton vivent dans le formulaire existant
+    const form = page.locator('form[action$="#filters"]');
+    assert.equal(await form.getAttribute('method'), 'get');
+    assert.equal(await form.locator('select#filter-priority, button[type="submit"]').count(), 2);
+    // Clavier : la priorité puis le bouton sont atteignables dans l'ordre natif
+    const reached = [];
+    for (let press = 0; press < 120 && reached.length < 2; press++) {
+      await page.keyboard.press('Tab');
+      const target = await page.evaluate(() => document.activeElement?.id === 'filter-priority' ? 'filter-priority'
+        : document.activeElement?.textContent?.trim() === 'Appliquer' ? 'Appliquer' : '');
+      if (target && !reached.includes(target)) reached.push(target);
+    }
+    assert.deepEqual(reached, ['filter-priority', 'Appliquer']);
+    mkdirSync('reports/privacy-browser', {recursive: true});
+    await page.screenshot({path: 'reports/privacy-browser/priority-mobile.png', fullPage: true});
+  } finally {await context.close();}
+  // Sans JavaScript, le choix reste lisible et soumissible
+  const off = await browser.newContext({javaScriptEnabled: false, viewport: {width: 390, height: 844}});
+  try {
+    const page = await off.newPage(); page.setDefaultTimeout(3000);
+    await page.goto(origin + '/render/results_priority');
+    assert.equal(await page.locator('#filter-priority').count(), 1);
+    assert.equal(await page.locator('#filter-priority').inputValue(), 'duration');
+    assert.equal(await page.locator('form[action$="#filters"] button[type="submit"]').isVisible(), true);
+    assert.match(await page.locator('.economic-choice').innerText(), /Compromis sur/);
+  } finally {await off.close();}
+  assert.deepEqual(failures, []);
+});
+
 test('pre-launch summary: synthesis, single launch button as confirmation, models table, 390 px in both themes', async () => {
   for (const colorScheme of ['light', 'dark']) {
     const context = await browser.newContext({viewport: {width: 390, height: 844}, colorScheme});
@@ -1197,6 +1466,479 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
   } finally {await context.close();}
 });
 
+test('external references remain readable, searchable and safe without JavaScript, by keyboard at 390 px', async () => {
+  for (const javaScriptEnabled of [false, true]) {
+    const context = await browser.newContext({javaScriptEnabled, viewport: {width: 390, height: 844}});
+    try {
+      const page = await context.newPage(); page.setDefaultTimeout(3000);
+      const external = [], dialogs = [], errors = [];
+      page.on('dialog', dialog => {dialogs.push(dialog.message()); dialog.dismiss();});
+      page.on('pageerror', error => errors.push(error.message));
+      await context.route('https://code.example/**', route => {
+        external.push({url: route.request().url(), referer: route.request().headers().referer});
+        return route.fulfill({status: 200, contentType: 'text/html', body: '<h1>Source fictive</h1>'});
+      });
+      await page.goto(origin + '/render/home');
+      await page.getByRole('navigation', {name: 'Navigation principale'}).getByRole('link', {name: 'Évaluations externes'}).click();
+      assert.equal(await page.locator('main h2').count(), 3);
+      assert.equal(await page.locator('#category').inputValue(), '');
+      assert.equal(await page.locator('#verification').inputValue(), '');
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.getByLabel('Rechercher une évaluation').fill('corriger');
+      await page.getByLabel('Travail mesuré', {exact: true}).selectOption('coding');
+      await page.getByLabel('Vérification éditoriale', {exact: true}).selectOption('verified');
+      await page.getByRole('button', {name: 'Rechercher', exact: true}).click();
+      assert.equal(await page.locator('main h2').count(), 1);
+      assert.equal(await page.locator('#q').inputValue(), 'corriger');
+      assert.equal(await page.locator('#category').inputValue(), 'coding');
+      assert.equal(await page.locator('#verification').inputValue(), 'verified');
+      await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
+      assert.equal(await page.locator('main h2').count(), 3);
+      await page.getByLabel('Rechercher une évaluation').fill('introuvable');
+      await page.getByRole('button', {name: 'Rechercher', exact: true}).click();
+      assert.match(await page.textContent('main'), /Aucune évaluation ne correspond/);
+      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
+      await page.goto(origin + '/evaluations-externes?q=' + encodeURIComponent('<script>alert(2)</script>'));
+      assert.equal(await page.locator('#q').inputValue(), '<script>alert(2)</script>');
+      assert.equal(await page.locator('main script').count(), 0);
+      await page.goto(origin + '/render/reference-empty');
+      assert.match(await page.textContent('main'), /Aucune évaluation externe disponible/);
+      await page.goto(origin + '/evaluations-externes/atelier-inconnu');
+      assert.match(await page.textContent('main'), /Vérification insuffisante/);
+      assert.match(await page.textContent('main'), /Inconnue/);
+      await page.goto(origin + '/evaluations-externes/atelier-retire');
+      assert.match(await page.textContent('main'), /Source retirée/);
+      assert.equal(await page.locator('main a[href^="https:"]').count(), 0);
+      await page.goto(origin + '/render/reference-referral');
+      const target = page.locator('main a[href="/evaluations-externes/atelier-code"]');
+      assert.equal(await target.getAttribute('rel'), 'noreferrer');
+      await target.click();
+      assert.equal(await page.locator('main h1').textContent(), 'Atelier Code fictif <script>alert(1)</script>');
+      assert.equal((await page.textContent('main')).includes('Besoin privé'), false);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Tabulation native : atteindre la source officielle, puis suivre le lien au clavier
+      let focused = false;
+      for (let press = 0; press < 30 && !focused; press++) {
+        await page.keyboard.press('Tab');
+        focused = await page.evaluate(() => document.activeElement.getAttribute('href') === 'https://code.example/evaluation');
+      }
+      assert.ok(focused);
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      mkdirSync('reports/461', {recursive: true});
+      await page.screenshot({path: 'reports/461/notice-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.keyboard.press('Enter');
+      await page.waitForURL('https://code.example/evaluation');
+      assert.deepEqual(external, [{url: 'https://code.example/evaluation', referer: undefined}]);
+      assert.deepEqual(dialogs, []);
+      assert.deepEqual(errors, []);
+      // Aide sémantique : information avant envoi, clavier, 390 px et fonctionnement sans JavaScript
+      await page.goto(origin + '/evaluations-externes/aide');
+      const help = await page.textContent('main');
+      for (const value of ['TypeSafe', 'Jev', 'formulation', 'Aucun dossier privé',
+                           'aucune information personnelle ou confidentielle',
+                           'reste disponible', 'Demander l’aide'])
+        assert.ok(help.includes(value), value);
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      const formulationField = page.getByLabel('Formulation à comparer');
+      await formulationField.fill('Corriger un programme fictif et résoudre un calcul inventé');
+      assert.equal(await formulationField.inputValue(), 'Corriger un programme fictif et résoudre un calcul inventé');
+      await formulationField.focus();
+      let submitFocused = false;
+      for (let press = 0; press < 5 && !submitFocused; press++) {
+        await page.keyboard.press('Tab');
+        submitFocused = await page.evaluate(() => document.activeElement.textContent.trim() === 'Demander l’aide');
+      }
+      assert.ok(submitFocused, 'bouton de l’aide inaccessible au clavier');
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      mkdirSync('reports/462', {recursive: true});
+      await page.screenshot({path: 'reports/462/aide-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.keyboard.press('Enter');
+      await page.waitForURL('**/evaluations-externes/aide/result');
+      const suggestions = await page.textContent('main');
+      assert.match(suggestions, /Correspondance forte/);
+      assert.match(suggestions, /Correspondance partielle/);
+      assert.match(suggestions, /Atelier Code fictif/);
+      assert.match(suggestions, /Atelier Maths fictif/);
+      assert.match(suggestions, /ne prouve ni adéquation/);
+      assert.equal(await page.locator('main details summary').filter({hasText: 'Reçu technique'}).count(), 1);
+      assert.equal(await page.locator('main a[href="/evaluations-externes"]').count(), 1);
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({path: 'reports/462/suggestions-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.goto(origin + '/render/reference_help_unavailable');
+      assert.match(await page.textContent('main'), /Aide indisponible/);
+      assert.match(await page.textContent('main'), /désactivé/);
+      assert.equal(await page.locator('main a[href="/evaluations-externes"]').count(), 1);
+      await page.goto(origin + '/render/approved-index');
+      const approved = await page.textContent('main');
+      for (const name of ['MathArena', 'LiveCodeBench', 'SWE-bench', 'MTEB', 'Artificial Analysis, performances API'])
+        assert.ok(approved.includes(name), name);
+      assert.equal(/HELM/i.test(approved), false);
+      assert.ok(approved.includes('Ayo est responsable de la maintenance de cette sélection.'));
+      assert.ok(approved.includes('22 octobre 2026'));
+      assert.ok(approved.includes('La disponibilité d’un lien reste distincte de cette vérification.'));
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.locator('#category option[value="retrieval"]').textContent(), 'Recherche documentaire');
+      assert.equal(await page.locator('#category option[value="api"]').textContent(), 'Performances des services');
+      assert.equal(await page.locator('#category option').evaluateAll(nodes => nodes.some(node => /helm/i.test(node.value + node.textContent))), false);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/approved-retrieval');
+      assert.equal(await page.locator('main h2').count(), 1);
+      assert.match(await page.textContent('main'), /MTEB/);
+      assert.equal((await page.textContent('main')).includes('MathArena'), false);
+      assert.equal(await page.locator('#category').inputValue(), 'retrieval');
+      await page.goto(origin + '/render/approved-api');
+      assert.match(await page.textContent('main'), /Artificial Analysis, performances API/);
+      assert.match(await page.textContent('main'), /2\.2\.0/);
+      assert.equal((await page.textContent('main')).includes('MTEB'), false);
+      assert.equal(await page.locator('#category').inputValue(), 'api');
+      assert.equal(await page.locator('#q').inputValue(), 'API');
+      await page.goto(origin + '/render/approved-matharena');
+      const matharena = await page.textContent('main');
+      assert.match(matharena, /Inconnue/);
+      assert.match(matharena, /2026-10-22/);
+      assert.match(matharena, /aucune version unique retenue/);
+      assert.match(matharena, /expected performance/);
+      assert.equal(matharena.includes('%'), false);
+      const mathLink = page.locator('main a[href="https://matharena.ai/"]');
+      assert.ok((await mathLink.getAttribute('rel')).split(/\s+/).includes('noreferrer'));
+      assert.ok((await mathLink.getAttribute('rel')).split(/\s+/).includes('noopener'));
+      await page.goto(origin + '/render/approved-livecodebench');
+      assert.match(await page.textContent('main'), /Version unique inconnue/);
+      assert.match(await page.textContent('main'), /n’est pas certifiée/);
+      await page.goto(origin + '/render/approved-swe-bench');
+      assert.match(await page.textContent('main'), /Multimodal/);
+      assert.match(await page.textContent('main'), /Inconnue/);
+      await page.goto(origin + '/render/approved-mteb');
+      assert.match(await page.textContent('main'), /n’a pas été essayé/);
+      assert.equal(await page.locator('main a[href="https://github.com/embeddings-benchmark/mteb"]').count(), 1);
+      await page.goto(origin + '/render/approved-artificial-analysis-api');
+      const apiNotice = await page.textContent('main');
+      assert.match(apiNotice, /2026-03-02/);
+      assert.match(apiNotice, /Leur indice global n’entre pas dans Bench-X/);
+      assert.equal(apiNotice.includes('%'), false);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.deepEqual(dialogs, []);
+      assert.deepEqual(errors, []);
+      assert.deepEqual(await context.cookies(), []);
+    } finally {await context.close();}
+  }
+});
+
+test('an editorial trial stays readable without JavaScript, by keyboard at 390 px', async () => {
+  for (const javaScriptEnabled of [false, true]) {
+    const context = await browser.newContext({javaScriptEnabled, viewport: {width: 390, height: 844}});
+    try {
+      const page = await context.newPage();
+      page.setDefaultTimeout(3000);
+      const dialogs = [], errors = [];
+      page.on('dialog', dialog => {dialogs.push(dialog.message()); dialog.dismiss();});
+      page.on('pageerror', error => errors.push(error.message));
+      await page.goto(origin + '/render/home');
+      await page.getByRole('navigation', {name: 'Navigation principale'}).getByRole('link', {name: 'Épreuves', exact: true}).click();
+      assert.match(await page.textContent('main'), /Tableau <script>alert\(1\)<\/script>/);
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Recherche native, filtres combinés, critères visibles et effaçables, sans JavaScript
+      const searchField = page.getByLabel('Rechercher une épreuve');
+      await searchField.focus();
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      await searchField.fill('note');
+      await page.getByLabel('Langue').selectOption('Français');
+      await page.getByLabel('Outil').selectOption('Tableur');
+      await page.getByRole('button', {name: 'Rechercher'}).click();
+      assert.match(page.url(), /q=note/);
+      const filtered = await page.textContent('main');
+      assert.match(filtered, /Critères actifs/);
+      assert.match(filtered, /Français/);
+      assert.match(filtered, /Tableur/);
+      assert.equal(filtered.includes('Tableau <script>alert(1)</script>'), false);
+      assert.equal(filtered.includes('Note <script>alert(4)</script>'), true);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.getByRole('link', {name: 'Note <script>alert(4)</script>'}).click();
+      assert.equal(await page.locator('h1').textContent(), 'Note <script>alert(4)</script>');
+      assert.match(await page.textContent('main'), /Retour aux résultats/);
+      await page.getByRole('link', {name: 'Retour aux résultats'}).click();
+      assert.match(await page.textContent('main'), /Critères actifs/);
+      await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
+      assert.equal(new URL(page.url()).search, '');
+      assert.equal(await page.getByLabel('Rechercher une épreuve').inputValue(), '');
+      assert.match(await page.textContent('main'), /Tableau <script>alert\(1\)<\/script>/);
+      await page.getByLabel('Rechercher une épreuve').fill('introuvable');
+      await page.getByRole('button', {name: 'Rechercher'}).click();
+      const withoutResult = await page.textContent('main');
+      assert.match(withoutResult, /Aucune épreuve ne correspond à cette recherche/);
+      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true})
+        .getAttribute('href'), '/preparation');
+      mkdirSync('reports/464', {recursive: true});
+      await page.screenshot({path: 'reports/464/recherche-mobile-'
+        + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      // Une valeur longue proposée reste sélectionnable et utilisable
+      await page.goto(origin + '/epreuves');
+      await page.getByLabel('Outil').selectOption(rendered['editorial-long-tool']);
+      await page.getByRole('button', {name: 'Rechercher'}).click();
+      const longResult = await page.textContent('main');
+      assert.match(longResult, /Version longue/);
+      assert.match(longResult, /Critères actifs/);
+      assert.equal(new URL(page.url()).searchParams.get('outil'), rendered['editorial-long-tool']);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Un filtre devenu indisponible reste sélectionné lors d'une nouvelle soumission
+      await page.goto(origin + '/render/editorial-unavailable');
+      assert.equal(await page.getByLabel('Outil').inputValue(), 'Tableur retiré');
+      assert.match(await page.locator('option[value="Tableur retiré"]').textContent(), /indisponible/);
+      await page.getByLabel('Rechercher une épreuve').fill('note');
+      await page.getByRole('button', {name: 'Rechercher'}).click();
+      const retained = await page.textContent('main');
+      assert.match(retained, /Critères actifs/);
+      assert.match(retained, /Tableur retiré \(indisponible\)/);
+      assert.match(retained, /Aucune épreuve ne correspond à cette recherche/);
+      assert.equal(retained.includes('Version au tableur retiré'), false);
+      assert.equal(new URL(page.url()).searchParams.get('outil'), 'Tableur retiré');
+      assert.equal(await page.getByLabel('Outil').inputValue(), 'Tableur retiré');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({path: 'reports/464/filtre-indisponible-mobile-'
+        + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
+      assert.equal(await page.getByLabel('Outil').inputValue(), '');
+      const cleared = await page.textContent('main');
+      assert.match(cleared, /Note <script>alert\(4\)<\/script>/);
+      assert.equal(cleared.includes('Version au tableur retiré'), false);
+      await page.goto(origin + '/epreuves');
+      await page.getByRole('link', {name: 'Tableau <script>alert(1)</script>'}).click();
+      assert.equal(await page.locator('h1').textContent(), 'Tableau <script>alert(1)</script>');
+      const text = await page.textContent('main');
+      assert.match(text, /Qualification absente/);
+      assert.match(text, /Aucune preuve de qualification/);
+      assert.match(text, /Aucun résultat publié/);
+      assert.match(text, /Cinq débits inventés/);
+      assert.match(text, /Ne certifie aucune comptabilité/);
+      assert.match(text, /Pièce <script>alert\(1\)<\/script>/);
+      assert.match(text, /Erreur de fixture <script>alert\(3\)<\/script>/);
+      assert.match(text, /Signalement éditorial/);
+      assert.equal(text.includes('Qualification réussie'), false);
+      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      let focused = false;
+      for (let press = 0; press < 40 && !focused; press++) {
+        await page.keyboard.press('Tab');
+        focused = await page.evaluate(() => document.activeElement?.getAttribute('href')?.endsWith('/pieces/consigne'));
+      }
+      assert.ok(focused, 'lien de pièce non atteint au clavier');
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      mkdirSync('reports/463', {recursive: true});
+      await page.screenshot({path: 'reports/463/epreuve-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.keyboard.press('Enter');
+      assert.match(await page.locator('body').innerText(), /Pièce <script>alert\(1\)<\/script>/);
+      await page.goto(origin + '/epreuves/tache-fictive/version-1');
+      const copyLink = page.getByRole('link', {name: 'Créer mon dossier privé'});
+      await copyLink.focus();
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/copy-confirmation');
+      const confirmation = await page.textContent('main');
+      assert.match(confirmation, /Épreuve source/);
+      assert.match(confirmation, /Tableau <script>alert\(1\)<\/script>/);
+      assert.match(confirmation, /Erreur signalée <script>alert\(2\)<\/script>/);
+      assert.match(confirmation, /Pièces copiées/);
+      assert.match(confirmation, /Créer mon dossier privé/);
+      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      const copyButton = page.getByRole('button', {name: 'Créer mon dossier privé'});
+      await copyButton.focus();
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      await page.screenshot({path: 'reports/465/confirmation-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.goto(origin + '/render/copy-dossier');
+      const copied = await page.textContent('main');
+      assert.match(copied, /Épreuve source/);
+      assert.match(copied, /Tableau <script>alert\(1\)<\/script>/);
+      assert.match(copied, /Pièce source <script>alert\(1\)<\/script>/);
+      assert.match(copied, /Erreur signalée <script>alert\(2\)<\/script>/);
+      assert.match(copied, /Sa qualification publiée ne qualifie pas ce dossier/);
+      assert.match(copied, /La copie reste consultable sans clé/);
+      // Copie sans exemple préparé : son état et la consultation sans clé sont dits au premier écran
+      assert.match(copied, /Copie d’épreuve · version 1/);
+      assert.equal(copied.includes('Exemple inventé'), false);
+      assert.match(copied, /Votre copie est enregistrée\./);
+      assert.match(copied, /sans clé ni appel aux modèles/);
+      assert.match(copied, /servira à préparer votre exemple/);
+      assert.equal(copied.includes('Ajoutez votre clé OpenRouter pour préparer un exemple.'), false);
+      assert.match(copied, /Aucun appel modèle effectué pour ce dossier/);
+      await page.reload();
+      const reloadedCopy = await page.textContent('main');
+      assert.match(reloadedCopy, /Copie d’épreuve · version 1/);
+      assert.match(reloadedCopy, /Épreuve source/);
+      assert.match(reloadedCopy, /Pièce source <script>alert\(1\)<\/script>/);
+      assert.match(reloadedCopy, /Qualification réussie/);
+      assert.match(reloadedCopy, /Aucun appel modèle effectué pour ce dossier/);
+      assert.equal(await page.locator('script[src*="privacy.js"]').count(), 1);
+      assert.equal(await page.locator('main script:not([src])').count(), 1);
+      assert.equal(await page.locator('main img, main script[src*="alert"]').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      let sourceFocused = false;
+      for (let press = 0; press < 40 && !sourceFocused; press++) {
+        await page.keyboard.press('Tab');
+        sourceFocused = await page.evaluate(() => document.activeElement?.tagName === 'SUMMARY');
+      }
+      assert.ok(sourceFocused, 'pièce source non atteinte au clavier');
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      mkdirSync('reports/465', {recursive: true});
+      await page.screenshot({path: 'reports/465/copie-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.goto(origin + '/render/editorial-help');
+      const helpForm = await page.textContent('main');
+      assert.match(helpForm, /TypeSafe/);
+      assert.match(helpForm, /Données transmises/);
+      assert.match(helpForm, /Recherche simple/);
+      const formulation = page.getByLabel('Formulation à comparer');
+      await formulation.focus();
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/editorial-help-result');
+      const helpResult = await page.textContent('main');
+      assert.match(helpResult, /Correspondance forte/);
+      assert.match(helpResult, /Correspondance partielle/);
+      assert.match(helpResult, /Cette appréciation ne prouve ni adéquation ni qualification/);
+      assert.match(helpResult, /Résultat attendu/);
+      assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-1"]').count(), 1);
+      assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-2"]').count(), 1);
+      assert.equal(await page.locator('main script').count(), 0);
+      const suggestion = page.locator('main a[href="/epreuves/tache-fictive/version-2"]');
+      await suggestion.focus();
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      mkdirSync('reports/467', {recursive: true});
+      await page.screenshot({path: 'reports/467/aide-catalogue-mobile-'
+        + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await page.goto(origin + '/render/editorial-help-withdrawn');
+      const withdrawnHelp = await page.textContent('main');
+      assert.match(withdrawnHelp, /Une suggestion a été retirée/);
+      assert.equal(withdrawnHelp.includes('Tableau <script>alert(1)</script>'), false);
+      assert.match(withdrawnHelp, /Note <script>alert\(4\)<\/script>/);
+      assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-1"]').count(), 0);
+      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/editorial-empty');
+      assert.match(await page.textContent('main'), /Aucune épreuve publiée/);
+      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/editorial-withdrawn');
+      const withdrawn = await page.textContent('main');
+      assert.match(withdrawn, /Cette version est retirée/);
+      assert.match(withdrawn, /Aucune nouvelle reprise/);
+      assert.match(withdrawn, /Erreur de fixture <script>alert\(3\)<\/script>/);
+      assert.equal(withdrawn.includes('Pièce <script>'), false);
+      assert.equal(withdrawn.includes('Tableau'), false);
+      assert.equal(await page.locator('main a[href*="/pieces/"]').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      assert.deepEqual(dialogs, []);
+      assert.deepEqual(errors, []);
+    } finally {await context.close();}
+  }
+});
+
+test('published results stay readable without JavaScript, by keyboard at 390 px', async () => {
+  for (const javaScriptEnabled of [false, true]) {
+    const context = await browser.newContext({javaScriptEnabled, viewport: {width: 390, height: 844}});
+    try {
+      const page = await context.newPage();
+      page.setDefaultTimeout(3000);
+      const dialogs = [], errors = [];
+      page.on('dialog', dialog => {dialogs.push(dialog.message()); dialog.dismiss();});
+      page.on('pageerror', error => errors.push(error.message));
+      await page.goto(origin + '/render/published-results');
+      const main = await page.textContent('main');
+      assert.match(main, /Tableau <script>alert\(1\)<\/script>/);
+      assert.match(main, /Modèle <script>alert\(1\)<\/script>/);
+      assert.match(main, /Préparer un tableau par opération/);
+      assert.match(main, /Satisfait/);
+      assert.match(main, /Ne satisfait pas/);
+      assert.match(main, /Coût observé inconnu pour 1 réponse/);
+      assert.match(main, /pièce non publiée/i);
+      assert.match(main, /un filtre ne change ni les verdicts ni la population/i);
+      assert.match(main, /Réponses évaluées : 2 · essais lancés : 2 sur 2/);
+      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Filtres natifs visibles, un seul tableau à une ligne sur la vue filtrée
+      assert.equal(await page.locator('#filter-configuration').count(), 1);
+      await page.goto(origin + '/render/published-results-filtered');
+      const filtered = await page.textContent('main');
+      assert.match(filtered, /1 réponse affichée sur 2/);
+      assert.equal(await page.locator('.comparison-results > .table-scroll > table > tbody > tr').count(), 1);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/published-results');
+      // Un dépliant puis la preuve publiée restent utilisables au clavier, sans JavaScript
+      let focused = false;
+      for (let press = 0; press < 60 && !focused; press++) {
+        await page.keyboard.press('Tab');
+        focused = await page.evaluate(() => document.activeElement?.tagName === 'SUMMARY');
+      }
+      assert.ok(focused, 'dépliant non atteint au clavier');
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      await page.getByText('Détail et preuves').first().click();
+      // Détail ouvert : la colonne Modèle garde des mots entiers, jamais une lettre par ligne
+      const column = await page.evaluate(() => {
+        const table = document.querySelector('section.comparison-results > .table-scroll > table');
+        const splitWords = node => {
+          const range = document.createRange(), lines = [];
+          for (let index = 0; index < node.length; index++) {
+            range.setStart(node, index);
+            range.setEnd(node, index + 1);
+            const top = Math.round(range.getBoundingClientRect().top);
+            const line = lines.find(item => Math.abs(item.top - top) < 2);
+            if (line) line.last = index;
+            else lines.push({top, first: index, last: index});
+          }
+          return lines.slice(1).filter(line => /\p{L}/u.test(node.data[line.first - 1] ?? '')
+            && /\p{L}/u.test(node.data[line.first] ?? ''))
+            .map(line => node.data.slice(line.first, line.last + 1));
+        };
+        const header = table.querySelector('thead th');
+        const name = table.querySelector('tbody th strong');
+        return {head: splitWords(header.firstChild), name: splitWords(name.firstChild),
+                width: Math.round(table.querySelector('tbody th').getBoundingClientRect().width),
+                characters: name.firstChild.length, scroll: table.parentElement.scrollWidth};
+      });
+      assert.deepEqual(column.head, [], 'en-tête de la colonne Modèle coupé entre deux lettres : ' + JSON.stringify(column));
+      assert.deepEqual(column.name, [], 'nom du modèle coupé entre deux lettres : ' + JSON.stringify(column));
+      assert.ok(column.scroll > 390, 'le tableau ne défile plus horizontalement : ' + JSON.stringify(column));
+      let proofFocused = false;
+      for (let press = 0; press < 40 && !proofFocused; press++) {
+        await page.keyboard.press('Tab');
+        proofFocused = await page.evaluate(() => document.activeElement?.getAttribute('href')?.endsWith('/pieces/output-a'));
+      }
+      assert.ok(proofFocused, 'preuve publiée non atteinte au clavier');
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      const proof = page.getByRole('link', {name: /Réponse de Modèle/});
+      mkdirSync('reports/466', {recursive: true});
+      await page.screenshot({path: 'reports/466/resultats-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      await proof.click();
+      assert.match(await page.locator('body').innerText(), /Réponse publique de la fixture/);
+      // États de retrait : aucun contenu retiré, retour vers l’épreuve et le catalogue
+      await page.goto(origin + '/render/published-results-withdrawn');
+      const withdrawn = await page.textContent('main');
+      assert.match(withdrawn, /Cette restitution est retirée/);
+      assert.equal(withdrawn.includes('Modèle <script>'), false);
+      assert.match(withdrawn, /Retour à l’épreuve/);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.goto(origin + '/render/published-results-trial-withdrawn');
+      const trialWithdrawn = await page.textContent('main');
+      assert.match(trialWithdrawn, /Cette épreuve est retirée/);
+      assert.equal(trialWithdrawn.includes('Tableau'), false);
+      assert.deepEqual(dialogs, []);
+      assert.deepEqual(errors, []);
+    } finally {await context.close();}
+  }
+});
+
 test('preparation screens preserve navigation, accessible forms and recoverable states', async () => {
   const context = await browser.newContext({javaScriptEnabled: false});
   try {
@@ -1255,8 +1997,9 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       assert.ok(text.includes('Décrire un autre cas d’usage'));
       assert.equal(/Envoyer ma réponse|Choisir les modèles|équipe Bench-X|n’est pas encore/.test(text), false);
       assert.equal(await page.locator('form[action$="/validation"], #availability').count(), 0);
-      assert.equal(await page.locator('a[href="https://matharena.ai/"]').count(), Number(category === 'math'));
-      assert.equal(await page.locator('a[href="https://livecodebench.github.io/"]').count(), Number(category === 'coding'));
+      assert.equal(await page.locator('a[href="/evaluations-externes/matharena"]').count(), Number(category === 'math'));
+      assert.equal(await page.locator('main a[href="/evaluations-externes"]').count(), 1);
+      assert.equal(await page.locator('a[href="/evaluations-externes/livecodebench"]').count(), Number(category === 'coding'));
     }
     for (const reason of ['open', 'interrupted', 'restore']) {
       await page.goto(origin + '/render/suspended-' + reason);

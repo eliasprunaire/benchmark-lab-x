@@ -13,7 +13,7 @@ import re
 import secrets
 import stat
 
-from .storage import _strict_json as encode, _unique_object
+from .storage import _listdir, _strict_json as encode, _unique_object
 from .validation import identifier, _hash, _texts
 
 SCHEMA = 'benchmark-lab-x/restitution-fictional/v1'
@@ -194,7 +194,7 @@ def materialize(bundle, approval, destination):
     finally:
         if folder is not None:
             if staged:
-                for name in os.listdir(folder):
+                for name in _listdir(folder):
                     os.unlink(name, dir_fd=folder)
             os.close(folder)
         if staged:

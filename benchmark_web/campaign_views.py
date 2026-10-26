@@ -11,6 +11,7 @@ pour qu'aucun cycle ne soit possible.
 """
 import re
 import secrets
+from urllib.parse import urlencode
 
 from benchmark.storage import _strict_json as encode
 from benchmark.preparation import INCIDENT_TEXT, NOT_SENT_TEXT, incident_text
@@ -403,6 +404,8 @@ ABSTENTION_REASONS = {
     'unknown': 'la qualité ou le coût d’une réponse qui satisfait l’exemple n’est pas connu.',
     'tradeoff': 'aucune réponse n’est la meilleure sur tous les critères de qualité.',
     'tie': 'plusieurs réponses ont la même qualité et le même coût.',
+    'cost_tie': 'plusieurs réponses conformes ont le coût observé le plus bas.',
+    'criterion_tie': 'plusieurs réponses ont la meilleure valeur sur le critère choisi et le même coût observé.',
     'disagreement': 'les exemples ne désignent pas le même modèle.',
 }
 
@@ -410,6 +413,36 @@ ABSTENTION_REASONS = {
 def model_name(configuration, names):
     """Nom commercial du relevé, sinon l'identifiant Openrouter : le même libellé sur chaque écran"""
     return names.get(configuration['model'], configuration['model'])
+
+
+def priority_label(value, priority):
+    """Libellé lisible de la priorité retenue : coût observé ou critère du contrat"""
+    if priority == 'cost':
+        return 'coût observé'
+    column = next((column for column in value['columns'] if column['id'] == priority), None)
+    return (column['definition'].get('measure') or column['definition'].get('label') or priority
+            if column else priority)
+
+
+def priority_href(value, query):
+    """Retour au conseil par défaut en gardant les autres filtres"""
+    params = {key: item for key, item in query.items() if key != 'priority'}
+    return value['href'] + ('?' + urlencode(params) if params else '') + '#filters'
+
+
+def tradeoff_sentence(item, names, panel):
+    """Compromis explicite : la réponse retenue est moins bonne qu'une autre réponse conforme
+
+    Deux configurations du même modèle se distinguent par le candidat entier, effort compris
+    """
+    configuration = item['configuration']
+    label = (candidate_label(configuration, names)
+             if sum(other['model'] == configuration['model'] for other in panel.values()) > 1
+             else model_name(configuration, names))
+    return ('Compromis sur « ' + item['measure'] + ' » : la réponse retenue vaut '
+            + valeur_mesure(item['value'], item.get('unit')) + ', alors que '
+            + label + ' vaut '
+            + valeur_mesure(item['best'], item.get('best_unit')) + '.')
 
 
 def candidate_label(configuration, names):
@@ -579,8 +612,12 @@ def render_comparison(value):
         content += text('Exemple ' + str(number(abstention['case_id'])) + ' : ' + reason if abstention['case_id']
                         else reason[0].upper() + reason[1:]) + '</p>'
         if abstention.get('choices'):
-            content += '<p>' + text(' · '.join('Exemple ' + str(number(item['case_id'])) + ' : ' + model_name(item['configuration'], names)
+            content += '<p>' + text(' · '.join('Exemple ' + str(number(item['case_id'])) + ' : '
+                                               + candidate_label(item['configuration'], names)
                                                for item in abstention['choices'])) + '</p>'
+        if query.get('priority'):
+            content += '<p>Priorité choisie : <strong>' + text(priority_label(value, query['priority'])) + '</strong>.</p>'
+            content += '<p><a href="' + text(priority_href(value, query)) + '">Revenir au conseil par défaut</a></p>'
         content += '</aside>'
     if not value['population']:
         return content + render_expenses(value.get('expenses'), names)
@@ -595,7 +632,25 @@ def render_comparison(value):
                  ['Exemple ' + str(number(item['case_id'])) + ' : ' + montant_lisible(item['amount']) + ' ' + item['unit']
                   for item in choice['cases']])
         content += '<p class="choice-cost">Coût observé' + ''.join('<strong>' + text(cost) + '</strong>' for cost in costs) + '</p></div>'
-        if choice['basis'] in ('quality_then_cost', 'each_case'):
+        if choice.get('priority'):
+            if choice['priority'] == 'cost':
+                content += '<p><strong>Priorité choisie : coût observé.</strong> Nous retenons l’unique réponse conforme la moins coûteuse. '
+                content += 'Une autre réponse peut être meilleure sur un critère de qualité : le compromis est indiqué ci-dessous.</p>'
+            else:
+                content += '<p><strong>Priorité choisie : ' + text(priority_label(value, choice['priority'])) + '.</strong> '
+                content += 'Nous retenons la meilleure valeur observée sur ce critère, selon le sens fixé par le contrat. '
+                content += 'En cas d’égalité, le coût observé le plus bas départage.</p>'
+            for item in choice.get('compromises', []):
+                content += '<p class="priority-tradeoff">' + text(tradeoff_sentence(item, names, panel)) + '</p>'
+            if 'cases' in choice:
+                for item in choice['cases']:
+                    for trade in item.get('compromises', []):
+                        content += '<p class="priority-tradeoff">' + text(
+                            'Exemple ' + str(number(item['case_id'])) + ' : ' + tradeoff_sentence(trade, names, panel)) + '</p>'
+            content += '<p class="hint">Ce conseil ne compare que des réponses qui satisfont toutes les obligations : '
+            content += 'aucune obligation non satisfaite n’est compensée.</p>'
+            content += '<p><a href="' + text(priority_href(value, query)) + '">Revenir au conseil par défaut</a></p>'
+        elif choice['basis'] in ('quality_then_cost', 'each_case'):
             criteria = list(dict.fromkeys(definition.get('measure') or definition.get('label')
                                           for definition in choice['quality']
                                           if definition.get('measure') or definition.get('label')))
@@ -612,6 +667,20 @@ def render_comparison(value):
                     text(len(choice['cases'])) + ' exemples') + '. Sur d’autres tâches, le résultat peut être différent.</p></aside>')
     sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
     sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
+    quality_columns = [column for column in value['columns'] if 'criterion_id' in column]
+    priority_control = ''
+    if value['columns']:
+        selected_priority = query.get('priority', '')
+        priority_choices = [('', 'Conseil par défaut'), ('cost', 'Priorité au coût observé')]
+        priority_choices += [(column['id'], 'Priorité : ' + priority_label(value, column['id']))
+                             for column in quality_columns]
+        priority_control = ('<div><label for="filter-priority">Priorité du conseil</label>'
+                            '<select id="filter-priority" name="priority" aria-describedby="priority-help">'
+                            + ''.join('<option value="' + text(value_) + '"' + (' selected' if selected_priority == value_ else '')
+                                      + '>' + text(title) + '</option>' for value_, title in priority_choices)
+                            + '</select><p class="hint" id="priority-help">Changer la priorité ne modifie ni les verdicts '
+                            'ni les coûts. Le conseil porte sur toute la comparaison, même si un filtre masque la réponse '
+                            'conseillée.</p></div>')
     options = {
         'case': ('Exemple', 'Tous les exemples', [(v['id'], example_label(v, number))
                          for number, v in enumerate(value['cases'], 1)] if multiple_cases else []),
@@ -626,8 +695,8 @@ def render_comparison(value):
     }
     content += '<section class="comparison-results"><h2>Comparaison des modèles</h2>'
     content += '<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
-    content += '<details id="filters" class="comparison-filters"' + (' open' if query else '') + '><summary>Trier et filtrer</summary>'
-    content += '<form method="get" action="' + text(base) + '#filters"><div class="filter-grid">'
+    content += '<details id="filters" class="comparison-filters"' + (' open' if query else '') + '><summary>Conseil, tri et filtres</summary>'
+    content += '<form method="get" action="' + text(base) + '#filters"><div class="filter-grid">' + priority_control
     advanced = ''
     for key, (label, default, values) in options.items():
         if not values:
@@ -671,7 +740,6 @@ def render_comparison(value):
                 continue
         content += '<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '">'
         content += '<table><caption>Chaque verdict concerne la réponse obtenue sur cet exemple.</caption><thead><tr>'
-        quality_columns = [column for column in value['columns'] if 'criterion_id' in column]
         titles = ['Modèle', 'Résultat'] + (['Qualité observée'] if quality_columns else []) + ['Coût observé', 'Détails']
         for title in titles:
             content += '<th scope="col">' + text(title) + '</th>'

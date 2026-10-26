@@ -316,6 +316,15 @@ def _strict_json(value):
         raise ValueError('strict UTF-8 JSON required') from error
 
 
+def _listdir(fd):
+    """Lister un répertoire par descripteur, offset remis à zéro pour un second listage sous Linux"""
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+    except OSError:
+        pass
+    return os.listdir(fd)
+
+
 def _fields(value, keys, label):
     if type(value) is not dict or value.keys() != set(keys):
         raise ValueError(f'{label} must contain exactly its S1 fields')
@@ -629,6 +638,12 @@ def _check_schema(connection, allow_empty=False, *, check_data=True):
             if _expected_schema(tuple(catalogue)) != _expected_schema(tuple(catalogue_schema_objects())):
                 raise SchemaError('structure du catalogue de modèles non prise en charge')
             rows = [row for row in rows if row[2] != 's2_model_catalogue']
+        semantic = [row for row in rows if row[2] == 's2_semantic_requests']
+        if semantic:
+            from .semantic_help import schema_objects as semantic_schema_objects
+            if _expected_schema(tuple(semantic)) != _expected_schema(tuple(semantic_schema_objects())):
+                raise SchemaError('structure de l’aide sémantique non prise en charge')
+            rows = [row for row in rows if row[2] != 's2_semantic_requests']
         # Compare all schema objects, including constraints and automatic indexes
         expected = [
             ("table", "dossier_revisions", "dossier_revisions", _SCHEMA[0]),
@@ -779,7 +794,7 @@ def initialize_preparation(root: Path) -> None:
             layout = _check_schema(connection)
             if layout in ('s2', 's3', 's4', 's5', 's6', 's7'):
                 return
-            if layout != 's1' or os.listdir(store._pieces_fd) or any(connection.execute(
+            if layout != 's1' or _listdir(store._pieces_fd) or any(connection.execute(
                     'SELECT 1 FROM ' + table + ' LIMIT 1').fetchone()
                     for table in ('dossier_revisions', 'pieces', 'budgets', 'operations', 'reservations')):
                 raise SchemaError('preparation requires an empty integrated S1 database')
@@ -1350,7 +1365,7 @@ class Store:
         from . import privacy
         if privacy.available(connection):
             references.update(privacy.pending_files(self, connection))
-        return sorted('pieces/' + name for name in os.listdir(self._pieces_fd)
+        return sorted('pieces/' + name for name in _listdir(self._pieces_fd)
                       if 'pieces/' + name not in references)
 
     def verify_task(self) -> list:

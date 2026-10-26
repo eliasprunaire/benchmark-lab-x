@@ -26,6 +26,8 @@ L’architecture est indépendante des modèles et de leurs versions commerciale
 
 Les appels engagés pour un demandeur peuvent être imputés à un accès fournisseur que ce demandeur fournit lui-même, en saisissant une clé personnelle dans le parcours. C’est le seul mécanisme d’accès du demandeur : l’ancienne autorisation déléguée est retirée. L’architecture exige que la clé soit reçue, conservé et utilisé par l’exécuteur seul, lié à la session du demandeur, révocable par lui, jamais transmis au serveur public, aux pages, aux journaux ni aux reçus publics. Le plafond non renouvelable de la clé OpenRouter est la seule limite financière du parcours financé par le demandeur. Préparation, correction, qualification, vérification des modèles, comparaison et jugement utilisent cette même clé, sans plafond local quotidien, par navigateur ou par campagne. Les estimations, réservations et coûts restent enregistrés pour le suivi, sans constituer une seconde limite. Cette imputation ne modifie ni la séparation des autorités de validation, de qualification et de lancement, ni les exigences de reçu et de preuve.
 
+L’aide sémantique de recherche constitue une exception bornée au canal OpenRouter et au financement personnel. Elle utilise directement TypeSafe selon la [section 4.9](#49-aide-sémantique-commune). Cette exception ne concerne ni préparation, ni qualification d’épreuve, ni candidat, ni jugement.
+
 ### 3.1 Identité de l'environnement d'exécution
 
 Chaque campagne doit figer le paquet ou fork Pi, sa version exécutée, les empreintes nécessaires, les paquets, outils, skills, contexte, réglages, environnement et date de gel. Les paramètres demandés et observés restent distincts.
@@ -113,11 +115,79 @@ L'évaluation s'applique à un cas et une tentative identifiés. Le verdict port
 
 Responsabilité : présenter les évaluations, les classements par critère, les filtres et la complétude de la comparaison des coûts, selon les [règles](RULES.md#7-ordre-de-décision). Chaque colonne ordonnable référence sa définition contractuelle et ses preuves ; les valeurs inconnues ou incompatibles sont sans rang, les égalités conservées. La vue expose le périmètre filtré sans modifier les sorties, reçus, verdicts ou populations des statistiques déjà calculées. Elle ne fusionne pas des couvertures incompatibles. Elle peut produire l’aide économique conditionnelle définie dans les règles, à partir des observations complètes avant filtrage, sans nouveau stockage ni appel modèle. Le score pondéré personnalisé reste différé selon le PRD ; aucun moteur ni formule n’est ajouté avant sa décision.
 
+La priorité privée est un paramètre de consultation validé côté serveur : conseil par défaut, coût observé ou critère secondaire ordonnable du contrat. Une sélection invalide est refusée explicitement, sans substitution silencieuse. La restitution réutilise les mesures, les ordres contractuels et les contrôles existants, avant les filtres d’affichage. Le rendu conserve la priorité et permet son effacement, y compris sans JavaScript.
+
+Aucun stockage de préférence, nouvel appel, nouvelle évaluation ni moteur de classement distinct n’est requis. La consultation des campagnes enregistrées conserve leurs octets et leurs preuves. Les projections publiques restent hors de cette capacité.
+
 ### 4.7 Restitution
 
 La restitution relie les identités du catalogue, de la tâche et de la campagne au parcours du [PRD](PRD.md#10-restitution-publique). La publication est une projection approuvée et identifiée de cette restitution et de ses pièces autorisées, séparée des données privées et de l’état d’exécution.
 
 La projection référence les versions de schéma, de présentation, de conclusion et de pièces utilisées. Sa mise à disposition doit être cohérente : une consultation ne mélange pas une conclusion nouvelle avec les pièces d’une publication précédente. Une nouvelle présentation ne relance aucune acquisition et ne modifie aucun verdict ; son exposition exige l’autorité de publication correspondante.
+
+### 4.7.1 Publication d’une épreuve éditoriale
+
+Une publication d’épreuve référence une identité de tâche, une version documentaire immuable, sa notice et les pièces publiques explicitement sélectionnées. Elle ne requiert aucune campagne. Son état de qualification reste distinct de l’approbation de publication ; une version documentaire non qualifiée ne vaut pas contrat approuvé pour exécution.
+
+L’opération opérateur vérifie l’autorité applicable et les octets approuvés avant d’activer un paquet complet. Ce paquet conserve les pièces publiques indépendamment des dossiers temporaires. Le serveur public lit seulement ce paquet et son état de publication. Il n’accède ni aux références du juge ni aux données privées pour servir la notice.
+
+Les primitives existantes de sélection, d’empreinte, de validation et d’activation atomique sont réutilisées. Les projections fictives historiques conservent leurs formats et leur autorité de test. Elles ne deviennent pas des publications éditoriales par changement de libellé. Aucun nouveau service ni interface d’administration complète n’est requis.
+
+Le retrait conserve une trace liée à la version, sans modifier ses octets approuvés. L’accès public à la notice, aux pièces et l’admission d’une nouvelle reprise vérifient cet état. Une ancienne URL ne contourne pas le retrait. Une nouvelle version ne remplace pas silencieusement une version antérieure.
+
+### 4.7.2 Copie privée d’une épreuve publiée
+
+L’admission de copie vérifie la version publiée, son autorité, ses empreintes et son absence de retrait. Le dossier privé conserve une copie autonome de la notice et des pièces publiques exactes. Sa filiation lie l’identité de tâche, la version documentaire et l’empreinte du paquet source. Une URL seule ne suffit pas. Le transfert ne donne au serveur public aucun accès direct au stockage privé.
+
+La copie réutilise les contrôles de session, de propriétaire, d’intégrité et de conservation du parcours privé. Elle ne résout aucun transport fournisseur et ne réserve aucun appel. Un paquet incomplet ne devient pas un dossier utilisable. La répétition de la même demande de copie ne crée pas de doublon. Le contrôle du retrait et la conservation de la source doivent rester cohérents lors de demandes concurrentes.
+
+La source documentaire reste distincte du besoin personnel et des révisions préparées. Le préparateur reçoit les contenus utiles comme contexte, sans importer d’autorité de qualification ni de référence réservée au juge. Le contrat et la référence de la nouvelle instance suivent la préparation et la qualification existantes. Les preuves, résultats et coûts des anciennes campagnes gardent leurs identités.
+
+Le signalement éditorial d’une erreur est attribué et lié à la version source. Il reste distinct des octets immuables de publication et des preuves privées. La consultation privée expose les signalements applicables à cette filiation, y compris après un retrait ordinaire. Aucun inventaire public des copies privées n’est créé. Le mécanisme ne requiert ni collecte automatique ni nouveau service.
+
+### 4.7.3 Recherche dans les épreuves éditoriales
+
+La recherche lit uniquement les paquets publics admis par le lecteur éditorial existant. Le serveur valide les paramètres, puis combine recherche textuelle sur les notices et filtres explicites. Les résultats et valeurs de filtres excluent les versions retirées ou invalides, les dossiers privés et les contributions. Aucun transport modèle, accès personnel ou nouveau service n’est nécessaire.
+
+Les caractéristiques décrites dans le [PRD](PRD.md#trouver-une-épreuve-par-ses-caractéristiques) appartiennent à la version approuvée. L’évolution du format conserve la lecture des anciens paquets et leur identité. Elle ne réécrit pas leurs manifestes et ne complète pas leurs inconnues. L’ajout de caractéristiques à une publication existante suit la création et l’approbation d’une nouvelle version.
+
+La projection de recherche conserve une entrée distincte par version disponible et ne transforme aucun ordre d’affichage en préférence. La notice, ses pièces et la copie utilisent leurs contrôles existants d’autorité, d’intégrité et de retrait. Le rendu serveur réutilise les protections et harnais web existants. La recherche ne modifie ni qualification, ni preuve, ni état de publication de résultats.
+
+### 4.7.4 Publication des résultats d’une épreuve
+
+L’opération opérateur construit une projection publique fermée à partir des restitutions existantes. Elle conserve les verdicts et observations sans nouvelle acquisition ni évaluation. Elle exclut la saisie initiale, les messages privés, les références réservées au juge, les secrets, les journaux bruts et les pièces étrangères. La projection privée ne devient pas publique par simple changement de visibilité.
+
+Le paquet autonome relie la version éditoriale exacte, son empreinte, la campagne, son contrat, la restitution et les pièces sélectionnées. L’approbation d’Ayo vise ces identités et les octets exacts. L’admission vérifie leur cohérence et la disponibilité de l’épreuve avant activation complète. Les primitives existantes d’empreinte, de sélection et d’activation sont réutilisées ; les formats fictifs historiques gardent leur autorité de test.
+
+Le serveur public lit seulement les paquets approuvés et leurs états de publication. La consultation ne dépend pas d’un accès au stockage privé. Elle conserve les conditions, dates, couverture, incidents, inconnues et restrictions nécessaires à la conclusion. Une autre campagne reste une restitution distincte ; les tris et filtres ne recalculent pas les verdicts ni les populations de référence.
+
+La présence de résultats est une projection des publications accessibles liées à la version. Elle ne réécrit aucun ancien manifeste éditorial. Le lecteur vérifie l’intégrité et les retraits de la restitution et de l’épreuve, y compris pour les accès directs aux pièces. Le retrait d’une restitution ferme seulement celle-ci ; le retrait de l’épreuve ferme l’accès public à toutes ses restitutions. Les paquets et décisions restent identifiables sans exposer les contenus retirés.
+
+### 4.8 Répertoire d’évaluations externes
+
+Le serveur public sert un répertoire éditorial de notices, distinct des tâches, campagnes et dossiers privés. Chaque notice possède une identité stable, sa source officielle et les métadonnées définies par le [PRD](PRD.md#consulter-des-évaluations-externes). Le statut de disponibilité et la vérification éditoriale restent explicites.
+
+La consultation, la recherche simple et les filtres s’exécutent sur les notices disponibles, sans transport modèle ni résolution de clé. Ils ne créent ni session requise, ni dossier, ni campagne. Le même contenu alimente l’accès direct et les renvois de préparation. Les identifiants et liens proviennent du répertoire ; les textes de recherche ne construisent aucune destination externe.
+
+Le rendu serveur permet l’usage sans JavaScript. Les entrées et textes sont validés et échappés selon les frontières existantes. Les liens externes ne transmettent ni besoin privé ni référent contenant des données privées. Aucun accès aux pièces privées n’est nécessaire pour servir une notice.
+
+Le retrait d’une notice produit un état indisponible explicite, y compris sur son lien direct. Une vérification éditoriale insuffisante reste visible. Le répertoire vide et la recherche sans résultat conservent une sortie vers la description d’un besoin. Cette capacité réutilise le serveur et les harnais existants ; elle ne requiert ni nouveau service, ni Jev, ni acquisition automatique de sources.
+
+### 4.9 Aide sémantique commune
+
+Le répertoire externe et le catalogue d’épreuves utilisent une seule intégration TypeSafe dans l’exécuteur existant. Chaque usage conserve ses questions versionnées et sa qualification distincte. Les lecteurs publics existants fournissent les seules notices admissibles. Aucun nouveau microservice, collecte de sources ou index privé n’est requis.
+
+Le serveur relaie la demande volontaire sans recevoir la clé TypeSafe. L’exécuteur construit une projection fermée : formulation soumise et champs publics utiles. Les identifiants de correspondance proviennent du serveur ; aucune destination n’est construite depuis une sortie libre. Les textes soumis restent des données, jamais des instructions ou une autorité. Les questions indépendantes par notice permettent une absence de suggestion. Le modèle demandé et observé, les identifiants, la complétude et les probabilités finies sont contrôlés avant usage. Aucun modèle, alias mobile ou fournisseur de secours n’est substitué.
+
+La configuration initiale fixe `jev-1.13.0`, sans alias mobile. Elle conserve un tarif daté, les limites et les questions propres à chaque usage. Les limites ordinaires retenues sont 64k jetons par requête et 32k par question, contexte compris. Leur application et la borne de réservation doivent être justifiées avant émission. Aucun contexte étendu, troncature silencieuse ou découpage multipliant les appels n’est permis. Un dépassement demande une formulation plus courte ou des filtres supplémentaires ; il ne sélectionne pas silencieusement un sous-ensemble.
+
+L’enveloppe initiale commune est de 1 USD de consommation API, sans renouvellement automatique. Elle ne constitue pas une autorisation d’émission. Le payeur TypeSafe est distinct des clés personnelles. L’exécuteur réserve avant émission sous contrôle transactionnel commun aux deux usages. Un tarif ou une borne de coût non établi empêche l’envoi. Le coût calculé depuis les jetons et le tarif reste distinct d’une facture. Un coût inconnu conserve sa réserve ; il ne devient pas nul. La recharge automatique du compte doit rester désactivée ; le contrôle local ne garantit pas la facture fournisseur.
+
+Une demande autorise au plus une émission, sans reprise automatique, y compris après 429, surcharge, interruption ou redémarrage. Les reprises implicites du SDK sont désactivées. Le délai maximal est de 10 secondes. Les deux usages partagent deux émissions simultanées au maximum et une nouvelle émission par seconde au maximum. Il n’existe aucune file d’attente durable. Une double soumission de la même demande ne produit pas deux émissions. Une nouvelle demande volontaire garde les mêmes contrôles de financement et de fréquence.
+
+Une intention et sa réservation précèdent l’envoi. Les reçus attribuent l’opération à son usage, au modèle demandé et observé, aux questions, aux notices, aux jetons et au tarif. Ils conservent la chronologie, l’incident et le coût connu ou inconnu, sans texte recherché, secret, cookie ou historique privé. Le contenu recherché ne persiste pas dans les journaux, les URL ou les reçus durables. Une empreinte ne constitue pas une promesse d’anonymat. Une émission incertaine garde sa réserve et ne repart pas. Une réponse tardive ne réactive pas une demande terminée.
+
+L’admissibilité des notices est revérifiée avant affichage, ouverture et copie. Les correspondances restent temporaires et n’altèrent aucun paquet publié. Une réponse invalide ou une limite atteinte ferme seulement l’aide concernée ; les recherches simples restent utilisables. Un interrupteur désactivé interdit toute émission et toute résolution de secret. L’activation de chaque usage exige son autorisation et sa qualification en français ; celle du répertoire ne qualifie pas celle des épreuves.
 
 ## 5. Flux minimal
 
@@ -149,7 +219,7 @@ Chaque tâche, version, cas, campagne, contrat, conditions communes, configurati
 - la sortie au reçu d'acquisition
 - le verdict à la sortie, au contrat, à la référence et à la méthode utilisés, ainsi qu’à ses preuves
 - la vue de décision aux seuls verdicts compatibles
-- la publication à la vue et aux preuves explicitement approuvées
+- la publication à la version éditoriale ou à la vue de restitution et aux pièces explicitement approuvées
 
 Un libellé public n'est pas une clé de jointure. La sortie brute et les preuves déjà enregistrées ne sont pas corrigées silencieusement.
 
@@ -187,8 +257,10 @@ Les campagnes déjà enregistrées conservent leurs questions, panels, schémas 
 - fabriquer des répétitions ou une stabilité
 - déduire un rang qualitatif des `FAIL G-001`
 - transformer un `PASS` de qualification du harnais en `PASS` produit
-- produire une baseline, un coût par résultat acceptable ou un conseil borné aux qualités et coûts observés
+- produire une baseline ou un coût par résultat acceptable
 - remplacer une inconnue par une estimation
+
+Le conseil privé reste permis sur les observations enregistrées qui satisfont les gardes de la [section 8 des règles](RULES.md#8-coût-et-bénéfices). Une priorité de consultation ne réécrit ni contrat ni verdict historique.
 
 ## 10. Sécurité et autorité
 

@@ -30,11 +30,16 @@ Un jalon porte un nom, jamais un numéro. Les jalons se succèdent sous les noms
 
 Les exigences suivantes du PRD n’ont pas encore de jalon. Les dater demande une décision d’Ayo, reportée dans la matrice.
 
+- répertoire éditorial d’évaluations externes, recherche simple et filtres sans appel modèle ([§10](PRD.md#consulter-des-évaluations-externes))
 - navigation catalogue, tâche, campagne et comparaison des configurations ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
-- consultation publique des seules restitutions approuvées, sans classement universel ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
-- catalogue de tâches versionnées, avec contrat et cas d'essai identifiés ; aucune demande n’y est publiée automatiquement ([§5.1](PRD.md#51-capacités))
+- consultation publique des seules restitutions approuvées, sans classement universel ; autorisation distincte, paquet autonome et retrait des résultats ([§10](PRD.md#publier-les-résultats-dune-épreuve)) ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
+- catalogue de tâches versionnées, avec contrat et cas d'essai identifiés ; aucune demande n’y est publiée automatiquement ([§5.1](PRD.md#51-capacités)) ; publication, consultation et retrait des épreuves éditoriales ([§10](PRD.md#publier-et-consulter-une-épreuve-éditoriale))
+- aide sémantique facultative commune au répertoire externe et au catalogue, avec activation distincte par usage ([§10](PRD.md#demander-une-aide-sémantique-facultative))
+- recherche textuelle et filtres explicites parmi les versions éditoriales publiques, sans appel modèle ([§10](PRD.md#trouver-une-épreuve-par-ses-caractéristiques))
+- copie privée d’une épreuve publiée, adaptation du besoin, qualification propre et signalement des erreurs de source ([§10](PRD.md#préparer-depuis-une-épreuve-publiée))
 - résultats réellement acquis et évalués sur le catalogue et le panel approuvés ([§5.1](PRD.md#51-capacités))
 - classements par critère et filtres combinés, sans note pondérée ni désignation automatique du meilleur modèle ([§5.1](PRD.md#51-capacités), [§7](PRD.md#7-ordre-de-décision))
+- priorité explicite et réversible du conseil privé : coût observé ou critère secondaire ordonnable, sans score pondéré ([§7](PRD.md#priorité-de-consultation-privée))
 - secours officiel candidat en dernier recours selon les conditions de l’ARD ([§5.1](PRD.md#51-capacités))
 - suivi des tentatives, incidents, coûts et preuves, sans relance implicite hors la relance automatique bornée des appels assistés ([§5.1](PRD.md#51-capacités))
 - un à trois essais par modèle et par exemple, choisis par l’utilisateur avant le lancement, chacun jugé et affiché séparément ([§5.1](PRD.md#51-capacités))

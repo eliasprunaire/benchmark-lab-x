@@ -6,8 +6,9 @@ forme les vues structurées renvoyées par l'exécuteur.
 from pathlib import Path
 import re
 import secrets
+from urllib.parse import urlencode, urlsplit
 
-from benchmark.preparation import CONTEXT_MAX, binding
+from benchmark.preparation import CONTEXT_MAX, REQUEST_MIN, binding
 from benchmark.storage import _strict_json as encode
 
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
@@ -16,6 +17,7 @@ from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MO
 from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, listing, montant_lisible,
                         personal_key_form, section, state_block, text)
 from .projection import candidate_names, piece_name, projection_body
+from .results_views import render_results
 from .legal_views import LEGAL_PAGES
 from .privacy_views import (PRIVACY_SCRIPT, render_privacy_page, render_privacy_controls,
                             render_contribution, render_contributions, render_bootstrap)
@@ -189,10 +191,562 @@ def page_script(value):
 
 
 BENCHMARK_REFERENCES = {
-    'math': (('MathArena', 'https://matharena.ai/', 'Raisonnement mathématique et problèmes de compétition'),),
-    'coding': (('LiveCodeBench', 'https://livecodebench.github.io/', 'Exercices de programmation'),
-               ('SWE-bench', 'https://www.swebench.com/', 'Résolution de problèmes logiciels dans des dépôts de code')),
+    # Notices approuvées : MathArena, LiveCodeBench, SWE-bench, MTEB, Artificial Analysis API
+    # Maintenance : Ayo ; HELM reste hors du répertoire ; vérification documentaire : 2026-10-22
+    'matharena': {
+        'name': 'MathArena', 'url': 'https://matharena.ai/', 'category': 'math',
+        'work': 'Résoudre des problèmes mathématiques, notamment issus de compétitions',
+        'scope': 'Résultats par compétition et problème ; sorties consultables sur le site',
+        'limits': 'Ces problèmes ne représentent pas tous les besoins mathématiques professionnels. '
+                  'La synthèse « expected performance » combine observations et estimations. '
+                  'Elle ne doit pas devenir un résultat observé Bench-X. Le classement général n’est pas repris.',
+        'version': 'Propre à chaque compétition ou série ; aucune version unique retenue',
+        'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
+    'livecodebench': {
+        'name': 'LiveCodeBench', 'url': 'https://livecodebench.github.io/', 'category': 'coding',
+        'work': 'Génération de code, réparation, prédiction de résultats et exécution sur des exercices',
+        'scope': 'Problèmes de concours provenant notamment de LeetCode, AtCoder et Codeforces',
+        'limits': 'Un exercice ne représente pas une modification complète d’application. '
+                  'Les périodes permettent des comparaisons temporelles. '
+                  'Elles ne garantissent pas seules l’absence de contamination. '
+                  'La fraîcheur de chaque tableau n’est pas certifiée.',
+        'version': 'Version unique inconnue ; préciser le scénario et la période du tableau consulté',
+        'published_at': '2024 pour l’article initial ; exemples anciens distincts des versions successives',
+        'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
+    'swe-bench': {
+        'name': 'SWE-bench', 'url': 'https://www.swebench.com/', 'category': 'coding',
+        'work': 'Résoudre des problèmes logiciels issus de dépôts',
+        'scope': 'Plusieurs variantes, dont Full, Lite, Verified, Multilingual et Multimodal',
+        'limits': 'La variante, l’environnement et l’agent influencent le résultat. Le nom du modèle ne suffit pas. '
+                  'Le site distingue les résultats exécutés ou vérifiés par son équipe. '
+                  'Les résultats des variantes ne sont pas fusionnés.',
+        'version': 'Nom de la variante à conserver ; aucune version unique retenue',
+        'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
+    'mteb': {
+        'name': 'MTEB', 'url': 'https://github.com/embeddings-benchmark/mteb', 'category': 'retrieval',
+        'work': 'Évaluer des représentations vectorielles et des systèmes de recherche',
+        'scope': 'Tâches, langues et modalités multiples ; documentation et classement liés depuis le dépôt',
+        'limits': 'Un résultat de recherche ne prouve pas la qualité d’une réponse générée à partir des documents. '
+                  'Il faut comparer les mêmes tâches et les mêmes langues. '
+                  'Une moyenne générale ne représente pas automatiquement le corpus du visiteur. '
+                  'Le fonctionnement interactif du classement n’a pas été essayé.',
+        'version': 'Dépend de la tâche, des données et du protocole ; aucune version globale retenue',
+        'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
+    'artificial-analysis-api': {
+        'name': 'Artificial Analysis, performances API',
+        'url': 'https://artificialanalysis.ai/methodology/performance-benchmarking', 'category': 'api',
+        'work': 'Délai avant réception, vitesse de sortie et temps de réponse des services API',
+        'scope': 'Charges et conditions de concurrence définies ; mesures agrégées sur des fenêtres temporelles',
+        'limits': 'La localisation du serveur et la longueur des échanges influencent les mesures. '
+                  'Les résultats ne garantissent ni délai contractuel ni performance depuis le poste du visiteur. '
+                  'Leur indice global n’entre pas dans Bench-X. La date de source concerne la méthode. '
+                  'Les résultats évoluent séparément.',
+        'version': '2.2.0', 'published_at': '2026-03-02',
+        'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
 }
+REFERENCE_CATEGORIES = {
+    'math': 'Mathématiques', 'coding': 'Programmation',
+    'retrieval': 'Recherche documentaire', 'api': 'Performances des services'}
+REFERENCE_VERIFICATIONS = {'verified': 'Vérifiée', 'unverified': 'Vérification insuffisante'}
+
+
+def reference_verified(reference):
+    return reference.get('verification') == 'verified' and bool(reference.get('checked_at'))
+
+
+def reference_url(reference):
+    url = reference.get('url') or ''
+    # urlsplit découpe une URL mais ne la valide pas ; le navigateur ne reçoit que des liens HTTPS sans authentification
+    if not url or any(c.isspace() or ord(c) < 32 or ord(c) == 127 or c == '\\' for c in url):
+        return None
+    try:
+        parsed = urlsplit(url)
+        if (parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.port is not None and parsed.port != 443
+                or not re.fullmatch(r'[A-Za-z0-9.-]+', parsed.hostname)):
+            return None
+    except ValueError:
+        return None
+    return url
+
+
+def reference_notice(reference):
+    url = reference_url(reference)
+    content = '<dl>' + ''.join('<dt>' + label + '</dt><dd>' + text(reference.get(key) or 'Inconnue') + '</dd>'
+        for key, label in (('work', 'Travail mesuré'), ('scope', 'Portée'), ('limits', 'Limites'),
+                           ('version', 'Version'), ('published_at', 'Date de la source'),
+                           ('checked_at', 'Date de vérification éditoriale'))) + '</dl>'
+    if not reference_verified(reference):
+        content += '<p class="notice">Vérification insuffisante. Cette source n’est pas une recommandation.</p>'
+    else:
+        content += '<p>Vérification éditoriale effectuée.</p>'
+    if reference.get('availability') != 'available':
+        content += '<p class="notice">Source retirée : indisponible.</p><p>Source officielle : ' + text(url or 'Inconnue') + '</p>'
+    elif not url:
+        content += '<p class="notice">Lien officiel indisponible.</p><p>Source officielle : Inconnue.</p>'
+    else:
+        content += '<p>Source disponible.</p><p>Source officielle : <a href="' + text(url) + '" rel="noreferrer noopener">' + text(url) + '</a></p>'
+    return content
+
+
+def editorial_report(report):
+    """Signalement éditorial attribué à la version, jamais une réécriture de ses octets"""
+    if not report:
+        return ''
+    return state_block('warn', 'Signalement éditorial', 'Erreur signalée sur cette version',
+                       '<p>' + text(report['summary']) + '</p><p class="hint">Attribué à la version source le '
+                       + text(date_lisible_utc(report['reported_at'])) + '. Ce signalement ne corrige pas les pièces '
+                       'ni les preuves déjà conservées.</p>')
+
+
+EDITORIAL_STATUS = {'ABSENT': 'Qualification absente', 'QUALIFIED': 'Qualification réussie',
+                    'BLOCKED': 'Qualification bloquée'}
+EDITORIAL_FILTERS = (('entree', 'Entrées'), ('langue', 'Langue'), ('outil', 'Outil'),
+                     ('difficulte', 'Difficulté'), ('qualification', 'Qualification'))
+
+
+def editorial_criteria_query(criteria):
+    """Chaîne de requête stable des seuls critères actifs"""
+    criteria = criteria or {}
+    keys = ('q',) + tuple(key for key, _ in EDITORIAL_FILTERS)
+    return urlencode([(key, criteria.get(key, '')) for key in keys if criteria.get(key)])
+
+
+def editorial_characteristic(entry, key):
+    """Valeur déclarée, absence explicite ou inconnue, sans substitution entre champs"""
+    value = entry.get(key)
+    if key in ('inputs', 'tools'):
+        if value is None:
+            return 'Inconnues' if key == 'inputs' else 'Inconnus'
+        if not value:
+            return 'Aucune entrée déclarée' if key == 'inputs' else 'Aucun outil déclaré'
+        return ', '.join(value)
+    if value is None:
+        return 'Inconnue' if key in ('language', 'difficulty') else 'Inconnu'
+    return value
+
+
+def editorial_characteristics(entry):
+    """Les huit informations restent distinctes, y compris la qualification et les résultats"""
+    return (('Travail évalué', entry.get('work') or 'Inconnu'),
+            ('Résultat attendu', editorial_characteristic(entry, 'expected_result')),
+            ('Entrées', editorial_characteristic(entry, 'inputs')),
+            ('Langue', editorial_characteristic(entry, 'language')),
+            ('Outils', editorial_characteristic(entry, 'tools')),
+            ('Difficulté', editorial_characteristic(entry, 'difficulty')),
+            ('Version', entry.get('version_id') or 'Inconnue'),
+            ('Qualification', EDITORIAL_STATUS.get(entry.get('qualification_status'), 'Qualification absente')),
+            ('Résultats publiés', 'Résultats publiés' if entry.get('results') else 'Aucun résultat publié'))
+
+
+def editorial_fields(entry):
+    return '<dl class="editorial-characteristics">' + ''.join(
+        '<dt>' + text(label) + '</dt><dd>' + text(value) + '</dd>'
+        for label, value in editorial_characteristics(entry)) + '</dl>'
+
+
+def render_editorial(value):
+    need = '<p><a href="/preparation">Décrire mon cas d’usage</a></p>'
+    criteria = value.get('criteria') or {}
+    query = editorial_criteria_query(criteria)
+    back_href = '/epreuves' + ('?' + query if query else '')
+    back = '<p>' + (('<a href="' + text(back_href) + '">Retour aux résultats</a> · ') if query else '')
+    back += '<a href="/epreuves">Toutes les épreuves</a></p>'
+    if value.get('withdrawn'):
+        content = ('<p class="note">Cette version est retirée. Son contenu et ses pièces ne sont plus disponibles.</p>'
+                   '<p>Aucune nouvelle reprise de cette version n’est admise.</p>')
+        content += editorial_report(value.get('report'))
+        return 'Version retirée', back + content + need
+    if not value.get('version_id'):
+        content = ('<p>La recherche porte sur le texte des notices publiques. Elle est déterministe et ne classe '
+                   'pas les épreuves par proximité sémantique.</p>'
+                   '<p>Les caractéristiques sont déclarées avec chaque version. Une information absente reste '
+                   'inconnue ; elle ne prouve ni absence d’outil ni qualification.</p>'
+                   '<p><a href="/epreuves/aide">Demander une aide sémantique facultative</a></p>')
+        filters = value.get('filters') or {}
+
+        def active_unavailable(key):
+            active = criteria.get(key)
+            return bool(active) and active not in filters.get(key, [])
+
+        content += ('<form method="get" action="/epreuves"><label for="q">Rechercher une épreuve</label>'
+                    '<input type="text" id="q" name="q" maxlength="200" value="' + text(criteria.get('q', '')) + '">')
+        for key, label in EDITORIAL_FILTERS:
+            content += ('<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key
+                        + '"><option value="">Tous</option>')
+            proposed = list(filters.get(key, []))
+            options = proposed + ([criteria[key]] if active_unavailable(key) else [])
+            for option in options:
+                shown = str(EDITORIAL_STATUS.get(option, option) if key == 'qualification' else option)
+                if active_unavailable(key) and option not in proposed:
+                    shown += ' (indisponible)'
+                content += ('<option value="' + text(option) + '"'
+                            + (' selected' if criteria.get(key) == option else '') + '>' + text(shown) + '</option>')
+            content += '</select>'
+        content += '<button type="submit">Rechercher</button></form>'
+        content += '<p><a href="/epreuves">Effacer la recherche et les filtres</a></p>'
+        if value.get('searched'):
+            content += '<section><h2>Critères actifs</h2><dl class="active-criteria">'
+            for key, label in (('q', 'Recherche'),) + EDITORIAL_FILTERS:
+                if criteria.get(key):
+                    shown = str(EDITORIAL_STATUS.get(criteria[key], criteria[key])
+                                if key == 'qualification' else criteria[key])
+                    if key != 'q' and active_unavailable(key):
+                        shown += ' (indisponible)'
+                    content += '<dt>' + text(label) + '</dt><dd>' + text(shown) + '</dd>'
+            content += '</dl>'
+            if any(active_unavailable(key) for key, _ in EDITORIAL_FILTERS):
+                content += ('<p class="hint">Une valeur marquée indisponible ne correspond à aucune version '
+                            'publique disponible. Elle reste active jusqu’à sa modification ou son effacement.</p>')
+            content += '</section>'
+        for entry in value.get('versions', []):
+            href = '/epreuves/' + entry['task_id'] + '/' + entry['version_id']
+            if query:
+                href += '?' + query
+            content += ('<section><h2><a href="' + text(href) + '">' + text(entry['title']) + '</a></h2>'
+                        + editorial_fields(entry) + '</section>')
+        if not value.get('total'):
+            content += '<p>Aucune épreuve publiée.</p>'
+        elif not value.get('versions'):
+            content += ('<p>Aucune épreuve ne correspond à cette recherche. Modifiez ou effacez les critères.</p>')
+        return 'Épreuves', content + need
+    status = EDITORIAL_STATUS.get(value.get('qualification_status'), 'Qualification absente')
+    content = editorial_fields(value)
+    content += '<p class="note">' + text(status) + '.</p>'
+    if value.get('qualification_status') == 'ABSENT':
+        content += '<p>Aucune preuve de qualification n’est publiée.</p>'
+    else:
+        content += '<p>Les preuves de qualification ne font pas partie de cette publication.</p>'
+    campaigns = value.get('results') or []
+    if campaigns:
+        content += ('<section><h2>Résultats publiés</h2><p class="hint">Chaque campagne est une restitution '
+                    'approuvée séparément. Elle ne fusionne pas ses résultats avec une autre campagne.</p><ul>')
+        for campaign in campaigns:
+            href = ('/epreuves/' + text(value['task_id']) + '/' + text(value['version_id'])
+                    + '/campagnes/' + text(campaign['campaign_id']))
+            shown = ('Campagne du ' + date_lisible_utc(campaign['frozen_at']) + ' · ' + campaign['pi']['package']
+                     + ' ' + campaign['pi']['version'] + ' · '
+                     + str(campaign['coverage']['evaluated_attempts'])
+                     + (' réponse évaluée' if campaign['coverage']['evaluated_attempts'] == 1 else ' réponses évaluées')
+                     + ' sur ' + str(campaign['coverage']['planned_cells'])
+                     + (' essai prévu' if campaign['coverage']['planned_cells'] == 1 else ' essais prévus') + ' · coûts '
+                     + ('complets' if campaign['economic_status'] == 'COMPLETE' else 'incomplets'))
+            content += '<li><a href="' + href + '">' + text(shown) + '</a></li>'
+        content += '</ul>'
+        if len({(campaign.get('contract_sha256'), campaign.get('cases'),
+                 tuple(sorted((campaign.get('environment') or {}).items())),
+                 campaign['pi']['package'], campaign['pi']['version'], campaign['unit'])
+                for campaign in campaigns}) > 1:
+            content += ('<p class="note">Ces campagnes n’ont pas le même contrat, périmètre d’exemples, environnement, '
+                        'harnais ou unité de coût : leurs résultats ne se comparent pas directement.</p>')
+        content += '</section>'
+    else:
+        content += '<p class="note">Aucun résultat publié.</p>'
+    content += ('<p>Cette publication ne qualifie pas l’épreuve et n’autorise aucune exécution. '
+                'La difficulté déclarée ne prouve aucune capacité mesurée.</p>')
+    content += editorial_report(value.get('report'))
+    content += '<h2>Cas</h2><ul>' + ''.join('<li>' + text(case) + '</li>' for case in value['cases']) + '</ul>'
+    content += '<h2>Limites</h2><ul>' + ''.join('<li>' + text(limit) + '</li>' for limit in value['limits']) + '</ul>'
+    content += '<h2>Pièces</h2>'
+    base = '/epreuves/' + text(value['task_id']) + '/' + text(value['version_id'])
+    for piece in value['pieces']:
+        content += ('<section><h3><a href="' + base + '/pieces/' + text(piece['id']) + '">' + text(piece['label']) + '</a></h3>'
+                    '<pre class="proof-content">' + text(piece['text']) + '</pre></section>')
+    copy_base = '/preparation/copies/' + text(value['task_id']) + '/' + text(value['version_id'])
+    content += section('Préparer mon dossier privé',
+                       '<p>Cette copie conserve exactement la notice et les pièces ci-dessus. Elle ne demande ni clé '
+                       'ni appel aux modèles : vous décrirez ensuite votre besoin et ce qui diffère de cette épreuve.</p>'
+                       '<p><a class="button" href="' + copy_base + '">Créer mon dossier privé</a></p>')
+    return value['title'], back + content + need
+
+
+def render_references(value):
+    back = '<p><a href="/evaluations-externes">Toutes les évaluations externes</a></p>'
+    need = '<p><a href="/preparation">Décrire mon cas d’usage</a></p>'
+    introduction = '<p>Ces évaluations externes ne prouvent pas la réussite sur votre besoin particulier.</p>'
+    if value.get('reference_id'):
+        reference = BENCHMARK_REFERENCES[value['reference_id']]
+        return reference['name'], back + introduction + reference_notice(reference) + need
+    content = (introduction
+               + '<p>Ayo est responsable de la maintenance de cette sélection.</p>'
+               + '<p>La vérification documentaire du 22 octobre 2026 couvre l’origine, l’objet et les limites. '
+               + 'La disponibilité d’un lien reste distincte de cette vérification.</p>'
+               + '<p><a href="/evaluations-externes/aide">Demander une aide sémantique facultative</a></p>')
+    available = {identity: reference for identity, reference in BENCHMARK_REFERENCES.items()
+                 if reference.get('availability') == 'available'}
+    categories = {reference['category']: REFERENCE_CATEGORIES.get(reference['category'], reference['category'])
+                  for reference in available.values()}
+    query, category, verification = (value.get(key, '') for key in ('q', 'category', 'verification'))
+    content += ('<form method="get" action="/evaluations-externes"><label for="q">Rechercher une évaluation</label>'
+                '<input type="text" id="q" name="q" value="' + text(query) + '">')
+    for key, label, choices in (('category', 'Travail mesuré', categories),
+                                 ('verification', 'Vérification éditoriale', REFERENCE_VERIFICATIONS)):
+        content += '<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key + '"><option value="">Tous</option>'
+        content += ''.join('<option value="' + text(choice) + '"' + (' selected' if value.get(key) == choice else '')
+                           + '>' + text(name) + '</option>' for choice, name in choices.items()) + '</select>'
+    content += '<button type="submit">Rechercher</button></form><p><a href="/evaluations-externes">Effacer la recherche et les filtres</a></p>'
+    found = []
+    for identity, reference in available.items():
+        if category and reference['category'] != category:
+            continue
+        if verification and reference_verified(reference) != (verification == 'verified'):
+            continue
+        searchable = ' '.join(str(part or '') for key, part in reference.items() if key != 'url').casefold()
+        searchable += ' ' + categories[reference['category']].casefold()
+        if all(term in searchable for term in query.casefold().split()):
+            found.append((identity, reference))
+    for identity, reference in found:
+        content += ('<section><h2><a href="/evaluations-externes/' + text(identity) + '">'
+                    + text(reference['name']) + '</a></h2>' + reference_notice(reference) + '</section>')
+    if not available:
+        content += '<p>Aucune évaluation externe disponible.</p>'
+    elif not found:
+        content += '<p>Aucune évaluation ne correspond à cette recherche. Modifiez la recherche ou les filtres.</p>'
+    return 'Évaluations externes', content + need + '<p><a href="/">Accueil</a></p>'
+
+
+HELP_LABELS = {'correspond': 'Correspondance forte', 'partiel': 'Correspondance partielle'}
+HELP_REASONS = {
+    'DISABLED': 'Le service d’aide est désactivé. La recherche simple reste disponible.',
+    'FINANCE': 'Aucune preuve financière n’est établie pour cette aide. Aucun appel n’a été émis.',
+    'BUDGET': 'L’enveloppe commune de cette aide ne permet plus cet envoi. Aucun appel n’a été émis.',
+    'RATE': 'Trop de demandes simultanées ou trop rapprochées. Réessayez dans un instant. Aucun appel n’a été émis.',
+    'CONTEXT': 'La formulation et les notices dépassent les limites de contexte. Raccourcissez la formulation. '
+               'Aucun appel n’a été émis.',
+    'TIMEOUT': 'L’aide n’a pas répondu dans le délai de dix secondes. Aucun nouvel essai n’est lancé automatiquement.',
+    'RATE_LIMITED': 'TypeSafe limite temporairement les demandes. Aucun nouvel essai n’est lancé automatiquement.',
+    'OVERLOADED': 'TypeSafe est temporairement surchargé. Aucun nouvel essai n’est lancé automatiquement.',
+    'KEY_REJECTED': 'L’accès à TypeSafe est refusé. Aucun nouvel essai n’est lancé automatiquement.',
+    'PROVIDER_ERROR': 'TypeSafe n’a pas pu répondre. Aucun nouvel essai n’est lancé automatiquement.',
+    'INVALID_RESPONSE': 'La réponse de TypeSafe est inexploitable. Aucune suggestion n’en est tirée.',
+    'INTERRUPTED': 'L’aide a été interrompue. Elle ne sera pas relancée.',
+    'RECORD_FAILED': 'Le reçu de l’aide n’a pas pu être conservé. Aucune suggestion n’est affichée.',
+    'CONFLICT': 'Cette demande ne correspond pas au reçu conservé.',
+    'RESTORE_PENDING': 'Les données sont en attente de vérification après restauration. '
+                       'Aucun appel n’a été émis.',
+    'INVALID_REQUEST': 'La demande est incomplète. Corrigez-la et renvoyez-la.',
+}
+HELP_INTRO = (
+    '<p>Cette aide facultative compare votre formulation au travail mesuré par les notices publiques '
+    'admissibles. Elle utilise TypeSafe et son modèle Jev. Elle ne remplace pas la recherche simple : '
+    'celle-ci reste disponible sans cette aide.</p>'
+    '<div class="note"><p><strong>Données transmises :</strong> la formulation que vous soumettez et les '
+    'informations publiques utiles des notices retenues. Aucun dossier privé, contribution, référence de '
+    'jugement, historique, clé ni cookie n’est transmis.</p>'
+    '<p>TypeSafe traite ces données selon son traitement standard. Bench-X ne promet ni absence de '
+    'conservation, ni localisation exclusivement européenne, ni absence d’entraînement. N’écrivez aucune '
+    'information personnelle ou confidentielle : cette consigne ne garantit pas leur absence.</p>'
+    '<p>Bench-X finance cette aide sur une enveloppe limitée, distincte des clés OpenRouter personnelles. '
+    'Seuls des reçus techniques et comptables sont conservés, sans le texte recherché. Une probabilité ne '
+    'prouve ni adéquation, ni qualification, et cette aide ne lance aucune campagne.</p></div>')
+
+
+def help_notices():
+    """Champs publics utiles, sans URL ni indicateur éditorial, pour la seule aide facultative"""
+    notices = []
+    for identity, reference in BENCHMARK_REFERENCES.items():
+        if reference.get('availability') != 'available' or not reference_verified(reference):
+            continue
+        item = {'id': identity}
+        for key in ('name', 'category', 'work', 'scope', 'limits', 'version'):
+            value = reference.get(key)
+            if isinstance(value, str) and value:
+                item[key] = value
+        item['name'] = reference.get('name') or 'Inconnue'
+        notices.append(item)
+    return notices
+
+
+def help_form(value, action='/evaluations-externes/aide'):
+    submission_id = value.get('submission_id')
+    if type(submission_id) is not str or re.fullmatch('[0-9a-f]{32}', submission_id) is None:
+        return ''
+    formulation = value.get('formulation')
+    formulation = formulation if type(formulation) is str else ''
+    return ('<form method="post" action="' + text(action) + '">'
+            '<input type="hidden" name="submission_id" value="' + text(submission_id) + '">'
+            '<label for="formulation">Formulation à comparer</label>'
+            '<p id="formulation-help" class="hint">Décrivez le travail recherché, sans information '
+            'personnelle ni confidentielle. Une demande peut contenir plusieurs travaux.</p>'
+            '<textarea id="formulation" name="formulation" required rows="5" '
+            'aria-describedby="formulation-help">' + text(formulation) + '</textarea>'
+            + HONEYPOT +
+            '<button type="submit">Demander l’aide</button></form>')
+
+
+def render_help_receipt(receipt):
+    """Reçu technique commun, sans texte recherché ni identifiant brut de notice"""
+    if not receipt:
+        return ''
+    cost = receipt.get('cost') or {}
+    notices = receipt.get('notice_labels')
+    if notices is None:
+        notices = receipt.get('notices') or []
+    return ('<details><summary>Reçu technique de cette demande</summary><dl>'
+            '<dt>Usage</dt><dd>' + text(receipt.get('usage')) + '</dd>'
+            '<dt>Version des questions</dt><dd>' + text(receipt.get('questions_version')) + '</dd>'
+            '<dt>Modèle demandé</dt><dd>' + text(receipt.get('model_requested')) + '</dd>'
+            '<dt>Modèle observé</dt><dd>' + text(receipt.get('model_observed') or 'Inconnu') + '</dd>'
+            '<dt>Notices appréciées</dt><dd>' + text(', '.join(notices) or 'Aucune') + '</dd>'
+            '<dt>Jetons d’entrée</dt><dd>' + text(receipt.get('input_tokens') if receipt.get('input_tokens') is not None else 'Inconnus') + '</dd>'
+            '<dt>Jetons de sortie</dt><dd>' + text(receipt.get('output_tokens') if receipt.get('output_tokens') is not None else 'Inconnus') + '</dd>'
+            '<dt>Coût calculé</dt><dd>' + text(
+                'inconnu' if cost.get('status') != 'KNOWN'
+                else montant_lisible(cost.get('amount')) + ' ' + str(cost.get('currency'))) + '</dd>'
+            '<dt>Base du coût</dt><dd>' + text(cost.get('source') or 'Inconnue') + '</dd>'
+            '</dl><p class="hint">Un coût calculé depuis les jetons reçus et le tarif daté reste '
+            'distinct d’une facture. Un coût inconnu conserve sa réserve.</p></details>')
+
+
+def render_semantic_help(value):
+    stage = value.get('stage')
+    content = HELP_INTRO
+    if stage in ('form', 'unavailable'):
+        content += help_form(value)
+    if stage == 'suggestions':
+        content += '<section><h2>Suggestions</h2>'
+        content += ('<p class="hint">Chaque notice est appréciée indépendamment. Les correspondances '
+                    'reposent sur des critères fermés et les champs publiés. Aucune suggestion ne '
+                    'qualifie une source.</p>')
+        suggestions = value.get('suggestions') or []
+        for suggestion in suggestions:
+            reference = suggestion.get('reference') or {}
+            label = HELP_LABELS.get(suggestion.get('label'), 'Correspondance')
+            content += ('<section><h2><a href="/evaluations-externes/' + text(suggestion['id']) + '">'
+                        + text(reference.get('name') or 'Inconnue') + '</a></h2>'
+                        + '<p class="note">' + text(label) + '. Cette appréciation ne prouve ni adéquation '
+                        'ni qualification.</p>' + reference_notice(reference) + '</section>')
+        if not suggestions:
+            content += '<p>Aucune suggestion.</p>'
+        content += '</section>'
+    elif stage == 'none':
+        content += ('<p role="status">Aucune notice ne correspond à cette formulation. '
+                    'La recherche simple reste disponible.</p>')
+    if value.get('dropped'):
+        content += ('<p class="hint">Une suggestion a été retirée : sa notice n’est plus disponible '
+                    'ou sa vérification éditoriale ne suffit plus.</p>')
+    elif stage == 'pending':
+        content += state_block('wait', 'Aide sémantique', 'Aide en cours',
+                               '<p>La demande est enregistrée. Cette page ne relance aucun appel ; '
+                               'actualisez-la dans un instant.</p>')
+    elif stage == 'unavailable':
+        content += state_block('unk', 'Aide sémantique', 'Aide indisponible',
+                               '<p>' + text(HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
+                               + '</p>')
+    content += render_help_receipt(value.get('receipt'))
+    content += ('<p><a href="/evaluations-externes/aide">Nouvelle demande</a> · '
+                '<a href="/evaluations-externes">Recherche simple</a> · '
+                '<a href="/preparation">Décrire mon cas d’usage</a></p>')
+    return 'Aide sémantique facultative', content
+
+
+def semantic_help_view(value):
+    """Projection de l'aide : les notices retirées ou non vérifiées disparaissent avant affichage"""
+    status = value.get('status')
+    stage = {'suggestions': 'suggestions', 'none': 'none',
+             'unavailable': 'unavailable', 'pending': 'pending'}.get(status, 'unavailable')
+    suggestions, dropped = [], False
+    for suggestion in value.get('suggestions') or []:
+        reference = BENCHMARK_REFERENCES.get(suggestion.get('notice_id'))
+        if (not reference or reference.get('availability') != 'available'
+                or not reference_verified(reference)):
+            dropped = True
+            continue
+        suggestions.append({'id': suggestion['notice_id'], 'label': suggestion.get('label'),
+                            'reference': reference})
+    if stage == 'suggestions' and not suggestions:
+        stage = 'none'
+    return {'kind': 'references_help', 'stage': stage, 'reason': value.get('reason'),
+            'receipt': value.get('receipt'), 'suggestions': suggestions,
+            'dropped': dropped}
+
+
+def editorial_help_notices(versions):
+    """Champs publics utiles à l’aide catalogue, sans qualification, résultat ni caractéristique inventée"""
+    notices = []
+    for entry in versions:
+        identity = entry.get('package_sha256')
+        if type(identity) is not str or re.fullmatch(r'[0-9a-f]{64}', identity) is None:
+            continue
+        item = {'id': identity, 'name': entry.get('title') or 'Inconnue',
+                'work': entry.get('work') or 'Inconnu', 'version': entry.get('version_id')}
+        scope = entry.get('expected_result')
+        if type(scope) is str and scope:
+            item['scope'] = scope
+        if entry.get('limits'):
+            item['limits'] = '\n'.join(entry['limits'])
+        notices.append(item)
+    return notices
+
+
+def editorial_help_view(value, versions):
+    """Projection de l’aide catalogue : chaque suggestion est revérifiée contre le catalogue courant"""
+    available = {entry['package_sha256']: entry for entry in versions
+                 if type(entry.get('package_sha256')) is str}
+    status = value.get('status')
+    stage = {'suggestions': 'suggestions', 'none': 'none',
+             'unavailable': 'unavailable', 'pending': 'pending'}.get(status, 'unavailable')
+    suggestions, dropped = [], False
+    for suggestion in value.get('suggestions') or []:
+        entry = available.get(suggestion.get('notice_id'))
+        if entry is None:
+            dropped = True
+            continue
+        suggestions.append({'id': suggestion['notice_id'], 'label': suggestion.get('label'),
+                            'entry': entry})
+    if stage == 'suggestions' and not suggestions:
+        stage = 'none'
+    receipt = value.get('receipt')
+    if type(receipt) is dict:
+        receipt = dict(receipt)
+        receipt['notice_labels'] = [
+            available[identity]['task_id'] + ' / ' + available[identity]['version_id']
+            if identity in available else 'Version retirée ou indisponible'
+            for identity in (receipt.get('notices') or [])]
+    return {'kind': 'editorial_help', 'stage': stage, 'reason': value.get('reason'),
+            'receipt': receipt, 'suggestions': suggestions, 'dropped': dropped}
+
+
+def render_editorial_help(value):
+    stage = value.get('stage')
+    content = HELP_INTRO
+    if stage in ('form', 'unavailable'):
+        content += help_form(value, '/epreuves/aide')
+    if stage == 'suggestions':
+        content += '<section><h2>Suggestions</h2>'
+        content += ('<p class="hint">Chaque version est appréciée indépendamment. Les correspondances '
+                    'reposent sur des critères fermés et les champs publics. Aucune suggestion ne '
+                    'qualifie une épreuve.</p>')
+        for suggestion in value.get('suggestions') or []:
+            entry = suggestion.get('entry') or {}
+            label = HELP_LABELS.get(suggestion.get('label'), 'Correspondance')
+            href = ('/epreuves/' + text(entry.get('task_id', '')) + '/'
+                    + text(entry.get('version_id', '')))
+            content += ('<section><h2><a href="' + href + '">' + text(entry.get('title') or 'Inconnue')
+                        + '</a></h2><p class="note">' + text(label) + '. Cette appréciation ne prouve ni '
+                        'adéquation ni qualification.</p>' + editorial_fields(entry) + '</section>')
+        if not value.get('suggestions'):
+            content += '<p>Aucune suggestion.</p>'
+        content += '</section>'
+    elif stage == 'none':
+        content += ('<p role="status">Aucune épreuve ne correspond à cette formulation. '
+                    'La recherche simple reste disponible.</p>')
+    if value.get('dropped'):
+        content += ('<p class="hint">Une suggestion a été retirée : sa version n’est plus disponible '
+                    'ou son paquet ne correspond plus à son empreinte.</p>')
+    elif stage == 'pending':
+        content += state_block('wait', 'Aide sémantique', 'Aide en cours',
+                               '<p>La demande est enregistrée. Cette page ne relance aucun appel ; '
+                               'actualisez-la dans un instant.</p>')
+    elif stage == 'unavailable':
+        content += state_block('unk', 'Aide sémantique', 'Aide indisponible',
+                               '<p>' + text(HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
+                               + '</p>')
+    content += render_help_receipt(value.get('receipt'))
+    content += ('<p><a href="/epreuves/aide">Nouvelle demande</a> · '
+                '<a href="/epreuves">Recherche simple</a> · '
+                '<a href="/preparation">Décrire mon cas d’usage</a></p>')
+    return 'Aide sémantique facultative', content
 
 
 def render_task_index(task):
@@ -266,6 +820,52 @@ def preparation_steps(value):
     return content + '<small>Cas d’usage privé · pièces entièrement inventées</small></nav>'
 
 
+def render_source_copy(source, notice, *, future=False):
+    """Notice et pièces exactes conservées dans le dossier, distinctes du besoin personnel"""
+    labels = {'ABSENT': 'Qualification absente', 'QUALIFIED': 'Qualification réussie', 'BLOCKED': 'Qualification bloquée'}
+    status = labels.get(source.get('qualification_status'), 'Qualification absente')
+    content = ('<p class="note">Cette épreuve publiée ' + ('sera conservée' if future else 'est conservée')
+               + ' dans votre dossier avec sa version et son '
+               'empreinte. Sa qualification publiée ne qualifie pas ce dossier : le contrat et la référence de '
+               'votre nouvel exemple seront construits puis vérifiés séparément.</p>'
+               '<dl><dt>Titre</dt><dd>' + text(source['title']) + '</dd>'
+               '<dt>Travail évalué</dt><dd>' + text(source['work']) + '</dd>'
+               '<dt>Version source</dt><dd>' + text(source['version_id']) + '</dd>'
+               '<dt>Qualification publiée</dt><dd>' + text(status) + '</dd></dl>')
+    if source.get('cases'):
+        content += '<h3>Cas de l’épreuve source</h3>' + listing(source['cases'])
+    if source.get('limits'):
+        content += '<h3>Limites de l’épreuve source</h3>' + listing(source['limits'])
+    content += '<h3>Pièces ' + ('copiées' if future else 'conservées') + '</h3>'
+    for piece in source.get('pieces', []):
+        content += ('<details class="example-content"><summary>Lire « ' + text(piece['label']) + ' »</summary>'
+                    '<div class="example-text">' + text(piece['text']) + '</div></details>')
+    if notice.get('withdrawn'):
+        content += ('<p class="notice">Cette version n’est plus disponible au catalogue. Votre copie et ses pièces '
+                    'restent conservées dans ce dossier.</p>')
+    if notice.get('unavailable'):
+        content += '<p class="notice">L’état et les signalements de la source sont momentanément indisponibles.</p>'
+    for report in notice.get('reports', []):
+        content += editorial_report(report)
+    return section('Épreuve source', content, 'source')
+
+
+def render_copy_source(value, csrf):
+    """Confirmation de la copie sous le chemin privé, avec le jeton de la session existante"""
+    source = value['source']
+    path = '/preparation/copies/' + text(source['task_id']) + '/' + text(source['version_id'])
+    content = ('<p class="note">Cette copie conservera exactement la notice et les pièces ci-dessous. '
+               'Aucune clé ni aucun appel aux modèles n’est nécessaire ; vous décrirez ensuite votre besoin.</p>')
+    content += render_source_copy(source, value.get('source_notice') or {}, future=True)
+    content += section('Créer le dossier privé', form(
+        csrf, path, {'copy': '1'},
+        '<p>Le dossier restera privé dans ce navigateur. Sa qualification publiée ne qualifie pas le nouveau dossier.</p>'
+        '<button type="submit">Créer mon dossier privé</button>'))
+    content += ('<p><a href="/epreuves/' + text(source['task_id']) + '/' + text(source['version_id'])
+                + '">Retour à l’épreuve</a></p>')
+    return 'Créer mon dossier privé', content
+
+
 def render(value, csrf, path='/preparation', *, error=False):
     """Native HTML forms, inert evidence and a fixed comparison focus script"""
     def field_attributes(name):
@@ -286,10 +886,17 @@ def render(value, csrf, path='/preparation', *, error=False):
     navigation = '' if error else preparation_steps(value)
     title = 'Décrire mon cas d’usage'
     # `aria-current` seulement sur l'entrée qui est la page affichée, jamais sur une page descendante ni d'erreur
-    current = None if error else {'home': '/', 'privacy_data': '/preparation/data'}.get(
+    current = None if error else {'home': '/', 'privacy_data': '/preparation/data',
+                                 'references': '/evaluations-externes' if not value.get('reference_id') else None,
+                                 'references_help': None,
+                                 'editorial': '/epreuves' if not value.get('version_id') else None,
+                                 'editorial_help': None,
+                                 'copy_source': '/preparation'}.get(
         value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)
     menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
-                   for href, label in (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données')))
+                   for href, label in (('/', 'Accueil'), ('/evaluations-externes', 'Évaluations externes'),
+                                       ('/epreuves', 'Épreuves'),
+                                       ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données')))
     if error:
         title = value.get('title') or ('Service momentanément indisponible' if value.get('unavailable') else 'Votre action n’a pas abouti')
         submitted = value.get('form')
@@ -309,7 +916,8 @@ def render(value, csrf, path='/preparation', *, error=False):
                 HONEYPOT +
                 '<button type="submit">Corriger et renvoyer</button>')
         elif type(submitted) is dict and 'message' in submitted:
-            content += form(csrf, path, {key: submitted[key] for key in ('action_id', 'revision', 'kind')},
+            content += form(csrf, path, {key: str(submitted.get(key, '')) for key in ('action_id', 'revision')}
+                            | {'kind': str(submitted.get('kind', 'clarify'))},
                 '<label for="message">Votre précision ou correction</label>'
                 '<textarea id="message" name="message" required maxlength="1000" rows="4"' + field_attributes('message') + '>' + text(submitted['message']) + '</textarea>' + field_error('message') +
                 HONEYPOT +
@@ -334,6 +942,16 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, content = render_bootstrap(value)
     elif value.get('kind') == 'legal':
         title, _, content = LEGAL_PAGES[value['path']]
+    elif value.get('kind') == 'references':
+        title, content = render_references(value)
+    elif value.get('kind') == 'references_help':
+        title, content = render_semantic_help(value)
+    elif value.get('kind') == 'editorial':
+        title, content = render_editorial(value)
+    elif value.get('kind') == 'editorial_help':
+        title, content = render_editorial_help(value)
+    elif value.get('kind') == 'results':
+        title, content = render_results(value)
     elif value.get('kind') == 'privacy_data':
         title, content = render_privacy_page(value, csrf)
     elif value.get('kind') == 'access':
@@ -369,6 +987,8 @@ def render(value, csrf, path='/preparation', *, error=False):
     elif value.get('kind') == 'campaign_launch':
         title = 'Vérifier puis lancer la comparaison'
         content = render_campaign_launch_operator(value, csrf)
+    elif value.get('kind') == 'copy_source':
+        title, content = render_copy_source(value, csrf)
     elif value.get('kind') == 'home':
         title = 'Quel modèle d’IA pour votre travail ?'
         content = '<div class="hero"><p class="lead note">Décrivez une tâche de votre travail. '
@@ -415,6 +1035,22 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '</fieldset><button type="submit">Actualiser l’aperçu</button></form>'
         content += '<p class="hint">L’aperçu montre toute la comparaison : les filtres des résultats ne s’appliquent pas ici.</p>'
         content += '<hr>' + projection_body(comparison, value['selected_links'], level=2)
+    elif value.get('kind') == 'constructed_response':
+        title = 'Réponse construite'
+        declaree = 'producteur' in value
+        phrase = ('Cette sortie construite déclare son producteur, sa date, sa source et son empreinte. '
+                  if declaree else
+                  'Cette sortie construite ne déclare pas de producteur, de date ni de source. ')
+        content = state_block('unk', 'Sortie construite', 'Réponse fournie pour le contrôle',
+            '<p>' + phrase + 'Elle n’est pas un reçu candidat. Ce contrôle ne qualifie pas le juge.</p>')
+        rows = '<dt>Nom</dt><dd>' + text(value['name']) + '</dd>'
+        if declaree:
+            rows += ('<dt>Producteur</dt><dd>' + text(value['producteur']) + '</dd>'
+                     '<dt>Date</dt><dd>' + text(date_lisible_utc(value['date'])) + '</dd>'
+                     '<dt>Source</dt><dd>' + text(value['source']) + '</dd>')
+        rows += '<dt>Empreinte</dt><dd><code>' + text(value['empreinte']) + '</code></dd>'
+        content += section('Renseignements de la sortie construite', '<dl class="kv">' + rows + '</dl>')
+        content += '<p><a href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a></p>'
     elif 'dossiers' in value:
         title = 'Mes cas d’usage'
         access = value.get('personal_access', {})
@@ -451,8 +1087,10 @@ def render(value, csrf, path='/preparation', *, error=False):
     else:
         dossier_id, revision = value['dossier_id'], value['revision']
         url = '/preparation/dossiers/' + dossier_id
+        source = value.get('source')
+        source_notice = value.get('source_notice') or {}
         title = ('Votre cas d’usage' if value['validation'] else 'Est-ce le travail que vous voulez tester ?'
-                 if value['package'] else 'Précisons votre besoin')
+                 if value['package'] else 'Votre dossier privé' if source else 'Précisons votre besoin')
         prior_revision = revision != value.get('current_revision', revision)
         snapshot = '/revisions/' in path and any(c['task']['revision'] == revision and c['attempts']
                                                 for c in value.get('campaigns', []))
@@ -472,6 +1110,9 @@ def render(value, csrf, path='/preparation', *, error=False):
                   'suspended': ('err', 'Préparation arrêtée', 'Renvoyez votre message pour relancer la préparation.' if can_submit
                                 else 'Vous pourrez renvoyer votre message quand l’envoi sera de nouveau possible.')}
         tone, heading, next_step = stages[value['stage']]
+        if source and value['stage'] == 'draft':
+            tone, heading, next_step = ('action', 'Copie enregistrée',
+                'Décrivez votre besoin et ce qui diffère de l’épreuve source pour préparer votre exemple.')
         if referral:
             title = 'Tâche hors du champ de Bench-X'
             tone, heading, next_step = ('unk', 'Bench-X ne peut pas comparer cette tâche',
@@ -511,7 +1152,8 @@ def render(value, csrf, path='/preparation', *, error=False):
             actions = f'<a class="button" href="{text(target)}">{text(label)}</a>'
         elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
             actions = f'<a class="button" href="{text(url)}/configurations">Choisir les modèles</a>'
-        content = '<p class="tag">Exemple inventé · version ' + text(revision) + '</p>'
+        example_mark = 'Copie d’épreuve' if source and value['package'] is None else 'Exemple inventé'
+        content = '<p class="tag">' + text(example_mark + ' · version ' + str(revision)) + '</p>'
         if snapshot:
             title = 'Exemple utilisé pour la comparaison'
             tone, heading, next_step = 'done', 'Exemple déjà testé', 'Vous consultez l’exemple tel qu’il a été testé. Ses résultats restent disponibles.'
@@ -539,11 +1181,14 @@ def render(value, csrf, path='/preparation', *, error=False):
                 body = '<p class="notice">' + text(value['notice']) + '</p>' + body
             content += state_block(tone, 'Où j’en suis', heading, body, actions)
         if referral:
-            references = BENCHMARK_REFERENCES.get(referral, ())
+            references = [(identity, reference) for identity, reference in BENCHMARK_REFERENCES.items()
+                          if reference['category'] == referral and reference.get('availability') == 'available']
             if references:
                 content += section('Où comparer ce type de tâche', '<ul>' + ''.join(
-                    '<li><a href="' + href + '" rel="noreferrer">' + label + '</a> : ' + description + '.</li>'
-                    for label, href, description in references) + '</ul>')
+                    '<li><a href="/evaluations-externes/' + text(identity) + '" rel="noreferrer">'
+                    + text(reference['name']) + '</a> : ' + text(reference['work']) + '.</li>'
+                    for identity, reference in references) + '</ul>')
+            content += '<p><a href="/evaluations-externes" rel="noreferrer">Consulter les évaluations externes</a></p>'
             content += '<p><a class="button sec" href="/preparation">Décrire un autre cas d’usage</a></p>'
         links = [] if '>Actualiser</a>' in actions else [f'<a href="{text(path)}">Actualiser</a>']
         if path != url:
@@ -552,16 +1197,33 @@ def render(value, csrf, path='/preparation', *, error=False):
             links.append(f'<a href="{text(url)}/revisions/{revision - 1}">Version précédente</a>')
         if links:
             content += '<p class="hint">' + ' · '.join(links) + '</p>'
-        if editable and value['package'] is None:
-            content += section('Votre réponse', form(csrf, url + '/messages',
-                {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
-                '<label for="message">Votre réponse à l’assistant</label><textarea id="message" name="message" rows="3" required maxlength="1000"' + disabled + '></textarea>' + HONEYPOT +
-                '<button type="submit"' + disabled + '>Envoyer ma réponse</button>'))
         payload = value['payload']
-        content += section('Votre besoin', '<p>' + text(payload['request']) + '</p>', 'besoin')
+        if source:
+            content += render_source_copy(source, source_notice)
+        content += section('Votre besoin', ('<p>' + text(payload['request']) + '</p>') if payload['request']
+                           else '<p>Votre besoin personnel n’est pas encore décrit.</p>', 'besoin')
+        if editable and value['package'] is None:
+            if source and not payload['request']:
+                need_disabled = '' if can_submit and editable else ' disabled'
+                content += section('Décrivez votre besoin', form(csrf, url + '/messages',
+                    {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
+                    '<p id="source-need-help" class="hint">Dites ce que vous voulez comparer et ce qui diffère de '
+                    'l’épreuve source. La notice et les pièces conservées ne changent pas. La préparation est payée '
+                    'avec votre clé OpenRouter.</p>'
+                    + ('' if can_submit else '<p class="hint"><a href="/preparation/access">Ajoutez votre clé OpenRouter</a> '
+                       'pour préparer cet exemple. La copie reste consultable sans clé.</p>') +
+                    '<label for="message">Votre besoin personnel</label>'
+                    '<textarea id="message" name="message" rows="4" required minlength="' + str(REQUEST_MIN)
+                    + '" maxlength="1000" aria-describedby="source-need-help"' + need_disabled + '></textarea>' + HONEYPOT +
+                    '<button type="submit"' + need_disabled + '>Préparer mon exemple</button>'))
+            else:
+                content += section('Votre réponse', form(csrf, url + '/messages',
+                    {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
+                    '<label for="message">Votre réponse à l’assistant</label><textarea id="message" name="message" rows="3" required maxlength="1000"' + disabled + '></textarea>' + HONEYPOT +
+                    '<button type="submit"' + disabled + '>Envoyer ma réponse</button>'))
         if value.get('task_index'):
             content += '<details><summary>Historique des versions et des comparaisons</summary>' + render_task_index(value['task_index']) + '</details>'
-        if value.get('message') and 'message' in value['message']:
+        if value.get('message') and 'message' in value['message'] and not source:
             content += section('Votre message à l’origine de cette version', '<p>' + text(value['message']['message']) + '</p>')
         if payload['clarifications'] or payload['validated_assumptions']:
             agreements = listing(payload['clarifications']) if payload['clarifications'] else ''
@@ -627,6 +1289,9 @@ def render(value, csrf, path='/preparation', *, error=False):
             cost = value['observed_cost']
             content += '<p>Coût observé de cette préparation : ' + text(
                 'inconnu' if cost['status'] == 'UNKNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']) + '. Source : ' + text(cost['source']) + '.</p>'
+        elif value.get('operations') == 0:
+            # Zéro opération : aucune dépense à rapprocher, pas même une dépense inconnue
+            content += '<p>Aucun appel modèle effectué pour ce dossier.</p>'
         else:
             content += '<p>Coût observé : inconnu, faute de justificatif de coût reçu pour cette préparation.</p>'
         if value.get('cost_reconciliation'):
@@ -744,8 +1409,13 @@ def render(value, csrf, path='/preparation', *, error=False):
             'restore': 'Service momentanément indisponible, réessayez plus tard.',
             'unresolved': 'Envois fermés : le résultat ou le coût d’un appel précédent n’est pas encore connu.'}
         # L'encadré porte l'état seul (DESIGN.md) : le motif suffit, sans titre ni note de financement
+        reason = reasons[state['reason']]
+        if state['reason'] == 'access' and value.get('source') and value.get('package') is None:
+            # Copie sans exemple préparé : la lecture n'exige ni clé ni appel, la clé sert ensuite
+            reason = ('Votre copie est enregistrée. Vous pouvez la consulter sans clé ni appel aux modèles ; '
+                      'la clé OpenRouter servira à préparer votre exemple.')
         content = ('<aside id="availability" class="availability" aria-label="État de la préparation"><p>'
-                   + text(reasons[state['reason']]) + '</p></aside>' + content)
+                   + text(reason) + '</p></aside>' + content)
     script = page_script(value) if not error else None
     if script is not None and value.get('kind') == 'campaign_launch' and value['campaign']['attempts']:
         content += '<script>' + script + '</script>'

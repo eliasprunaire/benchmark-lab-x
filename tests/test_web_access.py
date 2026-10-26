@@ -186,6 +186,8 @@ class WebServerCase(unittest.TestCase):
         root = Path(self.temporary.name)
         public = root / 'public'
         public.mkdir()
+        # Le lecteur public refuse un ancêtre symbolique : le répertoire de fixture est résolu
+        public = public.resolve()
         self.executor = FakeExecutor(root / 'executor.sock')
         self.executor.__enter__()
         self.port = _port()
@@ -610,6 +612,21 @@ class AccessServerTests(WebServerCase):
             self.assertNotIn(b'Error response', response, attendu)
             self.assertNotIn(b'<html', response, attendu)
 
+    def test_resultats_publics_absents_sans_relais_ni_cookie(self):
+        """#466 : une adresse de restitution sans paquet reste un 404 public, sans session ni exécuteur"""
+        for path in ('/epreuves/tache-fictive/version-1/campagnes/campagne-1',
+                     '/epreuves/tache-fictive/version-1/campagnes/campagne-1/pieces/output-a'):
+            for method in ('GET', 'HEAD'):
+                with self.subTest(path=path, method=method):
+                    status, headers, raw = self.request(method, path, headers={'Accept': 'text/html'})
+                    self.assertEqual(404, status)
+                    self.assertIsNone(headers.get('Set-Cookie'))
+                    self.assertEqual('no-referrer', headers['Referrer-Policy'])
+                    self.assertEqual('nosniff', headers['X-Content-Type-Options'])
+                    if method == 'GET':
+                        self.assertIn('<html lang="fr">', raw.decode())
+        self.assertTrue(self.executor.requests.empty())
+
 class ProbeTests(WebServerCase):
     """Critère BX-13 : vivacité publique et muette, disponibilité réservée au plan d'administration"""
     web_options = {'readiness_clients': ('::ffff:127.0.0.1',), 'trusted_proxies': ('192.0.2.30',),
@@ -812,8 +829,25 @@ class RouteCanonicalizationTests(unittest.TestCase):
                  '/preparation/dossiers/<id>/evaluations/<id>/pieces/<id>'),
                 ('/preparation/dossiers/d1/archive/items/record?snapshot=s7&part=0',
                  '/preparation/dossiers/<id>/archive/items/record'),
+                ('/evaluations-externes/aide', '/evaluations-externes/aide'),
+                ('/evaluations-externes/aide?q=formulation-privee', '/evaluations-externes/aide'),
+                ('/evaluations-externes/aide/' + 'a' * 32, '/evaluations-externes/aide/<id>'),
                 ('/mentions-legales', '/mentions-legales'), ('/cgu', '/cgu'),
-                ('/confidentialite', '/confidentialite')):
+                ('/confidentialite', '/confidentialite'),
+                ('/epreuves', '/epreuves'),
+                ('/epreuves/aide', '/epreuves/aide'),
+                ('/epreuves/aide?q=formulation-privee', '/epreuves/aide'),
+                ('/epreuves/aide/resultat/' + 'a' * 32, '/epreuves/aide/resultat/<id>'),
+                ('/epreuves?q=tableau&langue=Fran%C3%A7ais&outil=Tableur', '/epreuves'),
+                ('/epreuves/tache-fictive/version-1', '/epreuves/<id>/<id>'),
+                ('/epreuves/tache-fictive/version-1?q=tableau', '/epreuves/<id>/<id>'),
+                ('/epreuves/tache-fictive/version-1/pieces/consigne', '/epreuves/<id>/<id>/pieces/<id>'),
+                ('/epreuves/tache-fictive/version-1/campagnes/campagne-1',
+                 '/epreuves/<id>/<id>/campagnes/<id>'),
+                ('/epreuves/tache-fictive/version-1/campagnes/campagne-1?sort=cost&direction=desc',
+                 '/epreuves/<id>/<id>/campagnes/<id>'),
+                ('/epreuves/tache-fictive/version-1/campagnes/campagne-1/pieces/output-a',
+                 '/epreuves/<id>/<id>/campagnes/<id>/pieces/<id>')):
             self.assertEqual(expected, canonical_route(path), path)
 
     def test_un_chemin_non_servi_ne_ressort_jamais(self):
@@ -997,17 +1031,27 @@ class AccessJournalTests(WebServerCase):
         self.assertEqual(503, status)
         self.executor.raw_response = None
 
+        status, _, _ = self.request('GET', '/epreuves/aide?q=formulation-privee',
+                                    headers={'Accept': 'application/json'})
+        self.assertEqual(400, status)
+        status, _, _ = self.request('GET', '/epreuves/aide/resultat/' + 'a' * 32,
+                                    headers={'Accept': 'application/json'})
+        self.assertEqual(404, status)
+
         lines = self.lines()[start:]
-        self.assertEqual(6, len(lines), lines)
+        self.assertEqual(8, len(lines), lines)
         self.assertEqual(
             [('GET', '/preparation/access', '200'), ('PUT', '/preparation', '405'),
              ('GET', '<inconnu>', '404'), ('POST', '/preparation/dossiers', '400'),
-             ('GET', '/preparation/dossiers/<id>', '403'), ('GET', '/preparation', '503')],
+             ('GET', '/preparation/dossiers/<id>', '403'), ('GET', '/preparation', '503'),
+             ('GET', '/epreuves/aide', '400'), ('GET', '/epreuves/aide/resultat/<id>', '404')],
             [self.parsed(line) for line in lines])
         for line in lines:
             self.assertNotIn(dossier, line)
             self.assertNotIn('b' * 64, line)
+            self.assertNotIn('a' * 32, line)
             self.assertNotIn('saisie', line)
+            self.assertNotIn('formulation-privee', line)
             self.assertNotIn('?', line)
 
     def test_un_refus_avant_l_analyse_laisse_une_ligne_sans_chemin(self):

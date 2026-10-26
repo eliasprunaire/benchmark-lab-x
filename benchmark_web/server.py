@@ -20,6 +20,8 @@ import secrets
 from time import monotonic
 from urllib.parse import parse_qs, urlsplit
 
+from benchmark import editorial
+from benchmark import public_results
 from benchmark.runtime import encode
 from benchmark.service import executor_health, preparation_request, run
 from benchmark.storage import _unique_object
@@ -32,11 +34,16 @@ _ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*', '<poli
 # Motifs servis, essayés dans l'ordre : un chemin absent de cette liste se journalise `<inconnu>`
 _ROUTE_PATTERNS = (
     '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
+    '/evaluations-externes', '/evaluations-externes/aide', '/evaluations-externes/aide/<id>',
+    '/evaluations-externes/<id>',
+    '/epreuves', '/epreuves/aide', '/epreuves/aide/resultat/<id>',
+    '/epreuves/<id>/<id>', '/epreuves/<id>/<id>/pieces/<id>',
+    '/epreuves/<id>/<id>/campagnes/<id>', '/epreuves/<id>/<id>/campagnes/<id>/pieces/<id>',
     '/mentions-legales', '/cgu', '/confidentialite',
     '/preparation', '/preparation/privacy.js', '/preparation/style.css',
     '/preparation/fonts/<police>.woff2', '/preparation/fonts/OFL-<police>.txt',
     '/preparation/data', '/preparation/privacy', '/preparation/activity', '/preparation/catalogue',
-    '/preparation/session/open',
+    '/preparation/session/open', '/preparation/copies/<id>/<id>',
     '/preparation/access', '/preparation/access/key', '/preparation/access/disconnect',
     '/preparation/contributions', '/preparation/contributions/<id>/withdraw',
     '/preparation/dossiers', '/preparation/dossiers/<id>',
@@ -127,6 +134,18 @@ def _source_fingerprint(headers, client_address, salt, trusted_proxies):
     return sha256(salt + b'\n' + normalized.encode()).hexdigest()
 
 
+def _editorial_query(path):
+    """Seuls les paramètres de recherche prévus, une valeur chacun, texte UTF-8"""
+    try:
+        query = parse_qs(urlsplit(path).query, keep_blank_values=True, errors='strict',
+                         max_num_fields=len(editorial.SEARCH_PARAMETERS))
+    except (ValueError, UnicodeError):
+        raise ValueError('Recherche invalide') from None
+    if set(query) - set(editorial.SEARCH_PARAMETERS) or any(len(values) != 1 for values in query.values()):
+        raise ValueError('Recherche invalide')
+    return {key: values[0] for key, values in query.items()}
+
+
 def _return_path(value):
     if type(value) is not str or not value.isascii() or '\\' in value:
         raise ValueError('Chemin de retour invalide')
@@ -160,8 +179,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
 
     Le journal d'accès est émis au niveau INFO et n'est pas configuré ici : l'appelant
     règle `logging`, comme le fait `runtime.main`, sinon les lignes disparaissent.
-    `public` reste accepté pour le contrat CLI : aucune projection n'est servie tant
-    qu'aucune restitution réelle n'est approuvée (BX-12).
+    `public` reçoit les épreuves éditoriales. Les projections fictives S6 ne sont
+    pas servies tant qu'aucune restitution réelle n'est approuvée (BX-12).
     """
     # Deux questions distinctes : qui relaie le public (BX-15) et qui supervise ; vides, rien n'est ouvert
     trusted_proxies, readiness_clients = _addresses(trusted_proxies), _addresses(readiness_clients)
@@ -279,6 +298,143 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             # Ligne de requête refusée avant les en-têtes : aucun navigateur à servir, et `self.headers` peut manquer
             self.respond(code, {'error': 'Cette requête n’a pas pu être traitée.'}, headers=headers)
 
+        def copy_from_editorial(self):
+            """Confirmer puis créer une copie privée depuis une version publiée, sans clé ni appel modèle"""
+            reference_path = self.path.split('?', 1)[0]
+            match = re.fullmatch(
+                r'/preparation/copies/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})', reference_path)
+            if urlsplit(self.path).query or match is None:
+                self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                return
+            task_id, version_id = match.groups()
+            cookies = SimpleCookie(self.headers.get('Cookie', ''))
+            cookie = cookies.get('benchmark_session')
+            token = cookie.value if cookie else None
+            if self.command in ('GET', 'HEAD'):
+                return self.copy_confirmation(task_id, version_id, token, reference_path)
+            if self.command != 'POST':
+                self.error_page(405, 'Requête non acceptée', 'Cette page ne prend qu’une confirmation.')
+                return
+            expected = public_url.rstrip('/') if public_url else f'http://{address}:{port}'
+            if self.headers.get('Origin') not in (None, expected) or \
+                    self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin', 'none'):
+                self.error_page(403, 'Copie refusée', 'Cette demande ne vient pas de Bench-X.')
+                return
+            try:
+                length = self.headers.get('Content-Length', '')
+                if not length.isdecimal() or not 0 < int(length) <= 4096 or self.headers.get('Transfer-Encoding'):
+                    raise ValueError('Corps invalide')
+                try:
+                    raw = self.rfile.read(int(length))
+                except TimeoutError:
+                    self.log_request('<abandon>')
+                    self.close_connection = True
+                    return
+                if len(raw) != int(length) or self.headers.get_content_type() != 'application/x-www-form-urlencoded':
+                    raise ValueError('Corps invalide')
+                values = parse_qs(raw.decode('utf-8'), keep_blank_values=True, strict_parsing=True)
+                if any(len(items) != 1 for items in values.values()):
+                    raise ValueError('Champ répété')
+                body = {key: items[0] for key, items in values.items()}
+                if set(body) != {'csrf_token', 'copy'} or body['copy'] != '1' or \
+                        re.fullmatch(r'[0-9a-f]{64}', body['csrf_token']) is None:
+                    raise ValueError('Formulaire invalide')
+            except (ValueError, UnicodeError):
+                self.error_page(400, 'Copie impossible',
+                                'Ce formulaire ne peut pas être traité. Rechargez la confirmation, puis réessayez.')
+                return
+            if token is None:
+                self.error_page(403, 'Session requise',
+                                'Votre session a expiré. Ouvrez de nouveau la confirmation de copie.')
+                return
+            source = self._copy_source(task_id, version_id)
+            if source is None:
+                return
+            dossier_id = secrets.token_hex(16)
+            try:
+                result = preparation_request(socket_path, 'POST', '/preparation/copies', token, {
+                    'csrf_token': body['csrf_token'], 'dossier_id': dossier_id,
+                    'action_id': secrets.token_hex(16), 'source': source})
+            except OSError:
+                self.error_page(503, 'Service momentanément indisponible',
+                                'La copie n’a pas pu être enregistrée. Réessayez dans un instant.')
+                return
+            if result['status'] >= 400:
+                message = (result['value'].get('error') if isinstance(result['value'], dict)
+                           else 'La copie n’a pas pu être créée.')
+                self.error_page(result['status'], 'Copie impossible', message)
+                return
+            created_id = result['value'].get('dossier_id') if isinstance(result['value'], dict) else dossier_id
+            if not isinstance(created_id, str) or re.fullmatch(r'[A-Za-z0-9_-]{1,128}', created_id) is None:
+                created_id = dossier_id
+            headers = {'Location': '/preparation/dossiers/' + created_id}
+            if result.get('cookie'):
+                headers['Set-Cookie'] = _session_cookie(result['cookie'])
+            self.respond(303, b'', 'text/html; charset=utf-8', headers)
+
+        def _copy_source(self, task_id, version_id):
+            """Source admise depuis le paquet public, jamais depuis le corps de la requête"""
+            try:
+                return editorial.copy_bundle(public, task_id, version_id)
+            except editorial.NotFound:
+                self.error_page(404, 'Épreuve introuvable',
+                                'Cette version publiée n’existe plus. Aucun dossier n’a été créé.')
+            except ValueError as error:
+                messages = {
+                    'Nouvelle reprise refusée': 'Cette version est retirée : aucune nouvelle copie n’est admise.',
+                    'Autorité éditoriale refusée': 'La version publiée n’a pas une autorité valide. Aucun dossier n’a été créé.',
+                    'Approbation visant d’autres octets': 'La version publiée ne correspond plus à son approbation. Aucun dossier n’a été créé.',
+                    'Paquet incomplet': 'Le paquet publié est incomplet. Aucun dossier n’a été créé.',
+                    'Octets divergents': 'Le paquet publié ne correspond plus à ses empreintes. Aucun dossier n’a été créé.',
+                    'Manifeste divergent': 'Le paquet publié ne correspond plus à ses empreintes. Aucun dossier n’a été créé.',
+                    'Sélection publique fermée': 'Le paquet publié contient un contenu non autorisé. Aucun dossier n’a été créé.',
+                    'Pièce illisible': 'Le paquet publié contient une pièce illisible. Aucun dossier n’a été créé.',
+                    'Identité divergente': 'La version publiée ne correspond plus à son identité. Aucun dossier n’a été créé.',
+                }
+                self.error_page(409, 'Copie impossible', messages.get(
+                    str(error), 'La copie n’a pas pu être créée. Aucun dossier n’a été modifié.'))
+            return None
+
+        def copy_confirmation(self, task_id, version_id, token, path):
+            """Créer ou réutiliser la session privée sous le chemin du cookie, puis confirmer"""
+            source = self._copy_source(task_id, version_id)
+            if source is None:
+                return
+            try:
+                result = preparation_request(socket_path, 'GET', '/preparation', token)
+            except OSError:
+                self.error_page(503, 'Service momentanément indisponible',
+                                'La confirmation de copie ne peut pas s’afficher. Réessayez dans un instant.')
+                return
+            if result['status'] >= 400:
+                message = (result['value'].get('error') if isinstance(result['value'], dict)
+                           else 'La confirmation de copie ne peut pas s’afficher.')
+                self.error_page(result['status'], 'Copie impossible', message)
+                return
+            if isinstance(result['value'], dict) and result['value'].get('kind') == 'session_bootstrap':
+                # Première visite sous confidentialité S7 : le mécanisme existant ouvre la session
+                page = views.render(dict(result['value'], return_path=path), '', path)
+                headers = {}
+                if result.get('cookie'):
+                    headers['Set-Cookie'] = _session_cookie(result['cookie'])
+                self.respond(200, page, 'text/html; charset=utf-8', headers)
+                return
+            csrf = result['value'].get('csrf_token') if isinstance(result['value'], dict) else None
+            if not isinstance(csrf, str) or re.fullmatch(r'[0-9a-f]{64}', csrf) is None:
+                self.error_page(503, 'Service momentanément indisponible',
+                                'La confirmation de copie ne peut pas s’afficher. Réessayez dans un instant.')
+                return
+            try:
+                notice = editorial.source_notice(public, task_id, version_id, source)
+            except (editorial.NotFound, ValueError, KeyError, TypeError):
+                notice = {'withdrawn': None, 'reports': [], 'unavailable': True}
+            page = views.render({'kind': 'copy_source', 'source': source, 'source_notice': notice},
+                                csrf, path)
+            headers = {}
+            if result.get('cookie'):
+                headers['Set-Cookie'] = _session_cookie(result['cookie'])
+            self.respond(200, page, 'text/html; charset=utf-8', headers)
+
         def preparation(self):
             if re.fullmatch(r'/preparation/fonts/(OFL-)?[A-Za-z]+\.(woff2|txt)', self.path) and self.command in ('GET', 'HEAD'):
                 self.respond(404, {'error': 'NOT_FOUND'})
@@ -394,6 +550,14 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 result = preparation_request(socket_path, 'GET' if self.command == 'HEAD' else self.command,
                                              self.path, token, body, management_token=management_token)
                 relayed = True
+                value = result.get('value')
+                if type(value) is dict and type(value.get('source')) is dict:
+                    source = value['source']
+                    try:
+                        value['source_notice'] = editorial.source_notice(
+                            public, source['task_id'], source['version_id'], source)
+                    except (editorial.NotFound, ValueError, KeyError, TypeError):
+                        value['source_notice'] = {'withdrawn': None, 'reports': [], 'unavailable': True}
                 headers = {}
                 if result.get('cookie'):
                     token = result['cookie']
@@ -520,8 +684,231 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 self.respond(503, value if wants_json else views.render(value, '', error=True),
                              'application/json' if wants_json else 'text/html; charset=utf-8')
 
+        def evaluations_help(self):
+            """Soumission volontaire : le web ne détient ni clé TypeSafe ni texte durable"""
+            wants_json = 'application/json' in self.headers.get('Accept', '')
+            try:
+                expected = public_url.rstrip('/') if public_url else f'http://{address}:{port}'
+                if (self.headers.get('Origin') not in (None, expected)
+                        or self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin', 'none')):
+                    raise ValueError('Origine invalide')
+                if urlsplit(self.path).query:
+                    raise ValueError('Adresse invalide')
+                length = self.headers.get('Content-Length', '')
+                if (not length.isdecimal() or not 0 < int(length) <= 524288
+                        or self.headers.get('Transfer-Encoding')):
+                    raise ValueError('Corps invalide')
+                raw = self.rfile.read(int(length))
+                if len(raw) != int(length) or self.headers.get_content_type() != \
+                        'application/x-www-form-urlencoded':
+                    raise ValueError('Corps invalide')
+                values = parse_qs(raw.decode('utf-8'), keep_blank_values=True, strict_parsing=True)
+                if any(len(items) != 1 for items in values.values()) or set(values) - {
+                        'submission_id', 'formulation', 'website'}:
+                    raise ValueError('Champ répété ou inconnu')
+                fields = {key: items[0] for key, items in values.items()}
+                if fields.pop('website', ''):
+                    value = {'kind': 'references_help', 'stage': 'none'}
+                    self.respond(200, value if wants_json else views.render(value, ''),
+                                 'application/json' if wants_json else 'text/html; charset=utf-8')
+                    return
+                submission_id = fields.get('submission_id', '')
+                formulation = fields.get('formulation', '')
+                if (re.fullmatch('[0-9a-f]{32}', submission_id) is None
+                        or not formulation.strip() or len(formulation) > 65536):
+                    raise ValueError('Demande invalide')
+            except TimeoutError:
+                self.log_request('<abandon>')
+                self.close_connection = True
+                return
+            except (ValueError, UnicodeError, TypeError):
+                value = {'kind': 'references_help', 'stage': 'unavailable',
+                         'reason': 'INVALID_REQUEST'}
+                self.respond(400, value if wants_json else views.render(value, ''),
+                             'application/json' if wants_json else 'text/html; charset=utf-8')
+                return
+            try:
+                result = preparation_request(socket_path, 'POST', '/semantic-help/requests', None, {
+                    'usage': 'repertoire', 'submission_id': submission_id,
+                    'formulation': formulation, 'notices': views.help_notices()})
+                value = result.get('value')
+                if (result['status'] < 400 and type(value) is dict
+                        and type(value.get('request_id')) is str
+                        and re.fullmatch('[0-9a-f]{32}', value['request_id'])):
+                    self.respond(303, b'', 'text/html; charset=utf-8',
+                                 {'Location': '/evaluations-externes/aide/' + value['request_id']})
+                    return
+                if wants_json:
+                    self.respond(result['status'], value, 'application/json')
+                    return
+                if type(value) is dict and value.get('status') in ('none', 'suggestions'):
+                    self.respond(200, views.render(views.semantic_help_view(value), '',
+                                                   '/evaluations-externes/aide'),
+                                 'text/html; charset=utf-8')
+                    return
+                reason = value.get('reason') if type(value) is dict else None
+                page = {'kind': 'references_help', 'stage': 'unavailable', 'reason': reason,
+                        'submission_id': submission_id, 'formulation': formulation}
+                self.respond(200, views.render(page, ''), 'text/html; charset=utf-8')
+            except OSError:
+                value = {'kind': 'references_help', 'stage': 'unavailable',
+                         'reason': 'PROVIDER_ERROR', 'submission_id': submission_id,
+                         'formulation': formulation}
+                self.respond(503, value if wants_json else views.render(value, ''),
+                             'application/json' if wants_json else 'text/html; charset=utf-8')
+
+        def evaluations_help_receipt(self, request_id):
+            if urlsplit(self.path).query:
+                self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                return
+            try:
+                result = preparation_request(socket_path, 'GET',
+                                             '/semantic-help/requests/' + request_id, None)
+            except OSError:
+                self.respond(503, views.render({'kind': 'references_help', 'stage': 'unavailable',
+                                                'reason': 'PROVIDER_ERROR'}, ''),
+                             'text/html; charset=utf-8')
+                return
+            if result['status'] == 404:
+                self.not_found()
+                return
+            value = result.get('value')
+            if type(value) is not dict:
+                self.not_found()
+                return
+            page = views.semantic_help_view(value)
+            self.respond(200 if result['status'] < 400 else 503,
+                         views.render(page, '', '/evaluations-externes/aide/' + request_id),
+                         'text/html; charset=utf-8')
+
+        def editorial_help(self):
+            """Soumission volontaire au catalogue : ni clé TypeSafe ni texte durable dans le web"""
+            wants_json = 'application/json' in self.headers.get('Accept', '')
+            try:
+                expected = public_url.rstrip('/') if public_url else f'http://{address}:{port}'
+                if (self.headers.get('Origin') not in (None, expected)
+                        or self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin', 'none')):
+                    raise ValueError('Origine invalide')
+                if urlsplit(self.path).query:
+                    raise ValueError('Adresse invalide')
+                length = self.headers.get('Content-Length', '')
+                if (not length.isdecimal() or not 0 < int(length) <= 524288
+                        or self.headers.get('Transfer-Encoding')):
+                    raise ValueError('Corps invalide')
+                raw = self.rfile.read(int(length))
+                if len(raw) != int(length) or self.headers.get_content_type() != \
+                        'application/x-www-form-urlencoded':
+                    raise ValueError('Corps invalide')
+                values = parse_qs(raw.decode('utf-8'), keep_blank_values=True, strict_parsing=True)
+                if any(len(items) != 1 for items in values.values()) or set(values) - {
+                        'submission_id', 'formulation', 'website'}:
+                    raise ValueError('Champ répété ou inconnu')
+                fields = {key: items[0] for key, items in values.items()}
+                if fields.pop('website', ''):
+                    value = {'kind': 'editorial_help', 'stage': 'none'}
+                    self.respond(200, value if wants_json else views.render(value, ''),
+                                 'application/json' if wants_json else 'text/html; charset=utf-8')
+                    return
+                submission_id = fields.get('submission_id', '')
+                formulation = fields.get('formulation', '')
+                if (re.fullmatch('[0-9a-f]{32}', submission_id) is None
+                        or not formulation.strip() or len(formulation) > 65536):
+                    raise ValueError('Demande invalide')
+            except TimeoutError:
+                self.log_request('<abandon>')
+                self.close_connection = True
+                return
+            except (ValueError, UnicodeError, TypeError):
+                value = {'kind': 'editorial_help', 'stage': 'unavailable',
+                         'reason': 'INVALID_REQUEST'}
+                self.respond(400, value if wants_json else views.render(value, ''),
+                             'application/json' if wants_json else 'text/html; charset=utf-8')
+                return
+            try:
+                versions = editorial.catalog_view(public).get('versions', [])
+            except OSError:
+                self.respond(503, views.render({'kind': 'editorial_help', 'stage': 'unavailable',
+                                                'reason': 'PROVIDER_ERROR'}, ''),
+                             'text/html; charset=utf-8')
+                return
+            notices = views.editorial_help_notices(versions)
+            if not notices:
+                value = {'kind': 'editorial_help', 'stage': 'none'}
+                self.respond(200, value if wants_json else views.render(value, ''),
+                             'application/json' if wants_json else 'text/html; charset=utf-8')
+                return
+            try:
+                result = preparation_request(socket_path, 'POST', '/semantic-help/requests', None, {
+                    'usage': 'epreuves', 'submission_id': submission_id,
+                    'formulation': formulation, 'notices': notices})
+                value = result.get('value')
+                if (result['status'] < 400 and type(value) is dict
+                        and type(value.get('request_id')) is str
+                        and re.fullmatch('[0-9a-f]{32}', value['request_id'])):
+                    self.respond(303, b'', 'text/html; charset=utf-8',
+                                 {'Location': '/epreuves/aide/resultat/' + value['request_id']})
+                    return
+                if wants_json:
+                    self.respond(result['status'], value, 'application/json')
+                    return
+                if type(value) is dict and value.get('status') in ('none', 'suggestions'):
+                    self.respond(200, views.render(views.editorial_help_view(value, versions), '',
+                                                   '/epreuves/aide'),
+                                 'text/html; charset=utf-8')
+                    return
+                reason = value.get('reason') if type(value) is dict else None
+                page = {'kind': 'editorial_help', 'stage': 'unavailable', 'reason': reason,
+                        'submission_id': submission_id, 'formulation': formulation}
+                self.respond(200, views.render(page, ''), 'text/html; charset=utf-8')
+            except OSError:
+                value = {'kind': 'editorial_help', 'stage': 'unavailable',
+                         'reason': 'PROVIDER_ERROR', 'submission_id': submission_id,
+                         'formulation': formulation}
+                self.respond(503, value if wants_json else views.render(value, ''),
+                             'application/json' if wants_json else 'text/html; charset=utf-8')
+
+        def editorial_help_receipt(self, request_id):
+            if urlsplit(self.path).query:
+                self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                return
+            try:
+                result = preparation_request(socket_path, 'GET',
+                                             '/semantic-help/requests/' + request_id, None)
+            except OSError:
+                self.respond(503, views.render({'kind': 'editorial_help', 'stage': 'unavailable',
+                                                'reason': 'PROVIDER_ERROR'}, ''),
+                             'text/html; charset=utf-8')
+                return
+            if result['status'] == 404:
+                self.not_found()
+                return
+            value = result.get('value')
+            if type(value) is not dict:
+                self.not_found()
+                return
+            try:
+                versions = editorial.catalog_view(public).get('versions', [])
+            except OSError:
+                self.respond(503, views.render({'kind': 'editorial_help', 'stage': 'unavailable',
+                                                'reason': 'PROVIDER_ERROR'}, ''),
+                             'text/html; charset=utf-8')
+                return
+            page = views.editorial_help_view(value, versions)
+            self.respond(200 if result['status'] < 400 else 503,
+                         views.render(page, '', '/epreuves/aide/resultat/' + request_id),
+                         'text/html; charset=utf-8')
+
         def do_POST(self):
-            if self.path == '/preparation' or self.path.startswith('/preparation/'):
+            path = self.path.split('?', 1)[0]
+            if path == '/evaluations-externes/aide':
+                self.evaluations_help()
+            elif path == '/epreuves/aide':
+                self.editorial_help()
+            elif path == '/preparation/copies' or path == '/preparation/copies/':
+                self.not_found()
+            elif path.startswith('/preparation/copies/'):
+                self.copy_from_editorial()
+            elif self.path == '/preparation' or self.path.startswith('/preparation/'):
                 self.preparation()
             else:
                 self.not_found()
@@ -530,6 +917,141 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             self.do_GET()
 
         def do_GET(self):
+            reference_path = self.path.split('?', 1)[0]
+            if reference_path == '/evaluations-externes/aide':
+                if urlsplit(self.path).query:
+                    self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                    return
+                value = {'kind': 'references_help', 'stage': 'form',
+                         'submission_id': secrets.token_hex(16)}
+                self.respond(200, views.render(value, '', reference_path), 'text/html; charset=utf-8')
+                return
+            help_receipt = re.fullmatch(r'/evaluations-externes/aide/([0-9a-f]{32})', reference_path)
+            if help_receipt is not None:
+                self.evaluations_help_receipt(help_receipt[1])
+                return
+            if reference_path == '/evaluations-externes' or reference_path.startswith('/evaluations-externes/'):
+                identity = reference_path.removeprefix('/evaluations-externes').removeprefix('/')
+                if identity and identity not in views.BENCHMARK_REFERENCES:
+                    self.not_found()
+                    return
+                try:
+                    query = parse_qs(urlsplit(self.path).query, keep_blank_values=True, errors='strict', max_num_fields=3)
+                    if (query and identity or set(query) - {'q', 'category', 'verification'}
+                            or any(len(values) != 1 for values in query.values())):
+                        raise ValueError('Recherche invalide')
+                    fields = {key: values[0] for key, values in query.items()}
+                    categories = {reference['category'] for reference in views.BENCHMARK_REFERENCES.values()
+                                  if reference.get('availability') == 'available'}
+                    if (fields.get('category', '') not in categories | {''}
+                            or fields.get('verification', '') not in set(views.REFERENCE_VERIFICATIONS) | {''}):
+                        raise ValueError('Filtre invalide')
+                except ValueError:
+                    self.error_page(400, 'Recherche invalide', 'Modifiez votre recherche ou effacez les filtres.')
+                    return
+                value = {'kind': 'references', 'reference_id': identity, **fields}
+                self.respond(200, views.render(value, '', self.path), 'text/html; charset=utf-8')
+                return
+            if reference_path == '/epreuves/aide':
+                if urlsplit(self.path).query:
+                    self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                    return
+                value = {'kind': 'editorial_help', 'stage': 'form',
+                         'submission_id': secrets.token_hex(16)}
+                self.respond(200, views.render(value, '', reference_path), 'text/html; charset=utf-8')
+                return
+            editorial_receipt = re.fullmatch(r'/epreuves/aide/resultat/([0-9a-f]{32})', reference_path)
+            if editorial_receipt is not None:
+                self.editorial_help_receipt(editorial_receipt[1])
+                return
+            if reference_path == '/epreuves' or reference_path.startswith('/epreuves/'):
+                version_path = re.fullmatch(r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})', reference_path)
+                piece = re.fullmatch(
+                    r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/pieces/([A-Za-z0-9_-]{1,128})',
+                    reference_path)
+                campaign = re.fullmatch(
+                    r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/campagnes/([A-Za-z0-9_-]{1,128})',
+                    reference_path)
+                campaign_piece = re.fullmatch(
+                    r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/campagnes/'
+                    r'([A-Za-z0-9_-]{1,128})/pieces/([A-Za-z0-9_-]{1,128})', reference_path)
+                if version_path is None and piece is None and campaign is None and campaign_piece is None \
+                        and reference_path != '/epreuves':
+                    self.not_found()
+                    return
+                if piece is not None:
+                    if urlsplit(self.path).query:
+                        self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                        return
+                    try:
+                        payload = editorial.piece_bytes(public, *piece.groups())
+                    except (editorial.NotFound, ValueError):
+                        self.not_found()
+                        return
+                    self.respond(200, payload, 'text/plain; charset=utf-8')
+                    return
+                if campaign_piece is not None:
+                    if urlsplit(self.path).query:
+                        self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre.')
+                        return
+                    try:
+                        payload = public_results.piece_bytes(public, *campaign_piece.groups())
+                    except (public_results.NotFound, ValueError):
+                        self.not_found()
+                        return
+                    self.respond(200, payload, 'text/plain; charset=utf-8')
+                    return
+                if campaign is not None:
+                    try:
+                        filters = public_results.query_parameters(urlsplit(self.path).query)
+                    except ValueError:
+                        self.error_page(400, 'Filtre invalide',
+                                        'Modifiez votre recherche ou effacez les filtres.')
+                        return
+                    task_id, version_id, campaign_id = campaign.groups()
+                    try:
+                        payload = public_results.view(public, task_id, version_id, campaign_id, filters)
+                    except public_results.Invalid:
+                        self.error_page(400, 'Filtre invalide',
+                                        'Modifiez votre recherche ou effacez les filtres.')
+                        return
+                    except (public_results.NotFound, ValueError):
+                        self.not_found()
+                        return
+                    self.respond(200, views.render(payload, '', reference_path), 'text/html; charset=utf-8')
+                    return
+                try:
+                    criteria = editorial.search_criteria(_editorial_query(self.path))
+                except (ValueError, UnicodeError):
+                    self.error_page(400, 'Recherche invalide', 'Modifiez votre recherche ou effacez les filtres.')
+                    return
+                try:
+                    if reference_path == '/epreuves':
+                        payload = editorial.search_view(public, criteria)
+                        for entry in payload['versions']:
+                            try:
+                                entry['results'] = public_results.published(
+                                    public, entry['task_id'], entry['version_id'])
+                            except (LookupError, ValueError):
+                                entry['results'] = []
+                    elif version_path is not None:
+                        payload = editorial.version_view(public, *version_path.groups())
+                        payload['criteria'] = criteria
+                        try:
+                            payload['results'] = public_results.published(public, *version_path.groups())
+                        except (LookupError, ValueError):
+                            payload['results'] = []
+                    else:
+                        self.not_found()
+                        return
+                except editorial.NotFound:
+                    self.not_found()
+                    return
+                except ValueError:
+                    self.not_found()
+                    return
+                self.respond(200, views.render(payload, '', reference_path), 'text/html; charset=utf-8')
+                return
             if self.path in _RESOURCES:
                 raw, media, etag = resources[self.path] if resources else _load_resource(*_RESOURCES[self.path])
                 # `no-cache` garde la copie et la revalide : juste après un déploiement, sans URL à empreinte
@@ -539,6 +1061,12 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             if self.path == '/preparation/privacy':
                 # Ancienne notice du parcours privé, remplacée par la politique publique (BX-08)
                 self.respond(301, b'', 'text/html; charset=utf-8', {'Location': '/confidentialite'})
+                return
+            if reference_path == '/preparation/copies' or reference_path == '/preparation/copies/':
+                self.not_found()
+                return
+            if reference_path.startswith('/preparation/copies/'):
+                self.copy_from_editorial()
                 return
             if self.path == '/preparation' or self.path.startswith('/preparation/'):
                 self.preparation()

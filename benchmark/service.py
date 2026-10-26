@@ -333,6 +333,7 @@ def denied_response(error):
         'TOO_SOON': 'Vous venez d’envoyer un message. Patientez un peu avant le suivant.',
         'SOURCE_RATE_LIMIT': 'La limite d’envois par heure est atteinte. Réessayez plus tard.',
         'SOURCE_MISSING': 'Cet envoi n’a pas pu être vérifié. Rechargez la page, puis renvoyez-le.',
+        'COPY_SOURCE_INVALID': 'La copie demandée ne correspond plus au paquet publié. Aucun dossier n’a été créé.',
         'ACCESS_KEY_REJECTED': 'OpenRouter n’a pas pu vérifier cette clé. Votre clé précédente reste en place.',
         'ACCESS_CAP_REQUIRED': 'Utilisez une clé OpenRouter avec un plafond non renouvelable de 50 USD maximum et un solde disponible.',
         'ACCESS_REQUIRED': 'Ajoutez votre clé OpenRouter avant de lancer la comparaison.',
@@ -364,7 +365,8 @@ def denied_response(error):
             + ('sa borne publiée' if refused['reason'] == 'bound' else 'ce que sa fenêtre de contexte laisse après cet exemple')
             + f" : {refused['bound']} jetons au plus. Indiquez une limite plus basse dans « Ajuster la limite de "
             "sortie par modèle ». Rien n’a été enregistré.")
-    status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG', 'SOURCE_MISSING', 'OUTPUT_LIMIT_ABOVE_BOUND') else 403
+    status = 400 if error.code in ('TEXT_TOO_SHORT', 'TEXT_TOO_LONG', 'SOURCE_MISSING', 'COPY_SOURCE_INVALID',
+                                   'OUTPUT_LIMIT_ABOVE_BOUND') else 403
     result = {'status': status, 'value': {'error': messages.get(error.code, generic),
               'error_code': error.code, 'error_field': error.field}}
     if error.findings is not None:
@@ -414,7 +416,8 @@ def _logged_route(message):
     """Méthode et motif de route : identifiants remplacés, ni requête, ni corps, ni jeton"""
     pattern = re.sub(r'/(dossiers|campaigns|revisions|evaluations|pieces|attempts)/[A-Za-z0-9_-]{1,128}(?=/|$)',
                      r'/\1/<id>', message['path'].split('?', 1)[0])
-    if not re.fullmatch(r'/preparation[a-z/<>-]{0,120}', pattern):
+    pattern = re.sub(r'/requests/[0-9a-f]{32}$', '/requests/<id>', pattern)
+    if not re.fullmatch(r'(?:/preparation|/semantic-help)[a-z0-9/<>-]*', pattern):
         pattern = '<autre>'
     return message['method'] + ' ' + pattern
 
@@ -536,7 +539,7 @@ def personal_read_profiles(store, token, *profiles):
 
 def personal_dispatch(store, message, source, *, transport=None, qualification_transport=None, judgment_transport=None,
                       candidate_transport=None, candidate_identity=None, access_secret=None, access_transport=None,
-                      presentation=None):
+                      presentation=None, semantic_transport=None, semantic_config=None):
     """Acheminer une requête avec les assistants liés à la clé de sa session, jamais avec une clé opérateur
 
     Rend aussi les assistants liés, que l'exécuteur confie aux travaux lancés par la requête
@@ -557,7 +560,8 @@ def personal_dispatch(store, message, source, *, transport=None, qualification_t
         source, active_transport, candidate_transport=candidate_transport, candidate_identity=candidate_identity,
         qualification_transport=active_qualification, judgment_transport=active_judgment,
         access_secret=access_secret, access_transport=access_transport, presentation=presentation,
-        management_token=message.get('management_token'))
+        management_token=message.get('management_token'),
+        semantic_transport=semantic_transport, semantic_config=semantic_config)
     if isinstance(value, dict):
         if 'availability' in value and active_transport is None:
             value['availability'].update(can_submit=False, reason='access',
@@ -852,7 +856,8 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                    candidate_transport=None, candidate_transport_factory=None,
                    candidate_identity=None, judgment_transport=None,
                    access_secret=None, access_transport=None, presentation=None,
-                   catalogue_fetch=None, model_probe_transport=None):
+                   catalogue_fetch=None, model_probe_transport=None,
+                   semantic_transport=None, semantic_config=None):
     data, socket_path = Path(data), Path(socket_path)
     with closing(Store(data)) as store:
         lock_fd = os.open(data / 'executor.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -865,6 +870,15 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
             from .provider_access import expire
             expire(store)
             stop(data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
+            # Aucune demande d'aide sémantique interrompue n'est réémise : sa réserve reste comptée
+            try:
+                from . import semantic_help
+                closed = semantic_help.close_interrupted(store)
+                if closed:
+                    logging.getLogger(__name__).warning('SEMANTIC_HELP_INTERRUPTED_CLOSED count=%d', closed)
+            except Exception as error:
+                logging.getLogger(__name__).error('SEMANTIC_HELP_INTERRUPTED_CLOSE_FAILED error=%s',
+                                                  type(error).__name__)
             if socket_path.exists() or socket_path.is_symlink():
                 metadata = socket_path.lstat()
                 if not stat.S_ISSOCK(metadata.st_mode) or metadata.st_uid != os.getuid():
@@ -921,7 +935,8 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                     judgment_transport=judgment_transport,
                     candidate_transport=candidate_transport or candidate_transport_factory,
                     candidate_identity=candidate_identity, access_secret=access_secret,
-                    access_transport=access_transport, presentation=presentation)
+                    access_transport=access_transport, presentation=presentation,
+                    semantic_transport=semantic_transport, semantic_config=semantic_config)
                 if message['method'] == 'POST':
                     # Toute activité de la session reprogramme ses relances dues, perdues par un redémarrage
                     try:
