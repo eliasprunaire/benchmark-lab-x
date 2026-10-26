@@ -71,7 +71,7 @@ Bench-X aide à choisir un modèle pour une tâche précise à partir de preuves
 
 Direction retenue par Ayo le 26 octobre 2026 : le shot Dribbble S18 (Purrweb) pour le style, le shot S1 (Groundwork) pour la structure. Ce fichier est la seule source de vérité visuelle. Toute valeur vient d'une variable de `benchmark_web/static/preparation.css`.
 
-Exception provisoire : les pages publiées utilisent `benchmark_web/static/projection.css`, dont les octets sont liés à la version de présentation des paquets publiés. Cette feuille garde son apparence actuelle jusqu'à une nouvelle version de présentation, qui la passera au système S18.
+Les pages publiées utilisent `benchmark_web/static/projection.css`. Cette feuille reprend les mêmes couleurs, en thème clair et sombre. Elle utilise la police système, car le paquet publié ne contient aucune police. Ses octets sont liés à la version de présentation : toute modification incrémente `PRESENTATION_VERSION` dans `benchmark/publications.py`.
 
 Principes :
 

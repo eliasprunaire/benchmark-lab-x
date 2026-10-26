@@ -56,6 +56,13 @@ class TemplateTests(unittest.TestCase):
             self.assertIn('/preparation/fonts/' + name + '.woff2', views.STYLESHEET_PATH.read_text())
         self.assertEqual(Path('projection.css'), Path(projection.STYLESHEET_PATH.name))
         self.assertNotIn(b'@font-face', projection.STYLESHEET_PATH.read_bytes())
+        # La page publiée reprend les couleurs S18 du parcours, en clair comme en sombre
+        palette = lambda css: [dict(re.findall(r'--([a-z0-9-]+):\s*(#[0-9a-f]{6})', block))
+                               for block in re.split(r'@media\s*\(prefers-color-scheme:\s*dark\)', css)[:2]]
+        published, private = palette(projection.STYLESHEET_PATH.read_text()), palette(views.STYLESHEET_PATH.read_text())
+        for shade, (mine, theirs) in zip(('clair', 'sombre'), zip(published, private)):
+            self.assertTrue(mine, shade)
+            self.assertLessEqual(mine.items(), theirs.items(), shade)
         for retired in ('Syne', 'AtkinsonHyperlegibleNext', 'AtkinsonHyperlegibleMono'):
             self.assertFalse((views.FONTS_PATH / (retired + '.woff2')).exists(), retired)
         # Les mentions légales nomment exactement les polices servies
