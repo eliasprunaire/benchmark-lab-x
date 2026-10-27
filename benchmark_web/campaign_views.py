@@ -635,6 +635,8 @@ def render_comparison(value):
                  ['Exemple ' + str(number(item['case_id'])) + ' : ' + montant_lisible(item['amount']) + ' ' + item['unit']
                   for item in choice['cases']])
         advice += '<p class="choice-cost">Coût observé' + ''.join('<strong>' + text(cost) + '</strong>' for cost in costs) + '</p></div>'
+        # Compromis et portée du conseil : repliés sur téléphone pour le critère K1, dépliés sur ordinateur
+        detail = ''
         if choice.get('priority'):
             if choice['priority'] == 'cost':
                 advice += '<p><strong>Priorité choisie : coût observé.</strong> Nous retenons l’unique réponse conforme la moins coûteuse. '
@@ -643,16 +645,16 @@ def render_comparison(value):
                 advice += '<p><strong>Priorité choisie : ' + text(priority_label(value, choice['priority'])) + '.</strong> '
                 advice += 'Nous retenons la meilleure valeur observée sur ce critère, selon le sens fixé par le contrat. '
                 advice += 'En cas d’égalité, le coût observé le plus bas départage.</p>'
+            advice += '<p><a href="' + text(priority_href(value, query)) + '">Revenir au conseil par défaut</a></p>'
             for item in choice.get('compromises', []):
-                advice += '<p class="priority-tradeoff">' + text(tradeoff_sentence(item, names, panel)) + '</p>'
+                detail += '<p class="priority-tradeoff">' + text(tradeoff_sentence(item, names, panel)) + '</p>'
             if 'cases' in choice:
                 for item in choice['cases']:
                     for trade in item.get('compromises', []):
-                        advice += '<p class="priority-tradeoff">' + text(
+                        detail += '<p class="priority-tradeoff">' + text(
                             'Exemple ' + str(number(item['case_id'])) + ' : ' + tradeoff_sentence(trade, names, panel)) + '</p>'
-            advice += '<p class="hint">Ce conseil ne compare que des réponses qui satisfont toutes les obligations : '
-            advice += 'aucune obligation non satisfaite n’est compensée.</p>'
-            advice += '<p><a href="' + text(priority_href(value, query)) + '">Revenir au conseil par défaut</a></p>'
+            detail += '<p class="hint">Ce conseil ne compare que des réponses qui satisfont toutes les obligations : '
+            detail += 'aucune obligation non satisfaite n’est compensée.</p>'
         elif choice['basis'] in ('quality_then_cost', 'each_case'):
             criteria = list(dict.fromkeys(definition.get('measure') or definition.get('label')
                                           for definition in choice['quality']
@@ -666,8 +668,9 @@ def render_comparison(value):
             advice += (' Ce modèle est retenu sur chaque exemple, lu séparément.' if 'cases' in choice else '') + '</p>'
         else:
             advice += '<p>Les ' + text(choice['count']) + ' réponses qui satisfont l’exemple ont la même qualité observée. Nous retenons la moins coûteuse.</p>'
-        advice += ('<p class="hint">Ce conseil repose sur ' + ('un seul exemple' if 'cases' not in choice else
-                    text(len(choice['cases'])) + ' exemples') + '. Sur d’autres tâches, le résultat peut être différent.</p></aside>')
+        detail += ('<p class="hint">Ce conseil repose sur ' + ('un seul exemple' if 'cases' not in choice else
+                   text(len(choice['cases'])) + ' exemples') + '. Sur d’autres tâches, le résultat peut être différent.</p>')
+        advice += '<details class="choice-detail"><summary>Détail du conseil</summary><div>' + detail + '</div></details></aside>'
     content += advice + summary
     sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
     sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')

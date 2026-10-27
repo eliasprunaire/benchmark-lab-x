@@ -82,6 +82,10 @@ class Page(HTMLParser):
     def visible(self):
         return ' '.join(n['text'] for n in self.nodes if n['tag'] == '#text')
 
+    def depliant(self, summary):
+        """Texte complet d'un dépliant, repéré par le début de son résumé"""
+        return next(n['text'] for n in self.nodes if n['tag'] == 'details' and n['text'].lstrip().startswith(summary))
+
     def link(self, label):
         return next(n['attrs']['href'] for n in self.nodes
                     if n['tag'] == 'a' and label in n['text'])
@@ -5825,7 +5829,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Modèle A', conseil.visible)
         self.assertIn('Nous retenons d’abord la', conseil.visible)
         self.assertIn('À qualité égale, le coût observé le plus bas l’emporte.', conseil.visible)
-        self.assertIn('Ce conseil repose sur un seul exemple.', conseil.visible)
+        # Sur téléphone, la portée du conseil se replie sous « Détail du conseil » (critère K1)
+        self.assertIn('Ce conseil repose sur un seul exemple.', conseil.depliant('Détail du conseil'))
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
         _, _, raw = self.request(comparison, json_response=True)
         self.assertCountEqual([('excellent', 1), ('acceptable', 2)], [
@@ -6012,9 +6017,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Notre conseil', cout.visible)
         self.assertIn('Modèle C', cout.visible)
         self.assertIn('Priorité choisie : coût observé.', cout.visible)
+        # Le compromis et sa règle restent dans la page, repliés sous « Détail du conseil » (critère K1)
         self.assertIn('Compromis sur « Clarté du tableau » : la réponse retenue vaut acceptable, '
-                      'alors que Modèle A vaut excellent.', cout.visible)
-        self.assertIn('aucune obligation non satisfaite n’est compensée', cout.visible)
+                      'alors que Modèle A vaut excellent.', cout.depliant('Détail du conseil'))
+        self.assertIn('aucune obligation non satisfaite n’est compensée', cout.depliant('Détail du conseil'))
         self.assertIn('Revenir au conseil par défaut', cout.visible)
         self.assertIn('Coûtobservé0,10USD', cout.visible.replace(' ', ''))
         _, _, raw = self.request(comparison + '?priority=cost', json_response=True)
@@ -6030,7 +6036,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Modèle A', clarte_page.visible)
         self.assertIn('Priorité choisie : Clarté du tableau.', clarte_page.visible)
         self.assertIn('Compromis sur « Concision du tableau » : la réponse retenue vaut acceptable, '
-                      'alors que Modèle C vaut excellent.', clarte_page.visible)
+                      'alors que Modèle C vaut excellent.', clarte_page.depliant('Détail du conseil'))
         self.assertIn('Coûtobservé0,30USD', clarte_page.visible.replace(' ', ''))
         _, _, raw = self.request(comparison + '?priority=' + clarte['id'], json_response=True)
         self.assertEqual(('priority_criterion', 'openai/gpt-5.6-sol'),
@@ -6041,7 +6047,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Modèle C', concision_page.visible)
         self.assertIn('Priorité choisie : Concision du tableau.', concision_page.visible)
         self.assertIn('Compromis sur « Clarté du tableau » : la réponse retenue vaut acceptable, '
-                      'alors que Modèle A vaut excellent.', concision_page.visible)
+                      'alors que Modèle A vaut excellent.', concision_page.depliant('Détail du conseil'))
         # Effacement : le défaut revient sans substitution implicite
         efface, _, raw = self.request(comparison + '?priority=')
         self.assertIn('Pas de conseil', efface.visible)
@@ -6340,7 +6346,7 @@ class ParcoursComplet(unittest.TestCase):
                                                   ('other', '2', 'priority_criterion')],
                                                  [(item['case_id'], item['amount'], item['basis'])
                                                   for item in choix['recommendation']['cases']])
-                                self.assertIn('Ce conseil repose sur 2 exemples', priorite_page.visible)
+                                self.assertIn('Ce conseil repose sur 2 exemples', priorite_page.depliant('Détail du conseil'))
                             elif kind == 'disagree':
                                 self.assertIsNone(choix['recommendation'])
                                 self.assertEqual('disagreement', choix['abstention']['reason'])
@@ -6456,12 +6462,14 @@ class ParcoursComplet(unittest.TestCase):
         defaut = Page(html.split('<aside class="economic-choice"')[1].split('</aside>')[0].encode())
         self.assertIn('Modèle C', defaut.visible)
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
-        cout, _, _ = self.request(comparison + '?priority=cost')
-        conseil = cout.visible.split('Notre conseil')[1].split('Ce conseil repose')[0]
-        self.assertIn('Modèle A', conseil)
-        self.assertNotIn('Modèle B', conseil)
+        _, _, raw = self.request(comparison + '?priority=cost')
+        aside = Page(raw.decode().split('<aside class="economic-choice" aria-labelledby="economic-choice-title"')[1]
+                     .split('</aside>')[0].encode())
+        detail = aside.depliant('Détail du conseil')
+        self.assertIn('Modèle A', aside.visible)
+        self.assertNotIn('Modèle B', aside.visible + detail)
         self.assertIn('Compromis sur « Clarté du tableau » : la réponse retenue vaut acceptable, '
-                      'alors que Modèle C vaut excellent.', conseil)
+                      'alors que Modèle C vaut excellent.', detail)
 
     def test_pas_de_conseil_avec_plusieurs_essais(self):
         """Issue #455 : les conditions du conseil départagé par le coût, avec deux essais par modèle

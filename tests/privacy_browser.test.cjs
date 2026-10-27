@@ -1041,6 +1041,26 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
       assert.ok(k1.first, `${width} conseil après le bilan`);
       assert.ok(k1.bottom <= height, `${width} conseil sous le premier écran : ${k1.bottom}`);
     }
+    // Chaque bloc de conseil : détail replié sur téléphone, déplié sans JavaScript sur ordinateur, où le bloc entier tient au premier écran
+    for (const [width, height] of [[390, 844], [1440, 900]]) {
+      await page.setViewportSize({width, height});
+      for (const state of ['results', 'results_priority']) {
+        await page.goto(origin + '/render/' + state);
+        await page.evaluate(() => document.fonts.ready);
+        const blocks = await page.$$eval('.economic-choice', asides => asides.map(aside => {
+          const detail = aside.querySelector('details.choice-detail');
+          return {bottom: aside.getBoundingClientRect().bottom + scrollY,
+                  detail: detail ? detail.querySelector('summary').nextElementSibling.checkVisibility() : null};
+        }));
+        assert.ok(blocks.some(block => block.detail !== null), `${state} sans détail du conseil`);
+        for (const block of blocks.filter(block => block.detail !== null)) {
+          assert.equal(block.detail, width === 1440, `${state} ${width} détail du conseil`);
+        }
+        if (width === 1440) {
+          for (const block of blocks) assert.ok(block.bottom <= height, `${state} conseil sous le premier écran : ${block.bottom}`);
+        }
+      }
+    }
     await page.setViewportSize({width: 390, height: 844});
     await page.goto(origin + '/render/results');
     await page.evaluate(() => document.fonts.ready);
@@ -1167,14 +1187,18 @@ test('priority advice stays native, escaped, keyboard reachable and readable at 
     assert.deepEqual(await page.locator('#filter-priority option').evaluateAll(options => options.map(option => option.value)),
                      ['', 'cost', 'duration', 'present']);
     assert.match(await page.locator('label[for="filter-priority"]').innerText(), /Priorité du conseil/);
-    // La priorité et son compromis restent visibles ; les libellés du contrat restent du texte
+    // La priorité reste visible ; son compromis se replie sous « Détail du conseil » (critère K1) ; les libellés du contrat restent du texte
     const advice = page.locator('.economic-choice');
+    const detail = advice.locator('details.choice-detail');
     assert.match(await advice.innerText(), /Priorité choisie/);
-    assert.match(await advice.innerText(), /Compromis sur/);
+    assert.equal(await detail.locator('summary').innerText(), 'Détail du conseil');
+    assert.equal(await detail.evaluate(node => node.open), false, 'détail du conseil ouvert sur téléphone');
+    assert.doesNotMatch(await advice.innerText(), /Compromis sur/);
+    assert.match(await detail.textContent(), /Compromis sur/);
     assert.equal(await advice.locator('img, script').count(), 0, 'compromis interprété comme HTML');
     assert.equal(await page.locator('#filter-priority img, #filter-priority script').count(), 0,
                  'libellé de critère interprété comme HTML');
-    assert.match(await advice.innerText(), /<img src=x onerror=alert\(1\)>/);
+    assert.match(await advice.textContent(), /<img src=x onerror=alert\(1\)>/);
     assert.match(await select.textContent(), /<script>alert\(4\)<\/script>/);
     // GET natif : le contrôle et le bouton vivent dans le formulaire existant
     const form = page.locator('form[action$="#filters"]');
@@ -1191,6 +1215,9 @@ test('priority advice stays native, escaped, keyboard reachable and readable at 
     assert.deepEqual(reached, ['filter-priority', 'Appliquer']);
     mkdirSync('reports/privacy-browser', {recursive: true});
     await page.screenshot({path: 'reports/privacy-browser/priority-mobile.png', fullPage: true});
+    // Le résumé déplie le compromis au toucher
+    await detail.locator('summary').tap();
+    assert.match(await advice.innerText(), /Compromis sur/);
   } finally {await context.close();}
   // Sans JavaScript, le choix reste lisible et soumissible
   const off = await browser.newContext({javaScriptEnabled: false, viewport: {width: 390, height: 844}});
@@ -1200,6 +1227,8 @@ test('priority advice stays native, escaped, keyboard reachable and readable at 
     assert.equal(await page.locator('#filter-priority').count(), 1);
     assert.equal(await page.locator('#filter-priority').inputValue(), 'duration');
     assert.equal(await page.locator('form[action$="#filters"] button[type="submit"]').isVisible(), true);
+    // Sans JavaScript, le détail natif se déplie et montre le compromis
+    await page.locator('.economic-choice details.choice-detail > summary').click();
     assert.match(await page.locator('.economic-choice').innerText(), /Compromis sur/);
   } finally {await off.close();}
   assert.deepEqual(failures, []);
