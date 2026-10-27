@@ -1589,6 +1589,33 @@ test('external references remain readable, searchable and safe without JavaScrip
       await page.goto(origin + '/render/home');
       await page.getByRole('navigation', {name: 'Navigation principale'}).getByRole('link', {name: 'Évaluations externes'}).click();
       assert.equal(await page.locator('main h2').count(), 3);
+      // Composition S18 : recherche et filtres en synthèse, lus avant la liste sur téléphone ; la fiche garde un rappel en synthèse
+      const zones = () => page.evaluate(() => {
+        const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
+        if (!side || !main) return null;
+        const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
+        return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText,
+                h2Side: side.querySelectorAll('h2').length, search: Boolean(side.querySelector('form[method="get"] #q')),
+                overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
+      });
+      for (const width of [390, 1440]) {
+        await page.setViewportSize({width, height: 844});
+        await page.goto(origin + '/evaluations-externes');
+        let layout = await zones();
+        assert.ok(layout && layout.search && layout.h2Side === 0, `${width} recherche des évaluations hors synthèse`);
+        assert.match(layout.main, /Travail mesuré/, `${width} notices hors zone principale`);
+        assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la recherche des évaluations`);
+        assert.equal(layout.overflow, 0, `${width} débordement de la liste des évaluations`);
+        await page.goto(origin + '/render/approved-mteb');
+        layout = await zones();
+        assert.ok(layout, `${width} fiche d'évaluation sans composition`);
+        assert.match(layout.main, /Travail mesuré/, `${width} notice hors zone principale`);
+        assert.match(layout.side, /ne prouvent pas la réussite sur votre besoin/, `${width} rappel hors synthèse`);
+        assert.match(layout.side, /Décrire mon cas d’usage/, `${width} lien du besoin hors synthèse`);
+        assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de la fiche`);
+      }
+      await page.setViewportSize({width: 390, height: 844});
+      await page.goto(origin + '/evaluations-externes');
       assert.equal(await page.locator('#category').inputValue(), '');
       assert.equal(await page.locator('#verification').inputValue(), '');
       assert.equal(await page.locator('main script, main img').count(), 0);
@@ -1750,6 +1777,33 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       await page.goto(origin + '/render/home');
       await page.getByRole('navigation', {name: 'Navigation principale'}).getByRole('link', {name: 'Épreuves', exact: true}).click();
       assert.match(await page.textContent('main'), /Tableau <script>alert\(1\)<\/script>/);
+      // Composition S18 : la recherche en synthèse avant la liste ; sur la fiche, la copie suit les pièces qu'elle annonce « ci-dessus »
+      const zones = () => page.evaluate(() => {
+        const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
+        if (!side || !main) return null;
+        const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
+        return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText,
+                h2Side: side.querySelectorAll('h2').length, search: Boolean(side.querySelector('form[method="get"] #q')),
+                overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
+      });
+      for (const width of [390, 1440]) {
+        await page.setViewportSize({width, height: 844});
+        await page.goto(origin + '/epreuves');
+        let layout = await zones();
+        assert.ok(layout && layout.search && layout.h2Side === 0, `${width} recherche des épreuves hors synthèse`);
+        assert.match(layout.main, /Tableau <script>alert\(1\)<\/script>/, `${width} épreuves hors zone principale`);
+        assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la recherche des épreuves`);
+        assert.equal(layout.overflow, 0, `${width} débordement de la liste des épreuves`);
+        await page.goto(origin + '/epreuves/tache-fictive/version-1');
+        layout = await zones();
+        assert.ok(layout, `${width} fiche d'épreuve sans composition`);
+        assert.match(layout.main, /Pièces/, `${width} pièces hors zone principale`);
+        assert.match(layout.side, /Créer mon dossier privé/, `${width} copie hors synthèse`);
+        assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la copie`);
+        assert.equal(layout.overflow, 0, `${width} débordement de la fiche d'épreuve`);
+      }
+      await page.setViewportSize({width: 390, height: 844});
+      await page.goto(origin + '/epreuves');
       assert.equal(await page.locator('main script, main img').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -2252,6 +2306,31 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     await page.goto(origin + '/render/data');
     assert.equal(await page.locator('[data-privacy-history]').count(), 1);
     assert.equal(await page.locator('[data-privacy-activity]').count(), 0);
+    // Composition S18 : les données en zone principale, les liens et explications en synthèse
+    const zones = () => page.evaluate(() => {
+      const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
+      if (!side || !main) return null;
+      const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
+      return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText,
+              h2Side: side.querySelectorAll('h2').length, search: Boolean(side.querySelector('form[method="get"] #q')),
+              overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
+    });
+    for (const width of [390, 1440]) {
+      await page.setViewportSize({width, height: 844});
+      await page.goto(origin + '/render/data');
+      let layout = await zones();
+      assert.ok(layout, `${width} Mes données sans composition`);
+      assert.match(layout.main, /Vos cas gardés dans ce navigateur/, `${width} cas gardés hors zone principale`);
+      assert.match(layout.side, /Mes contributions/, `${width} liens hors synthèse`);
+      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de Mes données`);
+      await page.goto(origin + '/render/contribution-active-2099');
+      layout = await zones();
+      assert.ok(layout, `${width} Mes contributions sans composition`);
+      assert.match(layout.main, /Contribution du 18 septembre 2026/, `${width} contributions hors zone principale`);
+      assert.match(layout.side, /arrête seulement la contribution concernée/, `${width} explication hors synthèse`);
+      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse des contributions`);
+      assert.equal(layout.overflow, 0, `${width} débordement des contributions`);
+    }
   } finally {await context.close();}
 });
 

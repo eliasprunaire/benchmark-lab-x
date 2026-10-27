@@ -361,30 +361,30 @@ def render_editorial(value):
         content = ('<p>La recherche porte sur le texte des notices publiques. Elle est déterministe et ne classe '
                    'pas les épreuves par proximité sémantique.</p>'
                    '<p>Les caractéristiques sont déclarées avec chaque version. Une information absente reste '
-                   'inconnue ; elle ne prouve ni absence d’outil ni qualification.</p>'
-                   '<p><a href="/epreuves/aide">Demander une aide sémantique facultative</a></p>')
+                   'inconnue ; elle ne prouve ni absence d’outil ni qualification.</p>')
         filters = value.get('filters') or {}
 
         def active_unavailable(key):
             active = criteria.get(key)
             return bool(active) and active not in filters.get(key, [])
 
-        content += ('<form method="get" action="/epreuves"><label for="q">Rechercher une épreuve</label>'
-                    '<input type="text" id="q" name="q" maxlength="200" value="' + text(criteria.get('q', '')) + '">')
+        search = ('<form method="get" action="/epreuves"><label for="q">Rechercher une épreuve</label>'
+                  '<input type="text" id="q" name="q" maxlength="200" value="' + text(criteria.get('q', '')) + '">')
         for key, label in EDITORIAL_FILTERS:
-            content += ('<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key
-                        + '"><option value="">Tous</option>')
+            search += ('<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key
+                       + '"><option value="">Tous</option>')
             proposed = list(filters.get(key, []))
             options = proposed + ([criteria[key]] if active_unavailable(key) else [])
             for option in options:
                 shown = str(EDITORIAL_STATUS.get(option, option) if key == 'qualification' else option)
                 if active_unavailable(key) and option not in proposed:
                     shown += ' (indisponible)'
-                content += ('<option value="' + text(option) + '"'
-                            + (' selected' if criteria.get(key) == option else '') + '>' + text(shown) + '</option>')
-            content += '</select>'
-        content += '<button type="submit">Rechercher</button></form>'
-        content += '<p><a href="/epreuves">Effacer la recherche et les filtres</a></p>'
+                search += ('<option value="' + text(option) + '"'
+                           + (' selected' if criteria.get(key) == option else '') + '>' + text(shown) + '</option>')
+            search += '</select>'
+        search += '<button type="submit">Rechercher</button></form>'
+        search += '<p><a href="/epreuves">Effacer la recherche et les filtres</a></p>'
+        search += '<p><a href="/epreuves/aide">Demander une aide sémantique facultative</a></p>'
         if value.get('searched'):
             content += '<section><h2>Critères actifs</h2><dl class="active-criteria">'
             for key, label in (('q', 'Recherche'),) + EDITORIAL_FILTERS:
@@ -409,7 +409,8 @@ def render_editorial(value):
             content += '<p>Aucune épreuve publiée.</p>'
         elif not value.get('versions'):
             content += ('<p>Aucune épreuve ne correspond à cette recherche. Modifiez ou effacez les critères.</p>')
-        return 'Épreuves', content + need
+        # La recherche se lit avant la liste qu'elle filtre
+        return 'Épreuves', workbench(content, search, 'Recherche et filtres', side_first=True) + need
     status = EDITORIAL_STATUS.get(value.get('qualification_status'), 'Qualification absente')
     content = editorial_fields(value)
     content += '<p class="note">' + text(status) + '.</p>'
@@ -453,11 +454,12 @@ def render_editorial(value):
         content += ('<section><h3><a href="' + base + '/pieces/' + text(piece['id']) + '">' + text(piece['label']) + '</a></h3>'
                     '<pre class="proof-content">' + text(piece['text']) + '</pre></section>')
     copy_base = '/preparation/copies/' + text(value['task_id']) + '/' + text(value['version_id'])
-    content += section('Préparer mon dossier privé',
-                       '<p>Cette copie conserve exactement la notice et les pièces ci-dessus. Elle ne demande ni clé '
-                       'ni appel aux modèles : vous décrirez ensuite votre besoin et ce qui diffère de cette épreuve.</p>'
-                       '<p><a class="button" href="' + copy_base + '">Créer mon dossier privé</a></p>')
-    return value['title'], back + content + need
+    copy = section('Préparer mon dossier privé',
+                   '<p>Cette copie conserve exactement la notice et les pièces ci-dessus. Elle ne demande ni clé '
+                   'ni appel aux modèles : vous décrirez ensuite votre besoin et ce qui diffère de cette épreuve.</p>'
+                   '<p><a class="button" href="' + copy_base + '">Créer mon dossier privé</a></p>')
+    # La copie annonce les pièces « ci-dessus » : sur téléphone, sa colonne suit la zone principale
+    return value['title'], back + workbench(content, copy, 'Préparer mon dossier privé') + need
 
 
 def render_references(value):
@@ -466,25 +468,25 @@ def render_references(value):
     introduction = '<p>Ces évaluations externes ne prouvent pas la réussite sur votre besoin particulier.</p>'
     if value.get('reference_id'):
         reference = BENCHMARK_REFERENCES[value['reference_id']]
-        return reference['name'], back + introduction + reference_notice(reference) + need
+        return reference['name'], back + workbench(reference_notice(reference), introduction + need, 'À savoir')
     content = (introduction
                + '<p>Ayo est responsable de la maintenance de cette sélection.</p>'
                + '<p>La vérification documentaire du 22 octobre 2026 couvre l’origine, l’objet et les limites. '
-               + 'La disponibilité d’un lien reste distincte de cette vérification.</p>'
-               + '<p><a href="/evaluations-externes/aide">Demander une aide sémantique facultative</a></p>')
+               + 'La disponibilité d’un lien reste distincte de cette vérification.</p>')
     available = {identity: reference for identity, reference in BENCHMARK_REFERENCES.items()
                  if reference.get('availability') == 'available'}
     categories = {reference['category']: REFERENCE_CATEGORIES.get(reference['category'], reference['category'])
                   for reference in available.values()}
     query, category, verification = (value.get(key, '') for key in ('q', 'category', 'verification'))
-    content += ('<form method="get" action="/evaluations-externes"><label for="q">Rechercher une évaluation</label>'
-                '<input type="text" id="q" name="q" value="' + text(query) + '">')
+    search = ('<form method="get" action="/evaluations-externes"><label for="q">Rechercher une évaluation</label>'
+              '<input type="text" id="q" name="q" value="' + text(query) + '">')
     for key, label, choices in (('category', 'Travail mesuré', categories),
                                  ('verification', 'Vérification éditoriale', REFERENCE_VERIFICATIONS)):
-        content += '<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key + '"><option value="">Tous</option>'
-        content += ''.join('<option value="' + text(choice) + '"' + (' selected' if value.get(key) == choice else '')
-                           + '>' + text(name) + '</option>' for choice, name in choices.items()) + '</select>'
-    content += '<button type="submit">Rechercher</button></form><p><a href="/evaluations-externes">Effacer la recherche et les filtres</a></p>'
+        search += '<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key + '"><option value="">Tous</option>'
+        search += ''.join('<option value="' + text(choice) + '"' + (' selected' if value.get(key) == choice else '')
+                          + '>' + text(name) + '</option>' for choice, name in choices.items()) + '</select>'
+    search += '<button type="submit">Rechercher</button></form><p><a href="/evaluations-externes">Effacer la recherche et les filtres</a></p>'
+    search += '<p><a href="/evaluations-externes/aide">Demander une aide sémantique facultative</a></p>'
     found = []
     for identity, reference in available.items():
         if category and reference['category'] != category:
@@ -502,7 +504,9 @@ def render_references(value):
         content += '<p>Aucune évaluation externe disponible.</p>'
     elif not found:
         content += '<p>Aucune évaluation ne correspond à cette recherche. Modifiez la recherche ou les filtres.</p>'
-    return 'Évaluations externes', content + need + '<p><a href="/">Accueil</a></p>'
+    # La recherche se lit avant la liste qu'elle filtre
+    return 'Évaluations externes', (workbench(content, search, 'Recherche et filtres', side_first=True)
+                                    + need + '<p><a href="/">Accueil</a></p>')
 
 
 HELP_LABELS = {'correspond': 'Correspondance forte', 'partiel': 'Correspondance partielle'}
