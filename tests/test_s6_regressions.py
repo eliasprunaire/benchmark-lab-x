@@ -37,9 +37,9 @@ _VOLATILE_PRESENTATION = re.compile(
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
-    '11': {
-        'index.html': 'f9bea260ac3d38f26ddab4713fe44de6a3a6ddb09e6b0102377abd8f605c1f8a',
-        'style.css': '3949bd0be216120c89014442045980b1c2a657563e9c93f65ffeb9446443fa97',
+    '12': {
+        'index.html': 'ff58e14105a57c2bb462bd3eb2baed78c15a2fc922a2479a895e54950baf3173',
+        'style.css': '67ee5e3b69519730419b6c99cd68b7505a1414f3c44bc6247a9b0d0fe76572d6',
     },
 }
 # Feuille fictive distincte des octets actifs : aucun actif scellé n'est dupliqué
@@ -200,7 +200,7 @@ class S6Regressions(unittest.TestCase):
                 labeled = dict(manifest, presentation_version=old)
                 raw = storage._strict_json(labeled).encode()
                 pub._manifest(raw, sha256(raw).hexdigest())
-        unknown = dict(manifest, presentation_version='12')
+        unknown = dict(manifest, presentation_version='13')
         raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
             pub._manifest(raw, sha256(raw).hexdigest())
@@ -534,6 +534,10 @@ class S6Regressions(unittest.TestCase):
                        'La référence utilisée pour évaluer et les preuves de la vérification de l’exemple restent privées. '
                        'Un lecteur ne peut donc pas vérifier lui-même comment ces critères ont été validés.').encode(), raw)
         self.assertIn('Durée fictive'.encode(), raw)
+        # K5 : une durée de 200 s s'écrit en minutes, avec son unité
+        self.assertIn('Durée fictive : 3 min 20 s'.encode(), raw)
+        # AGPL §13 : la page publiée garde l'offre du code source
+        self.assertIn(b'<a href="https://github.com/eliasprunaire/benchmark-lab-x">Code source</a>', raw)
         self.assertIn('Présence fictive'.encode(), raw)
         self.assertNotIn(b'duration :', raw)
         self.assertNotIn(b'&quot;criterion_id&quot;:&quot;duration&quot;', raw)

@@ -51,7 +51,7 @@ details.proof-content { padding: 0; margin-block: 1rem; background: var(--surfac
 .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 table { border-collapse: collapse; width: 100%; min-width: 48rem; }
 caption { text-align: left; padding: .75rem; font-weight: 650; }
-th, td { padding: .75rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-soft); overflow-wrap: anywhere; }
+th, td { padding: .75rem; text-align: left; vertical-align: top; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line-soft); overflow-wrap: anywhere; }
 thead th { font-family: var(--mono); font-size: .75rem; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); border-bottom: 1px solid var(--ink); }
 tbody th { font-weight: 400; }
 td p, th p { margin-block: .5rem; }
