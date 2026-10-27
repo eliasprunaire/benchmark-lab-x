@@ -1,5 +1,5 @@
 """Vues de confidentialité sans session, secret ni accès au stockage"""
-from .fragments import text
+from .fragments import text, workbench
 
 PRIVACY_SCRIPT = '<script type="module" src="/preparation/privacy.js"></script>'
 LOCAL_WARNING = ('Votre navigateur peut effacer ces copies sans vous prévenir, par exemple '
@@ -8,17 +8,19 @@ LOCAL_WARNING = ('Votre navigateur peut effacer ces copies sans vous prévenir, 
 
 
 def render_privacy_page(value, csrf='', *, preparation=False):
-    return 'Mes données', (
+    history = (
         '<section data-privacy-history><h2>Vos cas gardés dans ce navigateur</h2><p>' + LOCAL_WARNING + '</p>'
         '<p role="status" data-privacy-status>Vos copies s’affichent ici quand JavaScript est activé.</p>'
         '<div class="actions"><button type="button" class="sec" data-privacy-action="clear" hidden>'
         'Tout effacer et arrêter l’historique</button><button type="button" class="sec" '
         'data-privacy-action="enable" hidden>Activer l’historique local</button></div>'
         '<div data-privacy-list></div><noscript><p>Activez JavaScript pour voir et exporter '
-        'les cas gardés dans ce navigateur.</p></noscript></section>'
-        '<p>' + ('' if preparation else '<a href="/preparation">Mes cas d’usage et ma clé</a> · ') +
-        '<a href="/preparation/contributions">Mes contributions</a> · '
-        '<a href="/confidentialite">Confidentialité</a></p>')
+        'les cas gardés dans ce navigateur.</p></noscript></section>')
+    links = ('<p>' + ('' if preparation else '<a href="/preparation">Mes cas d’usage et ma clé</a> · ') +
+             '<a href="/preparation/contributions">Mes contributions</a> · '
+             '<a href="/confidentialite">Confidentialité</a></p>')
+    # Dans Mes cas d'usage, la page a déjà sa propre composition : le bloc y reste à plat
+    return 'Mes données', history + links if preparation else workbench(history, links, 'Vos autres données')
 
 
 def active_session(privacy):
@@ -110,10 +112,11 @@ def render_contributions(value):
     from datetime import datetime, timezone
     from .fragments import date_lisible_utc
     from urllib.parse import quote
-    content = ('<p>Vous pouvez retirer votre consentement sans enregistrer de nouveau votre clé OpenRouter : ce navigateur garde un accès séparé, réservé à vos contributions.</p>'
-               '<p>Retirer un consentement arrête seulement la contribution concernée. L’historique local continue, et '
-               'les copies déjà gardées dans ce navigateur restent. Pour le mettre en pause ou les effacer, allez dans '
-               '<a href="/preparation/data">Mes données</a>.</p>')
+    side = ('<p>Vous pouvez retirer votre consentement sans enregistrer de nouveau votre clé OpenRouter : ce navigateur garde un accès séparé, réservé à vos contributions.</p>'
+            '<p>Retirer un consentement arrête seulement la contribution concernée. L’historique local continue, et '
+            'les copies déjà gardées dans ce navigateur restent. Pour le mettre en pause ou les effacer, allez dans '
+            '<a href="/preparation/data">Mes données</a>.</p>')
+    content = ''
     for item in value['contributions']:
         status = str(item.get('status', '')).lower()
         if status == 'active':
@@ -133,7 +136,7 @@ def render_contributions(value):
             disabled=status != 'active') + '</section>'
     if not value['contributions']:
         content += '<p>Ce navigateur n’a accès à aucune contribution.</p>'
-    return 'Mes contributions', content + '<p><a href="/preparation/data">Mes données</a></p>'
+    return 'Mes contributions', workbench(content, side + '<p><a href="/preparation/data">Mes données</a></p>', 'Retrait et historique')
 
 
 def render_bootstrap(value):
