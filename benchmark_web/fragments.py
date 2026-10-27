@@ -80,8 +80,9 @@ def valeur_mesure(value, unit):
         if number is not None and number.is_finite():
             value = number
     if type(value) in (int, float, Decimal):
-        if str(unit or '').strip().lower() in ('s', 'sec', 'seconde', 'secondes') and value >= 60:
-            minutes, seconds = divmod(Decimal(str(value)), 60)
+        amount = Decimal(str(value))
+        if str(unit or '').strip().lower() in ('s', 'sec', 'seconde', 'secondes') and amount >= 60:
+            minutes, seconds = divmod(amount, 60)
             return str(int(minutes)) + ' min' + ('' if seconds == 0 else ' ' + montant_lisible(seconds) + ' s')
         descriptive = str(unit or '').strip().lower() in ('', 'descriptif', 'descriptive', 'texte', 'text', 'description')
         return montant_lisible(value) + ('' if descriptive else ' ' + str(unit))
