@@ -293,6 +293,28 @@ footer.site summary { min-height: 0; padding: 0; font-weight: 500; color: var(--
 footer.site details > :not(summary) { margin: .4rem 0 0; }
 
 /* Petits écrans : le rail passe en ligne au-dessus de la fenêtre */
+/* Zone principale et colonne de synthèse : l'ordre du HTML reste l'ordre de lecture, la grille place la synthèse à droite */
+.workbench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 20rem); grid-template-areas: "main side"; gap: var(--s6); align-items: start; margin-top: var(--s5); }
+.wb-main { grid-area: main; min-width: 0; }
+.wb-side { grid-area: side; min-width: 0; position: sticky; top: var(--s4); padding: var(--s4) var(--s5) var(--s5); background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); }
+.wb-main > :first-child, .wb-side > :first-child { margin-top: 0; }
+.wb-side section { margin-top: var(--s5); padding-top: var(--s4); }
+.wb-side > section:first-child { border-top: 0; padding-top: 0; }
+.wb-side h2 { font-size: 1.05rem; }
+.wb-side button, .wb-side .button { width: 100%; justify-content: center; }
+.wb-side details.corr > div { padding: var(--s3); }
+/* relevé en grand d'un chiffre déjà connu, nommé au-dessus */
+.readout { display: grid; gap: var(--s1); margin: var(--s4) 0 0; max-width: none; }
+.readout span { font-family: var(--mono); font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
+.readout strong { font-family: var(--mono); font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; color: var(--ink); overflow-wrap: anywhere; }
+.wb-side .readout { margin: 0 0 var(--s3); padding-bottom: var(--s3); border-bottom: 1px solid var(--line); }
+.wb-side .synthesis { font-size: .86rem; }
+@media (max-width: 64rem) {
+  .workbench { grid-template-columns: minmax(0, 1fr); grid-template-areas: none; gap: var(--s5); }
+  .wb-main, .wb-side { grid-area: auto; }
+  .wb-side { position: static; }
+}
+
 @media (max-width: 52rem) {
   body:has(> header.site) { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "app" "foot"; padding-top: var(--s4); }
   header.site { gap: var(--s2); padding: var(--s3) var(--s3) var(--s2); border: 1px solid var(--line); border-bottom: 0; border-radius: var(--frame) var(--frame) 0 0; }

@@ -92,6 +92,19 @@ def section(title, content, anchor=None):
     return f'<section{target}><h2>{text(title)}</h2>{content}</section>'
 
 
+def workbench(main, side, label, *, side_first=False):
+    """Zone principale et colonne de synthèse ; `side_first` quand la synthèse doit se lire avant le détail"""
+    aside = '<aside class="wb-side" aria-label="' + text(label) + '">' + side + '</aside>'
+    body = '<div class="wb-main">' + main + '</div>'
+    return ('<div class="workbench' + (' side-first' if side_first else '') + '">'
+            + (aside + body if side_first else body + aside) + '</div>')
+
+
+def readout(label, value):
+    """Relevé en grand d'un chiffre déjà connu, toujours nommé"""
+    return '<p class="readout"><span>' + text(label) + '</span><strong>' + text(value) + '</strong></p>'
+
+
 def listing(values):
     return '<ul>' + ''.join(f'<li>{text(v)}</li>' for v in values) + '</ul>'
 

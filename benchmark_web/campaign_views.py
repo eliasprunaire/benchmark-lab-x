@@ -19,7 +19,7 @@ from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
 
 from .fragments import (VERDICT_BADGES, valeur_mesure, access_summary, badge, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
-                        personal_key_form, readable_fields, section, state_block, text)
+                        personal_key_form, readable_fields, readout, section, state_block, text, workbench)
 
 COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
   const link = event.target.closest('tr[id] [data-result]');
@@ -817,13 +817,16 @@ def render_configurations(value, csrf):
     """Choix des modèles et du palier, puis estimation de la sélection courante"""
     dossier_url = '/preparation/dossiers/' + value['dossier_id']
     content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
-    content += '<p class="note">Choisissez au moins deux modèles et un niveau de raisonnement. Enregistrer ce choix n’appelle aucun modèle.</p>'
+    content += '<p class="note">Choisissez au moins deux modèles et un niveau de raisonnement.</p>'
+    # La synthèse suit les réglages : elle dit l'absence d'appel et porte la validation du formulaire
+    side = '<p>Enregistrer ce choix n’appelle aucun modèle.</p>'
+    main = ''
     if not value.get('catalogue_available', True):
-        content += '<p>' + text(value['detail']) + '</p>'
-        content += render_custom_models(value, csrf, dossier_url)
+        main += '<p>' + text(value['detail']) + '</p>'
+        main += render_custom_models(value, csrf, dossier_url)
     else:
         if value.get('catalogue_stale'):
-            content += '<p class="note">La liste des modèles n’a pas pu être mise à jour. Vous voyez la dernière liste disponible, qui peut ne plus être à jour.</p>'
+            main += '<p class="note">La liste des modèles n’a pas pu être mise à jour. Vous voyez la dernière liste disponible, qui peut ne plus être à jour.</p>'
         choices = ''
         for model in value['models']:
             checked = ' checked' if model['selected'] else ''
@@ -866,10 +869,10 @@ def render_configurations(value, csrf):
                 + ('' if not bound else ' max="' + str(bound) + '"') + ' placeholder="' + text(default)
                 + '" name="' + text('max_tokens:' + model['id']) + '" value="' + text(str(model.get('output_limit') or '')) + '">')
         limits += '</details>'
-        content += ('<form id="configurations-form" method="post" action="' + text(dossier_url + '/configurations') + '">' +
+        main += ('<form id="configurations-form" method="post" action="' + text(dossier_url + '/configurations') + '">' +
                     hidden('csrf_token', csrf) + '<fieldset id="model-choices"><legend>Modèles à comparer</legend>' +
                     choices + '</fieldset></form>')
-        content += render_custom_models(value, csrf, dossier_url)
+        main += render_custom_models(value, csrf, dossier_url)
         # Décision d'Ayo du 2026-10-17 : un même nombre d'essais pour chaque modèle et chaque exemple
         repetitions = ('<label for="repetitions">Essais par modèle et par exemple</label>'
                        '<select id="repetitions" form="configurations-form" name="repetitions" aria-describedby="repetitions-help">'
@@ -881,11 +884,11 @@ def render_configurations(value, csrf):
                        'montrent si les réponses d’un modèle varient ; ils ne mesurent pas sa fiabilité. Avec plus d’un essai, '
                        'aucun conseil n’est donné.</p>')
         # Le récapitulatif de la sélection suit l'enregistrement : le serveur y redirige
-        content += ('<fieldset><legend>Raisonnement</legend>' + tiers + '</fieldset>'
-                    '<fieldset><legend>Essais</legend>' + repetitions + '</fieldset>'
-                    '<fieldset><legend>Limite de sortie</legend>' + limits +
-                    '</fieldset><button form="configurations-form" type="submit">Continuer</button>')
-    return content
+        main += ('<fieldset><legend>Raisonnement</legend>' + tiers + '</fieldset>'
+                 '<fieldset><legend>Essais</legend>' + repetitions + '</fieldset>'
+                 '<fieldset><legend>Limite de sortie</legend>' + limits + '</fieldset>')
+        side += '<button form="configurations-form" type="submit">Continuer</button>'
+    return content + workbench(main, section('Votre choix', side), 'Votre choix')
 
 
 def missing_evidence(attempt):
@@ -1071,7 +1074,7 @@ def render_campaign_launch_requester(value, csrf):
     cases = campaign.get('cases', [])
     repetitions = max((cell.get('repetition', 1) for cell in campaign['cells']), default=1)
     content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
-    content += '<p class="synthesis">' + text(
+    synthesis = '<p class="synthesis">' + text(
         str(len(panel)) + (' modèles' if len(panel) > 1 else ' modèle')
         + (' · ' + str(len(cases)) + ' exemples' if len(cases) > 1 else '')
         + (' · ' + str(repetitions) + ' essais par modèle' + (' et par exemple' if len(cases) > 1 else '') if repetitions > 1 else '')
@@ -1079,19 +1082,20 @@ def render_campaign_launch_requester(value, csrf):
         + ' · réponses estimées : ' + usd(value.get('estimate_total_usd'), 'non estimable')
         + ' · réservé pour l’évaluation : ' + usd(value.get('judgment_estimate_usd'), 'inconnu')
         + ' · crédit restant : ' + usd(value.get('access', {}).get('limit_remaining_usd'), 'inconnu')) + '</p>'
+    launch = ''
     if value['launchable']:
         # Le bouton est la confirmation : le serveur exige toujours `confirm=yes`
-        content += form(csrf, base + '/start', {
+        launch = form(csrf, base + '/start', {
             'manifest_version': campaign['version'],
             'frozen_at': campaign['conditions']['frozen_at'], 'confirm': 'yes'},
             '<button type="submit">Lancer le benchmark</button>')
-    content += '<p><a href="' + text(dossier_url + '/configurations') + '">Modifier la sélection</a></p>'
+    change = '<p><a href="' + text(dossier_url + '/configurations') + '">Modifier la sélection</a></p>'
     recoveries = value.get('recovery_limits') or {}
     rows = ''.join('<tr><th scope="row">' + text(model_name(item, names)) + '</th><td>'
                    + text(effort_label(item).removeprefix('Niveau de raisonnement : ')) + '</td><td>'
                    + text(output_label(item, recoveries)) + '</td><td>'
                    + text(usd(item['estimate']['amount_usd'], 'non estimable')) + '</td></tr>' for item in panel)
-    content += ('<div class="table-scroll" role="region" tabindex="0" aria-label="Modèles sélectionnés">'
+    main = ('<div class="table-scroll" role="region" tabindex="0" aria-label="Modèles sélectionnés">'
                 '<table class="compact"><thead><tr><th scope="col">Modèle</th><th scope="col">Niveau de raisonnement</th>'
                 '<th scope="col">Limite de sortie</th><th scope="col">Coût estimé</th></tr></thead><tbody>'
                 + rows + '</tbody></table></div>')
@@ -1101,10 +1105,10 @@ def render_campaign_launch_requester(value, csrf):
             label = 'Exemple ' + str(example['number']) + (' : ' + example['difference'] if example['difference'] else '')
             items.append(label + ('' if example['excluded'] is None else ' · pas inclus : ' + example['excluded']))
         # Plusieurs essais : le paragraphe qui suit dit combien de fois chaque modèle répond
-        content += ('<div id="exemples"><p>Exemples comparés' + (' : chaque modèle répond une fois à chacun' if repetitions == 1 else '') + '. '
+        main += ('<div id="exemples"><p>Exemples comparés' + (' : chaque modèle répond une fois à chacun' if repetitions == 1 else '') + '. '
                     'Plusieurs exemples ne prouvent pas qu’ils représentent votre travail.</p>' + listing(items) + '</div>')
     if repetitions > 1:
-        content += '<p>' + text('Chaque modèle répond ' + str(repetitions) + ' fois à '
+        main += '<p>' + text('Chaque modèle répond ' + str(repetitions) + ' fois à '
                                 + ('chaque exemple' if len(cases) > 1 else 'l’exemple') + '. Chaque essai est une réponse '
                                 'distincte, payée et évaluée séparément ; tous partent, quel que soit le résultat des autres.') + '</p>'
     if len(cases) > 1 or repetitions > 1:
@@ -1118,19 +1122,19 @@ def render_campaign_launch_requester(value, csrf):
                          usd(cell['estimate']['amount_usd'], 'non estimable')])
             rows += ('<tr><th scope="row">' + text(values[0]) + '</th>'
                      + ''.join('<td>' + text(item) + '</td>' for item in values[1:]) + '</tr>')
-        content += ('<div class="table-scroll" role="region" tabindex="0" aria-label="Essais prévus">'
+        main += ('<div class="table-scroll" role="region" tabindex="0" aria-label="Essais prévus">'
                     '<table class="compact" aria-label="Essais prévus"><thead><tr>'
                     + ''.join('<th scope="col">' + title + '</th>' for title in columns) + '</tr></thead><tbody>'
                     + rows + '</tbody></table></div>')
-    content += '<p>Tous les appels passent par votre clé OpenRouter. Son plafond est la seule limite de dépense. Les montants affichés ici sont une prévision et une réservation, pas des dépenses facturées.</p>'
+    main += '<p>Tous les appels passent par votre clé OpenRouter. Son plafond est la seule limite de dépense. Les montants affichés ici sont une prévision et une réservation, pas des dépenses facturées.</p>'
     if any(recoveries.values()):
         # Reprises préautorisées par ce lancement (RULES.md §9) : leur coût reste distinct de la prévision
-        content += '<p>' + text(
+        main += '<p>' + text(
             'Un modèle arrêté par la limite de longueur est relancé au plus deux fois, sa limite de sortie doublée '
             'à chaque fois dans la limite de sa route, comme l’indique le tableau ; chaque reprise apparaît sur sa '
             'propre ligne. Coût estimé si chaque modèle était repris jusqu’à sa dernière limite : '
             + usd(value.get('recovery_estimate_usd'), 'non estimable') + '.') + '</p>'
-    content += section('Ce qui sera testé', '<p>' + text(value['criteria']['result_expected']) + '</p>' +
+    main += section('Ce qui sera testé', '<p>' + text(value['criteria']['result_expected']) + '</p>' +
         ('<p>Chaque modèle reçoit la même consigne et, pour chaque exemple, les mêmes pièces. Chaque verdict vaudra pour un exemple et pour un modèle tel qu’il est réglé ici, sans conclure sur le modèle en général ni additionner les exemples.</p>'
          if len(cases) > 1 else
          '<p>Chaque modèle reçoit la même consigne et les mêmes pièces. Le verdict vaudra pour cet exemple et pour chaque modèle tel qu’il est réglé ici, sans conclure sur le modèle en général.</p>') +
@@ -1174,8 +1178,10 @@ def render_campaign_launch_requester(value, csrf):
             check_content += personal_key_form(csrf, value.get('access', {}), base + '/conditions', opened=True)
     elif not value['launchable']:
         check_content = '<p class="note">Impossible de lancer pour l’instant : le service d’exécution est indisponible. Réessayez dans quelques minutes.</p>'
-    content += section('Avant de lancer', check_content)
-    return content
+    # Synthèse, conditions puis bouton : lus avant le détail, sur téléphone comme sur ordinateur
+    side = (readout('Estimation des réponses', usd(value.get('estimate_total_usd'), 'non estimable')) + synthesis
+            + section('Avant de lancer', check_content) + launch + change)
+    return content + workbench(main, side, 'Avant de lancer', side_first=True)
 
 
 def render_campaign_launch_operator(value, csrf):

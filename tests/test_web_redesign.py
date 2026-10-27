@@ -181,5 +181,62 @@ class ComparisonPageTests(unittest.TestCase):
         self.assertEqual(set(options.values()), titles)
 
 
+
+class ModelsAndLaunchLayoutTests(unittest.TestCase):
+    """Phase B S18 : l'état d'abord, puis une zone principale et une colonne de synthèse"""
+    @classmethod
+    def setUpClass(cls):
+        from tests.test_privacy_views import browser_views
+        cls.pages = browser_views()
+
+    def page(self, key):
+        return self.pages[key]
+
+    @staticmethod
+    def side(page):
+        start = page.index('<aside class="wb-side"')
+        return page[start:page.index('</aside>', start)]
+
+    def test_cle_etat_puis_formulaires_et_synthese(self):
+        page = self.page('access-connected')
+        self.assertLess(page.index('Clé enregistrée'), page.index('class="workbench"'))
+        # Le solde connu est relevé en grand, jamais la clé
+        self.assertRegex(page, r'<p class="readout"><span>Solde restant selon OpenRouter</span><strong>12,50 USD</strong></p>')
+        self.assertLess(page.index('class="readout"'), page.index('class="workbench"'))
+        self.assertIn('Son plafond est la seule limite de dépense.', self.side(page))
+        self.assertLess(page.index('class="wb-main"'), page.index('Remplacer ma clé OpenRouter'))
+        self.assertLess(page.index('Remplacer ma clé OpenRouter'), page.index('class="wb-side"'))
+        for status in ('disconnected', 'invalid', 'unavailable'):
+            with self.subTest(status=status):
+                other = self.page('access-' + status)
+                self.assertIn('class="workbench"', other)
+                self.assertNotIn('class="readout"', other)
+
+    def test_modeles_reglages_puis_synthese_sans_appel(self):
+        page = self.page('configurations-selected')
+        side = self.side(page)
+        self.assertIn('Enregistrer ce choix n’appelle aucun modèle.', side)
+        self.assertIn('<button form="configurations-form" type="submit">Continuer</button>', side)
+        self.assertLess(page.index('Niveau de raisonnement demandé'), page.index('class="wb-side"'))
+        self.assertEqual(1, page.count('>Continuer</button>'))
+        empty = self.page('configurations-empty')
+        self.assertIn('Relevé de modèles indisponible', empty)
+        self.assertIn('class="workbench"', empty)
+
+    def test_lancement_budget_et_conditions_avant_le_bouton(self):
+        page = self.page('launch-ready')
+        side = self.side(page)
+        # La synthèse, les conditions puis le bouton dans la colonne lue en premier ; le détail suit
+        self.assertLess(page.index('class="wb-side"'), page.index('class="wb-main"'))
+        self.assertLess(side.index('réponses estimées'), side.index('<h2>Avant de lancer</h2>'))
+        self.assertLess(side.index('Tout est prêt.'), side.index('Lancer le benchmark'))
+        self.assertIn('<p class="readout"><span>Estimation des réponses</span><strong>3,50 USD</strong></p>', side)
+        self.assertNotIn('<table', side)
+        self.assertLess(page.index('class="wb-main"'), page.index('<table'))
+        blocked = self.side(self.page('launch-blocked'))
+        self.assertIn('Impossible de lancer pour l’instant', blocked)
+        self.assertNotIn('Lancer le benchmark', blocked)
+
+
 if __name__ == '__main__':
     unittest.main()
