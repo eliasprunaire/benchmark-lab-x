@@ -263,6 +263,10 @@ body:has(dialog[open]) { overflow: hidden; }
 .result-head button { margin: 0; }
 .result-status[role="status"] { margin: 0; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: .9rem; }
 .result-body progress { width: 100%; }
+/* La fenêtre de détail est étroite : la synthèse et les preuves y restent en une colonne */
+.result-body .workbench { grid-template-columns: minmax(0, 1fr); grid-template-areas: none; gap: var(--s5); }
+.result-body .wb-main, .result-body .wb-side { grid-area: auto; }
+.result-body .wb-side { position: static; }
 .result { margin: 0; padding: 0; border: 0; }
 .result h2 { margin: 0; max-width: none; }
 .result h3 { margin: 1.4rem 0 .4rem; font-size: 1.05rem; }
