@@ -15,7 +15,7 @@ from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MO
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
 from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, listing, montant_lisible,
-                        personal_key_form, section, state_block, text)
+                        personal_key_form, readout, section, state_block, text, workbench)
 from .projection import candidate_names, piece_name, projection_body
 from .results_views import render_results
 from .legal_views import LEGAL_PAGES
@@ -968,8 +968,11 @@ def render(value, csrf, path='/preparation', *, error=False):
         else:
             content = state_block('err', 'Clé OpenRouter', 'Enregistrement de clé indisponible',
                                   '<p>Vous ne pouvez pas enregistrer de clé pour le moment. Réessayez plus tard ; aucun modèle n’a été appelé.</p>')
-        if status != 'unavailable':
-            content += personal_key_form(csrf, value, '/preparation/access', opened=status != 'connected')
+        if status == 'connected' and value.get('limit_remaining_usd') is not None:
+            content += readout('Solde restant selon OpenRouter', montant_lisible(value['limit_remaining_usd']) + ' USD')
+        forms = personal_key_form(csrf, value, '/preparation/access', opened=status != 'connected') if status != 'unavailable' else ''
+        content += workbench(forms, section('Dépense', '<p>Tous les appels passent par votre clé OpenRouter. '
+                                                       'Son plafond est la seule limite de dépense.</p>'), 'Dépense')
         content += '<p><a href="/preparation">Revenir à mes cas d’usage</a></p>'
     elif value.get('kind') == 'configurations':
         title = 'Choisissez les modèles à comparer'

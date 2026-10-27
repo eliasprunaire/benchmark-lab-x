@@ -177,6 +177,8 @@ Deux rayons : `rounded.base` (8 px) pour les champs, boutons et dépliants, `rou
 - **Navigation** : le menu marque la page courante avec `aria-current="page"` seulement quand la page est réellement l'entrée du menu. L'entrée courante a un filet encre et un fond `paper`.
 - **Tableaux** : en-têtes en chasse fixe et capitales, filets pointillés entre les lignes, montants en chasse fixe et chiffres tabulaires.
 - **Listes de cas d'usage** : une ligne par cas, séparée par un filet, nom en Hubot Sans.
+- **Zone principale et colonne de synthèse** (`.workbench`, `fragments.workbench`) : les réglages ou le détail à gauche, la synthèse et l'action à droite, dans une colonne qui reste visible au défilement. Sous 64rem, une seule colonne dans l'ordre du HTML. La synthèse vient d'abord dans le HTML quand elle doit être lue avant le détail.
+- **Relevé** (`.readout`, `fragments.readout`) : un chiffre déjà connu, en grand et en chasse fixe, toujours nommé au-dessus. Jamais un chiffre calculé pour l'affichage.
 - **Récapitulatif avant dépense** : une ligne de synthèse, puis le bouton qui lance, puis le détail. La prévision des réponses et la réservation de l'évaluation s'affichent séparément, jamais additionnées.
 - **Dépliants** (`details`) : pour le détail rigoureux, les preuves et les options secondaires ; ils restent utilisables sans JavaScript.
 - **Pied de page** : quatre colonnes (deux sur tablette, une sur téléphone), titres en chasse fixe. Le lien « Code source » répond à l'offre de source de l'AGPL §13 et ne doit jamais disparaître.

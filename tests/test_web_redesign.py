@@ -181,5 +181,6 @@ class ComparisonPageTests(unittest.TestCase):
         self.assertEqual(set(options.values()), titles)
 
 
+
 if __name__ == '__main__':
     unittest.main()

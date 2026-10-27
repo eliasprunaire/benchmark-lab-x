@@ -1409,6 +1409,44 @@ test('access and launch screens preserve available actions, estimates and refusa
     await page.goto(origin + '/render/configurations-empty');
     assert.ok((await page.textContent('main')).includes('Relevé de modèles indisponible'));
     assert.equal(await page.locator('#configurations-form').count(), 0);
+    // Composition S18 : l'état d'abord, puis la zone principale et la colonne de synthèse, à droite sur ordinateur
+    const zones = () => page.evaluate(() => {
+      const box = selector => document.querySelector(selector).getBoundingClientRect();
+      const side = box('.wb-side'), main = box('.wb-main');
+      return {right: side.left >= main.right, below: side.top >= main.bottom, above: side.bottom <= main.top,
+              overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+              side: document.querySelector('.wb-side').innerText};
+    });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({width, height: 900});
+      await page.goto(origin + '/render/access-connected');
+      let layout = await zones();
+      assert.equal(await page.locator('.readout').innerText(), 'SOLDE RESTANT SELON OPENROUTER\n12,50 USD', `${width} relevé du solde`);
+      assert.equal(await page.evaluate(() => document.querySelector('.state').compareDocumentPosition(document.querySelector('.workbench'))
+        & Node.DOCUMENT_POSITION_FOLLOWING), 4, `${width} état avant les formulaires`);
+      assert.ok(layout.side.includes('Son plafond est la seule limite de dépense.'), `${width} colonne dépense`);
+      assert.ok(width === 1440 ? layout.right : layout.below, `${width} colonne de la clé`);
+      assert.equal(layout.overflow, 0, `${width} débordement de la clé`);
+      await page.goto(origin + '/render/configurations-selected');
+      layout = await zones();
+      assert.ok(layout.side.includes('Enregistrer ce choix n’appelle aucun modèle.'), `${width} aucun appel`);
+      assert.equal(await page.locator('.wb-side button[form="configurations-form"]').innerText(), 'Continuer');
+      assert.ok(width === 1440 ? layout.right : layout.below, `${width} colonne des modèles`);
+      assert.equal(layout.overflow, 0, `${width} débordement des modèles`);
+      await page.goto(origin + '/render/launch-ready');
+      layout = await zones();
+      // Synthèse, conditions puis bouton dans la colonne lue en premier ; le tableau reste dans la zone principale
+      for (const phrase of ['ESTIMATION DES RÉPONSES\n3,50 USD', 'réponses estimées : 3,50 USD', 'Tout est prêt.', 'Lancer le benchmark'])
+        assert.ok(layout.side.includes(phrase), `${width} ${phrase}`);
+      assert.ok(layout.side.indexOf('Tout est prêt.') < layout.side.indexOf('Lancer le benchmark'), `${width} conditions avant le bouton`);
+      assert.equal(await page.locator('.wb-main table').count(), 1);
+      assert.ok(width === 1440 ? layout.right : layout.above, `${width} colonne du lancement`);
+      assert.equal(layout.overflow, 0, `${width} débordement du lancement`);
+      await page.goto(origin + '/render/launch-blocked');
+      layout = await zones();
+      assert.ok(layout.side.includes('Impossible de lancer pour l’instant'));
+      assert.equal(layout.side.includes('Lancer le benchmark'), false);
+    }
   } finally {await context.close();}
 });
 
