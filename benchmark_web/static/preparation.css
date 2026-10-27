@@ -319,10 +319,14 @@ footer.site details > :not(summary) { margin: .4rem 0 0; }
 .toc ol { margin: var(--s2) 0 0; padding-left: 1.2rem; font-size: .9rem; }
 .toc li + li { margin-top: var(--s2); }
 /* Sur ordinateur, le sommaire reste déplié ; un navigateur sans ::details-content garde le résumé cliquable */
+/* Détail du conseil : replié sur téléphone (critère K1), déplié sur ordinateur sans JavaScript */
+.economic-choice details.choice-detail { margin: .35rem 0 0; border: 0; padding: 0; background: transparent; }
+.choice-detail > summary { padding-inline: 0; }
+.economic-choice .choice-detail > div { margin: 0; }
 @media (min-width: 64.0625rem) {
   @supports selector(::details-content) {
-    .toc > summary { display: none; }
-    .toc::details-content { content-visibility: visible; }
+    .toc > summary, .choice-detail > summary { display: none; }
+    .toc::details-content, .choice-detail::details-content { content-visibility: visible; }
     .toc ol { margin-top: 0; }
   }
 }
