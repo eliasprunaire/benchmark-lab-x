@@ -143,4 +143,6 @@ def public_page(value, selected):
             '<link rel="stylesheet" href="style.css"></head><body><a class="skip" href="#main">Aller au contenu</a>'
             '<main id="main">' + body + '</main><footer><nav aria-label="Informations légales">'
             '<a href="/mentions-legales">Mentions légales</a> · <a href="/cgu">Conditions d’utilisation</a> · '
-            '<a href="/confidentialite">Confidentialité</a></nav></footer></body></html>').encode('utf-8')
+            '<a href="/confidentialite">Confidentialité</a></nav>'
+            # AGPL §13 : la page publiée offre le code source, comme le gabarit du service
+            '<p><a href="https://github.com/eliasprunaire/benchmark-lab-x">Code source</a></p></footer></body></html>').encode('utf-8')

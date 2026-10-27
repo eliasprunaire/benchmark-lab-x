@@ -1229,6 +1229,9 @@ test('pre-launch summary: synthesis, single launch button as confirmation, model
         return nodes.every(Boolean) && nodes.every((node, i) => !i || nodes[i - 1].compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
       }), true, `${colorScheme} ordre synthèse, bouton, lien, tableau`);
       assert.match(await page.locator('.table-scroll table').innerText(), /adapté/);
+      // K5 : les nombres du tableau s'alignent en chiffres de largeur fixe
+      assert.match(await page.locator('.table-scroll td').first().evaluate(cell => getComputedStyle(cell).fontVariantNumeric),
+                   /tabular-nums/, `${colorScheme} chiffres du lancement`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${colorScheme} débordement`);
       assert.deepEqual(await page.evaluate(contrastFailures), [], colorScheme);
       let focused = false;
@@ -1323,7 +1326,12 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     for (const action of ['input', 'pause', 'complete']) {
       await start('progress-waiting-none-False');
       if (action === 'input') await page.locator('body').dispatchEvent('input');
-      if (action === 'pause') await page.getByRole('button', {name: 'Arrêter la mise à jour automatique'}).click();
+      if (action === 'pause') {
+        // K7 : la cible d'arrêt garde 44 px de haut
+        const stop = page.getByRole('button', {name: 'Arrêter la mise à jour automatique'});
+        assert.ok((await stop.boundingBox()).height >= 44, 'arrêt du suivi sous 44 px');
+        await stop.click();
+      }
       if (action !== 'complete') {
         await page.clock.runFor(30000);
         assert.equal(requests.length, 0);
@@ -2238,7 +2246,13 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       if (reason === 'interrupted') assert.ok(text.includes('cette opération sera close automatiquement'));
       if (reason === 'restore') assert.ok(text.includes('Service momentanément indisponible'));
     }
+    // K7 : à 390 px, menu, étapes et liens du pied de page offrent 44 px de haut
+    await page.setViewportSize({width: 390, height: 844});
     await page.goto(origin + '/render/example-PENDING');
+    const small = await page.$$eval('header.site nav a, .steps > a, footer.site a',
+      links => links.filter(link => link.getClientRects().length && link.getBoundingClientRect().height < 44)
+        .map(link => link.textContent.trim() + ' ' + Math.round(link.getBoundingClientRect().height)));
+    assert.deepEqual(small, [], 'cibles sous 44 px');
     assert.ok((await page.textContent('main')).includes('La vérification de l’exemple n’a pas pu démarrer.'));
     assert.equal((await page.textContent('main')).includes('Approbation'), false);
     await page.goto(origin + '/render/example-BLOCKED');

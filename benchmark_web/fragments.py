@@ -71,7 +71,18 @@ def valeur_mesure(value, unit):
         return 'Inconnue'
     if type(value) is bool:
         return 'Oui' if value else 'Non'
-    if type(value) in (int, float):
+    # Une mesure enregistrée en texte numérique garde son unité, comme un nombre
+    if type(value) is str:
+        try:
+            number = Decimal(value.strip())
+        except (InvalidOperation, ArithmeticError, ValueError):
+            number = None
+        if number is not None and number.is_finite():
+            value = number
+    if type(value) in (int, float, Decimal):
+        if str(unit or '').strip().lower() in ('s', 'sec', 'seconde', 'secondes') and value >= 60:
+            minutes, seconds = divmod(Decimal(str(value)), 60)
+            return str(int(minutes)) + ' min' + ('' if seconds == 0 else ' ' + montant_lisible(seconds) + ' s')
         descriptive = str(unit or '').strip().lower() in ('', 'descriptif', 'descriptive', 'texte', 'text', 'description')
         return montant_lisible(value) + ('' if descriptive else ' ' + str(unit))
     return str(value)
