@@ -1058,11 +1058,11 @@ def render(value, csrf, path='/preparation', *, error=False):
         title = 'Mes cas d’usage'
         access = value.get('personal_access', {})
         if access.get('status') == 'connected':
-            content = ('<p class="hint">Votre clé OpenRouter est enregistrée. ' + access_summary(access)
-                       + ' <a href="/preparation/access">Gérer ma clé</a></p>')
+            key = ('<p class="hint">Votre clé OpenRouter est enregistrée. ' + access_summary(access)
+                   + ' <a href="/preparation/access">Gérer ma clé</a></p>')
         else:
-            content = personal_key_form(csrf, access, '/preparation')
-        content += ('<p class="lead note">Vos cas d’usage restent privés dans ce navigateur. '
+            key = personal_key_form(csrf, access, '/preparation')
+        lead = ('<p class="lead note">Vos cas d’usage restent privés dans ce navigateur. '
                     'Reprenez un cas existant ou décrivez-en un nouveau.</p>' if value['dossiers'] else
                     '<p class="lead note">Décrivez une tâche de votre travail et le résultat qui vous aiderait. '
                     'L’assistant en tire un exemple inventé, que vous pourrez relire et corriger avant de le valider.</p>')
@@ -1079,8 +1079,10 @@ def render(value, csrf, path='/preparation', *, error=False):
             form_id='prepare-case')
             + '<button type="submit" form="prepare-case"' + disabled + '>' + icon('i-pen') + 'Préparer mon exemple</button>', 'besoin')
         listing_section = section('Enregistrés dans ce navigateur', dossiers, 'mes-cas')
+        # La clé se lit avant le formulaire qu'elle débloque
+        creation = workbench(lead + creation, key, 'Ma clé OpenRouter', side_first=True)
         # Un visiteur qui revient cherche d'abord ses cas ; un premier visiteur, le formulaire
-        content += listing_section + creation if value['dossiers'] else creation + listing_section
+        content = listing_section + creation if value['dossiers'] else creation + listing_section
     elif value.get('kind') == 'honeypot_ack' or 'operation_id' in value:
         title = 'Demande enregistrée'
         url = ('/preparation' if value.get('kind') == 'honeypot_ack'
@@ -1200,6 +1202,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             links.append(f'<a href="{text(url)}/revisions/{revision - 1}">Version précédente</a>')
         if links:
             content += '<p class="hint">' + ' · '.join(links) + '</p>'
+        main_start = len(content)
         payload = value['payload']
         if source:
             content += render_source_copy(source, source_notice)
@@ -1282,6 +1285,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                     if names:
                         changes += '<h3>' + label + '</h3>' + listing(names)
                 content += section('Ce qui a changé depuis la version précédente', changes)
+        cost_start = len(content)
         if 'indicative_cost' in value:
             estimate = value['indicative_cost']
             amount = estimate.get('token_subtotal_usd') if estimate else None
@@ -1302,6 +1306,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             content += '<p>Coût corrigé après vérification : ' + text(montant_lisible(cost['amount']) + ' ' + cost['currency']) + '. Source : ' + text(
                 proof['source']) + ', confirmée par ' + text(proof['actor']) + ' le ' + text(proof['observed_at']) + \
                 '. Le justificatif d’origine reste inchangé.</p>'
+        content, side = content[:cost_start], section('Coût de la préparation', content[cost_start:])
         if editable and package is not None:
             content += '<details class="corr"><summary class="button sec">' + icon('i-pen') + 'Préciser ou corriger cet exemple</summary><div>' + form(csrf, url + '/messages',
                 {'action_id': secrets.token_hex(16), 'revision': revision},
@@ -1314,25 +1319,28 @@ def render(value, csrf, path='/preparation', *, error=False):
                 '<button type="submit"' + disabled + '>Envoyer ce message</button>') + '</div></details>'
         launched = any(c['attempts'] for c in current_campaigns)
         if package:
-            content += '<section id="validation"><h2>Valider l’exemple</h2>'
+            validation = '<section id="validation"><h2>Valider l’exemple</h2>'
             if value['validation']:
-                content += '<p class="note">Vous avez validé cet exemple, dans cette version précise.</p>'
+                validation += '<p class="note">Vous avez validé cet exemple, dans cette version précise.</p>'
             else:
-                content += '<p class="note">Cet exemple n’est pas encore validé. Relisez-le, puis validez-le pour passer à la suite.</p>'
+                validation += '<p class="note">Cet exemple n’est pas encore validé. Relisez-le, puis validez-le pour passer à la suite.</p>'
             if editable and value['stage'] == 'preview' and value['validation'] is None:
-                content += '<p>En validant, vous confirmez que cet exemple correspond à votre besoin. L’exemple est ensuite vérifié automatiquement, si ce service est disponible : cette vérification est payée avec votre clé OpenRouter. Valider ne lance aucun des modèles à comparer et ne publie rien.</p>'
+                validation += '<p>En validant, vous confirmez que cet exemple correspond à votre besoin. L’exemple est ensuite vérifié automatiquement, si ce service est disponible : cette vérification est payée avec votre clé OpenRouter. Valider ne lance aucun des modèles à comparer et ne publie rien.</p>'
                 estimate = value.get('qualification_estimate')
                 if estimate:
                     # Deux réserves distinctes, jamais additionnées (DESIGN.md, récapitulatif avant dépense)
-                    content += ('<p>Estimation avant consommation : une réserve est bloquée sur votre crédit avant chaque appel. '
+                    validation += ('<p>Estimation avant consommation : une réserve est bloquée sur votre crédit avant chaque appel. '
                                 'Pour la vérification de l’exemple : au plus ' + text(montant_lisible(estimate['check_usd']))
                                 + ' USD réservé. Puis, pour le contrôle de chaque témoin, ' + text(str(estimate['witness_limit']))
                                 + ' au plus : au plus ' + text(montant_lisible(estimate['witness_usd']))
                                 + ' USD réservé par témoin. Un témoin est une réponse inventée, recevable ou fautive, soumise au '
                                 'contrôle qui jugera les modèles. Le coût observé est relevé ensuite sur le justificatif de chaque appel.</p>')
-                content += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
+                validation += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
                                 '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
-            content += '</section>'
+            validation += '</section>'
+            side = validation + side
+        content = content[:main_start] + workbench(content[main_start:], side, 'Valider l’exemple' if package else 'Coût de la préparation')
+        if package:
             # Le consentement suit la décision principale ; une fois la comparaison lancée, il se replie dans Mes données
             if launched:
                 folded_contribution = render_contribution(value, csrf)
