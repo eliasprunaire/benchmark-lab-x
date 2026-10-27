@@ -1018,7 +1018,7 @@ def render_campaign_followup(value, csrf):
     # Appel clos sans réponse confirmée (#537), dans la comparaison ou sa chaîne de relances : ni reçu ni compté
     closed = set(outcome.get('closed_cells', ())) | {
         a.get('cell_id') for a in campaign['attempts'] if a.get('incident') == AMBIGUOUS_EXPIRED}
-    content += section('Modèle par modèle', listing(
+    models_list = section('Modèle par modèle', listing(
         examples.get(cell.get('case_id'), '') + models.get(cell['configuration_id'], 'Modèle')
         + (' · essai ' + str(cell['repetition']) if 'repetition' in cell else '')
         + ' : ' + ('réponse non confirmée, appel clos' if cell.get('cell_id') in closed and cell['state'] == 'RECEIVED'
@@ -1032,11 +1032,13 @@ def render_campaign_followup(value, csrf):
     all_received = bool(campaign['cells']) and received == len(campaign['cells'])
     # Ni l'appel clos ni la cellule sans réponse exploitable ne comptent comme une réponse reçue (#541)
     received -= sum(cell['state'] == 'RECEIVED' and cell.get('cell_id') in closed | unusable for cell in campaign['cells'])
-    content += '<p>Réponses reçues : ' + str(received) + ' sur ' + str(len(campaign['cells'])) + '.</p>'
+    counts = '<p>Réponses reçues : ' + str(received) + ' sur ' + str(len(campaign['cells'])) + '.</p>'
     judgment = campaign.get('judgment')
     if judgment:
-        content += '<p>Réponses évaluées : ' + text(judgment['completed']) + ' sur ' + text(judgment['total']) + '.</p>'
-    content += '</div>'
+        counts += '<p>Réponses évaluées : ' + text(judgment['completed']) + ' sur ' + text(judgment['total']) + '.</p>'
+    # La composition reste dans la zone d'état : le script de suivi la remplace entière à chaque mise à jour
+    # Les compteurs suivent directement la liste, sans titre intermédiaire (parcours complets)
+    content += workbench(models_list, counts, 'Réponses') + '</div>'
     if active:
         content += '<div id="preparation-progress"><progress aria-label="Benchmark en cours"></progress>'
         content += '<p class="hint" role="status">Cette page se met à jour seule si JavaScript est activé. Sinon, actualisez-la.</p><div class="actions">'
