@@ -2071,6 +2071,43 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
         assert.ok((await page.textContent('main')).includes('Cette page se met à jour d’elle-même si JavaScript est activé'));
       }
     }
+    // Composition S18 : zone principale et colonne de synthèse, l'état reste en tête et le consentement suit la validation
+    const zones = () => page.evaluate(() => {
+      const box = node => node.getBoundingClientRect(), side = box(document.querySelector('.wb-side')), main = box(document.querySelector('.wb-main'));
+      const inside = (selector, zone) => Boolean(document.querySelector(selector)?.closest(zone));
+      const follows = (a, b) => Boolean(document.querySelector(a).compareDocumentPosition(document.querySelector(b)) & Node.DOCUMENT_POSITION_FOLLOWING);
+      return {right: side.left >= main.right, below: side.top >= main.bottom, above: side.bottom <= main.top,
+              overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+              key: inside('#openrouter-key', '.wb-side'), form: inside('#prepare-case', '.wb-main'),
+              reply: inside('textarea#message', '.wb-main'), validation: inside('#validation', '.wb-side'),
+              example: inside('#exemple', '.wb-main'), correction: inside('details.corr', '.wb-main'),
+              consent: inside('.privacy-consent', '.workbench'), side: document.querySelector('.wb-side').innerText,
+              bar: document.querySelector('.wb-side .actionbar') && getComputedStyle(document.querySelector('.wb-side .actionbar')).position,
+              stateFirst: document.querySelector('.state') ? follows('.state', '.workbench') : null,
+              consentAfter: document.querySelector('.privacy-consent') ? follows('#validation', '.privacy-consent') : null};
+    });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({width, height: 900});
+      await page.goto(origin + '/render/availability-access');
+      let layout = await zones();
+      assert.equal(layout.overflow, 0, `${width} besoin sans débordement`);
+      assert.ok(layout.key && layout.form, `${width} clé en synthèse, formulaire en zone principale`);
+      assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la synthèse du besoin`);
+      await page.goto(origin + '/render/progress-clarification-none-False');
+      layout = await zones();
+      assert.equal(layout.overflow, 0, `${width} préparation sans débordement`);
+      assert.ok(layout.reply && layout.stateFirst, `${width} état en tête, réponse en zone principale`);
+      assert.match(layout.side, /Coût observé/, `${width} coût en synthèse`);
+      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de préparation`);
+      await page.goto(origin + '/render/consent-current');
+      layout = await zones();
+      assert.equal(layout.overflow, 0, `${width} validation sans débordement`);
+      assert.ok(layout.example && layout.correction && layout.validation, `${width} exemple et correction en zone principale, validation en synthèse`);
+      assert.match(layout.side, /Oui, c’est le travail à tester/, `${width} bouton de validation en synthèse`);
+      assert.equal(layout.bar, 'static', `${width} la barre de validation ne recouvre pas le texte de la synthèse`);
+      assert.ok(!layout.consent && layout.consentAfter, `${width} consentement séparé, après la validation`);
+      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de validation`);
+    }
   } finally {await context.close();}
 });
 

@@ -302,6 +302,8 @@ footer.site details > :not(summary) { margin: .4rem 0 0; }
 .wb-side > section:first-child { border-top: 0; padding-top: 0; }
 .wb-side h2 { font-size: 1.05rem; }
 .wb-side button, .wb-side .button { width: 100%; justify-content: center; }
+/* La colonne suit déjà le défilement : la barre d'action y reste à sa place */
+.wb-side .actionbar { position: static; background: none; }
 .wb-side details.corr > div { padding: var(--s3); }
 /* relevé en grand d'un chiffre déjà connu, nommé au-dessus */
 .readout { display: grid; gap: var(--s1); margin: var(--s4) 0 0; max-width: none; }
