@@ -828,6 +828,24 @@ test('legal pages keep CSP, French headings, visible focus, AA contrast and fit 
           const outline = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
           assert.notEqual(outline, 'none', `${where} focus invisible`);
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} débordement`);
+          // Composition S18 : sommaire en synthèse, replié avant le texte sur téléphone, ouvert à droite sur ordinateur
+          const toc = await page.evaluate(() => {
+            const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
+            if (!side || !main) return null;
+            const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
+            const links = [...side.querySelectorAll('nav[aria-label="Sommaire"] a[href^="#"]')];
+            const targets = links.map(link => main.querySelector(link.getAttribute('href') + ' > h2'));
+            return {right: a.left >= b.right, above: a.bottom <= b.top, headings: side.querySelectorAll('h1, h2, h3').length,
+                    links: links.length, sections: main.querySelectorAll('section > h2').length,
+                    targeted: targets.every(Boolean), visible: links.filter(link => link.checkVisibility()).length,
+                    open: Boolean(side.querySelector('details[open]'))};
+          });
+          assert.ok(toc, `${where} page légale sans composition`);
+          assert.ok(toc.links > 0 && toc.links === toc.sections && toc.targeted, `${where} sommaire incomplet : ` + JSON.stringify(toc));
+          assert.equal(toc.headings, 0, `${where} titre dans le sommaire`);
+          assert.equal(toc.open, false, `${where} sommaire ouvert par défaut`);
+          assert.ok(viewport.width === 390 ? toc.above && toc.visible === 0 : toc.right && toc.visible === toc.links,
+                    `${where} position ou ouverture du sommaire : ` + JSON.stringify(toc));
           if (viewport.width === 390) {
             mkdirSync('reports/privacy-browser', {recursive: true});
             await page.screenshot({path: `reports/privacy-browser/legal-${name}-${colorScheme}-mobile.png`, fullPage: true});
@@ -1098,6 +1116,21 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     assert.doesNotMatch(await page.locator('fieldset').innerText(), /reference\.txt/);
     assert.doesNotMatch(await page.locator('main').innerText(), /\b[0-9a-f]{32,64}\b|\bPASS\b|\bFAIL\b/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'aperçu déborde à 390 px');
+    // Composition S18 : le choix des pièces en synthèse, lu avant le corps publié sur téléphone, à droite sur ordinateur
+    for (const width of [390, 1440]) {
+      await page.setViewportSize({width, height: 844});
+      const layout = await page.evaluate(() => {
+        const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
+        if (!side || !main) return null;
+        const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
+        return {right: a.left >= b.right, above: a.bottom <= b.top, form: Boolean(side.querySelector('form fieldset')),
+                body: main.querySelectorAll('h2').length, overflow: document.documentElement.scrollWidth - innerWidth};
+      });
+      assert.ok(layout && layout.form && layout.body > 0, `${width} aperçu sans composition : ` + JSON.stringify(layout));
+      assert.ok(width === 1440 ? layout.right : layout.above, `${width} position du choix des pièces`);
+      assert.equal(layout.overflow, 0, `${width} débordement de l’aperçu`);
+    }
+    await page.setViewportSize({width: 390, height: 844});
     await page.screenshot({path: 'reports/privacy-browser/preview-mobile.png', fullPage: true});
     // Le consentement suit la décision principale
     await page.goto(origin + '/render/example');
@@ -2045,6 +2078,22 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       assert.equal(await page.locator('main script, main img').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Composition S18 : comparaison en zone principale, cadre de lecture en synthèse, après la comparaison sur téléphone
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({width, height: 844});
+        const layout = await page.evaluate(() => {
+          const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
+          if (!side || !main) return null;
+          const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
+          return {right: a.left >= b.right, below: a.top >= b.bottom, table: Boolean(main.querySelector('.comparison-results table')),
+                  side: side.innerText, overflow: document.documentElement.scrollWidth - innerWidth};
+        });
+        assert.ok(layout && layout.table, `${width} résultats publiés sans composition`);
+        for (const heading of [/Limites/, /Conditions communes/, /Ce que cette publication permet de vérifier/, /Comment lire ces résultats/])
+          assert.match(layout.side, heading, `${width} ${heading} hors synthèse`);
+        assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse publiée`);
+        assert.equal(layout.overflow, 0, `${width} débordement des résultats publiés`);
+      }
       // Filtres natifs visibles, un seul tableau à une ligne sur la vue filtrée
       assert.equal(await page.locator('#filter-configuration').count(), 1);
       await page.goto(origin + '/render/published-results-filtered');

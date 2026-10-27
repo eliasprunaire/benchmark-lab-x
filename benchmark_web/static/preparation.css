@@ -315,6 +315,17 @@ footer.site details > :not(summary) { margin: .4rem 0 0; }
 .readout strong { font-family: var(--mono); font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; color: var(--ink); overflow-wrap: anywhere; }
 .wb-side .readout { margin: 0 0 var(--s3); padding-bottom: var(--s3); border-bottom: 1px solid var(--line); }
 .wb-side .synthesis { font-size: .86rem; }
+.wb-side details.toc { margin: 0; border: 0; background: transparent; }
+.toc ol { margin: var(--s2) 0 0; padding-left: 1.2rem; font-size: .9rem; }
+.toc li + li { margin-top: var(--s2); }
+/* Sur ordinateur, le sommaire reste déplié ; un navigateur sans ::details-content garde le résumé cliquable */
+@media (min-width: 64.0625rem) {
+  @supports selector(::details-content) {
+    .toc > summary { display: none; }
+    .toc::details-content { content-visibility: visible; }
+    .toc ol { margin-top: 0; }
+  }
+}
 @media (max-width: 64rem) {
   .workbench { grid-template-columns: minmax(0, 1fr); grid-template-areas: none; gap: var(--s5); }
   .wb-main, .wb-side { grid-area: auto; }
