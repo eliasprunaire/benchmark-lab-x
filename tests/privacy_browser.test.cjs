@@ -928,6 +928,21 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
     mkdirSync('reports/privacy-browser', {recursive: true});
     await page.screenshot({path: 'reports/privacy-browser/attempt-detail-nojs-mobile.png', fullPage: true});
+    // Composition S18 : le verdict et le coût en synthèse, lus avant la réponse sur téléphone
+    for (const width of [390, 1440]) {
+      await page.setViewportSize({width, height: 900});
+      const layout = await page.evaluate(`((root = document) => {
+      const side = root.querySelector('.wb-side'), main = root.querySelector('.wb-main');
+      if (!side || !main) return null;
+      const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
+      return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText};
+    })(document.getElementById('attempt-detail'))`);
+      assert.ok(layout, `${width} détail sans composition`);
+      assert.match(layout.side, /Coût observé/, `${width} coût hors synthèse`);
+      assert.match(layout.main, /Pourquoi ce verdict/, `${width} preuves hors zone principale`);
+      assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la synthèse du détail`);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0, `${width} débordement du détail`);
+    }
   } finally {await off.close();}
   const on = await browser.newContext();
   try {
@@ -950,6 +965,14 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
     assert.equal(page.url(), origin + '/render/comparison');
     assert.equal(await page.evaluate(() => document.getElementById('result-dialog').open), true);
     assert.match(await page.locator('#result-dialog .result-body').textContent(), /Pourquoi ce verdict/);
+    // Dans la fenêtre, la synthèse et les preuves restent en une colonne
+    const modal = await page.evaluate(`((root = document) => {
+      const side = root.querySelector('.wb-side'), main = root.querySelector('.wb-main');
+      if (!side || !main) return null;
+      const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
+      return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText};
+    })(document.querySelector('#result-dialog .result-body'))`);
+    assert.ok(modal && modal.above, 'fenêtre de détail en deux colonnes');
     assert.equal(await page.evaluate(() => document.activeElement.matches('#result-dialog [data-close]')), true);
     await page.keyboard.press('Escape');
     assert.equal(await page.evaluate(() => document.getElementById('result-dialog').open), false);
@@ -986,6 +1009,23 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     await page.goto(origin + '/render/results');
     await page.evaluate(() => document.fonts.ready);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
+    // K1 : le conseil et sa raison se lisent au premier écran, avant le bilan
+    const advice = () => page.evaluate(() => {
+      const aside = document.querySelector('.economic-choice');
+      return {bottom: aside.getBoundingClientRect().bottom + scrollY,
+              first: Boolean(aside.compareDocumentPosition(document.querySelector('.campaign-summary')) & Node.DOCUMENT_POSITION_FOLLOWING)};
+    });
+    for (const [width, height] of [[390, 844], [1440, 900]]) {
+      await page.setViewportSize({width, height});
+      await page.goto(origin + '/render/results');
+      await page.evaluate(() => document.fonts.ready);
+      const k1 = await advice();
+      assert.ok(k1.first, `${width} conseil après le bilan`);
+      assert.ok(k1.bottom <= height, `${width} conseil sous le premier écran : ${k1.bottom}`);
+    }
+    await page.setViewportSize({width: 390, height: 844});
+    await page.goto(origin + '/render/results');
+    await page.evaluate(() => document.fonts.ready);
     // Aucun mot coupé : chaque cellule offre au moins la largeur de son mot visible le plus long
     const cut = await page.$$eval('.table-scroll td, .table-scroll th', cells => cells.flatMap(cell => {
       const probe = document.createElement('span');
@@ -1822,6 +1862,22 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       await copyButton.focus();
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
       await page.screenshot({path: 'reports/465/confirmation-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
+      for (const width of [390, 1440]) {
+        await page.setViewportSize({width, height: 844});
+        const layout = await page.evaluate(`((root = document) => {
+      const side = root.querySelector('.wb-side'), main = root.querySelector('.wb-main');
+      if (!side || !main) return null;
+      const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
+      return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText};
+    })()`);
+        assert.ok(layout, `${width} copie sans composition`);
+        assert.match(layout.main, /Épreuve source/, `${width} épreuve hors zone principale`);
+        assert.match(layout.side, /Aucune clé ni aucun appel aux modèles/, `${width} conditions hors synthèse`);
+        assert.match(layout.side, /Créer mon dossier privé/, `${width} bouton hors synthèse`);
+        // La note annonce les pièces « ci-dessous » : elle et le bouton précèdent l'épreuve sur téléphone
+        assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la synthèse de la copie`);
+      }
+      await page.setViewportSize({width: 390, height: 844});
       await page.goto(origin + '/render/copy-dossier');
       const copied = await page.textContent('main');
       assert.match(copied, /Épreuve source/);

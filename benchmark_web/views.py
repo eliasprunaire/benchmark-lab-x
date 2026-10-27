@@ -854,15 +854,17 @@ def render_copy_source(value, csrf):
     """Confirmation de la copie sous le chemin privé, avec le jeton de la session existante"""
     source = value['source']
     path = '/preparation/copies/' + text(source['task_id']) + '/' + text(source['version_id'])
-    content = ('<p class="note">Cette copie conservera exactement la notice et les pièces ci-dessous. '
-               'Aucune clé ni aucun appel aux modèles n’est nécessaire ; vous décrirez ensuite votre besoin.</p>')
-    content += render_source_copy(source, value.get('source_notice') or {}, future=True)
-    content += section('Créer le dossier privé', form(
+    side = ('<p class="note">Cette copie conservera exactement la notice et les pièces ci-dessous. '
+            'Aucune clé ni aucun appel aux modèles n’est nécessaire ; vous décrirez ensuite votre besoin.</p>')
+    side += section('Créer le dossier privé', form(
         csrf, path, {'copy': '1'},
         '<p>Le dossier restera privé dans ce navigateur. Sa qualification publiée ne qualifie pas le nouveau dossier.</p>'
         '<button type="submit">Créer mon dossier privé</button>'))
-    content += ('<p><a href="/epreuves/' + text(source['task_id']) + '/' + text(source['version_id'])
-                + '">Retour à l’épreuve</a></p>')
+    side += ('<p><a href="/epreuves/' + text(source['task_id']) + '/' + text(source['version_id'])
+             + '">Retour à l’épreuve</a></p>')
+    # L'épreuve copiée en zone principale ; ce que coûte la copie et l'action en synthèse
+    content = workbench(render_source_copy(source, value.get('source_notice') or {}, future=True), side, 'Créer le dossier privé',
+                        side_first=True)
     return 'Créer mon dossier privé', content
 
 
