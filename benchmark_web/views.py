@@ -18,7 +18,7 @@ from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, 
                         personal_key_form, readout, section, state_block, text, workbench)
 from .projection import candidate_names, piece_name, projection_body
 from .results_views import render_results
-from .legal_views import LEGAL_PAGES
+from .legal_views import LEGAL_PAGES, legal_layout
 from .privacy_views import (PRIVACY_SCRIPT, render_privacy_page, render_privacy_controls,
                             render_contribution, render_contributions, render_bootstrap)
 
@@ -948,6 +948,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, content = render_bootstrap(value)
     elif value.get('kind') == 'legal':
         title, _, content = LEGAL_PAGES[value['path']]
+        content = legal_layout(content)
     elif value.get('kind') == 'references':
         title, content = render_references(value)
     elif value.get('kind') == 'references_help':
@@ -1034,16 +1035,18 @@ def render(value, csrf, path='/preparation', *, error=False):
         content = ('<p class="note">Aperçu privé, non approuvé : rien n’est publié. Cette page montre ce qu’un lecteur '
                    'verrait si cette comparaison était publiée.</p>')
         content += '<p><a href="' + text(comparison['href']) + '">Revenir aux résultats</a></p>'
-        content += '<form method="get" action="' + text(comparison['href'] + '/preview') + '">'
-        content += '<fieldset><legend>Pièces que la publication montrerait</legend>'
-        content += '<p class="hint">Si vous ne cochez aucune pièce, seuls les verdicts et leurs motifs apparaissent.</p>'
+        choice = '<form method="get" action="' + text(comparison['href'] + '/preview') + '">'
+        choice += '<fieldset><legend>Pièces que la publication montrerait</legend>'
+        choice += '<p class="hint">Si vous ne cochez aucune pièce, seuls les verdicts et leurs motifs apparaissent.</p>'
         for piece in value['pieces']:
             pid = piece['piece_id']
-            content += '<label><input type="checkbox" name="piece" value="' + text(pid) + '"'
-            content += (' checked' if pid in value['selected_links'] else '') + '> ' + text(piece_name(rows[pid], piece, candidates)) + '</label>'
-        content += '</fieldset><button type="submit">Actualiser l’aperçu</button></form>'
-        content += '<p class="hint">L’aperçu montre toute la comparaison : les filtres des résultats ne s’appliquent pas ici.</p>'
-        content += '<hr>' + projection_body(comparison, value['selected_links'], level=2)
+            choice += '<label><input type="checkbox" name="piece" value="' + text(pid) + '"'
+            choice += (' checked' if pid in value['selected_links'] else '') + '> ' + text(piece_name(rows[pid], piece, candidates)) + '</label>'
+        choice += '</fieldset><button type="submit">Actualiser l’aperçu</button></form>'
+        choice += '<p class="hint">L’aperçu montre toute la comparaison : les filtres des résultats ne s’appliquent pas ici.</p>'
+        # Le choix des pièces se lit avant le corps qu'il modifie
+        content += workbench(projection_body(comparison, value['selected_links'], level=2), choice,
+                             'Pièces à montrer', side_first=True)
     elif value.get('kind') == 'constructed_response':
         title = 'Réponse construite'
         declaree = 'producteur' in value

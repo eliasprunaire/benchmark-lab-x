@@ -6,7 +6,7 @@ pour les verdicts, les montants et les dates, et n’ajoute aucun script.
 """
 from .campaign_views import effort_label
 from .fragments import (badge, date_lisible_utc, jour_lisible, listing, montant_lisible, readable_fields,
-                        section, text, valeur_mesure)
+                        section, text, valeur_mesure, workbench)
 
 STATES = {'PASS': 'respectée', 'FAIL': 'non respectée', 'INDETERMINE': 'non vérifiable'}
 VERDICT_LABELS = {'SATISFAIT': 'Satisfait', 'NE SATISFAIT PAS': 'Ne satisfait pas', None: 'À reprendre'}
@@ -315,7 +315,7 @@ def render_results(value):
                    '<p>L’épreuve et les autres restitutions restent consultables.</p>')
         return 'Restitution retirée', back + content
     columns = value['columns']
-    content = back
+    content = ''
     content += '<p class="hint">' + text(value['title'] + ' · Version ' + value['version_id']
                                           + ' · exemple entièrement inventé') + '</p>'
     content += '<p>Travail évalué : ' + text(value['work']) + '</p>'
@@ -332,19 +332,20 @@ def render_results(value):
         content += '<p class="hint">Réponses reçues ' + text(
             'le ' + jour_lisible(dates[0]) if len(dates) == 1 else
             'du ' + jour_lisible(dates[0]) + ' au ' + jour_lisible(dates[-1])) + '.</p>'
-    content += section('Limites', listing(value['conclusion']['limits']))
-    content += _conditions(value)
-    content += _campaigns(value)
     content += _table(value, columns)
     content += _pending(value)
-    content += _unknowns(value)
-    content += _restrictions(value)
-    content += ('<details id="method"><summary>Comment lire ces résultats</summary><ul>'
-                '<li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
-                '<li><strong>Ne satisfait pas</strong> : une exigence n’est pas respectée ou une erreur éliminatoire a été relevée ; '
-                'la réponse n’est pas utilisable, quel que soit son coût.</li>'
-                '<li><strong>À reprendre</strong> : la preuve ne permet pas encore de conclure ; ce n’est pas un échec du modèle.</li>'
-                '<li>Les verdicts et les mesures sont ceux enregistrés lors de la campagne ; cette page ne relance aucune évaluation.</li>'
-                '<li>Les tris ordonnent les seules valeurs classables. Les valeurs inconnues ou incompatibles restent sans rang, '
-                'sans être traitées comme défavorables.</li></ul></details>')
-    return 'Résultats : ' + value['title'], content
+    # Le cadre de lecture suit la comparaison : sur téléphone, la synthèse vient après le tableau
+    side = section('Limites', listing(value['conclusion']['limits']))
+    side += _conditions(value)
+    side += _campaigns(value)
+    side += _unknowns(value)
+    side += _restrictions(value)
+    side += ('<details id="method"><summary>Comment lire ces résultats</summary><ul>'
+             '<li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
+             '<li><strong>Ne satisfait pas</strong> : une exigence n’est pas respectée ou une erreur éliminatoire a été relevée ; '
+             'la réponse n’est pas utilisable, quel que soit son coût.</li>'
+             '<li><strong>À reprendre</strong> : la preuve ne permet pas encore de conclure ; ce n’est pas un échec du modèle.</li>'
+             '<li>Les verdicts et les mesures sont ceux enregistrés lors de la campagne ; cette page ne relance aucune évaluation.</li>'
+             '<li>Les tris ordonnent les seules valeurs classables. Les valeurs inconnues ou incompatibles restent sans rang, '
+             'sans être traitées comme défavorables.</li></ul></details>')
+    return 'Résultats : ' + value['title'], back + workbench(content, side, 'Cadre de lecture')

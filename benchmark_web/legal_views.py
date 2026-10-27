@@ -1,6 +1,8 @@
 """Pages légales publiques : source unique, sans session, secret ni accès au stockage"""
 
-from .fragments import text
+import re
+
+from .fragments import text, workbench
 
 CONTACT = '<a href="mailto:contact@cybrel.fr">contact@cybrel.fr</a>'
 
@@ -236,6 +238,22 @@ CONFIDENTIALITE = (
     '<section><h2>10. Modification de cette politique</h2><p>Cette politique peut évoluer. La date de dernière mise '
     'à jour figure en tête. En cas de changement substantiel affectant une finalité fondée sur votre consentement, '
     'un nouveau choix vous sera demandé.</p></section>')
+
+def legal_layout(content):
+    """Texte en zone principale ; sommaire des sections en synthèse, replié sur téléphone"""
+    titles = []
+
+    def anchor(match):
+        titles.append(match.group(1))
+        return '<section id="section-' + str(len(titles)) + '"><h2>' + match.group(1) + '</h2>'
+    content = re.sub(r'<section><h2>(.*?)</h2>', anchor, content)
+    # Le sommaire précède le texte sur téléphone ; sans titre, pour garder la suite des niveaux de la page
+    toc = ('<details class="toc"><summary>Sommaire</summary><nav aria-label="Sommaire"><ol>'
+           + ''.join('<li><a href="#section-' + str(index) + '">' + title + '</a></li>'
+                     for index, title in enumerate(titles, 1))
+           + '</ol></nav></details>')
+    return workbench(content, toc, 'Navigation dans la page', side_first=True)
+
 
 # Chemin : titre, description pour les moteurs de recherche, contenu
 LEGAL_PAGES = {
