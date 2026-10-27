@@ -1,42 +1,64 @@
-:root { color-scheme: light; font-family: system-ui, sans-serif; color: #172c39; background: #f5f7f8; }
-body { margin: 0 auto; max-width: 58rem; padding: 1.25rem; line-height: 1.6; }
-header { padding-block: 1rem; border-bottom: 2px solid #486170; }
+/* Page publiée, style S18 : couleurs du parcours, police système, car le paquet scellé ne contient aucune police */
+:root {
+  color-scheme: light dark;
+  --paper: #e9e8e3; --surface: #fbfbf9; --line: #c9c8c0; --line-soft: #e2e1db; --line-2: #77766e;
+  --ink: #121212; --ink-2: #45453f; --muted: #55554e;
+  --btn: #121212; --btn-hover: #3d3d37; --on-btn: #fbfbf9;
+  --focus: #1f4fd6;
+  --body: system-ui, sans-serif;
+  --mono: ui-monospace, Menlo, monospace;
+  font-family: var(--body); color: var(--ink); background: var(--paper);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #161614; --surface: #1f1f1c; --line: #3a3a35; --line-soft: #2c2c28; --line-2: #8a897f;
+    --ink: #eeede8; --ink-2: #c9c8c0; --muted: #a8a79e;
+    --btn: #eeede8; --btn-hover: #b9b8b0; --on-btn: #121212;
+    --focus: #8ab4f8;
+  }
+}
+body { margin: 1.5rem auto; max-width: 58rem; padding: 1.5rem 2rem; line-height: 1.6; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+header { padding-block: 1rem; border-bottom: 1px solid var(--line-2); }
 main { padding-block: 1rem 3rem; }
-h1, h2 { line-height: 1.25; }
-h1 { font-size: 2rem; }
-h2 { font-size: 1.3rem; }
-section { margin-block: 2rem; }
-a { color: #064e83; text-underline-offset: .2em; }
-fieldset { min-width: 0; overflow-wrap: anywhere; }
+h1, h2 { line-height: 1.15; letter-spacing: -.02em; }
+h1 { font-size: 2.4rem; font-weight: 800; }
+h2 { font-size: 1.35rem; font-weight: 700; }
+section { margin-block: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--line-soft); }
+a { color: var(--ink); text-underline-offset: .2em; }
+fieldset { min-width: 0; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 8px; }
 label { display: block; font-weight: 650; margin-block: 1rem .4rem; }
-textarea, select, button { font: inherit; border: 1px solid #486170; border-radius: .25rem; padding: .7rem; }
-textarea, select { box-sizing: border-box; width: 100%; max-width: 100%; background: white; color: #172c39; }
-button { display: block; margin-top: 1rem; background: #164c65; color: white; cursor: pointer; }
-:focus-visible { outline: 3px solid #8a3600; outline-offset: 4px; }
-[role="status"], [role="alert"] { border-left: 4px solid #486170; padding: .75rem; background: white; }
+textarea, select, button { font: inherit; border: 1px solid var(--line-2); border-radius: 8px; padding: .7rem; }
+textarea, select { box-sizing: border-box; width: 100%; max-width: 100%; background: var(--surface); color: var(--ink); }
+button { display: block; margin-top: 1rem; background: var(--btn); color: var(--on-btn); border-color: var(--btn); font-weight: 700; cursor: pointer; }
+button:hover { background: var(--btn-hover); }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+[role="status"], [role="alert"] { border: 1px solid var(--line); border-left: 4px solid var(--ink); border-radius: 8px; padding: .75rem; background: var(--paper); }
 code, p, li { overflow-wrap: anywhere; }
+code, pre { font-family: var(--mono); }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 li { margin-block: .5rem; }
-details { border: 1px solid #486170; padding: .75rem; }
-summary { cursor: pointer; }
-details.proof-content { padding: 0; margin-block: 1rem; border-color: #cad5db; border-radius: .3rem; background: white; overflow-wrap: anywhere; }
-.proof-content summary { padding: 1rem; font-weight: 650; color: #164c65; background: #e5edf2; border-radius: .3rem; }
-.proof-content[open] summary { border-bottom: 1px solid #cad5db; }
+details { border: 1px solid var(--line); border-radius: 8px; padding: .75rem; }
+summary { cursor: pointer; font-weight: 650; }
+details.proof-content { padding: 0; margin-block: 1rem; background: var(--surface); overflow-wrap: anywhere; }
+.proof-content summary { padding: 1rem; color: var(--ink); background: var(--paper); border-radius: 8px; }
+.proof-content[open] summary { border-bottom: 1px solid var(--line); border-radius: 8px 8px 0 0; }
 .proof-text { padding: 1.25rem; white-space: pre-wrap; }
 .proof-content > p { padding-inline: 1.25rem; }
 .skip { position: absolute; top: -10rem; }
 .skip:focus { position: static; display: block; }
 .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 1rem; }
-.filter-grid form { min-width: 0; padding: .75rem; background: white; border: 1px solid #486170; }
-.table-scroll { overflow-x: auto; border: 1px solid #486170; background: white; }
+.filter-grid form { min-width: 0; padding: .75rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 table { border-collapse: collapse; width: 100%; min-width: 48rem; }
 caption { text-align: left; padding: .75rem; font-weight: 650; }
-th, td { padding: .75rem; text-align: left; vertical-align: top; border: 1px solid #b5c3cc; overflow-wrap: anywhere; }
-thead th { background: #e5edf2; }
+th, td { padding: .75rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-soft); overflow-wrap: anywhere; }
+thead th { font-family: var(--mono); font-size: .75rem; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); border-bottom: 1px solid var(--ink); }
 tbody th { font-weight: 400; }
 td p, th p { margin-block: .5rem; }
 table details { max-width: 100%; }
-.source-value { font-variant-numeric: tabular-nums; }
-tr:target { outline: 3px solid #8a3600; outline-offset: -3px; }
+.source-value { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+tr:target { outline: 3px solid var(--focus); outline-offset: -3px; }
+footer { padding-top: 1rem; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: .9rem; }
+footer a { color: var(--ink-2); }
 button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-@media (max-width: 30rem) { body { padding: .75rem; } h1 { font-size: 1.6rem; } }
+@media (max-width: 30rem) { body { margin: .5rem; padding: .75rem; } h1 { font-size: 1.7rem; } }

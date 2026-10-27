@@ -12,6 +12,10 @@ from tests.test_s2_review_regressions import Authorized, response_for
 from tests.test_s6_regressions import build
 from tests.test_web_access import setUpModule  # noqa: F401  contrôle global des pages rendues
 
+# Polices S18 servies en local, chacune avec sa licence OFL
+FONTS = ('MonaSans', 'HubotSans', 'HostGrotesk', 'GeistMono', 'Silkscreen')
+
+
 class TemplateTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch('socket.socket.connect', side_effect=AssertionError('No network')))
@@ -46,12 +50,26 @@ class TemplateTests(unittest.TestCase):
 
 
     def test_fonts_and_projection_stylesheet_are_local_files(self):
-        for name in ('AtkinsonHyperlegibleNext', 'AtkinsonHyperlegibleMono'):
+        for name in FONTS:
             self.assertTrue((views.FONTS_PATH / (name + '.woff2')).is_file(), name)
+            self.assertTrue((views.FONTS_PATH / ('OFL-' + name + '.txt')).is_file(), name)
+            self.assertIn('/preparation/fonts/' + name + '.woff2', views.STYLESHEET_PATH.read_text())
         self.assertEqual(Path('projection.css'), Path(projection.STYLESHEET_PATH.name))
         self.assertNotIn(b'@font-face', projection.STYLESHEET_PATH.read_bytes())
-        self.assertIn('/preparation/fonts/AtkinsonHyperlegibleNext.woff2', views.STYLESHEET_PATH.read_text())
-        self.assertFalse((views.FONTS_PATH / 'Syne.woff2').exists())
+        # La page publiée reprend les couleurs S18 du parcours, en clair comme en sombre
+        palette = lambda css: [dict(re.findall(r'--([a-z0-9-]+):\s*(#[0-9a-f]{6})', block))
+                               for block in re.split(r'@media\s*\(prefers-color-scheme:\s*dark\)', css)[:2]]
+        published, private = palette(projection.STYLESHEET_PATH.read_text()), palette(views.STYLESHEET_PATH.read_text())
+        for shade, (mine, theirs) in zip(('clair', 'sombre'), zip(published, private)):
+            self.assertTrue(mine, shade)
+            self.assertLessEqual(mine.items(), theirs.items(), shade)
+        for retired in ('Syne', 'AtkinsonHyperlegibleNext', 'AtkinsonHyperlegibleMono'):
+            self.assertFalse((views.FONTS_PATH / (retired + '.woff2')).exists(), retired)
+        # Les mentions légales nomment exactement les polices servies
+        from benchmark_web import legal_views
+        for family in ('Mona Sans', 'Hubot Sans', 'Host Grotesk', 'Geist Mono', 'Silkscreen'):
+            self.assertIn(family, legal_views.MENTIONS_LEGALES)
+        self.assertNotIn('Atkinson', legal_views.MENTIONS_LEGALES)
 
 
 class DossierPageTests(unittest.TestCase):
