@@ -1874,7 +1874,8 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
         assert.match(layout.main, /Épreuve source/, `${width} épreuve hors zone principale`);
         assert.match(layout.side, /Aucune clé ni aucun appel aux modèles/, `${width} conditions hors synthèse`);
         assert.match(layout.side, /Créer mon dossier privé/, `${width} bouton hors synthèse`);
-        assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de la copie`);
+        // La note annonce les pièces « ci-dessous » : elle et le bouton précèdent l'épreuve sur téléphone
+        assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la synthèse de la copie`);
       }
       await page.setViewportSize({width: 390, height: 844});
       await page.goto(origin + '/render/copy-dossier');

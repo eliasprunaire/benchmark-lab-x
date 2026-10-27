@@ -863,7 +863,8 @@ def render_copy_source(value, csrf):
     side += ('<p><a href="/epreuves/' + text(source['task_id']) + '/' + text(source['version_id'])
              + '">Retour à l’épreuve</a></p>')
     # L'épreuve copiée en zone principale ; ce que coûte la copie et l'action en synthèse
-    content = workbench(render_source_copy(source, value.get('source_notice') or {}, future=True), side, 'Créer le dossier privé')
+    content = workbench(render_source_copy(source, value.get('source_notice') or {}, future=True), side, 'Créer le dossier privé',
+                        side_first=True)
     return 'Créer mon dossier privé', content
 
 
