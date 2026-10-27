@@ -1270,6 +1270,13 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
         }
       }
     }
+    // La mise à jour réécrit la zone d'état : la composition est remplacée entière, sans doublon
+    await start();
+    assert.equal((await page.locator('.wb-side').innerText()).includes('Réponses évaluées'), false);
+    await tick(3000, 'mixed-EMISSION_POSSIBLE-WAITING', 'FOLLOWUP_ACTIVE');
+    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.workbench').length,
+      document.querySelectorAll('#campaign-status > .workbench').length]), [1, 1]);
+    assert.match(await page.locator('.wb-side').innerText(), /Réponses évaluées : 0 sur 2\./);
     await start();
     await tick(3000, 'followup-stopped', 'FOLLOWUP_COMPLETE');
     await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1/conditions');
@@ -1500,6 +1507,29 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       assert.equal(await page.locator('#preparation-progress').count(), Number(active));
       assert.equal((await page.title()).includes('Benchmark en cours'), active);
       assert.equal(await page.locator('script').count() > 0, active);
+    }
+    // Composition S18 : état en tête, liste des modèles en zone principale, compteurs en synthèse, actions hors de la zone réécrite
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({width, height: 900});
+      for (const view of ['followup-running', 'followup-credit-exhausted', 'judgment-NOT_STARTED', 'followup-received']) {
+        await page.goto(origin + '/render/' + view);
+        const layout = await page.evaluate(() => {
+          const status = document.getElementById('campaign-status'), bench = status.querySelector('.workbench');
+          const side = bench.querySelector('.wb-side'), main = bench.querySelector('.wb-main');
+          const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
+          return {right: a.left >= b.right, below: a.top >= b.bottom,
+                  overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+                  stateFirst: Boolean(status.querySelector('.state').compareDocumentPosition(bench) & Node.DOCUMENT_POSITION_FOLLOWING),
+                  list: main.querySelector('h2')?.textContent, side: side.innerText,
+                  actionsInside: document.querySelectorAll('.workbench #preparation-progress, .workbench form, .workbench a.button').length};
+        });
+        assert.equal(layout.overflow, 0, `${width} ${view} sans débordement`);
+        assert.ok(layout.stateFirst, `${width} ${view} état en tête`);
+        assert.equal(layout.list, 'Modèle par modèle', `${width} ${view} liste en zone principale`);
+        assert.match(layout.side, /Réponses reçues : \d+ sur \d+\./, `${width} ${view} compteurs en synthèse`);
+        assert.equal(layout.actionsInside, 0, `${width} ${view} actions hors de la composition`);
+        assert.ok(width === 1440 ? layout.right : layout.below, `${width} ${view} position de la synthèse`);
+      }
     }
   } finally {await context.close();}
 });
