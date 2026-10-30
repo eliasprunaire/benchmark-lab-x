@@ -292,6 +292,11 @@ body:has(dialog[open]) { overflow: hidden; }
   table[role="table"] [data-entete]::before { content: attr(data-entete); display: block; font-size: .8rem; color: var(--ink-2); font-weight: 600; }
 }
 
+/* Chaîne « A · B · C » lue en liste : un élément par ligne, sans puce */
+ul.meta { list-style: none; padding-left: 0; display: grid; gap: .15rem; }
+ul.meta > li { margin: 0; }
+ul.meta.note { color: var(--ink-2); }
+
 /* Pied de page */
 footer.site { margin-top: var(--s7); border-top: 1px solid var(--line); padding: var(--s5) 0 var(--s6); color: var(--ink-2); font-size: .9rem; }
 footer.site .cols { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: var(--s5); }

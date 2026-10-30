@@ -1250,12 +1250,13 @@ test('pre-launch summary: synthesis, single launch button as confirmation, model
       await page.evaluate(() => document.fonts.ready);
       const main = await page.locator('main').innerText();
       // Prévision et réservation affichées séparément, jamais additionnées
-      assert.match(main, /2 modèles · réponses estimées : non estimable · réservé pour l’évaluation : 0,30 USD · crédit restant : 18,5 USD/, colorScheme);
+      assert.deepEqual(await page.locator('ul.meta.synthesis > li').allInnerTexts(),
+        ['2 modèles', 'réponses estimées : non estimable', 'réservé pour l’évaluation : 0,30 USD', 'crédit restant : 18,5 USD'], colorScheme);
       assert.equal(await page.locator('main input[type="checkbox"]').count(), 0, `${colorScheme} case à cocher`);
       assert.equal(await page.locator('main button:not(.sec)').count(), 1, `${colorScheme} un seul bouton principal`);
       assert.equal(await page.locator('form[action$="/start"] input[name="confirm"]').getAttribute('value'), 'yes');
       assert.equal(await page.evaluate(() => {
-        const synthesis = [...document.querySelectorAll('main p')].find(p => p.textContent.includes('réponses estimées'));
+        const synthesis = [...document.querySelectorAll('main p, main ul.meta')].find(p => p.textContent.includes('réponses estimées'));
         const nodes = [synthesis, document.querySelector('form[action$="/start"] button'),
                        [...document.querySelectorAll('main a')].find(a => a.textContent === 'Modifier la sélection'),
                        document.querySelector('.table-scroll table')];
@@ -2115,7 +2116,9 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       assert.match(main, /Coût observé inconnu pour 1 réponse/);
       assert.match(main, /pièce non publiée/i);
       assert.match(main, /un filtre ne change ni les verdicts ni la population/i);
-      assert.match(main, /Réponses évaluées : 2 · essais lancés : 2 sur 2/);
+      const coverage = await page.locator('ul.meta', {hasText: 'Réponses évaluées'}).locator('li').allInnerTexts();
+      assert.equal(coverage[0], 'Réponses évaluées : 2');
+      assert.match(coverage[1], /^essais lancés : 2 sur 2\./);
       assert.equal(await page.locator('main script, main img').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -2177,7 +2180,7 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       });
       assert.deepEqual(column.head, [], 'en-tête de la colonne Modèle coupé entre deux lettres : ' + JSON.stringify(column));
       assert.deepEqual(column.name, [], 'nom du modèle coupé entre deux lettres : ' + JSON.stringify(column));
-      assert.ok(column.scroll > 390, 'le tableau ne défile plus horizontalement : ' + JSON.stringify(column));
+      assert.ok(column.scroll <= 390, 'le tableau se lit en liste, sans défilement horizontal : ' + JSON.stringify(column));
       let proofFocused = false;
       for (let press = 0; press < 40 && !proofFocused; press++) {
         await page.keyboard.press('Tab');

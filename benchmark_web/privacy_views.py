@@ -1,5 +1,5 @@
 """Vues de confidentialité sans session, secret ni accès au stockage"""
-from .fragments import text, workbench
+from .fragments import chain, text, workbench
 
 PRIVACY_SCRIPT = '<script type="module" src="/preparation/privacy.js"></script>'
 LOCAL_WARNING = ('Votre navigateur peut effacer ces copies sans vous prévenir, par exemple '
@@ -16,9 +16,8 @@ def render_privacy_page(value, csrf='', *, preparation=False):
         'data-privacy-action="enable" hidden>Activer l’historique local</button></div>'
         '<div data-privacy-list></div><noscript><p>Activez JavaScript pour voir et exporter '
         'les cas gardés dans ce navigateur.</p></noscript></section>')
-    links = ('<p>' + ('' if preparation else '<a href="/preparation">Mes cas d’usage et ma clé</a> · ') +
-             '<a href="/preparation/contributions">Mes contributions</a> · '
-             '<a href="/confidentialite">Confidentialité</a></p>')
+    links = chain((() if preparation else ('<a href="/preparation">Mes cas d’usage et ma clé</a>',)) + (
+        '<a href="/preparation/contributions">Mes contributions</a>', '<a href="/confidentialite">Confidentialité</a>'))
     # Dans Mes cas d'usage, la page a déjà sa propre composition : le bloc y reste à plat
     return 'Mes données', history + links if preparation else workbench(history, links, 'Vos autres données')
 
@@ -76,8 +75,8 @@ def render_privacy_controls(value, csrf, contribution=''):
             'comprise. Pour effacer aussi la copie gardée dans ce navigateur, activez JavaScript puis passez par Mes données.</p></noscript>'
             '<button type="submit" class="sec">Supprimer ce cas d’usage</button>'
             '<p role="status" data-privacy-status></p>', disabled=not active)
-    content += '<p>' + LOCAL_WARNING + '</p><p><a href="/preparation/data">Mes données</a> · '
-    content += '<a href="/preparation/contributions">Mes contributions</a> · <a href="/confidentialite">Confidentialité</a></p></details>'
+    content += '<p>' + LOCAL_WARNING + '</p>' + chain(['<a href="/preparation/data">Mes données</a>',
+        '<a href="/preparation/contributions">Mes contributions</a>', '<a href="/confidentialite">Confidentialité</a>']) + '</details>'
     return content
 
 

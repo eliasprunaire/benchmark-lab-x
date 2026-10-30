@@ -49,6 +49,15 @@ class Page(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        # Une liste `ul.meta` remplace une chaîne « A · B · C » : la lecture du texte rend le séparateur entre éléments
+        liste = next((n for n in reversed(self.stack) if n['tag'] == 'ul'), None)
+        if tag == 'li' and liste and 'meta' in (liste['attrs'].get('class') or '').split():
+            if liste.get('items'):
+                for noeud in self.stack:
+                    noeud['text'] += ' · '
+                if not any(n['tag'] in ('details', 'head', 'script', 'svg') or 'hidden' in n['attrs'] for n in self.stack):
+                    self.nodes.append({'tag': '#text', 'attrs': {}, 'text': '·', 'details': False, 'hidden': False, 'main': False})
+            liste['items'] = liste.get('items', 0) + 1
         node = {'tag': tag, 'attrs': attrs, 'text': '',
                 'details': any(n['tag'] == 'details' for n in self.stack),
                 'hidden': any(n['tag'] in ('head', 'script', 'svg') or 'hidden' in n['attrs']
@@ -413,6 +422,12 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b|\b(?:configuration|cell|attempt|case)-\d+\b|\b(?:O1|E1)\b|python -m|package_sha256')
             self.assertIn('Révision : aaaaaaa', page.visible)
             self.assertNotIn('v0.1.0', page.visible)
+            # Une chaîne « A · B · C » se lit en liste, un élément par ligne ; hors tableau, un bilan compte dès un séparateur
+            cellules = [n['text'] for n in page.nodes if n['tag'] in ('td', 'th')]
+            for noeud in page.nodes:
+                if noeud['tag'] == 'p' and not any(noeud['text'] in cellule for cellule in cellules):
+                    bilan = {'note', 'hint', 'synthesis'} & set((noeud['attrs'].get('class') or '').split())
+                    self.assertLess(noeud['text'].count(' · '), 1 if bilan else 2, noeud['text'][:80])
             # Un tableau se lit en liste sur téléphone : rôles explicites et en-tête de colonne par cellule
             self.assertNotIn('faites défiler', page.visible)
             for noeud in page.nodes:
@@ -3282,13 +3297,13 @@ class ParcoursComplet(unittest.TestCase):
         page, _, raw = self.request(recap)
         self.examine(page, recap, 'prêt à lancer', 'Lancer le benchmark')
         # Synthèse d'abord : prévision des réponses et réservation de l'évaluation restent deux montants
-        synthesis = next(n['text'] for n in page.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
+        synthesis = next(n['text'] for n in page.nodes if n['tag'] == 'ul' and 'meta' in n['attrs']['class'] and 'réponses estimées' in n['text'])
         self.assertRegex(synthesis, r'^2 modèles · réponses estimées : [0-9,]+ USD · réservé pour l’évaluation : '
                                     r'[0-9,]+ USD · crédit restant : 18,5 USD$')
         self.assertIn('Tout est prêt.', page.visible)
         self.assertNotIn('✓', page.visible)
         order = [next(i for i, n in enumerate(page.nodes) if test(n)) for test in (
-            lambda n: n['tag'] == 'p' and 'réponses estimées' in n['text'],
+            lambda n: n['tag'] == 'ul' and 'meta' in n['attrs']['class'] and 'réponses estimées' in n['text'],
             lambda n: n['tag'] == 'button' and n['text'] == 'Lancer le benchmark',
             lambda n: n['tag'] == 'a' and n['text'] == 'Modifier la sélection',
             lambda n: n['tag'] == 'table')]
@@ -4257,7 +4272,7 @@ class ParcoursComplet(unittest.TestCase):
         recap = premier + '/campaigns/' + premier.rsplit('/', 1)[1] + '-c1/conditions'
         # 1. Panel, exemples, réglages, essais et leur estimation, avant toute confirmation
         self.examine(page, recap, 'récapitulatif de deux exemples', 'Lancer le benchmark')
-        synthese = next(n['text'] for n in page.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
+        synthese = next(n['text'] for n in page.nodes if n['tag'] == 'ul' and 'meta' in n['attrs']['class'] and 'réponses estimées' in n['text'])
         self.assertRegex(synthese, r'^3 modèles · 2 exemples · 6 essais · réponses estimées : [0-9,]+ USD · '
                                    r'réservé pour l’évaluation : [0-9,]+ USD · crédit restant : [0-9,]+ USD$')
         exemples = next(n['text'] for n in page.nodes if n['attrs'].get('id') == 'exemples')
@@ -4301,7 +4316,7 @@ class ParcoursComplet(unittest.TestCase):
                                                      'tier': 'low'})
         exemples = next(n['text'] for n in seul.nodes if n['attrs'].get('id') == 'exemples')
         self.assertIn('Exemple 2 : Une action sans responsable, pour vérifier qu’elle est signalée · pas inclus : pas encore validé', exemples)
-        self.assertNotIn('exemples · ', next(n['text'] for n in seul.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text']))
+        self.assertNotIn('exemples · ', next(n['text'] for n in seul.nodes if n['tag'] == 'ul' and 'meta' in n['attrs']['class'] and 'réponses estimées' in n['text']))
         qualifier(second)
         page, _, _ = self.request(premier + '/configurations')
         page = self.submit(page, '/configurations', {
@@ -4516,7 +4531,7 @@ class ParcoursComplet(unittest.TestCase):
         recap = self.submit(page, '/configurations', {'models': modeles, 'tier': 'low', 'repetitions': '3'})
         suivi = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions'
         self.examine(recap, suivi, 'récapitulatif de trois essais par modèle', 'Lancer le benchmark')
-        synthese = next(n['text'] for n in recap.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
+        synthese = next(n['text'] for n in recap.nodes if n['tag'] == 'ul' and 'meta' in n['attrs']['class'] and 'réponses estimées' in n['text'])
         self.assertRegex(synthese, r'^2 modèles · 3 essais par modèle · 6 essais · réponses estimées : [0-9,]+ USD · ')
         self.assertIn('Chaque modèle répond 3 fois à l’exemple', recap.visible)
         essais = next(n for n in recap.nodes if n['tag'] == 'table' and n['attrs'].get('aria-label') == 'Essais prévus')
@@ -5695,7 +5710,9 @@ class ParcoursComplet(unittest.TestCase):
     def depenses(self, html):
         """Récapitulatif des dépenses de la comparaison : texte entier et lignes de chaque phase"""
         bloc = html.split('<details id="expenses">')[1].split('<details id="method">')[0].rsplit('</details>', 1)[0]
-        phases = {titre.split(' : ')[0]: re.findall(r'<li>(.*?)</li>', corps, re.S)
+        # La source d'une dépense est une liste `ul.meta` : la ligne se relit avec ses éléments séparés par « · »
+        corps_lus = lambda corps: re.sub(r'<ul class="meta">(.*?)</ul>', lambda m: m[1].replace('</li><li>', ' · ').replace('<li>', '').replace('</li>', ''), corps, flags=re.S)
+        phases = {titre.split(' : ')[0]: re.findall(r'<li>(.*?)</li>', corps_lus(corps), re.S)
                   for titre, corps in re.findall(r'<h3>(.*?)</h3>(.*?)(?=<h3>|$)', bloc, re.S)}
         return Page(('<details>' + bloc + '</details>').encode()).nodes[0]['text'], phases
 

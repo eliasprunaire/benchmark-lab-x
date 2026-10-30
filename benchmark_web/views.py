@@ -14,7 +14,7 @@ from benchmark.storage import _strict_json as encode
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
-from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, lisible_en_liste, listing,
+from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, chain, lisible_en_liste, listing,
                         montant_lisible, personal_key_form, readout, section, state_block, text, workbench)
 from .projection import candidate_names, piece_name, projection_body
 from .results_views import render_results
@@ -145,10 +145,11 @@ def render_witnesses(qualification):
                     + '<p>Attendu justifié : ' + text(witness['justification']) + '</p>'
                     + listing(row['description'] + ' : attendu ' + decision(row, row['expected']) + ', décidé '
                               + decision(row, row['decided']) for row in witness['expected'])
-                    + '<p class="hint">Contrôlé sur la version ' + text(str(witness['revision'])) + ' de l’exemple, avec sa référence'
-                    + ('' if cost is None else ' · coût observé : ' + text(
-                        'inconnu' if cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']))
-                    + '.</p><details><summary>Lire la réponse témoin</summary><div class="example-text">'
+                    + chain(['Contrôlé sur la version ' + text(str(witness['revision'])) + ' de l’exemple, avec sa référence']
+                            + ([] if cost is None else ['coût observé : ' + text(
+                                'inconnu' if cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency'])]),
+                            'hint', end='.')
+                    + '<details><summary>Lire la réponse témoin</summary><div class="example-text">'
                     + text(witness['output']) + '</div></details>')
     return content
 
@@ -638,9 +639,9 @@ def render_semantic_help(value):
                                '<p>' + text(HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
                                + '</p>')
     content += render_help_receipt(value.get('receipt'))
-    content += ('<p><a href="/evaluations-externes/aide">Nouvelle demande</a> · '
-                '<a href="/evaluations-externes">Recherche simple</a> · '
-                '<a href="/preparation">Décrire mon cas d’usage</a></p>')
+    content += chain(['<a href="/evaluations-externes/aide">Nouvelle demande</a>',
+                      '<a href="/evaluations-externes">Recherche simple</a>',
+                      '<a href="/preparation">Décrire mon cas d’usage</a>'])
     return 'Aide sémantique facultative', content
 
 
@@ -747,18 +748,18 @@ def render_editorial_help(value):
                                '<p>' + text(HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
                                + '</p>')
     content += render_help_receipt(value.get('receipt'))
-    content += ('<p><a href="/epreuves/aide">Nouvelle demande</a> · '
-                '<a href="/epreuves">Recherche simple</a> · '
-                '<a href="/preparation">Décrire mon cas d’usage</a></p>')
+    content += chain(['<a href="/epreuves/aide">Nouvelle demande</a>', '<a href="/epreuves">Recherche simple</a>',
+                      '<a href="/preparation">Décrire mon cas d’usage</a>'])
     return 'Aide sémantique facultative', content
 
 
 def render_task_index(task):
     content = '<p><a href="' + text(task['href']) + '">' + text(task['need']) + '</a></p>'
     content += '<p>Visible par vous seul : rien n’est publié dans le catalogue public.</p>'
-    content += '<p>Versions : ' + ' · '.join(
-        '<a href="' + text(task['href']) + '/revisions/' + str(revision) + '">' + str(revision) + '</a>'
-        for revision in task['revisions']) + '.</p>'
+    versions = ['<a href="' + text(task['href']) + '/revisions/' + str(revision) + '">' + str(revision) + '</a>'
+                for revision in task['revisions']]
+    versions[0], versions[-1] = 'Versions : ' + versions[0], versions[-1] + '.'
+    content += chain(versions)
     for version in task['versions']:
         content += '<section id="version-' + text(version['version']) + '"><h3>Exemple validé '
         content += text(version['version']) + '</h3>'
@@ -1210,7 +1211,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         if revision > 1:
             links.append(f'<a href="{text(url)}/revisions/{revision - 1}">Version précédente</a>')
         if links:
-            content += '<p class="hint">' + ' · '.join(links) + '</p>'
+            content += chain(links, 'hint')
         main_start = len(content)
         payload = value['payload']
         if source:

@@ -271,9 +271,9 @@ class S10ProofTests(unittest.TestCase):
             page = views.render(value, '').decode()
             self.assertEqual(1, page.count('<h2>Comparaison des modèles</h2>'))
             self.assertLess(page.index('<h2>Comparaison des modèles</h2>'), page.index('id="filters"'))
-            self.assertLess(page.index('id="filters"'), page.index('class="view-scope'))
+            self.assertLess(page.index('id="filters"'), page.index('view-scope'))
             if value['rows']:
-                self.assertLess(page.index('class="view-scope'), page.index('<table role="table">'))
+                self.assertLess(page.index('view-scope'), page.index('<table role="table">'))
                 self.assertNotIn('<h2>', page[page.index('id="filters"'):page.index('<table role="table">')])
             else:
                 self.assertIn('Aucune réponse ne correspond à ces filtres', page)
@@ -286,8 +286,8 @@ class S10ProofTests(unittest.TestCase):
                                         query={'verdict': 'NE SATISFAIT PAS', 'sort': 'cost'}), '').decode()
         summary = lambda html: html.split('aria-label="Bilan de la comparaison">', 1)[1].split('</div>', 1)[0]
         self.assertEqual(summary(page), summary(filtered))
-        self.assertIn('5 réponses affichées sur 5 · sans tri.', page)
-        self.assertIn('1 réponse affichée sur 5 · triées par coût observé, ordre croissant.', filtered)
+        self.assertIn('<li>5 réponses affichées sur 5</li><li>sans tri.</li>', page)
+        self.assertIn('<li>1 réponse affichée sur 5</li><li>triées par coût observé, ordre croissant.</li>', filtered)
         self.assertIn('Ne satisfait pas : 1', summary(page))
         self.assertIn('Satisfait : 3', summary(page))
         self.assertIn('Comparaison des coûts incomplète', summary(page))

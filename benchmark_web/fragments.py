@@ -239,3 +239,16 @@ def lisible_en_liste(html):
         out.append('<' + name + attrs + ' role="' + role + '"' + '>')
     out.append(html[pos:])
     return ''.join(out)
+
+
+def chain(items, classes='', end=''):
+    """Éléments déjà échappés d'une chaîne « A · B · C » : liste `ul.meta` au-delà du seuil, sinon paragraphe
+
+    Le seuil est de deux séparateurs, d'un seul pour un bilan (`note`, `hint`, `synthesis`) ;
+    `end` est la ponctuation finale, rattachée au dernier élément
+    """
+    needed = 1 if {'note', 'hint', 'synthesis'} & set(classes.split()) else 2
+    items = [*items[:-1], items[-1] + end]
+    if len(items) - 1 < needed:
+        return '<p' + (' class="' + classes + '"' if classes else '') + '>' + ' · '.join(items) + '</p>'
+    return '<ul class="meta' + (' ' + classes if classes else '') + '">' + ''.join('<li>' + item + '</li>' for item in items) + '</ul>'
