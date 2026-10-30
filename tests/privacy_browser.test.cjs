@@ -2355,6 +2355,7 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
               consent: inside('.privacy-consent', '.workbench'), side: document.querySelector('.wb-side').innerText,
               bar: document.querySelector('.wb-side .actionbar') && getComputedStyle(document.querySelector('.wb-side .actionbar')).position,
               stateFirst: document.querySelector('.state') ? follows('.state', '.workbench') : null,
+              stateInSide: inside('.state', '.wb-side'),
               consentAfter: document.querySelector('.privacy-consent') ? follows('#validation', '.privacy-consent') : null};
     });
     for (const width of [1440, 390]) {
@@ -2377,7 +2378,16 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       assert.match(layout.side, /Oui, c’est le travail à tester/, `${width} bouton de validation en synthèse`);
       assert.equal(layout.bar, 'static', `${width} la barre de validation ne recouvre pas le texte de la synthèse`);
       assert.ok(!layout.consent && layout.consentAfter, `${width} consentement séparé, après la validation`);
-      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de validation`);
+      // R10 : la synthèse (état, bouton, vérification) précède le contenu dans le HTML, donc sur téléphone, et reste à droite sur ordinateur
+      assert.ok(layout.stateInSide && !layout.stateFirst, `${width} état d'abord dans la synthèse`);
+      assert.match(layout.side, /Vérification\s*:\s*En attente/, `${width} état de la vérification en une ligne`);
+      assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la synthèse de validation`);
+      assert.equal(await page.locator('details.corr[open]').count(), 0, `${width} correction repliée`);
+      const order = await page.locator('main').innerText();
+      const at = phrase => order.indexOf(phrase);
+      assert.ok(at('Oui, c’est le travail à tester') < at('Votre besoin') && at('Votre besoin') < at('Consigne donnée aux modèles')
+        && at('Consigne donnée aux modèles') < at('Les pièces de l’exemple') && at('Les pièces de l’exemple') < at('Ce que le modèle doit rendre')
+        && at('Ce que le modèle doit rendre') < at('Critères de réussite') && at('Critères de réussite') < at('Limites et travail restant'), `${width} ordre du PRD`);
     }
   } finally {await context.close();}
 });
@@ -2388,7 +2398,7 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     const page = await context.newPage();
     await page.goto(origin + '/render/example');
     const text = await page.textContent('main');
-    assert.ok(text.indexOf('Les pièces de l’exemple') < text.indexOf('Oui, c’est le travail à tester'));
+    assert.ok(text.indexOf('Oui, c’est le travail à tester') < text.indexOf('Les pièces de l’exemple'));
     assert.ok(text.indexOf('Oui, c’est le travail à tester') < text.indexOf('conserver cet exemple pendant 6 mois'));
     for (const phrase of ['historique local', 'votre besoin, vos messages et les versions successives',
       'Cette copie contient plus que la contribution', 'a besoin de JavaScript', 'sans lui, seule la contribution',

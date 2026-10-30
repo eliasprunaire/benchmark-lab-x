@@ -3226,8 +3226,8 @@ class ParcoursComplet(unittest.TestCase):
         position = {key: next(i for i, n in enumerate(page.nodes) if test(n)) for key, test in (
             ('correction', lambda n: n['tag'] == 'details' and n['attrs'].get('class') == 'corr'),
             ('validation', lambda n: n['attrs'].get('id') == 'validation'))}
-        # « Corrigez si besoin, puis validez » ; l'ordre du consentement est vérifié dans tests/privacy_browser.test.cjs
-        self.assertLess(position['correction'], position['validation'])
+        # R10 : la synthèse et le bouton précèdent le contenu, donc la correction repliée ; le consentement est vérifié dans tests/privacy_browser.test.cjs
+        self.assertLess(position['validation'], position['correction'])
         self.assertTrue(any(n['tag'] == 'summary' and n['text'].startswith('Lire « ') for n in page.nodes))
         self.assertFalse(any(n['tag'] == 'summary' and 'Voir le contenu' in n['text'] for n in page.nodes))
         # Admission ouverte : aucun encadré de disponibilité

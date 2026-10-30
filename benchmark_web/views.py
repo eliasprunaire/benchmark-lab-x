@@ -1019,7 +1019,7 @@ def render(value, csrf, path='/preparation', *, error=False):
     elif value.get('kind') == 'home':
         title = 'Quel modèle d’IA pour votre travail ?'
         # Texte d'invite fixé par docs/PRD.md : ne pas le réécrire
-        content = ('<div class="hero"><p class="lead">Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. '
+        content = ('<div class="hero"><p class="lead note">Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. '
                    'Nous préparerons avec vous un exemple fictif pour comparer les modèles sur des critères vérifiables et leur coût observé. '
                    'Les résultats du test vous aideront à faire votre choix.</p>')
         content += '<div class="actions"><a class="button" href="/preparation">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
@@ -1204,15 +1204,21 @@ def render(value, csrf, path='/preparation', *, error=False):
                        '<button type="button" class="sec" hidden>Arrêter la mise à jour automatique</button></div></div>')
             # Relance automatique programmée : sa cause et son délai, sans rien à renvoyer
             notice = '<p class="notice">' + text(value['notice']) + '</p>' if value.get('notice') else ''
-            content += '<div id="availability">' + state_block(tone, 'Où j’en suis', heading,
-                notice + '<p>' + text(next_step) + '</p>', actions) + '</div><script>' + PREPARATION_PROGRESS_SCRIPT + '</script>'
+            state_html = '<div id="availability">' + state_block(tone, 'Où j’en suis', heading,
+                notice + '<p>' + text(next_step) + '</p>', actions) + '</div>'
+            state_tail = '<script>' + PREPARATION_PROGRESS_SCRIPT + '</script>'
         else:
             # L'explication de l'assistant (question sur l'exemple) ne vaut que tant que l'exemple n'est pas validé
             body = '<p>' + text(next_step) + '</p>' if value['validation'] else (
                 '<p>' + text(value['explanation']) + '</p><p class="hint">' + text(next_step) + '</p>')
             if value.get('notice'):
                 body = '<p class="notice">' + text(value['notice']) + '</p>' + body
-            content += state_block(tone, 'Où j’en suis', heading, body, actions)
+            state_html, state_tail = state_block(tone, 'Où j’en suis', heading, body, actions), ''
+        # Avec un exemple, l'état ouvre la colonne de synthèse : il se lit avant le contenu, y compris sur téléphone
+        state_in_side = bool(value['package']) and not referral
+        if not state_in_side:
+            content += state_html
+        content += state_tail
         if referral:
             references = [(identity, reference) for identity, reference in BENCHMARK_REFERENCES.items()
                           if reference['category'] == referral and reference.get('availability') == 'available']
@@ -1228,7 +1234,9 @@ def render(value, csrf, path='/preparation', *, error=False):
             links.append(f'<a href="{text(url)}">Version actuelle</a>')
         if revision > 1:
             links.append(f'<a href="{text(url)}/revisions/{revision - 1}">Version précédente</a>')
-        if links:
+        if links and state_in_side:
+            content += '<p class="hint versions">' + ' '.join(links) + '</p>'
+        elif links:
             content += chain(links, 'hint')
         main_start = len(content)
         payload = value['payload']
@@ -1353,6 +1361,8 @@ def render(value, csrf, path='/preparation', *, error=False):
             else:
                 validation += '<p class="note">Cet exemple n’est pas encore validé. Relisez-le, puis validez-le pour passer à la suite.</p>'
             if editable and value['stage'] == 'preview' and value['validation'] is None:
+                validation += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
+                                '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
                 validation += '<p>En validant, vous confirmez que cet exemple correspond à votre besoin. L’exemple est ensuite vérifié automatiquement, si ce service est disponible : cette vérification est payée avec votre clé OpenRouter. Valider ne lance aucun des modèles à comparer et ne publie rien.</p>'
                 estimate = value.get('qualification_estimate')
                 if estimate:
@@ -1363,11 +1373,19 @@ def render(value, csrf, path='/preparation', *, error=False):
                                 + ' au plus : au plus ' + text(montant_lisible(estimate['witness_usd']))
                                 + ' USD réservé par témoin. Un témoin est une réponse inventée, recevable ou fautive, soumise au '
                                 'contrôle qui jugera les modèles. Le coût observé est relevé ensuite sur le justificatif de chaque appel.</p>')
-                validation += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
-                                '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
             validation += '</section>'
             side = validation + side
-        content = content[:main_start] + workbench(content[main_start:], side, 'Valider l’exemple' if package else 'Coût de la préparation')
+        labels = {'PENDING': 'En attente', 'QUALIFIED': 'Vérification réussie',
+                  'BLOCKED': 'Bloquée : la réponse de référence ou les contrôles ne sont pas assez établis'}
+        if package and not referral:
+            # Une ligne d'état dans la synthèse ; le détail reste dans le dépliant de vérification
+            checked = ('Vérification impossible pour le moment' if automatic and qualification.get('cause')
+                       else labels.get(qualification.get('qualification_status'), 'En attente'))
+            side += '<p class="hint">Vérification : ' + text(checked) + '</p>'
+        if state_in_side:
+            side = state_html + side
+        content = content[:main_start] + workbench(content[main_start:], side, 'Valider l’exemple' if package else 'Coût de la préparation',
+                                                   side_first=state_in_side)
         if package:
             # Le consentement suit la décision principale ; une fois la comparaison lancée, il se replie dans Mes données
             if launched:
@@ -1418,8 +1436,6 @@ def render(value, csrf, path='/preparation', *, error=False):
                 '<textarea id="case-context" name="context" required maxlength="' + str(CONTEXT_MAX)
                 + '" rows="2" aria-describedby="case-context-help"' + disabled + '></textarea>'
                 '<button type="submit"' + disabled + '>Préparer cet exemple</button>') + '</div></details>')
-        labels = {'PENDING': 'En attente', 'QUALIFIED': 'Vérification réussie',
-                  'BLOCKED': 'Bloquée : la réponse de référence ou les contrôles ne sont pas assez établis'}
         if package and not referral:
             if automatic:
                 # Parcours public : la qualification automatique suffit, aucune approbation opérateur n'est attendue

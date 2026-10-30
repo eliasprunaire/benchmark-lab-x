@@ -352,6 +352,9 @@ footer.site details > :not(summary) { margin: .4rem 0 0; }
 .readout strong { font-family: var(--title); font-size: clamp(1.6rem, 3vw, 2.1rem); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; color: var(--ink); overflow-wrap: anywhere; }
 .wb-side .readout { margin: 0 0 var(--s3); padding-bottom: var(--s3); border-bottom: 1px solid var(--line-2); }
 .wb-side .synthesis { font-size: .9rem; }
+/* L'état ouvre la synthèse : le fond de la colonne suffit, sans second cadre */
+.wb-side > .state, .wb-side > #availability > .state { background: transparent; padding: 0; margin: 0 0 var(--s4); }
+.versions { display: flex; flex-wrap: wrap; gap: .25rem var(--s4); }
 .wb-side details.toc { margin: 0; border: 0; background: transparent; }
 .toc ol { margin: var(--s2) 0 0; padding-left: 1.2rem; font-size: .95rem; }
 .toc li + li { margin-top: var(--s2); }
