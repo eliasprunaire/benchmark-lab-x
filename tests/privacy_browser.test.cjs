@@ -41,7 +41,9 @@ try:
     # Cinq réponses dont une non conforme ; la recommandation est ajoutée à la vue seule, pour observer l'infobulle
     results = restitution.comparison(proof.store, proof.sid, 'fixture', 'comparison')
     results['recommendation'] = {'configuration': results['panel'][1], 'amount': '0.10001', 'unit': 'TEST',
-                                 'basis': 'quality_then_cost', 'quality': [{'measure': 'Durée fictive'}], 'count': 3}
+                                 'basis': 'quality_then_cost', 'quality': [{'measure': 'Durée fictive'}], 'count': 3,
+                                 'detail_href': next(row for row in results['rows'] if row['requested_configuration']['id']
+                                                     == results['panel'][1]['id'])['detail_href']}
     # Le motif vient d'un modèle juge : il reste du texte, jamais du balisage
     failed = next(row for row in results['rows'] if row['verdict'] == 'NE SATISFAIT PAS')
     failed['reason'] += ' <img src=x onerror=alert(1)>'
@@ -1054,6 +1056,25 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
       const k1 = await advice();
       assert.ok(k1.first, `${width} conseil après le bilan`);
       assert.ok(k1.bottom <= height, `${width} conseil sous le premier écran : ${k1.bottom}`);
+      // R14 : le conseil est en synthèse (à droite sur ordinateur, d'abord sur téléphone) ; le bilan est une liste courte aux statuts nommés
+      const zones = await page.evaluate(() => {
+        const side = document.querySelector('.wb-side').getBoundingClientRect(), main = document.querySelector('.wb-main').getBoundingClientRect();
+        return {right: side.left >= main.right, above: side.bottom <= main.top,
+                advice: Boolean(document.querySelector('.wb-side .economic-choice')),
+                bilan: [...document.querySelectorAll('.campaign-summary ul.bilan > li')].map(item => item.innerText),
+                limit: document.querySelector('.campaign-summary .limit a[href="#method"]')?.textContent,
+                advised: [...document.querySelectorAll('tr.advised th')].map(cell => cell.innerText),
+                filters: document.querySelector('details#filters')?.open, scope: Boolean(document.querySelector('.view-scope')),
+                detail: document.querySelector('.economic-choice a.button.sec')?.textContent};
+      });
+      assert.ok(zones.advice && (width === 1440 ? zones.right : zones.above), `${width} position de la synthèse du conseil`);
+      for (const label of ['Comparaison incomplète', 'Coût complet inconnu', 'Juge non qualifié', 'Réponses évaluées : 5'])
+        assert.ok(zones.bilan.some(item => item.includes(label)), `${width} bilan sans « ${label} »`);
+      assert.equal(zones.limit, 'Méthode et limites');
+      assert.equal(zones.advised.length, 1);
+      assert.match(zones.advised[0], /Conseillé/);
+      assert.equal(zones.filters, false);
+      assert.match(zones.detail, /^Voir le détail de /);
     }
     // Chaque bloc de conseil : détail replié sur téléphone, déplié sans JavaScript sur ordinateur, où le bloc entier tient au premier écran
     for (const [width, height] of [[390, 844], [1440, 900]]) {
@@ -1200,7 +1221,7 @@ test('priority advice stays native, escaped, keyboard reachable and readable at 
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
     const select = page.locator('#filter-priority');
     assert.equal(await select.count(), 1, 'priorité absente du formulaire');
-    assert.match(await page.locator('#filters > summary').innerText(), /Conseil/);
+    assert.match(await page.locator('#filters > summary').innerText(), /Trier et filtrer/);
     assert.equal(await select.inputValue(), 'duration');
     assert.deepEqual(await page.locator('#filter-priority option').evaluateAll(options => options.map(option => option.value)),
                      ['', 'cost', 'duration', 'present']);

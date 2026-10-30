@@ -4460,7 +4460,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Notre conseil', results.visible)
         # Issue #458 : l'absence de conseil nomme l'exemple incomplet
         self.assertIn('Exemple 2 : toutes les réponses prévues ne sont pas évaluées.', results.visible)
-        self.assertIn('Le juge automatique n’est pas qualifié', results.visible)
+        self.assertIn('Juge non qualifié', results.visible)
         self.sans_promesse(results)
         # Issue #456 : un filtre garde chaque exemple, son dénominateur, ses essais manquants et l'échelle de ses coûts
         sous_filtre, echelles = {}, {}
@@ -4476,7 +4476,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertRegex(page.visible, r'essais lancés : 5 sur 6')
             self.assertNotIn('Notre conseil', page.visible)
             self.assertIn('Exemple 2 : toutes les réponses prévues ne sont pas évaluées.', page.visible)
-            self.assertIn('Le juge automatique n’est pas qualifié', page.visible)
+            self.assertIn('Juge non qualifié', page.visible)
             sous_filtre[filtre] = [(part.count('Détail et preuves'),
                                     'Aucune réponse de cet exemple ne correspond à ces filtres.' in part)
                                    for part in parties[1:]]
@@ -4656,7 +4656,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertRegex(results.visible, r'essais lancés : 5 sur 6')
         # 5. Ni conseil, ni taux : les essais se lisent un par un
         self.assertNotIn('Notre conseil', results.visible)
-        self.assertIn('Le juge automatique n’est pas qualifié', results.visible)
+        self.assertIn('Juge non qualifié', results.visible)
         self.assertIn('Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.', results.visible)
         self.assertNotIn('%', results.visible)
         self.sans_promesse(results)

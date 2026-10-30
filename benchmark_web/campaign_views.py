@@ -530,13 +530,16 @@ def render_comparison(value):
     base, query = value['href'], value['filter_scope']
     names = value.get('model_names', {})
     multiple_cases = len(value['cases']) > 1
-    # Un lecteur arrivé par lien direct sait d'abord ce qui est comparé
-    content = chain([text(value['need']), 'Résultat attendu : ' + text(value['result_expected']),
-                     'Résultats visibles uniquement dans ce navigateur', 'Exemple validé ' + text(value['task']['version']),
-                     '<a href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a>'], 'hint')
-    summary = ''
-    summary += '<div class="campaign-summary" aria-label="Bilan de la comparaison"><span class="ic">' + icon('i-scale') + '</span>'
-    summary += '<p class="eyebrow">Bilan de la comparaison</p>'
+    # Un lecteur arrivé par lien direct sait d'abord ce qui est comparé, en une ligne
+    content = '<p class="hint">' + '. '.join([
+        text(value['need']).rstrip('. '), 'Résultat attendu : ' + text(value['result_expected']).rstrip('. '),
+        'Résultats visibles uniquement dans ce navigateur', 'Exemple validé ' + text(value['task']['version'])]) + '. ' \
+        '<a href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a></p>'
+
+    def status(tone, icon_name, label):
+        # Le libellé porte le statut : la couleur ne le porte jamais seule
+        return '<span class="badge ' + tone + '">' + icon(icon_name) + text(label) + '</span>'
+    items = []
     latest = {record['attempt_id']: record for record in value['history']}
     for case_number, case in enumerate(value['cases'], 1):
         records = [record for record in latest.values() if record['case_id'] == case['id']]
@@ -547,13 +550,11 @@ def render_comparison(value):
                 if count:
                     counts.append(label + ' : ' + str(count))
             prefix = '<strong>' + text(example_label(case, case_number)) + '</strong> : ' if multiple_cases else ''
-            items = [text(item) for item in counts]
-            items[0], items[-1] = prefix + items[0], items[-1] + '.'
-            summary += chain(items)
+            items.append(prefix + ' · '.join(text(item) for item in counts) + '.')
     if not latest:
         received = any(cell['state'] == 'RECEIVED' for cell in value['cells'])
-        summary += '<p>' + ('Des réponses sont arrivées. Leur verdict n’est pas encore disponible.' if received else
-                             'Aucune réponse n’a encore été évaluée. Le suivi indique où en est la comparaison.') + '</p>'
+        items.append('Des réponses sont arrivées. Leur verdict n’est pas encore disponible.' if received else
+                     'Aucune réponse n’a encore été évaluée. Le suivi indique où en est la comparaison.')
     panel = {configuration['id']: configuration for configuration in value.get('panel', [])}
     repetitions = max((cell.get('repetition', 1) for cell in value['cells']), default=1)
 
@@ -579,29 +580,39 @@ def render_comparison(value):
                 + (' · ' + effort_label(configuration) if sum(c['model'] == configuration['model'] for c in panel.values()) > 1 else '')
                 + attempt + ' (' + ' ; '.join(details) + ')'
                 + '. ' + ('Cet essai' if attempt else 'Ce modèle') + ' n’est pas évalué et n’entre pas dans la comparaison.')
-    pending_reasons = list(dict.fromkeys('<li>' + text(pending_reason(item)) + receipt_observations(item) + '</li>'
-                                         for item in value.get('pending_attempts', [])))
-    if pending_reasons:
-        summary += '<ul>' + ''.join(pending_reasons) + '</ul>'
+    items += list(dict.fromkeys(text(pending_reason(item)) + receipt_observations(item)
+                                for item in value.get('pending_attempts', [])))
     # Un modèle sans réponse exploitable est terminé : il ne fait pas dire que les essais se sont arrêtés
     open_pending = [item for item in value.get('pending_attempts', []) if item['state'] not in ('NO_USABLE_RESPONSE', 'NOT_SENT')]
     coverage = value['coverage']
-    summary += chain(['Réponses évaluées : ' + text(coverage['evaluated_attempts']),
-                      'essais lancés : ' + text(coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '.'
-                      + ('' if value['economic_status'] == 'COMPLETE' else ' Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables.')], 'note')
+    # `note` : la couverture reste la phrase d'état statique de la page
+    items.append('<li class="note">Réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : '
+                 + text(coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '.</li>')
+    if value.get('stop_reason') and (coverage['not_started'] or open_pending):
+        items.append(status('b-ind', 'i-alert', 'Comparaison incomplète')
+                     + ' : les essais se sont arrêtés avant la fin. Vous pouvez lire les réponses déjà reçues.')
+    if value['economic_status'] != 'COMPLETE':
+        items.append(status('b-ind', 'i-alert', 'Comparaison des coûts incomplète')
+                     + ' : certains coûts observés manquent ou ne sont pas comparables.')
+    expenses = value.get('expenses')
+    if expenses and not expenses['complete']:
+        items.append(status('b-ind', 'i-alert', 'Coût complet inconnu') + ' : sous-total connu : '
+                     + text(montant_lisible(expenses['known']) + ' ' + expenses['unit']) + '.')
     if multiple_cases or repetitions > 1:
         # Décision d'Ayo du 2026-10-16 : tout résultat sur plusieurs exemples ou plusieurs essais annonce cette limite
-        summary += ('<p class="note">Le juge automatique n’est pas qualifié : ses verdicts n’ont pas été comparés '
-                    'à des jugements humains.'
-                    + (' Chaque verdict vaut pour un exemple ; les exemples ne s’additionnent pas.' if multiple_cases else '')
-                    + (' Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.' if repetitions > 1 else '')
-                    + '</p>')
-    if value.get('stop_reason') and (coverage['not_started'] or open_pending):
-        summary += '<p>Comparaison incomplète : les essais se sont arrêtés avant la fin. Vous pouvez lire les réponses déjà reçues.</p>'
+        items.append(status('b-unk', 'i-help', 'Juge non qualifié') + ' : ses verdicts n’ont pas été comparés à des jugements humains.'
+                     + (' Chaque verdict vaut pour un exemple ; les exemples ne s’additionnent pas.' if multiple_cases else '')
+                     + (' Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.' if repetitions > 1 else ''))
     dates = sorted(set(date[:10] for date in value.get('acquisition_dates', [])))
     if dates:
-        summary += '<p class="hint">Réponses reçues ' + text('le ' + jour_lisible(dates[0]) if len(dates) == 1 else
-                                                          'du ' + jour_lisible(dates[0]) + ' au ' + jour_lisible(dates[-1])) + '.</p>'
+        items.append('Réponses reçues ' + text('le ' + jour_lisible(dates[0]) if len(dates) == 1 else
+                                              'du ' + jour_lisible(dates[0]) + ' au ' + jour_lisible(dates[-1])) + '.')
+    summary = '<div class="campaign-summary" aria-label="Bilan de la comparaison"><ul class="bilan">'
+    summary += ''.join(item if item.startswith('<li') else '<li>' + item + '</li>' for item in items) + '</ul>'
+    if value['population'] and value['conclusion']['limits']:
+        # La limite se lit dans le bilan ; la méthode complète est repliée plus bas
+        summary += ('<p class="limit"><strong>Limite principale :</strong> ' + text(value['conclusion']['limits'][0])
+                    + ' <a href="#method">Méthode et limites</a></p>')
     summary += '</div>'
 
     def number(case_id):
@@ -668,10 +679,18 @@ def render_comparison(value):
             advice += (' Ce modèle est retenu sur chaque exemple, lu séparément.' if 'cases' in choice else '') + '</p>'
         else:
             advice += '<p>Les ' + text(choice['count']) + ' réponses qui satisfont l’exemple ont la même qualité observée. Nous retenons la moins coûteuse.</p>'
+        # Lien natif vers le détail de la configuration conseillée ; la modale n'est pas requise
+        # Sans filtre dans l'adresse : le conseil ne change pas quand un filtre masque la réponse conseillée ;
+        # sur plusieurs exemples, chaque détail est atteignable depuis son tableau
+        advised_href = choice['detail_href'].split('?', 1)[0] if choice.get('detail_href') else None
+        if advised_href:
+            advice += ('<p><a class="button sec" href="' + text(advised_href) + '">Voir le détail de '
+                       + text(model_name(choice['configuration'], names)) + '</a></p>')
         detail += ('<p class="hint">Ce conseil repose sur ' + ('un seul exemple' if 'cases' not in choice else
                    text(len(choice['cases'])) + ' exemples') + '. Sur d’autres tâches, le résultat peut être différent.</p>')
         advice += '<details class="choice-detail"><summary>Détail du conseil</summary><div>' + detail + '</div></details></aside>'
-    content += advice + summary
+    # Le conseil, ou son absence motivée, ouvre la colonne de synthèse : il se lit d'abord sur téléphone et reste à droite sur ordinateur
+    head, content = content, ''
     sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
     sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
     quality_columns = [column for column in value['columns'] if 'criterion_id' in column]
@@ -701,7 +720,7 @@ def render_comparison(value):
                         (('PASS', 'Respectée'), ('FAIL', 'Non respectée'), ('INDETERMINE', 'Non vérifiable'))]),
     }
     content += '<section class="comparison-results"><h2>Comparaison des modèles</h2>'
-    content += '<details id="filters" class="comparison-filters"' + (' open' if query else '') + '><summary>Conseil, tri et filtres</summary>'
+    content += '<details id="filters" class="comparison-filters"' + (' open' if query else '') + '><summary>Trier et filtrer</summary>'
     content += '<form method="get" action="' + text(base) + '#filters"><div class="filter-grid">' + priority_control
     advanced = ''
     for key, (label, default, values) in options.items():
@@ -752,8 +771,12 @@ def render_comparison(value):
         known = [float(r['candidate_cost']['amount']) for r in latest.values() if r['case_id'] == case['id']
                  and r['candidate_cost'] is not None and _numeric(r['candidate_cost']['amount'])]
         for row in rows:
-            content += '<tr id="attempt-' + text(row['attempt_id']) + '"' + ('' if row['verdict'] == 'SATISFAIT' else ' class="out"') + ' tabindex="-1"><th scope="row">'
+            advised = bool(choice) and row['requested_configuration']['id'] == choice['configuration']['id'] and row['verdict'] == 'SATISFAIT'
+            content += ('<tr id="attempt-' + text(row['attempt_id']) + '"' + (' class="out"' if row['verdict'] != 'SATISFAIT'
+                        else ' class="advised"' if advised else '') + ' tabindex="-1"><th scope="row">')
             content += '<strong>' + text(model_name(row['requested_configuration'], names)) + '</strong>'
+            if advised:
+                content += ' <span class="badge b-ok advised-mark">Conseillé</span>'
             content += '<p class="hint">' + text(effort_label(row['requested_configuration'])) + '</p>'
             if row.get('repetition'):
                 content += '<p class="hint">' + text('Essai ' + str(row['repetition']) + ' sur ' + str(repetitions)) + '</p>'
@@ -788,18 +811,19 @@ def render_comparison(value):
         content += '</tbody></table></div>'
     conditions = value['conditions']
     content += '</section>' + render_expenses(value.get('expenses'), names)
-    content += '<details id="method"><summary>Comment lire ces résultats</summary>'
+    content += '<details id="method"><summary>Méthode et limites</summary>'
     content += '<ul><li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
     content += '<li><strong>Ne satisfait pas</strong> : une exigence n’est pas respectée ou une erreur éliminatoire a été relevée ; la réponse n’est pas utilisable, quel que soit son coût.</li>'
     content += '<li><strong>À reprendre</strong> : la preuve ne permet pas encore de conclure ; ce n’est pas un échec du modèle.</li>'
     content += '<li>Lisez d’abord le verdict, puis la qualité observée. Le coût observé sert seulement à départager des réponses qui satisfont l’exemple avec la même qualité. Un coût inconnu ne change pas le verdict.</li>'
     content += '<li>' + text(value['conclusion']['attribution']) + '</li>'
-    if value['conclusion']['limits']:
-        content += '<li>Limite principale : ' + text(value['conclusion']['limits'][0]) + '</li>'
     content += '<li>Conditions communes : tous les modèles reçoivent la même consigne et les mêmes pièces, et travaillent avec le même outil, '
     content += text(conditions['pi']['package'] + ' ' + conditions['pi']['version'])
     content += ', fixé le ' + text(date_lisible_utc(conditions['frozen_at'])) + '.</li></ul></details>'
     content += '<p><a href="' + text(base + '/preview') + '">Voir l’aperçu d’une publication</a> (rien n’est publié)</p>'
+    # Le tableau reprend toute la largeur sous la synthèse : seul le bilan se place à côté du conseil
+    content = head + ('<div class="workbench side-first"><div class="wb-side">' + advice + '</div><div class="wb-main">' + summary + '</div></div>'
+                      if advice else summary) + content
     content += '<dialog id="result-dialog" class="result-dialog" aria-label="Détail et preuves">'
     content += '<div class="result-head"><button type="button" class="sec" data-close autofocus>Fermer</button>'
     content += '<p class="result-status" role="status"></p></div><div class="result-body"></div>'
