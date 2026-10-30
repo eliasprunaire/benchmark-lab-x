@@ -666,6 +666,14 @@ test('native consent form remains usable without JavaScript, with no preselected
     await page.goto(origin + '/render/example');
     assert.equal(await page.getByRole('checkbox').isChecked(), false);
     assert.match(await page.locator('.privacy-consent').textContent(), /besoin de JavaScript ; sans lui, seule la contribution/i);
+    // La notice reste entière, repliée sous la case, et s'ouvre sans JavaScript
+    const notice = page.locator('.privacy-consent label:has(input[type="checkbox"]) + details');
+    assert.equal(await notice.count(), 1, 'notice absente sous la case');
+    assert.equal(await notice.locator('summary').textContent(), 'Ce que ce choix implique');
+    assert.equal(await notice.locator('p').first().isVisible(), false, 'notice dépliée par défaut');
+    await notice.locator('summary').click();
+    assert.equal(await notice.locator('p').first().isVisible(), true);
+    assert.match(await notice.textContent(), /Cette autorisation ne permet pas de le publier/);
     await page.getByRole('checkbox').check();
     await page.getByRole('button', {name: 'Enregistrer mon choix'}).click();
     assert.deepEqual(posts, [{path: '/preparation/dossiers/d1/contribution', body: {

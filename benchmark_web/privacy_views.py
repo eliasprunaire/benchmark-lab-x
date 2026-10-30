@@ -89,7 +89,7 @@ def render_contribution(value, csrf):
             or contribution.get('example_revision') != value.get('revision')):
         return ''
     enabled = contribution.get('enabled') is True
-    body = ('<legend>Partager cet exemple avec Bench-X et le garder dans ce navigateur (facultatif)</legend><p>Cocher cette case a deux effets. '
+    notice = ('<p>Cocher cette case a deux effets. '
             'D’abord, vous autorisez Cybrel, l’éditeur de Bench-X, à conserver cet exemple pendant 6 mois pour améliorer le service. '
             'Cette autorisation ne permet pas de le publier. '
             'Ensuite, vous activez l’historique local : ce navigateur garde une copie complète de chaque cas d’usage que vous ouvrez. '
@@ -97,9 +97,13 @@ def render_contribution(value, csrf):
             'de l’exemple.</p><p>L’historique local a besoin de JavaScript ; sans lui, seule la contribution '
             'est enregistrée. Décocher la case arrête la contribution. L’historique local continue : vous pouvez le mettre en pause ou l’effacer dans '
             '<a href="/preparation/data">Mes données</a>. Votre choix ne change rien à votre accès à Bench-X. '
-            '<a href="/confidentialite">Lire la politique de confidentialité</a>.</p>'
+            '<a href="/confidentialite">Lire la politique de confidentialité</a>.</p>')
+    # La notice reste entière, repliée sous la case qu'elle explique
+    body = ('<legend>Partager cet exemple avec Bench-X et le garder dans ce navigateur (facultatif)</legend>'
             '<label><input type="checkbox" name="enabled" value="true"' + (' checked' if enabled else '') + '>'
-            ' Je partage cet exemple avec Bench-X et j’active l’historique local</label><button type="submit" class="sec">Enregistrer mon choix</button>'
+            ' Je partage cet exemple avec Bench-X et j’active l’historique local</label>'
+            '<details class="depliant discret"><summary>Ce que ce choix implique</summary>' + notice + '</details>'
+            '<button type="submit" class="sec">Enregistrer mon choix</button>'
             '<p role="status" data-privacy-status>' + ('Vous partagez cet exemple avec Bench-X.' if enabled else 'Vous ne partagez pas cet exemple.') + '</p>')
     return '<div class="privacy-consent">' + privacy_form('contribution', privacy.get('csrf_token', csrf),
         '/preparation/dossiers/' + quote(privacy['dossier_id'], safe='') + '/contribution',
