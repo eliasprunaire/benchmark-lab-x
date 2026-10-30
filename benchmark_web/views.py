@@ -14,7 +14,7 @@ from benchmark.storage import _strict_json as encode
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
-from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, chain, lisible_en_liste, listing, long_hint,
+from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, chain, fold, lisible_en_liste, listing, long_hint,
                         montant_lisible, personal_key_form, readout, section, state_block, text, workbench)
 from .projection import candidate_names, piece_name, projection_body
 from .results_views import render_results
@@ -372,8 +372,9 @@ def render_editorial(value):
 
         search = ('<form method="get" action="/epreuves"><label for="q">Rechercher une épreuve</label>'
                   '<input type="text" id="q" name="q" maxlength="200" value="' + text(criteria.get('q', '')) + '">')
+        refine = ''
         for key, label in EDITORIAL_FILTERS:
-            search += ('<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key
+            refine += ('<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key
                        + '"><option value="">Tous</option>')
             proposed = list(filters.get(key, []))
             options = proposed + ([criteria[key]] if active_unavailable(key) else [])
@@ -381,9 +382,11 @@ def render_editorial(value):
                 shown = str(EDITORIAL_STATUS.get(option, option) if key == 'qualification' else option)
                 if active_unavailable(key) and option not in proposed:
                     shown += ' (indisponible)'
-                search += ('<option value="' + text(option) + '"'
+                refine += ('<option value="' + text(option) + '"'
                            + (' selected' if criteria.get(key) == option else '') + '>' + text(shown) + '</option>')
-            search += '</select>'
+            refine += '</select>'
+        # Les filtres se replient sous le champ de recherche, ouverts dès qu'un filtre est actif
+        search += fold('Affiner la recherche', refine, opened=any(criteria.get(key) for key, _ in EDITORIAL_FILTERS))
         search += '<button type="submit">Rechercher</button></form>'
         search += '<p><a href="/epreuves">Effacer la recherche et les filtres</a></p>'
         search += '<p><a href="/epreuves/aide">Demander une aide sémantique facultative</a></p>'
@@ -482,11 +485,13 @@ def render_references(value):
     query, category, verification = (value.get(key, '') for key in ('q', 'category', 'verification'))
     search = ('<form method="get" action="/evaluations-externes"><label for="q">Rechercher une évaluation</label>'
               '<input type="text" id="q" name="q" value="' + text(query) + '">')
+    refine = ''
     for key, label, choices in (('category', 'Travail mesuré', categories),
                                  ('verification', 'Vérification éditoriale', REFERENCE_VERIFICATIONS)):
-        search += '<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key + '"><option value="">Tous</option>'
-        search += ''.join('<option value="' + text(choice) + '"' + (' selected' if value.get(key) == choice else '')
+        refine += '<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key + '"><option value="">Tous</option>'
+        refine += ''.join('<option value="' + text(choice) + '"' + (' selected' if value.get(key) == choice else '')
                           + '>' + text(name) + '</option>' for choice, name in choices.items()) + '</select>'
+    search += fold('Affiner la recherche', refine, opened=bool(category or verification))
     search += '<button type="submit">Rechercher</button></form><p><a href="/evaluations-externes">Effacer la recherche et les filtres</a></p>'
     search += '<p><a href="/evaluations-externes/aide">Demander une aide sémantique facultative</a></p>'
     found = []

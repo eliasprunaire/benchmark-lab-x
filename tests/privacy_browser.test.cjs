@@ -1711,6 +1711,11 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.getByLabel('Rechercher une évaluation').fill('corriger');
+      // Les filtres sont repliés sous « Affiner la recherche » tant qu'aucun n'est actif
+      const refine = page.locator('details', {hasText: 'Affiner la recherche'});
+      assert.equal(await refine.evaluate(details => details.open), false);
+      assert.equal(await page.getByLabel('Rechercher une évaluation').isVisible(), true);
+      await refine.locator('summary').click();
       await page.getByLabel('Travail mesuré', {exact: true}).selectOption('coding');
       await page.getByLabel('Vérification éditoriale', {exact: true}).selectOption('verified');
       await page.getByRole('button', {name: 'Rechercher', exact: true}).click();
@@ -1901,6 +1906,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       await searchField.focus();
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
       await searchField.fill('note');
+      await page.locator('details', {hasText: 'Affiner la recherche'}).locator('summary').click();
       await page.getByLabel('Langue').selectOption('Français');
       await page.getByLabel('Outil').selectOption('Tableur');
       await page.getByRole('button', {name: 'Rechercher'}).click();
@@ -1932,6 +1938,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
         + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
       // Une valeur longue proposée reste sélectionnable et utilisable
       await page.goto(origin + '/epreuves');
+      await page.locator('details', {hasText: 'Affiner la recherche'}).locator('summary').click();
       await page.getByLabel('Outil').selectOption(rendered['editorial-long-tool']);
       await page.getByRole('button', {name: 'Rechercher'}).click();
       const longResult = await page.textContent('main');

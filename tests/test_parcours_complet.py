@@ -1028,6 +1028,11 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn('Épreuve fictive', catalog.visible)
             self.assertNotIn('Épreuve privée', catalog.visible)
             self.assertNotIn('Contribution voisine', catalog.visible)
+            # Les filtres se replient sous « Affiner la recherche », fermés sans filtre actif ; le champ de recherche reste visible
+            affiner = next(n for n in catalog.nodes if n['tag'] == 'details' and n['text'].lstrip().startswith('Affiner la recherche'))
+            self.assertNotIn('open', affiner['attrs'])
+            self.assertIn('Langue', affiner['text'])
+            self.assertFalse(next(n for n in catalog.nodes if n['attrs'].get('name') == 'q')['details'])
             self.assertNotIn('Langue invalide', catalog.visible)
             self.assertNotIn('Langue privée', catalog.visible)
             self.assertNotIn('Langue contribuée', catalog.visible)
@@ -1197,6 +1202,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Tableau au tableur', filtered.visible)
         self.assertNotIn('Note sans tableur', filtered.visible)
         self.assertEqual('Tableur', filtered.form_values('/epreuves')['outil'])
+        # Un filtre actif garde le dépliant ouvert
+        self.assertIn('open', next(n for n in filtered.nodes if n['tag'] == 'details'
+                                   and n['text'].lstrip().startswith('Affiner la recherche'))['attrs'])
         editorial.withdraw(self.public, task, 'version-tableur', dict(
             actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=tableur['package_sha256'],
             scope='editorial-withdrawal', task_id=task, version_id='version-tableur'))
