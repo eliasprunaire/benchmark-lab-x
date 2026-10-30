@@ -742,7 +742,7 @@ def render_comparison(value):
     order = text('triées par ' + sort_label[:1].lower() + sort_label[1:] if sort_column else sort_label)
     if sort_column:
         order += ', ordre décroissant' if query.get('direction') == 'desc' else ', ordre croissant'
-    content += chain([text(len(value['rows'])) + scope + text(len(value['population'])), order], 'view-scope note', end='.')
+    content += '<p class="view-scope note">' + text(len(value['rows'])) + scope + text(len(value['population'])) + ', ' + order + '.</p>'
     if not value['rows']:
         content += '<p class="note">Aucune réponse ne correspond à ces filtres. Retirez un filtre pour revoir les autres : rien n’a été supprimé.</p>'
     for case_number, case in enumerate(value['cases'], 1):

@@ -286,8 +286,8 @@ class S10ProofTests(unittest.TestCase):
                                         query={'verdict': 'NE SATISFAIT PAS', 'sort': 'cost'}), '').decode()
         summary = lambda html: html.split('aria-label="Bilan de la comparaison">', 1)[1].split('</div>', 1)[0]
         self.assertEqual(summary(page), summary(filtered))
-        self.assertIn('<li>5 réponses affichées sur 5</li><li>sans tri.</li>', page)
-        self.assertIn('<li>1 réponse affichée sur 5</li><li>triées par coût observé, ordre croissant.</li>', filtered)
+        self.assertIn('<p class="view-scope note">5 réponses affichées sur 5, sans tri.</p>', page)
+        self.assertIn('<p class="view-scope note">1 réponse affichée sur 5, triées par coût observé, ordre croissant.</p>', filtered)
         self.assertIn('Ne satisfait pas : 1', summary(page))
         self.assertIn('Satisfait : 3', summary(page))
         self.assertIn('Comparaison des coûts incomplète', summary(page))

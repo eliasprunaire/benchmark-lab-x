@@ -219,7 +219,6 @@ dl.kv dd { margin: 0; }
 .comparison-results td .hint { font-size: .85rem; }
 .filter-grid label { margin-top: .2rem; }
 .view-scope { color: var(--muted); font-size: .95rem; }
-ul.meta.view-scope { display: flex; flex-wrap: wrap; gap: 0 .4rem; }
 .table-scroll { overflow-x: auto; }
 /* Dans un tableau défilant, un mot ne se coupe pas et la colonne du candidat reste visible */
 .table-scroll :is(td, li, p) { overflow-wrap: break-word; }
