@@ -882,8 +882,10 @@ class ParcoursComplet(unittest.TestCase):
             both, _, _ = self.request('/epreuves')
             self.assertIn(title, both.visible)
             self.assertIn('Tableau révisé', both.visible)
-            self.assertIn('Version ' + version, both.visible)
-            self.assertIn('Version ' + other, both.visible)
+            # La version est une des caractéristiques repliées de chaque entrée
+            versions = [n['text'] for n in both.nodes if n['tag'] == 'dd']
+            self.assertIn(version, versions)
+            self.assertIn(other, versions)
             self.assertEqual(trial['package_sha256'], editorial.reprise_admission(self.public, task, version)['package_sha256'])
             self.assertEqual(before, {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()})
             refused_withdrawal = dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
@@ -1017,13 +1019,18 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIsNone(catalog_headers.get('Set-Cookie'))
             self.assertEqual('no-referrer', catalog_headers['Referrer-Policy'])
             self.assertNotIn(b'<script', catalog_raw)
+            # La liste montre quatre caractéristiques par épreuve ; les cinq autres se replient dans chaque entrée
             for value in ('Tableau des débits', 'Note de synthèse', 'Ancienne épreuve', 'Ancienne épreuve enrichie',
-                          'Version version-calcul', 'Version version-redaction', 'Version version-ancienne',
-                          'Version version-enrichie', 'Résultat attendu', 'Entrées', 'Langue', 'Outils',
-                          'Difficulté', 'Qualification', 'Résultats publiés', 'Aucun résultat publié',
+                          'Travail évalué', 'Résultat attendu', 'Qualification', 'Résultats publiés', 'Aucun résultat publié'):
+                self.assertIn(value, catalog.visible)
+            autres = ' '.join(n['text'] for n in catalog.nodes if n['tag'] == 'details' and 'Autres caractéristiques' in n['text'])
+            for value in ('Version', 'version-calcul', 'version-redaction', 'version-ancienne',
+                          'version-enrichie', 'Entrées', 'Langue', 'Outils', 'Difficulté',
                           'Textes fournis', 'Bibliothèque figée', 'Français', 'Anglais', 'Tableur',
                           'Aucun outil déclaré'):
-                self.assertIn(value, catalog.visible)
+                self.assertIn(value, autres)
+            for value in ('Entrées', 'Langue', 'Outils', 'Difficulté'):
+                self.assertNotIn(value, catalog.visible)
             self.assertNotIn('Épreuve retirée', catalog.visible)
             self.assertNotIn('Épreuve fictive', catalog.visible)
             self.assertNotIn('Épreuve privée', catalog.visible)
@@ -1241,7 +1248,7 @@ class ParcoursComplet(unittest.TestCase):
                              characteristics={'tools': [long_tool], 'language': 'Français'})
         page, _, _ = self.request('/epreuves')
         self.assertIn(long_tool, page.options('outil'))
-        self.assertIn(long_tool, page.visible)
+        self.assertIn(long_tool, [n['text'] for n in page.nodes if n['tag'] == 'dd'])
         fields = page.form_values('/epreuves')
         self.assertEqual('', fields['outil'])
         fields['outil'] = long_tool

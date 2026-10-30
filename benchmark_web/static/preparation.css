@@ -292,6 +292,12 @@ body:has(dialog[open]) { overflow: hidden; }
   table[role="table"] [data-entete]::before { content: attr(data-entete); display: block; font-size: .8rem; color: var(--ink-2); font-weight: 600; }
 }
 
+/* Caractéristiques d'une épreuve : couples nom et valeur en grille, deux colonnes dès que la place le permet */
+dl.editorial-characteristics { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .6rem 1.5rem; margin: .6rem 0; }
+dl.editorial-characteristics > div { min-width: 0; }
+dl.editorial-characteristics dt { font-size: .85rem; font-weight: 600; color: var(--ink-2); }
+dl.editorial-characteristics dd { margin: 0; overflow-wrap: anywhere; }
+
 /* Dépliant discret : aide ou précision repliée sous un champ, sans filet et sans JavaScript */
 details.depliant { border: 0; margin: .4rem 0; }
 details.depliant > summary { font-weight: 600; color: var(--accent-ink); }

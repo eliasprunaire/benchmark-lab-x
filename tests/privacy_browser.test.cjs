@@ -1898,6 +1898,12 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       }
       await page.setViewportSize({width: 390, height: 844});
       await page.goto(origin + '/epreuves');
+      // Chaque épreuve montre quatre caractéristiques en grille ; les cinq autres se replient
+      const entry = page.locator('main section', {has: page.locator('dl.editorial-characteristics')}).first();
+      assert.deepEqual(await entry.locator('> dl dt').allTextContents(), ['Travail évalué', 'Résultat attendu', 'Qualification', 'Résultats publiés']);
+      assert.equal(await entry.locator('details', {hasText: 'Autres caractéristiques'}).evaluate(details => details.open), false);
+      assert.equal(await entry.locator('details dt').count(), 5);
+      assert.equal(await entry.locator('> dl').evaluate(list => getComputedStyle(list).display), 'grid');
       assert.equal(await page.locator('main script, main img').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

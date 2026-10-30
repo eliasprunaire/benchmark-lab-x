@@ -341,10 +341,19 @@ def editorial_characteristics(entry):
             ('Résultats publiés', 'Résultats publiés' if entry.get('results') else 'Aucun résultat publié'))
 
 
-def editorial_fields(entry):
-    return '<dl class="editorial-characteristics">' + ''.join(
-        '<dt>' + text(label) + '</dt><dd>' + text(value) + '</dd>'
-        for label, value in editorial_characteristics(entry)) + '</dl>'
+EDITORIAL_KEY_FIELDS = ('Travail évalué', 'Résultat attendu', 'Qualification', 'Résultats publiés')
+
+
+def editorial_fields(entry, *, compact=False):
+    """Caractéristiques en grille ; en liste (`compact`), quatre visibles et les autres repliées"""
+    def grid(pairs):
+        return '<dl class="editorial-characteristics">' + ''.join(
+            '<div><dt>' + text(label) + '</dt><dd>' + text(value) + '</dd></div>' for label, value in pairs) + '</dl>'
+    pairs = editorial_characteristics(entry)
+    if not compact:
+        return grid(pairs)
+    return (grid([pair for pair in pairs if pair[0] in EDITORIAL_KEY_FIELDS])
+            + fold('Autres caractéristiques', grid([pair for pair in pairs if pair[0] not in EDITORIAL_KEY_FIELDS])))
 
 
 def render_editorial(value):
@@ -409,7 +418,7 @@ def render_editorial(value):
             if query:
                 href += '?' + query
             content += ('<section><h2><a href="' + text(href) + '">' + text(entry['title']) + '</a></h2>'
-                        + editorial_fields(entry) + '</section>')
+                        + editorial_fields(entry, compact=True) + '</section>')
         if not value.get('total'):
             content += '<p>Aucune épreuve publiée.</p>'
         elif not value.get('versions'):
