@@ -1167,7 +1167,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
             actions = f'<a class="button" href="{text(url)}/configurations">Choisir les modèles</a>'
         example_mark = 'Copie d’épreuve' if source and value['package'] is None else 'Exemple inventé'
-        content = '<p class="tag">' + text(example_mark + ' · version ' + str(revision)) + '</p>'
+        content = '<p class="tag">' + text(example_mark + ', version ' + str(revision)) + '</p>'
         if snapshot:
             title = 'Exemple utilisé pour la comparaison'
             tone, heading, next_step = 'done', 'Exemple déjà testé', 'Vous consultez l’exemple tel qu’il a été testé. Ses résultats restent disponibles.'

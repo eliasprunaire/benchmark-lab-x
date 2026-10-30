@@ -1337,7 +1337,7 @@ class ParcoursComplet(unittest.TestCase):
                       'La copie reste consultable sans clé'):
             self.assertIn(value, page.visible)
         # Avant préparation, la page dit son état de copie et non un exemple déjà préparé
-        self.assertIn('Copie d’épreuve · version 1', page.visible)
+        self.assertIn('Copie d’épreuve, version 1', page.visible)
         self.assertNotIn('Exemple inventé', page.visible)
         self.assertIn('Votre copie est enregistrée.', page.visible)
         self.assertIn('sans clé ni appel aux modèles', page.visible)
@@ -1364,7 +1364,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('justificatif', reloaded.visible)
         # Le rechargement garde la source, la qualification publiée et les pièces copiées
         self.assertIn('Épreuve source', reloaded.visible)
-        self.assertIn('Copie d’épreuve · version 1', reloaded.visible)
+        self.assertIn('Copie d’épreuve, version 1', reloaded.visible)
         self.assertIn('Qualification réussie', reloaded.visible)
         self.assertTrue(any('Relève les opérations inventées' in n['text'] for n in reloaded.nodes
                             if n['tag'] == 'div' and 'example-text' in n['attrs'].get('class', '')))
@@ -1656,7 +1656,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Épreuve source', page.visible)
         self.assertIn('Qualification réussie', page.visible)
         # Un dossier préparé garde sa marque d’exemple inventé, pas celle d’une simple copie
-        self.assertIn('Exemple inventé', page.visible)
+        self.assertRegex(page.visible, r'Exemple inventé, version \d')
+        self.assertNotIn('Exemple inventé ·', page.visible)
         self.assertNotIn('Copie d’épreuve', page.visible)
         # Le coût observé d’une opération reçue reste affiché tel quel, jamais remplacé par un zéro
         self.assertIn('Coût observé de cette préparation : 0,10 USD', page.visible)
