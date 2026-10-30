@@ -1538,7 +1538,7 @@ test('access and launch screens preserve available actions, estimates and refusa
       await page.setViewportSize({width, height: 900});
       await page.goto(origin + '/render/access-connected');
       let layout = await zones();
-      assert.equal(await page.locator('.readout').innerText(), 'SOLDE RESTANT SELON OPENROUTER\n12,50 USD', `${width} relevé du solde`);
+      assert.equal(await page.locator('.readout').innerText(), 'Solde restant selon OpenRouter\n12,50 USD', `${width} relevé du solde`);
       assert.equal(await page.evaluate(() => document.querySelector('.state').compareDocumentPosition(document.querySelector('.workbench'))
         & Node.DOCUMENT_POSITION_FOLLOWING), 4, `${width} état avant les formulaires`);
       assert.ok(layout.side.includes('Son plafond est la seule limite de dépense.'), `${width} colonne dépense`);
@@ -1553,7 +1553,7 @@ test('access and launch screens preserve available actions, estimates and refusa
       await page.goto(origin + '/render/launch-ready');
       layout = await zones();
       // Synthèse, conditions puis bouton dans la colonne lue en premier ; le tableau reste dans la zone principale
-      for (const phrase of ['ESTIMATION DES RÉPONSES\n3,50 USD', 'réponses estimées : 3,50 USD', 'Tout est prêt.', 'Lancer le benchmark'])
+      for (const phrase of ['Estimation des réponses\n3,50 USD', 'réponses estimées : 3,50 USD', 'Tout est prêt.', 'Lancer le benchmark'])
         assert.ok(layout.side.includes(phrase), `${width} ${phrase}`);
       assert.ok(layout.side.indexOf('Tout est prêt.') < layout.side.indexOf('Lancer le benchmark'), `${width} conditions avant le bouton`);
       assert.equal(await page.locator('.wb-main table').count(), 1);

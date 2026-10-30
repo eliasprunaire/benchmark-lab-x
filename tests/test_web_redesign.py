@@ -12,8 +12,8 @@ from tests.test_s2_review_regressions import Authorized, response_for
 from tests.test_s6_regressions import build
 from tests.test_web_access import setUpModule  # noqa: F401  contrôle global des pages rendues
 
-# Polices S18 servies en local, chacune avec sa licence OFL
-FONTS = ('MonaSans', 'HubotSans', 'HostGrotesk', 'GeistMono', 'Silkscreen')
+# Polices de la direction B servies en local, chacune avec sa licence OFL
+FONTS = ('Newsreader', 'InstrumentSans')
 
 
 class TemplateTests(unittest.TestCase):
@@ -56,20 +56,22 @@ class TemplateTests(unittest.TestCase):
             self.assertIn('/preparation/fonts/' + name + '.woff2', views.STYLESHEET_PATH.read_text())
         self.assertEqual(Path('projection.css'), Path(projection.STYLESHEET_PATH.name))
         self.assertNotIn(b'@font-face', projection.STYLESHEET_PATH.read_bytes())
-        # La page publiée reprend les couleurs S18 du parcours, en clair comme en sombre
+        # La page publiée reprend les couleurs du parcours, en clair comme en sombre
         palette = lambda css: [dict(re.findall(r'--([a-z0-9-]+):\s*(#[0-9a-f]{6})', block))
                                for block in re.split(r'@media\s*\(prefers-color-scheme:\s*dark\)', css)[:2]]
         published, private = palette(projection.STYLESHEET_PATH.read_text()), palette(views.STYLESHEET_PATH.read_text())
         for shade, (mine, theirs) in zip(('clair', 'sombre'), zip(published, private)):
             self.assertTrue(mine, shade)
             self.assertLessEqual(mine.items(), theirs.items(), shade)
-        for retired in ('Syne', 'AtkinsonHyperlegibleNext', 'AtkinsonHyperlegibleMono'):
+        for retired in ('Syne', 'AtkinsonHyperlegibleNext', 'AtkinsonHyperlegibleMono',
+                        'MonaSans', 'HubotSans', 'HostGrotesk', 'GeistMono', 'Silkscreen'):
             self.assertFalse((views.FONTS_PATH / (retired + '.woff2')).exists(), retired)
         # Les mentions légales nomment exactement les polices servies
         from benchmark_web import legal_views
-        for family in ('Mona Sans', 'Hubot Sans', 'Host Grotesk', 'Geist Mono', 'Silkscreen'):
+        for family in ('Newsreader', 'Instrument Sans'):
             self.assertIn(family, legal_views.MENTIONS_LEGALES)
-        self.assertNotIn('Atkinson', legal_views.MENTIONS_LEGALES)
+        for retired in ('Atkinson', 'Mona Sans', 'Geist Mono', 'Silkscreen'):
+            self.assertNotIn(retired, legal_views.MENTIONS_LEGALES)
 
 
 class DossierPageTests(unittest.TestCase):
