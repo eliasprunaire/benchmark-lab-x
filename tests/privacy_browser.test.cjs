@@ -2507,6 +2507,11 @@ test('public and private pages retain legal information and exact release identi
       assert.equal(await page.locator('a[aria-current="page"]').textContent(), 'Accueil');
       assert.equal(await page.locator('a[href="/index.html"]').count(), 0);
       assert.ok(text.includes('Un seul manquement suffit'));
+      // Accueil : invite du PRD, cinq étapes, règle visible et lecture du verdict repliée
+      assert.ok(text.includes('Les résultats du test vous aideront à faire votre choix.'));
+      assert.equal(await page.locator('ol.parcours > li').count(), 5);
+      assert.equal(await page.locator('main > details:not([open]) > summary', {hasText: 'Comment lire un verdict'}).count(), 1);
+      assert.equal(await page.locator('.rule').isVisible(), true);
       assert.equal(text.includes('Comparaisons publiées'), false);
     }
     await page.goto(origin + '/render/listing');

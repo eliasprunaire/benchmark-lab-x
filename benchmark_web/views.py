@@ -1018,22 +1018,24 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, content = render_copy_source(value, csrf)
     elif value.get('kind') == 'home':
         title = 'Quel modèle d’IA pour votre travail ?'
-        content = '<div class="hero"><p class="lead note">Décrivez une tâche de votre travail. '
-        content += 'Nous en tirons avec vous un exemple entièrement inventé, que plusieurs modèles traitent rigoureusement dans les mêmes conditions. '
-        content += 'Vous voyez lesquels satisfont vos critères, preuves à l’appui, et ce que chacun a réellement coûté. N’indiquez aucune donnée personnelle ni information confidentielle.</p>'
+        # Texte d'invite fixé par docs/PRD.md : ne pas le réécrire
+        content = ('<div class="hero"><p class="lead">Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. '
+                   'Nous préparerons avec vous un exemple fictif pour comparer les modèles sur des critères vérifiables et leur coût observé. '
+                   'Les résultats du test vous aideront à faire votre choix.</p>')
         content += '<div class="actions"><a class="button" href="/preparation">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
         content += '<a class="button sec" href="/preparation">Retrouver mes cas d’usage</a></div></div>'
         content += section('Cinq étapes jusqu’au verdict', '<ol class="parcours">'
-            '<li><strong>Besoin.</strong> Vous décrivez la tâche et le résultat qui vous serait utile. S’il manque une information, l’assistant vous pose une question.</li>'
-            '<li><strong>Exemple.</strong> L’assistant rédige une consigne et des documents de travail inventés, appelés pièces. Vous les corrigez jusqu’à ce qu’ils ressemblent à votre travail réel.</li>'
-            '<li><strong>Validation.</strong> Vous confirmez que c’est bien le travail à tester. Bench-X vérifie ensuite automatiquement que l’exemple est cohérent et que ses critères peuvent être contrôlés. Aucun modèle n’est encore comparé et rien n’est publié.</li>'
-            '<li><strong>Modèles.</strong> Vous choisissez les modèles et leur niveau de raisonnement. Vous voyez le coût estimé, puis vous décidez de lancer la comparaison.</li>'
-            '<li><strong>Résultats.</strong> Chaque modèle a traité le même exemple dans les mêmes conditions. Pour chacun, vous lisez le verdict, les preuves et le coût observé.</li></ol>')
-        content += section('Comment lire un verdict', '<div class="rule">' + icon('i-scale') + '<span><strong>Un seul manquement suffit.</strong> '
-            'Si le respect d’une exigence n’est pas prouvé, ou si une erreur éliminatoire apparaît, le modèle testé est écarté, quel que soit le reste.</span></div>'
-            '<ul><li>Le verdict vaut pour le modèle tel qu’il a été testé ici, avec ses réglages et dans ces conditions. Il ne juge pas le modèle en général.</li>'
+            '<li><strong>Besoin.</strong> Vous décrivez la tâche et le résultat utile. L’assistant pose une question s’il manque une information.</li>'
+            '<li><strong>Exemple.</strong> L’assistant invente une consigne et des pièces. Vous les corrigez.</li>'
+            '<li><strong>Validation.</strong> Vous confirmez le travail à tester. Aucun modèle n’est encore comparé et rien n’est publié.</li>'
+            '<li><strong>Modèles.</strong> Vous choisissez les modèles et voyez le coût estimé avant de lancer.</li>'
+            '<li><strong>Résultats.</strong> Pour chaque modèle : le verdict, les preuves et le coût observé.</li></ol>')
+        content += ('<div class="rule">' + icon('i-scale') + '<span><strong>Un seul manquement suffit.</strong> '
+            'Si le respect d’une exigence n’est pas prouvé, ou si une erreur éliminatoire apparaît, le modèle testé est écarté, quel que soit le reste.</span></div>')
+        content += fold('Comment lire un verdict', '<ul><li>Le verdict vaut pour le modèle tel qu’il a été testé ici, avec ses réglages et dans ces conditions. Il ne juge pas le modèle en général.</li>'
             '<li>Le coût comparé est celui relevé sur le justificatif renvoyé après chaque appel. Avant le lancement, vous voyez une estimation, signalée comme telle. Si un coût n’a pas pu être relevé, il est affiché comme inconnu.</li>'
-            '<li>Les pièces sont entièrement inventées : aucun dossier réel, même anonymisé.</li></ul>')
+            '<li>Les pièces sont entièrement inventées : aucun dossier réel, même anonymisé.</li>'
+            '<li>Bench-X vérifie ensuite automatiquement que l’exemple est cohérent et que ses critères peuvent être contrôlés.</li></ul>', classes='depliant')
     elif value.get('kind') == 'catalogue':
         title = 'Exemples validés et comparaisons'
         content = '<p class="lead">Visible par vous seul, dans ce navigateur. Pour chaque cas d’usage validé, vous retrouvez ses exemples validés et les comparaisons lancées.</p>'
