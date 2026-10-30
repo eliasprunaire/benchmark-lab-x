@@ -14,8 +14,8 @@ from benchmark.storage import _strict_json as encode
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
-from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, listing, montant_lisible,
-                        personal_key_form, readout, section, state_block, text, workbench)
+from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, chain, fold, lisible_en_liste, listing, long_hint,
+                        montant_lisible, personal_key_form, readout, section, state_block, text, workbench)
 from .projection import candidate_names, piece_name, projection_body
 from .results_views import render_results
 from .legal_views import LEGAL_PAGES, legal_layout
@@ -43,8 +43,9 @@ PUBLIC_PAGES = {
 HONEYPOT = ('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>'
             '<input id="website" name="website" autocomplete="off" tabindex="-1"></div>')
 REQUEST_FIELDS = (
-    '<label for="request">Votre tâche</label><p id="request-help" class="hint">Dites ce que vous faites et ce que vous attendez du modèle, '
-    'en 40 caractères au moins. N’indiquez ni donnée personnelle ni information confidentielle, et ne collez aucun document réel, même anonymisé.</p>'
+    '<label for="request">Votre tâche</label>' + long_hint('request-help', 'Dites ce que vous faites et ce que vous attendez du modèle, '
+    'en 40 caractères au moins. N’indiquez ni donnée personnelle ni information confidentielle, et ne collez aucun document réel, même anonymisé.',
+    'Conseils de saisie') +
     '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5"{request_attrs}>{request}</textarea>{request_error}'
     '<label for="useful">Résultat attendu <span class="hint">(facultatif)</span></label>'
     '<textarea id="useful" name="useful" maxlength="800" rows="3"{useful_attrs}>{useful}</textarea>{useful_error}'
@@ -145,10 +146,11 @@ def render_witnesses(qualification):
                     + '<p>Attendu justifié : ' + text(witness['justification']) + '</p>'
                     + listing(row['description'] + ' : attendu ' + decision(row, row['expected']) + ', décidé '
                               + decision(row, row['decided']) for row in witness['expected'])
-                    + '<p class="hint">Contrôlé sur la version ' + text(str(witness['revision'])) + ' de l’exemple, avec sa référence'
-                    + ('' if cost is None else ' · coût observé : ' + text(
-                        'inconnu' if cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']))
-                    + '.</p><details><summary>Lire la réponse témoin</summary><div class="example-text">'
+                    + chain(['Contrôlé sur la version ' + text(str(witness['revision'])) + ' de l’exemple, avec sa référence']
+                            + ([] if cost is None else ['coût observé : ' + text(
+                                'inconnu' if cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency'])]),
+                            'hint', end='.')
+                    + '<details><summary>Lire la réponse témoin</summary><div class="example-text">'
                     + text(witness['output']) + '</div></details>')
     return content
 
@@ -339,10 +341,19 @@ def editorial_characteristics(entry):
             ('Résultats publiés', 'Résultats publiés' if entry.get('results') else 'Aucun résultat publié'))
 
 
-def editorial_fields(entry):
-    return '<dl class="editorial-characteristics">' + ''.join(
-        '<dt>' + text(label) + '</dt><dd>' + text(value) + '</dd>'
-        for label, value in editorial_characteristics(entry)) + '</dl>'
+EDITORIAL_KEY_FIELDS = ('Travail évalué', 'Résultat attendu', 'Qualification', 'Résultats publiés')
+
+
+def editorial_fields(entry, *, compact=False):
+    """Caractéristiques en grille ; en liste (`compact`), quatre visibles et les autres repliées"""
+    def grid(pairs):
+        return '<dl class="editorial-characteristics">' + ''.join(
+            '<div><dt>' + text(label) + '</dt><dd>' + text(value) + '</dd></div>' for label, value in pairs) + '</dl>'
+    pairs = editorial_characteristics(entry)
+    if not compact:
+        return grid(pairs)
+    return (grid([pair for pair in pairs if pair[0] in EDITORIAL_KEY_FIELDS])
+            + fold('Autres caractéristiques', grid([pair for pair in pairs if pair[0] not in EDITORIAL_KEY_FIELDS])))
 
 
 def render_editorial(value):
@@ -370,8 +381,9 @@ def render_editorial(value):
 
         search = ('<form method="get" action="/epreuves"><label for="q">Rechercher une épreuve</label>'
                   '<input type="text" id="q" name="q" maxlength="200" value="' + text(criteria.get('q', '')) + '">')
+        refine = ''
         for key, label in EDITORIAL_FILTERS:
-            search += ('<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key
+            refine += ('<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key
                        + '"><option value="">Tous</option>')
             proposed = list(filters.get(key, []))
             options = proposed + ([criteria[key]] if active_unavailable(key) else [])
@@ -379,9 +391,11 @@ def render_editorial(value):
                 shown = str(EDITORIAL_STATUS.get(option, option) if key == 'qualification' else option)
                 if active_unavailable(key) and option not in proposed:
                     shown += ' (indisponible)'
-                search += ('<option value="' + text(option) + '"'
+                refine += ('<option value="' + text(option) + '"'
                            + (' selected' if criteria.get(key) == option else '') + '>' + text(shown) + '</option>')
-            search += '</select>'
+            refine += '</select>'
+        # Les filtres se replient sous le champ de recherche, ouverts dès qu'un filtre est actif
+        search += fold('Affiner la recherche', refine, opened=any(criteria.get(key) for key, _ in EDITORIAL_FILTERS))
         search += '<button type="submit">Rechercher</button></form>'
         search += '<p><a href="/epreuves">Effacer la recherche et les filtres</a></p>'
         search += '<p><a href="/epreuves/aide">Demander une aide sémantique facultative</a></p>'
@@ -404,7 +418,7 @@ def render_editorial(value):
             if query:
                 href += '?' + query
             content += ('<section><h2><a href="' + text(href) + '">' + text(entry['title']) + '</a></h2>'
-                        + editorial_fields(entry) + '</section>')
+                        + editorial_fields(entry, compact=True) + '</section>')
         if not value.get('total'):
             content += '<p>Aucune épreuve publiée.</p>'
         elif not value.get('versions'):
@@ -480,11 +494,13 @@ def render_references(value):
     query, category, verification = (value.get(key, '') for key in ('q', 'category', 'verification'))
     search = ('<form method="get" action="/evaluations-externes"><label for="q">Rechercher une évaluation</label>'
               '<input type="text" id="q" name="q" value="' + text(query) + '">')
+    refine = ''
     for key, label, choices in (('category', 'Travail mesuré', categories),
                                  ('verification', 'Vérification éditoriale', REFERENCE_VERIFICATIONS)):
-        search += '<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key + '"><option value="">Tous</option>'
-        search += ''.join('<option value="' + text(choice) + '"' + (' selected' if value.get(key) == choice else '')
+        refine += '<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key + '"><option value="">Tous</option>'
+        refine += ''.join('<option value="' + text(choice) + '"' + (' selected' if value.get(key) == choice else '')
                           + '>' + text(name) + '</option>' for choice, name in choices.items()) + '</select>'
+    search += fold('Affiner la recherche', refine, opened=bool(category or verification))
     search += '<button type="submit">Rechercher</button></form><p><a href="/evaluations-externes">Effacer la recherche et les filtres</a></p>'
     search += '<p><a href="/evaluations-externes/aide">Demander une aide sémantique facultative</a></p>'
     found = []
@@ -570,8 +586,8 @@ def help_form(value, action='/evaluations-externes/aide'):
     return ('<form method="post" action="' + text(action) + '">'
             '<input type="hidden" name="submission_id" value="' + text(submission_id) + '">'
             '<label for="formulation">Formulation à comparer</label>'
-            '<p id="formulation-help" class="hint">Décrivez le travail recherché, sans information '
-            'personnelle ni confidentielle. Une demande peut contenir plusieurs travaux.</p>'
+            + long_hint('formulation-help', 'Décrivez le travail recherché, sans information '
+                        'personnelle ni confidentielle. Une demande peut contenir plusieurs travaux.', 'Conseils de saisie') +
             '<textarea id="formulation" name="formulation" required rows="5" '
             'aria-describedby="formulation-help">' + text(formulation) + '</textarea>'
             + HONEYPOT +
@@ -638,9 +654,9 @@ def render_semantic_help(value):
                                '<p>' + text(HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
                                + '</p>')
     content += render_help_receipt(value.get('receipt'))
-    content += ('<p><a href="/evaluations-externes/aide">Nouvelle demande</a> · '
-                '<a href="/evaluations-externes">Recherche simple</a> · '
-                '<a href="/preparation">Décrire mon cas d’usage</a></p>')
+    content += chain(['<a href="/evaluations-externes/aide">Nouvelle demande</a>',
+                      '<a href="/evaluations-externes">Recherche simple</a>',
+                      '<a href="/preparation">Décrire mon cas d’usage</a>'])
     return 'Aide sémantique facultative', content
 
 
@@ -747,18 +763,19 @@ def render_editorial_help(value):
                                '<p>' + text(HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
                                + '</p>')
     content += render_help_receipt(value.get('receipt'))
-    content += ('<p><a href="/epreuves/aide">Nouvelle demande</a> · '
-                '<a href="/epreuves">Recherche simple</a> · '
-                '<a href="/preparation">Décrire mon cas d’usage</a></p>')
+    content += chain(['<a href="/epreuves/aide">Nouvelle demande</a>', '<a href="/epreuves">Recherche simple</a>',
+                      '<a href="/preparation">Décrire mon cas d’usage</a>'])
     return 'Aide sémantique facultative', content
 
 
 def render_task_index(task):
     content = '<p><a href="' + text(task['href']) + '">' + text(task['need']) + '</a></p>'
     content += '<p>Visible par vous seul : rien n’est publié dans le catalogue public.</p>'
-    content += '<p>Versions : ' + ' · '.join(
-        '<a href="' + text(task['href']) + '/revisions/' + str(revision) + '">' + str(revision) + '</a>'
-        for revision in task['revisions']) + '.</p>'
+    versions = ['<a href="' + text(task['href']) + '/revisions/' + str(revision) + '">' + str(revision) + '</a>'
+                for revision in task['revisions']]
+    if versions:
+        versions[0], versions[-1] = 'Versions : ' + versions[0], versions[-1] + '.'
+        content += chain(versions)
     for version in task['versions']:
         content += '<section id="version-' + text(version['version']) + '"><h3>Exemple validé '
         content += text(version['version']) + '</h3>'
@@ -813,9 +830,17 @@ def preparation_steps(value):
                (reference if downstream else sections[2]) if example else None,
                models_href if models else None,
                (value['href'] if kind in ('comparison', 'attempt_detail') else results_href) if results else None]
+    # Résumé d'une étape passée, seulement quand la donnée est déjà dans la vue : rien n'est déduit pour l'affichage
+    panel = len((launched or campaign).get('panel') or value.get('panel') or ())
+    shown = revision or value.get('task', {}).get('revision')
+    summaries = {1: value.get('need'), 2: 'Version ' + str(shown) if shown else None,
+                 3: 'Validé' if downstream or value.get('qualified') else None,
+                 4: str(panel) + (' configurations' if panel > 1 else ' configuration') if panel else None}
     content = '<nav class="steps" aria-label="Étapes de préparation">'
     for number, (label, href) in enumerate(zip(('Besoin', 'Exemple', 'Validation', 'Modèles', 'Résultats'), targets), 1):
         inner = '<span class="n">' + str(number) + '</span>' + label
+        if number < current and summaries.get(number):
+            inner += '<span class="resume">' + text(summaries[number]) + '</span>'
         if href is None:
             content += '<span aria-disabled="true">' + inner + '</span>'
         else:
@@ -1001,22 +1026,24 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, content = render_copy_source(value, csrf)
     elif value.get('kind') == 'home':
         title = 'Quel modèle d’IA pour votre travail ?'
-        content = '<div class="hero"><p class="lead note">Décrivez une tâche de votre travail. '
-        content += 'Nous en tirons avec vous un exemple entièrement inventé, que plusieurs modèles traitent rigoureusement dans les mêmes conditions. '
-        content += 'Vous voyez lesquels satisfont vos critères, preuves à l’appui, et ce que chacun a réellement coûté. N’indiquez aucune donnée personnelle ni information confidentielle.</p>'
+        # Texte d'invite fixé par docs/PRD.md : ne pas le réécrire
+        content = ('<div class="hero"><p class="lead note">Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. '
+                   'Nous préparerons avec vous un exemple fictif pour comparer les modèles sur des critères vérifiables et leur coût observé. '
+                   'Les résultats du test vous aideront à faire votre choix.</p>')
         content += '<div class="actions"><a class="button" href="/preparation">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
         content += '<a class="button sec" href="/preparation">Retrouver mes cas d’usage</a></div></div>'
         content += section('Cinq étapes jusqu’au verdict', '<ol class="parcours">'
-            '<li><strong>Besoin.</strong> Vous décrivez la tâche et le résultat qui vous serait utile. S’il manque une information, l’assistant vous pose une question.</li>'
-            '<li><strong>Exemple.</strong> L’assistant rédige une consigne et des documents de travail inventés, appelés pièces. Vous les corrigez jusqu’à ce qu’ils ressemblent à votre travail réel.</li>'
-            '<li><strong>Validation.</strong> Vous confirmez que c’est bien le travail à tester. Bench-X vérifie ensuite automatiquement que l’exemple est cohérent et que ses critères peuvent être contrôlés. Aucun modèle n’est encore comparé et rien n’est publié.</li>'
-            '<li><strong>Modèles.</strong> Vous choisissez les modèles et leur niveau de raisonnement. Vous voyez le coût estimé, puis vous décidez de lancer la comparaison.</li>'
-            '<li><strong>Résultats.</strong> Chaque modèle a traité le même exemple dans les mêmes conditions. Pour chacun, vous lisez le verdict, les preuves et le coût observé.</li></ol>')
-        content += section('Comment lire un verdict', '<div class="rule">' + icon('i-scale') + '<span><strong>Un seul manquement suffit.</strong> '
-            'Si le respect d’une exigence n’est pas prouvé, ou si une erreur éliminatoire apparaît, le modèle testé est écarté, quel que soit le reste.</span></div>'
-            '<ul><li>Le verdict vaut pour le modèle tel qu’il a été testé ici, avec ses réglages et dans ces conditions. Il ne juge pas le modèle en général.</li>'
+            '<li><strong>Besoin.</strong> Vous décrivez la tâche et le résultat utile. L’assistant pose une question s’il manque une information.</li>'
+            '<li><strong>Exemple.</strong> L’assistant invente une consigne et des pièces. Vous les corrigez.</li>'
+            '<li><strong>Validation.</strong> Vous confirmez le travail à tester. Aucun modèle n’est encore comparé et rien n’est publié.</li>'
+            '<li><strong>Modèles.</strong> Vous choisissez les modèles et voyez le coût estimé avant de lancer.</li>'
+            '<li><strong>Résultats.</strong> Pour chaque modèle : le verdict, les preuves et le coût observé.</li></ol>')
+        content += ('<div class="rule">' + icon('i-scale') + '<span><strong>Un seul manquement suffit.</strong> '
+            'Si le respect d’une exigence n’est pas prouvé, ou si une erreur éliminatoire apparaît, le modèle testé est écarté, quel que soit le reste.</span></div>')
+        content += fold('Comment lire un verdict', '<ul><li>Le verdict vaut pour le modèle tel qu’il a été testé ici, avec ses réglages et dans ces conditions. Il ne juge pas le modèle en général.</li>'
             '<li>Le coût comparé est celui relevé sur le justificatif renvoyé après chaque appel. Avant le lancement, vous voyez une estimation, signalée comme telle. Si un coût n’a pas pu être relevé, il est affiché comme inconnu.</li>'
-            '<li>Les pièces sont entièrement inventées : aucun dossier réel, même anonymisé.</li></ul>')
+            '<li>Les pièces sont entièrement inventées : aucun dossier réel, même anonymisé.</li>'
+            '<li>Bench-X vérifie ensuite automatiquement que l’exemple est cohérent et que ses critères peuvent être contrôlés.</li></ul>', classes='depliant')
     elif value.get('kind') == 'catalogue':
         title = 'Exemples validés et comparaisons'
         content = '<p class="lead">Visible par vous seul, dans ce navigateur. Pour chaque cas d’usage validé, vous retrouvez ses exemples validés et les comparaisons lancées.</p>'
@@ -1167,7 +1194,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
             actions = f'<a class="button" href="{text(url)}/configurations">Choisir les modèles</a>'
         example_mark = 'Copie d’épreuve' if source and value['package'] is None else 'Exemple inventé'
-        content = '<p class="tag">' + text(example_mark + ' · version ' + str(revision)) + '</p>'
+        content = '<p class="tag">' + text(example_mark + ', version ' + str(revision)) + '</p>'
         if snapshot:
             title = 'Exemple utilisé pour la comparaison'
             tone, heading, next_step = 'done', 'Exemple déjà testé', 'Vous consultez l’exemple tel qu’il a été testé. Ses résultats restent disponibles.'
@@ -1185,15 +1212,20 @@ def render(value, csrf, path='/preparation', *, error=False):
                        '<button type="button" class="sec" hidden>Arrêter la mise à jour automatique</button></div></div>')
             # Relance automatique programmée : sa cause et son délai, sans rien à renvoyer
             notice = '<p class="notice">' + text(value['notice']) + '</p>' if value.get('notice') else ''
-            content += '<div id="availability">' + state_block(tone, 'Où j’en suis', heading,
-                notice + '<p>' + text(next_step) + '</p>', actions) + '</div><script>' + PREPARATION_PROGRESS_SCRIPT + '</script>'
+            state_html = '<div id="availability">' + state_block(tone, 'Où j’en suis', heading,
+                notice + '<p>' + text(next_step) + '</p>', actions) + '</div>'
+            state_tail = '<script>' + PREPARATION_PROGRESS_SCRIPT + '</script>'
         else:
             # L'explication de l'assistant (question sur l'exemple) ne vaut que tant que l'exemple n'est pas validé
             body = '<p>' + text(next_step) + '</p>' if value['validation'] else (
                 '<p>' + text(value['explanation']) + '</p><p class="hint">' + text(next_step) + '</p>')
             if value.get('notice'):
                 body = '<p class="notice">' + text(value['notice']) + '</p>' + body
-            content += state_block(tone, 'Où j’en suis', heading, body, actions)
+            state_html, state_tail = state_block(tone, 'Où j’en suis', heading, body, actions), ''
+        # Avec un exemple, l'état ouvre la colonne de synthèse : il se lit avant le contenu, y compris sur téléphone
+        state_in_side = bool(value['package']) and not referral
+        if not state_in_side:
+            content += state_html + state_tail
         if referral:
             references = [(identity, reference) for identity, reference in BENCHMARK_REFERENCES.items()
                           if reference['category'] == referral and reference.get('availability') == 'available']
@@ -1209,8 +1241,10 @@ def render(value, csrf, path='/preparation', *, error=False):
             links.append(f'<a href="{text(url)}">Version actuelle</a>')
         if revision > 1:
             links.append(f'<a href="{text(url)}/revisions/{revision - 1}">Version précédente</a>')
-        if links:
-            content += '<p class="hint">' + ' · '.join(links) + '</p>'
+        if links and state_in_side:
+            content += '<p class="hint versions">' + ' '.join(links) + '</p>'
+        elif links:
+            content += chain(links, 'hint')
         main_start = len(content)
         payload = value['payload']
         if source:
@@ -1222,9 +1256,9 @@ def render(value, csrf, path='/preparation', *, error=False):
                 need_disabled = '' if can_submit and editable else ' disabled'
                 content += section('Décrivez votre besoin', form(csrf, url + '/messages',
                     {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
-                    '<p id="source-need-help" class="hint">Dites ce que vous voulez comparer et ce qui diffère de '
-                    'l’épreuve source. La notice et les pièces conservées ne changent pas. La préparation est payée '
-                    'avec votre clé OpenRouter.</p>'
+                    long_hint('source-need-help', 'Dites ce que vous voulez comparer et ce qui diffère de '
+                              'l’épreuve source. La notice et les pièces conservées ne changent pas. La préparation est payée '
+                              'avec votre clé OpenRouter.', 'Conseils de saisie')
                     + ('' if can_submit else '<p class="hint"><a href="/preparation/access">Ajoutez votre clé OpenRouter</a> '
                        'pour préparer cet exemple. La copie reste consultable sans clé.</p>') +
                     '<label for="message">Votre besoin personnel</label>'
@@ -1334,6 +1368,8 @@ def render(value, csrf, path='/preparation', *, error=False):
             else:
                 validation += '<p class="note">Cet exemple n’est pas encore validé. Relisez-le, puis validez-le pour passer à la suite.</p>'
             if editable and value['stage'] == 'preview' and value['validation'] is None:
+                validation += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
+                                '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
                 validation += '<p>En validant, vous confirmez que cet exemple correspond à votre besoin. L’exemple est ensuite vérifié automatiquement, si ce service est disponible : cette vérification est payée avec votre clé OpenRouter. Valider ne lance aucun des modèles à comparer et ne publie rien.</p>'
                 estimate = value.get('qualification_estimate')
                 if estimate:
@@ -1344,11 +1380,20 @@ def render(value, csrf, path='/preparation', *, error=False):
                                 + ' au plus : au plus ' + text(montant_lisible(estimate['witness_usd']))
                                 + ' USD réservé par témoin. Un témoin est une réponse inventée, recevable ou fautive, soumise au '
                                 'contrôle qui jugera les modèles. Le coût observé est relevé ensuite sur le justificatif de chaque appel.</p>')
-                validation += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
-                                '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
             validation += '</section>'
             side = validation + side
-        content = content[:main_start] + workbench(content[main_start:], side, 'Valider l’exemple' if package else 'Coût de la préparation')
+        labels = {'PENDING': 'En attente', 'QUALIFIED': 'Vérification réussie',
+                  'BLOCKED': 'Bloquée : la réponse de référence ou les contrôles ne sont pas assez établis'}
+        if package and not referral:
+            # Une ligne d'état dans la synthèse ; le détail reste dans le dépliant de vérification
+            checked = ('Vérification impossible pour le moment' if automatic and qualification.get('cause')
+                       else labels.get(qualification.get('qualification_status'), 'En attente'))
+            side += '<p class="hint">Vérification : ' + text(checked) + '</p>'
+        if state_in_side:
+            # Le script de suivi cherche son panneau au démarrage : il vient après lui dans la synthèse
+            side = state_html + state_tail + side
+        content = content[:main_start] + workbench(content[main_start:], side, 'Valider l’exemple' if package else 'Coût de la préparation',
+                                                   side_first=state_in_side)
         if package:
             # Le consentement suit la décision principale ; une fois la comparaison lancée, il se replie dans Mes données
             if launched:
@@ -1399,8 +1444,6 @@ def render(value, csrf, path='/preparation', *, error=False):
                 '<textarea id="case-context" name="context" required maxlength="' + str(CONTEXT_MAX)
                 + '" rows="2" aria-describedby="case-context-help"' + disabled + '></textarea>'
                 '<button type="submit"' + disabled + '>Préparer cet exemple</button>') + '</div></details>')
-        labels = {'PENDING': 'En attente', 'QUALIFIED': 'Vérification réussie',
-                  'BLOCKED': 'Bloquée : la réponse de référence ou les contrôles ne sont pas assez établis'}
         if package and not referral:
             if automatic:
                 # Parcours public : la qualification automatique suffit, aucune approbation opérateur n'est attendue
@@ -1467,4 +1510,4 @@ def render(value, csrf, path='/preparation', *, error=False):
             head += '<link rel="canonical" href="' + text(PUBLIC_URL + page) + '">'
     return (template.replace('{{title}}', text(title)).replace('{{body_class}}', body_class).replace('{{menu}}', menu)
             .replace('{{navigation}}', navigation).replace('{{layout_class}}', 'layout' if navigation else '')
-            .replace('{{identity}}', identity).replace('{{head}}', head).replace('{{content}}', content).encode('utf-8'))
+            .replace('{{identity}}', identity).replace('{{head}}', head).replace('{{content}}', lisible_en_liste(content)).encode('utf-8'))

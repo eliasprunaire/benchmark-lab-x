@@ -447,7 +447,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
         with patch.object(c, '_requester_campaigns', return_value=[snapshot]):
             selection = c.configurations_view(self.store, self.sid, 'fixture')
         page = views.render(self.summary(snapshot, selection), 'csrf').decode()
-        self.assertIn('<td>non estimable</td>', page)
+        self.assertIn('>non estimable</td>', page)
         self.assertIn('réponses estimées : non estimable', page)
         checks = c._requester_checks(self.store, self.store._connection, snapshot, self.sid, {})
         self.assertEqual('Estimation totale : non estimable',
