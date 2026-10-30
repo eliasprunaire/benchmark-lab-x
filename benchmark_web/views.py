@@ -14,7 +14,7 @@ from benchmark.storage import _strict_json as encode
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
-from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, chain, lisible_en_liste, listing,
+from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, chain, lisible_en_liste, listing, long_hint,
                         montant_lisible, personal_key_form, readout, section, state_block, text, workbench)
 from .projection import candidate_names, piece_name, projection_body
 from .results_views import render_results
@@ -43,8 +43,9 @@ PUBLIC_PAGES = {
 HONEYPOT = ('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>'
             '<input id="website" name="website" autocomplete="off" tabindex="-1"></div>')
 REQUEST_FIELDS = (
-    '<label for="request">Votre tâche</label><p id="request-help" class="hint">Dites ce que vous faites et ce que vous attendez du modèle, '
-    'en 40 caractères au moins. N’indiquez ni donnée personnelle ni information confidentielle, et ne collez aucun document réel, même anonymisé.</p>'
+    '<label for="request">Votre tâche</label>' + long_hint('request-help', 'Dites ce que vous faites et ce que vous attendez du modèle, '
+    'en 40 caractères au moins. N’indiquez ni donnée personnelle ni information confidentielle, et ne collez aucun document réel, même anonymisé.',
+    'Conseils de saisie') +
     '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5"{request_attrs}>{request}</textarea>{request_error}'
     '<label for="useful">Résultat attendu <span class="hint">(facultatif)</span></label>'
     '<textarea id="useful" name="useful" maxlength="800" rows="3"{useful_attrs}>{useful}</textarea>{useful_error}'
@@ -571,8 +572,8 @@ def help_form(value, action='/evaluations-externes/aide'):
     return ('<form method="post" action="' + text(action) + '">'
             '<input type="hidden" name="submission_id" value="' + text(submission_id) + '">'
             '<label for="formulation">Formulation à comparer</label>'
-            '<p id="formulation-help" class="hint">Décrivez le travail recherché, sans information '
-            'personnelle ni confidentielle. Une demande peut contenir plusieurs travaux.</p>'
+            + long_hint('formulation-help', 'Décrivez le travail recherché, sans information '
+                        'personnelle ni confidentielle. Une demande peut contenir plusieurs travaux.', 'Conseils de saisie') +
             '<textarea id="formulation" name="formulation" required rows="5" '
             'aria-describedby="formulation-help">' + text(formulation) + '</textarea>'
             + HONEYPOT +
@@ -1223,9 +1224,9 @@ def render(value, csrf, path='/preparation', *, error=False):
                 need_disabled = '' if can_submit and editable else ' disabled'
                 content += section('Décrivez votre besoin', form(csrf, url + '/messages',
                     {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
-                    '<p id="source-need-help" class="hint">Dites ce que vous voulez comparer et ce qui diffère de '
-                    'l’épreuve source. La notice et les pièces conservées ne changent pas. La préparation est payée '
-                    'avec votre clé OpenRouter.</p>'
+                    long_hint('source-need-help', 'Dites ce que vous voulez comparer et ce qui diffère de '
+                              'l’épreuve source. La notice et les pièces conservées ne changent pas. La préparation est payée '
+                              'avec votre clé OpenRouter.', 'Conseils de saisie')
                     + ('' if can_submit else '<p class="hint"><a href="/preparation/access">Ajoutez votre clé OpenRouter</a> '
                        'pour préparer cet exemple. La copie reste consultable sans clé.</p>') +
                     '<label for="message">Votre besoin personnel</label>'

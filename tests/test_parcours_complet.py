@@ -60,6 +60,7 @@ class Page(HTMLParser):
             liste['items'] = liste.get('items', 0) + 1
         node = {'tag': tag, 'attrs': attrs, 'text': '',
                 'details': any(n['tag'] == 'details' for n in self.stack),
+                'fieldset': any(n['tag'] == 'fieldset' for n in self.stack),
                 'hidden': any(n['tag'] in ('head', 'script', 'svg') or 'hidden' in n['attrs']
                               for n in self.stack),
                 'main': any(n['tag'] == 'main' for n in self.stack)}
@@ -428,6 +429,12 @@ class ParcoursComplet(unittest.TestCase):
                 if noeud['tag'] == 'p' and not any(noeud['text'] in cellule for cellule in cellules):
                     bilan = {'note', 'hint', 'synthesis'} & set((noeud['attrs'].get('class') or '').split())
                     self.assertLess(noeud['text'].count(' · '), 1 if bilan else 2, noeud['text'][:80])
+            # Une aide de plus de 140 caractères dans un formulaire se replie ; son id reste la cible de aria-describedby
+            longues = [noeud['text'].strip()[:60] for noeud in page.nodes
+                       if noeud['tag'] in ('p', 'small') and not noeud['details'] and len(noeud['text'].strip()) > 140
+                       and 'hint' in (noeud['attrs'].get('class') or '').split() + [noeud['tag']]
+                       and (noeud['fieldset'] or any(noeud is n for formulaire in page.forms for n in formulaire['nodes']))]
+            self.assertEqual([], longues)
             # Un tableau se lit en liste sur téléphone : rôles explicites et en-tête de colonne par cellule
             self.assertNotIn('faites défiler', page.visible)
             for noeud in page.nodes:
@@ -3170,6 +3177,11 @@ class ParcoursComplet(unittest.TestCase):
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         self.examine(page, '/preparation', 'besoin', 'Préparer mon exemple')
+        # L'aide longue du champ se replie sous « Conseils de saisie » ; son id reste la cible de aria-describedby
+        self.assertIn('en 40 caractères au moins', page.depliant('Conseils de saisie'))
+        self.assertNotIn('en 40 caractères au moins', page.visible)
+        self.assertIn('request-help', next(n for n in page.nodes if n['attrs'].get('id') == 'request')['attrs']['aria-describedby'])
+        self.assertTrue(any(n['attrs'].get('id') == 'request-help' and n['details'] for n in page.nodes))
         self.assertIn('Votre clé OpenRouter est enregistrée.', page.visible)
         self.assertFalse(any(n['attrs'].get('id') == 'availability' for n in page.nodes))
         fields = [n['attrs'].get('name') for n in page.form('/dossiers')['nodes'] if n['tag'] == 'textarea']
@@ -3241,6 +3253,10 @@ class ParcoursComplet(unittest.TestCase):
         configurations = page.link('Choisir les modèles')
         page, _, _ = self.request(configurations)
         self.examine(page, configurations, 'choix des configurations', 'Continuer')
+        # L'aide longue d'un réglage se replie sous le nom de ce réglage ; le groupe reste lié à elle
+        self.assertIn('plus proche qu’il propose', page.depliant('Ce que change « Niveau de raisonnement demandé »'))
+        self.assertIn('Ce que change « Essais par modèle et par exemple »', ' '.join(n['text'] for n in page.nodes if n['tag'] == 'summary'))
+        self.assertNotIn('plus proche qu’il propose', page.visible)
         self.assertNotIn('Gammes généralistes retenues', page.visible)
         self.assertNotIn('date d’ajout au catalogue', page.visible)
         self.assertNotIn('Relevé des modèles du', page.visible)

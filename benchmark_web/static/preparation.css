@@ -292,6 +292,12 @@ body:has(dialog[open]) { overflow: hidden; }
   table[role="table"] [data-entete]::before { content: attr(data-entete); display: block; font-size: .8rem; color: var(--ink-2); font-weight: 600; }
 }
 
+/* Dépliant discret : aide ou précision repliée sous un champ, sans filet et sans JavaScript */
+details.depliant { border: 0; margin: .4rem 0; }
+details.depliant > summary { font-weight: 600; color: var(--accent-ink); }
+details.depliant > :not(summary) { margin-top: .5rem; }
+details.depliant > p, details.depliant > ul { max-width: 68ch; }
+
 /* Choix court : boutons radio côte à côte, l'option cochée prend la couleur du bouton principal */
 fieldset.segments { display: flex; flex-wrap: wrap; gap: .5rem; border: 0; padding: 0; margin: .9rem 0 .3rem; }
 .segments legend { flex-basis: 100%; padding: 0; margin-bottom: .3rem; }

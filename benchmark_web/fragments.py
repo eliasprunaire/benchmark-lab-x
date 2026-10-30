@@ -8,7 +8,7 @@ de rendu, pour qu'aucun cycle ne soit possible.
 import re
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from html import escape
+from html import escape, unescape
 
 MOIS = ('janvier', 'février', 'mars', 'avril', 'mai', 'juin',
         'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre')
@@ -272,3 +272,14 @@ def single_choice(field, name, label, options, selected, *, form='', describedby
             + attrs + (' aria-describedby="' + text(describedby) + '"' if describedby else '') + '>'
             + ''.join('<option value="' + text(value) + '"' + (' selected' if value == selected else '') + '>' + text(title)
                       + '</option>' for value, title in options) + '</select>')
+
+
+def long_hint(identifier, body, summary, *, limit=140):
+    """Aide d'un champ ou d'un réglage : au-delà de `limit` caractères elle se replie sous `summary`
+
+    L'id reste sur le paragraphe, donc la cible de `aria-describedby`, plié ou non
+    """
+    hint = '<p id="' + text(identifier) + '" class="hint">' + body + '</p>'
+    if len(unescape(re.sub(r'<[^>]+>', '', body))) <= limit:
+        return hint
+    return '<details class="depliant discret"><summary>' + summary + '</summary>' + hint + '</details>'

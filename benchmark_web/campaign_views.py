@@ -19,7 +19,7 @@ from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
 
 from .fragments import (VERDICT_BADGES, valeur_mesure, access_summary, badge, chain, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
-                        personal_key_form, readable_fields, readout, section, single_choice, state_block, text, workbench)
+                        personal_key_form, readable_fields, readout, section, long_hint, single_choice, state_block, text, workbench)
 
 COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
   const link = event.target.closest('tr[id] [data-result]');
@@ -685,9 +685,9 @@ def render_comparison(value):
                             '<select id="filter-priority" name="priority" aria-describedby="priority-help">'
                             + ''.join('<option value="' + text(value_) + '"' + (' selected' if selected_priority == value_ else '')
                                       + '>' + text(title) + '</option>' for value_, title in priority_choices)
-                            + '</select><p class="hint" id="priority-help">Changer la priorité ne modifie ni les verdicts '
+                            + '</select>' + long_hint('priority-help', 'Changer la priorité ne modifie ni les verdicts '
                             'ni les coûts. Le conseil porte sur toute la comparaison, même si un filtre masque la réponse '
-                            'conseillée.</p></div>')
+                            'conseillée.', 'Ce que change « Priorité du conseil »') + '</div>')
     options = {
         'case': ('Exemple', 'Tous les exemples', [(v['id'], example_label(v, number))
                          for number, v in enumerate(value['cases'], 1)] if multiple_cases else []),
@@ -843,8 +843,9 @@ def render_configurations(value, csrf):
         tiers = single_choice('reasoning-effort', 'tier', 'Niveau de raisonnement demandé',
                        [(tier, labels.get(tier, tier)) for tier in value['available_tiers']], value['current_tier'],
                        form='configurations-form', describedby='reasoning-help')
-        tiers += '<p class="hint" id="reasoning-help">Ce niveau est transmis aux modèles qui le proposent. '
-        tiers += 'Un modèle qui ne l’accepte pas reçoit le niveau le plus proche qu’il propose, affiché dans le récapitulatif. Les modèles à niveau fixe sont comparés tels quels. Un niveau plus élevé peut rendre la réponse plus lente et plus chère, sans garantir qu’elle soit meilleure.</p>'
+        tiers += long_hint('reasoning-help', 'Ce niveau est transmis aux modèles qui le proposent. '
+                           'Un modèle qui ne l’accepte pas reçoit le niveau le plus proche qu’il propose, affiché dans le récapitulatif. Les modèles à niveau fixe sont comparés tels quels. Un niveau plus élevé peut rendre la réponse plus lente et plus chère, sans garantir qu’elle soit meilleure.',
+                           'Ce que change « Niveau de raisonnement demandé »')
         tunable = [model for model in value['models'] if len(model.get('levels', ())) > 1]
         if tunable:
             tiers += '<details><summary>Ajuster le niveau par modèle</summary><p class="hint">« Automatique » suit le niveau demandé ci-dessus. Seuls les niveaux acceptés par chaque modèle sont proposés.</p>'
@@ -877,10 +878,10 @@ def render_configurations(value, csrf):
                               [(str(count), str(count) + (' essais' if count > 1 else ' essai'))
                                for count in range(1, value.get('max_repetitions', 1) + 1)],
                               str(value.get('repetitions', 1)), form='configurations-form', describedby='repetitions-help')
-                       + '<p class="hint" id="repetitions-help">Chaque essai est une réponse distincte, payée et '
-                       'évaluée séparément. Tous les essais partent, quel que soit le résultat des autres. Plusieurs essais '
-                       'montrent si les réponses d’un modèle varient ; ils ne mesurent pas sa fiabilité. Avec plus d’un essai, '
-                       'aucun conseil n’est donné.</p>')
+                       + long_hint('repetitions-help', 'Chaque essai est une réponse distincte, payée et '
+                                   'évaluée séparément. Tous les essais partent, quel que soit le résultat des autres. Plusieurs essais '
+                                   'montrent si les réponses d’un modèle varient ; ils ne mesurent pas sa fiabilité. Avec plus d’un essai, '
+                                   'aucun conseil n’est donné.', 'Ce que change « Essais par modèle et par exemple »'))
         # Le récapitulatif de la sélection suit l'enregistrement : le serveur y redirige
         main += ('<fieldset><legend>Raisonnement</legend>' + tiers + '</fieldset>'
                  '<fieldset><legend>Essais</legend>' + repetitions + '</fieldset>'
