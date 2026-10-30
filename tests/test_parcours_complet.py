@@ -49,18 +49,8 @@ class Page(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
-        # Une liste `ul.meta` remplace une chaîne « A · B · C » : la lecture du texte rend le séparateur entre éléments
-        liste = next((n for n in reversed(self.stack) if n['tag'] == 'ul'), None)
-        if tag == 'li' and liste and 'meta' in (liste['attrs'].get('class') or '').split():
-            if liste.get('items'):
-                for noeud in self.stack:
-                    noeud['text'] += ' · '
-                if not any(n['tag'] in ('details', 'head', 'script', 'svg') or 'hidden' in n['attrs'] for n in self.stack):
-                    self.nodes.append({'tag': '#text', 'attrs': {}, 'text': '·', 'details': False, 'hidden': False, 'main': False})
-            liste['items'] = liste.get('items', 0) + 1
         node = {'tag': tag, 'attrs': attrs, 'text': '',
                 'details': any(n['tag'] == 'details' for n in self.stack),
-                'fieldset': any(n['tag'] == 'fieldset' for n in self.stack),
                 'hidden': any(n['tag'] in ('head', 'script', 'svg') or 'hidden' in n['attrs']
                               for n in self.stack),
                 'main': any(n['tag'] == 'main' for n in self.stack)}
@@ -423,30 +413,6 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b|\b(?:configuration|cell|attempt|case)-\d+\b|\b(?:O1|E1)\b|python -m|package_sha256')
             self.assertIn('Révision : aaaaaaa', page.visible)
             self.assertNotIn('v0.1.0', page.visible)
-            # Une chaîne « A · B · C » se lit en liste, un élément par ligne ; hors tableau, un bilan compte dès un séparateur
-            cellules = [n['text'] for n in page.nodes if n['tag'] in ('td', 'th')]
-            for noeud in page.nodes:
-                if noeud['tag'] == 'p' and not any(noeud['text'] in cellule for cellule in cellules):
-                    bilan = {'note', 'hint', 'synthesis'} & set((noeud['attrs'].get('class') or '').split())
-                    self.assertLess(noeud['text'].count(' · '), 1 if bilan else 2, noeud['text'][:80])
-            # Une aide de plus de 140 caractères dans un formulaire se replie ; son id reste la cible de aria-describedby
-            longues = [noeud['text'].strip()[:60] for noeud in page.nodes
-                       if noeud['tag'] in ('p', 'small') and not noeud['details'] and len(noeud['text'].strip()) > 140
-                       and 'hint' in (noeud['attrs'].get('class') or '').split() + [noeud['tag']]
-                       and (noeud['fieldset'] or any(noeud is n for formulaire in page.forms for n in formulaire['nodes']))]
-            self.assertEqual([], longues)
-            # Un tableau se lit en liste sur téléphone : rôles explicites et en-tête de colonne par cellule
-            self.assertNotIn('faites défiler', page.visible)
-            for noeud in page.nodes:
-                if noeud['tag'] == 'table':
-                    self.assertEqual('table', noeud['attrs'].get('role'))
-                elif noeud['tag'] == 'td':
-                    self.assertEqual('cell', noeud['attrs'].get('role'))
-                    self.assertTrue(noeud['attrs'].get('data-entete'), noeud['text'][:40])
-                elif noeud['tag'] == 'th':
-                    colonne = noeud['attrs'].get('scope') == 'col'
-                    self.assertEqual('columnheader' if colonne else 'rowheader', noeud['attrs'].get('role'))
-                    self.assertEqual(colonne, not noeud['attrs'].get('data-entete'))
             self.assertNotIn(KEY, page.visible)
             # Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page ne compte sur elle
             self.assertNotIn('équipe Bench-X', ' '.join(n['text'] for n in page.nodes))
@@ -882,10 +848,8 @@ class ParcoursComplet(unittest.TestCase):
             both, _, _ = self.request('/epreuves')
             self.assertIn(title, both.visible)
             self.assertIn('Tableau révisé', both.visible)
-            # La version est une des caractéristiques repliées de chaque entrée
-            versions = [n['text'] for n in both.nodes if n['tag'] == 'dd']
-            self.assertIn(version, versions)
-            self.assertIn(other, versions)
+            self.assertIn('Version ' + version, both.visible)
+            self.assertIn('Version ' + other, both.visible)
             self.assertEqual(trial['package_sha256'], editorial.reprise_admission(self.public, task, version)['package_sha256'])
             self.assertEqual(before, {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()})
             refused_withdrawal = dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
@@ -1019,27 +983,17 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIsNone(catalog_headers.get('Set-Cookie'))
             self.assertEqual('no-referrer', catalog_headers['Referrer-Policy'])
             self.assertNotIn(b'<script', catalog_raw)
-            # La liste montre quatre caractéristiques par épreuve ; les cinq autres se replient dans chaque entrée
             for value in ('Tableau des débits', 'Note de synthèse', 'Ancienne épreuve', 'Ancienne épreuve enrichie',
-                          'Travail évalué', 'Résultat attendu', 'Qualification', 'Résultats publiés', 'Aucun résultat publié'):
-                self.assertIn(value, catalog.visible)
-            autres = ' '.join(n['text'] for n in catalog.nodes if n['tag'] == 'details' and 'Autres caractéristiques' in n['text'])
-            for value in ('Version', 'version-calcul', 'version-redaction', 'version-ancienne',
-                          'version-enrichie', 'Entrées', 'Langue', 'Outils', 'Difficulté',
+                          'Version version-calcul', 'Version version-redaction', 'Version version-ancienne',
+                          'Version version-enrichie', 'Résultat attendu', 'Entrées', 'Langue', 'Outils',
+                          'Difficulté', 'Qualification', 'Résultats publiés', 'Aucun résultat publié',
                           'Textes fournis', 'Bibliothèque figée', 'Français', 'Anglais', 'Tableur',
                           'Aucun outil déclaré'):
-                self.assertIn(value, autres)
-            for value in ('Entrées', 'Langue', 'Outils', 'Difficulté'):
-                self.assertNotIn(value, catalog.visible)
+                self.assertIn(value, catalog.visible)
             self.assertNotIn('Épreuve retirée', catalog.visible)
             self.assertNotIn('Épreuve fictive', catalog.visible)
             self.assertNotIn('Épreuve privée', catalog.visible)
             self.assertNotIn('Contribution voisine', catalog.visible)
-            # Les filtres se replient sous « Affiner la recherche », fermés sans filtre actif ; le champ de recherche reste visible
-            affiner = next(n for n in catalog.nodes if n['tag'] == 'details' and n['text'].lstrip().startswith('Affiner la recherche'))
-            self.assertNotIn('open', affiner['attrs'])
-            self.assertIn('Langue', affiner['text'])
-            self.assertFalse(next(n for n in catalog.nodes if n['attrs'].get('name') == 'q')['details'])
             self.assertNotIn('Langue invalide', catalog.visible)
             self.assertNotIn('Langue privée', catalog.visible)
             self.assertNotIn('Langue contribuée', catalog.visible)
@@ -1209,9 +1163,6 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Tableau au tableur', filtered.visible)
         self.assertNotIn('Note sans tableur', filtered.visible)
         self.assertEqual('Tableur', filtered.form_values('/epreuves')['outil'])
-        # Un filtre actif garde le dépliant ouvert
-        self.assertIn('open', next(n for n in filtered.nodes if n['tag'] == 'details'
-                                   and n['text'].lstrip().startswith('Affiner la recherche'))['attrs'])
         editorial.withdraw(self.public, task, 'version-tableur', dict(
             actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=tableur['package_sha256'],
             scope='editorial-withdrawal', task_id=task, version_id='version-tableur'))
@@ -1248,7 +1199,7 @@ class ParcoursComplet(unittest.TestCase):
                              characteristics={'tools': [long_tool], 'language': 'Français'})
         page, _, _ = self.request('/epreuves')
         self.assertIn(long_tool, page.options('outil'))
-        self.assertIn(long_tool, [n['text'] for n in page.nodes if n['tag'] == 'dd'])
+        self.assertIn(long_tool, page.visible)
         fields = page.form_values('/epreuves')
         self.assertEqual('', fields['outil'])
         fields['outil'] = long_tool
@@ -1374,7 +1325,7 @@ class ParcoursComplet(unittest.TestCase):
                       'La copie reste consultable sans clé'):
             self.assertIn(value, page.visible)
         # Avant préparation, la page dit son état de copie et non un exemple déjà préparé
-        self.assertIn('Copie d’épreuve, version 1', page.visible)
+        self.assertIn('Copie d’épreuve · version 1', page.visible)
         self.assertNotIn('Exemple inventé', page.visible)
         self.assertIn('Votre copie est enregistrée.', page.visible)
         self.assertIn('sans clé ni appel aux modèles', page.visible)
@@ -1401,7 +1352,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('justificatif', reloaded.visible)
         # Le rechargement garde la source, la qualification publiée et les pièces copiées
         self.assertIn('Épreuve source', reloaded.visible)
-        self.assertIn('Copie d’épreuve, version 1', reloaded.visible)
+        self.assertIn('Copie d’épreuve · version 1', reloaded.visible)
         self.assertIn('Qualification réussie', reloaded.visible)
         self.assertTrue(any('Relève les opérations inventées' in n['text'] for n in reloaded.nodes
                             if n['tag'] == 'div' and 'example-text' in n['attrs'].get('class', '')))
@@ -1693,8 +1644,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Épreuve source', page.visible)
         self.assertIn('Qualification réussie', page.visible)
         # Un dossier préparé garde sa marque d’exemple inventé, pas celle d’une simple copie
-        self.assertRegex(page.visible, r'Exemple inventé, version \d')
-        self.assertNotIn('Exemple inventé ·', page.visible)
+        self.assertIn('Exemple inventé', page.visible)
         self.assertNotIn('Copie d’épreuve', page.visible)
         # Le coût observé d’une opération reçue reste affiché tel quel, jamais remplacé par un zéro
         self.assertIn('Coût observé de cette préparation : 0,10 USD', page.visible)
@@ -2002,7 +1952,7 @@ class ParcoursComplet(unittest.TestCase):
         # Configuration demandée, observée et sources : différence et inconnue explicites
         page_raw = raw.decode()
         self.assertIn('fournisseur-observe', page_raw)
-        self.assertRegex(page_raw, r'Fournisseur</th><td[^>]*>OpenRouter</td><td[^>]*>fournisseur-observe</td>')
+        self.assertRegex(page_raw, r'Fournisseur</th><td>OpenRouter</td><td>fournisseur-observe</td>')
         self.assertRegex(page_raw, r'Observations inconnues :[^<]*Effort de raisonnement')
 
         piece_url = first + '/pieces/' + selected[0]
@@ -3192,11 +3142,6 @@ class ParcoursComplet(unittest.TestCase):
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         self.examine(page, '/preparation', 'besoin', 'Préparer mon exemple')
-        # L'aide longue du champ se replie sous « Conseils de saisie » ; son id reste la cible de aria-describedby
-        self.assertIn('en 40 caractères au moins', page.depliant('Conseils de saisie'))
-        self.assertNotIn('en 40 caractères au moins', page.visible)
-        self.assertIn('request-help', next(n for n in page.nodes if n['attrs'].get('id') == 'request')['attrs']['aria-describedby'])
-        self.assertTrue(any(n['attrs'].get('id') == 'request-help' and n['details'] for n in page.nodes))
         self.assertIn('Votre clé OpenRouter est enregistrée.', page.visible)
         self.assertFalse(any(n['attrs'].get('id') == 'availability' for n in page.nodes))
         fields = [n['attrs'].get('name') for n in page.form('/dossiers')['nodes'] if n['tag'] == 'textarea']
@@ -3226,8 +3171,8 @@ class ParcoursComplet(unittest.TestCase):
         position = {key: next(i for i, n in enumerate(page.nodes) if test(n)) for key, test in (
             ('correction', lambda n: n['tag'] == 'details' and n['attrs'].get('class') == 'corr'),
             ('validation', lambda n: n['attrs'].get('id') == 'validation'))}
-        # R10 : la synthèse et le bouton précèdent le contenu, donc la correction repliée ; le consentement est vérifié dans tests/privacy_browser.test.cjs
-        self.assertLess(position['validation'], position['correction'])
+        # « Corrigez si besoin, puis validez » ; l'ordre du consentement est vérifié dans tests/privacy_browser.test.cjs
+        self.assertLess(position['correction'], position['validation'])
         self.assertTrue(any(n['tag'] == 'summary' and n['text'].startswith('Lire « ') for n in page.nodes))
         self.assertFalse(any(n['tag'] == 'summary' and 'Voir le contenu' in n['text'] for n in page.nodes))
         # Admission ouverte : aucun encadré de disponibilité
@@ -3268,10 +3213,6 @@ class ParcoursComplet(unittest.TestCase):
         configurations = page.link('Choisir les modèles')
         page, _, _ = self.request(configurations)
         self.examine(page, configurations, 'choix des configurations', 'Continuer')
-        # L'aide longue d'un réglage se replie sous le nom de ce réglage ; le groupe reste lié à elle
-        self.assertIn('plus proche qu’il propose', page.depliant('Ce que change « Niveau de raisonnement demandé »'))
-        self.assertIn('Ce que change « Essais par modèle et par exemple »', ' '.join(n['text'] for n in page.nodes if n['tag'] == 'summary'))
-        self.assertNotIn('plus proche qu’il propose', page.visible)
         self.assertNotIn('Gammes généralistes retenues', page.visible)
         self.assertNotIn('date d’ajout au catalogue', page.visible)
         self.assertNotIn('Relevé des modèles du', page.visible)
@@ -3328,13 +3269,13 @@ class ParcoursComplet(unittest.TestCase):
         page, _, raw = self.request(recap)
         self.examine(page, recap, 'prêt à lancer', 'Lancer le benchmark')
         # Synthèse d'abord : prévision des réponses et réservation de l'évaluation restent deux montants
-        synthesis = next(n['text'] for n in page.nodes if n['tag'] == 'ul' and 'meta' in n['attrs']['class'] and 'réponses estimées' in n['text'])
+        synthesis = next(n['text'] for n in page.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
         self.assertRegex(synthesis, r'^2 modèles · réponses estimées : [0-9,]+ USD · réservé pour l’évaluation : '
                                     r'[0-9,]+ USD · crédit restant : 18,5 USD$')
         self.assertIn('Tout est prêt.', page.visible)
         self.assertNotIn('✓', page.visible)
         order = [next(i for i, n in enumerate(page.nodes) if test(n)) for test in (
-            lambda n: n['tag'] == 'ul' and 'meta' in n['attrs']['class'] and 'réponses estimées' in n['text'],
+            lambda n: n['tag'] == 'p' and 'réponses estimées' in n['text'],
             lambda n: n['tag'] == 'button' and n['text'] == 'Lancer le benchmark',
             lambda n: n['tag'] == 'a' and n['text'] == 'Modifier la sélection',
             lambda n: n['tag'] == 'table')]
@@ -3478,8 +3419,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual({'openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'},
                          {n['attrs']['value'] for n in chosen.nodes if n['tag'] == 'input'
                           and n['attrs'].get('name') == 'models' and 'checked' in n['attrs']})
-        self.assertIn('checked', next(n for n in chosen.nodes if n['tag'] == 'input' and n['attrs'].get('type') == 'radio'
-                                      and n['attrs'].get('name') == 'tier' and n['attrs'].get('value') == 'high')['attrs'])
+        self.assertIn('selected', next(n for n in chosen.nodes if n['tag'] == 'option'
+                                       and n['attrs'].get('value') == 'high')['attrs'])
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'essais en attente', 'Actualiser le suivi')
         self.assertEqual('Benchmark en cours', next(n['text'] for n in page.nodes if n['tag'] == 'h1'))
@@ -4303,7 +4244,7 @@ class ParcoursComplet(unittest.TestCase):
         recap = premier + '/campaigns/' + premier.rsplit('/', 1)[1] + '-c1/conditions'
         # 1. Panel, exemples, réglages, essais et leur estimation, avant toute confirmation
         self.examine(page, recap, 'récapitulatif de deux exemples', 'Lancer le benchmark')
-        synthese = next(n['text'] for n in page.nodes if n['tag'] == 'ul' and 'meta' in n['attrs']['class'] and 'réponses estimées' in n['text'])
+        synthese = next(n['text'] for n in page.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
         self.assertRegex(synthese, r'^3 modèles · 2 exemples · 6 essais · réponses estimées : [0-9,]+ USD · '
                                    r'réservé pour l’évaluation : [0-9,]+ USD · crédit restant : [0-9,]+ USD$')
         exemples = next(n['text'] for n in page.nodes if n['attrs'].get('id') == 'exemples')
@@ -4347,7 +4288,7 @@ class ParcoursComplet(unittest.TestCase):
                                                      'tier': 'low'})
         exemples = next(n['text'] for n in seul.nodes if n['attrs'].get('id') == 'exemples')
         self.assertIn('Exemple 2 : Une action sans responsable, pour vérifier qu’elle est signalée · pas inclus : pas encore validé', exemples)
-        self.assertNotIn('exemples · ', next(n['text'] for n in seul.nodes if n['tag'] == 'ul' and 'meta' in n['attrs']['class'] and 'réponses estimées' in n['text']))
+        self.assertNotIn('exemples · ', next(n['text'] for n in seul.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text']))
         qualifier(second)
         page, _, _ = self.request(premier + '/configurations')
         page = self.submit(page, '/configurations', {
@@ -4460,7 +4401,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Notre conseil', results.visible)
         # Issue #458 : l'absence de conseil nomme l'exemple incomplet
         self.assertIn('Exemple 2 : toutes les réponses prévues ne sont pas évaluées.', results.visible)
-        self.assertIn('Juge non qualifié', results.visible)
+        self.assertIn('Le juge automatique n’est pas qualifié', results.visible)
         self.sans_promesse(results)
         # Issue #456 : un filtre garde chaque exemple, son dénominateur, ses essais manquants et l'échelle de ses coûts
         sous_filtre, echelles = {}, {}
@@ -4476,7 +4417,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertRegex(page.visible, r'essais lancés : 5 sur 6')
             self.assertNotIn('Notre conseil', page.visible)
             self.assertIn('Exemple 2 : toutes les réponses prévues ne sont pas évaluées.', page.visible)
-            self.assertIn('Juge non qualifié', page.visible)
+            self.assertIn('Le juge automatique n’est pas qualifié', page.visible)
             sous_filtre[filtre] = [(part.count('Détail et preuves'),
                                     'Aucune réponse de cet exemple ne correspond à ces filtres.' in part)
                                    for part in parties[1:]]
@@ -4562,7 +4503,7 @@ class ParcoursComplet(unittest.TestCase):
         recap = self.submit(page, '/configurations', {'models': modeles, 'tier': 'low', 'repetitions': '3'})
         suivi = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions'
         self.examine(recap, suivi, 'récapitulatif de trois essais par modèle', 'Lancer le benchmark')
-        synthese = next(n['text'] for n in recap.nodes if n['tag'] == 'ul' and 'meta' in n['attrs']['class'] and 'réponses estimées' in n['text'])
+        synthese = next(n['text'] for n in recap.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
         self.assertRegex(synthese, r'^2 modèles · 3 essais par modèle · 6 essais · réponses estimées : [0-9,]+ USD · ')
         self.assertIn('Chaque modèle répond 3 fois à l’exemple', recap.visible)
         essais = next(n for n in recap.nodes if n['tag'] == 'table' and n['attrs'].get('aria-label') == 'Essais prévus')
@@ -4588,11 +4529,7 @@ class ParcoursComplet(unittest.TestCase):
             campaigns.create(store, incomplet)
         # Le choix se relit sur la page des modèles
         _, _, raw = self.request(dossier + '/configurations')
-        # Trois choix courts : des boutons radio de même nom, le troisième coché
-        self.assertRegex(raw.decode(), r'<fieldset class="segments"[^>]*><legend>Essais par modèle et par exemple</legend>'
-                                       r'(?:<label><input type="radio" name="repetitions" value="[12]" form="configurations-form"> [^<]*</label>){2}'
-                                       r'<label><input type="radio" name="repetitions" value="3" form="configurations-form" checked> 3 essais</label>')
-        self.assertNotIn('<select id="repetitions"', raw.decode())
+        self.assertRegex(raw.decode(), r'name="repetitions"[^>]*>(?:(?!</select>).)*<option value="3" selected>')
         self.submit(recap, '/start', {}, status=303)
         attempts = self.starts.get_nowait()['candidate_attempts']
         self.assertEqual(6, len(attempts))
@@ -4656,7 +4593,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertRegex(results.visible, r'essais lancés : 5 sur 6')
         # 5. Ni conseil, ni taux : les essais se lisent un par un
         self.assertNotIn('Notre conseil', results.visible)
-        self.assertIn('Juge non qualifié', results.visible)
+        self.assertIn('Le juge automatique n’est pas qualifié', results.visible)
         self.assertIn('Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.', results.visible)
         self.assertNotIn('%', results.visible)
         self.sans_promesse(results)
@@ -5627,7 +5564,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(bloc.split('Modèle B')[1].split('Modèle C')[0].strip().endswith(': réponse reçue'), bloc)
         # Issue #541 : la ligne de compte ne la compte pas non plus comme une réponse reçue
         self.assertIn('Réponses reçues : 2 sur 3.', page.visible)
-        rows = html.split('<tbody role="rowgroup">')[1].split('</tbody>')[0]
+        rows = html.split('<tbody>')[1].split('</tbody>')[0]
         self.assertEqual(2, rows.count('<tr id="attempt-'))
         reprise = next(chunk for chunk in rows.split('<tr id="attempt-')[1:] if '<strong>Modèle B</strong>' in chunk)
         self.assertIn('Reprise après arrêt pour longueur : limite de sortie de 8192 jetons', reprise)
@@ -5733,7 +5670,7 @@ class ParcoursComplet(unittest.TestCase):
             ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
         self.assertEqual(3, len(envois))
         html = self.evaluer(dossier)
-        self.assertEqual(2, html.split('<tbody role="rowgroup">')[1].count('<tr id="attempt-'))
+        self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
         self.assertNotIn('Aucune réponse exploitable', html)
         self.assertNotIn('Notre conseil', html)
         self.assertIn('Une reprise a été demandée pour un modèle.', html)
@@ -5745,9 +5682,7 @@ class ParcoursComplet(unittest.TestCase):
     def depenses(self, html):
         """Récapitulatif des dépenses de la comparaison : texte entier et lignes de chaque phase"""
         bloc = html.split('<details id="expenses">')[1].split('<details id="method">')[0].rsplit('</details>', 1)[0]
-        # La source d'une dépense est une liste `ul.meta` : la ligne se relit avec ses éléments séparés par « · »
-        corps_lus = lambda corps: re.sub(r'<ul class="meta">(.*?)</ul>', lambda m: m[1].replace('</li><li>', ' · ').replace('<li>', '').replace('</li>', ''), corps, flags=re.S)
-        phases = {titre.split(' : ')[0]: re.findall(r'<li>(.*?)</li>', corps_lus(corps), re.S)
+        phases = {titre.split(' : ')[0]: re.findall(r'<li>(.*?)</li>', corps, re.S)
                   for titre, corps in re.findall(r'<h3>(.*?)</h3>(.*?)(?=<h3>|$)', bloc, re.S)}
         return Page(('<details>' + bloc + '</details>').encode()).nodes[0]['text'], phases
 
@@ -5811,7 +5746,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(len(phases) - 1, texte.count('Pour information, hors conseil'))
         self.assertNotRegex(texte, r'(?i)par mois|heure de travail|plafond|traceur')
         # Le tableau garde le coût de chaque réponse, sans les autres phases
-        lignes = html.split('<tbody role="rowgroup">')[1].split('</tbody>')[0]
+        lignes = html.split('<tbody>')[1].split('</tbody>')[0]
         self.assertEqual(['0,05 USD', '0,10 USD'], sorted(re.findall(r'<span class="source-value">(.*?)</span>', lignes)))
 
     def test_cout_complet_inconnu_annonce_un_sous_total(self):
@@ -5909,9 +5844,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(filtree.link('Détail et preuves'))
         self.examine(page, comparison, 'détail ouvert seul', None)
         self.assertIn('Modèle C', page.visible)
-        # La portée du verdict est longue : elle se replie, alors que la limite de l'exemple reste visible
-        self.assertNotIn(ATTRIBUTION, page.visible)
-        self.assertIn(ATTRIBUTION, page.depliant('Portée de ce verdict'))
+        self.assertIn(ATTRIBUTION, page.visible)
         self.assertIn(LIMIT, page.visible)
         self.assertIn('Comparaison : réponses évaluées : 2 · essais lancés : 2 sur 2.', page.visible)
         resultats = Page(html.encode())
@@ -6131,8 +6064,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('1 réponse affichée sur 2', filtree.visible)
         self.assertIn('Notre conseil', filtree.visible)
         self.assertIn('Modèle C', filtree.visible)
-        self.assertIn('Modèle A', filtree_raw.decode().split('<tbody role="rowgroup">')[1].split('</tbody>')[0])
-        self.assertNotIn('Modèle C</strong>', filtree_raw.decode().split('<tbody role="rowgroup">')[1].split('</tbody>')[0])
+        self.assertIn('Modèle A', filtree_raw.decode().split('<tbody>')[1].split('</tbody>')[0])
+        self.assertNotIn('Modèle C</strong>', filtree_raw.decode().split('<tbody>')[1].split('</tbody>')[0])
         self.assertEqual({'priority': 'cost', 'configuration': filtre},
                          json.loads(self.request(comparison + '?priority=cost&configuration=' + filtre,
                                                  json_response=True)[2])['filter_scope'])
@@ -6673,7 +6606,7 @@ class ParcoursComplet(unittest.TestCase):
                           ('mistralai/mistral-small-2603', 16384)], envois)
         html = self.evaluer(dossier)
         self.assertEqual(1, judge.request.call_count)
-        rows = html.split('<tbody role="rowgroup">')[1].split('</tbody>')[0]
+        rows = html.split('<tbody>')[1].split('</tbody>')[0]
         self.assertNotIn('<strong>Modèle B</strong>', rows)
         self.assertNotIn('<strong>Modèle C</strong>', rows)
         ligne_b = next(li for li in html.split('<li>') if li.startswith('Aucune réponse exploitable pour Modèle B'))
@@ -6734,7 +6667,7 @@ class ParcoursComplet(unittest.TestCase):
                           ('mistralai/mistral-small-2603', 4096)], envois)
         html = self.evaluer(dossier)
         self.assertEqual(2, judge.request.call_count)
-        rows = html.split('<tbody role="rowgroup">')[1].split('</tbody>')[0]
+        rows = html.split('<tbody>')[1].split('</tbody>')[0]
         self.assertNotIn('<strong>Modèle C</strong>', rows)
         self.assertIn('Aucune réponse exploitable pour Modèle C (cause non établie par le reçu). Ce modèle', html)
         self.assertIn('Essai d’origine · motif de fin transmis : stop · consommation transmise : '
@@ -7008,7 +6941,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual([snapshot['admissions'][-1]['authority']['automatic_judgment']['configuration']] * 2, jugements)
         _, _, raw = self.request(suivi.removesuffix('/conditions'))
         html = raw.decode()
-        self.assertEqual(2, html.split('<tbody role="rowgroup">')[1].count('<tr id="attempt-'))
+        self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
         self.assertNotIn('Aucune réponse exploitable', html)
         self.assertIn('Réponse obtenue à la tentative 4, après un incident fournisseur', html)
         self.assertIn('Notre conseil', html)
@@ -7027,7 +6960,7 @@ class ParcoursComplet(unittest.TestCase):
             Path(artefacts).mkdir(parents=True, exist_ok=True)
             Path(artefacts, 'relance-incident-candidat.json').write_text(json.dumps(
                 {'envois': envois, 'jugements': judge.request.call_count,
-                 'lignes_du_tableau': html.split('<tbody role="rowgroup">')[1].count('<tr id="attempt-'),
+                 'lignes_du_tableau': html.split('<tbody>')[1].count('<tr id="attempt-'),
                  'autres_envois': [re.sub(r'<[^>]+>', ' ', ligne).split('  ')[0].strip()
                                    for ligne in phases['Autres envois aux modèles']]},
                 ensure_ascii=False, indent=2) + '\n')
@@ -7445,18 +7378,13 @@ class ParcoursComplet(unittest.TestCase):
                           ('openai/gpt-5.6-sol', 'high', 'low', None)], sent)
         page, _, _ = self.request(configurations)
         # Relecture exacte : palier commun et choix par modèle, puis renvoi du formulaire tel quel
-        # Niveau commun et niveau par modèle : des boutons radio de même nom, l'option choisie cochée
-        reglages = [n for n in page.nodes if n['tag'] == 'input' and n['attrs'].get('type') == 'radio']
-        self.assertEqual({'tier', 'effort:mistralai/mistral-small-2603', 'repetitions'}, {n['attrs']['name'] for n in reglages})
-        self.assertTrue(all(n['attrs'].get('form') == 'configurations-form' for n in reglages))
-        self.assertFalse([n for n in page.nodes if n['tag'] == 'select'])
-        self.assertTrue(any(n['tag'] == 'fieldset' and n['attrs'].get('class') == 'segments'
-                            and n['attrs'].get('aria-describedby') == 'reasoning-help' for n in page.nodes))
-        fields = {'models': []}
+        fields, select = {'models': []}, None
         for node in page.nodes:
-            if (node['tag'] == 'input' and node['attrs'].get('type') == 'radio' and 'checked' in node['attrs']
-                    and node['attrs']['value'] and node['attrs']['name'] != 'repetitions'):
-                fields[node['attrs']['name']] = node['attrs']['value']
+            if node['tag'] == 'select':
+                select = node['attrs']['name']
+            elif (node['tag'] == 'option' and 'selected' in node['attrs'] and node['attrs']['value']
+                  and (select == 'tier' or select.startswith('effort:'))):
+                fields[select] = node['attrs']['value']
             elif node['tag'] == 'input' and node['attrs'].get('name') == 'models' and 'checked' in node['attrs']:
                 fields['models'].append(node['attrs']['value'])
         self.assertEqual('low', fields['tier'])

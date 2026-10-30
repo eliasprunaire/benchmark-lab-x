@@ -5,8 +5,8 @@ ni dossier, ni pièce réservée au juge. Il partage les fragments du parcours p
 pour les verdicts, les montants et les dates, et n’ajoute aucun script.
 """
 from .campaign_views import effort_label
-from .fragments import (badge, chain, date_lisible_utc, fold, jour_lisible, listing, montant_lisible, readable_fields,
-                        section, single_choice, text, valeur_mesure, workbench)
+from .fragments import (badge, date_lisible_utc, jour_lisible, listing, montant_lisible, readable_fields,
+                        section, text, valeur_mesure, workbench)
 
 STATES = {'PASS': 'respectée', 'FAIL': 'non respectée', 'INDETERMINE': 'non vérifiable'}
 VERDICT_LABELS = {'SATISFAIT': 'Satisfait', 'NE SATISFAIT PAS': 'Ne satisfait pas', None: 'À reprendre'}
@@ -42,15 +42,14 @@ def _scope(value, columns):
     query = value.get('filter_scope') or {}
     shown, total = len(value['rows']), value['population']
     label = ('1 réponse affichée sur ' if shown == 1 else ' réponses affichées sur ')
-    items = [text(str(shown) + label + str(total))]
+    content = '<p class="view-scope note">' + text(str(shown) + label + str(total))
     if query.get('sort'):
         column = next(column for column in columns if column['id'] == query['sort'])
-        items.append(text('triées par ' + column['label'][:1].lower() + column['label'][1:]
-                          + ', ' + TRI_LABELS[query.get('direction', 'asc')]))
+        content += ' · ' + text('triées par ' + column['label'][:1].lower() + column['label'][1:]
+                                 + ', ' + TRI_LABELS[query.get('direction', 'asc')])
     else:
-        items.append('sans tri')
-    items[-1] += '. Un filtre ne change ni les verdicts ni la population des calculs.'
-    content = chain(items, 'view-scope note')
+        content += ' · sans tri'
+    content += '. Un filtre ne change ni les verdicts ni la population des calculs.</p>'
     return content
 
 
@@ -71,9 +70,13 @@ def _filters(value, columns):
     content += '<summary>Trier et filtrer</summary><form method="get" action="' + _base(value) + '#filters">'
     content += '<div class="filter-grid">'
     for name, label, default, values in options:
-        # Seuls les choix à vocabulaire fixe changent de forme ; une liste tirée des données reste un menu
-        content += '<div>' + single_choice('filter-' + name, name, label, [('', default)] + list(values), query.get(name, ''),
-                                    segments=name in ('verdict', 'direction')) + '</div>'
+        content += '<div><label for="filter-' + name + '">' + text(label) + '</label>'
+        content += '<select id="filter-' + name + '" name="' + name + '">'
+        content += '<option value="">' + text(default) + '</option>'
+        for option, shown in values:
+            content += ('<option value="' + text(option) + '"' +
+                        (' selected' if query.get(name) == option else '') + '>' + text(shown) + '</option>')
+        content += '</select></div>'
     content += '</div>'
     if value['obligations']:
         content += '<details class="filter-advanced"' + (' open' if 'obligation' in query else '') + '>'
@@ -218,6 +221,7 @@ def _table(value, columns):
     panel = _panel(value)
     quality = [column for column in columns if not column['cost']]
     content = '<section class="comparison-results"><h2>Comparaison des modèles</h2>'
+    content += '<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
     content += _filters(value, columns) + _scope(value, columns)
     if not value['rows']:
         content += ('<p class="note">Aucune réponse ne correspond à ces filtres. Retirez un filtre pour revoir les autres : '
@@ -312,15 +316,17 @@ def render_results(value):
         return 'Restitution retirée', back + content
     columns = value['columns']
     content = ''
-    content += chain([text(value['title']), text('Version ' + value['version_id']), 'exemple entièrement inventé'], 'hint')
+    content += '<p class="hint">' + text(value['title'] + ' · Version ' + value['version_id']
+                                          + ' · exemple entièrement inventé') + '</p>'
     content += '<p>Travail évalué : ' + text(value['work']) + '</p>'
     content += '<p>' + text(value['conclusion']['text']) + '</p>'
-    content += fold('Portée de ce verdict', '<p>' + text(value['conclusion']['attribution']) + '</p>')
+    content += '<p>' + text(value['conclusion']['attribution']) + '</p>'
     coverage = value['coverage']
-    content += chain(['Réponses évaluées : ' + text(str(coverage['evaluated_attempts'])),
-                      'essais lancés : ' + text(str(coverage['attempted_cells'])) + ' sur ' + text(str(coverage['planned_cells'])) + '. '
-                      + ('Comparaison des coûts complète.' if value['economic_status'] == 'COMPLETE'
-                         else 'Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables.')], 'note')
+    content += '<p class="note">Réponses évaluées : ' + text(str(coverage['evaluated_attempts'])) + ' · essais lancés : '
+    content += text(str(coverage['attempted_cells'])) + ' sur ' + text(str(coverage['planned_cells'])) + '. '
+    content += ('Comparaison des coûts complète.' if value['economic_status'] == 'COMPLETE'
+                else 'Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables.')
+    content += '</p>'
     dates = sorted({date[:10] for date in value['acquisition_dates']})
     if dates:
         content += '<p class="hint">Réponses reçues ' + text(

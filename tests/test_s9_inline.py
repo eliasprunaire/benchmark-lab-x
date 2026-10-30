@@ -61,9 +61,9 @@ class InlineExampleTests(unittest.TestCase):
                     self.assertTrue(details)
                     self.assertTrue(all('open' not in attrs for attrs in details))
                 self.assertIn('tabindex="-1"', page)
-                # R10 : la synthèse de validation précède le contenu, correction repliée comprise
-                self.assertLess(page.index('id="validation"'), page.index('id="exemple"'))
-                self.assertLess(page.index('id="validation"'), page.index('class="corr"'))
+                self.assertLess(page.index('id="exemple"'), page.index('id="validation"'))
+                # La consigne dit « corrigez si besoin, puis validez » : la correction précède la validation
+                self.assertLess(page.index('class="corr"'), page.index('id="validation"'))
                 self.assertTrue(any(tag == 'label' and attrs.get('for') == 'message'
                                     for tag, attrs in parsed.tags))
                 self.assertEqual(before, store.inspect_operations())

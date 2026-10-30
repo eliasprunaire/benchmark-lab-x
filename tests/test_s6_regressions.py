@@ -37,9 +37,9 @@ _VOLATILE_PRESENTATION = re.compile(
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
-    '13': {
+    '14': {
         'index.html': 'ff58e14105a57c2bb462bd3eb2baed78c15a2fc922a2479a895e54950baf3173',
-        'style.css': 'f22effbb4b58495d0b613e2260e8bfdde7c693d0217007e0d40bea062a6a6c05',
+        'style.css': '67ee5e3b69519730419b6c99cd68b7505a1414f3c44bc6247a9b0d0fe76572d6',
     },
 }
 # Feuille fictive distincte des octets actifs : aucun actif scellé n'est dupliqué
@@ -200,7 +200,7 @@ class S6Regressions(unittest.TestCase):
                 labeled = dict(manifest, presentation_version=old)
                 raw = storage._strict_json(labeled).encode()
                 pub._manifest(raw, sha256(raw).hexdigest())
-        unknown = dict(manifest, presentation_version='14')
+        unknown = dict(manifest, presentation_version='15')
         raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
             pub._manifest(raw, sha256(raw).hexdigest())

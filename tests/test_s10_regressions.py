@@ -41,7 +41,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertNotIn('les essais se sont arrêtés avant la fin', page)
         value['coverage']['not_started'] = 1
         self.assertIn('les essais se sont arrêtés avant la fin', views.render(value, '').decode())
-        table = page.split('<table role="table">', 1)[1].split('</table>', 1)[0]
+        table = page.split('<table>', 1)[1].split('</table>', 1)[0]
         self.assertNotIn('Demandée, observée et sources', table)
         self.assertNotIn('Sans rang', table)
         self.assertIn('Détail et preuves', table)
@@ -271,10 +271,10 @@ class S10ProofTests(unittest.TestCase):
             page = views.render(value, '').decode()
             self.assertEqual(1, page.count('<h2>Comparaison des modèles</h2>'))
             self.assertLess(page.index('<h2>Comparaison des modèles</h2>'), page.index('id="filters"'))
-            self.assertLess(page.index('id="filters"'), page.index('view-scope'))
+            self.assertLess(page.index('id="filters"'), page.index('class="view-scope'))
             if value['rows']:
-                self.assertLess(page.index('view-scope'), page.index('<table role="table">'))
-                self.assertNotIn('<h2>', page[page.index('id="filters"'):page.index('<table role="table">')])
+                self.assertLess(page.index('class="view-scope'), page.index('<table>'))
+                self.assertNotIn('<h2>', page[page.index('id="filters"'):page.index('<table>')])
             else:
                 self.assertIn('Aucune réponse ne correspond à ces filtres', page)
 
@@ -286,14 +286,14 @@ class S10ProofTests(unittest.TestCase):
                                         query={'verdict': 'NE SATISFAIT PAS', 'sort': 'cost'}), '').decode()
         summary = lambda html: html.split('aria-label="Bilan de la comparaison">', 1)[1].split('</div>', 1)[0]
         self.assertEqual(summary(page), summary(filtered))
-        self.assertIn('<p class="view-scope note">5 réponses affichées sur 5, sans tri.</p>', page)
-        self.assertIn('<p class="view-scope note">1 réponse affichée sur 5, triées par coût observé, ordre croissant.</p>', filtered)
+        self.assertIn('5 réponses affichées sur 5 · sans tri.', page)
+        self.assertIn('1 réponse affichée sur 5 · triées par coût observé, ordre croissant.', filtered)
         self.assertIn('Ne satisfait pas : 1', summary(page))
         self.assertIn('Satisfait : 3', summary(page))
         self.assertIn('Comparaison des coûts incomplète', summary(page))
         self.assertIn('body class="s9 comparison"', page)
         self.assertIn('<h1>Résultats</h1>', page)
-        self.assertLess(page.index('<table role="table">'), page.index('id="method"'))
+        self.assertLess(page.index('<table>'), page.index('id="method"'))
         self.assertNotIn('open', next(attrs for tag, attrs in Markup(page.encode()).tags if attrs.get('id') == 'filters'))
         # Le rendu technique complet reste sur les évaluations enregistrées ; la page directe garde la lecture humaine
         _, dossier, _, _ = web_api.dispatch(self.store, 'GET', value['dossier_href'], self.token, None, 'a' * 40, None)
