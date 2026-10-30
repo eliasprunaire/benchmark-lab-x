@@ -880,7 +880,7 @@ test('per-model reasoning tuning opens without JavaScript, stays in the form and
       assert.equal(await choices.first().isVisible(), false, `${colorScheme} dépliant fermé par défaut`);
       await tuning.locator('summary').click();
       assert.equal(await choices.first().isVisible(), true, colorScheme);
-      assert.equal(await choices.first().getAttribute('form'), 'configurations-form', colorScheme);
+      assert.deepEqual(await choices.evaluateAll(radios => radios.map(radio => radio.form?.id)), ['configurations-form', 'configurations-form', 'configurations-form'], colorScheme);
       assert.deepEqual(await choices.evaluateAll(radios => radios.map(radio => radio.value)), ['', 'none', 'high']);
       assert.equal(await choices.first().isChecked(), true, 'Automatique coché par défaut');
       assert.equal(await page.locator('fieldset.segments', {has: choices.first()}).locator('legend').textContent(), 'Mistral Medium 3.5');
@@ -1549,7 +1549,8 @@ test('access and launch screens preserve available actions, estimates and refusa
     assert.equal(await page.locator('input[type="radio"][name="tier"]:checked').inputValue(), 'high');
     assert.equal(await page.locator('fieldset.segments', {has: page.locator('input[name="tier"]')}).getAttribute('aria-describedby'), 'reasoning-help');
     const effort = page.locator('input[type="radio"][name="effort:modele-a"]');
-    assert.equal(await effort.first().getAttribute('form'), 'configurations-form');
+    assert.ok((await effort.evaluateAll(radios => radios.map(radio => radio.form?.id))).every(id => id === 'configurations-form'), 'un niveau ne serait pas envoyé');
+    assert.ok((await page.locator('input[type="radio"][name="tier"]').evaluateAll(radios => radios.map(radio => radio.form?.id))).every(id => id === 'configurations-form'));
     assert.equal(await page.locator('input[name="effort:modele-a"]:checked').inputValue(), 'xhigh');
     assert.equal(await page.locator('[name="effort:modele-b"]').count(), 0);
     const selection = await page.textContent('main');
@@ -1924,6 +1925,9 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.deepEqual(await entry.locator('> dl dt').allTextContents(), ['Travail évalué', 'Résultat attendu', 'Qualification', 'Résultats publiés']);
       assert.equal(await entry.locator('details', {hasText: 'Autres caractéristiques'}).evaluate(details => details.open), false);
       assert.equal(await entry.locator('details dt').count(), 5);
+      // Repliées seulement : une fois ouvertes, les cinq caractéristiques se lisent
+      await entry.locator('details', {hasText: 'Autres caractéristiques'}).locator('summary').click();
+      assert.deepEqual(await entry.locator('details dd').evaluateAll(values => values.map(dd => dd.checkVisibility())), [true, true, true, true, true]);
       assert.equal(await entry.locator('> dl').evaluate(list => getComputedStyle(list).display), 'grid');
       assert.equal(await page.locator('main script, main img').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
@@ -2172,6 +2176,9 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       assert.equal(await scope.count(), 1);
       assert.equal(await scope.locator('p').isVisible(), false, 'portée dépliée par défaut');
       assert.match(await scope.textContent(), /Le verdict porte sur la configuration observée/);
+      // Repliée seulement : une fois ouverte, la limite se lit vraiment
+      await scope.locator('summary').click();
+      assert.equal(await scope.locator('p', {hasText: 'Le verdict porte sur la configuration observée'}).isVisible(), true, 'portée illisible après ouverture');
       assert.equal(await page.locator('main script, main img').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
