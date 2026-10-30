@@ -773,8 +773,9 @@ def render_task_index(task):
     content += '<p>Visible par vous seul : rien n’est publié dans le catalogue public.</p>'
     versions = ['<a href="' + text(task['href']) + '/revisions/' + str(revision) + '">' + str(revision) + '</a>'
                 for revision in task['revisions']]
-    versions[0], versions[-1] = 'Versions : ' + versions[0], versions[-1] + '.'
-    content += chain(versions)
+    if versions:
+        versions[0], versions[-1] = 'Versions : ' + versions[0], versions[-1] + '.'
+        content += chain(versions)
     for version in task['versions']:
         content += '<section id="version-' + text(version['version']) + '"><h3>Exemple validé '
         content += text(version['version']) + '</h3>'

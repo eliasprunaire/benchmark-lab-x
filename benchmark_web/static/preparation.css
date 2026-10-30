@@ -381,7 +381,8 @@ footer.site details > :not(summary) { margin: .4rem 0 0; }
   dl.kv { grid-template-columns: 1fr; gap: 0; }
   dl.kv dt { margin-top: .5rem; }
   footer.site .cols { grid-template-columns: 1fr; }
-  header.site { gap: 0 var(--s4); padding-top: var(--s3); }
+  header.site { align-items: flex-start; flex-direction: column; }
+  header.site { gap: 0; padding-top: var(--s3); }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 .website{display:none}
