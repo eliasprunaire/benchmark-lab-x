@@ -19,7 +19,7 @@ from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
 
 from .fragments import (VERDICT_BADGES, valeur_mesure, access_summary, badge, chain, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
-                        personal_key_form, readable_fields, readout, section, state_block, text, workbench)
+                        personal_key_form, readable_fields, readout, section, single_choice, state_block, text, workbench)
 
 COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
   const link = event.target.closest('tr[id] [data-result]');
@@ -710,10 +710,8 @@ def render_comparison(value):
         selected = query.get(key, '')
         if key == 'direction' and selected == 'asc':
             selected = ''
-        control = '<div><label for="filter-' + key + '">' + label + '</label><select id="filter-' + key + '" name="' + key + '">'
-        for val, title in [('', default)] + values:
-            control += '<option value="' + text(val) + '"' + (' selected' if selected == val else '') + '>' + text(title) + '</option>'
-        control += '</select></div>'
+        control = '<div>' + single_choice('filter-' + key, key, label, [('', default)] + values, selected,
+                                   segments=key in ('verdict', 'direction')) + '</div>'
         if key == 'obligation':
             advanced = '<details class="filter-advanced"' + (' open' if key in query else '') + '><summary>Filtrer par exigence</summary>'
             advanced += '<p class="hint">Pour retrouver les réponses qui respectent ou non une exigence précise.</p>' + control + '</details>'
@@ -842,24 +840,19 @@ def render_configurations(value, csrf):
                 choices += ' · niveau de raisonnement fixe'
             choices += '</label>'
         labels = EFFORT_LABELS
-        tiers = '<label for="reasoning-effort">Niveau de raisonnement demandé</label>'
-        tiers += '<select id="reasoning-effort" form="configurations-form" name="tier" aria-describedby="reasoning-help">'
-        tiers += ''.join('<option value="' + text(tier) + '"' +
-                         (' selected' if value['current_tier'] == tier else '') + '>' +
-                         text(labels.get(tier, tier)) + '</option>' for tier in value['available_tiers'])
-        tiers += '</select><p class="hint" id="reasoning-help">Ce niveau est transmis aux modèles qui le proposent. '
+        tiers = single_choice('reasoning-effort', 'tier', 'Niveau de raisonnement demandé',
+                       [(tier, labels.get(tier, tier)) for tier in value['available_tiers']], value['current_tier'],
+                       form='configurations-form', describedby='reasoning-help')
+        tiers += '<p class="hint" id="reasoning-help">Ce niveau est transmis aux modèles qui le proposent. '
         tiers += 'Un modèle qui ne l’accepte pas reçoit le niveau le plus proche qu’il propose, affiché dans le récapitulatif. Les modèles à niveau fixe sont comparés tels quels. Un niveau plus élevé peut rendre la réponse plus lente et plus chère, sans garantir qu’elle soit meilleure.</p>'
         tunable = [model for model in value['models'] if len(model.get('levels', ())) > 1]
         if tunable:
             tiers += '<details><summary>Ajuster le niveau par modèle</summary><p class="hint">« Automatique » suit le niveau demandé ci-dessus. Seuls les niveaux acceptés par chaque modèle sont proposés.</p>'
             for index, model in enumerate(tunable, 1):
                 field = 'effort-' + str(index)
-                tiers += ('<label for="' + field + '">' + text(model['name']) + '</label><select id="' + field +
-                          '" form="configurations-form" name="' + text('effort:' + model['id']) + '">' +
-                          '<option value="">Automatique</option>' +
-                          ''.join('<option value="' + text(level) + '"' + (' selected' if model.get('chosen') == level else '') +
-                                  '>' + text(labels.get(level, level)) + '</option>' for level in model['levels']) +
-                          '</select>')
+                tiers += single_choice(field, 'effort:' + model['id'], model['name'],
+                                [('', 'Automatique')] + [(level, labels.get(level, level)) for level in model['levels']],
+                                model.get('chosen') or '', form='configurations-form')
             tiers += '</details>'
         default = str(value.get('default_output_tokens', ''))
         limits = ('<details><summary>Ajuster la limite de sortie par modèle</summary><p class="hint">Vide : '
@@ -880,12 +873,11 @@ def render_configurations(value, csrf):
                     choices + '</fieldset></form>')
         main += render_custom_models(value, csrf, dossier_url)
         # Décision d'Ayo du 2026-10-17 : un même nombre d'essais pour chaque modèle et chaque exemple
-        repetitions = ('<label for="repetitions">Essais par modèle et par exemple</label>'
-                       '<select id="repetitions" form="configurations-form" name="repetitions" aria-describedby="repetitions-help">'
-                       + ''.join('<option value="' + str(count) + '"' + (' selected' if value.get('repetitions', 1) == count else '')
-                                 + '>' + str(count) + (' essais' if count > 1 else ' essai') + '</option>'
-                                 for count in range(1, value.get('max_repetitions', 1) + 1))
-                       + '</select><p class="hint" id="repetitions-help">Chaque essai est une réponse distincte, payée et '
+        repetitions = (single_choice('repetitions', 'repetitions', 'Essais par modèle et par exemple',
+                              [(str(count), str(count) + (' essais' if count > 1 else ' essai'))
+                               for count in range(1, value.get('max_repetitions', 1) + 1)],
+                              str(value.get('repetitions', 1)), form='configurations-form', describedby='repetitions-help')
+                       + '<p class="hint" id="repetitions-help">Chaque essai est une réponse distincte, payée et '
                        'évaluée séparément. Tous les essais partent, quel que soit le résultat des autres. Plusieurs essais '
                        'montrent si les réponses d’un modèle varient ; ils ne mesurent pas sa fiabilité. Avec plus d’un essai, '
                        'aucun conseil n’est donné.</p>')

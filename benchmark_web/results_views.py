@@ -6,7 +6,7 @@ pour les verdicts, les montants et les dates, et n’ajoute aucun script.
 """
 from .campaign_views import effort_label
 from .fragments import (badge, chain, date_lisible_utc, jour_lisible, listing, montant_lisible, readable_fields,
-                        section, text, valeur_mesure, workbench)
+                        section, single_choice, text, valeur_mesure, workbench)
 
 STATES = {'PASS': 'respectée', 'FAIL': 'non respectée', 'INDETERMINE': 'non vérifiable'}
 VERDICT_LABELS = {'SATISFAIT': 'Satisfait', 'NE SATISFAIT PAS': 'Ne satisfait pas', None: 'À reprendre'}
@@ -71,13 +71,9 @@ def _filters(value, columns):
     content += '<summary>Trier et filtrer</summary><form method="get" action="' + _base(value) + '#filters">'
     content += '<div class="filter-grid">'
     for name, label, default, values in options:
-        content += '<div><label for="filter-' + name + '">' + text(label) + '</label>'
-        content += '<select id="filter-' + name + '" name="' + name + '">'
-        content += '<option value="">' + text(default) + '</option>'
-        for option, shown in values:
-            content += ('<option value="' + text(option) + '"' +
-                        (' selected' if query.get(name) == option else '') + '>' + text(shown) + '</option>')
-        content += '</select></div>'
+        # Seuls les choix à vocabulaire fixe changent de forme ; une liste tirée des données reste un menu
+        content += '<div>' + single_choice('filter-' + name, name, label, [('', default)] + list(values), query.get(name, ''),
+                                    segments=name in ('verdict', 'direction')) + '</div>'
     content += '</div>'
     if value['obligations']:
         content += '<details class="filter-advanced"' + (' open' if 'obligation' in query else '') + '>'

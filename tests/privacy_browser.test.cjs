@@ -865,16 +865,22 @@ test('per-model reasoning tuning opens without JavaScript, stays in the form and
       await page.goto(origin + '/render/configurations');
       const tuning = page.locator('details', {hasText: 'Ajuster le niveau par modèle'});
       assert.equal(await tuning.count(), 1, colorScheme);
-      const select = page.locator('select[name="effort:mistralai/mistral-medium-3-5"]');
-      assert.equal(await select.isVisible(), false, `${colorScheme} dépliant fermé par défaut`);
+      // Trois choix courts : des boutons radio de même nom, dans un groupe nommé par le modèle
+      const choices = page.locator('input[type="radio"][name="effort:mistralai/mistral-medium-3-5"]');
+      assert.equal(await choices.first().isVisible(), false, `${colorScheme} dépliant fermé par défaut`);
       await tuning.locator('summary').click();
-      assert.equal(await select.isVisible(), true, colorScheme);
-      assert.equal(await select.getAttribute('form'), 'configurations-form', colorScheme);
-      assert.deepEqual(await select.locator('option').evaluateAll(options => options.map(option => option.value)), ['', 'none', 'high']);
-      assert.equal(await page.locator('label[for="' + await select.getAttribute('id') + '"]').textContent(), 'Mistral Medium 3.5');
-      assert.equal(await page.locator('select[name="effort:deepseek/deepseek-v4.1-flash"]').count(), 0, `${colorScheme} niveau fixe sans réglage`);
-      await select.focus();
-      assert.notEqual(await select.evaluate(element => getComputedStyle(element).outlineStyle), 'none', `${colorScheme} focus invisible`);
+      assert.equal(await choices.first().isVisible(), true, colorScheme);
+      assert.equal(await choices.first().getAttribute('form'), 'configurations-form', colorScheme);
+      assert.deepEqual(await choices.evaluateAll(radios => radios.map(radio => radio.value)), ['', 'none', 'high']);
+      assert.equal(await choices.first().isChecked(), true, 'Automatique coché par défaut');
+      assert.equal(await page.locator('fieldset.segments', {has: choices.first()}).locator('legend').textContent(), 'Mistral Medium 3.5');
+      assert.equal(await page.locator('[name="effort:deepseek/deepseek-v4.1-flash"]').count(), 0, `${colorScheme} niveau fixe sans réglage`);
+      // Le clavier atteint le groupe, et le contour entoure le bouton entier
+      await choices.first().focus();
+      await page.keyboard.press('Shift+Tab');
+      await page.keyboard.press('Tab');
+      assert.equal(await choices.first().evaluate(element => document.activeElement === element), true, `${colorScheme} groupe hors d’atteinte au clavier`);
+      assert.notEqual(await choices.first().evaluate(element => getComputedStyle(element.closest('label')).outlineStyle), 'none', `${colorScheme} focus invisible`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${colorScheme} débordement`);
       assert.deepEqual(await page.evaluate(contrastFailures), [], colorScheme);
       mkdirSync('reports/privacy-browser', {recursive: true});
@@ -1511,12 +1517,12 @@ test('access and launch screens preserve available actions, estimates and refusa
     await page.goto(origin + '/render/configurations-selected');
     assert.equal(await page.locator('form#configurations-form').getAttribute('action'), '/preparation/dossiers/d1/configurations');
     assert.equal(await page.locator('input[name="models"]:checked').count(), 2);
-    assert.equal(await page.locator('select[name="tier"]').inputValue(), 'high');
-    assert.equal(await page.locator('select[name="tier"]').getAttribute('aria-describedby'), 'reasoning-help');
-    const effort = page.locator('select[name="effort:modele-a"]');
-    assert.equal(await effort.getAttribute('form'), 'configurations-form');
-    assert.equal(await effort.inputValue(), 'xhigh');
-    assert.equal(await page.locator('select[name="effort:modele-b"]').count(), 0);
+    assert.equal(await page.locator('input[type="radio"][name="tier"]:checked').inputValue(), 'high');
+    assert.equal(await page.locator('fieldset.segments', {has: page.locator('input[name="tier"]')}).getAttribute('aria-describedby'), 'reasoning-help');
+    const effort = page.locator('input[type="radio"][name="effort:modele-a"]');
+    assert.equal(await effort.first().getAttribute('form'), 'configurations-form');
+    assert.equal(await page.locator('input[name="effort:modele-a"]:checked').inputValue(), 'xhigh');
+    assert.equal(await page.locator('[name="effort:modele-b"]').count(), 0);
     const selection = await page.textContent('main');
     for (const phrase of ['reçoit le niveau le plus proche qu’il propose', 'Ajuster le niveau par modèle',
       'sans garantir qu’elle soit meilleure', 'niveau de raisonnement fixe']) assert.ok(selection.includes(phrase), phrase);

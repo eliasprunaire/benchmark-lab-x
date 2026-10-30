@@ -3447,8 +3447,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual({'openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'},
                          {n['attrs']['value'] for n in chosen.nodes if n['tag'] == 'input'
                           and n['attrs'].get('name') == 'models' and 'checked' in n['attrs']})
-        self.assertIn('selected', next(n for n in chosen.nodes if n['tag'] == 'option'
-                                       and n['attrs'].get('value') == 'high')['attrs'])
+        self.assertIn('checked', next(n for n in chosen.nodes if n['tag'] == 'input' and n['attrs'].get('type') == 'radio'
+                                      and n['attrs'].get('name') == 'tier' and n['attrs'].get('value') == 'high')['attrs'])
         page, _, _ = self.request(recap)
         self.examine(page, recap, 'essais en attente', 'Actualiser le suivi')
         self.assertEqual('Benchmark en cours', next(n['text'] for n in page.nodes if n['tag'] == 'h1'))
@@ -4557,7 +4557,11 @@ class ParcoursComplet(unittest.TestCase):
             campaigns.create(store, incomplet)
         # Le choix se relit sur la page des modèles
         _, _, raw = self.request(dossier + '/configurations')
-        self.assertRegex(raw.decode(), r'name="repetitions"[^>]*>(?:(?!</select>).)*<option value="3" selected>')
+        # Trois choix courts : des boutons radio de même nom, le troisième coché
+        self.assertRegex(raw.decode(), r'<fieldset class="segments"[^>]*><legend>Essais par modèle et par exemple</legend>'
+                                       r'(?:<label><input type="radio" name="repetitions" value="[12]" form="configurations-form"> [^<]*</label>){2}'
+                                       r'<label><input type="radio" name="repetitions" value="3" form="configurations-form" checked> 3 essais</label>')
+        self.assertNotIn('<select id="repetitions"', raw.decode())
         self.submit(recap, '/start', {}, status=303)
         attempts = self.starts.get_nowait()['candidate_attempts']
         self.assertEqual(6, len(attempts))
@@ -7408,13 +7412,18 @@ class ParcoursComplet(unittest.TestCase):
                           ('openai/gpt-5.6-sol', 'high', 'low', None)], sent)
         page, _, _ = self.request(configurations)
         # Relecture exacte : palier commun et choix par modèle, puis renvoi du formulaire tel quel
-        fields, select = {'models': []}, None
+        # Niveau commun et niveau par modèle : des boutons radio de même nom, l'option choisie cochée
+        reglages = [n for n in page.nodes if n['tag'] == 'input' and n['attrs'].get('type') == 'radio']
+        self.assertEqual({'tier', 'effort:mistralai/mistral-small-2603', 'repetitions'}, {n['attrs']['name'] for n in reglages})
+        self.assertTrue(all(n['attrs'].get('form') == 'configurations-form' for n in reglages))
+        self.assertFalse([n for n in page.nodes if n['tag'] == 'select'])
+        self.assertTrue(any(n['tag'] == 'fieldset' and n['attrs'].get('class') == 'segments'
+                            and n['attrs'].get('aria-describedby') == 'reasoning-help' for n in page.nodes))
+        fields = {'models': []}
         for node in page.nodes:
-            if node['tag'] == 'select':
-                select = node['attrs']['name']
-            elif (node['tag'] == 'option' and 'selected' in node['attrs'] and node['attrs']['value']
-                  and (select == 'tier' or select.startswith('effort:'))):
-                fields[select] = node['attrs']['value']
+            if (node['tag'] == 'input' and node['attrs'].get('type') == 'radio' and 'checked' in node['attrs']
+                    and node['attrs']['value'] and node['attrs']['name'] != 'repetitions'):
+                fields[node['attrs']['name']] = node['attrs']['value']
             elif node['tag'] == 'input' and node['attrs'].get('name') == 'models' and 'checked' in node['attrs']:
                 fields['models'].append(node['attrs']['value'])
         self.assertEqual('low', fields['tier'])

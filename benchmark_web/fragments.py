@@ -252,3 +252,23 @@ def chain(items, classes='', end=''):
     if len(items) - 1 < needed:
         return '<p' + (' class="' + classes + '"' if classes else '') + '>' + ' · '.join(items) + '</p>'
     return '<ul class="meta' + (' ' + classes if classes else '') + '">' + ''.join('<li>' + item + '</li>' for item in items) + '</ul>'
+
+
+def single_choice(field, name, label, options, selected, *, form='', describedby='', segments=True):
+    """Choix unique : boutons radio de même nom pour 2 à 4 options courtes, sinon menu natif
+
+    `options` : couples (valeur, intitulé). L'option choisie est cochée ; sans correspondance, la première.
+    """
+    values = [value for value, _ in options]
+    attrs = (' form="' + text(form) + '"' if form else '')
+    if segments and 2 <= len(options) <= 4 and sum(len(title) for _, title in options) <= 64:
+        chosen = selected if selected in values else values[0]
+        return ('<fieldset class="segments"' + (' aria-describedby="' + text(describedby) + '"' if describedby else '')
+                + '><legend>' + text(label) + '</legend>' + ''.join(
+                    '<label><input type="radio" name="' + text(name) + '" value="' + text(value) + '"' + attrs
+                    + (' checked' if value == chosen else '') + '> ' + text(title) + '</label>' for value, title in options)
+                + '</fieldset>')
+    return ('<label for="' + text(field) + '">' + text(label) + '</label><select id="' + text(field) + '" name="' + text(name) + '"'
+            + attrs + (' aria-describedby="' + text(describedby) + '"' if describedby else '') + '>'
+            + ''.join('<option value="' + text(value) + '"' + (' selected' if value == selected else '') + '>' + text(title)
+                      + '</option>' for value, title in options) + '</select>')
