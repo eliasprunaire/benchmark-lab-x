@@ -662,11 +662,6 @@ class ProbeTests(WebServerCase):
                     self.assertIsNone(headers.get('Set-Cookie'))
                     if method == 'GET':
                         self.assertIn('<html lang="fr">', raw.decode())
-                        page = raw.decode()
-                        # Un tableau légal se lit en liste sur téléphone, sans consigne de défilement
-                        self.assertNotIn('faites défiler', page)
-                        self.assertEqual(page.count('<table'), page.count('<table role="table"'))
-                        self.assertEqual(page.count('<td'), len(re.findall(r'<td role="cell" data-entete="[^"]+"', page)))
         self.assertTrue(self.executor.requests.empty())
 
     def test_ancienne_notice_renvoie_vers_la_politique_publique(self):
@@ -884,13 +879,13 @@ class RouteCanonicalizationTests(unittest.TestCase):
 class StaticResourceTests(unittest.TestCase):
     """Ressources invariantes (BX-05) : lues une fois, revalidées par ETag ; le HTML garde `no-store`"""
     ROOT = Path(__file__).resolve().parents[1] / 'benchmark_web'
-    # Ce qu'une page charge : gabarit, feuille de style et ses deux polices, script de confidentialité
+    # Ce qu'une page charge : gabarit, feuille de style et ses cinq polices, script de confidentialité
     FILES = {'/favicon.ico': 'static/favicon.ico', '/bench-x.svg': 'static/bench-x.svg',
              '/preparation/style.css': 'static/preparation.css', '/preparation/privacy.js': 'privacy.js',
              **{'/preparation/fonts/' + name: 'static/fonts/' + name for name in (
-                 'Newsreader.woff2', 'InstrumentSans.woff2')}}
+                 'MonaSans.woff2', 'HubotSans.woff2', 'HostGrotesk.woff2', 'GeistMono.woff2', 'Silkscreen.woff2')}}
     NAVIGATION = tuple(FILES)
-    LICENCES = tuple('/preparation/fonts/OFL-' + name + '.txt' for name in ('Newsreader', 'InstrumentSans'))
+    LICENCES = tuple('/preparation/fonts/OFL-' + name + '.txt' for name in ('MonaSans', 'HubotSans', 'HostGrotesk', 'GeistMono', 'Silkscreen'))
 
     def serve(self, check, **options):
         """Serveur réel dans ce processus : les lectures disque du service y sont observables"""

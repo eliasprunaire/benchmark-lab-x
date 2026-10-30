@@ -9,7 +9,8 @@ CONTACT = '<a href="mailto:contact@cybrel.fr">contact@cybrel.fr</a>'
 
 def table(label, head, rows):
     """Tableau défilant dans sa propre région au clavier, jamais dans la page"""
-    return ('<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '"><table><thead><tr>'
+    return ('<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
+            '<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '"><table><thead><tr>'
             + ''.join('<th scope="col">' + cell + '</th>' for cell in head) + '</tr></thead><tbody>'
             + ''.join('<tr>' + ''.join('<td>' + cell + '</td>' for cell in row) + '</tr>' for row in rows)
             + '</tbody></table></div>')
@@ -33,7 +34,7 @@ MENTIONS_LEGALES = (
     '<li>version exécutée : <strong>version de release indiquée au dépôt</strong></li></ul></section>'
     '<section><h2>Propriété intellectuelle</h2><p>Les textes, la charte graphique et les contenus éditoriaux du '
     'site sont protégés. Les polices de caractères utilisées sont distribuées sous licence SIL Open Font License '
-    'version 1.1 : Newsreader et Instrument Sans.</p>'
+    'version 1.1 : Mona Sans, Hubot Sans, Host Grotesk, Geist Mono et Silkscreen.</p>'
     '<p>Les exemples, pièces et résultats produits dans votre parcours restent privés et vous appartiennent, sous '
     'réserve des droits que vous accordez explicitement en activant la contribution facultative.</p></section>'
     '<section><h2>Signalement</h2><p>Pour signaler un contenu illicite, une faille de sécurité ou une difficulté '

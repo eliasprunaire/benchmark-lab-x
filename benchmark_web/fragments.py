@@ -5,10 +5,9 @@ primitives réutilisées par plusieurs vues (échappement, formulaires natifs,
 repères visuels, dates, montants, preuves inertes). Il n'importe aucun module
 de rendu, pour qu'aucun cycle ne soit possible.
 """
-import re
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from html import escape, unescape
+from html import escape
 
 MOIS = ('janvier', 'février', 'mars', 'avril', 'mai', 'juin',
         'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre')
@@ -185,106 +184,3 @@ def personal_key_form(csrf, access, back, *, opened=False):
         content += ('<p class="hint">Attendez la fin d’une préparation ou d’une vérification en cours avant de changer de clé. '
                     'Une fois la clé retirée, Bench-X ne lance plus aucun nouvel appel. La clé reste active chez OpenRouter, et une comparaison déjà lancée n’est pas annulée.</p>')
     return content
-
-
-_TABLE_TAG = re.compile(r'<(/?)(table|thead|tbody|tr|th|td)\b([^>]*)>')
-
-
-def lisible_en_liste(html):
-    """Rôles explicites et en-tête par cellule, posés une fois pour tous les tableaux de la page
-
-    Sur téléphone, la CSS affiche chaque ligne en liste ; les rôles gardent le sens de tableau
-    pour les lecteurs d'écran, et `data-entete` redonne l'en-tête de colonne à chaque cellule
-    """
-    out, pos, tables = [], 0, []
-    for tag in _TABLE_TAG.finditer(html):
-        out.append(html[pos:tag.start()])
-        pos = tag.end()
-        closing, name, attrs = tag[1], tag[2], tag[3]
-        if closing:
-            if name == 'table' and tables:
-                tables.pop()
-            elif name == 'tr' and tables:
-                tables[-1]['col'] = 0
-            elif name == 'th' and tables and tables[-1]['head_start'] is not None:
-                # Le texte de l'en-tête sert d'étiquette aux cellules de sa colonne, balises retirées
-                tables[-1]['heads'].append(re.sub(r'<[^>]+>', '', html[tables[-1]['head_start']:tag.start()]).strip())
-                tables[-1]['head_start'] = None
-            out.append(tag[0])
-            continue
-        if name == 'table':
-            tables.append({'heads': [], 'col': 0, 'in_head': False, 'head_start': None})
-            role = 'table'
-        elif name in ('thead', 'tbody'):
-            if tables:
-                tables[-1]['in_head'] = name == 'thead'
-            role = 'rowgroup'
-        elif name == 'tr':
-            role = 'row'
-        else:
-            current = tables[-1] if tables else None
-            extra = ''
-            if name == 'th' and current and current['in_head']:
-                role = 'columnheader'
-                current['head_start'] = tag.end()
-            else:
-                role = 'rowheader' if name == 'th' else 'cell'
-                heads = current['heads'] if current else []
-                if current and current['col'] < len(heads) and heads[current['col']]:
-                    extra = ' data-entete="' + heads[current['col']] + '"'
-            if current:
-                current['col'] += 1
-            out.append('<' + name + attrs + ' role="' + role + '"' + extra + '>')
-            continue
-        out.append('<' + name + attrs + ' role="' + role + '"' + '>')
-    out.append(html[pos:])
-    return ''.join(out)
-
-
-def chain(items, classes='', end=''):
-    """Éléments déjà échappés d'une chaîne « A · B · C » : liste `ul.meta` au-delà du seuil, sinon paragraphe
-
-    Le seuil est de deux séparateurs, d'un seul pour un bilan (`note`, `hint`, `synthesis`) ;
-    `end` est la ponctuation finale, rattachée au dernier élément
-    """
-    needed = 1 if {'note', 'hint', 'synthesis'} & set(classes.split()) else 2
-    items = [*items[:-1], items[-1] + end]
-    if len(items) - 1 < needed:
-        return '<p' + (' class="' + classes + '"' if classes else '') + '>' + ' · '.join(items) + '</p>'
-    return '<ul class="meta' + (' ' + classes if classes else '') + '">' + ''.join('<li>' + item + '</li>' for item in items) + '</ul>'
-
-
-def single_choice(field, name, label, options, selected, *, form='', describedby='', segments=True):
-    """Choix unique : boutons radio de même nom pour 2 à 4 options courtes, sinon menu natif
-
-    `options` : couples (valeur, intitulé). L'option choisie est cochée ; sans correspondance, la première.
-    """
-    values = [value for value, _ in options]
-    attrs = (' form="' + text(form) + '"' if form else '')
-    if segments and 2 <= len(options) <= 4 and sum(len(title) for _, title in options) <= 64:
-        chosen = selected if selected in values else values[0]
-        return ('<fieldset class="segments"' + (' aria-describedby="' + text(describedby) + '"' if describedby else '')
-                + '><legend>' + text(label) + '</legend>' + ''.join(
-                    '<label><input type="radio" name="' + text(name) + '" value="' + text(value) + '"' + attrs
-                    + (' checked' if value == chosen else '') + '> ' + text(title) + '</label>' for value, title in options)
-                + '</fieldset>')
-    return ('<label for="' + text(field) + '">' + text(label) + '</label><select id="' + text(field) + '" name="' + text(name) + '"'
-            + attrs + (' aria-describedby="' + text(describedby) + '"' if describedby else '') + '>'
-            + ''.join('<option value="' + text(value) + '"' + (' selected' if value == selected else '') + '>' + text(title)
-                      + '</option>' for value, title in options) + '</select>')
-
-
-def long_hint(identifier, body, summary, *, limit=140):
-    """Aide d'un champ ou d'un réglage : au-delà de `limit` caractères elle se replie sous `summary`
-
-    L'id reste sur le paragraphe, donc la cible de `aria-describedby`, plié ou non
-    """
-    hint = '<p id="' + text(identifier) + '" class="hint">' + body + '</p>'
-    if len(unescape(re.sub(r'<[^>]+>', '', body))) <= limit:
-        return hint
-    return '<details class="depliant discret"><summary>' + summary + '</summary>' + hint + '</details>'
-
-
-def fold(summary, body, *, opened=False, classes='depliant discret'):
-    """Contenu replié sous un résumé, lisible sans JavaScript"""
-    return '<details class="' + classes + '"' + (' open' if opened else '') + '><summary>' + summary + '</summary>' + body + '</details>'

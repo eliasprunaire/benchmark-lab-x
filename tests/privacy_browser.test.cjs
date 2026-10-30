@@ -41,9 +41,7 @@ try:
     # Cinq réponses dont une non conforme ; la recommandation est ajoutée à la vue seule, pour observer l'infobulle
     results = restitution.comparison(proof.store, proof.sid, 'fixture', 'comparison')
     results['recommendation'] = {'configuration': results['panel'][1], 'amount': '0.10001', 'unit': 'TEST',
-                                 'basis': 'quality_then_cost', 'quality': [{'measure': 'Durée fictive'}], 'count': 3,
-                                 'detail_href': next(row for row in results['rows'] if row['requested_configuration']['id']
-                                                     == results['panel'][1]['id'])['detail_href']}
+                                 'basis': 'quality_then_cost', 'quality': [{'measure': 'Durée fictive'}], 'count': 3}
     # Le motif vient d'un modèle juge : il reste du texte, jamais du balisage
     failed = next(row for row in results['rows'] if row['verdict'] == 'NE SATISFAIT PAS')
     failed['reason'] += ' <img src=x onerror=alert(1)>'
@@ -668,14 +666,6 @@ test('native consent form remains usable without JavaScript, with no preselected
     await page.goto(origin + '/render/example');
     assert.equal(await page.getByRole('checkbox').isChecked(), false);
     assert.match(await page.locator('.privacy-consent').textContent(), /besoin de JavaScript ; sans lui, seule la contribution/i);
-    // La notice reste entière, repliée sous la case, et s'ouvre sans JavaScript
-    const notice = page.locator('.privacy-consent label:has(input[type="checkbox"]) + details');
-    assert.equal(await notice.count(), 1, 'notice absente sous la case');
-    assert.equal(await notice.locator('summary').textContent(), 'Ce que ce choix implique');
-    assert.equal(await notice.locator('p').first().isVisible(), false, 'notice dépliée par défaut');
-    await notice.locator('summary').click();
-    assert.equal(await notice.locator('p').first().isVisible(), true);
-    assert.match(await notice.textContent(), /Cette autorisation ne permet pas de le publier/);
     await page.getByRole('checkbox').check();
     await page.getByRole('button', {name: 'Enregistrer mon choix'}).click();
     assert.deepEqual(posts, [{path: '/preparation/dossiers/d1/contribution', body: {
@@ -875,22 +865,16 @@ test('per-model reasoning tuning opens without JavaScript, stays in the form and
       await page.goto(origin + '/render/configurations');
       const tuning = page.locator('details', {hasText: 'Ajuster le niveau par modèle'});
       assert.equal(await tuning.count(), 1, colorScheme);
-      // Trois choix courts : des boutons radio de même nom, dans un groupe nommé par le modèle
-      const choices = page.locator('input[type="radio"][name="effort:mistralai/mistral-medium-3-5"]');
-      assert.equal(await choices.first().isVisible(), false, `${colorScheme} dépliant fermé par défaut`);
+      const select = page.locator('select[name="effort:mistralai/mistral-medium-3-5"]');
+      assert.equal(await select.isVisible(), false, `${colorScheme} dépliant fermé par défaut`);
       await tuning.locator('summary').click();
-      assert.equal(await choices.first().isVisible(), true, colorScheme);
-      assert.deepEqual(await choices.evaluateAll(radios => radios.map(radio => radio.form?.id)), ['configurations-form', 'configurations-form', 'configurations-form'], colorScheme);
-      assert.deepEqual(await choices.evaluateAll(radios => radios.map(radio => radio.value)), ['', 'none', 'high']);
-      assert.equal(await choices.first().isChecked(), true, 'Automatique coché par défaut');
-      assert.equal(await page.locator('fieldset.segments', {has: choices.first()}).locator('legend').textContent(), 'Mistral Medium 3.5');
-      assert.equal(await page.locator('[name="effort:deepseek/deepseek-v4.1-flash"]').count(), 0, `${colorScheme} niveau fixe sans réglage`);
-      // Le clavier atteint le groupe, et le contour entoure le bouton entier
-      await choices.first().focus();
-      await page.keyboard.press('Shift+Tab');
-      await page.keyboard.press('Tab');
-      assert.equal(await choices.first().evaluate(element => document.activeElement === element), true, `${colorScheme} groupe hors d’atteinte au clavier`);
-      assert.notEqual(await choices.first().evaluate(element => getComputedStyle(element.closest('label')).outlineStyle), 'none', `${colorScheme} focus invisible`);
+      assert.equal(await select.isVisible(), true, colorScheme);
+      assert.equal(await select.getAttribute('form'), 'configurations-form', colorScheme);
+      assert.deepEqual(await select.locator('option').evaluateAll(options => options.map(option => option.value)), ['', 'none', 'high']);
+      assert.equal(await page.locator('label[for="' + await select.getAttribute('id') + '"]').textContent(), 'Mistral Medium 3.5');
+      assert.equal(await page.locator('select[name="effort:deepseek/deepseek-v4.1-flash"]').count(), 0, `${colorScheme} niveau fixe sans réglage`);
+      await select.focus();
+      assert.notEqual(await select.evaluate(element => getComputedStyle(element).outlineStyle), 'none', `${colorScheme} focus invisible`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${colorScheme} débordement`);
       assert.deepEqual(await page.evaluate(contrastFailures), [], colorScheme);
       mkdirSync('reports/privacy-browser', {recursive: true});
@@ -920,19 +904,6 @@ test('pages expose no decorative SVG, keep status roles for live zones and hide 
           assert.equal(await page.locator('.lead').evaluate(lead => getComputedStyle(lead).borderLeftStyle), 'none',
             `${where} l’accroche est un paragraphe, sans filet latéral (DESIGN.md)`);
       }
-      // Une chaîne « A · B · C » devenue liste se lit un élément par ligne, jamais collée en ligne sans séparateur
-      let lists = 0;
-      for (const name of ['example', 'comparison', 'results', 'launch-ready']) {
-        await page.goto(origin + '/render/' + name);
-        await page.evaluate(() => document.fonts.ready);
-        lists += await page.locator('ul.meta').count();
-        assert.deepEqual(await page.$$eval('ul.meta', lists => lists.flatMap(list => {
-          const items = [...list.children].filter(item => item.checkVisibility());
-          return items.slice(1).filter((item, index) => item.getBoundingClientRect().top < items[index].getBoundingClientRect().bottom - 1)
-            .map(() => list.textContent.trim().slice(0, 60));
-        })), [], `${name} ${colorScheme} liste lue en ligne`);
-      }
-      assert.ok(lists > 0, `${colorScheme} aucune liste contrôlée`);
       await page.route('**/preparation/style.css', route => route.abort());
       for (const name of ['dossiers', 'example']) {
         await page.goto(origin + '/render/' + name);
@@ -1069,34 +1040,6 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
       const k1 = await advice();
       assert.ok(k1.first, `${width} conseil après le bilan`);
       assert.ok(k1.bottom <= height, `${width} conseil sous le premier écran : ${k1.bottom}`);
-      // R14 : le conseil est en synthèse (à droite sur ordinateur, d'abord sur téléphone) ; le bilan est une liste courte aux statuts nommés
-      const zones = await page.evaluate(() => {
-        const side = document.querySelector('.wb-side').getBoundingClientRect(), main = document.querySelector('.wb-main').getBoundingClientRect();
-        return {right: side.left >= main.right, above: side.bottom <= main.top,
-                advice: Boolean(document.querySelector('.wb-side .economic-choice')),
-                bilan: [...document.querySelectorAll('.campaign-summary ul.bilan > li')].map(item => item.innerText),
-                limit: document.querySelector('.campaign-summary .limit a[href="#method"]')?.textContent,
-                advised: [...document.querySelectorAll('tr.advised th')].map(cell => cell.innerText),
-                filters: document.querySelector('details#filters')?.open, scope: Boolean(document.querySelector('.view-scope')),
-                detail: document.querySelector('.economic-choice a.button.sec')?.textContent};
-      });
-      assert.ok(zones.advice && (width === 1440 ? zones.right : zones.above), `${width} position de la synthèse du conseil`);
-      for (const label of ['Comparaison incomplète', 'Coût complet inconnu', 'Juge non qualifié', 'Réponses évaluées : 5'])
-        assert.ok(zones.bilan.some(item => item.includes(label)), `${width} bilan sans « ${label} »`);
-      assert.equal(zones.limit, 'Méthode et limites');
-      assert.equal(zones.advised.length, 1);
-      assert.match(zones.advised[0], /Conseillé/);
-      assert.equal(zones.filters, false);
-      assert.match(zones.detail, /^Voir le détail de /);
-      // Journal d'essai : sur ordinateur, chaque étape passée porte un résumé d'une ligne tiré des données ; sur téléphone, la barre reste nue
-      const summaries = await page.$$eval('.steps .done', steps => steps.map(step => step.querySelector('.resume')?.checkVisibility() ? step.querySelector('.resume').textContent : null));
-      if (width === 1440) {
-        assert.equal(summaries.length, 4, 'quatre étapes passées');
-        assert.ok(summaries[0], 'besoin sans résumé');
-        assert.match(summaries[1], /^Version \d+$/);
-        assert.equal(summaries[2], 'Validé');
-        assert.match(summaries[3], /^\d+ configurations?$/);
-      } else assert.deepEqual(summaries.filter(Boolean), [], 'résumés visibles sur téléphone');
     }
     // Chaque bloc de conseil : détail replié sur téléphone, déplié sans JavaScript sur ordinateur, où le bloc entier tient au premier écran
     for (const [width, height] of [[390, 844], [1440, 900]]) {
@@ -1136,10 +1079,6 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
       return words;
     }));
     assert.deepEqual(cut, [], 'mots coupés dans le tableau');
-    // Téléphone : le tableau se lit en liste, sans défilement horizontal, l'en-tête de colonne devant chaque valeur
-    assert.equal(await page.$eval('.table-scroll', scroller => scroller.scrollWidth <= scroller.clientWidth + 1), true, 'défilement horizontal du tableau');
-    assert.equal(await page.$eval('.table-scroll thead', head => head.getBoundingClientRect().width <= 1), true, 'en-têtes de colonne visibles');
-    assert.equal(await page.$eval('.table-scroll tbody td[data-entete]', cell => getComputedStyle(cell, '::before').content === JSON.stringify(cell.dataset.entete)), true, 'en-tête absent devant la valeur');
     // Tableau défilé jusqu'au coût : le nom du candidat reste à gauche
     await page.$eval('.table-scroll', scroller => {scroller.scrollLeft = scroller.scrollWidth;});
     assert.equal(await page.$eval('.table-scroll tbody th', th =>
@@ -1243,7 +1182,7 @@ test('priority advice stays native, escaped, keyboard reachable and readable at 
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
     const select = page.locator('#filter-priority');
     assert.equal(await select.count(), 1, 'priorité absente du formulaire');
-    assert.match(await page.locator('#filters > summary').innerText(), /Trier et filtrer/);
+    assert.match(await page.locator('#filters > summary').innerText(), /Conseil/);
     assert.equal(await select.inputValue(), 'duration');
     assert.deepEqual(await page.locator('#filter-priority option').evaluateAll(options => options.map(option => option.value)),
                      ['', 'cost', 'duration', 'present']);
@@ -1307,13 +1246,12 @@ test('pre-launch summary: synthesis, single launch button as confirmation, model
       await page.evaluate(() => document.fonts.ready);
       const main = await page.locator('main').innerText();
       // Prévision et réservation affichées séparément, jamais additionnées
-      assert.deepEqual(await page.locator('ul.meta.synthesis > li').allInnerTexts(),
-        ['2 modèles', 'réponses estimées : non estimable', 'réservé pour l’évaluation : 0,30 USD', 'crédit restant : 18,5 USD'], colorScheme);
+      assert.match(main, /2 modèles · réponses estimées : non estimable · réservé pour l’évaluation : 0,30 USD · crédit restant : 18,5 USD/, colorScheme);
       assert.equal(await page.locator('main input[type="checkbox"]').count(), 0, `${colorScheme} case à cocher`);
       assert.equal(await page.locator('main button:not(.sec)').count(), 1, `${colorScheme} un seul bouton principal`);
       assert.equal(await page.locator('form[action$="/start"] input[name="confirm"]').getAttribute('value'), 'yes');
       assert.equal(await page.evaluate(() => {
-        const synthesis = [...document.querySelectorAll('main p, main ul.meta')].find(p => p.textContent.includes('réponses estimées'));
+        const synthesis = [...document.querySelectorAll('main p')].find(p => p.textContent.includes('réponses estimées'));
         const nodes = [synthesis, document.querySelector('form[action$="/start"] button'),
                        [...document.querySelectorAll('main a')].find(a => a.textContent === 'Modifier la sélection'),
                        document.querySelector('.table-scroll table')];
@@ -1452,10 +1390,6 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     await start();
     await tick(3000, 'followup-stopped', 'FOLLOWUP_COMPLETE');
     await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1/conditions');
-    // Vérification de l'exemple en attente : le panneau de suivi est dans la synthèse, et le script le trouve au démarrage
-    await start('progress-package-PENDING');
-    assert.equal(await page.locator('.wb-side #preparation-progress').count(), 1);
-    assert.equal(await page.locator('#preparation-progress button').isVisible(), true, 'suivi automatique non démarré');
     assert.deepEqual(failures, []);
   } finally {followupReplies = []; await context.close();}
 });
@@ -1572,13 +1506,12 @@ test('access and launch screens preserve available actions, estimates and refusa
     await page.goto(origin + '/render/configurations-selected');
     assert.equal(await page.locator('form#configurations-form').getAttribute('action'), '/preparation/dossiers/d1/configurations');
     assert.equal(await page.locator('input[name="models"]:checked').count(), 2);
-    assert.equal(await page.locator('input[type="radio"][name="tier"]:checked').inputValue(), 'high');
-    assert.equal(await page.locator('fieldset.segments', {has: page.locator('input[name="tier"]')}).getAttribute('aria-describedby'), 'reasoning-help');
-    const effort = page.locator('input[type="radio"][name="effort:modele-a"]');
-    assert.ok((await effort.evaluateAll(radios => radios.map(radio => radio.form?.id))).every(id => id === 'configurations-form'), 'un niveau ne serait pas envoyé');
-    assert.ok((await page.locator('input[type="radio"][name="tier"]').evaluateAll(radios => radios.map(radio => radio.form?.id))).every(id => id === 'configurations-form'));
-    assert.equal(await page.locator('input[name="effort:modele-a"]:checked').inputValue(), 'xhigh');
-    assert.equal(await page.locator('[name="effort:modele-b"]').count(), 0);
+    assert.equal(await page.locator('select[name="tier"]').inputValue(), 'high');
+    assert.equal(await page.locator('select[name="tier"]').getAttribute('aria-describedby'), 'reasoning-help');
+    const effort = page.locator('select[name="effort:modele-a"]');
+    assert.equal(await effort.getAttribute('form'), 'configurations-form');
+    assert.equal(await effort.inputValue(), 'xhigh');
+    assert.equal(await page.locator('select[name="effort:modele-b"]').count(), 0);
     const selection = await page.textContent('main');
     for (const phrase of ['reçoit le niveau le plus proche qu’il propose', 'Ajuster le niveau par modèle',
       'sans garantir qu’elle soit meilleure', 'niveau de raisonnement fixe']) assert.ok(selection.includes(phrase), phrase);
@@ -1605,7 +1538,7 @@ test('access and launch screens preserve available actions, estimates and refusa
       await page.setViewportSize({width, height: 900});
       await page.goto(origin + '/render/access-connected');
       let layout = await zones();
-      assert.equal(await page.locator('.readout').innerText(), 'Solde restant selon OpenRouter\n12,50 USD', `${width} relevé du solde`);
+      assert.equal(await page.locator('.readout').innerText(), 'SOLDE RESTANT SELON OPENROUTER\n12,50 USD', `${width} relevé du solde`);
       assert.equal(await page.evaluate(() => document.querySelector('.state').compareDocumentPosition(document.querySelector('.workbench'))
         & Node.DOCUMENT_POSITION_FOLLOWING), 4, `${width} état avant les formulaires`);
       assert.ok(layout.side.includes('Son plafond est la seule limite de dépense.'), `${width} colonne dépense`);
@@ -1620,7 +1553,7 @@ test('access and launch screens preserve available actions, estimates and refusa
       await page.goto(origin + '/render/launch-ready');
       layout = await zones();
       // Synthèse, conditions puis bouton dans la colonne lue en premier ; le tableau reste dans la zone principale
-      for (const phrase of ['Estimation des réponses\n3,50 USD', 'réponses estimées : 3,50 USD', 'Tout est prêt.', 'Lancer le benchmark'])
+      for (const phrase of ['ESTIMATION DES RÉPONSES\n3,50 USD', 'réponses estimées : 3,50 USD', 'Tout est prêt.', 'Lancer le benchmark'])
         assert.ok(layout.side.includes(phrase), `${width} ${phrase}`);
       assert.ok(layout.side.indexOf('Tout est prêt.') < layout.side.indexOf('Lancer le benchmark'), `${width} conditions avant le bouton`);
       assert.equal(await page.locator('.wb-main table').count(), 1);
@@ -1759,11 +1692,6 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.getByLabel('Rechercher une évaluation').fill('corriger');
-      // Les filtres sont repliés sous « Affiner la recherche » tant qu'aucun n'est actif
-      const refine = page.locator('details', {hasText: 'Affiner la recherche'});
-      assert.equal(await refine.evaluate(details => details.open), false);
-      assert.equal(await page.getByLabel('Rechercher une évaluation').isVisible(), true);
-      await refine.locator('summary').click();
       await page.getByLabel('Travail mesuré', {exact: true}).selectOption('coding');
       await page.getByLabel('Vérification éditoriale', {exact: true}).selectOption('verified');
       await page.getByRole('button', {name: 'Rechercher', exact: true}).click();
@@ -1946,15 +1874,6 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       }
       await page.setViewportSize({width: 390, height: 844});
       await page.goto(origin + '/epreuves');
-      // Chaque épreuve montre quatre caractéristiques en grille ; les cinq autres se replient
-      const entry = page.locator('main section', {has: page.locator('dl.editorial-characteristics')}).first();
-      assert.deepEqual(await entry.locator('> dl dt').allTextContents(), ['Travail évalué', 'Résultat attendu', 'Qualification', 'Résultats publiés']);
-      assert.equal(await entry.locator('details', {hasText: 'Autres caractéristiques'}).evaluate(details => details.open), false);
-      assert.equal(await entry.locator('details dt').count(), 5);
-      // Repliées seulement : une fois ouvertes, les cinq caractéristiques se lisent
-      await entry.locator('details', {hasText: 'Autres caractéristiques'}).locator('summary').click();
-      assert.deepEqual(await entry.locator('details dd').evaluateAll(values => values.map(dd => dd.checkVisibility())), [true, true, true, true, true]);
-      assert.equal(await entry.locator('> dl').evaluate(list => getComputedStyle(list).display), 'grid');
       assert.equal(await page.locator('main script, main img').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -1963,7 +1882,6 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       await searchField.focus();
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
       await searchField.fill('note');
-      await page.locator('details', {hasText: 'Affiner la recherche'}).locator('summary').click();
       await page.getByLabel('Langue').selectOption('Français');
       await page.getByLabel('Outil').selectOption('Tableur');
       await page.getByRole('button', {name: 'Rechercher'}).click();
@@ -1995,7 +1913,6 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
         + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
       // Une valeur longue proposée reste sélectionnable et utilisable
       await page.goto(origin + '/epreuves');
-      await page.locator('details', {hasText: 'Affiner la recherche'}).locator('summary').click();
       await page.getByLabel('Outil').selectOption(rendered['editorial-long-tool']);
       await page.getByRole('button', {name: 'Rechercher'}).click();
       const longResult = await page.textContent('main');
@@ -2094,7 +2011,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.match(copied, /Sa qualification publiée ne qualifie pas ce dossier/);
       assert.match(copied, /La copie reste consultable sans clé/);
       // Copie sans exemple préparé : son état et la consultation sans clé sont dits au premier écran
-      assert.match(copied, /Copie d’épreuve, version 1/);
+      assert.match(copied, /Copie d’épreuve · version 1/);
       assert.equal(copied.includes('Exemple inventé'), false);
       assert.match(copied, /Votre copie est enregistrée\./);
       assert.match(copied, /sans clé ni appel aux modèles/);
@@ -2103,7 +2020,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.match(copied, /Aucun appel modèle effectué pour ce dossier/);
       await page.reload();
       const reloadedCopy = await page.textContent('main');
-      assert.match(reloadedCopy, /Copie d’épreuve, version 1/);
+      assert.match(reloadedCopy, /Copie d’épreuve · version 1/);
       assert.match(reloadedCopy, /Épreuve source/);
       assert.match(reloadedCopy, /Pièce source <script>alert\(1\)<\/script>/);
       assert.match(reloadedCopy, /Qualification réussie/);
@@ -2194,17 +2111,7 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       assert.match(main, /Coût observé inconnu pour 1 réponse/);
       assert.match(main, /pièce non publiée/i);
       assert.match(main, /un filtre ne change ni les verdicts ni la population/i);
-      const coverage = await page.locator('ul.meta', {hasText: 'Réponses évaluées'}).locator('li').allInnerTexts();
-      assert.equal(coverage[0], 'Réponses évaluées : 2');
-      assert.match(coverage[1], /^essais lancés : 2 sur 2\./);
-      // La portée du verdict est longue : elle se replie sous « Portée de ce verdict » et s'ouvre sans JavaScript
-      const scope = page.locator('main details', {hasText: 'Portée de ce verdict'});
-      assert.equal(await scope.count(), 1);
-      assert.equal(await scope.locator('p').isVisible(), false, 'portée dépliée par défaut');
-      assert.match(await scope.textContent(), /Le verdict porte sur la configuration observée/);
-      // Repliée seulement : une fois ouverte, la limite se lit vraiment
-      await scope.locator('summary').click();
-      assert.equal(await scope.locator('p', {hasText: 'Le verdict porte sur la configuration observée'}).isVisible(), true, 'portée illisible après ouverture');
+      assert.match(main, /Réponses évaluées : 2 · essais lancés : 2 sur 2/);
       assert.equal(await page.locator('main script, main img').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -2266,7 +2173,7 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       });
       assert.deepEqual(column.head, [], 'en-tête de la colonne Modèle coupé entre deux lettres : ' + JSON.stringify(column));
       assert.deepEqual(column.name, [], 'nom du modèle coupé entre deux lettres : ' + JSON.stringify(column));
-      assert.ok(column.scroll <= 390, 'le tableau se lit en liste, sans défilement horizontal : ' + JSON.stringify(column));
+      assert.ok(column.scroll > 390, 'le tableau ne défile plus horizontalement : ' + JSON.stringify(column));
       let proofFocused = false;
       for (let press = 0; press < 40 && !proofFocused; press++) {
         await page.keyboard.press('Tab');
@@ -2409,7 +2316,6 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
               consent: inside('.privacy-consent', '.workbench'), side: document.querySelector('.wb-side').innerText,
               bar: document.querySelector('.wb-side .actionbar') && getComputedStyle(document.querySelector('.wb-side .actionbar')).position,
               stateFirst: document.querySelector('.state') ? follows('.state', '.workbench') : null,
-              stateInSide: inside('.state', '.wb-side'),
               consentAfter: document.querySelector('.privacy-consent') ? follows('#validation', '.privacy-consent') : null};
     });
     for (const width of [1440, 390]) {
@@ -2432,16 +2338,7 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       assert.match(layout.side, /Oui, c’est le travail à tester/, `${width} bouton de validation en synthèse`);
       assert.equal(layout.bar, 'static', `${width} la barre de validation ne recouvre pas le texte de la synthèse`);
       assert.ok(!layout.consent && layout.consentAfter, `${width} consentement séparé, après la validation`);
-      // R10 : la synthèse (état, bouton, vérification) précède le contenu dans le HTML, donc sur téléphone, et reste à droite sur ordinateur
-      assert.ok(layout.stateInSide && !layout.stateFirst, `${width} état d'abord dans la synthèse`);
-      assert.match(layout.side, /Vérification\s*:\s*En attente/, `${width} état de la vérification en une ligne`);
-      assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la synthèse de validation`);
-      assert.equal(await page.locator('details.corr[open]').count(), 0, `${width} correction repliée`);
-      const order = await page.locator('main').innerText();
-      const at = phrase => order.indexOf(phrase);
-      assert.ok(at('Oui, c’est le travail à tester') < at('Votre besoin') && at('Votre besoin') < at('Consigne donnée aux modèles')
-        && at('Consigne donnée aux modèles') < at('Les pièces de l’exemple') && at('Les pièces de l’exemple') < at('Ce que le modèle doit rendre')
-        && at('Ce que le modèle doit rendre') < at('Critères de réussite') && at('Critères de réussite') < at('Limites et travail restant'), `${width} ordre du PRD`);
+      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de validation`);
     }
   } finally {await context.close();}
 });
@@ -2452,7 +2349,7 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     const page = await context.newPage();
     await page.goto(origin + '/render/example');
     const text = await page.textContent('main');
-    assert.ok(text.indexOf('Oui, c’est le travail à tester') < text.indexOf('Les pièces de l’exemple'));
+    assert.ok(text.indexOf('Les pièces de l’exemple') < text.indexOf('Oui, c’est le travail à tester'));
     assert.ok(text.indexOf('Oui, c’est le travail à tester') < text.indexOf('conserver cet exemple pendant 6 mois'));
     for (const phrase of ['historique local', 'votre besoin, vos messages et les versions successives',
       'Cette copie contient plus que la contribution', 'a besoin de JavaScript', 'sans lui, seule la contribution',
@@ -2571,11 +2468,6 @@ test('public and private pages retain legal information and exact release identi
       assert.equal(await page.locator('a[aria-current="page"]').textContent(), 'Accueil');
       assert.equal(await page.locator('a[href="/index.html"]').count(), 0);
       assert.ok(text.includes('Un seul manquement suffit'));
-      // Accueil : invite du PRD, cinq étapes, règle visible et lecture du verdict repliée
-      assert.ok(text.includes('Les résultats du test vous aideront à faire votre choix.'));
-      assert.equal(await page.locator('ol.parcours > li').count(), 5);
-      assert.equal(await page.locator('main > details:not([open]) > summary', {hasText: 'Comment lire un verdict'}).count(), 1);
-      assert.equal(await page.locator('.rule').isVisible(), true);
       assert.equal(text.includes('Comparaisons publiées'), false);
     }
     await page.goto(origin + '/render/listing');
