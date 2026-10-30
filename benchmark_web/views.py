@@ -1225,8 +1225,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         # Avec un exemple, l'état ouvre la colonne de synthèse : il se lit avant le contenu, y compris sur téléphone
         state_in_side = bool(value['package']) and not referral
         if not state_in_side:
-            content += state_html
-        content += state_tail
+            content += state_html + state_tail
         if referral:
             references = [(identity, reference) for identity, reference in BENCHMARK_REFERENCES.items()
                           if reference['category'] == referral and reference.get('availability') == 'available']
@@ -1391,7 +1390,8 @@ def render(value, csrf, path='/preparation', *, error=False):
                        else labels.get(qualification.get('qualification_status'), 'En attente'))
             side += '<p class="hint">Vérification : ' + text(checked) + '</p>'
         if state_in_side:
-            side = state_html + side
+            # Le script de suivi cherche son panneau au démarrage : il vient après lui dans la synthèse
+            side = state_html + state_tail + side
         content = content[:main_start] + workbench(content[main_start:], side, 'Valider l’exemple' if package else 'Coût de la préparation',
                                                    side_first=state_in_side)
         if package:

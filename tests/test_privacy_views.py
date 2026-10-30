@@ -170,6 +170,11 @@ def browser_views():
             qualified=qualification.get('status') == 'QUALIFIED',
             availability=dict(available, reason='waiting', can_submit=False))
         examples[f'progress-{stage}-{qualification.get("status", "none")}-{prior}'] = value
+    # Exemple présent et vérification automatique en attente : l'état et son suivi passent dans la synthèse
+    pending = example_view()
+    pending.update(qualification=dict(operation_id='op', status='PENDING', summary='Contrôle', findings=[]),
+                   validation={'validated_at': '2026-09-17'}, availability=dict(available, reason='waiting', can_submit=False))
+    examples['progress-package-PENDING'] = pending
     history = example_view()
     stopped = deepcopy(ready['campaign'])
     stopped['conditions'].update(pi=dict(package='pi', version='1', status='PINNED'),

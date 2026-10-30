@@ -1452,6 +1452,10 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     await start();
     await tick(3000, 'followup-stopped', 'FOLLOWUP_COMPLETE');
     await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1/conditions');
+    // Vérification de l'exemple en attente : le panneau de suivi est dans la synthèse, et le script le trouve au démarrage
+    await start('progress-package-PENDING');
+    assert.equal(await page.locator('.wb-side #preparation-progress').count(), 1);
+    assert.equal(await page.locator('#preparation-progress button').isVisible(), true, 'suivi automatique non démarré');
     assert.deepEqual(failures, []);
   } finally {followupReplies = []; await context.close();}
 });
