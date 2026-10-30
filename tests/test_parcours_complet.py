@@ -5894,7 +5894,9 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(filtree.link('Détail et preuves'))
         self.examine(page, comparison, 'détail ouvert seul', None)
         self.assertIn('Modèle C', page.visible)
-        self.assertIn(ATTRIBUTION, page.visible)
+        # La portée du verdict est longue : elle se replie, alors que la limite de l'exemple reste visible
+        self.assertNotIn(ATTRIBUTION, page.visible)
+        self.assertIn(ATTRIBUTION, page.depliant('Portée de ce verdict'))
         self.assertIn(LIMIT, page.visible)
         self.assertIn('Comparaison : réponses évaluées : 2 · essais lancés : 2 sur 2.', page.visible)
         resultats = Page(html.encode())

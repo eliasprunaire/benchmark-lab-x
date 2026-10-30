@@ -18,7 +18,7 @@ from benchmark.preparation import INCIDENT_TEXT, NOT_SENT_TEXT, incident_text
 from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
 
-from .fragments import (VERDICT_BADGES, valeur_mesure, access_summary, badge, chain, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
+from .fragments import (VERDICT_BADGES, valeur_mesure, access_summary, badge, chain, date_lisible_utc, fold, form, hidden, icon, jour_lisible, listing, montant_lisible,
                         personal_key_form, readable_fields, readout, section, long_hint, single_choice, state_block, text, workbench)
 
 COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
@@ -1474,7 +1474,8 @@ def render_attempt_detail(value):
         content += render_result(record, names) + '</details>'
     # Hors de `#attempt-detail` : dans la modale, la page des résultats porte déjà cette portée et cette couverture
     conclusion, coverage = value['conclusion'], value['coverage']
-    content += '</div><p class="note">' + text(conclusion['attribution'] + ' ' + conclusion['limits'][0]) + '</p>'
+    content += ('</div>' + fold('Portée de ce verdict', '<p>' + text(conclusion['attribution']) + '</p>')
+                + '<p class="note">' + text(conclusion['limits'][0]) + '</p>')
     return content + chain(['Comparaison : réponses évaluées : ' + text(coverage['evaluated_attempts']),
                             'essais lancés : ' + text(coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '.'], 'hint')
 

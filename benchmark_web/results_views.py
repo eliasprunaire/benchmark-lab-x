@@ -5,7 +5,7 @@ ni dossier, ni pièce réservée au juge. Il partage les fragments du parcours p
 pour les verdicts, les montants et les dates, et n’ajoute aucun script.
 """
 from .campaign_views import effort_label
-from .fragments import (badge, chain, date_lisible_utc, jour_lisible, listing, montant_lisible, readable_fields,
+from .fragments import (badge, chain, date_lisible_utc, fold, jour_lisible, listing, montant_lisible, readable_fields,
                         section, single_choice, text, valeur_mesure, workbench)
 
 STATES = {'PASS': 'respectée', 'FAIL': 'non respectée', 'INDETERMINE': 'non vérifiable'}
@@ -315,7 +315,7 @@ def render_results(value):
     content += chain([text(value['title']), text('Version ' + value['version_id']), 'exemple entièrement inventé'], 'hint')
     content += '<p>Travail évalué : ' + text(value['work']) + '</p>'
     content += '<p>' + text(value['conclusion']['text']) + '</p>'
-    content += '<p>' + text(value['conclusion']['attribution']) + '</p>'
+    content += fold('Portée de ce verdict', '<p>' + text(value['conclusion']['attribution']) + '</p>')
     coverage = value['coverage']
     content += chain(['Réponses évaluées : ' + text(str(coverage['evaluated_attempts'])),
                       'essais lancés : ' + text(str(coverage['attempted_cells'])) + ' sur ' + text(str(coverage['planned_cells'])) + '. '

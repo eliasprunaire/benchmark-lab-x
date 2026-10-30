@@ -2133,6 +2133,11 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       const coverage = await page.locator('ul.meta', {hasText: 'Réponses évaluées'}).locator('li').allInnerTexts();
       assert.equal(coverage[0], 'Réponses évaluées : 2');
       assert.match(coverage[1], /^essais lancés : 2 sur 2\./);
+      // La portée du verdict est longue : elle se replie sous « Portée de ce verdict » et s'ouvre sans JavaScript
+      const scope = page.locator('main details', {hasText: 'Portée de ce verdict'});
+      assert.equal(await scope.count(), 1);
+      assert.equal(await scope.locator('p').isVisible(), false, 'portée dépliée par défaut');
+      assert.match(await scope.textContent(), /Le verdict porte sur la configuration observée/);
       assert.equal(await page.locator('main script, main img').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

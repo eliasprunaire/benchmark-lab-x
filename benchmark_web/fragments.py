@@ -283,3 +283,8 @@ def long_hint(identifier, body, summary, *, limit=140):
     if len(unescape(re.sub(r'<[^>]+>', '', body))) <= limit:
         return hint
     return '<details class="depliant discret"><summary>' + summary + '</summary>' + hint + '</details>'
+
+
+def fold(summary, body, *, opened=False, classes='depliant discret'):
+    """Contenu replié sous un résumé, lisible sans JavaScript"""
+    return '<details class="' + classes + '"' + (' open' if opened else '') + '><summary>' + summary + '</summary>' + body + '</details>'
