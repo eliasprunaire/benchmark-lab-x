@@ -920,6 +920,19 @@ test('pages expose no decorative SVG, keep status roles for live zones and hide 
           assert.equal(await page.locator('.lead').evaluate(lead => getComputedStyle(lead).borderLeftStyle), 'none',
             `${where} l’accroche est un paragraphe, sans filet latéral (DESIGN.md)`);
       }
+      // Une chaîne « A · B · C » devenue liste se lit un élément par ligne, jamais collée en ligne sans séparateur
+      let lists = 0;
+      for (const name of ['example', 'comparison', 'results', 'launch-ready']) {
+        await page.goto(origin + '/render/' + name);
+        await page.evaluate(() => document.fonts.ready);
+        lists += await page.locator('ul.meta').count();
+        assert.deepEqual(await page.$$eval('ul.meta', lists => lists.flatMap(list => {
+          const items = [...list.children].filter(item => item.checkVisibility());
+          return items.slice(1).filter((item, index) => item.getBoundingClientRect().top < items[index].getBoundingClientRect().bottom - 1)
+            .map(() => list.textContent.trim().slice(0, 60));
+        })), [], `${name} ${colorScheme} liste lue en ligne`);
+      }
+      assert.ok(lists > 0, `${colorScheme} aucune liste contrôlée`);
       await page.route('**/preparation/style.css', route => route.abort());
       for (const name of ['dossiers', 'example']) {
         await page.goto(origin + '/render/' + name);
@@ -1075,6 +1088,15 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
       assert.match(zones.advised[0], /Conseillé/);
       assert.equal(zones.filters, false);
       assert.match(zones.detail, /^Voir le détail de /);
+      // Journal d'essai : sur ordinateur, chaque étape passée porte un résumé d'une ligne tiré des données ; sur téléphone, la barre reste nue
+      const summaries = await page.$$eval('.steps .done', steps => steps.map(step => step.querySelector('.resume')?.checkVisibility() ? step.querySelector('.resume').textContent : null));
+      if (width === 1440) {
+        assert.equal(summaries.length, 4, 'quatre étapes passées');
+        assert.ok(summaries[0], 'besoin sans résumé');
+        assert.match(summaries[1], /^Version \d+$/);
+        assert.equal(summaries[2], 'Validé');
+        assert.match(summaries[3], /^\d+ configurations?$/);
+      } else assert.deepEqual(summaries.filter(Boolean), [], 'résumés visibles sur téléphone');
     }
     // Chaque bloc de conseil : détail replié sur téléphone, déplié sans JavaScript sur ordinateur, où le bloc entier tient au premier écran
     for (const [width, height] of [[390, 844], [1440, 900]]) {

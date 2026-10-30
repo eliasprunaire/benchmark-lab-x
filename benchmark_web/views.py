@@ -830,9 +830,17 @@ def preparation_steps(value):
                (reference if downstream else sections[2]) if example else None,
                models_href if models else None,
                (value['href'] if kind in ('comparison', 'attempt_detail') else results_href) if results else None]
+    # Résumé d'une étape passée, seulement quand la donnée est déjà dans la vue : rien n'est déduit pour l'affichage
+    panel = len((launched or campaign).get('panel') or value.get('panel') or ())
+    shown = revision or value.get('task', {}).get('revision')
+    summaries = {1: value.get('need'), 2: 'Version ' + str(shown) if shown else None,
+                 3: 'Validé' if downstream or value.get('qualified') else None,
+                 4: str(panel) + (' configurations' if panel > 1 else ' configuration') if panel else None}
     content = '<nav class="steps" aria-label="Étapes de préparation">'
     for number, (label, href) in enumerate(zip(('Besoin', 'Exemple', 'Validation', 'Modèles', 'Résultats'), targets), 1):
         inner = '<span class="n">' + str(number) + '</span>' + label
+        if number < current and summaries.get(number):
+            inner += '<span class="resume">' + text(summaries[number]) + '</span>'
         if href is None:
             content += '<span aria-disabled="true">' + inner + '</span>'
         else:

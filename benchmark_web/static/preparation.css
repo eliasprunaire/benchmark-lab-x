@@ -91,6 +91,7 @@ section h3 { margin-top: 1rem; }
 .steps a:hover { color: var(--ink); }
 .steps .n::after { content: ". "; }
 .steps small { display: none; }
+.steps .resume { display: none; }
 @media (min-width: 64rem) {
   .layout:has(> .steps) { display: grid; grid-template-columns: 13rem minmax(0, 1fr); column-gap: var(--s7); align-items: start; }
   .steps { position: sticky; top: var(--s5); flex-direction: column; gap: 0; margin: var(--s4) 0 0 .5rem; border-left: 2px solid var(--line); font-size: 1rem; }
@@ -101,6 +102,8 @@ section h3 { margin-top: 1rem; }
   .steps > span { color: var(--muted); font-weight: 400; }
   .steps .n { display: none; }
   .steps small { display: block; margin: var(--s3) 0 0 1.25rem; font-size: .85rem; }
+  /* Résumé d'une étape passée : deux lignes au plus, le texte entier reste dans la page */
+  .steps .resume { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: .85rem; font-weight: 400; color: var(--ink-2); }
 }
 
 /* Encadré d'état : un trait à gauche, la teinte du statut, toujours un titre */
