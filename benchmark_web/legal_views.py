@@ -9,8 +9,7 @@ CONTACT = '<a href="mailto:contact@cybrel.fr">contact@cybrel.fr</a>'
 
 def table(label, head, rows):
     """Tableau défilant dans sa propre région au clavier, jamais dans la page"""
-    return ('<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
-            '<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '"><table><thead><tr>'
+    return ('<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '"><table><thead><tr>'
             + ''.join('<th scope="col">' + cell + '</th>' for cell in head) + '</tr></thead><tbody>'
             + ''.join('<tr>' + ''.join('<td>' + cell + '</td>' for cell in row) + '</tr>' for row in rows)
             + '</tbody></table></div>')

@@ -219,7 +219,6 @@ dl.kv dd { margin: 0; }
 .comparison-results td .hint { font-size: .85rem; }
 .filter-grid label { margin-top: .2rem; }
 .view-scope { color: var(--muted); font-size: .95rem; }
-.table-hint { display: none; }
 .table-scroll { overflow-x: auto; }
 /* Dans un tableau défilant, un mot ne se coupe pas et la colonne du candidat reste visible */
 .table-scroll :is(td, li, p) { overflow-wrap: break-word; }
@@ -283,6 +282,16 @@ body:has(dialog[open]) { overflow: hidden; }
 .checks > li > details { grid-column: 1 / -1; margin: .2rem 0 0; }
 .checks > li > .checks { grid-column: 1 / -1; margin: .1rem 0 0; padding-left: 1rem; border-left: 1px solid var(--line); }
 
+/* Tableaux lus en liste sur téléphone : les rôles ARIA gardent le sens, data-entete redonne l'en-tête à chaque cellule */
+@media (max-width: 47.99rem) {
+  table[role="table"]:has(tbody tr) thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table[role="table"], table[role="table"] tbody, table[role="table"] td, table[role="table"] tbody th, table[role="table"] caption { display: block; }
+  table[role="table"] tr { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem 1rem; padding: .75rem 0; border-bottom: 1px solid var(--line); }
+  table[role="table"] tr > :first-child { grid-column: 1 / -1; width: auto; }
+  table[role="table"] td, table[role="table"] tbody th { border: 0; padding: .2rem 0; position: static; width: auto; background: none; }
+  table[role="table"] [data-entete]::before { content: attr(data-entete); display: block; font-size: .8rem; color: var(--ink-2); font-weight: 600; }
+}
+
 /* Pied de page */
 footer.site { margin-top: var(--s7); border-top: 1px solid var(--line); padding: var(--s5) 0 var(--s6); color: var(--ink-2); font-size: .9rem; }
 footer.site .cols { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: var(--s5); }
@@ -341,8 +350,6 @@ footer.site details > :not(summary) { margin: .4rem 0 0; }
 
 @media (max-width: 52rem) {
   footer.site .cols { grid-template-columns: 1fr 1fr; }
-  .table-hint { display: block; }
-  table { min-width: 44rem; }
 }
 @media (max-width: 40rem) {
   .two { grid-template-columns: 1fr; }

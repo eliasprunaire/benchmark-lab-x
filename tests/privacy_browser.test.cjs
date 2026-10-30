@@ -1079,6 +1079,10 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
       return words;
     }));
     assert.deepEqual(cut, [], 'mots coupés dans le tableau');
+    // Téléphone : le tableau se lit en liste, sans défilement horizontal, l'en-tête de colonne devant chaque valeur
+    assert.equal(await page.$eval('.table-scroll', scroller => scroller.scrollWidth <= scroller.clientWidth + 1), true, 'défilement horizontal du tableau');
+    assert.equal(await page.$eval('.table-scroll thead', head => head.getBoundingClientRect().width <= 1), true, 'en-têtes de colonne visibles');
+    assert.equal(await page.$eval('.table-scroll tbody td[data-entete]', cell => getComputedStyle(cell, '::before').content === JSON.stringify(cell.dataset.entete)), true, 'en-tête absent devant la valeur');
     // Tableau défilé jusqu'au coût : le nom du candidat reste à gauche
     await page.$eval('.table-scroll', scroller => {scroller.scrollLeft = scroller.scrollWidth;});
     assert.equal(await page.$eval('.table-scroll tbody th', th =>

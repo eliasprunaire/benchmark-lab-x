@@ -413,6 +413,18 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b|\b(?:configuration|cell|attempt|case)-\d+\b|\b(?:O1|E1)\b|python -m|package_sha256')
             self.assertIn('Révision : aaaaaaa', page.visible)
             self.assertNotIn('v0.1.0', page.visible)
+            # Un tableau se lit en liste sur téléphone : rôles explicites et en-tête de colonne par cellule
+            self.assertNotIn('faites défiler', page.visible)
+            for noeud in page.nodes:
+                if noeud['tag'] == 'table':
+                    self.assertEqual('table', noeud['attrs'].get('role'))
+                elif noeud['tag'] == 'td':
+                    self.assertEqual('cell', noeud['attrs'].get('role'))
+                    self.assertTrue(noeud['attrs'].get('data-entete'), noeud['text'][:40])
+                elif noeud['tag'] == 'th':
+                    colonne = noeud['attrs'].get('scope') == 'col'
+                    self.assertEqual('columnheader' if colonne else 'rowheader', noeud['attrs'].get('role'))
+                    self.assertEqual(colonne, not noeud['attrs'].get('data-entete'))
             self.assertNotIn(KEY, page.visible)
             # Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page ne compte sur elle
             self.assertNotIn('équipe Bench-X', ' '.join(n['text'] for n in page.nodes))
@@ -1952,7 +1964,7 @@ class ParcoursComplet(unittest.TestCase):
         # Configuration demandée, observée et sources : différence et inconnue explicites
         page_raw = raw.decode()
         self.assertIn('fournisseur-observe', page_raw)
-        self.assertRegex(page_raw, r'Fournisseur</th><td>OpenRouter</td><td>fournisseur-observe</td>')
+        self.assertRegex(page_raw, r'Fournisseur</th><td[^>]*>OpenRouter</td><td[^>]*>fournisseur-observe</td>')
         self.assertRegex(page_raw, r'Observations inconnues :[^<]*Effort de raisonnement')
 
         piece_url = first + '/pieces/' + selected[0]
@@ -5564,7 +5576,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(bloc.split('Modèle B')[1].split('Modèle C')[0].strip().endswith(': réponse reçue'), bloc)
         # Issue #541 : la ligne de compte ne la compte pas non plus comme une réponse reçue
         self.assertIn('Réponses reçues : 2 sur 3.', page.visible)
-        rows = html.split('<tbody>')[1].split('</tbody>')[0]
+        rows = html.split('<tbody role="rowgroup">')[1].split('</tbody>')[0]
         self.assertEqual(2, rows.count('<tr id="attempt-'))
         reprise = next(chunk for chunk in rows.split('<tr id="attempt-')[1:] if '<strong>Modèle B</strong>' in chunk)
         self.assertIn('Reprise après arrêt pour longueur : limite de sortie de 8192 jetons', reprise)
@@ -5670,7 +5682,7 @@ class ParcoursComplet(unittest.TestCase):
             ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], comportement)
         self.assertEqual(3, len(envois))
         html = self.evaluer(dossier)
-        self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
+        self.assertEqual(2, html.split('<tbody role="rowgroup">')[1].count('<tr id="attempt-'))
         self.assertNotIn('Aucune réponse exploitable', html)
         self.assertNotIn('Notre conseil', html)
         self.assertIn('Une reprise a été demandée pour un modèle.', html)
@@ -5746,7 +5758,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(len(phases) - 1, texte.count('Pour information, hors conseil'))
         self.assertNotRegex(texte, r'(?i)par mois|heure de travail|plafond|traceur')
         # Le tableau garde le coût de chaque réponse, sans les autres phases
-        lignes = html.split('<tbody>')[1].split('</tbody>')[0]
+        lignes = html.split('<tbody role="rowgroup">')[1].split('</tbody>')[0]
         self.assertEqual(['0,05 USD', '0,10 USD'], sorted(re.findall(r'<span class="source-value">(.*?)</span>', lignes)))
 
     def test_cout_complet_inconnu_annonce_un_sous_total(self):
@@ -6064,8 +6076,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('1 réponse affichée sur 2', filtree.visible)
         self.assertIn('Notre conseil', filtree.visible)
         self.assertIn('Modèle C', filtree.visible)
-        self.assertIn('Modèle A', filtree_raw.decode().split('<tbody>')[1].split('</tbody>')[0])
-        self.assertNotIn('Modèle C</strong>', filtree_raw.decode().split('<tbody>')[1].split('</tbody>')[0])
+        self.assertIn('Modèle A', filtree_raw.decode().split('<tbody role="rowgroup">')[1].split('</tbody>')[0])
+        self.assertNotIn('Modèle C</strong>', filtree_raw.decode().split('<tbody role="rowgroup">')[1].split('</tbody>')[0])
         self.assertEqual({'priority': 'cost', 'configuration': filtre},
                          json.loads(self.request(comparison + '?priority=cost&configuration=' + filtre,
                                                  json_response=True)[2])['filter_scope'])
@@ -6606,7 +6618,7 @@ class ParcoursComplet(unittest.TestCase):
                           ('mistralai/mistral-small-2603', 16384)], envois)
         html = self.evaluer(dossier)
         self.assertEqual(1, judge.request.call_count)
-        rows = html.split('<tbody>')[1].split('</tbody>')[0]
+        rows = html.split('<tbody role="rowgroup">')[1].split('</tbody>')[0]
         self.assertNotIn('<strong>Modèle B</strong>', rows)
         self.assertNotIn('<strong>Modèle C</strong>', rows)
         ligne_b = next(li for li in html.split('<li>') if li.startswith('Aucune réponse exploitable pour Modèle B'))
@@ -6667,7 +6679,7 @@ class ParcoursComplet(unittest.TestCase):
                           ('mistralai/mistral-small-2603', 4096)], envois)
         html = self.evaluer(dossier)
         self.assertEqual(2, judge.request.call_count)
-        rows = html.split('<tbody>')[1].split('</tbody>')[0]
+        rows = html.split('<tbody role="rowgroup">')[1].split('</tbody>')[0]
         self.assertNotIn('<strong>Modèle C</strong>', rows)
         self.assertIn('Aucune réponse exploitable pour Modèle C (cause non établie par le reçu). Ce modèle', html)
         self.assertIn('Essai d’origine · motif de fin transmis : stop · consommation transmise : '
@@ -6941,7 +6953,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual([snapshot['admissions'][-1]['authority']['automatic_judgment']['configuration']] * 2, jugements)
         _, _, raw = self.request(suivi.removesuffix('/conditions'))
         html = raw.decode()
-        self.assertEqual(2, html.split('<tbody>')[1].count('<tr id="attempt-'))
+        self.assertEqual(2, html.split('<tbody role="rowgroup">')[1].count('<tr id="attempt-'))
         self.assertNotIn('Aucune réponse exploitable', html)
         self.assertIn('Réponse obtenue à la tentative 4, après un incident fournisseur', html)
         self.assertIn('Notre conseil', html)
@@ -6960,7 +6972,7 @@ class ParcoursComplet(unittest.TestCase):
             Path(artefacts).mkdir(parents=True, exist_ok=True)
             Path(artefacts, 'relance-incident-candidat.json').write_text(json.dumps(
                 {'envois': envois, 'jugements': judge.request.call_count,
-                 'lignes_du_tableau': html.split('<tbody>')[1].count('<tr id="attempt-'),
+                 'lignes_du_tableau': html.split('<tbody role="rowgroup">')[1].count('<tr id="attempt-'),
                  'autres_envois': [re.sub(r'<[^>]+>', ' ', ligne).split('  ')[0].strip()
                                    for ligne in phases['Autres envois aux modèles']]},
                 ensure_ascii=False, indent=2) + '\n')

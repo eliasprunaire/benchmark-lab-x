@@ -221,7 +221,6 @@ def _table(value, columns):
     panel = _panel(value)
     quality = [column for column in columns if not column['cost']]
     content = '<section class="comparison-results"><h2>Comparaison des modèles</h2>'
-    content += '<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
     content += _filters(value, columns) + _scope(value, columns)
     if not value['rows']:
         content += ('<p class="note">Aucune réponse ne correspond à ces filtres. Retirez un filtre pour revoir les autres : '

@@ -14,8 +14,8 @@ from benchmark.storage import _strict_json as encode
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
-from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, listing, montant_lisible,
-                        personal_key_form, readout, section, state_block, text, workbench)
+from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, lisible_en_liste, listing,
+                        montant_lisible, personal_key_form, readout, section, state_block, text, workbench)
 from .projection import candidate_names, piece_name, projection_body
 from .results_views import render_results
 from .legal_views import LEGAL_PAGES, legal_layout
@@ -1467,4 +1467,4 @@ def render(value, csrf, path='/preparation', *, error=False):
             head += '<link rel="canonical" href="' + text(PUBLIC_URL + page) + '">'
     return (template.replace('{{title}}', text(title)).replace('{{body_class}}', body_class).replace('{{menu}}', menu)
             .replace('{{navigation}}', navigation).replace('{{layout_class}}', 'layout' if navigation else '')
-            .replace('{{identity}}', identity).replace('{{head}}', head).replace('{{content}}', content).encode('utf-8'))
+            .replace('{{identity}}', identity).replace('{{head}}', head).replace('{{content}}', lisible_en_liste(content)).encode('utf-8'))

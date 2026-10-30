@@ -662,6 +662,11 @@ class ProbeTests(WebServerCase):
                     self.assertIsNone(headers.get('Set-Cookie'))
                     if method == 'GET':
                         self.assertIn('<html lang="fr">', raw.decode())
+                        page = raw.decode()
+                        # Un tableau légal se lit en liste sur téléphone, sans consigne de défilement
+                        self.assertNotIn('faites défiler', page)
+                        self.assertEqual(page.count('<table'), page.count('<table role="table"'))
+                        self.assertEqual(page.count('<td'), len(re.findall(r'<td role="cell" data-entete="[^"]+"', page)))
         self.assertTrue(self.executor.requests.empty())
 
     def test_ancienne_notice_renvoie_vers_la_politique_publique(self):

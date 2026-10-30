@@ -701,7 +701,6 @@ def render_comparison(value):
                         (('PASS', 'Respectée'), ('FAIL', 'Non respectée'), ('INDETERMINE', 'Non vérifiable'))]),
     }
     content += '<section class="comparison-results"><h2>Comparaison des modèles</h2>'
-    content += '<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
     content += '<details id="filters" class="comparison-filters"' + (' open' if query else '') + '><summary>Conseil, tri et filtres</summary>'
     content += '<form method="get" action="' + text(base) + '#filters"><div class="filter-grid">' + priority_control
     advanced = ''
