@@ -504,6 +504,8 @@ export async function mountPrivacy(root = document) {
         const state = store ? await store.state(id) : {enabled: false, chosen: false};
         archive.hidden = !active || !state.enabled;
         enable.hidden = !active || !state.chosen || state.enabled;
+        // Carte de la liste : message seulement après une action (réussite ou erreur), jamais l'état par défaut sur chaque carte
+        if (element.hasAttribute('data-privacy-manual')) return;
         if (!state.chosen) status.textContent = 'Historique local désactivé : ce cas n’est pas gardé dans ce navigateur. Pour l’activer, cochez la case de contribution ou passez par Mes données.';
         else if (!state.enabled) status.textContent = 'Historique local en pause : ce cas n’est plus gardé dans ce navigateur. Réactivez-le dans Mes données, ou pour ce cas seulement avec le bouton ci-dessous.';
       };

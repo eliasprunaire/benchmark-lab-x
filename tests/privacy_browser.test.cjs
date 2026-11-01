@@ -583,6 +583,26 @@ test('rendered pages write nothing before the single choice, then checking it st
     assert.deepEqual(posts.filter(post => post.path.endsWith('/contribution')).map(post => [post.path, post.body.enabled]), [
       ['/preparation/dossiers/d1/contribution', false], ['/preparation/dossiers/d1/contribution', true]]);
     assert.deepEqual(await databases(), ['bench-x-history']);
+    // Cartes de Mes cas d'usage : aucun message par défaut, puis un message visible après la copie, réussie ou non
+    await page.goto(origin + '/render/privacy-listing');
+    const carte = id => page.locator('.ge-cas [data-dossier-id="' + id + '"]');
+    await carte('d1').locator('[data-privacy-action="archive"]').waitFor();
+    assert.deepEqual(await page.locator('.ge-cas [data-privacy-status]').allTextContents(), ['', '']);
+    await carte('d1').locator('[data-privacy-action="archive"]').click();
+    const statut1 = carte('d1').locator('[data-privacy-status]');
+    await page.waitForFunction(() => document.querySelector('.ge-cas [data-dossier-id="d1"] [data-privacy-status]').textContent !== ''
+      && !document.querySelector('.ge-cas [data-dossier-id="d1"] [data-privacy-action="archive"]').disabled);
+    assert.match(await statut1.textContent(), /Copie gardée dans ce navigateur|déjà la version la plus récente/);
+    assert.equal(await statut1.isVisible(), true, 'réussite visible à l’écran');
+    // d2 n'a pas de copie servie par la fixture : l'échec se lit à l'écran, pas seulement par un lecteur d'écran
+    await carte('d2').locator('[data-privacy-action="archive"]').click();
+    const statut2 = carte('d2').locator('[data-privacy-status]');
+    await page.waitForFunction(() => {
+      const texte = document.querySelector('.ge-cas [data-dossier-id="d2"] [data-privacy-status]').textContent;
+      return texte !== '' && texte !== 'Copie en cours dans ce navigateur…';
+    });
+    assert.doesNotMatch(await statut2.textContent(), /Copie gardée/);
+    assert.equal(await statut2.isVisible(), true, 'échec visible à l’écran');
     await page.goto(origin + '/render/data');
     await page.waitForFunction(() => document.querySelector('[data-privacy-list] > details'));
     await page.locator('[data-privacy-list] > details > summary').click();

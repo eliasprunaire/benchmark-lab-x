@@ -101,8 +101,8 @@ def gestion_cas(dossier, privacy):
         # Bouton de copie seulement : aucune copie automatique au chargement, le consentement ne couvre que le cas ouvert
         attributs += ' data-privacy-manual'
     titre = dossier.get('need') or 'Cas d’usage sans description'
-    # Statut lu par les lecteurs d'écran seulement : `privacy.js` y écrit « Historique local désactivé » sur chaque carte par défaut
-    return ('<div class="ge-gerer"' + attributs + '><p class="cache" role="status" data-privacy-status></p>'
+    # Statut visible, vide par défaut : `privacy.js` n'y écrit que la réussite ou l'échec d'une copie
+    return ('<div class="ge-gerer"' + attributs + '><p class="petit statut-copie" role="status" data-privacy-status></p>'
             '<button type="button" class="btn btn-sec btn-s" data-privacy-action="archive" hidden>' + ic('doc') + 'Garder une copie dans ce navigateur</button>'
             '<button type="button" class="btn btn-sec btn-s" data-privacy-action="enable-case" hidden>Réactiver l’historique de ce cas</button>'
             '<a class="btn btn-danger btn-s" href="' + text(adresse_suppression(identifiant, '/preparation')) + '" aria-label="'

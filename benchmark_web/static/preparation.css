@@ -747,6 +747,9 @@ table.comparatif td:last-child a, table.comparatif td:last-child .lien { white-s
 .btn-s { min-height: 44px; padding: 0 16px; font-size: .92rem; border-radius: 10px; }
 .ge-gerer { display: flex; flex-wrap: wrap; gap: 14px 20px; margin-top: 16px; padding-top: 16px; border-top: 1px dashed var(--filet-doux); }
 .ge-gerer form { margin: 0; }
+.ge-gerer .statut-copie { order: 99; flex: 1 1 100%; margin: 0; }
+/* Vide : il reste dans l'arbre d'accessibilité pour annoncer le message, sans écart sous les boutons */
+.ge-gerer .statut-copie:empty { margin-top: -14px; }
 /* sur mobile, les deux boutons d'une carte ont la même largeur */
 @media (max-width: 620px) { .ge-gerer > .btn { flex: 1 1 100%; justify-content: center; } }
 /* Confirmation de suppression */
