@@ -2,17 +2,17 @@
 
 import re
 
-from .fragments import text, workbench
+from .fragments import puce, text
 
 CONTACT = '<a href="mailto:contact@cybrel.fr">contact@cybrel.fr</a>'
 
 
 def table(label, head, rows):
-    """Tableau défilant dans sa propre région au clavier, jamais dans la page"""
-    return ('<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
-            '<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '"><table><thead><tr>'
+    """Tableau dans sa région au clavier ; sur petit écran, chaque ligne s'empile avec le nom de sa colonne (`data-th`)"""
+    return ('<div class="table-defile" role="region" tabindex="0" aria-label="' + text(label) + '"><table class="empile"><thead><tr>'
             + ''.join('<th scope="col">' + cell + '</th>' for cell in head) + '</tr></thead><tbody>'
-            + ''.join('<tr>' + ''.join('<td>' + cell + '</td>' for cell in row) + '</tr>' for row in rows)
+            + ''.join('<tr>' + ''.join('<td data-th="' + text(re.sub('<[^>]+>', '', name)) + '">' + cell + '</td>' for name, cell in zip(head, row)) + '</tr>'
+                      for row in rows)
             + '</tbody></table></div>')
 
 
@@ -20,12 +20,12 @@ MENTIONS_LEGALES = (
     '<section><h2>Éditeur du site</h2><p><strong>CYBREL</strong><br>Courriel : ' + CONTACT + '</p>'
     '<p>Directeur de la publication : Cybrel RSSI</p></section>'
     '<section><h2>Hébergeur</h2><p><strong>CYBREL</strong></p></section>'
-    '<section><h2>Nature du service</h2><p>Bench-X est un service gratuit qui aide à préparer un exemple de travail '
+    '<section><h2>Nature du service</h2><p>Evaly est un service gratuit qui aide à préparer un exemple de travail '
     'entièrement fictif, puis à comparer sur cet exemple plusieurs configurations de modèles d’intelligence '
     'artificielle. Il ne fournit ni conseil professionnel, ni prestation de traitement de documents réels.</p>'
-    '<p>Bench-X ne demande pas de compte. L’accès à vos cas d’usage repose sur un cookie technique déposé dans '
+    '<p>Evaly ne demande pas de compte. L’accès à vos cas d’usage repose sur un cookie technique déposé dans '
     'votre navigateur.</p></section>'
-    '<section><h2>Code source</h2><p>Bench-X est un logiciel libre distribué sous licence <strong>GNU Affero '
+    '<section><h2>Code source</h2><p>Evaly est un logiciel libre distribué sous licence <strong>GNU Affero '
     'General Public License, version 3 uniquement (AGPL-3.0-only)</strong>.</p>'
     '<p>Conformément à la section 13 de cette licence, relative à l’interaction par le réseau, le code source '
     'complet de la version exécutée par ce service est mis à votre disposition :</p><ul>'
@@ -43,14 +43,14 @@ MENTIONS_LEGALES = (
 
 CGU = (
     '<p>Dernière mise à jour : 29 septembre 2026</p>'
-    '<section><h2>1. Objet</h2><p>Les présentes conditions régissent l’utilisation de Bench-X, service gratuit '
+    '<section><h2>1. Objet</h2><p>Les présentes conditions régissent l’utilisation d’Evaly, service gratuit '
     'accessible à l’adresse bench.librenet.work. Utiliser le service vaut acceptation de ces conditions.</p></section>'
-    '<section><h2>2. Ce que fait le service</h2><p>Bench-X vous aide à décrire une tâche de votre travail, '
+    '<section><h2>2. Ce que fait le service</h2><p>Evaly vous aide à décrire une tâche de votre travail, '
     'construit avec vous un exemple entièrement inventé qui la représente, puis compare plusieurs configurations '
     'de modèles d’intelligence artificielle sur cet exemple, dans des conditions communes.</p>'
     '<p>Le résultat porte sur la configuration observée, sur cet exemple, à la date de la comparaison. Il ne '
     'désigne pas de meilleur modèle en général et ne garantit aucun résultat sur vos dossiers réels.</p></section>'
-    '<section><h2>3. Ce que le service ne fait pas</h2><p>Bench-X ne traite aucun document réel, n’accède ni à '
+    '<section><h2>3. Ce que le service ne fait pas</h2><p>Evaly ne traite aucun document réel, n’accède ni à '
     'votre ordinateur, ni à votre téléphone, ni à vos données. Il ne fournit aucun conseil juridique, médical, '
     'comptable, financier ou professionnel, et ne délivre aucune habilitation.</p>'
     '<p>Une réussite sur un exemple fictif ne préjuge pas de la qualité d’un modèle sur un cas réel. Les décisions '
@@ -59,7 +59,7 @@ CGU = (
     'sur un cookie technique déposé dans votre navigateur, valable trente jours au maximum sans interaction réelle '
     'de votre part.</p><p>Perdre ou effacer ce cookie fait perdre l’accès à vos cas d’usage conservés sur le '
     'serveur. Nous ne pouvons pas rétablir cet accès, faute de pouvoir vous identifier.</p></section>'
-    '<section><h2>5. Vos engagements</h2><p>En utilisant Bench-X, vous vous engagez à :</p><ul>'
+    '<section><h2>5. Vos engagements</h2><p>En utilisant Evaly, vous vous engagez à :</p><ul>'
     '<li>ne saisir <strong>aucune donnée personnelle</strong> et <strong>aucune information confidentielle</strong>, '
     'ni la vôtre ni celle d’un tiers ; les personnes, organismes, échanges et pièces que vous décrivez doivent être '
     'entièrement inventés ;</li>'
@@ -75,12 +75,12 @@ CGU = (
     'elle finance vos propres appels, sous le plafond défini chez ce fournisseur.</p>'
     '<p>La clé doit porter chez OpenRouter un <strong>plafond de dépense non renouvelable d’au plus 50 dollars '
     'américains</strong>. Une clé sans plafond, avec un plafond supérieur, ou dont le plafond se réinitialise '
-    'périodiquement est refusée par le service. Utilisez une clé dédiée à Bench-X.</p>'
+    'périodiquement est refusée par le service. Utilisez une clé dédiée à Evaly.</p>'
     '<p>Enregistrer une clé ne lance aucun appel. Retirer la clé interdit les nouveaux appels avec celle-ci, sans '
     'la révoquer chez OpenRouter et sans annuler un appel déjà émis. Nous ne remboursons aucune dépense engagée chez '
     'un fournisseur tiers.</p></section>'
     '<section><h2>7. Contribution facultative</h2><p>Après examen d’un exemple, vous pouvez autoriser sa '
-    'conservation pour améliorer Bench-X. Ce choix est facultatif, sans effet sur votre accès au service, et '
+    'conservation pour améliorer Evaly. Ce choix est facultatif, sans effet sur votre accès au service, et '
     'révocable à tout moment. Il n’autorise aucune publication. Les modalités figurent dans la '
     '<a href="/confidentialite">politique de confidentialité</a>.</p></section>'
     '<section><h2>8. Publication des résultats</h2><p>Vos cas d’usage et leurs résultats sont privés par défaut. '
@@ -101,7 +101,7 @@ CGU = (
     '<li>des contenus que vous saisissez en violation de l’article 5.</li></ul></section>'
     '<section><h2>11. Suspension</h2><p>L’accès peut être suspendu, sans préavis, en cas de manquement aux '
     'présentes conditions, notamment en cas d’usage abusif ou de tentative de saturation du service.</p></section>'
-    '<section><h2>12. Propriété intellectuelle</h2><p>Le logiciel Bench-X est distribué sous licence '
+    '<section><h2>12. Propriété intellectuelle</h2><p>Le logiciel Evaly est distribué sous licence '
     'AGPL-3.0-only. Le code source de la version exécutée est accessible depuis les '
     '<a href="/mentions-legales">mentions légales</a>.</p>'
     '<p>Vous conservez vos droits sur les descriptions que vous saisissez. Vous accordez à l’éditeur le droit de les '
@@ -119,7 +119,7 @@ CONFIDENTIALITE = (
     '<p>Dernière mise à jour : 29 septembre 2026</p>'
     '<section><h2>1. Responsable du traitement</h2><p><strong>CYBREL</strong><br>Contact pour toute question ou '
     'demande relative à vos données : <strong>' + CONTACT + '</strong></p></section>'
-    '<section><h2>2. Principe</h2><p>Bench-X est conçu pour fonctionner <strong>sans que vous ayez à fournir de '
+    '<section><h2>2. Principe</h2><p>Evaly est conçu pour fonctionner <strong>sans que vous ayez à fournir de '
     'donnée personnelle</strong>. Vous décrivez une tâche de travail ; nous construisons avec vous un exemple '
     'entièrement inventé. Ne saisissez aucune donnée personnelle ni information confidentielle, ni la vôtre ni '
     'celle d’un tiers.</p>'
@@ -148,7 +148,7 @@ CONFIDENTIALITE = (
          'Limiter les abus et la saturation du service', 'Intérêt légitime à protéger le service (art. 6.1.f)',
          '1 heure glissante, en mémoire uniquement'),
         ('Copie de l’exemple, de sa qualification et de ses résultats, si vous activez la contribution',
-         'Améliorer Bench-X', 'Votre consentement (art. 6.1.a)', '6 mois à compter du consentement'),
+         'Améliorer Evaly', 'Votre consentement (art. 6.1.a)', '6 mois à compter du consentement'),
         ('Historique local dans votre navigateur (IndexedDB)',
          'Vous permettre de relire et d’exporter vos cas après expiration de l’accès serveur',
          'Votre consentement (art. 6.1.a)', 'Jusqu’à effacement par vous ou par votre navigateur')))
@@ -157,7 +157,7 @@ CONFIDENTIALITE = (
     '<section><h2>4. Destinataires</h2><p>Pour produire une comparaison, le contenu nécessaire aux appels est '
     'transmis à :</p><ul><li><strong>OpenRouter</strong>, qui achemine les appels vers les fournisseurs de '
     'modèles ;</li><li><strong>les fournisseurs des modèles comparés</strong>, à travers OpenRouter.</li></ul>'
-    '<p>Leurs propres conditions de traitement et de conservation s’appliquent. Une suppression dans Bench-X ne '
+    '<p>Leurs propres conditions de traitement et de conservation s’appliquent. Une suppression dans Evaly ne '
     'garantit pas l’effacement des copies déjà traitées par ces tiers.</p>'
     '<p>Aucun autre destinataire. Aucune donnée n’est transmise à des régies publicitaires ou à des outils de '
     'mesure d’audience : <strong>le service n’en utilise aucun</strong>.</p></section>'
@@ -170,7 +170,7 @@ CONFIDENTIALITE = (
     '(article 46 du RGPD). Vous pouvez en obtenir une copie à ' + CONTACT + '.</p>'
     '<p>Les fournisseurs de modèles appliquent leurs propres conditions de traitement. Nous ne pouvons pas garantir '
     'que chacun d’eux offre un niveau de protection équivalent à celui de l’Union européenne : c’est l’une des '
-    'raisons pour lesquelles vous ne devez saisir aucune donnée personnelle dans Bench-X.</p></section>'
+    'raisons pour lesquelles vous ne devez saisir aucune donnée personnelle dans Evaly.</p></section>'
     '<section><h2>6. Cookies et stockage dans votre navigateur</h2><p>Le site <strong>ne dépose aucun cookie de '
     'mesure d’audience, de publicité ou de réseau social</strong>. Aucun cookie n’est déposé lorsque vous consultez '
     'la page d’accueil.</p>'
@@ -240,19 +240,23 @@ CONFIDENTIALITE = (
     'un nouveau choix vous sera demandé.</p></section>')
 
 def legal_layout(content):
-    """Texte en zone principale ; sommaire des sections en synthèse, replié sur téléphone"""
+    """(puce de mise à jour, texte) : sommaire collant à gauche, ouvert ; texte intégral à droite"""
     titles = []
 
     def anchor(match):
         titles.append(match.group(1))
         return '<section id="section-' + str(len(titles)) + '"><h2>' + match.group(1) + '</h2>'
     content = re.sub(r'<section><h2>(.*?)</h2>', anchor, content)
-    # Le sommaire précède le texte sur téléphone ; sans titre, pour garder la suite des niveaux de la page
-    toc = ('<details class="toc"><summary>Sommaire</summary><nav aria-label="Sommaire"><ol>'
-           + ''.join('<li><a href="#section-' + str(index) + '">' + title + '</a></li>'
-                     for index, title in enumerate(titles, 1))
-           + '</ol></nav></details>')
-    return workbench(content, toc, 'Navigation dans la page', side_first=True)
+    # La date de mise à jour passe sous le titre ; l'adresse d'un lien se coupe après un « / », jamais au milieu d'un mot
+    mise_a_jour = re.match(r'<p>(Dernière mise à jour[^<]*)</p>', content)
+    content = content[mise_a_jour.end():] if mise_a_jour else content
+    content = re.sub(r'(<a [^>]*>)(https?://[^<]+)(</a>)',
+                     lambda m: m[1] + re.sub(r'(?<=[^/])/(?=[^/])', '/<wbr>', m[2]) + m[3], content)
+    toc = ('<aside class="g-toc" aria-label="Sommaire"><details class="tiroir" open><summary>Sommaire<span class="plus" aria-hidden="true"></span></summary>'
+           '<nav aria-label="Sommaire de la page"><ol>'
+           + ''.join('<li><a href="#section-' + str(index) + '">' + title + '</a></li>' for index, title in enumerate(titles, 1))
+           + '</ol></nav></details></aside>')
+    return puce(mise_a_jour[1]) if mise_a_jour else '', '<div class="g-legal">' + toc + '<div class="g-texte">' + content + '</div></div>'
 
 
 # Chemin : titre, description pour les moteurs de recherche, contenu

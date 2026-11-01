@@ -1305,3 +1305,14 @@ body { overflow-wrap: break-word; }
   .colonnes > .cote-avant:first-child { grid-column: 2; grid-row: 1; }
   .colonnes > .cote-avant:first-child + .pile-l { grid-column: 1; grid-row: 1; }
 }
+
+/* —— lot données —— */
+/* Un bouton masqué par l'attribut `hidden` (privacy.js) le reste malgré `display: inline-flex` */
+.btn[hidden] { display: none; }
+/* Confirmation de suppression : le fieldset de privacy.js enveloppe le corps de la carte */
+.confirmer > fieldset > * + * { margin-top: 18px; }
+/* Une fois la copie locale effacée (fieldset désactivé), l'annulation n'a plus d'objet : le retour à la liste la remplace */
+fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display: none; }
+/* Dépliant de la copie locale : son statut est un enfant direct, comme privacy.js l'attend */
+.privacy-controls > [data-privacy-status] { margin: 0; padding: 0 2px 8px; }
+.confirmer noscript p { margin-top: 18px; }

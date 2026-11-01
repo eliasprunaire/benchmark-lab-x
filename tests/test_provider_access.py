@@ -274,7 +274,7 @@ class ProviderAccessTests(unittest.TestCase):
         page = render(dict(value, kind='access'), csrf, '/preparation/access').decode()
         self.assertIn('type="password"', page)
         self.assertIn('autocomplete="new-password"', page)
-        self.assertIn('Remplacer ma clé OpenRouter', page)
+        self.assertIn('Remplacer ma clé', page)
         self.assertIn('Retirer la clé', page)
         for html in (home, page):
             self.assertNotIn(KEY, html)

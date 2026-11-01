@@ -560,6 +560,9 @@ test('rendered pages write nothing before the single choice, then checking it st
     assert.deepEqual(await databases(), []);
     assert.equal(await page.locator('[data-privacy-action="archive"]').isHidden(), true);
     assert.equal(await page.locator('[data-privacy-action="enable-case"]').isHidden(), true);
+    // Replié par défaut : le statut « Facultatif · non partagé » se lit sans l'ouvrir
+    assert.match(await page.locator('.privacy-consent summary').first().textContent(), /Partager cet exemple\s*Facultatif · non partagé/);
+    await openConsent(page);
     assert.equal(await page.getByRole('checkbox').isChecked(), false);
     assert.equal(await page.getByRole('checkbox').isEnabled(), true);
     mkdirSync('reports/privacy-browser', {recursive: true});
@@ -568,6 +571,7 @@ test('rendered pages write nothing before the single choice, then checking it st
     await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
     await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
     assert.deepEqual(await databases(), []);
+    await openConsent(page);
     await page.getByRole('checkbox').check();
     await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
     await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('Copie gardée dans ce navigateur.'));
@@ -592,6 +596,7 @@ test('the box state sent to the server is the one that decides local history', a
     await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
     let held;
     await page.route('**/preparation/dossiers/d1/contribution', route => {held = route;});
+    await openConsent(page);
     await page.getByRole('button', {name: 'Enregistrer mon choix'}).click();
     await page.waitForFunction(() => document.querySelector('.privacy-consent form').dataset.busy);
     await page.getByRole('checkbox').check();
@@ -664,6 +669,7 @@ test('native consent form remains usable without JavaScript, with no preselected
   try {
     const page = await context.newPage();
     await page.goto(origin + '/render/example');
+    await openConsent(page);
     assert.equal(await page.getByRole('checkbox').isChecked(), false);
     assert.match(await page.locator('.privacy-consent').textContent(), /besoin de JavaScript ; sans lui, seule la contribution/i);
     await page.getByRole('checkbox').check();
@@ -724,6 +730,9 @@ test('case deletion tombstones locally before POST and retains explicit failure 
     const page = await context.newPage(); page.setDefaultTimeout(3000);
     await page.goto(origin + '/render/example');
     await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('Copie gardée dans ce navigateur.'));
+    // La suppression passe par sa page de confirmation, ouverte avec la copie déjà gardée
+    await page.goto(origin + '/render/case-delete');
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('version la plus récente'));
     fixture(2); mode = 'delay';
     const waiting = new Promise(resolve => {arrived = resolve;});
     pending = observer.evaluate(() => historyStore.archive('d1', 2).catch(error => error.message));
@@ -733,7 +742,6 @@ test('case deletion tombstones locally before POST and retains explicit failure 
       observed = await observer.evaluate(async () => ({record: await historyStore.get('d1'), state: await historyStore.state('d1')}));
       await route.fulfill({status: 503, contentType: 'application/json', body: '{}'});
     });
-    await page.locator('.privacy-controls > summary').click();
     const deletionResponse = page.waitForResponse(response => response.url().endsWith('/d1/delete'));
     await page.locator('form[data-privacy-post="delete"] button').click();
     await deletionResponse;
@@ -742,7 +750,10 @@ test('case deletion tombstones locally before POST and retains explicit failure 
     const status = await page.locator('form[data-privacy-post="delete"] [data-privacy-status]').textContent();
     assert.match(status, /Copie de ce navigateur effacée/);
     assert.match(status, /La suppression sur le serveur, contribution comprise, n’est pas confirmée/);
-    assert.equal(page.url(), origin + '/render/example');
+    assert.equal(page.url(), origin + '/render/case-delete');
+    // L'échec du serveur laisse le formulaire actif : annuler comme réessayer restent possibles
+    assert.equal(await page.locator('.annuler').isVisible(), true);
+    assert.equal(await page.locator('form[data-privacy-post="delete"] button[type="submit"]').isDisabled(), false);
     release();
     assert.match(await pending, /effac|suspend|annul/i);
     assert.equal(await observer.evaluate(() => historyStore.get('d1')), null);
@@ -771,6 +782,8 @@ test('case deletion still requests server purge when IndexedDB is unavailable an
 
 
 const LEGAL = ['mentions-legales', 'cgu', 'confidentialite'];
+// Le choix de partage est replié dans son tiroir : sa case et son bouton ne se lisent qu'ouvert
+const openConsent = page => page.locator('.privacy-consent summary').first().click();
 // WCAG 2.x : 4.5:1, 3:1 pour le grand texte ; fond pris au premier ancêtre opaque
 function contrastFailures() {
   const channels = color => color.match(/[\d.]+/g).map(Number);
@@ -828,25 +841,36 @@ test('legal pages keep CSP, French headings, visible focus, AA contrast and fit 
           const outline = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
           assert.notEqual(outline, 'none', `${where} focus invisible`);
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} débordement`);
-          // Composition S18 : sommaire en synthèse, replié avant le texte sur téléphone, ouvert à droite sur ordinateur
+          // Pages légales : sommaire ouvert, à gauche du texte et collant sous l'en-tête sur ordinateur, avant le texte sur téléphone
           const toc = await page.evaluate(() => {
-            const side = document.querySelector('main .cote'), main = document.querySelector('main .pile-l');
+            const side = document.querySelector('main .g-toc'), main = document.querySelector('main .g-texte');
             if (!side || !main) return null;
             const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-            const links = [...side.querySelectorAll('nav[aria-label="Sommaire"] a[href^="#"]')];
+            const links = [...side.querySelectorAll('nav[aria-label="Sommaire de la page"] a[href^="#"]')];
             const targets = links.map(link => main.querySelector(link.getAttribute('href') + ' > h2'));
-            return {right: a.left >= b.right, above: a.bottom <= b.top, headings: side.querySelectorAll('h1, h2, h3').length,
+            return {left: a.right <= b.left, above: a.bottom <= b.top, headings: side.querySelectorAll('h1, h2, h3').length,
                     links: links.length, sections: main.querySelectorAll('section > h2').length,
                     targeted: targets.every(Boolean), visible: links.filter(link => link.checkVisibility()).length,
-                    open: Boolean(side.querySelector('details[open]'))};
+                    open: Boolean(side.querySelector('details[open]')), position: getComputedStyle(side).position};
           });
           assert.ok(toc, `${where} page légale sans composition`);
           assert.ok(toc.links > 0 && toc.links === toc.sections && toc.targeted, `${where} sommaire incomplet : ` + JSON.stringify(toc));
           assert.equal(toc.headings, 0, `${where} titre dans le sommaire`);
-          assert.equal(toc.open, false, `${where} sommaire ouvert par défaut`);
-          // Le sommaire reste replié, y compris sur ordinateur, tant que la refonte des pages légales n'a pas porté `.g-legal`
-          assert.ok(viewport.width === 390 ? toc.above && toc.visible === 0 : toc.right && toc.visible === 0,
+          assert.equal(toc.open, true, `${where} sommaire replié par défaut`);
+          assert.ok(viewport.width === 390 ? toc.above && toc.visible === toc.links : toc.left && toc.visible === toc.links,
                     `${where} position ou ouverture du sommaire : ` + JSON.stringify(toc));
+          if (viewport.width > 390) {
+            assert.equal(toc.position, 'sticky', `${where} sommaire non collant`);
+            // Sous l'en-tête fixe (jusqu'à 78 px) : un sommaire collé à 20 px passerait dessous
+            const stuck = await page.evaluate(() => {
+              if (document.documentElement.scrollHeight < innerHeight + 900) return null;
+              scrollTo(0, 600);
+              const side = document.querySelector('main .g-toc').getBoundingClientRect();
+              const header = document.querySelector('header.haut').getBoundingClientRect();
+              return {top: Math.round(side.top), headerBottom: Math.round(header.bottom), bottom: Math.round(side.bottom), height: innerHeight};
+            });
+            if (stuck) assert.ok(stuck.top >= stuck.headerBottom && stuck.bottom <= stuck.height, `${where} sommaire collé sous l'en-tête : ` + JSON.stringify(stuck));
+          }
           if (viewport.width === 390) {
             mkdirSync('reports/privacy-browser', {recursive: true});
             await page.screenshot({path: `reports/privacy-browser/legal-${name}-${colorScheme}-mobile.png`, fullPage: true});
@@ -1459,8 +1483,8 @@ test('access and launch screens preserve available actions, estimates and refusa
       if (state === 'disconnected') assert.equal(await page.locator('input[name="return"]').inputValue(), '/preparation/access');
       if (state === 'connected') {
         const text = await page.textContent('main');
-        assert.ok(text.includes('Solde restant selon OpenRouter : 12,50 USD'));
-        assert.ok(text.includes('Plafond de la clé : 25 USD'));
+        assert.ok(text.includes('Solde restant') && text.includes('12,50') && text.includes('selon OpenRouter'));
+        assert.ok(text.includes('Plafond de la clé') && text.includes('25'));
         assert.ok(text.includes('Retirer la clé de ce navigateur'));
       }
       if (state === 'invalid') assert.ok((await page.textContent('main')).includes('OpenRouter refuse cette clé'));
@@ -1539,10 +1563,9 @@ test('access and launch screens preserve available actions, estimates and refusa
       await page.setViewportSize({width, height: 900});
       await page.goto(origin + '/render/access-connected');
       let layout = await zones();
-      assert.equal(await page.locator('.releves').innerText(), 'SOLDE RESTANT SELON OPENROUTER\n12,50 USD', `${width} relevé du solde`);
-      assert.equal(await page.evaluate(() => document.querySelector('.etat').compareDocumentPosition(document.querySelector('.colonnes'))
-        & Node.DOCUMENT_POSITION_FOLLOWING), 4, `${width} état avant les formulaires`);
-      assert.ok(layout.side.includes('Son plafond est la seule limite de dépense.'), `${width} colonne dépense`);
+      assert.match((await page.locator('.releves').innerText()).replace(/\s+/g, ' '), /SOLDE RESTANT 12,50\s*USD selon OpenRouter PLAFOND DE LA CLÉ 25\s*USD/i, `${width} relevés du solde`);
+      assert.equal(await page.locator('.pile-l > .etat').count(), 1, `${width} état avant le formulaire`);
+      assert.ok(layout.side.includes('Ce plafond est la seule limite de dépense.'), `${width} colonne de la clé`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} colonne de la clé`);
       assert.equal(layout.overflow, 0, `${width} débordement de la clé`);
       await page.goto(origin + '/render/configurations-selected');
@@ -2362,21 +2385,47 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     const text = await page.textContent('main');
     assert.ok(text.indexOf('Les pièces de l’exemple') < text.indexOf('Oui, c’est le travail à tester'));
     assert.ok(text.indexOf('Oui, c’est le travail à tester') < text.indexOf('conserver cet exemple pendant 6 mois'));
-    for (const phrase of ['historique local', 'votre besoin, vos messages et les versions successives',
-      'Cette copie contient plus que la contribution', 'a besoin de JavaScript', 'sans lui, seule la contribution',
-      'efface la copie de ce cas gardée dans ce navigateur', 'vos cas ne sont plus accessibles après 7 jours', 'Votre clé ne l’est plus après 30 jours'])
+    for (const phrase of ['historique local', 'besoin, messages et versions compris', 'copie complète de chaque cas ouvert',
+      'a besoin de JavaScript', 'sans lui, seule la contribution', 'Cybrel', 'sans le publier',
+      'Efface la copie de ce navigateur et demande la suppression sur le serveur'])
       assert.ok(text.includes(phrase), phrase);
+    // La conservation 7 jours / 30 jours s'explique dans Mes données, plus sur la page du cas
+    assert.equal(/effacé après 7 jours|effacée après 30 jours/.test(text), false);
     assert.equal(/Clé retirée après|11 jours|conserve votre copie locale/.test(text), false);
     assert.equal(await page.locator('script[src="/preparation/privacy.js"]').count(), 1);
     assert.ok(await page.locator('script:not([src])').count() > 0);
     await page.goto(origin + '/render/privacy-listing');
-    const activity = page.locator('[data-privacy-activity]');
-    assert.equal(await activity.getAttribute('data-dossier-id'), 'd1');
-    assert.equal(await activity.getAttribute('data-content-version'), '4');
+    // Le repère de session précède les cartes : `privacy.js` lit le premier, qui ne désigne aucun cas
+    const activity = page.locator('[data-privacy-activity]').first();
+    assert.equal(await activity.getAttribute('data-dossier-id'), null);
     assert.equal(await activity.getAttribute('data-csrf-token'), 'privacy-token');
     assert.equal(await page.locator('form#nouveau input[name="csrf_token"]').inputValue(), 'csrf');
     assert.equal(await page.locator('[data-privacy-post="contribution"]').count(), 0);
+    // Chaque carte garde sa copie (privacy.js) et mène à la confirmation de suppression, avec son adresse de retour
+    assert.deepEqual(await page.locator('.ge-cas [data-privacy-controls]').evaluateAll(cards => cards.map(card => card.dataset.dossierId)), ['d1', 'd2']);
+    assert.deepEqual(await page.locator('.ge-cas a.btn-danger').evaluateAll(links => links.map(link => link.getAttribute('href'))),
+      ['/preparation/dossiers/d1/delete?retour=/preparation', '/preparation/dossiers/d2/delete?retour=/preparation']);
+    assert.equal(await page.locator('[data-privacy-post="delete"]').count(), 0);
+    assert.equal(await page.locator('.alerte-exp').count(), 0, 'sans échéance connue, aucune alerte');
+    await page.goto(origin + '/render/listing-expiring');
+    assert.equal(await page.locator('.alerte-exp').count(), 1);
+    assert.match(await page.locator('.alerte-exp').textContent(), /Bientôt effacé.*ce cas sera effacé le (lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) \d{1,2} \p{L}+/u);
+    assert.equal(await page.locator('.ge-cas:has(.alerte-exp) h3').textContent(), 'Trier des notes de réunion');
+    await page.goto(origin + '/render/listing-deleted');
+    assert.match(await page.locator('.etat').first().textContent(), /Le cas d’usage a été supprimé/);
+    await page.goto(origin + '/render/case-delete');
     assert.equal(await page.locator('[data-privacy-post="delete"]').count(), 1);
+    assert.equal(await page.locator('form.confirmer input[name="csrf_token"]').inputValue(), 'privacy-token');
+    assert.equal(await page.locator('.annuler a').getAttribute('href'), '/preparation/dossiers/d1');
+    assert.equal(await page.locator('form.confirmer button[type="submit"]').isDisabled(), false);
+    await page.goto(origin + '/render/case-delete-closed');
+    assert.equal(await page.locator('form.confirmer button[type="submit"]').isDisabled(), true);
+    assert.equal(await page.locator('.annuler a').count(), 1);
+    assert.equal(await page.locator('.annuler a').getAttribute('href'), '/preparation', 'adresse de retour refusée : Mes cas d’usage');
+    // Formulaire désactivé (accès fermé ou cas déjà effacé) : l'annulation n'a plus d'objet, le retour à Mes cas d'usage la remplace
+    assert.equal(await page.locator('.annuler').isVisible(), false);
+    assert.equal(await page.locator('.apres-suppression a').isVisible(), true);
+    assert.equal((await page.content()).includes('//evil.test'), false);
     for (const name of ['current', 'expired', 'prior']) {
       await page.goto(origin + '/render/consent-' + name);
       const box = page.locator('[data-privacy-post="contribution"] input[type="checkbox"]');
@@ -2409,30 +2458,21 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     await page.goto(origin + '/render/data');
     assert.equal(await page.locator('[data-privacy-history]').count(), 1);
     assert.equal(await page.locator('[data-privacy-activity]').count(), 0);
-    // Composition S18 : les données en zone principale, les liens et explications en synthèse
-    const zones = () => page.evaluate(() => {
-      const side = document.querySelector('main .cote'), main = document.querySelector('main .pile-l');
-      if (!side || !main) return null;
-      const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-      return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText,
-              h2Side: side.querySelectorAll('h2').length, search: Boolean(side.querySelector('form[method="get"] #q')),
-              overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
-    });
+    // Mes données : conservation expliquée, historique local, puis les liens ; aucune page ne déborde
+    const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     for (const width of [390, 1440]) {
       await page.setViewportSize({width, height: 844});
       await page.goto(origin + '/render/data');
-      let layout = await zones();
-      assert.ok(layout, `${width} Mes données sans composition`);
-      assert.match(layout.main, /Vos cas gardés dans ce navigateur/, `${width} cas gardés hors zone principale`);
-      assert.match(layout.side, /Mes contributions/, `${width} liens hors synthèse`);
-      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de Mes données`);
+      const main = await page.locator('main').innerText();
+      for (const phrase of ['Conservation automatique', 'Un cas d’usage est effacé après 7 jours sans activité', 'Votre clé OpenRouter est effacée après 30 jours sans activité',
+        'Vos cas gardés dans ce navigateur', 'Mes cas d’usage et ma clé', 'Mes contributions', 'Confidentialité']) assert.ok(main.includes(phrase), `${width} ${phrase}`);
+      assert.equal(await overflow(), 0, `${width} débordement de Mes données`);
       await page.goto(origin + '/render/contribution-active-2099');
-      layout = await zones();
-      assert.ok(layout, `${width} Mes contributions sans composition`);
-      assert.match(layout.main, /Contribution du 18 septembre 2026/, `${width} contributions hors zone principale`);
-      assert.match(layout.side, /arrête seulement la contribution concernée/, `${width} explication hors synthèse`);
-      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse des contributions`);
-      assert.equal(layout.overflow, 0, `${width} débordement des contributions`);
+      const contributions = await page.locator('main').textContent();
+      assert.ok(contributions.includes('Contribution du 18 septembre 2026'), `${width} contribution`);
+      assert.ok(contributions.includes('arrête seulement la contribution concernée'), `${width} explication du retrait`);
+      assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes données', `${width} entrée de menu des contributions`);
+      assert.equal(await overflow(), 0, `${width} débordement des contributions`);
     }
   } finally {await context.close();}
 });
