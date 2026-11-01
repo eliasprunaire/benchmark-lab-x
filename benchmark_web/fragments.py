@@ -396,3 +396,9 @@ def personal_key_form(csrf, access, back, *, opened=False):
                  '<div class="actions">' + bouton('Enregistrer la nouvelle clé' if status == 'invalid' else 'Enregistrer la clé', icone='cle') + '</div>',
                  classe='g-cle carte')
     return envoi + retrait_cle(csrf, back) if status == 'invalid' else envoi
+
+
+# ——— Lot campagne ———
+def statut(ton, texte, icone):
+    """Tampon de statut libre (couloirs et en-tête du suivi) : ton, mot et icône choisis par l'écran"""
+    return '<span class="tampon tampon-' + ton + '">' + ic(icone) + text(texte) + '</span>'

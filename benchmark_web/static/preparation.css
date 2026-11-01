@@ -1316,3 +1316,10 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
 /* Dépliant de la copie locale : son statut est un enfant direct, comme privacy.js l'attend */
 .privacy-controls > [data-privacy-status] { margin: 0; padding: 0 2px 8px; }
 .confirmer noscript p { margin-top: 18px; }
+/* —— lot campagne —— */
+/* Le script de suivi et celui des modèles absents montrent et masquent par l'attribut hidden : les boutons et liens à display explicite l'ignoreraient */
+.lien[hidden] { display: none; }
+/* Fond inversé en thème sombre : les nombres de la barre de choix quittent le jaune, illisible sur le papier clair */
+@media (prefers-color-scheme: dark) { .barre-choix .resume b { color: var(--papier); } }
+/* Arrêt de la mise à jour automatique de la page du cas : cible tactile de 44 px (le balisage de cette page garde la classe sec) */
+#preparation-progress button { min-height: 44px; }

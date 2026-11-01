@@ -358,7 +358,7 @@ class AutomaticJudgment(unittest.TestCase):
         self.assertEqual('COMPLETE', auto.status(self.store, self.store._connection, self.cid)['status'])
         view = campaigns.launch_view(self.store, self.sid, 'fixture', self.cid)
         page = views.render(view, 'csrf').decode()
-        self.assertIn('Voir les résultats</a>', page)
+        self.assertIn('Voir les résultats<svg', page)
         self.assertNotIn('id="preparation-progress"', page)
         self.assertNotIn('Évaluation interrompue', page)
         self.assertIn('1 modèle sur 2 n’a pas donné de réponse exploitable', page)
@@ -684,7 +684,7 @@ class AutomaticJudgmentRetries(unittest.TestCase):
     def assert_no_manual_retry(self, page):
         self.assertNotIn('/evaluate', page)
         self.assertNotIn('Relancer', page)
-        self.assertNotIn('Évaluer les réponses reçues', page)
+        self.assertNotIn('Vérifier les réponses reçues', page)
 
     def series(self, attempt_id):
         return sorted((o for o in self.store.inspect_operations() if o['phase'] == 'judgment'

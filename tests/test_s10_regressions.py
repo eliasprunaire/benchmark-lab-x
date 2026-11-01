@@ -55,7 +55,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertEqual((200, None, None), (code, cookie, start))
         self.assertEqual(value['panel'], models['panel'])
         page = views.render(models, '').decode()
-        self.assertIn('<h1>Modèles de cette comparaison</h1>', page)
+        self.assertIn('<h1>Modèles de ce benchmark</h1>', page)
         self.assertIn('<li aria-current="step"><a href="', page)
         self.assertIn('<span class="n">04</span><span class="l">Modèles</span><span class="cache"> (étape en cours)</span>', page)
         self.assertNotIn('<form', page)

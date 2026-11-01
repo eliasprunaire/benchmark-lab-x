@@ -13,7 +13,7 @@ from benchmark.storage import _strict_json as encode
 
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
-                             render_comparison, render_configurations, render_campaign_models, campaign_followup)
+                             render_comparison, render_configurations, render_campaign_models, campaign_followup, contexte_vue, titre_vue)
 from .fragments import (ETAPES, bouton, btn, cadre, champ, date_lisible_utc, disque, erreur_champ, etat, form,
                         ic, icon, lien, listing, montant_lisible, piste, puce, ruban, section, state_block, tampon,
                         tete, text, tiroir, workbench)
@@ -1109,20 +1109,19 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         title = 'Ma clé OpenRouter'
         content = render_access(value, csrf)
     elif value.get('kind') == 'configurations':
-        title = 'Choisissez les modèles à comparer'
+        title, contexte = titre_vue(value), contexte_vue(value)
         content = render_configurations(value, csrf)
     elif value.get('kind') == 'campaign_models':
-        title = 'Modèles de cette comparaison'
+        title, contexte = titre_vue(value), contexte_vue(value)
         content = render_campaign_models(value)
     elif value.get('kind') == 'attempt_detail':
         title = 'Détail et preuves'
         content = render_attempt_detail(value)
     elif value.get('kind') == 'campaign_launch' and 'checks' in value:
-        title = ('Vérifier puis lancer la comparaison' if not value['campaign']['attempts'] else
-                 'Benchmark en cours' if campaign_followup(value['campaign'])[0] else 'Suivi de la comparaison')
+        title, contexte = titre_vue(value), contexte_vue(value)
         content = render_campaign_launch_requester(value, csrf)
     elif value.get('kind') == 'campaign_launch':
-        title = 'Vérifier puis lancer la comparaison'
+        title, contexte = titre_vue(value), contexte_vue(value)
         content = render_campaign_launch_operator(value, csrf)
     elif value.get('kind') == 'copy_source':
         title, content = render_copy_source(value, csrf)
