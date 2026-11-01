@@ -31,8 +31,10 @@ def browser_views():
     reasons = set(re.findall(r"reason = '(\w+)'", inspect.getsource(preparation.availability)))
     assert 'daily_cap' not in reasons
     for reason in reasons:
-        examples['availability-' + reason] = dict(dossiers=[], availability=dict(
-            available, can_submit=reason == 'open', reason=reason))
+        # Un cas existe quand une préparation est en cours, interrompue ou en restauration : la liste ne se dit pas vide
+        examples['availability-' + reason] = dict(
+            dossiers=[dict(dossier_id='d1', need='Trier des notes', revision=2)] if reason in ('interrupted', 'waiting', 'restore') else [],
+            availability=dict(available, can_submit=reason == 'open', reason=reason))
     for status in ('disconnected', 'connected', 'invalid', 'unavailable'):
         access = dict(kind='access', status=status, connected=status == 'connected',
                       limit_usd='25', limit_remaining_usd='12.50', reason='KEY_REJECTED')

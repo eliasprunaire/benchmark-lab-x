@@ -12,8 +12,10 @@ from tests.test_s2_review_regressions import Authorized, response_for
 from tests.test_s6_regressions import build
 from tests.test_web_access import setUpModule  # noqa: F401  contrôle global des pages rendues
 
-# Polices S18 servies en local, chacune avec sa licence OFL
-FONTS = ('MonaSans', 'HubotSans', 'HostGrotesk', 'GeistMono', 'Silkscreen')
+# Polices chargées par la feuille, servies en local avec leur licence OFL
+FONTS = ('MonaSans', 'GeistMono', 'Silkscreen')
+# Polices encore servies et nommées par les mentions légales, sans être chargées par la feuille
+FONTS_NOMMEES = ('HubotSans', 'HostGrotesk')
 
 
 class TemplateTests(unittest.TestCase):
@@ -33,36 +35,35 @@ class TemplateTests(unittest.TestCase):
             return sum(weight * (v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4)
                        for weight, v in zip((.2126, .7152, .0722), channels))
 
-        text_pairs = [(fg, bg) for fg in ('ink', 'ink-2', 'muted', 'accent-ink')
-                      for bg in ('paper', 'surface', 'soft')]
-        text_pairs += [(tone, tone + '-soft') for tone in ('warm', 'ok', 'ko', 'warn', 'unk', 'wait')]
-        text_pairs += [('on-btn', 'btn'), ('on-btn', 'btn-hover'), ('surface', 'accent')]
+        # Paires de reports/refonte-c/contrastes.md : texte sur fond, 4,5:1 au moins dans chaque thème
+        text_pairs = [('encre', 'papier'), ('encre', 'carte'), ('encre-2', 'papier'), ('discret', 'papier'),
+                      ('discret', 'carte'), ('discret', 'creux'), ('ok', 'carte'), ('ko', 'carte'),
+                      ('sur-signal', 'signal'), ('sur-ruban', 'ruban'), ('nuit-2', 'nuit'), ('sur-nuit', 'nuit'),
+                      ('signal', 'nuit'), ('focus', 'papier')]
+        text_pairs += [(tone, tone + '-fond') for tone in ('ok', 'ko', 'att', 'vig', 'inc')]
         for name, colors in (('clair', themes[0]), ('sombre', themes[0] | themes[1])):
-            with self.subTest(theme=name, état='survol'):
-                low, high = sorted((luminance(colors['btn']), luminance(colors['btn-hover'])))
-                self.assertGreaterEqual((high + .05) / (low + .05), 1.4)
-            pairs = [(fg, bg, 4.5) for fg, bg in text_pairs]
-            pairs += [(fg, bg, 3) for fg in ('focus', 'line-2') for bg in ('paper', 'surface')]
-            for fg, bg, minimum in pairs:
+            for fg, bg in text_pairs:
                 with self.subTest(theme=name, texte=fg, fond=bg):
                     low, high = sorted((luminance(colors[fg]), luminance(colors[bg])))
-                    self.assertGreaterEqual((high + .05) / (low + .05), minimum)
+                    self.assertGreaterEqual((high + .05) / (low + .05), 4.5)
 
 
     def test_fonts_and_projection_stylesheet_are_local_files(self):
-        for name in FONTS:
+        for name in FONTS + FONTS_NOMMEES:
             self.assertTrue((views.FONTS_PATH / (name + '.woff2')).is_file(), name)
             self.assertTrue((views.FONTS_PATH / ('OFL-' + name + '.txt')).is_file(), name)
+        for name in FONTS:
             self.assertIn('/preparation/fonts/' + name + '.woff2', views.STYLESHEET_PATH.read_text())
+        # Toute police de la feuille est servie par la route des polices
+        for name in re.findall(r'url\("/preparation/fonts/([A-Za-z]+)\.woff2"\)', views.STYLESHEET_PATH.read_text()):
+            self.assertIn(name, FONTS)
         self.assertEqual(Path('projection.css'), Path(projection.STYLESHEET_PATH.name))
         self.assertNotIn(b'@font-face', projection.STYLESHEET_PATH.read_bytes())
-        # La page publiée reprend les couleurs S18 du parcours, en clair comme en sombre
+        # La page publiée garde sa palette S18 (projection.css n'est pas migrée) : elle définit ses couleurs en clair comme en sombre
         palette = lambda css: [dict(re.findall(r'--([a-z0-9-]+):\s*(#[0-9a-f]{6})', block))
                                for block in re.split(r'@media\s*\(prefers-color-scheme:\s*dark\)', css)[:2]]
-        published, private = palette(projection.STYLESHEET_PATH.read_text()), palette(views.STYLESHEET_PATH.read_text())
-        for shade, (mine, theirs) in zip(('clair', 'sombre'), zip(published, private)):
+        for shade, mine in zip(('clair', 'sombre'), palette(projection.STYLESHEET_PATH.read_text())):
             self.assertTrue(mine, shade)
-            self.assertLessEqual(mine.items(), theirs.items(), shade)
         for retired in ('Syne', 'AtkinsonHyperlegibleNext', 'AtkinsonHyperlegibleMono'):
             self.assertFalse((views.FONTS_PATH / (retired + '.woff2')).exists(), retired)
         # Les mentions légales nomment exactement les polices servies
@@ -139,10 +140,10 @@ class DossierPageTests(unittest.TestCase):
                 code, view, _, _ = web_api.dispatch(store, 'GET', '/preparation/dossiers/inline', token, None, 'a' * 40, None)
                 self.assertEqual(200, code)
                 page = views.render(view, csrf).decode()
-        self.assertIn('class="state action"', page)
+        self.assertIn('<section class="etat" data-ton="att"', page)
         self.assertIn('Où j’en suis', page)
         self.assertIn('aria-current="step"', page)
-        self.assertIn('<span class="n">3</span>Validation', page)
+        self.assertIn('<span class="n">03</span><span class="l">Validation</span>', page)
         self.assertIn('<details class="corr"><summary class="button sec">', page)
         self.assertIn('Oui, c’est le travail à tester', page)
         self.assertIn('>Actualiser</a>', page)
@@ -160,8 +161,8 @@ class ComparisonPageTests(unittest.TestCase):
                 store, sid, _, _, _ = build(data)
             with closing(store):
                 page = views.render(r.comparison(store, sid, 'fixture', 'comparison'), '').decode()
-        self.assertIn('<span class="badge b-ok">', page)
-        self.assertIn('<span class="badge b-ko">', page)
+        self.assertIn('<span class="tampon tampon-ok">', page)
+        self.assertIn('<span class="tampon tampon-ko">', page)
         self.assertIn('class="costbar"', page)
         self.assertIn('<nav aria-label="Informations légales"><h2>Informations légales</h2>', page)
         self.assertNotIn('SHA-256', page)

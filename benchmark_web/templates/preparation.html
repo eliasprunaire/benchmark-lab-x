@@ -3,42 +3,56 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{title}} · Bench-X</title>
+<title>{{title}} · Evaly</title>
 {{head}}
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
 <link rel="icon" href="/bench-x.svg" type="image/svg+xml">
+<link rel="preload" href="/preparation/fonts/MonaSans.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/preparation/style.css">
 </head>
 <body class="{{body_class}}">
 <svg hidden aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+<symbol id="i-fleche" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+<symbol id="i-retour" viewBox="0 0 24 24"><path d="M19 12H5M11 18l-6-6 6-6"/></symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
-<symbol id="i-cross" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
-<symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 1-1 1.7M12 17h.01"/></symbol>
-<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
-<symbol id="i-pen" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
-<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20L12 3ZM12 10v4M12 17h.01"/></symbol>
+<symbol id="i-croix" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+<symbol id="i-stylo" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+<symbol id="i-alerte" viewBox="0 0 24 24"><path d="M12 3 2 20h20L12 3ZM12 10v4M12 17h.01"/></symbol>
+<symbol id="i-horloge" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-actualiser" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></symbol>
+<symbol id="i-cle" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M15 8l2 2"/></symbol>
+<symbol id="i-cadenas" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+<symbol id="i-oeil" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+<symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7l-4-4Z"/><path d="M14 3v4h4M9 13h6M9 17h6"/></symbol>
+<symbol id="i-pinceau" viewBox="0 0 24 24"><path d="m14 4 6 6-9 9H5v-6l9-9Z"/></symbol>
+<symbol id="i-question" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 1-1 1.7M12 17h.01"/></symbol>
+<symbol id="i-poubelle" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+<symbol id="i-loupe" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+<symbol id="i-lien" viewBox="0 0 24 24"><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></symbol>
+<symbol id="i-cible" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r=".6"/></symbol>
+<symbol id="i-interdit" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.7 5.7 12.6 12.6"/></symbol>
+<symbol id="i-github" viewBox="0 0 24 24"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.3 4.3 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.3 4.3 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></symbol>
 <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h13l-3 4 3 4H5"/></symbol>
-<symbol id="i-github" viewBox="0 0 16 16"><path fill="currentColor" stroke="none" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></symbol>
 <symbol id="i-scale" viewBox="0 0 24 24"><path d="M12 3v18M4 7h16M4 7l-2 7h6L6 7M18 7l-2 7h6l-2-7M8 21h8"/></symbol>
 </svg>
-<a class="skip" href="#main">Aller au contenu</a>
-<header class="site"><a class="brand" href="/"><img src="/bench-x.svg" width="32" height="32" alt=""><span>Bench-X<small>by Le Lab-X</small></span></a><nav aria-label="Navigation principale">{{menu}}</nav></header>
-<div class="{{layout_class}}">
-{{navigation}}
+<a class="sauter" href="#main">Aller au contenu</a>
+<header class="haut"><div class="cadre"><a class="marque" href="/" aria-label="Evaly, accueil"><span class="marque-mot">EVAL</span><span class="marque-x" aria-hidden="true">Y</span></a><nav class="nav" aria-label="Navigation principale"><ul>{{menu}}</ul></nav><details class="nav-mobile"><summary>Menu</summary><nav aria-label="Navigation principale, mobile"><ul>{{menu}}</ul></nav></details></div></header>
 <main id="main" tabindex="-1">
-<h1>{{title}}</h1>
-
+{{tete}}
 {{content}}
 </main>
-</div>
-<footer class="site">
+<footer class="pied">
+<div class="cadre">
 <div class="cols">
-<div><p class="brandline"><img src="/bench-x.svg" width="32" height="32" alt="">Bench-X <small>by Le Lab-X</small></p><p>Comparez des modèles d’IA sur une tâche de votre travail, preuves et coût observé à l’appui.</p></div>
-<div><h2>Parcours</h2><ul><li><a href="/preparation">Décrire un cas d’usage</a></li><li><a href="/preparation">Mes cas d’usage</a></li></ul></div>
+<div><a class="marque" href="/" aria-label="Evaly, accueil"><span class="marque-mot">EVAL</span><span class="marque-x" aria-hidden="true">Y</span></a><p class="intro">Comparez les modèles d’IA sur votre propre cas d’usage, preuves et coût observé à l’appui.</p><p class="intro note">N’indiquez aucune donnée personnelle ni information confidentielle.</p></div>
+<nav aria-label="Parcours"><h2>Parcours</h2><ul><li><a href="/preparation">Décrire un cas d’usage</a></li><li><a href="/preparation">Mes cas d’usage</a></li><li><a href="/evaluations-externes">Benchmarks publics</a></li><li><a href="/epreuves">Épreuves</a></li><li><a href="/preparation/data">Mes données</a></li></ul></nav>
 <nav aria-label="Informations légales"><h2>Informations légales</h2><ul><li><a href="/mentions-legales">Mentions légales</a></li><li><a href="/cgu">Conditions d’utilisation</a></li><li><a href="/confidentialite">Confidentialité</a></li></ul></nav>
-<div><h2>Confidentialité</h2><ul><li>Sans compte, lié à ce navigateur</li><li>Données inventées uniquement</li><li>Cas privés, partage facultatif</li></ul></div>
 </div>
-<div class="bottom">{{identity}}</div>
+<p class="geant" aria-hidden="true">EVAL<span class="x">Y</span></p>
+<div class="pied-bas"><span class="signature">Par Cybrel · né au Lab-X</span>{{identity}}</div>
+</div>
 </footer>
 </body>
 </html>

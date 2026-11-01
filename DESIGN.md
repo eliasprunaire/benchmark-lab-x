@@ -1,48 +1,45 @@
 ---
-version: s18
-name: Bench-X
-description: Parcours web de Bench-X, du besoin à la comparaison des configurations et à leurs preuves. Style S18 « instrument ».
+version: c
+name: Evaly
+description: Parcours web d'Evaly, du cas d'usage à la comparaison des configurations et à leurs preuves. Direction « Banc d'essai » (refonte C).
 colors:
-  paper: "#e9e8e3"
-  surface: "#fbfbf9"
-  soft: "#dddcd5"
-  line: "#c9c8c0"
-  line-soft: "#e2e1db"
-  line-2: "#77766e"
-  ink: "#121212"
-  ink-2: "#45453f"
-  muted: "#55554e"
-  accent: "#121212"
-  accent-ink: "#121212"
-  accent-soft: "#e2e1db"
-  accent-soft-2: "#c9c8c0"
-  btn: "#121212"
-  btn-hover: "#3d3d37"
-  on-btn: "#fbfbf9"
-  warm: "#7d4710"
-  warm-soft: "#f1e6d8"
-  ok: "#24613a"
-  ok-soft: "#e1ece3"
-  ko: "#b0241a"
-  ko-soft: "#f6e5e2"
-  warn: "#765000"
-  warn-soft: "#f2e8d2"
-  unk: "#4b4f55"
-  unk-soft: "#e4e4e0"
-  wait: "#2c5677"
-  wait-soft: "#e1e8ee"
-  focus: "#1f4fd6"
+  papier: "#f1eee5"
+  carte: "#fffdf8"
+  creux: "#e7e3d8"
+  encre: "#141311"
+  encre-2: "#48453d"
+  discret: "#5b574d"
+  filet: "#141311"
+  filet-doux: "#d3cebf"
+  signal: "#ffd21f"
+  signal-pale: "#fff0b0"
+  sur-signal: "#141311"
+  ok: "#13703a"
+  ok-fond: "#dcf0e1"
+  ko: "#bf2419"
+  ko-fond: "#fbe3df"
+  att: "#1d52b0"
+  att-fond: "#e1e9f8"
+  vig: "#845400"
+  vig-fond: "#f6ead0"
+  inc: "#4f545b"
+  inc-fond: "#e6e5e0"
+  ruban: "#e6d3a6"
+  sur-ruban: "#3a2a0b"
+  focus: "#1f47e0"
+  nuit: "#0f0e0d"
+  sur-nuit: "#f1eee5"
+  nuit-2: "#bdb7a8"
+  nuit-filet: "#34312b"
 typography:
-  display:
+  titre:
     fontFamily: Mona Sans
-    fontWeight: 700
-    fontStretch: 115%
+    fontWeight: 800
+    fontStretch: 112%
     letterSpacing: -0.02em
-  title:
-    fontFamily: Hubot Sans
-    fontWeight: 600
-  body:
-    fontFamily: Host Grotesk
+  corps:
+    fontFamily: Mona Sans
+    fontWeight: 400
     fontSize: 16px
     lineHeight: 1.55
   mono:
@@ -51,151 +48,140 @@ typography:
     fontFamily: Silkscreen
     fontWeight: 700
 rounded:
-  base: 8px
-  frame: 12px
+  carte: 14px
+  bouton: 12px
+  ligne: 8px
 spacing:
-  s1: 4px
-  s2: 8px
-  s3: 12px
-  s4: 16px
-  s5: 24px
-  s6: 32px
-  s7: 48px
+  gout: clamp(16px, 4vw, 40px)
+  cadre: 1240px
 ---
 
-# Bench-X
+# Evaly
 
-## Overview
+> **Ce fichier remplace la direction S18 « instrument »** (Bench-X, 26 octobre 2026). Le rail latéral, le papier gris neutre, l'accent unique en encre, les trois polices de texte et l'interdiction du mouvement n'existent plus. Les règles de preuve de S18 (l'état d'abord, aucun chiffre inventé, un statut porte son mot) restent : voir « Invariants ». Le nom Bench-X ne s'affiche plus, le produit s'appelle Evaly.
 
-Bench-X aide à choisir un modèle pour une tâche précise à partir de preuves lisibles. Le ton visuel est celui d'un instrument de mesure : papier gris neutre, encre noire, étiquettes en chasse fixe, chiffres alignés, filets fins. Aucun décor.
+## Vue d'ensemble
 
-Direction retenue par Ayo le 26 octobre 2026 : le shot Dribbble S18 (Purrweb) pour le style, le shot S1 (Groundwork) pour la structure. Ce fichier est la seule source de vérité visuelle. Toute valeur vient d'une variable de `benchmark_web/static/preparation.css`.
+Evaly aide à choisir un modèle pour un cas d'usage précis à partir de preuves lisibles. Le ton visuel est celui d'un banc d'essai : papier crème, encre noire, filets épais, un seul jaune de signal, des tampons de verdict. Le mouvement existe, mais il illustre le test (un disque qui court, un tampon qui frappe) et ne décore rien.
 
-Les pages publiées utilisent `benchmark_web/static/projection.css`. Cette feuille reprend les mêmes couleurs, en thème clair et sombre. Elle utilise la police système, car le paquet publié ne contient aucune police. Ses octets sont liés à la version de présentation : toute modification incrémente `PRESENTATION_VERSION` dans `benchmark/publications.py`.
+Source de vérité : la feuille `benchmark_web/static/preparation.css`. Elle concatène la feuille de base de la maquette (`reports/refonte-c/maquette/static/app.css`) puis les feuilles par écran (`static/ecrans/*.css`, ordre alphabétique). Toute valeur vient d'une variable de `:root`. Les composants HTML vivent dans `benchmark_web/fragments.py`, qui reprend `reports/refonte-c/maquette/mq/kit.py`.
 
-Principes :
+Les pages publiées utilisent `benchmark_web/static/projection.css`. Cette feuille garde sa propre palette. Ses octets sont liés à la version de présentation : toute modification incrémente `PRESENTATION_VERSION` dans `benchmark/publications.py`.
 
-1. **L'état d'abord.** Chaque écran commence par son état principal, en clair. La raison suit, en une ou deux phrases.
-2. **Le rouge signale un manque.** `ko` sert seulement à un manquement, à une condition non remplie ou à un point à relire. `ok` sert seulement à une condition remplie.
-3. **Aucun chiffre inventé.** Une estimation est nommée « estimation ». Une valeur inconnue est affichée « inconnu ». Aucun score global.
-4. **La police pixel est rare.** Elle sert seulement à quelques grands chiffres de relevé. Jamais pour un titre ni pour du texte.
+## Couleurs
 
-## Colors
+- **Papier** est le fond de page. **Carte** est le fond des cartes, des champs et des boutons secondaires. **Creux** est le fond appuyé (lignes d'état, cases, tableaux).
+- **Encre** sert au texte, aux filets de 2 px et à l'entrée de menu courante. **Encre-2** et **discret** servent au texte secondaire.
+- **Signal** (jaune) est le seul accent. Il marque l'action principale, la station courante, la pastille d'état et le Y de la marque. Le texte sur signal est toujours `sur-signal`.
+- Cinq tons portent un verdict ou un état, chacun avec son fond : `ok`, `ko`, `att` (en attente, à reprendre), `vig` (vigilance), `inc` (inconnu). Un ton s'accompagne toujours d'un mot et d'une icône.
+- **Ruban** marque ce qui est inventé : pièces, consigne, exemple. Le texte sur ruban est `sur-ruban`.
+- **Nuit** fond les bandes sombres : banc d'essai de l'accueil, suivi en direct, pied de page. Le texte y est `sur-nuit` ou `nuit-2`.
+- **Focus** est le seul bleu de l'interface. Sur fond jaune, le contour de focus reste `#1f47e0`.
+- Le thème sombre suit `prefers-color-scheme: dark`, avec les mêmes noms. Il redéfinit `papier`, `carte`, `creux`, `encre`, `encre-2`, `discret`, `filet`, `filet-doux`, `signal-pale`, `sur-signal`, les cinq tons et leurs fonds, `ruban`, `sur-ruban`, `focus`, `nuit` et `nuit-filet`. `signal` reste jaune dans les deux thèmes.
 
-- **Paper** sert de fond de page. **Surface** sert de fond au rail et à la fenêtre d'application. **Soft** sert de fond appuyé.
-- **Ink** est la couleur d'interaction : liens, bouton principal, entrée de menu courante, étape courante. Aucune autre teinte d'accent.
-- Les paires de statut (`ok`, `ko`, `warn`, `unk`, `wait`, chacune avec sa variante `-soft`) portent un verdict ou un état, jamais une décoration. Un statut s'accompagne toujours d'un libellé, pas de la couleur seule.
-- **Warm** est réservé à ce qui est inventé : consigne donnée aux modèles, marque « cas d'usage inventé ».
-- **Focus** est le seul bleu de l'interface : contour du focus clavier.
-- `line` et `line-soft` ne portent aucune information seule. Un bord de champ utilise `ink-2`.
-
-Contrastes mesurés (texte sur fond), thème clair et thème sombre :
+Contrastes mesurés (texte sur fond), minimum 4,5:1 hors focus sur jaune (4,77:1) :
 
 | Texte | Fond | Clair | Sombre |
 |---|---|---|---|
-| ink | paper / surface | 15,27:1 / 18,08:1 | 15,46:1 / 14,09:1 |
-| ink-2 | paper / surface | 7,87:1 / 9,31:1 | 10,79:1 / 9,84:1 |
-| muted | soft | 5,46:1 | 5,96:1 |
-| ko / ok / warn | leur fond `-soft` | 5,53:1 / 6,08:1 / 5,91:1 | 6,11:1 / 6,78:1 / 6,86:1 |
-| on-btn | btn | 18,08:1 | 15,98:1 |
-| focus | paper | 5,44:1 | 8,60:1 |
+| encre | papier | 16,00:1 | 16,28:1 |
+| encre-2 | papier | 8,25:1 | 11,06:1 |
+| discret | papier / carte / creux | 6,21 / 7,09 / 5,62 | 7,68 / 7,02 / 6,24 |
+| ok, ko, att, vig, inc | leur fond | 4,93:1 à 6,05:1 | 6,95:1 à 8,43:1 |
+| sur-signal | signal | 12,81:1 | 13,01:1 |
+| sur-ruban | ruban | 9,39:1 | 7,42:1 |
+| sur-nuit | nuit | 16,62:1 | 18,10:1 |
+| focus | papier | 5,96:1 | 8,96:1 |
 
-`tests/test_web_redesign.py` vérifie ces paires à chaque exécution.
+`tests/test_web_redesign.py` vérifie ces paires à chaque exécution. Le tableau complet est dans `reports/refonte-c/contrastes.md`.
 
-## Themes
-
-Le thème sombre suit `prefers-color-scheme: dark`, avec les mêmes noms de variables. L'encre claire devient la couleur d'interaction et le bouton principal passe en encre claire sur texte sombre.
-
-| Variable | Clair | Sombre |
-|---|---|---|
-| paper | #e9e8e3 | #161614 |
-| surface | #fbfbf9 | #1f1f1c |
-| soft | #dddcd5 | #2a2a26 |
-| line | #c9c8c0 | #3a3a35 |
-| line-soft | #e2e1db | #2c2c28 |
-| line-2 | #77766e | #8a897f |
-| ink | #121212 | #eeede8 |
-| ink-2 | #45453f | #c9c8c0 |
-| muted | #55554e | #a8a79e |
-| accent | #121212 | #eeede8 |
-| accent-ink | #121212 | #f4f3ee |
-| accent-soft | #e2e1db | #2c2c28 |
-| accent-soft-2 | #c9c8c0 | #3a3a35 |
-| btn | #121212 | #eeede8 |
-| btn-hover | #3d3d37 | #b9b8b0 |
-| on-btn | #fbfbf9 | #121212 |
-| warm | #7d4710 | #e0a24a |
-| warm-soft | #f1e6d8 | #3a2c14 |
-| ok | #24613a | #7dc795 |
-| ok-soft | #e1ece3 | #1b3324 |
-| ko | #b0241a | #ef8f84 |
-| ko-soft | #f6e5e2 | #43201b |
-| warn | #765000 | #e3b45a |
-| warn-soft | #f2e8d2 | #3a2f12 |
-| unk | #4b4f55 | #b3b6ba |
-| unk-soft | #e4e4e0 | #2a2c2f |
-| wait | #2c5677 | #8fbde0 |
-| wait-soft | #e1e8ee | #1d2e3c |
-| focus | #1f4fd6 | #8ab4f8 |
-
-## Typography
+## Typographie
 
 | Rôle | Police | Réglage | Où |
 |---|---|---|---|
-| Grands titres | Mona Sans | gras 700, largeur 115 %, espacement −0,02 em | `h1`, titre du conseil |
-| Autres titres | Hubot Sans | demi-gras 600 | `h2` à `h6`, noms des configurations, cas d'usage |
-| Texte | Host Grotesk | 400, 16 px, interligne 1,55 | paragraphes, descriptions, tableaux |
-| Étiquettes et chiffres | Geist Mono | 11 à 14 px ; capitales espacées pour les étiquettes ; chiffres tabulaires | menu, étapes, en-têtes de tableau, badges, montants, consigne et pièces |
-| Grands chiffres de relevé | Silkscreen | gras 700 | réservé ; aucun écran ne l'utilise encore |
+| Titres | Mona Sans | 800, largeur 112 %, espacement −0,02 em ; `h1` en 850 et largeur 125 % | `h1` à `h4`, marque, boutons |
+| Texte | Mona Sans | 400, 16 px, interligne 1,55 | paragraphes, champs, tableaux |
+| Étiquettes | Geist Mono | 11 à 13 px, capitales espacées | menu, étiquettes, mots de statut, notes de relevé |
+| Compteurs | Silkscreen | 700 | seulement le résumé de la barre de choix des modèles |
 
-Les cinq polices sont sous licence SIL Open Font License 1.1. Elles sont servies en local depuis `/preparation/fonts/`, chacune avec son fichier `OFL-<police>.txt`. Les noms de fichier ne contiennent que des lettres, comme l'exige la route du serveur.
+Montants, durées, numéros d'étape et codes d'erreur utilisent Mona Sans à chiffres tabulaires. Le 4 de Silkscreen se lit comme un bloc plein.
 
-## Layout
+Les polices sont sous licence SIL Open Font License 1.1. Elles sont servies en local depuis `/preparation/fonts/`, chacune avec son fichier `OFL-<police>.txt`. Les fichiers HubotSans et HostGrotesk restent servis, car les mentions légales les nomment, mais aucune feuille ne les charge.
+
+## Mise en page
 
 ```
-rail latéral (marque, menu)  │  fenêtre d'application (étapes, titre, contenu)
-──────────────────────────────┴──────────────────────────────────────────────
-pied de page (présentation, parcours, informations légales, confidentialité, code source)
+en-tête fixe : marque EVAL + Y, menu (Accueil, Mes cas d'usage, Épreuves, Mes données)
+────────────────────────────────────────────────────────────────────────────────
+tête d'écran : piste des cinq stations, titre h1, puces de contexte
+contenu : colonne principale  │  colonne de synthèse collante (.cote)
+────────────────────────────────────────────────────────────────────────────────
+pied de page : marque, Parcours, Informations légales, grand EVALY, bande basse
 ```
 
-- Ordinateur : le rail occupe 12 rem à gauche. Il porte la marque et le menu en colonne. La fenêtre d'application occupe le reste. Le rail et la fenêtre forment un seul cadre `surface` au bord `line`.
-- 52 rem et moins : le rail passe au-dessus de la fenêtre et son menu passe en ligne.
-- Le gabarit `templates/preparation.html` garde son HTML. La grille CSS place l'en-tête, la fenêtre et le pied de page. `header.site` reste un vrai bloc d'en-tête, sans `display: contents`, pour garder son rôle de bannière.
-- Les étapes du parcours (Besoin, Exemple, Validation, Modèles, Résultats) forment une barre horizontale en chasse fixe au-dessus du titre.
-- Chaque page se lit à 390 px sans défilement horizontal de la page. Seul un tableau peut défiler dans son propre conteneur.
+- `.cadre` centre le contenu : 1240 px au plus, gouttière `clamp(16px, 4vw, 40px)`. Les bandes pleine largeur (`.zone`, `.une`, `.compo-zone`, `.pied`) portent leur propre `.cadre`.
+- Le gabarit `templates/preparation.html` écrit l'en-tête, le pied et le marqueur `{{tete}}`. `views.render` remplit `{{tete}}` (piste, titre, puces de contexte) et enveloppe le contenu dans un `.cadre`. Une vue qui écrit son propre h1 et ses propres bandes (accueil, Mes cas d'usage) passe `plein`.
+- Le menu est une liste. Sous 860 px, il devient un dépliant « Menu ». `aria-current="page"` marque seulement l'entrée qui est la page affichée, jamais une page descendante ni une page d'erreur.
+- Le pied de page a trois colonnes (deux sous 860 px, une sous 480 px), puis le mot EVALY en grand, puis une bande en trois zones : « Par Cybrel · né au Lab-X », la version et la source, le lien « Code source ».
+- Les cinq stations du cas (Besoin, Exemple, Validation, Modèles, Résultats) forment la piste. Les stations franchies sont des liens. Sous 700 px, seul le nom de la station courante reste visible.
+- Deux colonnes (`.colonnes`) : 360 px à droite pour l'état, la décision et le coût. Sous 1000 px, une seule colonne. `.cote-avant` remonte la colonne de droite avant le détail.
+- Chaque page se lit à 390 px sans défilement horizontal de la page. Seul un tableau défile dans son propre conteneur.
 
-## Shapes
+## Formes
 
-Deux rayons : `rounded.base` (8 px) pour les champs, boutons et dépliants, `rounded.frame` (12 px) pour le cadre de l'application et les encadrés d'état. Les étiquettes et badges ont un rayon de 4 px.
+Trois rayons : 14 px (`--r`) pour les cartes, les états et les tableaux ; 12 px pour les boutons et les champs ; 8 px (`--r-s`) pour les lignes d'état et les petits blocs. Les filets de structure font 2 px en `filet`. Les séparations internes sont en pointillés `filet-doux`.
 
-## Components
+## Composants
 
-- **Encadré d'état** : un seul modèle d'encadré, réservé aux états et alertes. Le ton vient des paires de statut. Une note ordinaire est un paragraphe, pas un encadré.
-- **Badges de verdict** : capsule rectangulaire en chasse fixe et capitales, bord de la couleur du statut, toujours avec son mot.
-- **Boutons** : 48 px de haut minimum. Le bouton principal est plein (`btn`). Le bouton secondaire (`.sec`) a un fond transparent et un bord encre. Un seul bouton principal par écran.
-- **Champs** : libellé visible au-dessus, bord `ink-2`, 48 px de haut minimum. Une erreur porte `aria-invalid="true"` et un bord `ko` de 2 px.
-- **Navigation** : le menu marque la page courante avec `aria-current="page"` seulement quand la page est réellement l'entrée du menu. L'entrée courante a un filet encre et un fond `paper`.
-- **Tableaux** : en-têtes en chasse fixe et capitales, filets pointillés entre les lignes, montants en chasse fixe et chiffres tabulaires.
-- **Listes de cas d'usage** : une ligne par cas, séparée par un filet, nom en Hubot Sans.
-- **Zone principale et colonne de synthèse** (`.workbench`, `fragments.workbench`) : les réglages ou le détail à gauche, la synthèse et l'action à droite, dans une colonne qui reste visible au défilement. Sous 64rem, une seule colonne dans l'ordre du HTML. La synthèse vient d'abord dans le HTML quand elle doit être lue avant le détail.
-- **Relevé** (`.readout`, `fragments.readout`) : un chiffre déjà connu, en grand et en chasse fixe, toujours nommé au-dessus. Jamais un chiffre calculé pour l'affichage.
-- **Récapitulatif avant dépense** : une ligne de synthèse, puis le bouton qui lance, puis le détail. La prévision des réponses et la réservation de l'évaluation s'affichent séparément, jamais additionnées.
-- **Dépliants** (`details`) : pour le détail rigoureux, les preuves et les options secondaires ; ils restent utilisables sans JavaScript.
-- **Pied de page** : quatre colonnes (deux sur tablette, une sur téléphone), titres en chasse fixe. Le lien « Code source » répond à l'offre de source de l'AGPL §13 et ne doit jamais disparaître.
+Chaque composant HTML a sa fonction dans `benchmark_web/fragments.py`. Les noms de classe viennent de la feuille.
 
-## Interactions
+- **Marque** (`.marque`) : EVAL en lettres grasses larges, suivi d'un carré jaune portant Y, incliné de 6 degrés. Le fichier `static/bench-x.svg` reprend le Y en carré jaune. Le nom de fichier reste, car il figure dans la liste blanche du serveur.
+- **Piste** (`piste`) : cinq stations avec leur numéro et leur nom ; la courante porte le disque d'essai, les franchies portent une coche.
+- **Tête** (`tete`) : piste, `h1`, puces de contexte (`puce`, `ruban`).
+- **État** (`etat`) : un seul encadré par écran, réservé à l'état principal. Pastille, mot de statut (`mot`), titre `h2`, une phrase, actions. Une note ordinaire est un paragraphe.
+- **Tampon** (`tampon`) : verdict en capitales dans un cadre double, toujours avec son mot. `ok` Satisfait, `ko` Ne satisfait pas, `att` À reprendre, `vig` Non vérifié, `inc` Inconnu. La variante `xl` sert au bilan. La classe `frappe` anime l'arrivée.
+- **Boutons** (`btn`, `bouton`) : 52 px de haut minimum. Le bouton principal est jaune. `sec` est transparent à bord encre. `xl` est grand. Au survol, le bouton se décale de 3 px et projette un filet plein. Un seul bouton principal par écran. Le bouton de suppression est rouge (`btn-danger`). `lien` est l'action discrète avec flèche.
+- **Relevés** (`releves`, `readout`) : un chiffre déjà connu, en grand, toujours nommé au-dessus. Une valeur absente s'affiche « inconnu ». La variante `compact` sert à la colonne de droite.
+- **Récapitulatif avant dépense** : une ligne de synthèse, puis le bouton qui lance, puis le détail. La prévision des réponses et la réservation de la vérification s'affichent séparément, jamais additionnées.
+- **Tiroir** (`tiroir`) : `details` natif avec titre, résumé de statut et signe plus. Il contient le détail rigoureux, les preuves et les options secondaires.
+- **Champ** (`champ`, `composeur` dans `views.py`) : libellé visible, aide liée par `aria-describedby`, bord encre de 2 px, 52 px de haut minimum. Une erreur porte `aria-invalid="true"` et un message `role="alert"` (`erreur_champ`). Le champ unique de Mes cas d'usage (`.compo`) a un halo animé au focus et des exemples qui défilent quand il est vide.
+- **Zone** (`zone`, `section`) : bande pleine largeur avec étiquette et titre, ou section d'une colonne.
+- **Colonnes** (`workbench`) : colonne principale (`.pile-l`) et colonne de synthèse collante (`.cote`).
+- **Harnais** (`harnais`) : valeur « pi.dev » avec lien et info-bulle sur le lancement à vide, sans numéro de version.
+- **Accueil** : accroche avec mot qui défile, banc d'essai de nuit avec trois couloirs de démonstration, cinq stations, règle du verdict.
+- **Suivi en direct** : couloirs de nuit, un disque qui avance par modèle, tampon d'état à droite.
+- **Pied de page** : voir « Mise en page ». Le lien « Code source » répond à l'offre de source de l'AGPL §13 et ne disparaît jamais.
 
-- Survol : le fond change, jamais la couleur du texte vers un gris plus clair.
-- Focus : contour `focus` de 3 px, décalé de 2 px, sur tout élément interactif.
-- Transitions : 200 ms, seulement sur le fond et la flèche des dépliants. Aucune sous `prefers-reduced-motion`.
-- Zones tactiles : 44 px minimum.
+## Mouvement
 
-## Do's and Don'ts
+- Le mouvement sert la lecture : le disque d'essai qui court (accueil, suivi), le tampon qui frappe (`frappe`, 0,32 s, ressort `cubic-bezier(.2, .9, .3, 1.25)`), le mot qui défile dans le titre de l'accueil, les exemples qui défilent dans le champ vide, le halo du champ au focus.
+- Aucune animation n'est nécessaire pour comprendre un état.
+- `prefers-reduced-motion: reduce` supprime toutes les animations et transitions. Le disque et les traces prennent alors leur position finale.
+- Les transitions de survol durent 150 à 200 ms : décalage du bouton, flèche des liens, signe plus des tiroirs.
+- Aucun nouveau mouvement sans nouvelle règle dans ce fichier.
+
+## Invariants
+
+Ces règles viennent du produit. Le style peut changer, elles restent. Le script `reports/refonte-c/outil/invariants.py` les contrôle sur la maquette.
+
+1. Un statut porte toujours son mot. La couleur seule ne signale rien.
+2. Aucun chiffre inventé. Une valeur absente s'affiche « inconnu ». Une estimation porte le mot « estimation » ou « estimé ».
+3. Aucun JavaScript requis pour lire, saisir ou naviguer. Le JavaScript ajoute seulement du confort.
+4. Aucune ressource externe. Aucun attribut `style=""`, aucune balise `<style>`, aucun script inline qui demanderait `unsafe-inline` dans la CSP.
+5. `prefers-reduced-motion: reduce` supprime tout mouvement.
+6. Cibles tactiles de 44 px au minimum. Contour de focus visible sur tout élément interactif.
+7. À 390 px, la page ne défile pas horizontalement.
+8. Le pied de page de chaque page porte le lien « Code source ».
+9. Les modèles portent leur nom commercial, jamais un alias interne.
+10. Le tableau des résultats n'a pas de colonne ajoutée ni de paragraphe explicatif sous lui. Le détail va dans une info-bulle ou un tiroir. Pas de barres de coût.
+11. Aucun score global, aucun « meilleur modèle » en général.
+12. Un seul bouton principal par écran.
+
+## À ne pas faire
 
 - Ne pas utiliser la police pixel pour un titre ou du texte.
-- Ne pas ajouter de seconde couleur d'accent, de dégradé, de halo ni d'ombre décorative.
+- Ne pas ajouter de seconde couleur d'accent, de dégradé de décor ni d'ombre décorative. Le seul relief est le filet plein des boutons au survol.
 - Ne pas signaler un statut par la couleur seule.
-- Ne pas ajouter de colonne au tableau des résultats ni de paragraphe explicatif sous lui ; le détail va dans l'infobulle.
-- Ne pas afficher les alias internes de configuration ; utiliser les noms commerciaux.
-- Ne pas exiger JavaScript pour lire, saisir ou naviguer ; aucune ressource externe ; aucun style ni script inline qui demanderait `unsafe-inline` dans la CSP.
-- Respecter `prefers-reduced-motion`.
+- Ne pas afficher les alias internes de configuration.
+- Ne pas écrire « Bench-X » ni « tâche » pour le travail de l'utilisateur : le produit s'appelle Evaly et le travail s'appelle un cas d'usage. Les pages légales et les descriptions de benchmarks publics gardent leur texte.
+- Ne pas écrire de numéro de version de Pi dans un texte affiché.
+- Ne pas copier la feuille ni les composants hors de leurs deux emplacements.

@@ -269,7 +269,7 @@ class ProviderAccessTests(unittest.TestCase):
         self.assertIsNone(start)
         self.assertNotIn(KEY, json.dumps(value))
         home = render({'dossiers': [], 'personal_access': value}, csrf).decode()
-        self.assertIn('Votre clé OpenRouter est enregistrée', home)
+        self.assertIn('La clé OpenRouter paie les appels aux modèles.', home)
         self.assertIn('href="/preparation/access"', home)
         page = render(dict(value, kind='access'), csrf, '/preparation/access').decode()
         self.assertIn('type="password"', page)

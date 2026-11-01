@@ -56,7 +56,8 @@ class S10ProofTests(unittest.TestCase):
         self.assertEqual(value['panel'], models['panel'])
         page = views.render(models, '').decode()
         self.assertIn('<h1>Modèles de cette comparaison</h1>', page)
-        self.assertIn('aria-current="step"><span class="n">4</span>Modèles', page)
+        self.assertIn('<li aria-current="step"><a href="', page)
+        self.assertIn('<span class="n">04</span><span class="l">Modèles</span><span class="cache"> (étape en cours)</span>', page)
         self.assertNotIn('<form', page)
         self.assertNotIn('<script>', page)
         self.assertIn(value['href'], Markup(page.encode()).links)
@@ -247,7 +248,8 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn('<link rel="stylesheet" href="/preparation/style.css">', raw)
         self.assertIn('<h1>Détail et preuves</h1>', raw)
         self.assertIn(detail['back_href'], Markup(raw.encode()).links)
-        self.assertIn('href="' + detail['href'] + '" aria-current="step"><span class="n">5</span>Résultats', raw)
+        self.assertIn('<li aria-current="step"><a href="' + detail['href'] + '"><span class="disque" aria-hidden="true"></span>'
+                      '<span class="n">05</span><span class="l">Résultats</span>', raw)
         self.assertEqual(1, raw.count('id="attempt-detail"'))
         fragment = raw.split('id="attempt-detail"', 1)[1]
         self.assertNotIn(detail['need'], fragment)
@@ -330,11 +332,11 @@ class S10ProofTests(unittest.TestCase):
         self.assertNotIn('Contrat et portée exacte', method)
         main = page.split('<main', 1)[1].split('</main>', 1)[0]
         self.assertNotIn('>Mes cas d’usage</a>', main)
-        nav = page.split('<nav class="steps"', 1)[1].split('</nav>', 1)[0]
+        nav = page.split('<nav class="piste"', 1)[1].split('</nav>', 1)[0]
         self.assertIn('href="' + value['dossier_href'] + '"', nav)
         self.assertNotIn('#validation', nav)
         self.assertIn(value['href'] + '/configurations', nav)
-        self.assertIn('aria-current="step"><span class="n">5</span>Résultats', nav)
+        self.assertIn('<span class="n">05</span><span class="l">Résultats</span><span class="cache"> (étape en cours)</span>', nav)
 
     def test_unconfigured_judgment_is_visible_in_empty_results_without_model_failure(self):
         value = r.comparison(self.store, self.sid, 'fixture', 'comparison')

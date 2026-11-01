@@ -403,12 +403,12 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual(1, len(headings))
             self.assertTrue(headings[0]['text'].strip())
             actions = [n for n in page.nodes if n['main'] and not n['details']
-                       and (n['tag'] == 'button' or n['tag'] == 'a' and 'button' in n['attrs'].get('class', '').split())
-                       and 'sec' not in n['attrs'].get('class', '').split()]
+                       and (n['tag'] == 'button' or n['tag'] == 'a' and {'button', 'btn'} & set(n['attrs'].get('class', '').split()))
+                       and not {'sec', 'btn-sec'} & set(n['attrs'].get('class', '').split())]
             self.assertEqual([] if primary is None else [primary], [n['text'].strip() for n in actions])
-            # Une phrase d'état statique est un encadré `note` ou un bloc `state` ; `role` reste réservé aux zones mises à jour (BX-22)
+            # Une phrase d'état statique est un encadré `note` ou un bloc `etat` ; `role` reste réservé aux zones mises à jour (BX-22)
             self.assertTrue(any((n['attrs'].get('role') in ('status', 'alert')
-                                 or {'note', 'state'} & set((n['attrs'].get('class') or '').split())) and n['text'].strip()
+                                 or {'note', 'etat'} & set((n['attrs'].get('class') or '').split())) and n['text'].strip()
                                 for n in page.nodes), 'Phrase d’état absente')
             self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b|\b(?:configuration|cell|attempt|case)-\d+\b|\b(?:O1|E1)\b|python -m|package_sha256')
             self.assertIn('Révision : aaaaaaa', page.visible)
@@ -431,8 +431,8 @@ class ParcoursComplet(unittest.TestCase):
                 patch.object(server, 'preparation_request', side_effect=AssertionError('Relais privé interdit')):
             before = {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()}
             home, _, _ = self.request('/')
-            self.assertTrue(any(n['tag'] == 'a' and n['text'] == 'Évaluations externes' for n in home.nodes))
-            target = home.link('Évaluations externes')
+            self.assertTrue(any(n['tag'] == 'a' and n['text'] == 'Benchmarks publics' for n in home.nodes))
+            target = home.link('Benchmarks publics')
             page, headers, raw = self.request(target)
             self.assertEqual('/evaluations-externes', target)
             self.assertIsNone(headers.get('Set-Cookie'))
@@ -590,7 +590,7 @@ class ParcoursComplet(unittest.TestCase):
                     'https://artificialanalysis.ai/methodology/performance-benchmarking',
                     'Délai avant réception, vitesse de sortie et temps de réponse des services API',
                     'mesures agrégées sur des fenêtres temporelles',
-                    'Leur indice global n’entre pas dans Bench-X',
+                    'Leur indice global n’entre pas dans Evaly',
                     '2.2.0',
                     '2026-03-02',
                     'Les résultats évoluent séparément',
@@ -688,7 +688,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual('/epreuves', empty_search.link('Effacer la recherche et les filtres'))
             self.assertEqual('/preparation', empty_search.link('Décrire mon cas d’usage'))
             self.assertEqual([], empty_search.options('langue')[1:])
-            self.assertEqual(['/epreuves'], [n['attrs']['href'] for n in empty.nodes if n['attrs'].get('aria-current') == 'page'])
+            self.assertEqual(['/epreuves'], sorted({n['attrs']['href'] for n in empty.nodes if n['attrs'].get('aria-current') == 'page'}))
             self.assertEqual(raw, self.request('/epreuves', cookies=SimpleCookie('benchmark_session=invalid'))[2])
             leaked, _, leaked_raw = self.request('/epreuves?besoin=prive', status=400)
             self.assertNotIn('prive', leaked.visible)
@@ -1245,9 +1245,14 @@ class ParcoursComplet(unittest.TestCase):
             scope='editorial-trial'))
         return bundle
 
+    def formulaire_cle(self, page):
+        """Formulaire d'ajout de clé : il vit sur la page de la clé, que Mes cas d'usage relie par sa bande"""
+        acces, _, _ = self.request(page.link('Ma clé OpenRouter'))
+        return acces.form('/access/key')
+
     def ajouter_cle(self):
         page, _, _ = self.request('/preparation')
-        form = page.form('/access/key')
+        form = self.formulaire_cle(page)
         self.request(form['action'], form['fields'] | {'key': KEY}, status=303)
 
     def copie_epreuve(self, version='version-1', *, status=303, task='tache-fictive'):
@@ -2209,14 +2214,15 @@ class ParcoursComplet(unittest.TestCase):
             return value
         with patch.object(views, 'BENCHMARK_REFERENCES', references), patch.object(self, 'prepare', suspended):
             page, _, _ = self.request('/preparation')
-            self.submit(page, '/access/key', {'key': KEY})
+            acces, _, _ = self.request(page.link('Ma clé OpenRouter'))
+            self.submit(acces, '/access/key', {'key': KEY})
             page, _, _ = self.request('/preparation')
             page = self.submit(page, '/dossiers', {'request': 'Besoin privé fictif : une épreuve générale de programmation'})
             dossier = page.link('Actualiser')
             prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
             page, _, _ = self.request(dossier)
-            self.assertIn('Bench-X ne peut pas comparer cette tâche', page.visible)
-            self.assertEqual('/evaluations-externes', page.link('Évaluations externes'))
+            self.assertIn('Evaly ne peut pas comparer ce cas d’usage', page.visible)
+            self.assertEqual('/evaluations-externes', page.link('Benchmarks publics'))
             target = page.link('Atelier Code')
             direct = self.request('/evaluations-externes/atelier-code')[2]
             notice, headers, raw = self.request(target)
@@ -3138,11 +3144,11 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(target)
         # Sans clé, la page propose d'abord de l'enregistrer : rien d'autre ne ferme la préparation
         self.assertIn('Ajoutez votre clé OpenRouter pour préparer un exemple.', page.visible)
-        key_form = page.form('/access/key')
+        key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         self.examine(page, '/preparation', 'besoin', 'Préparer mon exemple')
-        self.assertIn('Votre clé OpenRouter est enregistrée.', page.visible)
+        self.assertIn('La clé OpenRouter paie les appels aux modèles.', page.visible)
         self.assertFalse(any(n['attrs'].get('id') == 'availability' for n in page.nodes))
         fields = [n['attrs'].get('name') for n in page.form('/dossiers')['nodes'] if n['tag'] == 'textarea']
         self.assertEqual(['request', 'useful', 'context'], fields)
@@ -3166,7 +3172,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'exemple', 'Oui, c’est le travail à tester')
         self.assertIn('Relever toutes les actions', page.visible)
-        self.assertNotIn('Bench-X ne peut pas comparer cette tâche', page.visible)
+        self.assertNotIn('Evaly ne peut pas comparer ce cas d’usage', page.visible)
         self.assertIn('cette vérification est payée avec votre clé OpenRouter', page.visible)
         position = {key: next(i for i, n in enumerate(page.nodes) if test(n)) for key, test in (
             ('correction', lambda n: n['tag'] == 'details' and n['attrs'].get('class') == 'corr'),
@@ -3203,7 +3209,7 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, dossier, 'exemple qualifié', 'Choisir les modèles')
         self.assertIn('Exemple vérifié, prêt à comparer', page.visible)
         self.assertEqual('Votre cas d’usage', next(n['text'] for n in page.nodes if n['tag'] == 'h1'))
-        state = next(n for n in page.nodes if 'state' in n['attrs'].get('class', '').split())
+        state = next(n for n in page.nodes if 'etat' in n['attrs'].get('class', '').split())
         self.assertIn('Choisir les modèles', state['text'])
         # Qualification automatique : aucune approbation opérateur n'est attendue
         self.assertNotIn('Approbation', ' '.join(n['text'] for n in page.nodes))
@@ -3314,7 +3320,7 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, dossier, 'comparaison préparée', 'Vérifier puis lancer la comparaison')
         self.assertIn('Comparaison prête à lancer', page.visible)
         # Une sélection sans essai : étape Modèles, aucun résultat à ouvrir
-        self.assertEqual(('4Modèles', None), self.etape(page))
+        self.assertEqual(('04Modèles', None), self.etape(page))
         self.assertEqual(recap, page.link('Vérifier puis lancer'))
         page, _, _ = self.request(recap)
         self.assertIn('Relever toutes les actions dans les notes', page.visible)
@@ -3454,7 +3460,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Évaluation à lancer', page.visible)
         self.assertNotIn('Comparaison terminée', page.visible)
         self.assertEqual(recap, page.link('Lancer l’évaluation'))
-        self.assertEqual(('5Résultats', recap), self.etape(page))
+        self.assertEqual(('05Résultats', recap), self.etape(page))
         self.assertNotIn('choisissez les modèles', page.visible)
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s5_evaluations').fetchone()[0])
@@ -3472,11 +3478,11 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(b'Transformer des notes', raw)
             self.assertNotIn(b'Attendu fictif', raw)
             empty, _, _ = self.request('/preparation', cookies=cookies)
-            self.assertIn('Vous n’avez encore aucun cas d’usage dans ce navigateur', empty.visible)
+            self.assertIn('Aucun cas d’usage dans ce navigateur', empty.visible)
             self.assertFalse(any(n['tag'] == 'a' and n['attrs'].get('href') == dossier for n in empty.nodes))
         page, _, _ = self.request('/preparation')
         self.assertIn(dossier, [n['attrs'].get('href') for n in page.nodes])
-        self.assertIn('Sans compte, lié à ce navigateur',
+        self.assertIn('N’indiquez aucune donnée personnelle ni information confidentielle.',
                       next(n['text'] for n in page.nodes if n['tag'] == 'footer'))
         page, _, _ = self.request(configurations)
         self.submit(page, '/configurations', {
@@ -3485,7 +3491,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'nouvelle comparaison préparée', 'Vérifier puis lancer la comparaison')
         # Étape Modèles en cours ; l'onglet Résultats garde la comparaison lancée, pas la sélection en attente
-        self.assertEqual(('4Modèles', recap), self.etape(page))
+        self.assertEqual(('04Modèles', recap), self.etape(page))
         listed = next(n for n in page.nodes if n['attrs'].get('id') == 'comparaison')
         campaign_links = [n for n in page.nodes if n['tag'] == 'a' and not n['details']
                           and n['text'].startswith('Comparaison ')]
@@ -3563,7 +3569,8 @@ class ParcoursComplet(unittest.TestCase):
             if not response.headers.get('Content-Type', '').startswith('text/html'):
                 continue
             page = Page(raw)
-            courants = [n['attrs']['href'] for n in page.nodes if n['attrs'].get('aria-current') == 'page']
+            # Le menu de grand écran et le menu mobile portent la même entrée courante
+            courants = sorted({n['attrs']['href'] for n in page.nodes if n['attrs'].get('aria-current') == 'page'})
             if courants not in ([], [urlsplit(path).path]):
                 faux_courants.append((route, courants))
             cibles = [n['attrs'].get('href', '') for n in page.nodes if n['tag'] == 'a']
@@ -3595,7 +3602,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request('/')
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
-        key_form = page.form('/access/key')
+        key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         page = self.submit(page, '/dossiers', {'request': 'Transformer des notes de réunion en une liste complète des actions à relire'})
@@ -3640,7 +3647,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request('/')
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
-        key_form = page.form('/access/key')
+        key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         page = self.submit(page, '/dossiers', {'request': 'Transformer des notes de réunion en une liste complète des actions à relire'})
@@ -3701,7 +3708,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request('/')
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
-        key_form = page.form('/access/key')
+        key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         page = self.submit(page, '/dossiers', {'request': 'Relever les décisions et les actions à mener dans mes notes de réunion'})
@@ -3844,7 +3851,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request('/')
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
-        key_form = page.form('/access/key')
+        key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         page = self.submit(page, '/dossiers', {'request': 'Relever les actions à mener dans mes notes de réunion'})
@@ -4055,7 +4062,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request('/')
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
-        key_form = page.form('/access/key')
+        key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         page = self.submit(page, '/dossiers', {'request': 'Relever les actions à mener dans mes notes de réunion'})
@@ -4193,7 +4200,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request('/')
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
-        key_form = page.form('/access/key')
+        key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         page = self.submit(page, '/dossiers', {'request': 'Relever les actions à mener dans mes notes de réunion'})
@@ -4687,7 +4694,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request('/')
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
-        key_form = page.form('/access/key')
+        key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         page = self.submit(page, '/dossiers', {'request': 'Transformer des notes de réunion en une liste complète des actions à relire'})
@@ -4797,7 +4804,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, raw = self.request(dossier)
         # Comparaison préparée mais pas lancée : l'encadré dit que l'exemple est à revoir, sans proposer de lancer
         self.examine(page, dossier, 'dossier bloqué par le contrat opérateur', None)
-        state = next(n for n in page.nodes if 'state' in n['attrs'].get('class', '').split())
+        state = next(n for n in page.nodes if 'etat' in n['attrs'].get('class', '').split())
         self.assertIn('Exemple à revoir avant comparaison', state['text'])
         self.assertNotIn('Vérifier puis lancer', page.visible)
         verification = next(n['text'] for n in page.nodes if n['tag'] == 'details'
@@ -4849,7 +4856,7 @@ class ParcoursComplet(unittest.TestCase):
         self.bloquer_par_contrat_operateur(dossier)
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'exemple bloqué sans comparaison', None)
-        state = next(n for n in page.nodes if 'state' in n['attrs'].get('class', '').split())
+        state = next(n for n in page.nodes if 'etat' in n['attrs'].get('class', '').split())
         self.assertIn('Exemple à revoir avant comparaison', state['text'])
         self.assertNotIn('n’a pas pu démarrer', page.visible)
         self.assertFalse(any(n['tag'] == 'a' and n['text'] == 'Choisir les modèles' for n in page.nodes))
@@ -4881,9 +4888,9 @@ class ParcoursComplet(unittest.TestCase):
 
     @staticmethod
     def etape(page):
-        """Étape courante de la barre et cible de l'onglet Résultats (None s'il est désactivé)"""
-        current = next(n['text'] for n in page.nodes if n['attrs'].get('aria-current') == 'step')
-        results = next(n for n in page.nodes if n['tag'] in ('a', 'span') and n['text'] == '5Résultats')
+        """Étape courante de la piste et cible de la station Résultats (None sans lien)"""
+        current = next(n['text'] for n in page.nodes if n['attrs'].get('aria-current') == 'step').removesuffix(' (étape en cours)')
+        results = next(n for n in page.nodes if n['tag'] in ('a', 'span') and n['text'].startswith('05Résultats'))
         return current, results['attrs'].get('href')
 
     def exemple_qualifie(self):
@@ -4899,7 +4906,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request('/')
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
-        key_form = page.form('/access/key')
+        key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         self.preparation_stage = 'exemple'
@@ -5007,15 +5014,15 @@ class ParcoursComplet(unittest.TestCase):
         comparison = recap.removesuffix('/conditions')
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'comparaison partielle terminée', 'Voir les résultats')
-        state = next(n for n in page.nodes if 'state' in n['attrs'].get('class', '').split())
+        state = next(n for n in page.nodes if 'etat' in n['attrs'].get('class', '').split())
         self.assertIn('Comparaison terminée', state['text'])
         self.assertIn('1 modèle sur 3 n’a pas donné de réponse exploitable', state['text'])
         self.assertNotIn('Cet exemple correspond-il', state['text'])
-        self.assertIn('done', state['attrs']['class'])
+        self.assertEqual('ok', state['attrs']['data-ton'])
         for absent in ('demande votre attention', 'interrompue', 'Voir ce qui s’est passé'):
             self.assertNotIn(absent, page.visible)
         self.assertEqual(comparison, page.link('Voir les résultats'))
-        self.assertEqual(('5Résultats', comparison), self.etape(page))
+        self.assertEqual(('05Résultats', comparison), self.etape(page))
         results, _, raw = self.request(comparison)
         self.examine(results, comparison, 'résultats partiels', None)
         self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu).', results.visible)
@@ -5029,7 +5036,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier + '/configurations')
         self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'tier': 'high'})
         page, _, _ = self.request(dossier)
-        self.assertEqual(('4Modèles', comparison), self.etape(page))
+        self.assertEqual(('04Modèles', comparison), self.etape(page))
         self.assertEqual(2, judge.request.call_count)
 
     def test_motif_du_verdict_nomme_les_exigences_qui_le_fondent(self):
@@ -6801,7 +6808,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(any('RECOVERY_STOPPED' in line and 'Denied' in line for line in logs.output), logs.output)
         # L'utilisateur reconnecte sa clé : l'évaluation des autres modèles n'attend pas la reprise refusée
         page, _, _ = self.request(self.request('/')[0].link('Décrire mon cas'))
-        key_form = page.form('/access/key')
+        key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         html = self.evaluer(dossier)
         self.assertEqual(1, judge.request.call_count)
@@ -7582,12 +7589,11 @@ class ParcoursComplet(unittest.TestCase):
         _, headers, raw = self.request('/preparation/style.css')
         self.assertIn('text/css', headers['Content-Type'])
         css = raw.decode()
-        small = css.split('@media (max-width: 40rem) {', 1)[1].split('@media', 1)[0]
-        for rule in ('.two { grid-template-columns: 1fr; }',
-                     'footer.site .cols { grid-template-columns: 1fr; }',
-                     'header.site { align-items: flex-start; flex-direction: column; }'):
-            self.assertIn(rule, small)
-        self.assertIn('.table-scroll { overflow-x: auto; }', css)
+        # Menu replié sous 860 px, pied de page sur une colonne sous 480 px, tableaux défilants dans leur conteneur
+        small = css.split('@media (max-width: 860px) {', 1)[1].split('@media', 1)[0]
+        self.assertIn('.nav { display: none; }', small)
+        self.assertIn('@media (max-width: 480px) { .pied .cols { grid-template-columns: 1fr; } }', css)
+        self.assertIn('.table-defile { overflow-x: auto;', css)
         self.assertIn(':focus-visible { outline: 3px solid var(--focus)', css)
         self.assertIn('white-space: normal;', css)
         with socket.socket() as connection, self.assertRaisesRegex(AssertionError, '^No network$'):

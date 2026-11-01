@@ -56,11 +56,16 @@ class BrandingTests(unittest.TestCase):
         }, {}).decode()
         profile = openrouter.load_profile(openrouter.ASSISTANT)
 
-        for surface in (readme, template, public_page, profile['system']):
+        for surface in (readme, public_page, profile['system']):
             with self.subTest(surface=surface[:40]):
                 self.assertIn('Bench-X', surface)
                 self.assertNotIn('Benchmark Lab-X', surface)
         self.assertIn('by Le Lab-X', readme)
+        # Le parcours privé s'appelle Evaly ; les pages publiées, le README et l'assistant gardent Bench-X
+        self.assertIn('· Evaly</title>', template)
+        self.assertIn('aria-label="Evaly, accueil"', template)
+        self.assertIn('Par Cybrel · né au Lab-X', template)
+        self.assertNotIn('Bench-X', template)
 
     def test_existing_machine_identifiers_keep_their_compatibility_names(self):
         self.assertTrue(storage.PREPARATION_IDENTITY.startswith('benchmark-lab-x/'))

@@ -30,7 +30,7 @@ CSP = ("default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; "
 
 
 def setUpModule():
-    """Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page rendue ne compte sur elle"""
+    """Décision du propriétaire : l’équipe Evaly (ex-Bench-X) n’intervient jamais, aucune page rendue ne compte sur elle"""
     garder_module()
     render = views.render
 
@@ -38,8 +38,8 @@ def setUpModule():
         page = render(value, *args, **kwargs)
         # Seul le lancement préparé par l'opérateur (sans contrôles demandeur) reste hors du parcours public
         operator = type(value) is dict and value.get('kind') == 'campaign_launch' and 'checks' not in value
-        if not operator and 'équipe Bench-X' in page.decode():
-            raise AssertionError('Page rendue qui compte sur l’équipe Bench-X')
+        if not operator and re.search('équipe (Bench-X|Evaly)', page.decode()):
+            raise AssertionError('Page rendue qui compte sur l’équipe Evaly')
         return page
     patcher = patch.object(views, 'render', checked)
     patcher.start()
@@ -645,9 +645,9 @@ class ProbeTests(WebServerCase):
     def test_pied_de_page_sous_identite_de_release(self):
         # BX-09 : la version reçue par `serve_web` atteint le rendu, avec le lien vers l'arbre servi
         page = self.request('GET', '/preparation', headers={'Accept': 'text/html'})[2].decode()
-        self.assertIn('<span>Version : v0.1.0 (aaaaaaa)</span>'
+        self.assertIn('<span class="identite">Version : v0.1.0 (aaaaaaa)</span>'
                       '<a class="source" href="https://github.com/eliasprunaire/benchmark-lab-x/tree/' + 'a' * 40
-                      + '"><svg class="ico" aria-hidden="true"><use href="#i-github"/></svg>Code source</a>', page)
+                      + '"><svg class="ic" aria-hidden="true"><use href="#i-github"/></svg>Code source</a>', page)
 
 
     def test_pages_legales_publiques_sans_cookie_ni_executeur(self):
@@ -702,7 +702,7 @@ class IndexationTests(WebServerCase):
                 self.assertEqual(200, status)
                 self.assertIsNone(headers.get('X-Robots-Tag'))
                 tags = Markup(raw).tags
-                self.assertRegex(re.search(r'<title>(.*)</title>', raw.decode())[1], r'\S · Bench-X$')
+                self.assertRegex(re.search(r'<title>(.*)</title>', raw.decode())[1], r'\S · Evaly$')
                 descriptions = [attrs['content'] for tag, attrs in tags if tag == 'meta' and attrs.get('name') == 'description']
                 self.assertEqual(1, len(descriptions))
                 self.assertGreaterEqual(len(descriptions[0]), 50)

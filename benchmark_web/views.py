@@ -8,14 +8,15 @@ import re
 import secrets
 from urllib.parse import urlencode, urlsplit
 
-from benchmark.preparation import CONTEXT_MAX, REQUEST_MIN, binding
+from benchmark.preparation import CONTEXT_MAX, REQUEST_MAX, REQUEST_MIN, USEFUL_MAX, binding
 from benchmark.storage import _strict_json as encode
 
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
-from .fragments import (ACCESS_REASONS, access_summary, date_lisible_utc, form, icon, listing, montant_lisible,
-                        personal_key_form, readout, section, state_block, text, workbench)
+from .fragments import (ACCESS_REASONS, ETAPES, access_summary, btn, cadre, champ, date_lisible_utc, disque, erreur_champ, etat, form,
+                        ic, icon, lien, listing, montant_lisible, personal_key_form, piste, puce, readout, ruban, section, state_block, tampon,
+                        tete, text, tiroir, workbench)
 from .projection import candidate_names, piece_name, projection_body
 from .results_views import render_results
 from .legal_views import LEGAL_PAGES, legal_layout
@@ -35,21 +36,57 @@ REPOSITORY_URL = 'https://github.com/eliasprunaire/benchmark-lab-x'
 PUBLIC_URL = None
 # Pages indexables et leur description ; une page légale y entre par `LEGAL_PAGES` (BX-21)
 PUBLIC_PAGES = {
-    '/': 'Décrivez une tâche de votre travail : Bench-X prépare avec vous un exemple entièrement inventé, puis '
+    '/': 'Décrivez un cas d’usage de votre travail : Evaly prépare avec vous un exemple entièrement inventé, puis '
          'compare les modèles dans les mêmes conditions, coût observé compris.',
     **{path: description for path, (_, description, _) in LEGAL_PAGES.items()},
 }
+# Menu principal, dans l'ordre de la maquette (A14) ; Benchmarks publics n'y figure plus et reste au pied de page (A12)
+MENU = (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/epreuves', 'Épreuves'), ('/preparation/data', 'Mes données'))
 # Piège à robots : `hidden` le retire du rendu et de l'arbre d'accessibilité même sans feuille de style
 HONEYPOT = ('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>'
             '<input id="website" name="website" autocomplete="off" tabindex="-1"></div>')
-REQUEST_FIELDS = (
-    '<label for="request">Votre tâche</label><p id="request-help" class="hint">Dites ce que vous faites et ce que vous attendez du modèle, '
-    'en 40 caractères au moins. N’indiquez ni donnée personnelle ni information confidentielle, et ne collez aucun document réel, même anonymisé.</p>'
-    '<textarea id="request" name="request" required minlength="40" maxlength="1500" rows="5"{request_attrs}>{request}</textarea>{request_error}'
-    '<label for="useful">Résultat attendu <span class="hint">(facultatif)</span></label>'
-    '<textarea id="useful" name="useful" maxlength="800" rows="3"{useful_attrs}>{useful}</textarea>{useful_error}'
-    '<label for="context">Contexte <span class="hint">(facultatif)</span></label>'
-    '<textarea id="context" name="context" maxlength="200" rows="2"{context_attrs}>{context}</textarea>{context_error}')
+# Exemples qui défilent dans le champ vide : 76 caractères au plus pour tenir sur une ligne dès 768 px (B24)
+IDEES = ('Je reçois des notes de réunion en vrac. Je veux la liste des actions.',
+         'Je réponds à des clients mécontents. Je veux un brouillon de réponse poli.',
+         'Je compare des devis fournisseurs. Je veux un tableau des prix et délais.',
+         'Je relis des contrats de prestation. Je veux la liste des clauses à risque.')
+COMPOSEUR_SUITE = 'L’assistant invente un exemple réaliste. Vous le relisez avant tout appel aux modèles comparés.'
+
+
+def composeur(csrf, action, fields, *, request='', useful='', context='', bloque=False, erreur=None,
+              envoi='Préparer mon exemple', titre_niveau='h1'):
+    """Champ unique « Décrivez votre cas d’usage », résultat attendu et contexte dans un tiroir ; mêmes noms envoyés
+
+    `bloque` : False, True (indisponible) ou la raison écrite sous le champ ; `erreur` : (nom du champ, message) ou None
+    """
+    en_erreur, message = erreur or (None, '')
+    desactive = ' disabled' if bloque else ''
+    decrit = 'request-help' + (' request-error' if en_erreur == 'request' else '') + (' availability' if bloque else '')
+    raison = (bloque if isinstance(bloque, str) else 'Préparation indisponible pour le moment.') if bloque else COMPOSEUR_SUITE
+    idees = ''.join('<span>' + text(idee) + '</span>' for idee in IDEES + IDEES[:1])
+    contenu = (
+        '<' + titre_niveau + ' class="compo-titre"><label for="request">Décrivez votre cas d’usage</label></' + titre_niveau + '>'
+        '<p class="compo-sous">Une ou deux phrases suffisent : ce que vous faites, et ce que vous attendez d’une IA.</p>'
+        '<div class="compo-champ"><textarea id="request" name="request" rows="3" required minlength="' + str(REQUEST_MIN)
+        + '" maxlength="' + str(REQUEST_MAX) + '" placeholder=" " aria-describedby="' + decrit + '"'
+        + (' aria-invalid="true"' if en_erreur == 'request' else '') + desactive + '>' + text(request) + '</textarea>'
+        '<span class="compo-idees" aria-hidden="true"><span class="defile">' + idees + '</span></span>'
+        '<div class="compo-pied"><p class="aide" id="request-help">' + str(REQUEST_MIN) + ' caractères au moins · aucune donnée personnelle, '
+        'aucun document réel, même anonymisé</p><button class="btn compo-envoi" type="submit"' + desactive + '>' + text(envoi) + ic('fleche') + '</button></div></div>'
+        + (erreur_champ('request', message) if en_erreur == 'request' else '')
+        + '<p class="compo-suite petit"' + (' id="availability"' if bloque else '') + '>' + text(raison) + '</p>'
+        + tiroir('Préciser le résultat attendu ou le contexte',
+                 champ('Résultat attendu', 'useful', ident='useful', maxlength=USEFUL_MAX, valeur=useful, desactive=bool(bloque),
+                       aide='Par exemple : un tableau, une liste d’actions, un brouillon de courriel.',
+                       erreur=message if en_erreur == 'useful' else '')
+                 + champ('Contexte', 'context', ident='context', maxlength=CONTEXT_MAX, valeur=context, desactive=bool(bloque),
+                         aide='Ce qu’un modèle doit savoir pour bien faire le travail.',
+                         erreur=message if en_erreur == 'context' else ''),
+                 resume='facultatif', ouvert=bool(useful or context or en_erreur in ('useful', 'context')))
+        + HONEYPOT)
+    return form(csrf, action, fields, contenu, form_id='nouveau', classe='compo')
+
+
 PREPARATION_PROGRESS_SCRIPT = """(() => {
   const destination = document.getElementById('campaign-followup')?.dataset?.resultsHref;
   if (destination) { location.replace(destination); return; }
@@ -199,7 +236,7 @@ BENCHMARK_REFERENCES = {
         'scope': 'Résultats par compétition et problème ; sorties consultables sur le site',
         'limits': 'Ces problèmes ne représentent pas tous les besoins mathématiques professionnels. '
                   'La synthèse « expected performance » combine observations et estimations. '
-                  'Elle ne doit pas devenir un résultat observé Bench-X. Le classement général n’est pas repris.',
+                  'Elle ne doit pas devenir un résultat observé Evaly. Le classement général n’est pas repris.',
         'version': 'Propre à chaque compétition ou série ; aucune version unique retenue',
         'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
     'livecodebench': {
@@ -239,7 +276,7 @@ BENCHMARK_REFERENCES = {
         'scope': 'Charges et conditions de concurrence définies ; mesures agrégées sur des fenêtres temporelles',
         'limits': 'La localisation du serveur et la longueur des échanges influencent les mesures. '
                   'Les résultats ne garantissent ni délai contractuel ni performance depuis le poste du visiteur. '
-                  'Leur indice global n’entre pas dans Bench-X. La date de source concerne la méthode. '
+                  'Leur indice global n’entre pas dans Evaly. La date de source concerne la méthode. '
                   'Les résultats évoluent séparément.',
         'version': '2.2.0', 'published_at': '2026-03-02',
         'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
@@ -537,10 +574,10 @@ HELP_INTRO = (
     '<div class="note"><p><strong>Données transmises :</strong> la formulation que vous soumettez et les '
     'informations publiques utiles des notices retenues. Aucun dossier privé, contribution, référence de '
     'jugement, historique, clé ni cookie n’est transmis.</p>'
-    '<p>TypeSafe traite ces données selon son traitement standard. Bench-X ne promet ni absence de '
+    '<p>TypeSafe traite ces données selon son traitement standard. Evaly ne promet ni absence de '
     'conservation, ni localisation exclusivement européenne, ni absence d’entraînement. N’écrivez aucune '
     'information personnelle ou confidentielle : cette consigne ne garantit pas leur absence.</p>'
-    '<p>Bench-X finance cette aide sur une enveloppe limitée, distincte des clés OpenRouter personnelles. '
+    '<p>Evaly finance cette aide sur une enveloppe limitée, distincte des clés OpenRouter personnelles. '
     'Seuls des reçus techniques et comptables sont conservés, sans le texte recherché. Une probabilité ne '
     'prouve ni adéquation, ni qualification, et cette aide ne lance aucune campagne.</p></div>')
 
@@ -813,15 +850,8 @@ def preparation_steps(value):
                (reference if downstream else sections[2]) if example else None,
                models_href if models else None,
                (value['href'] if kind in ('comparison', 'attempt_detail') else results_href) if results else None]
-    content = '<nav class="steps" aria-label="Étapes de préparation">'
-    for number, (label, href) in enumerate(zip(('Besoin', 'Exemple', 'Validation', 'Modèles', 'Résultats'), targets), 1):
-        inner = '<span class="n">' + str(number) + '</span>' + label
-        if href is None:
-            content += '<span aria-disabled="true">' + inner + '</span>'
-        else:
-            state = ' aria-current="step"' if number == current else ' class="done"' if number < current else ''
-            content += '<a href="' + text(href) + '"' + state + '>' + inner + '</a>'
-    return content + '<small>Cas d’usage privé · pièces entièrement inventées</small></nav>'
+    cles = [cle for cle, _ in ETAPES]
+    return piste(cles[current - 1], {cle: href for cle, href in zip(cles, targets) if href is not None})
 
 
 def render_source_copy(source, notice, *, future=False):
@@ -872,6 +902,101 @@ def render_copy_source(value, csrf):
     return 'Créer mon dossier privé', content
 
 
+MOTS_ACCUEIL = ('votre travail', 'vos notes', 'vos devis', 'vos rapports', 'vos tableaux', 'votre travail')
+COULOIRS_ACCUEIL = (('Modèle A', 'raisonnement élevé', 'ok'), ('Modèle B', 'raisonnement faible', 'ok'),
+                    ('Modèle C', 'raisonnement fixe', 'ko'))
+ETAPES_ACCUEIL = (('Besoin', 'Vous décrivez votre cas d’usage en quelques phrases. L’assistant vous pose une question si besoin.'),
+                  ('Exemple', 'L’assistant crée un exemple réaliste : une consigne et des documents inventés.'),
+                  ('Validation', 'Vous corrigez l’exemple si besoin, puis vous le validez.'),
+                  ('Modèles', 'Vous choisissez les modèles à comparer et voyez le coût estimé avant de lancer.'),
+                  ('Résultats', 'Pour chaque modèle : son verdict, ses preuves et son coût observé.'))
+
+
+def render_home():
+    """Accueil : accroche animée, banc d'essai de démonstration (modèles fictifs), cinq étapes, règle du verdict"""
+    # La mesure empile tous les mots : la fente prend la largeur du plus long
+    fente = ('<span class="fente" aria-hidden="true"><span class="mesure">' + ''.join('<span>' + m + '</span>' for m in sorted(set(MOTS_ACCUEIL)))
+             + '</span><span class="defile">' + ''.join('<span>' + m + '</span>' for m in MOTS_ACCUEIL) + '</span></span>')
+    couloirs = ''.join(
+        '<li class="couloir"><span class="couloir-nom">' + nom + '<small>' + raisonnement + '</small></span>'
+        '<span class="voie"><span class="coureur"><span class="trace"></span>' + disque() + '</span></span>' + tampon(verdict) + '</li>'
+        for nom, raisonnement, verdict in COULOIRS_ACCUEIL)
+    stations = ''.join('<li><span class="n">0' + str(numero) + '</span><h3>' + nom + '</h3><p>' + phrase + '</p></li>'
+                       for numero, (nom, phrase) in enumerate(ETAPES_ACCUEIL, 1))
+    return (
+        '<section class="une"><div class="cadre">'
+        '<h1><span class="ligne">Quel modèle d’IA</span><span class="ligne">pour <span class="colle">' + fente
+        + '<span class="cache">votre travail</span>&nbsp;?</span></span></h1><div class="une-bas"><div>'
+        '<p class="texte-l accroche">Le bon modèle d’IA dépend de votre cas d’usage. Evaly le soumet à plusieurs modèles, dans les mêmes conditions, '
+        'et vous montre lequel réussit vraiment.</p>'
+        '<ul class="atouts" aria-label="Ce qu’Evaly vous apporte"><li>' + ic('cible') + '<span><b>Votre cas d’usage</b>, pas un classement générique</span></li>'
+        '<li>' + ic('check') + '<span><b>Un verdict prouvé</b> pour chaque modèle</span></li>'
+        '<li>' + ic('horloge') + '<span><b>Le coût observé</b> de chaque réponse</span></li></ul></div>'
+        '<div class="actions">' + btn('/preparation', 'Décrire mon cas d’usage', xl=True, avant='stylo')
+        + lien('/preparation', 'Retrouver mes cas d’usage') + '</div></div>'
+        '<figure class="banc" aria-labelledby="banc-legende"><div class="banc-tete"><span><b>●</b> Banc d’essai · démonstration</span>'
+        '<span class="exemple">' + ic('doc') + 'Exemple : notes de réunion inventées</span></div><ol class="couloirs course">' + couloirs + '</ol>'
+        '<figcaption class="banc-pied" id="banc-legende"><span><strong>Même consigne, mêmes pièces, mêmes conditions.</strong> Un verdict par modèle.</span>'
+        '<span>Aucune note globale, aucun classement universel.</span></figcaption></figure></div></section>'
+        '<section class="zone"><div class="cadre"><div class="zone-titre"><span class="etiq">Le parcours</span>'
+        '<h2>De votre cas d’usage au verdict, en cinq étapes</h2></div><ol class="stations">' + stations + '</ol></div></section>'
+        '<section class="zone"><div class="cadre"><div class="regle"><div><span class="etiq">Comment lire un verdict</span>'
+        '<h2>Un seul manquement suffit</h2><p class="texte-l">Une exigence non prouvée, ou une erreur éliminatoire, écarte le modèle. Le reste n’y change rien.</p></div>'
+        '<div><ul class="controle" aria-label="Exemple de contrôle d’une réponse">'
+        '<li><span class="ok">' + ic('check') + '</span>Toutes les actions sont retrouvées</li>'
+        '<li><span class="ok">' + ic('check') + '</span>Chaque action a un responsable</li>'
+        '<li><span class="ko">' + ic('croix') + '</span><span><span class="barre">Échéance inventée</span> : erreur éliminatoire</span></li>'
+        '<li><span class="ok">' + ic('check') + '</span>Format demandé respecté</li>' + tampon('ko', xl=True) + '</ul></div></div>'
+        '<ul class="faits"><li><strong>Un verdict pour ce test précis</strong>Le verdict concerne le modèle avec les réglages de votre test. '
+        'Il ne juge pas ce modèle en général.</li>'
+        '<li><strong>Un coût réellement observé</strong>Evaly relève le coût de chaque réponse sur le justificatif d’OpenRouter. '
+        'S’il manque, le coût est affiché « inconnu ».</li>'
+        '<li><strong>Aucun document réel</strong>Les documents de l’exemple sont entièrement inventés. '
+        'Vous ne transmettez aucun dossier réel, même anonymisé.</li></ul></div></section>')
+
+
+def disponibilite_cas(raison):
+    """Carte d'état et raison écrite sous le champ quand l'envoi est refusé : (HTML de la carte, bloque)"""
+    actualiser = btn('/preparation', 'Actualiser', sec=True, icone=None, avant='actualiser')
+    return {
+        'access': (etat('vig', 'Clé requise', 'Ajoutez votre clé OpenRouter', 'Ajoutez votre clé OpenRouter pour préparer un exemple.',
+                        btn('/preparation/access', 'Ajouter ma clé OpenRouter', sec=True, avant='cle')),
+                   'Ajoutez d’abord votre clé OpenRouter.'),
+        'restore': (etat('ko', 'Indisponible', 'Service momentanément indisponible', 'Réessayez plus tard. Vos cas restent en place.', actualiser), True),
+        'interrupted': (etat('inc', 'Résultat inconnu', 'Une préparation a été interrompue',
+                             'Nous ne savons pas si le modèle a répondu. Rien n’est relancé ; cette opération sera close automatiquement.'),
+                        'Nouvelle préparation possible une fois l’opération close.'),
+        'unconfigured': (etat('ko', 'Indisponible', 'Préparation indisponible', 'Aucun assistant n’est en service pour le moment.'), True),
+        'waiting': (etat('att', 'En cours', 'Votre préparation précédente est en cours', 'Actualisez la page pour voir où elle en est.', actualiser),
+                    'Nouvelle préparation possible quand la précédente est terminée.'),
+        'unresolved': (etat('vig', 'Envois fermés', 'Un appel précédent n’est pas résolu',
+                            'Le résultat ou le coût d’un appel précédent n’est pas encore connu.'), True),
+    }.get(raison, ('', True))
+
+
+def render_cases(value, csrf):
+    """Mes cas d'usage : état du service, champ unique de description, cas enregistrés, bande de la clé"""
+    state = value.get('availability', {})
+    carte, bloque = ('', False) if state.get('can_submit', False) else disponibilite_cas(state.get('reason'))
+    creation = composeur(csrf, '/preparation/dossiers', {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16)}, bloque=bloque)
+    if value['dossiers']:
+        corps = '<ul class="ge-liste">' + ''.join(
+            '<li class="ge-cas"><h3>' + text(d.get('need') or 'Cas d’usage sans description') + '</h3><div class="contexte">'
+            + puce('Version ' + str(d['revision'])) + ruban('Exemple inventé') + '</div><div class="actions">'
+            + lien('/preparation/dossiers/' + d['dossier_id'], 'Reprendre ce cas') + '</div></li>' for d in value['dossiers']) + '</ul>'
+        corps += '<p>' + lien('/preparation/catalogue', 'Exemples validés et benchmarks') + '</p>'
+    else:
+        corps = ('<div class="ge-vide"><p><strong>Aucun cas d’usage dans ce navigateur.</strong></p>'
+                 '<p class="petit">Décrivez un cas d’usage pour commencer, dès que la préparation est disponible.</p></div>'
+                 + tiroir('Vous en aviez déjà un ?', '<p>Vos cas d’usage sont liés au navigateur où vous les avez créés. Ouvrez Evaly dans ce navigateur-là. '
+                          'Si ses cookies ont été effacés, les cas ne peuvent plus être retrouvés.</p>'))
+    bande = ('<div class="ge-bande">' + ic('cle') + '<p>La clé OpenRouter paie les appels aux modèles.</p>'
+             + lien('/preparation/access', 'Ma clé OpenRouter') + '</div>')
+    return ('<section class="compo-zone"><div class="cadre">' + carte + creation + '</div></section>'
+            '<div class="cadre ge-pile ge-mes-cas"><section class="ge-pile" aria-labelledby="t-liste"><h2 id="t-liste">Vos cas d’usage, dans ce navigateur</h2>'
+            + corps + '</section>' + bande + '</div>')
+
+
 def render(value, csrf, path='/preparation', *, error=False):
     """Native HTML forms, inert evidence and a fixed comparison focus script"""
     def field_attributes(name):
@@ -880,10 +1005,10 @@ def render(value, csrf, path='/preparation', *, error=False):
     def field_error(name):
         if value.get('error_field') != name:
             return ''
-        return f'<p id="{text(name)}-error" role="alert">{text(value["error"])}</p>'
+        return erreur_champ(name, value['error'])
 
     state = value.get('availability', {})
-    needs_availability = 'dossiers' in value
+    needs_availability = False
     folded_contribution = ''
     pending = not error and preparation_pending(value)
     can_submit = state.get('can_submit', False)
@@ -891,18 +1016,18 @@ def render(value, csrf, path='/preparation', *, error=False):
     s9 = value.get('kind') != 'projection_preview'
     navigation = '' if error else preparation_steps(value)
     title = 'Décrire mon cas d’usage'
+    # `contexte` : puces sous le titre h1 ; `plein` : la vue écrit son propre h1 et ses propres bandes pleine largeur
+    contexte, plein = '', False
     # `aria-current` seulement sur l'entrée qui est la page affichée, jamais sur une page descendante ni d'erreur
-    current = None if error else {'home': '/', 'privacy_data': '/preparation/data',
-                                 'references': '/evaluations-externes' if not value.get('reference_id') else None,
+    current = None if error else {'home': '/', 'privacy_data': '/preparation/data', 'contributions': '/preparation/data',
+                                 'references': None,
                                  'references_help': None,
                                  'editorial': '/epreuves' if not value.get('version_id') else None,
                                  'editorial_help': None,
                                  'copy_source': '/preparation'}.get(
         value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)
-    menu = ''.join('<a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a>'
-                   for href, label in (('/', 'Accueil'), ('/evaluations-externes', 'Évaluations externes'),
-                                       ('/epreuves', 'Épreuves'),
-                                       ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données')))
+    menu = ''.join('<li><a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a></li>'
+                   for href, label in MENU)
     if error:
         title = value.get('title') or ('Service momentanément indisponible' if value.get('unavailable') else 'Votre action n’a pas abouti')
         submitted = value.get('form')
@@ -913,14 +1038,10 @@ def render(value, csrf, path='/preparation', *, error=False):
             content += '<p>Ce que la vérification de l’exemple a relevé</p>' + listing(
                 finding['text'] for finding in value['findings'])
         if type(submitted) is dict and 'request' in submitted:
-            content += form(csrf, path, {key: submitted[key] for key in ('dossier_id', 'action_id')},
-                REQUEST_FIELDS.format(
-                    request=text(submitted['request']), useful=text(submitted.get('useful', '')), context=text(submitted.get('context', '')),
-                    request_attrs=' aria-describedby="request-help' + (' request-error' if value.get('error_field') == 'request' else '') + '"',
-                    useful_attrs=field_attributes('useful'), context_attrs=field_attributes('context'),
-                    request_error=field_error('request'), useful_error=field_error('useful'), context_error=field_error('context')) +
-                HONEYPOT +
-                '<button type="submit">Corriger et renvoyer</button>')
+            content += composeur(csrf, path, {key: submitted[key] for key in ('dossier_id', 'action_id')},
+                request=submitted['request'], useful=submitted.get('useful', ''), context=submitted.get('context', ''),
+                erreur=(value['error_field'], value['error']) if value.get('error_field') in ('request', 'useful', 'context') else None,
+                envoi='Corriger et renvoyer', titre_niveau='h2')
         elif type(submitted) is dict and 'message' in submitted:
             content += form(csrf, path, {key: str(submitted.get(key, '')) for key in ('action_id', 'revision')}
                             | {'kind': str(submitted.get('kind', 'clarify'))},
@@ -971,7 +1092,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                 ACCESS_REASONS.get(value.get('reason'), value.get('reason') or 'raison inconnue')) + '.</p>')
         elif status == 'disconnected':
             content = state_block('action', 'Clé OpenRouter', 'Aucune clé enregistrée',
-                                  '<p>Ajoutez une clé réservée à Bench-X. Elle paie les appels aux modèles : préparation de l’exemple, vérification, puis comparaison.</p>')
+                                  '<p>Ajoutez une clé réservée à Evaly. Elle paie les appels aux modèles : préparation de l’exemple, vérification, puis comparaison.</p>')
         else:
             content = state_block('err', 'Clé OpenRouter', 'Enregistrement de clé indisponible',
                                   '<p>Vous ne pouvez pas enregistrer de clé pour le moment. Réessayez plus tard ; aucun modèle n’a été appelé.</p>')
@@ -1001,22 +1122,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, content = render_copy_source(value, csrf)
     elif value.get('kind') == 'home':
         title = 'Quel modèle d’IA pour votre travail ?'
-        content = '<div class="hero"><p class="lead note">Décrivez une tâche de votre travail. '
-        content += 'Nous en tirons avec vous un exemple entièrement inventé, que plusieurs modèles traitent rigoureusement dans les mêmes conditions. '
-        content += 'Vous voyez lesquels satisfont vos critères, preuves à l’appui, et ce que chacun a réellement coûté. N’indiquez aucune donnée personnelle ni information confidentielle.</p>'
-        content += '<div class="actions"><a class="button" href="/preparation">' + icon('i-pen') + 'Décrire mon cas d’usage</a>'
-        content += '<a class="button sec" href="/preparation">Retrouver mes cas d’usage</a></div></div>'
-        content += section('Cinq étapes jusqu’au verdict', '<ol class="parcours">'
-            '<li><strong>Besoin.</strong> Vous décrivez la tâche et le résultat qui vous serait utile. S’il manque une information, l’assistant vous pose une question.</li>'
-            '<li><strong>Exemple.</strong> L’assistant rédige une consigne et des documents de travail inventés, appelés pièces. Vous les corrigez jusqu’à ce qu’ils ressemblent à votre travail réel.</li>'
-            '<li><strong>Validation.</strong> Vous confirmez que c’est bien le travail à tester. Bench-X vérifie ensuite automatiquement que l’exemple est cohérent et que ses critères peuvent être contrôlés. Aucun modèle n’est encore comparé et rien n’est publié.</li>'
-            '<li><strong>Modèles.</strong> Vous choisissez les modèles et leur niveau de raisonnement. Vous voyez le coût estimé, puis vous décidez de lancer la comparaison.</li>'
-            '<li><strong>Résultats.</strong> Chaque modèle a traité le même exemple dans les mêmes conditions. Pour chacun, vous lisez le verdict, les preuves et le coût observé.</li></ol>')
-        content += section('Comment lire un verdict', '<div class="rule">' + icon('i-scale') + '<span><strong>Un seul manquement suffit.</strong> '
-            'Si le respect d’une exigence n’est pas prouvé, ou si une erreur éliminatoire apparaît, le modèle testé est écarté, quel que soit le reste.</span></div>'
-            '<ul><li>Le verdict vaut pour le modèle tel qu’il a été testé ici, avec ses réglages et dans ces conditions. Il ne juge pas le modèle en général.</li>'
-            '<li>Le coût comparé est celui relevé sur le justificatif renvoyé après chaque appel. Avant le lancement, vous voyez une estimation, signalée comme telle. Si un coût n’a pas pu être relevé, il est affiché comme inconnu.</li>'
-            '<li>Les pièces sont entièrement inventées : aucun dossier réel, même anonymisé.</li></ul>')
+        content, plein = render_home(), True
     elif value.get('kind') == 'catalogue':
         title = 'Exemples validés et comparaisons'
         content = '<p class="lead">Visible par vous seul, dans ce navigateur. Pour chaque cas d’usage validé, vous retrouvez ses exemples validés et les comparaisons lancées.</p>'
@@ -1065,33 +1171,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += '<p><a href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a></p>'
     elif 'dossiers' in value:
         title = 'Mes cas d’usage'
-        access = value.get('personal_access', {})
-        if access.get('status') == 'connected':
-            key = ('<p class="hint">Votre clé OpenRouter est enregistrée. ' + access_summary(access)
-                   + ' <a href="/preparation/access">Gérer ma clé</a></p>')
-        else:
-            key = personal_key_form(csrf, access, '/preparation')
-        lead = ('<p class="lead note">Vos cas d’usage restent privés dans ce navigateur. '
-                    'Reprenez un cas existant ou décrivez-en un nouveau.</p>' if value['dossiers'] else
-                    '<p class="lead note">Décrivez une tâche de votre travail et le résultat qui vous aiderait. '
-                    'L’assistant en tire un exemple inventé, que vous pourrez relire et corriger avant de le valider.</p>')
-        dossiers = '<ul class="dossiers">' + ''.join(
-            f'<li><a href="/preparation/dossiers/{text(d["dossier_id"])}">{text(d.get("need") or "Cas d’usage sans description")}</a>'
-            f'<small>Version {d["revision"]}</small></li>'
-            for d in value['dossiers']) + '</ul><p><a href="/preparation/catalogue">Exemples validés et comparaisons</a></p>' if value['dossiers'] else (
-                '<p>Vous n’avez encore aucun cas d’usage dans ce navigateur. Décrivez une tâche ci-dessus pour commencer, dès que la préparation est disponible.</p>'
-                '<p>Vous en aviez déjà un ? Vos cas d’usage sont liés au navigateur où vous les avez créés. Ouvrez Bench-X dans ce navigateur-là ; si ses cookies ont été effacés, les cas ne peuvent plus être retrouvés.</p>')
-        creation = section('Décrire un nouveau cas d’usage', form(csrf, '/preparation/dossiers',
-            {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16)},
-            REQUEST_FIELDS.format(request='', useful='', context='', request_error='', useful_error='', context_error='', request_attrs=' aria-describedby="request-help' + ('"' if can_submit else ' availability" disabled'),
-                                  useful_attrs=disabled, context_attrs=disabled) + HONEYPOT,
-            form_id='prepare-case')
-            + '<button type="submit" form="prepare-case"' + disabled + '>' + icon('i-pen') + 'Préparer mon exemple</button>', 'besoin')
-        listing_section = section('Enregistrés dans ce navigateur', dossiers, 'mes-cas')
-        # La clé se lit avant le formulaire qu'elle débloque
-        creation = workbench(lead + creation, key, 'Ma clé OpenRouter', side_first=True)
-        # Un visiteur qui revient cherche d'abord ses cas ; un premier visiteur, le formulaire
-        content = listing_section + creation if value['dossiers'] else creation + listing_section
+        content, plein = render_cases(value, csrf), True
     elif value.get('kind') == 'honeypot_ack' or 'operation_id' in value:
         title = 'Demande enregistrée'
         url = ('/preparation' if value.get('kind') == 'honeypot_ack'
@@ -1118,7 +1198,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                   'clarification': ('action', 'L’assistant a une question', 'Répondez ci-dessous : l’exemple sera préparé ensuite.'),
                   'preview': ('action', 'Votre exemple est prêt', 'Lisez la consigne et les pièces, corrigez si besoin, puis validez.'),
                   'scope_confirmation': ('action', 'Précisez le travail à comparer',
-                      'Bench-X compare des modèles sur un travail concret, avec un résultat attendu et des critères que l’on peut vérifier. '
+                      'Evaly compare des modèles sur un travail concret, avec un résultat attendu et des critères que l’on peut vérifier. '
                       'Précisez ou confirmez le travail que vous voulez comparer. Aucune comparaison ne peut être lancée à cette étape.'),
                   # La cause est dans l'explication ; l'envoi reste ouvert sauf motif de disponibilité affiché à part
                   'suspended': ('err', 'Préparation arrêtée', 'Renvoyez votre message pour relancer la préparation.' if can_submit
@@ -1128,9 +1208,9 @@ def render(value, csrf, path='/preparation', *, error=False):
             tone, heading, next_step = ('action', 'Copie enregistrée',
                 'Décrivez votre besoin et ce qui diffère de l’épreuve source pour préparer votre exemple.')
         if referral:
-            title = 'Tâche hors du champ de Bench-X'
-            tone, heading, next_step = ('unk', 'Bench-X ne peut pas comparer cette tâche',
-                'Bench-X compare des modèles sur des tâches de travail concrètes. '
+            title = 'Cas d’usage hors du champ d’Evaly'
+            tone, heading, next_step = ('unk', 'Evaly ne peut pas comparer ce cas d’usage',
+                'Evaly compare des modèles sur des cas d’usage de travail concrets. '
                 'Ce cas d’usage est donc arrêté et aucune comparaison ne sera lancée pour lui.')
         qualification = value.get('qualification', {})
         automatic = 'operation_id' in qualification
@@ -1198,7 +1278,7 @@ def render(value, csrf, path='/preparation', *, error=False):
             references = [(identity, reference) for identity, reference in BENCHMARK_REFERENCES.items()
                           if reference['category'] == referral and reference.get('availability') == 'available']
             if references:
-                content += section('Où comparer ce type de tâche', '<ul>' + ''.join(
+                content += section('Où comparer ce type de cas d’usage', '<ul>' + ''.join(
                     '<li><a href="/evaluations-externes/' + text(identity) + '" rel="noreferrer">'
                     + text(reference['name']) + '</a> : ' + text(reference['work']) + '.</li>'
                     for identity, reference in references) + '</ul>')
@@ -1376,7 +1456,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                     return 'exemple vérifié' if case['qualified'] else 'validé, vérification en attente ou à revoir'
                 return 'à valider' if case['stage'] == 'preview' else stages[case['stage']][1].lower()
             drifted = any(case['drifted'] for case in cases)
-            content += section('Exemples de cette tâche', '<ul>' + ''.join(
+            content += section('Exemples de ce cas d’usage', '<ul>' + ''.join(
                 '<li>' + ('Exemple ' + str(case['number']) + ' (cette page)' if case['current'] else
                           '<a href="/preparation/dossiers/' + text(case['dossier_id']) + '">Exemple ' + str(case['number']) + '</a>')
                 + ' : ' + text(case_state(case)) + '.'
@@ -1388,7 +1468,7 @@ def render(value, csrf, path='/preparation', *, error=False):
                 + ' Plusieurs exemples ne prouvent pas qu’ils représentent votre travail : chacun reste inventé, validé et '
                 'vérifié séparément.</p>', 'cas')
         if value['validation'] and (not cases or cases[0]['current']) and not snapshot and not prior_revision and not referral:
-            content += ('<details><summary class="button sec">' + icon('i-pen') + 'Ajouter un autre exemple à cette tâche</summary><div>'
+            content += ('<details><summary class="button sec">' + icon('i-pen') + 'Ajouter un autre exemple à ce cas d’usage</summary><div>'
                         '<p id="case-context-help">Le nouvel exemple reprend la consigne, les livrables, les critères et les '
                         'ambiguïtés acceptables de cette version. L’assistant prépare d’autres pièces et un autre résultat de '
                         'référence, à valider puis vérifier séparément. Cette préparation est payée avec votre clé OpenRouter. '
@@ -1434,8 +1514,10 @@ def render(value, csrf, path='/preparation', *, error=False):
             # Copie sans exemple préparé : la lecture n'exige ni clé ni appel, la clé sert ensuite
             reason = ('Votre copie est enregistrée. Vous pouvez la consulter sans clé ni appel aux modèles ; '
                       'la clé OpenRouter servira à préparer votre exemple.')
-        content = ('<aside id="availability" class="availability" aria-label="État de la préparation"><p>'
+        content = ('<aside id="availability" class="etat-ligne" aria-label="État de la préparation"><p>'
                    + text(reason) + '</p></aside>' + content)
+    # Le reste s'ajoute après la vue : scripts, historique local, contrôles de confidentialité
+    principal, content = content, ''
     script = page_script(value) if not error else None
     if script is not None and value.get('kind') == 'campaign_launch' and value['campaign']['attempts']:
         content += '<script>' + script + '</script>'
@@ -1449,14 +1531,19 @@ def render(value, csrf, path='/preparation', *, error=False):
         content += render_privacy_controls(value, csrf, folded_contribution)
         if value.get('privacy') or value.get('kind') in ('home', 'privacy_data', 'contributions', 'session_bootstrap'):
             content += PRIVACY_SCRIPT
+    # Une vue `plein` écrit son h1 et ses bandes ; les autres reçoivent l'en-tête commun et la colonne centrée
+    if plein:
+        principal += cadre(content) if content else ''
+        tete_html = ''
+    else:
+        principal = cadre(principal + content)
+        tete_html = tete(title, piste_html=navigation, contexte_html=contexte)
     template = TEMPLATE or TEMPLATE_PATH.read_text()
     body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''
     # Offre de source AGPL §13 : un numéro et un lien vers l'arbre du commit seulement sous identité de release,
     # construite depuis ce commit ; un checkout peut être modifié ou non poussé, il renvoie au dépôt
-    identity = ''
-    if SOURCE_SHA:
-        identity = '<span>' + text(('Version : v' + RELEASE_VERSION + ' (' + SOURCE_SHA[:7] + ')') if RELEASE_VERSION
-                                   else 'Révision : ' + SOURCE_SHA[:7]) + '</span>'
+    identity = '<span class="identite">' + text(('Version : v' + RELEASE_VERSION + ' (' + SOURCE_SHA[:7] + ')') if SOURCE_SHA and RELEASE_VERSION
+                                                else 'Révision : ' + SOURCE_SHA[:7] if SOURCE_SHA else 'Version : inconnue') + '</span>'
     identity += ('<a class="source" href="' + text(REPOSITORY_URL + ('/tree/' + SOURCE_SHA if SOURCE_SHA and RELEASE_VERSION else ''))
                  + '">' + icon('i-github') + 'Code source</a>')
     page = None if error else {'home': '/', 'legal': value.get('path')}.get(value.get('kind'))
@@ -1465,6 +1552,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         head = '<meta name="description" content="' + text(PUBLIC_PAGES[page]) + '">'
         if PUBLIC_URL:
             head += '<link rel="canonical" href="' + text(PUBLIC_URL + page) + '">'
-    return (template.replace('{{title}}', text(title)).replace('{{body_class}}', body_class).replace('{{menu}}', menu)
-            .replace('{{navigation}}', navigation).replace('{{layout_class}}', 'layout' if navigation else '')
-            .replace('{{identity}}', identity).replace('{{head}}', head).replace('{{content}}', content).encode('utf-8'))
+    # Une seule passe : un marqueur écrit dans le contenu ou le titre n'est jamais substitué à son tour
+    parts = {'title': text(title), 'body_class': body_class, 'menu': menu, 'identity': identity, 'head': head,
+             'tete': tete_html, 'content': principal}
+    return re.sub(r'\{\{(\w+)\}\}', lambda marker: parts[marker[1]], template).encode('utf-8')
