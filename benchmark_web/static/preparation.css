@@ -1343,3 +1343,6 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
 /* le ticket sans conseil a le fond d'une carte creuse : ses liens et puces gardent la couleur du texte, y compris en thème sombre */
 .ticket-vide .lien { color: var(--encre); }
 .ticket-vide .puce { border-color: var(--filet); }
+/* ——— Lot besoin ——— */
+/* Un élément masqué par `hidden` le reste, même quand sa classe lui donne un affichage (bouton d'arrêt de la mise à jour, activé par le script) */
+[hidden] { display: none !important; }

@@ -1070,6 +1070,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 try:
                     if reference_path == '/epreuves':
                         payload = editorial.search_view(public, criteria)
+                        # Une recherche envoyée sans aucun critère s'annonce telle quelle (C3)
+                        payload['search_sent'] = bool(urlsplit(self.path).query)
                         for entry in payload['versions']:
                             try:
                                 entry['results'] = public_results.published(

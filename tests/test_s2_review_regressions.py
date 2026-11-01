@@ -271,7 +271,7 @@ class S2ReviewRegressions(unittest.TestCase):
                              data=urlencode(body).encode(), headers=headers), timeout=5) as result:
             self.assertEqual(200, result.status)
             html = result.read().decode()
-        self.assertIn('Vous avez validé cet exemple, dans cette version précise.', html)
+        self.assertIn('Votre validation est enregistrée.', html)
         parser = RefreshLink()
         parser.feed(html)
         self.assertIsNotNone(parser.refresh)
@@ -288,7 +288,7 @@ class S2ReviewRegressions(unittest.TestCase):
             result = error
         with result:
             self.assertEqual(200, result.status)
-            self.assertIn('Vous avez validé cet exemple, dans cette version précise.', result.read().decode())
+            self.assertIn('Contrôle de l’exemple', result.read().decode())
         self.assertEqual('/preparation/dossiers/review-dossier', parser.refresh)
         self.assertEqual(before, self.store._connection.execute('SELECT * FROM s2_validations').fetchall())
         self.assertEqual(operations, requested())

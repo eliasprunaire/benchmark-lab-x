@@ -108,23 +108,23 @@ class DossierPageTests(unittest.TestCase):
         page = render({'eliminatory': ['Erreur bloquante'], 'obligations': ['Action présente'],
                        'quality': [{'label': 'Clarté', 'scale': ['excellent', 'acceptable', 'faible'],
                                     'favorable': 'excellent'}]})
-        for expected in ('class="grp elim"', '<h3>Éliminatoires</h3>', 'Erreur bloquante',
-                         'class="grp oblig"', '<h3>Obligations</h3>', 'Action présente',
-                         'class="grp sec"', '<h3>Qualité</h3>', 'Clarté', rule):
+        for expected in ('<ul class="criteres">', '<span class="genre">Erreur éliminatoire</span>', 'Erreur bloquante',
+                         '<span class="genre">Obligation</span>', 'Action présente',
+                         '<span class="genre">Qualité</span>', 'Clarté', rule):
             self.assertIn(expected, page)
         for raw_key in ('<li>eliminatory</li>', '<li>obligations</li>', '<li>quality</li>'):
             self.assertNotIn(raw_key, page)
         self.assertNotIn('<li>faible</li>', page)
-        self.assertIn('<h1>Est-ce le travail que vous voulez tester ?</h1>', page)
-        self.assertIn('<title>Est-ce le travail que vous voulez tester ?', page)
+        self.assertIn('<h1>Est-ce le travail à tester ?</h1>', page)
+        self.assertIn('<title>Est-ce le travail à tester ?', page)
 
         single_group = render(['Toutes les actions présentes'])
-        self.assertIn('<h3>Obligations</h3>', single_group)
-        self.assertIn('<li>Toutes les actions présentes</li>', single_group)
-        self.assertNotIn('<h3>Éliminatoires</h3>', single_group)
-        self.assertNotIn('<h3>Qualité</h3>', single_group)
+        self.assertIn('<span class="genre">Obligation</span>', single_group)
+        self.assertIn('Toutes les actions présentes', single_group)
+        self.assertNotIn('<span class="genre">Erreur éliminatoire</span>', single_group)
+        self.assertNotIn('<span class="genre">Qualité</span>', single_group)
         self.assertIn(rule, single_group)
-        self.assertIn('<h1>Est-ce le travail que vous voulez tester ?</h1>', single_group)
+        self.assertIn('<h1>Est-ce le travail à tester ?</h1>', single_group)
 
 
     def test_state_block_steps_and_hidden_correction_without_digests(self):
@@ -143,13 +143,15 @@ class DossierPageTests(unittest.TestCase):
                 code, view, _, _ = web_api.dispatch(store, 'GET', '/preparation/dossiers/inline', token, None, 'a' * 40, None)
                 self.assertEqual(200, code)
                 page = views.render(view, csrf).decode()
-        self.assertIn('<section class="etat" data-ton="att"', page)
-        self.assertIn('Où j’en suis', page)
+        # Avant validation, le bloc jaune porte la décision ; le tiroir de correction est celui que ce bloc commande
+        self.assertIn('<form class="decision" method="post"', page)
+        self.assertIn('<details class="tiroir" id="corriger">', page)
+        self.assertIn('<form id="form-corriger" method="post"', page)
         self.assertIn('aria-current="step"', page)
         self.assertIn('<span class="n">03</span><span class="l">Validation</span>', page)
-        self.assertIn('<details class="corr"><summary class="button sec">', page)
         self.assertIn('Oui, c’est le travail à tester', page)
-        self.assertIn('>Actualiser</a>', page)
+        self.assertIn('type="submit" form="form-corriger"', page)
+        self.assertIn('>Actualiser<svg', page)
         self.assertIn('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>', page)
         self.assertNotIn(view['package_sha256'], page.replace('name="package_sha256" value="' + view['package_sha256'] + '"', ''))
 

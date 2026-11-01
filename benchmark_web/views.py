@@ -14,15 +14,16 @@ from benchmark.storage import _strict_json as encode
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, render_campaign_models, campaign_followup, contexte_vue, titre_vue)
-from .fragments import (ETAPES, bouton, btn, cadre, champ, date_lisible_utc, disque, erreur_champ, etat, form,
-                        ic, icon, lien, listing, montant_lisible, piste, puce, ruban, section, state_block, tampon,
-                        tete, text, tiroir, workbench)
-from .projection import projection_body
+from .fragments import (ETAPES, bouton, btn, bulle_assistant, bulle_vous, cadre, champ, cles, consigne,
+                        critere_ligne, criteres_actifs, date_lisible_utc, disque, erreur_champ, etat, feuille, fil, form, ic, icon, jour_lisible,
+                        lien, listing, montant_lisible, mot, notice_ligne, piste, puce, releves, ruban, section,
+                        segments_liens, state_block, tampon, tete, text, tiroir)
+from .projection import (projection_body)
 from .results_views import (contexte_apercu, contexte_publication, contexte_resultats, render_preview, render_results)
 from .legal_views import LEGAL_PAGES, legal_layout
-from .privacy_views import (PRIVACY_SCRIPT, actions_erreur, alerte_expiration, erreur_grande, gestion_cas, historique_local, liens_donnees, marqueur_activite,
-                            render_access, render_bootstrap, render_contribution, render_contributions, render_deleted,
-                            render_delete_confirmation, render_privacy_controls, render_privacy_page)
+from .privacy_views import (PRIVACY_SCRIPT, actions_erreur, active_session, alerte_expiration, erreur_grande, gestion_cas, historique_local,
+                            liens_donnees, marqueur_activite, render_access, render_bootstrap, render_contribution, render_contributions,
+                            render_delete_confirmation, render_deleted, render_privacy_controls, render_privacy_page)
 
 TEMPLATE_PATH = Path(__file__).with_name('templates') / 'preparation.html'
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'preparation.css'
@@ -102,7 +103,9 @@ PREPARATION_PROGRESS_SCRIPT = """(() => {
     clearTimeout(timer);
     request?.abort();
     status.textContent = message;
-    panel.querySelector('progress').hidden = true;
+    const progress = panel.querySelector('progress');
+    if (progress) progress.hidden = true;
+    document.querySelectorAll('.tourne').forEach(node => node.classList.remove('tourne'));
     pause.hidden = true;
     link.hidden = false;
   }
@@ -166,7 +169,7 @@ def render_witnesses(qualification):
     if 'witnesses' not in qualification:
         return ''
     if qualification['witnesses'] is None:
-        return '<p>Aucun témoin n’a été contrôlé pour cette version : elle a été vérifiée avant les contrôles par témoins.</p>'
+        return '<p>Aucun témoin n’a été contrôlé pour cette version : elle a été contrôlée avant les contrôles par témoins.</p>'
 
     def decision(row, status):
         if status is None:
@@ -174,7 +177,7 @@ def render_witnesses(qualification):
         if row['eliminatory']:
             return {'PASS': 'faute absente', 'FAIL': 'faute présente'}.get(status, 'indéterminé')
         return {'PASS': 'satisfait', 'FAIL': 'non satisfait'}.get(status, 'indéterminé')
-    content = ('<h3>Témoins contrôlés</h3><p class="hint">Un témoin est une réponse inventée, recevable ou fautive, soumise '
+    content = ('<h3>Témoins contrôlés</h3><p class="petit">Un témoin est une réponse inventée, recevable ou fautive, soumise '
                'au contrôle qui jugera les modèles. Ce résultat dit ce que le contrôle a décidé sur ce témoin avec cette '
                'référence ; il ne prouve pas que l’attendu est juste.</p>')
     for witness in qualification['witnesses']:
@@ -183,7 +186,7 @@ def render_witnesses(qualification):
                     + '<p>Attendu justifié : ' + text(witness['justification']) + '</p>'
                     + listing(row['description'] + ' : attendu ' + decision(row, row['expected']) + ', décidé '
                               + decision(row, row['decided']) for row in witness['expected'])
-                    + '<p class="hint">Contrôlé sur la version ' + text(str(witness['revision'])) + ' de l’exemple, avec sa référence'
+                    + '<p class="petit">Contrôlé sur la version ' + text(str(witness['revision'])) + ' de l’exemple, avec sa référence'
                     + ('' if cost is None else ' · coût observé : ' + text(
                         'inconnu' if cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']))
                     + '.</p><details><summary>Lire la réponse témoin</summary><div class="example-text">'
@@ -201,13 +204,15 @@ def preparation_pending(value):
 
 
 STEP_SCRIPT = """(() => {
-  const initial = document.querySelector('.steps [aria-current]');
+  const items = [...document.querySelectorAll('.piste li')];
+  const initial = document.querySelector('.piste li[aria-current]');
   function selectStep() {
     const section = ['#besoin', '#exemple', '#validation'].includes(location.hash);
-    document.querySelectorAll('.steps a').forEach(link => {
-      const selected = section ? new URL(link.href).hash === location.hash : link === initial;
-      if (selected) link.setAttribute('aria-current', 'step');
-      else link.removeAttribute('aria-current');
+    items.forEach(item => {
+      const link = item.querySelector('a');
+      const selected = section ? link !== null && new URL(link.href).hash === location.hash : item === initial;
+      if (selected) item.setAttribute('aria-current', 'step');
+      else item.removeAttribute('aria-current');
     });
   }
   window.addEventListener('hashchange', selectStep);
@@ -308,39 +313,22 @@ def reference_url(reference):
     return url
 
 
-def reference_notice(reference):
-    url = reference_url(reference)
-    content = '<dl>' + ''.join('<dt>' + label + '</dt><dd>' + text(reference.get(key) or 'Inconnue') + '</dd>'
-        for key, label in (('work', 'Travail mesuré'), ('scope', 'Portée'), ('limits', 'Limites'),
-                           ('version', 'Version'), ('published_at', 'Date de la source'),
-                           ('checked_at', 'Date de vérification éditoriale'))) + '</dl>'
-    if not reference_verified(reference):
-        content += '<p class="notice">Vérification insuffisante. Cette source n’est pas une recommandation.</p>'
-    else:
-        content += '<p>Vérification éditoriale effectuée.</p>'
-    if reference.get('availability') != 'available':
-        content += '<p class="notice">Source retirée : indisponible.</p><p>Source officielle : ' + text(url or 'Inconnue') + '</p>'
-    elif not url:
-        content += '<p class="notice">Lien officiel indisponible.</p><p>Source officielle : Inconnue.</p>'
-    else:
-        content += '<p>Source disponible.</p><p>Source officielle : <a href="' + text(url) + '" rel="noreferrer noopener">' + text(url) + '</a></p>'
-    return content
-
-
-def editorial_report(report):
-    """Signalement éditorial attribué à la version, jamais une réécriture de ses octets"""
-    if not report:
-        return ''
-    return state_block('warn', 'Signalement éditorial', 'Erreur signalée sur cette version',
-                       '<p>' + text(report['summary']) + '</p><p class="hint">Attribué à la version source le '
-                       + text(date_lisible_utc(report['reported_at'])) + '. Ce signalement ne corrige pas les pièces '
-                       'ni les preuves déjà conservées.</p>')
-
-
 EDITORIAL_STATUS = {'ABSENT': 'Qualification absente', 'QUALIFIED': 'Qualification réussie',
                     'BLOCKED': 'Qualification bloquée'}
 EDITORIAL_FILTERS = (('entree', 'Entrées'), ('langue', 'Langue'), ('outil', 'Outil'),
                      ('difficulte', 'Difficulté'), ('qualification', 'Qualification'))
+# Aide sémantique : le web ne connaît pas l'état du service (il vit dans l'exécuteur) ; le lien reste masqué tant que
+# `serve_web` ne l'a pas activé, comme la désactivation par défaut du PRD
+SEMANTIC_HELP_ENABLED = False
+INCONNU = '<span class="g-inconnu">inconnu</span>'
+CAUTION = ('Des benchmarks reconnus, publiés par d’autres. Utiles pour un travail générique, comme les mathématiques ou le code. '
+           'Ils ne prouvent pas la réussite sur votre cas d’usage.')
+
+
+def version_lisible(version_id):
+    """« version-1 » devient « Version 1 », « version-longue » devient « Version longue » ; l'identifiant reste dans le reçu technique"""
+    mots = str(version_id).replace('-', ' ').replace('_', ' ').strip()
+    return mots[:1].upper() + mots[1:]
 
 
 def editorial_criteria_query(criteria):
@@ -348,6 +336,17 @@ def editorial_criteria_query(criteria):
     criteria = criteria or {}
     keys = ('q',) + tuple(key for key, _ in EDITORIAL_FILTERS)
     return urlencode([(key, criteria.get(key, '')) for key in keys if criteria.get(key)])
+
+
+def avec_critere(base, criteria, **changes):
+    """Adresse de la liste avec les critères actifs modifiés par `changes` ; une valeur vide retire le critère"""
+    query = editorial_criteria_query({**(criteria or {}), **changes})
+    return base + ('?' + query if query else '')
+
+
+def valeur_ou_inconnu(value):
+    """Valeur échappée ; absente : « inconnu »"""
+    return text(jour_lisible(value)) if value else INCONNU
 
 
 def editorial_characteristic(entry, key):
@@ -365,166 +364,264 @@ def editorial_characteristic(entry, key):
 
 
 def editorial_characteristics(entry):
-    """Les huit informations restent distinctes, y compris la qualification et les résultats"""
+    """Les neuf informations restent distinctes, y compris la qualification et les résultats"""
     return (('Travail évalué', entry.get('work') or 'Inconnu'),
             ('Résultat attendu', editorial_characteristic(entry, 'expected_result')),
             ('Entrées', editorial_characteristic(entry, 'inputs')),
             ('Langue', editorial_characteristic(entry, 'language')),
             ('Outils', editorial_characteristic(entry, 'tools')),
             ('Difficulté', editorial_characteristic(entry, 'difficulty')),
-            ('Version', entry.get('version_id') or 'Inconnue'),
+            ('Version', version_lisible(entry['version_id']) if entry.get('version_id') else 'Inconnue'),
             ('Qualification', EDITORIAL_STATUS.get(entry.get('qualification_status'), 'Qualification absente')),
             ('Résultats publiés', 'Résultats publiés' if entry.get('results') else 'Aucun résultat publié'))
 
 
 def editorial_fields(entry):
-    return '<dl class="editorial-characteristics">' + ''.join(
-        '<dt>' + text(label) + '</dt><dd>' + text(value) + '</dd>'
-        for label, value in editorial_characteristics(entry)) + '</dl>'
+    return cles([(label, text(value)) for label, value in editorial_characteristics(entry)])
+
+
+def carte_epreuve(entry, href):
+    """Fiche d'une version dans la liste : titre, travail évalué, quatre traits, deux mots d'état"""
+    traits = ''.join('<div><dt>' + label + '</dt><dd>' + text(editorial_characteristic(entry, key)) + '</dd></div>'
+                     for label, key in (('Langue', 'language'), ('Outils', 'tools'), ('Difficulté', 'difficulty'), ('Entrées', 'inputs')))
+    return ('<li class="g-fiche"><div class="g-fiche-haut">' + puce(version_lisible(entry['version_id'])) + '</div><h3><a href="' + text(href)
+            + '">' + text(entry['title']) + '</a></h3><p class="g-mesure"><span class="etiq">Travail évalué</span>' + text(entry.get('work') or 'Inconnu')
+            + '</p><dl class="g-traits">' + traits + '</dl><div class="g-fiche-mots">'
+            + mot(EDITORIAL_STATUS.get(entry.get('qualification_status'), 'Qualification absente'), 'vig')
+            + mot('Résultats publiés' if entry.get('results') else 'Aucun résultat publié', 'ok' if entry.get('results') else 'inc')
+            + '</div><span class="g-ouvrir" aria-hidden="true">' + ic('fleche') + '</span></li>')
+
+
+COMMENT_LIRE = tiroir('Comment lire ces fiches', '''<dl class="g-lire">
+<div><dt>Version</dt><dd>Chaque épreuve peut évoluer. Une version publiée ne change plus : ses pièces et ses résultats restent ceux de cette version.</dd></div>
+<div><dt>Travail évalué</dt><dd>Ce que le modèle doit faire, en une phrase. C’est le critère le plus utile pour savoir si l’épreuve ressemble à votre besoin.</dd></div>
+<div><dt>Langue, outils, entrées</dt><dd>Ce que l’épreuve fournit au modèle : la langue des textes, les outils qu’il peut utiliser, les documents qu’il reçoit. Evaly les renseigne à la publication. « inconnu » veut dire non renseigné, pas absent.</dd></div>
+<div><dt>Difficulté</dt><dd>Une estimation d’Evaly. Elle ne mesure aucune capacité d’un modèle.</dd></div>
+<div><dt>Qualification</dt><dd>Indique si Evaly a vérifié que le contrôle de l’épreuve sépare bien une bonne réponse d’une mauvaise. « Absente » : cette vérification n’a pas encore été faite, et les verdicts sont à lire avec prudence.</dd></div>
+<div><dt>Résultats publiés</dt><dd>Indique si Evaly a publié un benchmark sur cette épreuve. Sans résultat publié, vous pouvez lancer votre propre benchmark à partir de la fiche.</dd></div>
+</dl>''')
+LIEN_AIDE = '<div class="actions">' + lien('/epreuves/aide', 'Demander une aide sémantique facultative', 'question') + '</div>'
 
 
 def render_editorial(value):
-    need = '<p><a href="/preparation">Décrire mon cas d’usage</a></p>'
+    """Catalogue des épreuves, fiche d'une version ou version retirée ; renvoie (titre, contenu, en-tête)"""
     criteria = value.get('criteria') or {}
     query = editorial_criteria_query(criteria)
     back_href = '/epreuves' + ('?' + query if query else '')
-    back = '<p>' + (('<a href="' + text(back_href) + '">Retour aux résultats</a> · ') if query else '')
-    back += '<a href="/epreuves">Toutes les épreuves</a></p>'
+    retour = [(back_href, 'Retour aux résultats')] if query else []
+    retour = fil(*retour, ('/epreuves', 'Toutes les épreuves'))
     if value.get('withdrawn'):
-        content = ('<p class="note">Cette version est retirée. Son contenu et ses pièces ne sont plus disponibles.</p>'
-                   '<p>Aucune nouvelle reprise de cette version n’est admise.</p>')
-        content += editorial_report(value.get('report'))
-        return 'Version retirée', back + content + need
+        carte = etat('ko', 'Version retirée', 'Cette version est retirée',
+                     'Son contenu et ses pièces ne sont plus disponibles. Aucune nouvelle reprise de cette version n’est admise.')
+        corps = ('<div class="cadre g-pile">' + carte + editorial_report(value.get('report')) + '<div class="actions">'
+                 + btn('/preparation', 'Décrire mon cas d’usage') + '</div></div>')
+        return 'Version retirée', corps, dict(piste_html=retour, contexte_html=mot('Retirée', 'ko'), cadre_propre=True)
     if not value.get('version_id'):
-        content = ('<p>La recherche porte sur le texte des notices publiques. Elle est déterministe et ne classe '
-                   'pas les épreuves par proximité sémantique.</p>'
-                   '<p>Les caractéristiques sont déclarées avec chaque version. Une information absente reste '
-                   'inconnue ; elle ne prouve ni absence d’outil ni qualification.</p>')
         filters = value.get('filters') or {}
 
         def active_unavailable(key):
             active = criteria.get(key)
             return bool(active) and active not in filters.get(key, [])
 
-        search = ('<form method="get" action="/epreuves"><label for="q">Rechercher une épreuve</label>'
-                  '<input type="text" id="q" name="q" maxlength="200" value="' + text(criteria.get('q', '')) + '">')
+        # Un lien par valeur : le filtre s'applique au clic, le texte de recherche est recopié dans chaque adresse (A6, A7)
+        selection = ''
         for key, label in EDITORIAL_FILTERS:
-            search += ('<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key
-                       + '"><option value="">Tous</option>')
             proposed = list(filters.get(key, []))
-            options = proposed + ([criteria[key]] if active_unavailable(key) else [])
-            for option in options:
+            options = [('', 'Tous')]
+            for option in proposed + ([criteria[key]] if active_unavailable(key) and criteria[key] not in proposed else []):
                 shown = str(EDITORIAL_STATUS.get(option, option) if key == 'qualification' else option)
-                if active_unavailable(key) and option not in proposed:
-                    shown += ' (indisponible)'
-                search += ('<option value="' + text(option) + '"'
-                           + (' selected' if criteria.get(key) == option else '') + '>' + text(shown) + '</option>')
-            search += '</select>'
-        search += '<button type="submit">Rechercher</button></form>'
-        search += '<p><a href="/epreuves">Effacer la recherche et les filtres</a></p>'
-        search += '<p><a href="/epreuves/aide">Demander une aide sémantique facultative</a></p>'
-        if value.get('searched'):
-            content += '<section><h2>Critères actifs</h2><dl class="active-criteria">'
-            for key, label in (('q', 'Recherche'),) + EDITORIAL_FILTERS:
-                if criteria.get(key):
-                    shown = str(EDITORIAL_STATUS.get(criteria[key], criteria[key])
-                                if key == 'qualification' else criteria[key])
-                    if key != 'q' and active_unavailable(key):
-                        shown += ' (indisponible)'
-                    content += '<dt>' + text(label) + '</dt><dd>' + text(shown) + '</dd>'
-            content += '</dl>'
-            if any(active_unavailable(key) for key, _ in EDITORIAL_FILTERS):
-                content += ('<p class="hint">Une valeur marquée indisponible ne correspond à aucune version '
-                            'publique disponible. Elle reste active jusqu’à sa modification ou son effacement.</p>')
-            content += '</section>'
-        for entry in value.get('versions', []):
-            href = '/epreuves/' + entry['task_id'] + '/' + entry['version_id']
-            if query:
-                href += '?' + query
-            content += ('<section><h2><a href="' + text(href) + '">' + text(entry['title']) + '</a></h2>'
-                        + editorial_fields(entry) + '</section>')
-        if not value.get('total'):
-            content += '<p>Aucune épreuve publiée.</p>'
-        elif not value.get('versions'):
-            content += ('<p>Aucune épreuve ne correspond à cette recherche. Modifiez ou effacez les critères.</p>')
-        # La recherche se lit avant la liste qu'elle filtre
-        return 'Épreuves', workbench(content, search, 'Recherche et filtres', side_first=True) + need
+                options.append((option, shown + (' (indisponible)' if active_unavailable(key) and option not in proposed else '')))
+            selection += segments_liens(label, 'fe-' + key, options, criteria.get(key, ''),
+                                        lambda option, key=key: avec_critere('/epreuves', criteria, **{key: option}))
+        selection += ''.join('<input type="hidden" name="' + key + '" value="' + text(criteria[key]) + '">'
+                             for key, _ in EDITORIAL_FILTERS if criteria.get(key))
+        actifs = [(label, criteria[key]) for key, label in EDITORIAL_FILTERS if criteria.get(key)]
+        filtres = tiroir('Filtres', '<div class="filtres-liens">' + selection + '</div>', ouvert=True,
+                         resume=str(len(actifs)) + (' actifs' if len(actifs) > 1 else ' actif') if actifs else 'aucun')
+        formulaire = ('<form class="g-recherche" method="get" action="/epreuves" role="search"><div class="g-ligne">'
+                      + champ('Rechercher une épreuve', 'q', zone=False, type_='search', ident='q', maxlength=200, valeur=criteria.get('q', ''))
+                      + bouton('Rechercher', icone='loupe') + '</div>' + filtres + (LIEN_AIDE if SEMANTIC_HELP_ENABLED else '') + '</form>')
+        chips = criteres_actifs(([('Recherche : ' + criteria['q'])] if criteria.get('q') else [])
+                                + [label + ' : ' + str(EDITORIAL_STATUS.get(criteria[key], criteria[key]) if key == 'qualification' else criteria[key])
+                                   + (' (indisponible)' if active_unavailable(key) else '') for key, label in EDITORIAL_FILTERS if criteria.get(key)],
+                                '/epreuves')
+        versions = value.get('versions', [])
+        indisponible = any(active_unavailable(key) for key, _ in EDITORIAL_FILTERS)
+        catalogue_vide = not value.get('total')
+        if catalogue_vide:
+            corps = etat('inc', 'Catalogue vide', 'Aucune épreuve publiée', 'Le catalogue ne contient encore aucune épreuve.')
+        elif not versions and indisponible:
+            corps = etat('vig', 'Critère indisponible', 'Aucune épreuve ne correspond à cette recherche',
+                         'Une valeur marquée indisponible ne correspond à aucune version publique disponible. '
+                         'Elle reste active jusqu’à sa modification ou son effacement.')
+        elif not versions:
+            corps = (etat('vig', 'Aucun résultat', 'Aucune épreuve ne correspond à cette recherche',
+                          'Recherche : « ' + criteria['q'] + ' ». Modifiez ou effacez les critères.') if criteria.get('q') else
+                     etat('vig', 'Aucun résultat', 'Aucune épreuve ne correspond à ces filtres', 'Changez un filtre, ou effacez-les.'))
+        else:
+            total = value['total']
+            compte = (str(len(versions)) + (' épreuves' if len(versions) > 1 else ' épreuve') + (' sur ' + str(total) if len(versions) != total else '')
+                      + (' · recherche envoyée sans critère' if value.get('search_sent') and not any(criteria.values()) else ''))
+            corps = ('<h2 class="cache">Résultats</h2><p class="g-compte" role="status" data-un="épreuve" data-plusieurs="épreuves">' + text(compte)
+                     + '</p><ul class="g-grille">' + ''.join(carte_epreuve(entry, avec_critere('/epreuves/' + entry['task_id'] + '/' + entry['version_id'], criteria))
+                                                            for entry in versions) + '</ul>')
+        # Seuls un catalogue vide et une recherche sans résultat proposent de décrire un besoin
+        suite = '<div class="actions">' + lien('/preparation', 'Décrire mon cas d’usage') + '</div>' if catalogue_vide else ''
+        sous = ('<p class="texte-l g-sous">Des cas d’usage préparés et publiés par Evaly, avec des exemples entièrement inventés. '
+                'Trouvez un travail proche du vôtre, lisez ses résultats s’ils sont publiés, ou partez de lui pour votre propre benchmark.</p>')
+        return ('Épreuves Evaly', '<div class="cadre g-pile">' + formulaire + chips + corps + COMMENT_LIRE + suite + '</div>',
+                dict(sous_titre_html=sous, cadre_propre=True))
     status = EDITORIAL_STATUS.get(value.get('qualification_status'), 'Qualification absente')
-    content = editorial_fields(value)
-    content += '<p class="note">' + text(status) + '.</p>'
-    if value.get('qualification_status') == 'ABSENT':
-        content += '<p>Aucune preuve de qualification n’est publiée.</p>'
-    else:
-        content += '<p>Les preuves de qualification ne font pas partie de cette publication.</p>'
+    absente = value.get('qualification_status') == 'ABSENT' or value.get('qualification_status') not in EDITORIAL_STATUS
+    carte = etat('vig', status, 'Aucune preuve de qualification n’est publiée' if absente else 'Les preuves de qualification ne font pas partie de cette publication',
+                 'Cette publication ne qualifie pas l’épreuve et n’autorise aucune exécution. La difficulté déclarée ne prouve aucune capacité mesurée.')
+    base = '/epreuves/' + value['task_id'] + '/' + value['version_id']
     campaigns = value.get('results') or []
+    publies = ''
     if campaigns:
-        content += ('<section><h2>Résultats publiés</h2><p class="hint">Chaque campagne est une restitution '
-                    'approuvée séparément. Elle ne fusionne pas ses résultats avec une autre campagne.</p><ul>')
+        items = ''
         for campaign in campaigns:
-            href = ('/epreuves/' + text(value['task_id']) + '/' + text(value['version_id'])
-                    + '/campagnes/' + text(campaign['campaign_id']))
-            shown = ('Campagne du ' + date_lisible_utc(campaign['frozen_at']) + ' · ' + campaign['pi']['package']
-                     + ' ' + campaign['pi']['version'] + ' · '
-                     + str(campaign['coverage']['evaluated_attempts'])
+            shown = ('Benchmark du ' + date_lisible_utc(campaign['frozen_at']) + ' · ' + str(campaign['coverage']['evaluated_attempts'])
                      + (' réponse évaluée' if campaign['coverage']['evaluated_attempts'] == 1 else ' réponses évaluées')
                      + ' sur ' + str(campaign['coverage']['planned_cells'])
                      + (' essai prévu' if campaign['coverage']['planned_cells'] == 1 else ' essais prévus') + ' · coûts '
                      + ('complets' if campaign['economic_status'] == 'COMPLETE' else 'incomplets'))
-            content += '<li><a href="' + href + '">' + text(shown) + '</a></li>'
-        content += '</ul>'
-        if len({(campaign.get('contract_sha256'), campaign.get('cases'),
-                 tuple(sorted((campaign.get('environment') or {}).items())),
-                 campaign['pi']['package'], campaign['pi']['version'], campaign['unit'])
-                for campaign in campaigns}) > 1:
-            content += ('<p class="note">Ces campagnes n’ont pas le même contrat, périmètre d’exemples, environnement, '
+            items += '<li>' + lien(base + '/campagnes/' + campaign['campaign_id'], shown) + '</li>'
+        publies = ('<section class="pile" aria-labelledby="g-resultats"><h2 id="g-resultats" class="g-h2">Résultats publiés</h2><p class="petit">'
+                   'Chaque benchmark est une restitution approuvée séparément. Elle ne fusionne pas ses résultats avec un autre benchmark.</p>'
+                   '<ul class="g-liste">' + items + '</ul>')
+        if len({(c.get('contract_sha256'), c.get('cases'), tuple(sorted((c.get('environment') or {}).items())),
+                 c['pi']['package'], c['pi']['version'], c['unit']) for c in campaigns}) > 1:
+            publies += ('<p class="petit">Ces benchmarks n’ont pas le même contrat, périmètre d’exemples, environnement, '
                         'harnais ou unité de coût : leurs résultats ne se comparent pas directement.</p>')
-        content += '</section>'
+        publies += '</section>'
+    cas = ('<section class="carte" aria-labelledby="g-cas"><h2 id="g-cas" class="g-h2">Cas</h2><ul class="g-liste">'
+           + ''.join('<li>' + text(item) + '</li>' for item in value['cases']) + '</ul></section>')
+    limites = ('<section class="carte" aria-labelledby="g-lim"><h2 id="g-lim" class="g-h2">Limites</h2><ul class="g-liste">'
+               + ''.join('<li>' + text(item) + '</li>' for item in value['limits']) + '</ul></section>')
+    pieces = ('<section aria-labelledby="g-pieces"><h2 id="g-pieces" class="g-h2">Pièces</h2><ul class="pieces">'
+              + ''.join(feuille(piece['label'], 'Pièce de cette version', piece['text'], 'piece-' + str(index))
+                        for index, piece in enumerate(value['pieces'], 1)) + '</ul></section>')
+    copy_base = '/preparation/copies/' + value['task_id'] + '/' + value['version_id']
+    dossier = ('<div class="decision"><span class="etiq">Préparer mon dossier privé</span><h2>Partir de cette épreuve.</h2>'
+               '<p>Cette copie conserve exactement la notice et les pièces ci-contre. Elle ne demande ni clé ni appel aux modèles : '
+               'vous décrirez ensuite votre besoin et ce qui diffère de cette épreuve.</p>' + btn(copy_base, 'Créer mon dossier privé') + '</div>')
+    besoin = '<div class="actions">' + lien('/preparation', 'Décrire mon cas d’usage') + '</div>'
+    corps = ('<div class="cadre g-pile">' + carte + editorial_report(value.get('report')) + '</div><div class="cadre"><div class="colonnes">'
+             '<div class="pile-l"><div class="colonnes-moitie">' + cas + limites + '</div>' + pieces + publies + besoin
+             + '</div><aside class="cote" aria-label="Caractéristiques et dossier privé"><div class="carte">'
+             + editorial_fields(value) + '</div>' + dossier + '</aside></div></div>')
+    contexte = puce(version_lisible(value['version_id'])) + mot(status, 'vig') + (puce('Depuis la recherche : ' + ', '.join(
+        str(criteria[key]) for key in ('q',) + tuple(k for k, _ in EDITORIAL_FILTERS) if criteria.get(key)), plein=True) if query else '')
+    return value['title'], corps, dict(piste_html=retour, contexte_html=contexte, cadre_propre=True)
+
+
+def editorial_report(report):
+    """Signalement éditorial attribué à la version, jamais une réécriture de ses octets"""
+    if not report:
+        return ''
+    return ('<section class="carte g-signal" aria-labelledby="g-sig">' + mot('Signalement éditorial', 'ko')
+            + '<h2 id="g-sig">Erreur signalée sur cette version</h2><p>' + text(report['summary']) + '</p><p class="petit">Attribué à la version source le '
+            + text(date_lisible_utc(report['reported_at'])) + '. Ce signalement ne corrige pas les pièces ni les preuves déjà conservées.</p></section>')
+
+
+def reference_mots(reference):
+    """Mots d'état d'une fiche : vérification éditoriale et disponibilité de la source"""
+    verifiee = reference_verified(reference)
+    disponible = reference.get('availability') == 'available'
+    return (mot('Vérifiée', 'ok') if verifiee else mot('Vérification insuffisante', 'vig'),
+            mot('Source disponible', 'ok') if disponible else mot('Source retirée', 'ko'))
+
+
+def reference_adresse(**criteria):
+    """Adresse du répertoire avec les critères non vides"""
+    query = urlencode([(key, value) for key, value in criteria.items() if value])
+    return '/evaluations-externes' + ('?' + query if query else '')
+
+
+def carte_reference(identity, reference):
+    verification, disponibilite = reference_mots(reference)
+    categorie = puce(REFERENCE_CATEGORIES.get(reference.get('category'), 'Catégorie inconnue'))
+    return ('<li class="g-fiche"><div class="g-fiche-haut">' + categorie + '</div><h3><a href="/evaluations-externes/' + text(identity) + '">'
+            + text(reference['name']) + '</a></h3><p class="g-mesure"><span class="etiq">Travail mesuré</span>' + text(reference.get('work') or 'Inconnu')
+            + '</p><div class="g-fiche-mots">' + verification + disponibilite + '</div><span class="g-ouvrir" aria-hidden="true">' + ic('fleche') + '</span></li>')
+
+
+def selection_tenue():
+    """« Comment cette sélection est tenue » : la date de relecture est la plus récente des fiches vérifiées"""
+    dates = [reference['checked_at'] for reference in BENCHMARK_REFERENCES.values()
+             if reference.get('availability') == 'available' and reference_verified(reference)]
+    relecture = ' La dernière relecture date du ' + jour_lisible(max(dates)) + '.' if dates else ''
+    return tiroir('Comment cette sélection est tenue',
+                  '<p>Evaly choisit et tient à jour cette liste. Chaque fiche est relue avant d’être affichée.' + relecture + '</p>'
+                  '<dl class="g-lire">'
+                  '<div><dt>Ce que la relecture vérifie</dt><dd>Trois points : qui publie le benchmark, ce qu’il mesure, et ce qu’il ne mesure pas.</dd></div>'
+                  '<div><dt>Vérifiée</dt><dd>Les trois points sont établis.</dd></div>'
+                  '<div><dt>Vérification insuffisante</dt><dd>Au moins un point reste inconnu. La fiche reste consultable, mais ce n’est pas une recommandation.</dd></div>'
+                  '<div><dt>Source disponible</dt><dd>La page officielle du benchmark est accessible depuis la fiche. Ce contrôle est fait à part de la relecture.</dd></div>'
+                  '<div><dt>Ce que la liste ne fait pas</dt><dd>Elle n’est pas complète. Elle ne classe pas les benchmarks entre eux et ne donne aucune note globale.</dd></div>'
+                  '</dl><p>Un bon résultat sur un benchmark public ne prouve pas qu’un modèle réussira votre cas d’usage. '
+                  'Pour le savoir, comparez les modèles sur votre propre exemple.</p>')
+
+
+def render_reference_notice(identity, reference):
+    """Fiche d'un benchmark public : état de la vérification, ce qu'il mesure, ses limites, la source officielle"""
+    url = reference_url(reference)
+    verification, disponibilite = reference_mots(reference)
+    retour = fil(('/evaluations-externes', 'Tous les benchmarks publics'))
+    if reference.get('availability') != 'available':
+        carte = etat('ko', 'Source retirée', 'Cette source n’est plus disponible',
+                     'Le lien n’est plus proposé. Vérification insuffisante : cette source n’est pas une recommandation.')
+    elif reference_verified(reference):
+        carte = etat('ok', 'Vérifiée', 'Vérification éditoriale effectuée',
+                     'Le ' + jour_lisible(reference['checked_at']) + ' : origine, objet et limites. Le lien est contrôlé à part.')
     else:
-        content += '<p class="note">Aucun résultat publié.</p>'
-    content += ('<p>Cette publication ne qualifie pas l’épreuve et n’autorise aucune exécution. '
-                'La difficulté déclarée ne prouve aucune capacité mesurée.</p>')
-    content += editorial_report(value.get('report'))
-    content += '<h2>Cas</h2><ul>' + ''.join('<li>' + text(case) + '</li>' for case in value['cases']) + '</ul>'
-    content += '<h2>Limites</h2><ul>' + ''.join('<li>' + text(limit) + '</li>' for limit in value['limits']) + '</ul>'
-    content += '<h2>Pièces</h2>'
-    base = '/epreuves/' + text(value['task_id']) + '/' + text(value['version_id'])
-    for piece in value['pieces']:
-        content += ('<section><h3><a href="' + base + '/pieces/' + text(piece['id']) + '">' + text(piece['label']) + '</a></h3>'
-                    '<pre class="proof-content">' + text(piece['text']) + '</pre></section>')
-    copy_base = '/preparation/copies/' + text(value['task_id']) + '/' + text(value['version_id'])
-    copy = section('Préparer mon dossier privé',
-                   '<p>Cette copie conserve exactement la notice et les pièces ci-dessus. Elle ne demande ni clé '
-                   'ni appel aux modèles : vous décrirez ensuite votre besoin et ce qui diffère de cette épreuve.</p>'
-                   '<p><a class="button" href="' + copy_base + '">Créer mon dossier privé</a></p>')
-    # La copie annonce les pièces « ci-dessus » : sur téléphone, sa colonne suit la zone principale
-    return value['title'], back + workbench(content, copy, 'Préparer mon dossier privé') + need
+        carte = etat('vig', 'Vérification insuffisante', 'Cette source n’est pas une recommandation',
+                     'Origine, objet ou limites ne sont pas établis : plusieurs champs restent inconnus.')
+    if reference.get('availability') == 'available' and url:
+        action = ('<div class="decision"><span class="etiq">Source officielle</span><h2>Les résultats détaillés restent chez la source.</h2>'
+                  '<p class="g-url">' + text(url) + '</p><a class="btn" href="' + text(url) + '" rel="noreferrer noopener">Ouvrir la source officielle'
+                  + ic('lien') + '</a></div>')
+        suite = lien('/preparation', 'Décrire mon cas d’usage')
+    else:
+        action = ('<div class="carte carte-douce"><span class="etiq">' + ('Adresse retirée' if reference.get('availability') != 'available' else 'Lien indisponible')
+                  + '</span><p class="g-url">' + (text(url) if url else 'Inconnue')
+                  + '</p><p class="petit">' + ('Adresse indiquée à titre d’archive, sans lien.' if reference.get('availability') != 'available'
+                                               else 'Lien officiel indisponible.') + '</p></div>')
+        suite = btn('/preparation', 'Décrire mon cas d’usage')
+    infos = cles([('Version', valeur_ou_inconnu(reference.get('version'))), ('Date de la source', valeur_ou_inconnu(reference.get('published_at'))),
+                  ('Vérification éditoriale', valeur_ou_inconnu(reference.get('checked_at')))])
+    corps = ('<div class="cadre g-pile">' + carte + '</div><div class="cadre"><div class="colonnes g-fiche-page"><div class="pile-l">'
+             '<section aria-labelledby="g-mesure"><span class="etiq">Elle mesure</span><h2 id="g-mesure" class="g-h">' + text(reference.get('work') or 'Inconnu')
+             + '</h2><p class="texte-l">' + (text(reference['scope']) if reference.get('scope') else 'Portée : ' + INCONNU) + '</p></section>'
+             '<section aria-labelledby="g-limites" class="carte g-limites"><div class="g-limites-tete">' + ic('alerte')
+             + '<h2 id="g-limites">Ses limites</h2></div><p>' + (text(reference['limits']) if reference.get('limits') else INCONNU) + '</p></section>'
+             '<p class="petit">' + text(CAUTION) + '</p><div class="actions">' + suite + '</div></div>'
+             '<aside class="cote" aria-label="Source et dates"><div class="carte">' + infos + '</div>' + action + '</aside></div></div>')
+    contexte = puce(REFERENCE_CATEGORIES.get(reference.get('category'), 'Catégorie inconnue')) + verification + disponibilite
+    return reference['name'], corps, dict(piste_html=retour, contexte_html=contexte, cadre_propre=True)
 
 
 def render_references(value):
-    back = '<p><a href="/evaluations-externes">Toutes les évaluations externes</a></p>'
-    need = '<p><a href="/preparation">Décrire mon cas d’usage</a></p>'
-    introduction = '<p>Ces évaluations externes ne prouvent pas la réussite sur votre besoin particulier.</p>'
+    """Répertoire des benchmarks publics ou fiche d'un benchmark ; renvoie (titre, contenu, en-tête)"""
     if value.get('reference_id'):
-        reference = BENCHMARK_REFERENCES[value['reference_id']]
-        return reference['name'], back + workbench(reference_notice(reference), introduction + need, 'À savoir')
-    content = (introduction
-               + '<p>Ayo est responsable de la maintenance de cette sélection.</p>'
-               + '<p>La vérification documentaire du 22 octobre 2026 couvre l’origine, l’objet et les limites. '
-               + 'La disponibilité d’un lien reste distincte de cette vérification.</p>')
+        return render_reference_notice(value['reference_id'], BENCHMARK_REFERENCES[value['reference_id']])
     available = {identity: reference for identity, reference in BENCHMARK_REFERENCES.items()
                  if reference.get('availability') == 'available'}
     categories = {reference['category']: REFERENCE_CATEGORIES.get(reference['category'], reference['category'])
                   for reference in available.values()}
-    query, category, verification = (value.get(key, '') for key in ('q', 'category', 'verification'))
-    search = ('<form method="get" action="/evaluations-externes"><label for="q">Rechercher une évaluation</label>'
-              '<input type="text" id="q" name="q" value="' + text(query) + '">')
-    for key, label, choices in (('category', 'Travail mesuré', categories),
-                                 ('verification', 'Vérification éditoriale', REFERENCE_VERIFICATIONS)):
-        search += '<label for="' + key + '">' + label + '</label><select id="' + key + '" name="' + key + '"><option value="">Tous</option>'
-        search += ''.join('<option value="' + text(choice) + '"' + (' selected' if value.get(key) == choice else '')
-                          + '>' + text(name) + '</option>' for choice, name in choices.items()) + '</select>'
-    search += '<button type="submit">Rechercher</button></form><p><a href="/evaluations-externes">Effacer la recherche et les filtres</a></p>'
-    search += '<p><a href="/evaluations-externes/aide">Demander une aide sémantique facultative</a></p>'
+    query, category, verification = (str(value.get(key) or '') for key in ('q', 'category', 'verification'))
+    selection = (segments_liens('Travail mesuré', 'f-cat', [('', 'Tous')] + list(categories.items()), category,
+                                lambda choice: reference_adresse(q=query, category=choice, verification=verification))
+                 + segments_liens('Vérification éditoriale', 'f-verif', [('', 'Toutes')] + list(REFERENCE_VERIFICATIONS.items()), verification,
+                                  lambda choice: reference_adresse(q=query, category=category, verification=choice)))
+    formulaire = ('<form class="g-recherche" method="get" action="/evaluations-externes" role="search"><div class="g-ligne">'
+                  + champ('Rechercher un benchmark', 'q', zone=False, type_='search', ident='q', valeur=query) + bouton('Rechercher', icone='loupe') + '</div>'
+                  '<input type="hidden" name="category" value="' + text(category) + '"><input type="hidden" name="verification" value="' + text(verification)
+                  + '">' + selection + (('<div class="actions">' + lien('/evaluations-externes/aide', 'Demander une aide sémantique facultative', 'question') + '</div>')
+                                        if SEMANTIC_HELP_ENABLED else '') + '</form>')
+    actifs = criteres_actifs(([('Recherche : ' + query)] if query else []) + (['Travail mesuré : ' + categories.get(category, category)] if category else [])
+                             + (['Vérification : ' + REFERENCE_VERIFICATIONS.get(verification, verification)] if verification else []), '/evaluations-externes')
     found = []
     for identity, reference in available.items():
         if category and reference['category'] != category:
@@ -535,19 +632,23 @@ def render_references(value):
         searchable += ' ' + categories[reference['category']].casefold()
         if all(term in searchable for term in query.casefold().split()):
             found.append((identity, reference))
-    for identity, reference in found:
-        content += ('<section><h2><a href="/evaluations-externes/' + text(identity) + '">'
-                    + text(reference['name']) + '</a></h2>' + reference_notice(reference) + '</section>')
     if not available:
-        content += '<p>Aucune évaluation externe disponible.</p>'
+        corps = etat('inc', 'Répertoire vide', 'Aucun benchmark public disponible', 'Le répertoire ne contient encore aucune fiche.')
     elif not found:
-        content += '<p>Aucune évaluation ne correspond à cette recherche. Modifiez la recherche ou les filtres.</p>'
-    # La recherche se lit avant la liste qu'elle filtre
-    return 'Évaluations externes', (workbench(content, search, 'Recherche et filtres', side_first=True)
-                                    + need + '<p><a href="/">Accueil</a></p>')
+        corps = (etat('vig', 'Aucun résultat', 'Aucun benchmark ne correspond à cette recherche',
+                      'Recherche : « ' + query + ' ». Modifiez la recherche ou les filtres.') if query else
+                 etat('vig', 'Aucun résultat', 'Aucun benchmark ne correspond à ces filtres', 'Changez un filtre, ou effacez-les.'))
+    else:
+        compte = str(len(found)) + (' benchmarks' if len(found) > 1 else ' benchmark') + (' sur ' + str(len(available)) if len(found) != len(available) else '')
+        corps = ('<h2 class="cache">Résultats</h2><p class="g-compte" role="status" data-un="benchmark" data-plusieurs="benchmarks">' + compte
+                 + '</p><ul class="g-grille g-liste-ext">' + ''.join(carte_reference(identity, reference) for identity, reference in found) + '</ul>')
+    # Seuls une recherche sans résultat et un répertoire vide proposent de décrire un besoin
+    suite = '<div class="actions">' + lien('/preparation', 'Décrire mon cas d’usage') + '</div>' if not found else ''
+    return 'Benchmarks publics', ('<div class="cadre g-pile">' + formulaire + actifs + corps + selection_tenue() + suite + '</div>'), dict(
+        sous_titre_html='<p class="texte-l g-sous">' + text(CAUTION) + '</p>', cadre_propre=True)
 
 
-HELP_LABELS = {'correspond': 'Correspondance forte', 'partiel': 'Correspondance partielle'}
+HELP_LABELS = {'correspond': ('Correspondance forte', 'ok'), 'partiel': ('Correspondance partielle', 'att')}
 HELP_REASONS = {
     'DISABLED': 'Le service d’aide est désactivé. La recherche simple reste disponible.',
     'FINANCE': 'Aucune preuve financière n’est établie pour cette aide. Aucun appel n’a été émis.',
@@ -568,19 +669,18 @@ HELP_REASONS = {
                        'Aucun appel n’a été émis.',
     'INVALID_REQUEST': 'La demande est incomplète. Corrigez-la et renvoyez-la.',
 }
-HELP_INTRO = (
-    '<p>Cette aide facultative compare votre formulation au travail mesuré par les notices publiques '
+HELP_TEXTE = (
+    'Cette aide facultative compare votre formulation au travail mesuré par les notices publiques '
     'admissibles. Elle utilise TypeSafe et son modèle Jev. Elle ne remplace pas la recherche simple : '
-    'celle-ci reste disponible sans cette aide.</p>'
-    '<div class="note"><p><strong>Données transmises :</strong> la formulation que vous soumettez et les '
-    'informations publiques utiles des notices retenues. Aucun dossier privé, contribution, référence de '
-    'jugement, historique, clé ni cookie n’est transmis.</p>'
-    '<p>TypeSafe traite ces données selon son traitement standard. Evaly ne promet ni absence de '
+    'celle-ci reste disponible sans cette aide.',
+    'Données transmises : la formulation que vous soumettez et les informations publiques utiles des '
+    'notices retenues. Aucun dossier privé, contribution, référence de jugement, historique, clé ni cookie n’est transmis.',
+    'TypeSafe traite ces données selon son traitement standard. Evaly ne promet ni absence de '
     'conservation, ni localisation exclusivement européenne, ni absence d’entraînement. N’écrivez aucune '
-    'information personnelle ou confidentielle : cette consigne ne garantit pas leur absence.</p>'
-    '<p>Evaly finance cette aide sur une enveloppe limitée, distincte des clés OpenRouter personnelles. '
+    'information personnelle ou confidentielle : cette consigne ne garantit pas leur absence.',
+    'Evaly finance cette aide sur une enveloppe limitée, distincte des clés OpenRouter personnelles. '
     'Seuls des reçus techniques et comptables sont conservés, sans le texte recherché. Une probabilité ne '
-    'prouve ni adéquation, ni qualification, et cette aide ne lance aucune campagne.</p></div>')
+    'prouve ni adéquation, ni qualification, et cette aide ne lance aucune campagne.')
 
 
 def help_notices():
@@ -599,7 +699,7 @@ def help_notices():
     return notices
 
 
-def help_form(value, action='/evaluations-externes/aide'):
+def help_form(value, action='/evaluations-externes/aide', simple='/evaluations-externes'):
     submission_id = value.get('submission_id')
     if type(submission_id) is not str or re.fullmatch('[0-9a-f]{32}', submission_id) is None:
         return ''
@@ -607,13 +707,11 @@ def help_form(value, action='/evaluations-externes/aide'):
     formulation = formulation if type(formulation) is str else ''
     return ('<form method="post" action="' + text(action) + '">'
             '<input type="hidden" name="submission_id" value="' + text(submission_id) + '">'
-            '<label for="formulation">Formulation à comparer</label>'
-            '<p id="formulation-help" class="hint">Décrivez le travail recherché, sans information '
-            'personnelle ni confidentielle. Une demande peut contenir plusieurs travaux.</p>'
-            '<textarea id="formulation" name="formulation" required rows="5" '
-            'aria-describedby="formulation-help">' + text(formulation) + '</textarea>'
-            + HONEYPOT +
-            '<button type="submit">Demander l’aide</button></form>')
+            + champ('Formulation à comparer', 'formulation', grand=True, ident='formulation', valeur=formulation,
+                    aide='Décrivez le travail recherché, sans information personnelle ni confidentielle. '
+                         'Une demande peut contenir plusieurs travaux.')
+            + HONEYPOT + '<div class="actions g-bas">' + bouton('Demander l’aide', icone='question') + lien(simple, 'Recherche simple', 'loupe')
+            + '</div></form>')
 
 
 def render_help_receipt(receipt):
@@ -624,62 +722,73 @@ def render_help_receipt(receipt):
     notices = receipt.get('notice_labels')
     if notices is None:
         notices = receipt.get('notices') or []
-    return ('<details><summary>Reçu technique de cette demande</summary><dl>'
-            '<dt>Usage</dt><dd>' + text(receipt.get('usage')) + '</dd>'
-            '<dt>Version des questions</dt><dd>' + text(receipt.get('questions_version')) + '</dd>'
-            '<dt>Modèle demandé</dt><dd>' + text(receipt.get('model_requested')) + '</dd>'
-            '<dt>Modèle observé</dt><dd>' + text(receipt.get('model_observed') or 'Inconnu') + '</dd>'
-            '<dt>Notices appréciées</dt><dd>' + text(', '.join(notices) or 'Aucune') + '</dd>'
-            '<dt>Jetons d’entrée</dt><dd>' + text(receipt.get('input_tokens') if receipt.get('input_tokens') is not None else 'Inconnus') + '</dd>'
-            '<dt>Jetons de sortie</dt><dd>' + text(receipt.get('output_tokens') if receipt.get('output_tokens') is not None else 'Inconnus') + '</dd>'
-            '<dt>Coût calculé</dt><dd>' + text(
-                'inconnu' if cost.get('status') != 'KNOWN'
-                else montant_lisible(cost.get('amount')) + ' ' + str(cost.get('currency'))) + '</dd>'
-            '<dt>Base du coût</dt><dd>' + text(cost.get('source') or 'Inconnue') + '</dd>'
-            '</dl><p class="hint">Un coût calculé depuis les jetons reçus et le tarif daté reste '
-            'distinct d’une facture. Un coût inconnu conserve sa réserve.</p></details>')
+    return tiroir('Reçu technique de cette demande', cles([
+        ('Usage', text(receipt.get('usage'))), ('Version des questions', text(receipt.get('questions_version'))),
+        ('Modèle demandé', text(receipt.get('model_requested'))), ('Modèle observé', text(receipt.get('model_observed') or 'Inconnu')),
+        ('Notices appréciées', text(', '.join(notices) or 'Aucune')),
+        ('Jetons d’entrée', text(receipt.get('input_tokens') if receipt.get('input_tokens') is not None else 'Inconnus')),
+        ('Jetons de sortie', text(receipt.get('output_tokens') if receipt.get('output_tokens') is not None else 'Inconnus')),
+        ('Coût calculé', text('inconnu' if cost.get('status') != 'KNOWN' else montant_lisible(cost.get('amount')) + ' ' + str(cost.get('currency')))),
+        ('Base du coût', text(cost.get('source') or 'Inconnue'))])
+        + '<p class="petit">Un coût calculé depuis les jetons reçus et le tarif daté reste '
+        'distinct d’une facture. Un coût inconnu conserve sa réserve.</p>')
 
 
-def render_semantic_help(value):
+def render_aide(value, *, repertoire):
+    """Aide sémantique facultative des Benchmarks publics (`repertoire`) ou des Épreuves ; renvoie (titre, contenu, en-tête)"""
     stage = value.get('stage')
-    content = HELP_INTRO
-    if stage in ('form', 'unavailable'):
-        content += help_form(value)
-    if stage == 'suggestions':
-        content += '<section><h2>Suggestions</h2>'
-        content += ('<p class="hint">Chaque notice est appréciée indépendamment. Les correspondances '
-                    'reposent sur des critères fermés et les champs publiés. Aucune suggestion ne '
-                    'qualifie une source.</p>')
-        suggestions = value.get('suggestions') or []
-        for suggestion in suggestions:
-            reference = suggestion.get('reference') or {}
-            label = HELP_LABELS.get(suggestion.get('label'), 'Correspondance')
-            content += ('<section><h2><a href="/evaluations-externes/' + text(suggestion['id']) + '">'
-                        + text(reference.get('name') or 'Inconnue') + '</a></h2>'
-                        + '<p class="note">' + text(label) + '. Cette appréciation ne prouve ni adéquation '
-                        'ni qualification.</p>' + reference_notice(reference) + '</section>')
-        if not suggestions:
-            content += '<p>Aucune suggestion.</p>'
-        content += '</section>'
-    elif stage == 'none':
-        content += ('<p role="status">Aucune notice ne correspond à cette formulation. '
-                    'La recherche simple reste disponible.</p>')
-    if value.get('dropped'):
-        content += ('<p class="hint">Une suggestion a été retirée : sa notice n’est plus disponible '
-                    'ou sa vérification éditoriale ne suffit plus.</p>')
-    elif stage == 'pending':
-        content += state_block('wait', 'Aide sémantique', 'Aide en cours',
-                               '<p>La demande est enregistrée. Cette page ne relance aucun appel ; '
-                               'actualisez-la dans un instant.</p>')
+    base = '/evaluations-externes' if repertoire else '/epreuves'
+    cible = 'notices' if repertoire else 'épreuves'
+    simple = (base, 'Recherche simple')
+    texte_complet = tiroir('Texte complet : données, fournisseur et coût', ''.join('<p>' + text(paragraphe) + '</p>' for paragraphe in HELP_TEXTE))
+    etats = ''
+    if stage == 'pending':
+        etats = etat('att', 'En cours', 'Aide en cours', 'La demande est enregistrée. Cette page ne relance aucun appel ; actualisez-la dans un instant.')
     elif stage == 'unavailable':
-        content += state_block('unk', 'Aide sémantique', 'Aide indisponible',
-                               '<p>' + text(HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
-                               + '</p>')
-    content += render_help_receipt(value.get('receipt'))
-    content += ('<p><a href="/evaluations-externes/aide">Nouvelle demande</a> · '
-                '<a href="/evaluations-externes">Recherche simple</a> · '
-                '<a href="/preparation">Décrire mon cas d’usage</a></p>')
-    return 'Aide sémantique facultative', content
+        etats = etat('vig', 'Indisponible', 'Aide indisponible', HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
+    elif stage == 'none':
+        etats = etat('inc', 'Aucun résultat', 'Aucune suggestion', corps_html='<p role="status">Aucune ' + ('notice' if repertoire else 'épreuve')
+                     + ' ne correspond à cette formulation. La recherche simple reste disponible.</p>')
+    elif stage == 'suggestions':
+        count = len(value.get('suggestions') or [])
+        etats = etat('ok', 'Résultat', str(count) + (' suggestions' if count > 1 else ' suggestion'), 'Chaque appréciation ne prouve ni adéquation ni qualification.')
+    if value.get('dropped'):
+        etats += etat('vig', 'Suggestion retirée', 'Une suggestion a été retirée',
+                      'Sa notice n’est plus disponible ou sa vérification éditoriale ne suffit plus.' if repertoire else
+                      'Sa version n’est plus disponible ou son paquet ne correspond plus à son empreinte.', ident='etat-retiree')
+    suggestions = ''
+    if stage == 'suggestions':
+        cartes = ''
+        for suggestion in value.get('suggestions') or []:
+            libelle, ton = HELP_LABELS.get(suggestion.get('label'), ('Correspondance', 'inc'))
+            if repertoire:
+                carte = carte_reference(suggestion['id'], suggestion.get('reference') or {})
+            else:
+                entry = suggestion.get('entry') or {}
+                carte = carte_epreuve(entry, '/epreuves/' + entry.get('task_id', '') + '/' + entry.get('version_id', ''))
+            cartes += carte.replace('<li class="g-fiche">', '<li class="g-fiche"><div class="g-corr">' + mot(libelle, ton) + '</div>', 1)
+        suggestions = ('<section><h2>Suggestions</h2><p class="texte-l">Chaque ' + ('notice' if repertoire else 'version')
+                       + ' est appréciée à part. Les correspondances reposent sur des critères fermés et les champs '
+                       + ('publiés' if repertoire else 'publics') + '. Aucune suggestion ne qualifie '
+                       + ('une source' if repertoire else 'une épreuve') + '.</p>'
+                       + ('<ul class="g-grille">' + cartes + '</ul>' if cartes else '<p>Aucune suggestion.</p>') + '</section>')
+    formulaire = help_form(value, base + '/aide', base) if stage in ('form', 'unavailable') else ''
+    cote = ''
+    if formulaire:
+        cote = ('<aside class="cote" aria-label="Ce qui est transmis"><div class="carte"><span class="etiq">Ce qui part</span>'
+                '<ul class="g-liste"><li>Votre formulation et les informations publiques des ' + cible + ' retenues.</li>'
+                '<li>Jamais : dossier privé, contribution, historique, clé ni cookie.</li></ul></div>'
+                '<div class="carte carte-douce">' + ic('cadenas') + '<p class="petit">TypeSafe ne promet ni absence de conservation, '
+                'ni localisation européenne, ni absence d’entraînement. N’écrivez rien de personnel ni de confidentiel.</p></div></aside>')
+    liens = ('<div class="actions">' + lien(base + '/aide', 'Nouvelle demande', 'actualiser') + lien(simple[0], simple[1], 'loupe')
+             + lien('/preparation', 'Décrire mon cas d’usage') + '</div>')
+    sous = '<p class="texte-l g-sous">Elle compare votre phrase au travail mesuré. Elle ne remplace pas la recherche simple.</p>' if formulaire else ''
+    corps = ('<div class="cadre g-pile">' + etats + suggestions + '</div>' if etats or suggestions else '')
+    corps += ('<div class="cadre"><div class="colonnes"><div class="pile">' + formulaire + texte_complet + '</div>' + cote + '</div></div>'
+              if formulaire else '<div class="cadre g-pile">' + render_help_receipt(value.get('receipt')) + texte_complet + liens + '</div>')
+    return 'Aide sémantique facultative', corps, dict(
+        piste_html=fil((base, 'Benchmarks publics' if repertoire else 'Épreuves')), contexte_html=puce('Facultative') + puce('Sans compte ni clé'),
+        sous_titre_html=sous, cadre_propre=True)
 
 
 def semantic_help_view(value):
@@ -749,69 +858,6 @@ def editorial_help_view(value, versions):
             'receipt': receipt, 'suggestions': suggestions, 'dropped': dropped}
 
 
-def render_editorial_help(value):
-    stage = value.get('stage')
-    content = HELP_INTRO
-    if stage in ('form', 'unavailable'):
-        content += help_form(value, '/epreuves/aide')
-    if stage == 'suggestions':
-        content += '<section><h2>Suggestions</h2>'
-        content += ('<p class="hint">Chaque version est appréciée indépendamment. Les correspondances '
-                    'reposent sur des critères fermés et les champs publics. Aucune suggestion ne '
-                    'qualifie une épreuve.</p>')
-        for suggestion in value.get('suggestions') or []:
-            entry = suggestion.get('entry') or {}
-            label = HELP_LABELS.get(suggestion.get('label'), 'Correspondance')
-            href = ('/epreuves/' + text(entry.get('task_id', '')) + '/'
-                    + text(entry.get('version_id', '')))
-            content += ('<section><h2><a href="' + href + '">' + text(entry.get('title') or 'Inconnue')
-                        + '</a></h2><p class="note">' + text(label) + '. Cette appréciation ne prouve ni '
-                        'adéquation ni qualification.</p>' + editorial_fields(entry) + '</section>')
-        if not value.get('suggestions'):
-            content += '<p>Aucune suggestion.</p>'
-        content += '</section>'
-    elif stage == 'none':
-        content += ('<p role="status">Aucune épreuve ne correspond à cette formulation. '
-                    'La recherche simple reste disponible.</p>')
-    if value.get('dropped'):
-        content += ('<p class="hint">Une suggestion a été retirée : sa version n’est plus disponible '
-                    'ou son paquet ne correspond plus à son empreinte.</p>')
-    elif stage == 'pending':
-        content += state_block('wait', 'Aide sémantique', 'Aide en cours',
-                               '<p>La demande est enregistrée. Cette page ne relance aucun appel ; '
-                               'actualisez-la dans un instant.</p>')
-    elif stage == 'unavailable':
-        content += state_block('unk', 'Aide sémantique', 'Aide indisponible',
-                               '<p>' + text(HELP_REASONS.get(value.get('reason'), 'L’aide n’est pas disponible.'))
-                               + '</p>')
-    content += render_help_receipt(value.get('receipt'))
-    content += ('<p><a href="/epreuves/aide">Nouvelle demande</a> · '
-                '<a href="/epreuves">Recherche simple</a> · '
-                '<a href="/preparation">Décrire mon cas d’usage</a></p>')
-    return 'Aide sémantique facultative', content
-
-
-def render_task_index(task):
-    content = '<p><a href="' + text(task['href']) + '">' + text(task['need']) + '</a></p>'
-    content += '<p>Visible par vous seul : rien n’est publié dans le catalogue public.</p>'
-    content += '<p>Versions : ' + ' · '.join(
-        '<a href="' + text(task['href']) + '/revisions/' + str(revision) + '">' + str(revision) + '</a>'
-        for revision in task['revisions']) + '.</p>'
-    for version in task['versions']:
-        content += '<section id="version-' + text(version['version']) + '"><h3>Exemple validé '
-        content += text(version['version']) + '</h3>'
-        content += '<p><a href="' + text(task['href']) + '/revisions/' + str(version['revision']) + '">Voir cet exemple</a></p><ul>'
-        # Le numéro distingue deux comparaisons figées dans la même seconde
-        for number, campaign in enumerate(version['campaigns'], 1):
-            content += ('<li><a href="' + text(campaign['href']) + '">Comparaison ' + str(number) + ' du '
-                        + text(date_lisible_utc(campaign['frozen_at'])) + '</a></li>')
-        content += '</ul>' if version['campaigns'] else '</ul><p>Aucune comparaison lancée avec cet exemple.</p>'
-        content += '</section>'
-    if not task['versions']:
-        content += '<p>Aucun exemple validé pour l’instant.</p>'
-    return content
-
-
 def preparation_steps(value):
     kind = value.get('kind')
     if kind not in ('configurations', 'campaign_launch', 'comparison', 'campaign_models', 'attempt_detail') and 'revision' not in value:
@@ -853,54 +899,6 @@ def preparation_steps(value):
                (value['href'] if kind in ('comparison', 'attempt_detail') else results_href) if results else None]
     cles = [cle for cle, _ in ETAPES]
     return piste(cles[current - 1], {cle: href for cle, href in zip(cles, targets) if href is not None})
-
-
-def render_source_copy(source, notice, *, future=False):
-    """Notice et pièces exactes conservées dans le dossier, distinctes du besoin personnel"""
-    labels = {'ABSENT': 'Qualification absente', 'QUALIFIED': 'Qualification réussie', 'BLOCKED': 'Qualification bloquée'}
-    status = labels.get(source.get('qualification_status'), 'Qualification absente')
-    content = ('<p class="note">Cette épreuve publiée ' + ('sera conservée' if future else 'est conservée')
-               + ' dans votre dossier avec sa version et son '
-               'empreinte. Sa qualification publiée ne qualifie pas ce dossier : le contrat et la référence de '
-               'votre nouvel exemple seront construits puis vérifiés séparément.</p>'
-               '<dl><dt>Titre</dt><dd>' + text(source['title']) + '</dd>'
-               '<dt>Travail évalué</dt><dd>' + text(source['work']) + '</dd>'
-               '<dt>Version source</dt><dd>' + text(source['version_id']) + '</dd>'
-               '<dt>Qualification publiée</dt><dd>' + text(status) + '</dd></dl>')
-    if source.get('cases'):
-        content += '<h3>Cas de l’épreuve source</h3>' + listing(source['cases'])
-    if source.get('limits'):
-        content += '<h3>Limites de l’épreuve source</h3>' + listing(source['limits'])
-    content += '<h3>Pièces ' + ('copiées' if future else 'conservées') + '</h3>'
-    for piece in source.get('pieces', []):
-        content += ('<details class="example-content"><summary>Lire « ' + text(piece['label']) + ' »</summary>'
-                    '<div class="example-text">' + text(piece['text']) + '</div></details>')
-    if notice.get('withdrawn'):
-        content += ('<p class="notice">Cette version n’est plus disponible au catalogue. Votre copie et ses pièces '
-                    'restent conservées dans ce dossier.</p>')
-    if notice.get('unavailable'):
-        content += '<p class="notice">L’état et les signalements de la source sont momentanément indisponibles.</p>'
-    for report in notice.get('reports', []):
-        content += editorial_report(report)
-    return section('Épreuve source', content, 'source')
-
-
-def render_copy_source(value, csrf):
-    """Confirmation de la copie sous le chemin privé, avec le jeton de la session existante"""
-    source = value['source']
-    path = '/preparation/copies/' + text(source['task_id']) + '/' + text(source['version_id'])
-    side = ('<p class="note">Cette copie conservera exactement la notice et les pièces ci-dessous. '
-            'Aucune clé ni aucun appel aux modèles n’est nécessaire ; vous décrirez ensuite votre besoin.</p>')
-    side += section('Créer le dossier privé', form(
-        csrf, path, {'copy': '1'},
-        '<p>Le dossier restera privé dans ce navigateur. Sa qualification publiée ne qualifie pas le nouveau dossier.</p>'
-        '<button type="submit">Créer mon dossier privé</button>'))
-    side += ('<p><a href="/epreuves/' + text(source['task_id']) + '/' + text(source['version_id'])
-             + '">Retour à l’épreuve</a></p>')
-    # L'épreuve copiée en zone principale ; ce que coûte la copie et l'action en synthèse
-    content = workbench(render_source_copy(source, value.get('source_notice') or {}, future=True), side, 'Créer le dossier privé',
-                        side_first=True)
-    return 'Créer mon dossier privé', content
 
 
 MOTS_ACCUEIL = ('votre travail', 'vos notes', 'vos devis', 'vos rapports', 'vos tableaux', 'votre travail')
@@ -1006,6 +1004,589 @@ def render_cases(value, csrf):
             + corps + '</section>' + bande + historique + '</div>')
 
 
+def render_task_index(task):
+    """Exemples validés d'un cas d'usage et leurs benchmarks, visibles par vous seul"""
+    content = '<p class="petit">Visible par vous seul : rien n’est publié dans le catalogue public.</p>'
+    content += '<p class="petit">Versions : ' + ' · '.join(
+        '<a href="' + text(task['href']) + '/revisions/' + str(revision) + '">' + str(revision) + '</a>'
+        for revision in task['revisions']) + '.</p>'
+    for version in task['versions']:
+        # Le numéro distingue deux benchmarks figés dans la même seconde
+        items = ''.join('<li><span>Benchmark ' + str(number) + ' du ' + text(date_lisible_utc(campaign['frozen_at'])) + '</span>'
+                        + lien(campaign['href'], 'Voir les résultats') + '</li>' for number, campaign in enumerate(version['campaigns'], 1))
+        content += ('<div id="version-' + text(version['version']) + '"><h3>Exemple validé ' + text(version['version']) + '</h3><ul>'
+                    + (items or '<li><span>Aucun benchmark lancé avec cet exemple.</span></li>') + '</ul><div class="actions">'
+                    + lien(task['href'] + '/revisions/' + str(version['revision']), 'Voir cet exemple') + '</div></div>')
+    if not task['versions']:
+        content += '<p>Aucun exemple validé pour l’instant.</p>'
+    return content
+
+
+def render_catalogue(value):
+    """Exemples validés et benchmarks de tous les cas d'usage de ce navigateur"""
+    corps = ''.join('<article class="ge-cat"><h2><a href="' + text(task['href']) + '">' + text(task['need']) + '</a></h2>' + render_task_index(task) + '</article>'
+                    for task in value['tasks'])
+    if not value['tasks']:
+        corps = '<p>Aucun cas d’usage validé pour l’instant. Validez un exemple pour le retrouver ici.</p>'
+    corps = '<div class="ge-pile">' + corps + '<p>' + lien('/preparation', 'Revenir à mes cas d’usage', 'retour') + '</p></div>'
+    return 'Exemples validés et benchmarks', corps, dict(sous_titre_html=(
+        '<p class="texte-l">Visible par vous seul, dans ce navigateur. Pour chaque cas validé, retrouvez ses exemples et ses benchmarks.</p>'))
+
+
+def render_attente(value):
+    """Demande enregistrée : l'envoi est pris en compte, l'assistant prépare sa réponse"""
+    url = '/preparation' if value.get('kind') == 'honeypot_ack' else '/preparation/dossiers/' + value['dossier_id']
+    lignes = (('coche', 'check', 'Envoi enregistré', mot('Fait', 'ok')), ('coche coche-att', 'horloge', 'L’assistant prépare sa réponse', mot('En cours', 'att')),
+              ('coche coche-vide', 'question', 'Une question, ou votre exemple', mot('À venir', 'inc')))
+    liste = ''.join('<li><span class="' + classe + '">' + ic(icone) + '</span><span>' + text(libelle) + '</span>' + statut + '</li>'
+                    for classe, icone, libelle, statut in lignes)
+    corps = ('<div class="gb-seul gb-cote">' + etat('att', 'Enregistrée', 'L’assistant prépare sa réponse',
+             'Votre envoi est bien enregistré. Vous pouvez quitter cette page et revenir plus tard.', btn(url, 'Suivre mon cas d’usage'),
+             marque_html=disque('disque-l tourne')) + '<ul class="checklist carte" aria-label="Étapes de la préparation">' + liste + '</ul></div>')
+    return 'Demande enregistrée', corps, dict(piste_html=piste('besoin'))
+
+
+def render_source_copy(source, notice, *, future=False):
+    """Épreuve source conservée dans le dossier, distincte du besoin personnel : titre, travail, version, cas, limites, pièces"""
+    absente = source.get('qualification_status') in (None, 'ABSENT') or source.get('qualification_status') not in EDITORIAL_STATUS
+    statut = EDITORIAL_STATUS.get(source.get('qualification_status'), 'Qualification absente')
+    phrase = ('Aucune qualification n’est publiée pour cette épreuve. Votre exemple est contrôlé à part : son contrat et sa référence sont '
+              'construits puis contrôlés pour votre dossier.' if absente else
+              'Sa qualification publiée ne qualifie pas ce dossier : votre exemple est contrôlé à part ; son contrat et sa référence sont '
+              'construits puis contrôlés pour votre dossier.')
+    groupes = ''
+    if source.get('cases'):
+        groupes += '<h3>Cas de l’épreuve source</h3>' + listing(source['cases'])
+    if source.get('limits'):
+        groupes += '<h3>Limites de l’épreuve source</h3>' + listing(source['limits'])
+    groupes += '<h3>Pièces</h3><ul class="pieces">' + ''.join(
+        feuille(piece['label'], '', piece['text'], 'source-' + str(index)) for index, piece in enumerate(source.get('pieces', []), 1)) + '</ul>'
+    contenu = ('<section class="carte ge-pile" id="source" aria-labelledby="t-src"><h2 id="t-src">Épreuve source</h2>'
+               + cles([('Titre', text(source['title'])), ('Travail évalué', text(source['work'])), ('Version source', text(version_lisible(source['version_id']))),
+                       ('Qualification', text(statut))])
+               + '<p class="petit">L’épreuve ' + ('sera conservée' if future else 'est conservée') + ' avec sa version et son empreinte. ' + phrase + '</p>'
+               + tiroir('Cas, limites et pièces ' + ('copiées' if future else 'conservées'), '<div class="ge-src">' + groupes + '</div>'))
+    if notice.get('withdrawn'):
+        contenu += notice_ligne('Cette version n’est plus disponible au catalogue. Votre copie et ses pièces restent conservées dans ce dossier.')
+    if notice.get('unavailable'):
+        contenu += notice_ligne('L’état et les signalements de la source sont momentanément indisponibles.')
+    if notice.get('reports'):
+        contenu += tiroir('Signalement éditorial', ''.join(
+            '<p>' + text(report['summary']) + '</p><p class="petit">Attribué à la version source le ' + text(date_lisible_utc(report['reported_at']))
+            + '. Ce signalement ne corrige pas les pièces ni les preuves déjà conservées.</p>' for report in notice['reports']))
+    return contenu + '</section>'
+
+
+def render_copy_source(value, csrf):
+    """Confirmation de la copie sous le chemin privé, avec le jeton de la session existante"""
+    source = value['source']
+    path = '/preparation/copies/' + source['task_id'] + '/' + source['version_id']
+    decision = form(csrf, path, {'copy': '1'}, '<span class="etiq">Copie</span><h2>Créer le dossier privé</h2>'
+                    '<p>Le dossier reste privé dans ce navigateur. Vous décrirez ensuite votre besoin.</p>'
+                    + bouton('Créer mon dossier privé', xl=True) + '<p class="effet">' + ic('cadenas') + '<span>Rien n’est publié. Aucun modèle n’est appelé.</span></p>',
+                    classe='decision')
+    corps = ('<div class="colonnes"><div class="pile-l">' + render_source_copy(source, value.get('source_notice') or {}, future=True) + '</div><aside class="cote" aria-label="Décision">'
+             + decision + lien('/epreuves/' + source['task_id'] + '/' + source['version_id'], 'Retour à l’épreuve', 'retour') + '</aside></div>')
+    return 'Créer mon dossier privé', corps, dict(sous_titre_html=(
+        '<p class="texte-l">Cette copie garde exactement la notice et les pièces ci-dessous. Aucune clé ni aucun appel aux modèles n’est nécessaire.</p>'))
+
+
+# ——— Besoin, exemple, validation, révision, hors champ ———
+# Raisons pour lesquelles l'envoi est refusé : écrites au-dessus de la conversation et liées au champ désactivé par `availability`
+RAISONS_ENVOI = {
+    'access': ('Ajoutez votre clé OpenRouter pour préparer un exemple.', 'alerte'),
+    'unconfigured': ('Préparation indisponible : aucun assistant n’est en service pour le moment.', 'alerte'),
+    'waiting': ('Votre préparation précédente est en cours. Actualisez la page pour voir où elle en est.', 'horloge'),
+    'interrupted': ('Nous ne savons pas si le modèle a répondu. Rien n’est relancé ; cette opération sera close automatiquement.', 'alerte'),
+    'restore': ('Service momentanément indisponible, réessayez plus tard.', 'alerte'),
+    'unresolved': ('Envois fermés : le résultat ou le coût d’un appel précédent n’est pas encore connu.', 'alerte')}
+# Ancien ton du produit : (ton, mot de statut) ; le mot double la couleur
+MOTS_TON = {'action': ('att', 'À faire'), 'wait': ('att', 'En cours'), 'warn': ('vig', 'À vérifier'), 'err': ('ko', 'À revoir'),
+            'done': ('ok', 'Terminé'), 'unk': ('inc', 'Inconnu')}
+CONTROLE = {'QUALIFIED': 'Réussi', 'BLOCKED': 'Bloqué', 'PENDING': 'En attente'}
+# Contrôle de l'exemple : état connu de l'exemple avant et après validation
+TEXTE_CONTROLE_ATTENTE = ('Après votre validation, l’assistant contrôle que la consigne, les pièces et les critères permettent de juger '
+                          'les réponses des modèles. Ce contrôle n’a pas encore eu lieu pour cette version.')
+TEXTE_CONTROLE_REUSSI = ('L’assistant a contrôlé cette version : la consigne, les pièces et les critères permettent de juger '
+                         'les réponses des modèles.')
+
+
+def cout_preparation(value):
+    """Coût de la préparation en relevé compact : estimé, observé ou corrigé, jamais deviné"""
+    lignes, notes = [], ''
+    if 'indicative_cost' in value:
+        estimate = value['indicative_cost']
+        amount = estimate.get('token_subtotal_usd') if estimate else None
+        lignes.append(('Coût estimé de la préparation', None if amount is None else montant_lisible(amount), 'USD',
+                       'non estimable' if amount is None else 'estimation, pas une facture'))
+        notes = '<p class="petit">Calcul de l’estimation : tokens utilisés × tarifs du modèle relevés avant l’appel.</p>'
+    if value.get('observed_cost'):
+        cost = value['observed_cost']
+        inconnu = cost['status'] == 'UNKNOWN'
+        lignes.append(('Coût observé de la préparation', None if inconnu else montant_lisible(cost['amount']), '' if inconnu else cost['currency'],
+                       'source : ' + str(cost['source'])))
+    elif value.get('operations') == 0:
+        # Zéro opération : aucune dépense à rapprocher, pas même une dépense inconnue
+        lignes.append(('Coût de la préparation', 'aucun', '', 'aucun appel modèle effectué'))
+    else:
+        lignes.append(('Coût de la préparation', None, '', 'aucun justificatif reçu'))
+    if value.get('cost_reconciliation'):
+        proof, cost = value['cost_reconciliation'], value['effective_cost']
+        lignes.append(('Coût corrigé après vérification', montant_lisible(cost['amount']), cost['currency'],
+                       'source : ' + str(proof['source']) + ', confirmée par ' + str(proof['actor']) + ' le ' + str(proof['observed_at'])))
+        notes += '<p class="petit">Le justificatif d’origine reste inchangé.</p>'
+    return releves(lignes, compact=True) + notes
+
+
+def formulaire_reponse(csrf, url, revision, *, desactive, aide, decrit='', libelle='Votre réponse à l’assistant', envoi='Envoyer ma réponse',
+                       minlength=None):
+    """Champ de réponse de la conversation : un champ, un bouton, la raison du refus liée au champ désactivé"""
+    attribut = ' disabled aria-describedby="availability"' if desactive else ''
+    return form(csrf, url + '/messages', {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
+                '<label class="cache" for="message">' + text(libelle) + '</label><textarea id="message" name="message" rows="3" required'
+                + (' minlength="' + str(minlength) + '"' if minlength else '') + ' maxlength="1000" placeholder="Votre réponse…"' + attribut + '></textarea>'
+                + HONEYPOT + '<div class="actions"><span class="petit">' + text(aide) + '</span>'
+                + bouton(envoi, sec=desactive).replace('type="submit"', 'type="submit"' + (' disabled' if desactive else '')) + '</div>',
+                classe='reponse')
+
+
+def tiroir_correction(csrf, url, revision, disabled, *, ouvert=False):
+    """« Préciser ou corriger cet exemple » : le bloc jaune de la validation envoie ce formulaire quand le tiroir est ouvert"""
+    corps = form(csrf, url + '/messages', {'action_id': secrets.token_hex(16), 'revision': revision},
+                 '<p class="petit">Ce qui est convenu reste acquis. Si l’exemple change, vous le validerez de nouveau. '
+                 'Les versions précédentes restent consultables.</p>'
+                 '<div class="champ"><label for="kind">Votre message sert à</label><select id="kind" name="kind"' + disabled + '>'
+                 '<option value="clarify">Répondre à l’assistant ou confirmer le travail</option>'
+                 '<option value="correct" selected>Modifier cet exemple</option></select></div>'
+                 + champ('Votre précision ou correction', 'message', ident='message', maxlength=1000, desactive=bool(disabled), aide='')
+                 + HONEYPOT + '<div class="actions envoi">' + bouton('Envoyer ce message', sec=True).replace(
+                     'type="submit"', 'type="submit"' + disabled) + '</div>', form_id='form-corriger')
+    return tiroir('Préciser ou corriger cet exemple', corps, resume='Versions précédentes conservées', ouvert=ouvert, ident='corriger')
+
+
+MODE_CORRIGER = ('<div class="mode-corriger"><div class="mc-correct"><h2>Corriger l’exemple</h2>'
+                 '<p>L’assistant lit votre message et prépare une nouvelle version. Vous la relirez avant de la valider.</p>'
+                 + bouton('Corriger ce travail', xl=True).replace('type="submit"', 'type="submit" form="form-corriger"') + '</div>'
+                 '<div class="mc-clarify"><h2>Répondre à l’assistant</h2>'
+                 '<p>L’assistant lit votre réponse et reprend la préparation de l’exemple.</p>'
+                 + bouton('Envoyer ma réponse', xl=True).replace('type="submit"', 'type="submit" form="form-corriger"') + '</div></div>')
+
+
+def decision_validation(csrf, url, value, disabled, estimation_html):
+    """Bloc jaune de la validation : valider l'exemple, ou (tiroir de correction ouvert) envoyer la correction"""
+    return form(csrf, url + '/validation', binding(value['dossier_id'], value['revision'], value['package_sha256']),
+                '<span class="etiq">Étape 3 sur 5</span><div class="mode-valider" id="validation"><h2>Valider l’exemple</h2>'
+                '<p>Vous confirmez que cet exemple représente bien votre besoin. L’exemple est ensuite contrôlé automatiquement, si ce service est disponible : '
+                'ce contrôle est payé avec votre clé OpenRouter. Valider ne lance aucun des modèles à comparer et ne publie rien.</p>'
+                + bouton('Oui, c’est le travail à tester', xl=True).replace('type="submit"', 'type="submit"' + disabled) + estimation_html + '</div>'
+                + MODE_CORRIGER, classe='decision')
+
+
+def estimation_controle(value):
+    """Annonce de dépense avant validation : deux réserves distinctes, jamais additionnées (DESIGN.md)"""
+    estimate = value.get('qualification_estimate')
+    if not estimate:
+        return ''
+    return ('<p class="petit">Estimation avant consommation : une réserve est bloquée sur votre crédit avant chaque appel. '
+            'Pour le contrôle de l’exemple : au plus ' + text(montant_lisible(estimate['check_usd']))
+            + ' USD réservé. Puis, pour le contrôle de chaque témoin, ' + text(str(estimate['witness_limit']))
+            + ' au plus : au plus ' + text(montant_lisible(estimate['witness_usd']))
+            + ' USD réservé par témoin. Un témoin est une réponse inventée, recevable ou fautive, soumise au '
+            'contrôle qui jugera les modèles. Le coût observé est relevé ensuite sur le justificatif de chaque appel.</p>')
+
+
+def critere_obligation(item):
+    """Une obligation, composée ou non : ses éléments sont jugés chacun séparément"""
+    if type(item) is str:
+        return text(item)
+    return text(item['description']) + listing(item['elements'])
+
+
+def bloc_criteres(value):
+    """Critères de réussite : obligations, erreurs éliminatoires et qualité en lignes de genre, puis la règle"""
+    criteria = value['criteria']
+    lignes = ''.join(critere_ligne(critere_obligation(item), 'Obligation') for item in criteria['obligations'])
+    lignes += ''.join(critere_ligne(text(item), 'Erreur éliminatoire', interdit=True) for item in criteria['eliminatory'])
+    lignes += ''.join(critere_ligne(text(item['label']), 'Qualité') for item in criteria['quality'])
+    return ('<section class="pile" aria-labelledby="t-criteres"><div class="zone-titre"><h2 id="t-criteres">Critères de réussite</h2>'
+            '<span class="petit">Chaque obligation compte.</span></div><div class="carte"><p class="etiq">Ce que le modèle doit rendre</p>'
+            + ''.join('<p class="texte-l">' + text(item) + '</p>' for item in value['package']['deliverables'])
+            + '<ul class="criteres">' + lignes + '</ul><p class="regle-verdict"><span>Règle</span> <span>' + text(value['criteria_rule'])
+            + '</span></p></div></section>')
+
+
+def bloc_dossier(value):
+    """Consigne, pièces, critères, limites, changements : l'exemple lisible en entier"""
+    package = value['package']
+    pieces = ''.join(feuille(piece['name'], '', value['example_contents'][piece['id']], 'piece-' + str(index))
+                     for index, piece in enumerate(package['pieces'], 1))
+    contenu = consigne(package['instruction'], ident='exemple')
+    contenu += ('<section class="pile" aria-labelledby="t-pieces"><div class="zone-titre"><h2 id="t-pieces">Les pièces</h2><span class="petit">'
+                + str(len(package['pieces'])) + (' documents inventés' if len(package['pieces']) > 1 else ' document inventé')
+                + '</span></div><ul class="pieces">' + pieces + '</ul></section>')
+    contenu += bloc_criteres(value)
+    limites = '<h3>Ce qui restera à faire par une personne</h3><p>' + text(package['human_work']) + '</p>'
+    if package['acceptable_ambiguities']:
+        limites += '<h3>Ambiguïtés acceptées</h3>' + listing(package['acceptable_ambiguities'])
+    if package['limits']:
+        limites += '<h3>Limites de l’exemple</h3>' + listing(package['limits'])
+    contenu += tiroir('Limites et travail restant', limites)
+    labels = {'instruction': 'Consigne', 'deliverables': 'Livrables', 'criteria': 'Critères',
+              'acceptable_ambiguities': 'Ambiguïtés acceptées', 'pieces': 'Pièces'}
+    if value['changes']:
+        changes = listing(labels.get(change, change) for change in value['changes'])
+        for kind, label in (('added', 'Pièces ajoutées'), ('removed', 'Pièces retirées'), ('modified', 'Pièces modifiées')):
+            names = value['piece_changes'][kind]
+            if names:
+                changes += '<h3>' + label + '</h3>' + listing(names)
+        contenu += tiroir('Ce qui a changé depuis la version précédente', changes)
+    return contenu
+
+
+def bloc_precisions(value):
+    """Besoin, précisions et éléments inventés : tiroir sous l'exemple, jamais perdus"""
+    payload = value['payload']
+    contenu = ''
+    if value.get('message') and 'message' in value['message'] and not value.get('source'):
+        contenu += '<h3>Votre message à l’origine de cette version</h3><p>' + text(value['message']['message']) + '</p>'
+    if payload['clarifications'] or payload['validated_assumptions']:
+        accords = listing(payload['clarifications']) if payload['clarifications'] else ''
+        for agreement in payload['validated_assumptions']:
+            if type(agreement) is dict and set(agreement) == {'question', 'answer'}:
+                accords += ('<blockquote><p>' + text(agreement['question']) + '</p><p><strong>Votre accord : </strong>'
+                            + text(agreement['answer']) + '</p></blockquote>')
+            else:
+                accords += '<p>' + text(encode(agreement) if type(agreement) is dict else agreement) + '</p>'
+        contenu += '<h3>Précisions et points convenus</h3>' + accords
+    if payload['reformulation']:
+        contenu += '<h3>Votre besoin reformulé par l’assistant</h3><p>' + text(payload['reformulation']) + '</p>'
+    if payload['fictional_parameters']:
+        contenu += '<h3>Éléments inventés pour l’exemple</h3>' + listing(f'{k} : {v}' for k, v in payload['fictional_parameters'].items())
+    return tiroir('Votre besoin et vos précisions', '<p>' + text(payload['request']) + '</p>' + contenu, ident='besoin') if payload['request'] or contenu else ''
+
+
+def controle_exemple(value, qualification, automatic, referral):
+    """Tiroir « Contrôle de l'exemple » : ce que le contrôle a relevé, ou pourquoi il n'a pas eu lieu"""
+    if not value['package'] or referral:
+        return ''
+    reussi = qualification.get('qualification_status') == 'QUALIFIED' or qualification.get('status') == 'QUALIFIED'
+    if not value['validation'] and not qualification:
+        return tiroir('Contrôle de l’exemple', '<p>' + TEXTE_CONTROLE_ATTENTE + '</p>', resume='En attente')
+    corps = '<p>' + TEXTE_CONTROLE_REUSSI + '</p>' if reussi else ''
+    if automatic:
+        resume = 'Impossible pour le moment' if qualification.get('cause') else CONTROLE.get(qualification.get('qualification_status', qualification.get('status')), 'En attente')
+        # L'encadré d'état porte déjà la remarque d'un contrôle bloqué ou impossible
+        dans_encadre = not reussi and qualification.get('status') == 'BLOCKED' or bool(qualification.get('cause'))
+        corps += ('' if dans_encadre else '<p>Remarque du contrôle : ' + text(qualification['summary']) + '</p>')
+        corps += (listing(finding['text'] for finding in qualification.get('findings', [])) + render_witnesses(qualification))
+    else:
+        resume = CONTROLE.get(qualification.get('qualification_status'), 'En attente')
+        if qualification.get('findings'):
+            corps += '<p>Bloqué. Ce que le contrôle de l’exemple a relevé :</p>' + listing(finding['text'] for finding in qualification['findings'])
+    return tiroir('Contrôle de l’exemple', corps, resume=resume)
+
+
+def ligne_exemples(value, stages, cases):
+    """Exemples de ce cas d'usage : l'exemple courant, les autres, et ce qui les distingue"""
+    def case_state(case):
+        if case['drifted']:
+            return 'contrat d’une ancienne version de l’exemple 1'
+        if case['validated']:
+            return 'exemple contrôlé' if case['qualified'] else 'validé, contrôle en attente ou à revoir'
+        return 'à valider' if case['stage'] == 'preview' else stages[case['stage']][2].lower()
+    drifted = any(case['drifted'] for case in cases)
+    corps = ('<ul class="g-liste">' + ''.join(
+        '<li>' + ('Exemple ' + str(case['number']) + ' (cette page)' if case['current'] else
+                  '<a href="/preparation/dossiers/' + text(case['dossier_id']) + '">Exemple ' + str(case['number']) + '</a>')
+        + ' : ' + text(case_state(case)) + '.' + (' Ce qui le distingue : ' + text(case['difference']) if case['difference'] else '') + '</li>'
+        for case in cases) + '</ul>'
+        + ('<p class="petit">Le contrat de l’exemple 1 a changé depuis la création de certains exemples : '
+           'ces exemples ne suivent plus la même consigne. Ajoutez-les de nouveau depuis l’exemple 1.' if drifted else
+           '<p class="petit">Tous les exemples suivent la même consigne, les mêmes livrables et les mêmes critères.')
+        + ' Plusieurs exemples ne prouvent pas qu’ils représentent votre travail : chacun reste inventé, validé et '
+        'contrôlé séparément.</p>')
+    return section('Exemples de ce cas d’usage', corps, 'cas')
+
+
+def ajouter_exemple(csrf, dossier_id, disabled):
+    return tiroir('Ajouter un autre exemple à ce cas d’usage', form(
+        csrf, '/preparation/dossiers', {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16), 'case_of': dossier_id},
+        '<p class="petit" id="case-context-help">Le nouvel exemple reprend la consigne, les livrables, les critères et les '
+        'ambiguïtés acceptables de cette version. L’assistant prépare d’autres pièces et un autre résultat de '
+        'référence, à valider puis contrôler séparément. Cette préparation est payée avec votre clé OpenRouter. '
+        'Stabilisez cet exemple avant d’en ajouter d’autres : une correction ultérieure de sa consigne ne se '
+        'reporte pas aux exemples déjà créés.</p>'
+        + champ('Ce qui distingue cet exemple, par exemple la difficulté qu’il couvre', 'context', ident='case-context', maxlength=CONTEXT_MAX,
+                desactive=bool(disabled)).replace('<textarea ', '<textarea required aria-describedby="case-context-help" ', 1)
+        + '<div class="actions">' + bouton('Préparer cet exemple', sec=True).replace('type="submit"', 'type="submit"' + disabled) + '</div>'),
+        resume='Facultatif')
+
+
+def liste_benchmarks(value, url, current_campaigns):
+    """Benchmarks lancés avec cet exemple, le plus récent d'abord, et le journal détaillé en tiroir"""
+    items = ''
+    for number, campaign in reversed(list(enumerate(current_campaigns, 1))):
+        ton, heading, _, target, _ = campaign_status(campaign, url)
+        items += ('<li><a href="' + text(target) + '">Benchmark ' + str(number) + ' du '
+                  + text(date_lisible_utc(campaign['conditions']['frozen_at'])) + '</a>' + mot(heading, MOTS_TON[ton][0]) + '</li>')
+    return ('<section id="comparaison" aria-labelledby="t-comps"><div class="zone-titre"><h2 id="t-comps">Benchmarks de cet exemple</h2></div>'
+            '<ul class="gb-hist carte">' + items + '</ul></section>')
+
+
+def hors_champ(value, referral, request, benchmarks, bas):
+    """Cas arrêté, hors du champ d'Evaly : les benchmarks publics utiles, en direct, sans rien transmettre du besoin"""
+    liste = ''
+    for identity, reference in benchmarks:
+        url = reference_url(reference)
+        verification = mot('Vérifiée', 'ok') if reference_verified(reference) else mot('Vérification insuffisante', 'vig')
+        source = ('<a class="btn btn-s" href="' + text(url) + '" rel="noreferrer noopener" target="_blank">Ouvrir ' + text(reference['name']) + ic('lien') + '</a>'
+                  if url else '<span class="petit">Source indisponible</span>')
+        liste += ('<li class="gb-bench"><div><h3>' + text(reference['name']) + '</h3><p>' + text(reference['work']) + '</p>' + verification
+                  + '</div><div class="actions">' + source + lien('/evaluations-externes/' + identity, 'Lire la fiche') + '</div></li>')
+    if liste:
+        titre = 'Ce travail est déjà mesuré par des benchmarks publics'
+        intro = ('Votre demande porte sur une compétence générale, pas sur un travail précis. Des benchmarks publics la mesurent déjà sur des '
+                 'milliers d’exercices : leurs classements vous répondront mieux qu’un exemple unique.')
+        liste = '<ul class="gb-benchs">' + liste + '</ul>'
+    else:
+        titre = 'Evaly compare des modèles sur un travail précis'
+        intro = ('Votre demande ne décrit pas un travail précis. Aucun benchmark public ne correspond directement. '
+                 'Décrivez un cas d’usage réel de votre travail : ce que vous recevez, et ce que vous voulez obtenir.')
+    autre = btn('/preparation', 'Décrire un cas d’usage précis', sec=bool(liste), avant='stylo', icone=None)
+    return ('<div class="cadre gb-hc"><div class="entretien">' + (bulle_vous(request) if request else '') + '</div>'
+            '<section class="gb-hc-rep" aria-labelledby="t-hc">' + mot('Hors champ', 'inc') + '<h2 id="t-hc">' + titre + '</h2><p class="texte-l">' + intro + '</p>'
+            + liste + '<div class="actions">' + autre + lien('/evaluations-externes', 'Tous les benchmarks publics') + '</div>'
+            '<p class="petit">Ce cas d’usage est arrêté : aucun benchmark ne sera lancé. Votre demande n’est transmise à aucun de ces sites.</p></section>'
+            + ('<div class="pile">' + bas + '</div>' if bas else '') + '</div>')
+
+
+def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
+    """Page d'un cas d'usage : besoin, exemple, validation, révision ou hors champ ; renvoie (titre, contenu, en-tête, état)"""
+    dossier_id, revision = value['dossier_id'], value['revision']
+    url = '/preparation/dossiers/' + dossier_id
+    source, source_notice = value.get('source'), value.get('source_notice') or {}
+    package, stage = value['package'], value['stage']
+    prior_revision = revision != value.get('current_revision', revision)
+    snapshot = '/revisions/' in path and any(c['task']['revision'] == revision and c['attempts'] for c in value.get('campaigns', []))
+    referral = value.get('checks', {}).get('out_of_scope')
+    editable = not prior_revision and not snapshot and stage != 'waiting' and not referral
+    disabled = '' if can_submit and editable else ' disabled aria-describedby="availability"'
+    current_campaigns = [c for c in value.get('campaigns', []) if c['task']['revision'] == revision]
+    launched = any(c['attempts'] for c in current_campaigns)
+    qualification = value.get('qualification', {})
+    automatic = 'operation_id' in qualification
+    explanation = value.get('explanation') or ''
+    suite = ('Renvoyez votre message pour relancer la préparation.' if can_submit
+             else 'Vous pourrez renvoyer votre message quand l’envoi sera de nouveau possible.')
+    stages = {'draft': ('inc', 'Brouillon', 'Rien n’a encore été envoyé à l’assistant', ''),
+              'waiting': ('att', 'En cours', 'Préparation en cours',
+                          'L’assistant prépare votre exemple, ou une question s’il lui manque une information. Vous pouvez quitter cette page.'),
+              'clarification': ('att', 'Question', 'L’assistant a une question',
+                                'Répondez : l’exemple sera préparé ensuite. Vous pouvez quitter la page et revenir.'),
+              'preview': ('att', 'À relire', 'Votre exemple est prêt', 'Lisez la consigne et les pièces, corrigez si besoin, puis validez.'),
+              'scope_confirmation': ('att', 'Question', 'Précisez le travail à comparer',
+                                     'Evaly compare des modèles sur un travail concret, avec un résultat attendu et des critères vérifiables. '
+                                     'Aucun benchmark ne se lance à cette étape.'),
+              # La cause vient de l'explication ; l'envoi reste ouvert sauf motif de disponibilité affiché à part
+              'suspended': ('ko', 'Arrêtée', 'Préparation arrêtée', (explanation + ' ' if explanation else '') + suite)}
+    ton, mot_, titre, texte = stages[stage]
+    if source and stage == 'draft':
+        ton, mot_, titre, texte = ('ok', 'Copie enregistrée', 'Votre copie est enregistrée',
+                                   'Vous la consultez sans clé ni appel aux modèles. La clé OpenRouter sert à préparer votre exemple.')
+    action = ''
+    if value['validation']:
+        bloque = qualification.get('status') == 'BLOCKED' and not qualification.get('cause')
+        if automatic and value.get('qualified') or not automatic and value.get('qualified') and not current_campaigns:
+            ton, mot_, titre, texte = ('ok', 'Contrôlé', 'Exemple contrôlé, prêt à comparer',
+                                       'Lisez les remarques du contrôle, puis choisissez les modèles à comparer.' if automatic else 'Choisissez les modèles à comparer.')
+        elif current_campaigns:
+            ton, mot_, titre, texte = ('ok', 'Lancé', 'Benchmark lancé', 'Un benchmark utilise déjà cet exemple. Suivez-le jusqu’aux résultats.')
+        elif not automatic:
+            ton, mot_, titre, texte = ('inc', 'Non démarré', 'Contrôle de l’exemple non démarré',
+                                       'Le contrôle de l’exemple n’a pas pu démarrer. Pour le relancer, corrigez l’exemple, puis validez-le de nouveau.')
+        elif qualification.get('status') == 'BLOCKED' and qualification.get('cause'):
+            # Incident chez le fournisseur ou clé : l'exemple n'est pas en cause
+            ton, mot_, titre, texte = 'inc', 'Impossible', 'Contrôle de l’exemple impossible pour le moment', qualification['summary']
+        elif bloque:
+            ton, mot_, titre, texte = ('ko', 'À revoir', 'Exemple à revoir avant le benchmark',
+                                       'Remarque du contrôle : ' + qualification['summary'].rstrip('.') + '. Corrigez l’exemple, puis validez-le de nouveau.')
+        elif qualification.get('cause'):
+            ton, mot_, titre, texte = 'att', 'En attente', 'Contrôle de l’exemple en attente', qualification['summary']
+        else:
+            ton, mot_, titre, texte = ('att', 'En cours', 'Contrôle de l’exemple en cours',
+                                       'Votre validation est enregistrée. L’assistant contrôle que l’exemple est cohérent et que ses critères peuvent être contrôlés.')
+    # Contrat opérateur bloqué avant tout lancement : l'exemple est à revoir, aucun benchmark ne se lance
+    operator_blocked = (value['validation'] and not automatic and qualification.get('qualification_status') == 'BLOCKED' and not launched)
+    if operator_blocked:
+        ton, mot_, titre, texte = ('ko', 'À revoir', 'Exemple à revoir avant le benchmark',
+                                   'Le détail du contrôle, plus bas, dit ce qui bloque. Corrigez l’exemple, puis validez-le de nouveau.')
+    corriger = ton in ('ko',) and mot_ == 'À revoir' or mot_ == 'Non démarré'
+    if corriger and package:
+        action = btn('#corriger', 'Corriger l’exemple', icone='stylo')
+    # Un benchmark existe : l'encadré dit son état et mène à lui, jamais à un nouveau choix de modèles
+    if value['validation'] and current_campaigns and not snapshot and not prior_revision and not operator_blocked:
+        ancien, titre, texte, cible, libelle = campaign_status(current_campaigns[-1], url)
+        ton, mot_ = MOTS_TON[ancien]
+        action = btn(cible, libelle)
+    elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
+        action = btn(url + '/configurations', 'Choisir les modèles')
+    h1 = ('Votre cas d’usage' if value['validation'] else 'Est-ce le travail à tester ?' if package else 'Votre dossier privé' if source
+          else 'Précisons votre besoin')
+    if launched and not snapshot and package:
+        h1 = 'Exemple validé, benchmark lancé'
+    notices = ''
+    if snapshot:
+        h1 = 'Exemple utilisé pour le benchmark'
+        ton, mot_, titre, texte = ('ok', 'Déjà testé', 'Exemple déjà testé',
+                                   'Vous consultez l’exemple tel qu’il a été testé. Ses résultats restent disponibles.')
+        notices += notice_ligne('Lecture seule. Si vous modifiez l’exemple, vos changements formeront une nouvelle version, à valider de nouveau.', 'cadenas')
+        resultats = [campaign_status(c, url)[3] for c in current_campaigns if c['attempts']]
+        action = btn(url, 'Nouveau benchmark') + (lien(resultats[-1], 'Revenir aux résultats', 'retour') if resultats else '')
+    elif prior_revision:
+        ton, mot_, titre = 'vig', 'Lecture seule', 'Ancienne version'
+        texte = ('Cet exemple a été remplacé par une version plus récente.' if package or stage != 'waiting'
+                 else 'La préparation continue dans la version actuelle. Celle-ci ne peut ni être modifiée ni être validée.')
+        action = btn(url, 'Ouvrir la version actuelle')
+        if not referral:
+            notices += notice_ligne('Ancienne version, en lecture seule. Pour modifier ou valider, ouvrez la version actuelle.', 'cadenas')
+    if value.get('notice'):
+        texte = value['notice'] + ' ' + texte
+    # Raison pour laquelle l'envoi est refusé : au-dessus de la conversation, liée au champ désactivé
+    etat_service = value.get('availability', {})
+    raison = RAISONS_ENVOI.get(etat_service.get('reason'))
+    if (etat_service and not pending and not can_submit and editable and raison and not referral and not prior_revision):
+        phrase = raison[0]
+        if etat_service['reason'] == 'access' and source and package is None:
+            phrase = ('Votre copie est enregistrée. Vous pouvez la consulter sans clé ni appel aux modèles ; '
+                      'la clé OpenRouter servira à préparer votre exemple.')
+        notices = '<p class="etat-ligne gb-notice" id="availability">' + ic(raison[1]) + '<span>' + text(phrase) + '</span></p>' + notices
+    request = value['payload']['request']
+    privacy_html = render_privacy_controls(value, csrf, render_contribution(value, csrf) if launched and package else '')
+    partage = render_contribution(value, csrf) if package and not launched else ''
+    bas = ''
+    if value.get('task_index'):
+        bas += tiroir('Historique des versions et des benchmarks', render_task_index(value['task_index']))
+    cases = value.get('cases', [])
+    if current_campaigns and package:
+        bas += liste_benchmarks(value, url, current_campaigns)
+    if value.get('campaigns') and package:
+        bas += tiroir('Historique détaillé des benchmarks', render_campaign_records(value['campaigns'], url),
+                      resume='Benchmark ' + str(len(current_campaigns)) if current_campaigns else '')
+    if cases and package:
+        bas += ligne_exemples(value, stages, cases)
+    if (package and value['validation'] and (not cases or cases[0]['current']) and not snapshot and not prior_revision and not referral):
+        bas += ajouter_exemple(csrf, dossier_id, disabled)
+    bas += controle_exemple(value, qualification, automatic, referral) if package else ''
+    bas += privacy_html + partage
+    # Une fois la vue écrite, le tail de `render` n'ajoute plus les contrôles de confidentialité de cette page
+    sortie = dict(bas_place=True)
+    ancre = lien(path, 'Actualiser', 'actualiser') if not pending else ''
+    precedente = lien(url + '/revisions/' + str(revision - 1), 'Version précédente') if revision > 1 else ''
+    liens = '<div class="actions">' + ancre + precedente + '</div>' if ancre or precedente else ''
+    if referral:
+        benchmarks = [(identity, reference) for identity, reference in BENCHMARK_REFERENCES.items()
+                      if reference['category'] == referral and reference.get('availability') == 'available']
+        contenu = hors_champ(value, referral, request, benchmarks, bas)
+        return 'Hors du champ d’Evaly', contenu, dict(piste_html=navigation, contexte_html=puce('Version ' + str(revision)), cadre_propre=True), sortie
+    if pending:
+        marque = disque('disque-l tourne')
+        suivi = ('<div class="actions" id="preparation-progress">' + lien(path, 'Actualiser', 'actualiser')
+                 + '<button class="btn btn-sec" type="button" hidden>' + ic('pause') + 'Arrêter la mise à jour automatique</button>'
+                 '<p class="cache" role="status"></p></div>')
+        # `availability` nomme la raison du refus d'envoi liée au champ désactivé
+        carte = '<div id="availability">' + etat(ton, mot_, titre, texte, marque_html=marque, corps_html=suivi) + '</div>'
+    else:
+        carte = etat(ton, mot_, titre, texte, action) if titre else ''
+    cout = cout_preparation(value)
+    nom = request if len(request) <= 60 else request[:59].rstrip() + '…'
+    contexte = (puce(nom, plein=True) if request else '') + puce('Version ' + str(revision)) + ruban('Copie d’épreuve' if source and package is None else 'Exemple inventé')
+    avant = ' cote-avant' if package and value['validation'] or (value['validation'] and not request) else ''
+    if package is None:
+        # Conversation : le besoin, la question de l'assistant, puis le champ de réponse
+        gauche = notices
+        if source:
+            gauche += render_source_copy(source, source_notice)
+        else:
+            gauche += (bulle_vous(request) if request else '<p class="petit">Votre besoin personnel n’est pas encore décrit.</p>')
+        if stage in ('clarification', 'scope_confirmation') and explanation and not source:
+            gauche += bulle_assistant(explanation, 'L’assistant demande')
+        elif prior_revision and stage == 'preview':
+            gauche += bulle_assistant('Votre exemple est prêt. Lisez la consigne et les pièces, corrigez si besoin, puis validez.')
+        elif prior_revision and stage == 'waiting':
+            gauche += bulle_assistant('L’assistant prépare votre exemple, ou une question s’il lui manque une information.', 'Exemple attendu')
+        terminé = value['validation'] and qualification.get('status') in ('BLOCKED', 'QUALIFIED')
+        if editable and not source and not terminé:
+            if value['validation']:
+                aide = 'L’envoi sera de nouveau possible quand le contrôle de l’exemple se termine.'
+            elif not can_submit:
+                aide = {'waiting': 'L’envoi sera de nouveau possible quand la préparation précédente se termine.',
+                        'access': 'L’envoi sera possible une fois votre clé OpenRouter ajoutée.'}.get(
+                            etat_service.get('reason'), 'L’envoi sera de nouveau possible quand le service répond.')
+            else:
+                aide = 'Votre message relance la préparation.' if stage == 'suspended' else 'L’exemple est préparé dès votre réponse.'
+            gauche += formulaire_reponse(csrf, url, revision, desactive=not can_submit or bool(value['validation']), aide=aide)
+        if source and editable:
+            decision = form(csrf, url + '/messages', {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
+                            '<span class="etiq">Votre besoin</span><h2>Décrivez votre besoin</h2><p>Votre besoin personnel n’est pas encore décrit. '
+                            'Dites ce que vous voulez comparer et ce qui diffère de l’épreuve source. La notice et les pièces conservées ne changent pas.</p>'
+                            + champ('Votre besoin personnel', 'message', ident='message', maxlength=1000, desactive=not can_submit or not editable,
+                                    aide='')
+                            .replace('<textarea ', '<textarea required minlength="' + str(REQUEST_MIN) + '" ', 1)
+                            + HONEYPOT + bouton('Préparer mon exemple', xl=True).replace('type="submit"', 'type="submit"' + ('' if can_submit else ' disabled'))
+                            + '<p class="effet">' + ic('cle') + '<span>La préparation est payée avec votre clé OpenRouter. '
+                            + ('La' if can_submit else '<a href="/preparation/access">Ajoutez votre clé</a> : la') + ' copie reste consultable sans elle.</span></p>',
+                            classe='decision')
+            droite = decision + cout
+            haut = '<div class="ge-pile">' + carte + '</div>'
+        else:
+            droite = carte + cout + liens
+            haut = ''
+        corps = (haut + '<div class="colonnes"><div class="entretien">' + gauche + '</div><aside class="cote gb-cote' + avant + '" aria-label="Où en est la préparation">'
+                 + droite + '</aside>' + ('<div class="pile pile-bas">' + bas + '</div>' if bas else '') + '</div>')
+        entete = dict(piste_html=navigation, contexte_html=contexte)
+        if stage == 'waiting' or pending:
+            corps += '<script>' + PREPARATION_PROGRESS_SCRIPT + '</script>' if pending else ''
+        return h1, corps, entete, sortie
+    # Exemple : consigne, pièces, critères et correction à gauche, décision ou état à droite
+    gauche = notices + (bulle_assistant(explanation) if explanation and not value['validation'] else '') + bloc_dossier(value)
+    avant_validation = editable and stage == 'preview' and value['validation'] is None
+    if editable:
+        gauche += tiroir_correction(csrf, url, revision, disabled, ouvert=corriger)
+    gauche += bloc_precisions(value) if True else ''
+    if source:
+        gauche = render_source_copy(source, source_notice) + gauche
+    haut = ''
+    if avant_validation:
+        decision = decision_validation(csrf, url, value, disabled, estimation_controle(value))
+        # Une version déjà remplacée ou un accès fermé s'annonce au-dessus des colonnes
+        if revision > 1:
+            haut = '<div class="gb-cote">' + etat('att', 'À valider', 'Version ' + str(revision) + ' prête à valider',
+                                                'Votre choix de partage vaut pour cette version. Relisez l’exemple, puis validez-le.') + '</div>'
+        droite = decision + cout + liens
+        avant = ''
+    elif prior_revision and not value['validation'] and stage == 'preview':
+        droite = ('<div class="carte gb-ancienne"><span class="etiq">Étape 3 sur 5</span><h2>Valider l’exemple</h2>'
+                  '<p>Cet exemple n’est pas encore validé. Ouvrez la version actuelle pour le valider.</p></div>' + cout + liens)
+        haut = '<div class="gb-cote">' + carte + '</div>'
+    else:
+        droite = carte + cout + liens
+        avant = ' cote-avant'
+    if value.get('privacy') and not active_session(value['privacy']) and package:
+        haut = '<div class="gb-cote">' + etat('vig', 'Accès fermé', 'Votre accès à ce cas est fermé',
+                                            'Si vous en avez gardé une copie dans ce navigateur, vous pouvez encore la lire dans Mes données.',
+                                            lien('/preparation/data', 'Ouvrir Mes données')) + '</div>' + haut
+    corps = (haut + '<div class="colonnes"><div class="pile-l">' + gauche + '</div><aside class="cote gb-cote' + avant + '"'
+             # La décision porte déjà l'ancre `validation` de la piste ; sinon la colonne d'état la porte
+             + ('' if avant_validation else ' id="validation"') + ' aria-label="'
+             + ('Décision' if avant_validation else 'État de l’exemple') + '">' + droite + '</aside>'
+             + ('<div class="pile pile-bas">' + bas + '</div>' if bas else '') + '</div>')
+    if pending:
+        corps += '<script>' + PREPARATION_PROGRESS_SCRIPT + '</script>'
+    contexte += ''.join(puce('Exemple ' + str(case['number'])) for case in cases if case['current']) if snapshot and cases else ''
+    return h1, corps, dict(piste_html=navigation, contexte_html=contexte), sortie
+
+
+
 def render(value, csrf, path='/preparation', *, error=False, status=None):
     """Native HTML forms, inert evidence and a fixed comparison focus script"""
     def field_attributes(name):
@@ -1017,22 +1598,23 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         return erreur_champ(name, value['error'])
 
     state = value.get('availability', {})
-    needs_availability = False
     folded_contribution = ''
+    bas_place = False
     pending = not error and preparation_pending(value)
     can_submit = state.get('can_submit', False)
-    disabled = '' if can_submit else ' disabled aria-describedby="availability"'
     s9 = value.get('kind') != 'projection_preview'
     navigation = '' if error else preparation_steps(value)
     title = 'Décrire mon cas d’usage'
     # `contexte` : puces sous le titre h1 ; `plein` : la vue écrit son propre h1 et ses propres bandes pleine largeur
     contexte, plein = '', False
+    # En-tête propre à la vue (fil de retour, puces, sous-titre) ; `cadre_propre` : la vue écrit déjà ses colonnes centrées
+    entete = {}
     # `aria-current` seulement sur l'entrée qui est la page affichée, jamais sur une page descendante ni d'erreur
     current = None if error else {'home': '/', 'privacy_data': '/preparation/data', 'contributions': '/preparation/data',
                                  'references': None,
                                  'references_help': None,
                                  'editorial': '/epreuves' if not value.get('version_id') else None,
-                                 'editorial_help': None,
+                                 'editorial_help': '/epreuves',
                                  'copy_source': '/preparation'}.get(
         value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)
     menu = ''.join('<li><a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a></li>'
@@ -1046,7 +1628,7 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
                     and value.get('error_field') in submitted else None)
         content = ''
         if value.get('step') == 'example_qualified' and value.get('findings'):
-            content += '<p>Ce que la vérification de l’exemple a relevé</p>' + listing(
+            content += '<p>Ce que le contrôle de l’exemple a relevé</p>' + listing(
                 finding['text'] for finding in value['findings'])
         principal, autres = actions_erreur(decrit, path)
         message, phrase, corrigeable = value['error'], None, False
@@ -1094,13 +1676,13 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         title, _, content = LEGAL_PAGES[value['path']]
         contexte, content = legal_layout(content)
     elif value.get('kind') == 'references':
-        title, content = render_references(value)
+        title, content, entete = render_references(value)
     elif value.get('kind') == 'references_help':
-        title, content = render_semantic_help(value)
+        title, content, entete = render_aide(value, repertoire=True)
     elif value.get('kind') == 'editorial':
-        title, content = render_editorial(value)
+        title, content, entete = render_editorial(value)
     elif value.get('kind') == 'editorial_help':
-        title, content = render_editorial_help(value)
+        title, content, entete = render_aide(value, repertoire=False)
     elif value.get('kind') == 'results':
         title, content = render_results(value)
         contexte = contexte_publication(value)
@@ -1126,17 +1708,12 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         title, contexte = titre_vue(value), contexte_vue(value)
         content = render_campaign_launch_operator(value, csrf)
     elif value.get('kind') == 'copy_source':
-        title, content = render_copy_source(value, csrf)
+        title, content, entete = render_copy_source(value, csrf)
     elif value.get('kind') == 'home':
         title = 'Quel modèle d’IA pour votre travail ?'
         content, plein = render_home(), True
     elif value.get('kind') == 'catalogue':
-        title = 'Exemples validés et comparaisons'
-        content = '<p class="lead">Visible par vous seul, dans ce navigateur. Pour chaque cas d’usage validé, vous retrouvez ses exemples validés et les comparaisons lancées.</p>'
-        content += ''.join('<section><h2>' + text(task['need']) + '</h2>' + render_task_index(task) + '</section>' for task in value['tasks'])
-        if not value['tasks']:
-            content += '<p>Aucun cas d’usage validé pour l’instant. Validez un exemple pour le retrouver ici.</p>'
-        content += '<p><a href="/preparation">Revenir à mes cas d’usage</a></p>'
+        title, content, entete = render_catalogue(value)
     elif value.get('kind') == 'comparison':
         title = 'Résultats'
         contexte = contexte_resultats(value, retour=(value['dossier_href'], 'Revenir au cas d’usage', 'retour'))
@@ -1165,349 +1742,10 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         title = 'Mes cas d’usage'
         content, plein = render_cases(value, csrf), True
     elif value.get('kind') == 'honeypot_ack' or 'operation_id' in value:
-        title = 'Demande enregistrée'
-        url = ('/preparation' if value.get('kind') == 'honeypot_ack'
-               else '/preparation/dossiers/' + value['dossier_id'])
-        content = state_block('wait', 'Où j’en suis', 'L’assistant prépare sa réponse', '<p>Votre envoi est bien enregistré. Vous pouvez suivre l’avancement depuis la page de votre cas d’usage.</p>',
-                              f'<a class="button" href="{text(url)}">Suivre mon cas d’usage</a>')
+        title, content, entete = render_attente(value)
     else:
-        dossier_id, revision = value['dossier_id'], value['revision']
-        url = '/preparation/dossiers/' + dossier_id
-        source = value.get('source')
-        source_notice = value.get('source_notice') or {}
-        title = ('Votre cas d’usage' if value['validation'] else 'Est-ce le travail que vous voulez tester ?'
-                 if value['package'] else 'Votre dossier privé' if source else 'Précisons votre besoin')
-        prior_revision = revision != value.get('current_revision', revision)
-        snapshot = '/revisions/' in path and any(c['task']['revision'] == revision and c['attempts']
-                                                for c in value.get('campaigns', []))
-        referral = value.get('checks', {}).get('out_of_scope')
-        editable = not prior_revision and not snapshot and value['stage'] != 'waiting' and not referral
-        needs_availability = editable
-        disabled = '' if can_submit and editable else ' disabled aria-describedby="availability"'
-        current_campaigns = [c for c in value.get('campaigns', []) if c['task']['revision'] == revision]
-        stages = {'draft': ('unk', 'Brouillon', 'Rien n’a encore été envoyé à l’assistant.'),
-                  'waiting': ('wait', 'Préparation en cours', 'L’assistant prépare votre exemple, ou une question s’il lui manque une information. Vous pouvez quitter cette page et revenir plus tard.'),
-                  'clarification': ('action', 'L’assistant a une question', 'Répondez ci-dessous : l’exemple sera préparé ensuite.'),
-                  'preview': ('action', 'Votre exemple est prêt', 'Lisez la consigne et les pièces, corrigez si besoin, puis validez.'),
-                  'scope_confirmation': ('action', 'Précisez le travail à comparer',
-                      'Evaly compare des modèles sur un travail concret, avec un résultat attendu et des critères que l’on peut vérifier. '
-                      'Précisez ou confirmez le travail que vous voulez comparer. Aucune comparaison ne peut être lancée à cette étape.'),
-                  # La cause est dans l'explication ; l'envoi reste ouvert sauf motif de disponibilité affiché à part
-                  'suspended': ('err', 'Préparation arrêtée', 'Renvoyez votre message pour relancer la préparation.' if can_submit
-                                else 'Vous pourrez renvoyer votre message quand l’envoi sera de nouveau possible.')}
-        tone, heading, next_step = stages[value['stage']]
-        if source and value['stage'] == 'draft':
-            tone, heading, next_step = ('action', 'Copie enregistrée',
-                'Décrivez votre besoin et ce qui diffère de l’épreuve source pour préparer votre exemple.')
-        if referral:
-            title = 'Cas d’usage hors du champ d’Evaly'
-            tone, heading, next_step = ('unk', 'Evaly ne peut pas comparer ce cas d’usage',
-                'Evaly compare des modèles sur des cas d’usage de travail concrets. '
-                'Ce cas d’usage est donc arrêté et aucune comparaison ne sera lancée pour lui.')
-        qualification = value.get('qualification', {})
-        automatic = 'operation_id' in qualification
-        if value['validation']:
-            # Sans vérification automatique : l'exemple n'attend personne, il se relance par une correction
-            tone, heading, next_step = (('done', 'Exemple vérifié, prêt à comparer', 'Choisissez les modèles à comparer.') if value.get('qualified')
-                                        else ('unk', 'Cas d’usage validé', 'La vérification de l’exemple n’a pas pu démarrer. '
-                                              'Pour la relancer, précisez ou corrigez l’exemple, puis validez-le de nouveau.')) if not current_campaigns \
-                else ('done', 'Cas d’usage validé', 'Une comparaison est prête ou déjà lancée. Suivez-la à l’étape Modèles.')
-        if value['validation'] and automatic:
-            if value.get('qualified'):
-                tone, heading, next_step = 'done', 'Exemple vérifié, prêt à comparer', 'Lisez les remarques de la vérification, puis choisissez les modèles à comparer.'
-            elif qualification.get('status') == 'BLOCKED' and qualification.get('cause'):
-                # Incident chez le fournisseur ou clé : l'exemple n'est pas en cause
-                tone, heading, next_step = 'unk', 'Vérification impossible pour le moment', qualification['summary']
-            elif qualification.get('status') == 'BLOCKED':
-                tone, heading, next_step = 'err', 'Exemple à revoir avant comparaison', qualification['summary']
-            elif qualification.get('cause'):
-                tone, heading, next_step = 'wait', 'Vérification de l’exemple en attente', qualification['summary']
-            else:
-                tone, heading, next_step = 'wait', 'Vérification de l’exemple en cours', 'Votre validation est enregistrée. L’assistant vérifie que l’exemple est cohérent et que ses critères peuvent être contrôlés.'
-        # Contrat opérateur bloqué avant tout lancement : l'exemple est à revoir, aucune comparaison ne se lance
-        operator_blocked = (value['validation'] and not automatic and qualification.get('qualification_status') == 'BLOCKED'
-                            and not any(c['attempts'] for c in current_campaigns))
-        if operator_blocked:
-            tone, heading, next_step = ('err', 'Exemple à revoir avant comparaison',
-                                        'Le détail de la vérification, plus bas, dit ce qui bloque. '
-                                        'Corrigez l’exemple, puis validez-le de nouveau.')
-        actions = ''
-        # Une comparaison existe : l'encadré dit son état et mène à elle, jamais à un nouveau choix de modèles
-        if value['validation'] and current_campaigns and not snapshot and not prior_revision and not operator_blocked:
-            tone, heading, next_step, target, label = campaign_status(current_campaigns[-1], url)
-            actions = f'<a class="button" href="{text(target)}">{text(label)}</a>'
-        elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
-            actions = f'<a class="button" href="{text(url)}/configurations">Choisir les modèles</a>'
-        example_mark = 'Copie d’épreuve' if source and value['package'] is None else 'Exemple inventé'
-        content = '<p class="tag">' + text(example_mark + ' · version ' + str(revision)) + '</p>'
-        if snapshot:
-            title = 'Exemple utilisé pour la comparaison'
-            tone, heading, next_step = 'done', 'Exemple déjà testé', 'Vous consultez l’exemple tel qu’il a été testé. Ses résultats restent disponibles.'
-            content += '<p class="notice">Lecture seule. Si vous modifiez l’exemple, vos changements formeront une nouvelle version, à valider de nouveau.</p>'
-        if prior_revision:
-            content += '<p class="notice">Ancienne version, en lecture seule. Pour modifier ou valider, ouvrez la version actuelle.</p>'
-        if prior_revision:
-            actions = f'<a class="button" href="{text(url)}">Ouvrir la version actuelle</a>'
-        elif snapshot:
-            actions = f'<a class="button sec" href="{text(url)}">Préparer une nouvelle comparaison</a>'
-        if pending:
-            actions = ('<div id="preparation-progress"><progress aria-label="' + text(heading) + '"></progress>'
-                       '<p class="hint" role="status">Cette page se met à jour d’elle-même si JavaScript est activé. Sinon, actualisez-la de temps en temps.</p>'
-                       '<div class="actions"><a href="' + text(url) + '">Actualiser</a>'
-                       '<button type="button" class="sec" hidden>Arrêter la mise à jour automatique</button></div></div>')
-            # Relance automatique programmée : sa cause et son délai, sans rien à renvoyer
-            notice = '<p class="notice">' + text(value['notice']) + '</p>' if value.get('notice') else ''
-            content += '<div id="availability">' + state_block(tone, 'Où j’en suis', heading,
-                notice + '<p>' + text(next_step) + '</p>', actions) + '</div><script>' + PREPARATION_PROGRESS_SCRIPT + '</script>'
-        else:
-            # L'explication de l'assistant (question sur l'exemple) ne vaut que tant que l'exemple n'est pas validé
-            body = '<p>' + text(next_step) + '</p>' if value['validation'] else (
-                '<p>' + text(value['explanation']) + '</p><p class="hint">' + text(next_step) + '</p>')
-            if value.get('notice'):
-                body = '<p class="notice">' + text(value['notice']) + '</p>' + body
-            content += state_block(tone, 'Où j’en suis', heading, body, actions)
-        if referral:
-            references = [(identity, reference) for identity, reference in BENCHMARK_REFERENCES.items()
-                          if reference['category'] == referral and reference.get('availability') == 'available']
-            if references:
-                content += section('Où comparer ce type de cas d’usage', '<ul>' + ''.join(
-                    '<li><a href="/evaluations-externes/' + text(identity) + '" rel="noreferrer">'
-                    + text(reference['name']) + '</a> : ' + text(reference['work']) + '.</li>'
-                    for identity, reference in references) + '</ul>')
-            content += '<p><a href="/evaluations-externes" rel="noreferrer">Consulter les évaluations externes</a></p>'
-            content += '<p><a class="button sec" href="/preparation">Décrire un autre cas d’usage</a></p>'
-        links = [] if '>Actualiser</a>' in actions else [f'<a href="{text(path)}">Actualiser</a>']
-        if path != url:
-            links.append(f'<a href="{text(url)}">Version actuelle</a>')
-        if revision > 1:
-            links.append(f'<a href="{text(url)}/revisions/{revision - 1}">Version précédente</a>')
-        if links:
-            content += '<p class="hint">' + ' · '.join(links) + '</p>'
-        main_start = len(content)
-        payload = value['payload']
-        if source:
-            content += render_source_copy(source, source_notice)
-        content += section('Votre besoin', ('<p>' + text(payload['request']) + '</p>') if payload['request']
-                           else '<p>Votre besoin personnel n’est pas encore décrit.</p>', 'besoin')
-        if editable and value['package'] is None:
-            if source and not payload['request']:
-                need_disabled = '' if can_submit and editable else ' disabled'
-                content += section('Décrivez votre besoin', form(csrf, url + '/messages',
-                    {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
-                    '<p id="source-need-help" class="hint">Dites ce que vous voulez comparer et ce qui diffère de '
-                    'l’épreuve source. La notice et les pièces conservées ne changent pas. La préparation est payée '
-                    'avec votre clé OpenRouter.</p>'
-                    + ('' if can_submit else '<p class="hint"><a href="/preparation/access">Ajoutez votre clé OpenRouter</a> '
-                       'pour préparer cet exemple. La copie reste consultable sans clé.</p>') +
-                    '<label for="message">Votre besoin personnel</label>'
-                    '<textarea id="message" name="message" rows="4" required minlength="' + str(REQUEST_MIN)
-                    + '" maxlength="1000" aria-describedby="source-need-help"' + need_disabled + '></textarea>' + HONEYPOT +
-                    '<button type="submit"' + need_disabled + '>Préparer mon exemple</button>'))
-            else:
-                content += section('Votre réponse', form(csrf, url + '/messages',
-                    {'action_id': secrets.token_hex(16), 'revision': revision, 'kind': 'clarify'},
-                    '<label for="message">Votre réponse à l’assistant</label><textarea id="message" name="message" rows="3" required maxlength="1000"' + disabled + '></textarea>' + HONEYPOT +
-                    '<button type="submit"' + disabled + '>Envoyer ma réponse</button>'))
-        if value.get('task_index'):
-            content += '<details><summary>Historique des versions et des comparaisons</summary>' + render_task_index(value['task_index']) + '</details>'
-        if value.get('message') and 'message' in value['message'] and not source:
-            content += section('Votre message à l’origine de cette version', '<p>' + text(value['message']['message']) + '</p>')
-        if payload['clarifications'] or payload['validated_assumptions']:
-            agreements = listing(payload['clarifications']) if payload['clarifications'] else ''
-            for agreement in payload['validated_assumptions']:
-                if type(agreement) is dict and set(agreement) == {'question', 'answer'}:
-                    agreements += '<blockquote><p>' + text(agreement['question']) + '</p>'
-                    agreements += '<p><strong>Votre accord : </strong>' + text(agreement['answer']) + '</p></blockquote>'
-                else:
-                    agreements += '<p>' + text(encode(agreement) if type(agreement) is dict else agreement) + '</p>'
-            content += section('Précisions et points convenus', agreements)
-        if payload['reformulation']:
-            content += section('Votre besoin reformulé par l’assistant', '<p>' + text(payload['reformulation']) + '</p>')
-        if payload['fictional_parameters']:
-            content += section('Éléments inventés pour l’exemple', listing(f'{k} : {v}' for k, v in payload['fictional_parameters'].items()))
-        package = value['package']
-        if package:
-            content += section('Consigne donnée aux modèles', '<p class="consigne">' + text(package['instruction']) + '</p>', 'exemple')
-            content += section('Les pièces de l’exemple', '<p class="hint">Ouvrez une pièce pour la lire ici. Refermez-la pour revenir à la suite.</p>' + ''.join(
-                '<details class="example-content"><summary>Lire « ' + text(piece['name']) + ' »</summary>'
-                + '<div class="example-text">' + text(value['example_contents'][piece['id']]) + '</div></details>'
-                for piece in package['pieces']))
-            content += '<div class="two">' + section('Ce que le modèle doit rendre', listing(package['deliverables']))
-            criteria = value['criteria']
-            groups = ''
-            for key, tone, group_title in (('eliminatory', 'elim', 'Éliminatoires'),
-                                     ('obligations', 'oblig', 'Obligations'),
-                                     ('quality', 'sec', 'Qualité')):
-                items = criteria[key]
-                if items:
-                    if key == 'obligations':
-                        # Une obligation composée montre ses éléments, jugés chacun séparément
-                        body = '<ul>' + ''.join('<li>' + (text(item) if type(item) is str else text(item['description'])
-                                                + listing(item['elements'])) + '</li>' for item in items) + '</ul>'
-                    else:
-                        body = listing(item['label'] for item in items) if key == 'quality' else listing(items)
-                    groups += '<div class="grp ' + tone + '"><h3>' + group_title + '</h3>' + body + '</div>'
-            groups = '<div class="crit">' + groups + '</div><p class="rule"><span>Règle</span><span>' \
-                     + text(value['criteria_rule']) + '</span></p>'
-            content += section('Critères de réussite', groups) + '</div>'
-            limits = '<h3>Ce qui restera à faire par une personne</h3><p>' + text(package['human_work']) + '</p>'
-            if package['acceptable_ambiguities']:
-                limits += '<h3>Ambiguïtés acceptées</h3>' + listing(package['acceptable_ambiguities'])
-            if package['limits']:
-                limits += '<h3>Limites de l’exemple</h3>' + listing(package['limits'])
-            content += section('Limites et travail restant', limits)
-            change_labels = {'instruction': 'Consigne', 'deliverables': 'Livrables', 'criteria': 'Critères',
-                'acceptable_ambiguities': 'Ambiguïtés acceptées', 'pieces': 'Pièces'}
-            if value['changes']:
-                changes = listing(change_labels.get(change, change) for change in value['changes'])
-                for kind, label in (('added', 'Pièces ajoutées'), ('removed', 'Pièces retirées'),
-                                    ('modified', 'Pièces modifiées')):
-                    names = value['piece_changes'][kind]
-                    if names:
-                        changes += '<h3>' + label + '</h3>' + listing(names)
-                content += section('Ce qui a changé depuis la version précédente', changes)
-        cost_start = len(content)
-        if 'indicative_cost' in value:
-            estimate = value['indicative_cost']
-            amount = estimate.get('token_subtotal_usd') if estimate else None
-            content += '<p>Coût estimé de cette préparation : ' + text(
-                'non estimable' if amount is None else montant_lisible(amount) + ' USD') + \
-                '. Calcul : tokens utilisés × tarifs du modèle relevés avant l’appel. C’est une estimation, pas une facture.</p>'
-        if value.get('observed_cost'):
-            cost = value['observed_cost']
-            content += '<p>Coût observé de cette préparation : ' + text(
-                'inconnu' if cost['status'] == 'UNKNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']) + '. Source : ' + text(cost['source']) + '.</p>'
-        elif value.get('operations') == 0:
-            # Zéro opération : aucune dépense à rapprocher, pas même une dépense inconnue
-            content += '<p>Aucun appel modèle effectué pour ce dossier.</p>'
-        else:
-            content += '<p>Coût observé : inconnu, faute de justificatif de coût reçu pour cette préparation.</p>'
-        if value.get('cost_reconciliation'):
-            proof, cost = value['cost_reconciliation'], value['effective_cost']
-            content += '<p>Coût corrigé après vérification : ' + text(montant_lisible(cost['amount']) + ' ' + cost['currency']) + '. Source : ' + text(
-                proof['source']) + ', confirmée par ' + text(proof['actor']) + ' le ' + text(proof['observed_at']) + \
-                '. Le justificatif d’origine reste inchangé.</p>'
-        content, side = content[:cost_start], section('Coût de la préparation', content[cost_start:])
-        if editable and package is not None:
-            content += '<details class="corr"><summary class="button sec">' + icon('i-pen') + 'Préciser ou corriger cet exemple</summary><div>' + form(csrf, url + '/messages',
-                {'action_id': secrets.token_hex(16), 'revision': revision},
-                '<p>Dites ce qui doit changer. Ce que vous avez déjà convenu reste acquis, et les versions précédentes restent consultables. Si l’exemple change, vous devrez le valider de nouveau.</p>'
-                '<label for="kind">Votre message sert à</label><select id="kind" name="kind"' + disabled + '>'
-                '<option value="clarify">Répondre à l’assistant ou confirmer le travail à tester</option>'
-                '<option value="correct" selected>Modifier cet exemple</option></select>'
-                '<label for="message">Votre précision ou correction</label>'
-                '<textarea id="message" name="message" rows="4" required maxlength="1000"' + disabled + '></textarea>' + HONEYPOT +
-                '<button type="submit"' + disabled + '>Envoyer ce message</button>') + '</div></details>'
-        launched = any(c['attempts'] for c in current_campaigns)
-        if package:
-            validation = '<section id="validation"><h2>Valider l’exemple</h2>'
-            if value['validation']:
-                validation += '<p class="note">Vous avez validé cet exemple, dans cette version précise.</p>'
-            else:
-                validation += '<p class="note">Cet exemple n’est pas encore validé. Relisez-le, puis validez-le pour passer à la suite.</p>'
-            if editable and value['stage'] == 'preview' and value['validation'] is None:
-                validation += '<p>En validant, vous confirmez que cet exemple correspond à votre besoin. L’exemple est ensuite vérifié automatiquement, si ce service est disponible : cette vérification est payée avec votre clé OpenRouter. Valider ne lance aucun des modèles à comparer et ne publie rien.</p>'
-                estimate = value.get('qualification_estimate')
-                if estimate:
-                    # Deux réserves distinctes, jamais additionnées (DESIGN.md, récapitulatif avant dépense)
-                    validation += ('<p>Estimation avant consommation : une réserve est bloquée sur votre crédit avant chaque appel. '
-                                'Pour la vérification de l’exemple : au plus ' + text(montant_lisible(estimate['check_usd']))
-                                + ' USD réservé. Puis, pour le contrôle de chaque témoin, ' + text(str(estimate['witness_limit']))
-                                + ' au plus : au plus ' + text(montant_lisible(estimate['witness_usd']))
-                                + ' USD réservé par témoin. Un témoin est une réponse inventée, recevable ou fautive, soumise au '
-                                'contrôle qui jugera les modèles. Le coût observé est relevé ensuite sur le justificatif de chaque appel.</p>')
-                validation += '<div class="actionbar">' + form(csrf, url + '/validation', binding(dossier_id, revision, value['package_sha256']),
-                                '<button type="submit">' + icon('i-check') + 'Oui, c’est le travail à tester</button>') + '</div>'
-            validation += '</section>'
-            side = validation + side
-        content = content[:main_start] + workbench(content[main_start:], side, 'Valider l’exemple' if package else 'Coût de la préparation')
-        if package:
-            # Le consentement suit la décision principale ; une fois la comparaison lancée, il se replie dans Mes données
-            if launched:
-                folded_contribution = render_contribution(value, csrf)
-            else:
-                content += render_contribution(value, csrf)
-        if current_campaigns:
-            content += '<section id="comparaison"><h2>Comparaisons de cet exemple</h2><ul>'
-            for number, campaign in reversed(list(enumerate(current_campaigns, 1))):
-                _, heading_, _, target, _ = campaign_status(campaign, url)
-                content += ('<li><a href="' + text(target) + '">Comparaison ' + str(number) + ' du '
-                            + text(date_lisible_utc(campaign['conditions']['frozen_at']))
-                            + '</a> : ' + text(heading_[0].lower() + heading_[1:]) + '.</li>')
-            content += '</ul>'
-            if value.get('qualified') and not snapshot and not prior_revision:
-                content += ('<p><a href="' + text(url) + '/configurations">Choisir d’autres modèles</a> : '
-                            'une nouvelle comparaison sera préparée, et les résultats actuels restent disponibles.</p>')
-            content += '</section>'
-        cases = value.get('cases', [])
-        if cases:
-            def case_state(case):
-                if case['drifted']:
-                    return 'contrat d’une ancienne version de l’exemple 1'
-                if case['validated']:
-                    return 'exemple vérifié' if case['qualified'] else 'validé, vérification en attente ou à revoir'
-                return 'à valider' if case['stage'] == 'preview' else stages[case['stage']][1].lower()
-            drifted = any(case['drifted'] for case in cases)
-            content += section('Exemples de ce cas d’usage', '<ul>' + ''.join(
-                '<li>' + ('Exemple ' + str(case['number']) + ' (cette page)' if case['current'] else
-                          '<a href="/preparation/dossiers/' + text(case['dossier_id']) + '">Exemple ' + str(case['number']) + '</a>')
-                + ' : ' + text(case_state(case)) + '.'
-                + (' Ce qui le distingue : ' + text(case['difference']) if case['difference'] else '') + '</li>'
-                for case in cases) + '</ul>'
-                + ('<p class="note">Le contrat de l’exemple 1 a changé depuis la création de certains exemples : '
-                   'ces exemples ne suivent plus la même consigne. Ajoutez-les de nouveau depuis l’exemple 1.' if drifted else
-                   '<p class="note">Tous les exemples suivent la même consigne, les mêmes livrables et les mêmes critères.')
-                + ' Plusieurs exemples ne prouvent pas qu’ils représentent votre travail : chacun reste inventé, validé et '
-                'vérifié séparément.</p>', 'cas')
-        if value['validation'] and (not cases or cases[0]['current']) and not snapshot and not prior_revision and not referral:
-            content += ('<details><summary class="button sec">' + icon('i-pen') + 'Ajouter un autre exemple à ce cas d’usage</summary><div>'
-                        '<p id="case-context-help">Le nouvel exemple reprend la consigne, les livrables, les critères et les '
-                        'ambiguïtés acceptables de cette version. L’assistant prépare d’autres pièces et un autre résultat de '
-                        'référence, à valider puis vérifier séparément. Cette préparation est payée avec votre clé OpenRouter. '
-                        'Stabilisez cet exemple avant d’en ajouter d’autres : une correction ultérieure de sa consigne ne se '
-                        'reporte pas aux exemples déjà créés.</p>' + form(csrf, '/preparation/dossiers',
-                {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16), 'case_of': dossier_id},
-                '<label for="case-context">Ce qui distingue cet exemple, par exemple la difficulté qu’il couvre</label>'
-                '<textarea id="case-context" name="context" required maxlength="' + str(CONTEXT_MAX)
-                + '" rows="2" aria-describedby="case-context-help"' + disabled + '></textarea>'
-                '<button type="submit"' + disabled + '>Préparer cet exemple</button>') + '</div></details>')
-        labels = {'PENDING': 'En attente', 'QUALIFIED': 'Vérification réussie',
-                  'BLOCKED': 'Bloquée : la réponse de référence ou les contrôles ne sont pas assez établis'}
-        if package and not referral:
-            if automatic:
-                # Parcours public : la qualification automatique suffit, aucune approbation opérateur n'est attendue
-                content += '<details><summary>Détail de la vérification de l’exemple</summary>'
-                content += section('Vérification', '<p>' + text('Vérification impossible pour le moment' if qualification.get('cause')
-                                                                 else labels.get(qualification.get('qualification_status'), 'En attente')) + '</p>'
-                                   + '<p>' + text(qualification['summary']) + '</p>'
-                                   + listing(finding['text'] for finding in qualification.get('findings', []))
-                                   + render_witnesses(qualification))
-            else:
-                content += '<details><summary>Vérification de l’exemple</summary>'
-                # Contrat opérateur bloqué : ses constats remplacent le libellé générique, comme sur une page de refus
-                content += section('Vérification', ('<p>Bloquée. Ce que la vérification de l’exemple a relevé :</p>' + listing(
-                    finding['text'] for finding in qualification['findings'])) if qualification.get('findings')
-                    else '<p>' + text(labels.get(qualification.get('qualification_status'), 'En attente')) + '</p>')
-            content += '</details>'
-        if value.get('campaigns'):
-            content += render_campaign_records(value['campaigns'], url)
-    if state and s9 and not pending and not can_submit and needs_availability and not value.get('checks', {}).get('out_of_scope'):
-        reasons = {
-            'access': 'Ajoutez votre clé OpenRouter pour préparer un exemple.',
-            'open': 'Vous pouvez envoyer votre demande. Chaque envoi est contrôlé avant d’être traité.',
-            'unconfigured': 'Préparation indisponible : aucun assistant n’est en service pour le moment.',
-            'waiting': 'Votre préparation précédente est en cours. Actualisez la page pour voir où elle en est.',
-            'interrupted': 'Nous ne savons pas si le modèle a répondu. Rien n’est relancé ; cette opération sera close automatiquement.',
-            'restore': 'Service momentanément indisponible, réessayez plus tard.',
-            'unresolved': 'Envois fermés : le résultat ou le coût d’un appel précédent n’est pas encore connu.'}
-        # L'encadré porte l'état seul (DESIGN.md) : le motif suffit, sans titre ni note de financement
-        reason = reasons[state['reason']]
-        if state['reason'] == 'access' and value.get('source') and value.get('package') is None:
-            # Copie sans exemple préparé : la lecture n'exige ni clé ni appel, la clé sert ensuite
-            reason = ('Votre copie est enregistrée. Vous pouvez la consulter sans clé ni appel aux modèles ; '
-                      'la clé OpenRouter servira à préparer votre exemple.')
-        content = ('<aside id="availability" class="etat-ligne" aria-label="État de la préparation"><p>'
-                   + text(reason) + '</p></aside>' + content)
+        title, content, entete, sortie = render_dossier(value, csrf, path, pending=pending, can_submit=can_submit, navigation=navigation)
+        bas_place = sortie['bas_place']
     # Le reste s'ajoute après la vue : scripts, historique local, contrôles de confidentialité
     principal, content = content, ''
     script = page_script(value) if not error else None
@@ -1518,7 +1756,8 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
     if not error:
         if value.get('kind') == 'home':
             content += '<span data-privacy-home hidden></span>'
-        content += render_privacy_controls(value, csrf, folded_contribution, path)
+        if not bas_place:
+            content += render_privacy_controls(value, csrf, folded_contribution, path)
         if value.get('privacy') or value.get('kind') in ('home', 'privacy_data', 'contributions', 'session_bootstrap'):
             content += PRIVACY_SCRIPT
     # Une vue `plein` écrit son h1 et ses bandes ; les autres reçoivent l'en-tête commun et la colonne centrée
@@ -1526,10 +1765,12 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         principal += cadre(content) if content else ''
         tete_html = ''
     else:
-        principal = cadre(principal + content)
-        tete_html = tete(title, piste_html=navigation, contexte_html=contexte)
+        principal = principal + content if entete.pop('cadre_propre', False) else cadre(principal + content)
+        tete_html = tete(title, **{'piste_html': navigation, 'contexte_html': contexte, **entete})
     template = TEMPLATE or TEMPLATE_PATH.read_text()
-    body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''
+    body_class = ('s9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else '')
+    if not error and value.get('kind') in ('editorial', 'editorial_help', 'references', 'references_help'):
+        body_class = 'g-cat'
     if value.get('kind') == 'legal':
         body_class = 'g-cat g-page-legale'
     # Offre de source AGPL §13 : un numéro et un lien vers l'arbre du commit seulement sous identité de release,

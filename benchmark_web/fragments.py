@@ -458,3 +458,63 @@ def bilan(titre, sous_titre, exemples_html, signaux_html='', *, ident='t-bilan')
 def bilan_exemple(titre, nombre_html, tampons_html):
     """Carte d'un exemple dans le bilan : titre, nombre de réponses, tampons comptés"""
     return '<div class="bilan-ex"><h3>' + text(titre) + nombre_html + '</h3><div class="compte">' + tampons_html + '</div></div>'
+
+
+# ——— Lot besoin ———
+def bulle_vous(texte, qui='Votre besoin'):
+    """Message de la personne dans la conversation avec l'assistant"""
+    return ('<div class="bulle bulle-vous"><div><p class="bulle-qui">' + text(qui) + '</p><div class="bulle-texte">' + text(texte)
+            + '</div></div><span class="avatar" aria-hidden="true">VOUS</span></div>')
+
+
+def bulle_assistant(texte, qui='L’assistant écrit'):
+    """Message de l'assistant dans la conversation"""
+    return ('<div class="bulle bulle-question"><span class="avatar" aria-hidden="true">EV</span><div><p class="bulle-qui">'
+            + text(qui) + '</p><div class="bulle-texte">' + text(texte) + '</div></div></div>')
+
+
+def notice_ligne(texte, icone='alerte'):
+    """Ligne d'avertissement au-dessus de la conversation"""
+    return '<p class="etat-ligne gb-notice">' + ic(icone) + '<span>' + text(texte) + '</span></p>'
+
+
+def fil(*liens):
+    """Fil de retour : (adresse, libellé) ; le premier lien porte la flèche de retour"""
+    items = ''.join('<li>' + lien(href, libelle, 'retour' if index == 0 else None) + '</li>' for index, (href, libelle) in enumerate(liens))
+    return '<nav class="g-fil" aria-label="Retour"><ul>' + items + '</ul></nav>'
+
+
+def segments_liens(legende, ident, options, choisi, cible):
+    """Filtre appliqué au clic : chaque option est un lien vers la liste filtrée, sans script ; `options` : (valeur, libellé)"""
+    liens = ''.join('<a href="' + text(cible(valeur)) + '"' + (' aria-current="true"' if valeur == choisi else '')
+                    + (' title="' + text(libelle) + '"' if len(libelle) > 32 else '') + '>' + text(libelle) + '</a>'
+                    for valeur, libelle in options)
+    return ('<div class="g-seg" role="group" aria-labelledby="' + text(ident) + '"><p class="g-seg-titre" id="' + text(ident) + '">'
+            + text(legende) + '</p><div class="segments segments-liens">' + liens + '</div></div>')
+
+
+def criteres_actifs(items, effacer):
+    """Critères de recherche actifs en puces, avec le lien qui les efface ; vide sans critère"""
+    if not items:
+        return ''
+    puces = ''.join('<li>' + puce(item, plein=True) + '</li>' for item in items)
+    return '<div class="g-actifs"><ul aria-label="Critères actifs">' + puces + '</ul>' + lien(effacer, 'Effacer la recherche et les filtres', 'croix') + '</div>'
+
+
+def feuille(nom, description, texte, ident):
+    """Pièce de l'exemple : feuille repliée, texte inerte"""
+    return ('<li class="feuille">' + ruban('Pièce inventée') + '<details id="' + text(ident) + '"><summary><span class="nom">' + ic('doc')
+            + ' ' + text(nom) + '</span><span>' + text(description) + '</span><span class="lignes" aria-hidden="true"><i></i><i></i><i></i><i></i></span>'
+            '<span class="ouvrir">Lire la pièce ' + ic('fleche') + '</span></summary><pre class="example-text">' + text(texte) + '</pre></details></li>')
+
+
+def consigne(texte, etiquette='Consigne donnée aux modèles', ident=None):
+    """Consigne donnée aux modèles, dans son cadre à ruban"""
+    return ('<section class="pile"' + (' id="' + text(ident) + '"' if ident else '') + '><div class="consigne">' + ruban(etiquette)
+            + '<blockquote>' + text(texte) + '</blockquote></div></section>')
+
+
+def critere_ligne(libelle, genre, interdit=False):
+    """Une ligne de critère : icône, libellé, genre (Obligation, Erreur éliminatoire, Qualité)"""
+    return ('<li><span class="type' + (' type-ko' if interdit else '') + '" aria-hidden="true">' + ic('interdit' if interdit else 'cible')
+            + '</span><span>' + libelle + '</span><span class="genre">' + text(genre) + '</span></li>')
