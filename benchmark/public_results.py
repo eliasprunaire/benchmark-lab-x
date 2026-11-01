@@ -912,7 +912,7 @@ def _view(destination, task_id, version_id, campaign_id, query, actor):
     query = _queries(query, manifest)
     manifest.update(kind='results', withdrawn=False, unavailable=None, task_id=task_id, version_id=version_id,
                     rows=_ordered(_selected(manifest['rows'], query), query, manifest['cases']),
-                    population=len(manifest['rows']), filter_scope=query,
+                    population=len(manifest['rows']), population_rows=manifest['rows'], filter_scope=query,
                     campaigns=_published(destination, task_id, version_id, actor))
     return manifest
 

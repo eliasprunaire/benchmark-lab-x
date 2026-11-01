@@ -260,7 +260,7 @@ def browser_views():
     return rendered
 
 
-def results_view(*, withdrawn=False, unavailable=None, filtered=False):
+def results_view(*, withdrawn=False, unavailable=None, filtered=False, repeated=False):
     """Restitution publique fermée, sans accès privé : fixture du harnais Chromium"""
     cases = [{'position': 1}]
     panel = [
@@ -319,6 +319,9 @@ def results_view(*, withdrawn=False, unavailable=None, filtered=False):
          'limits': ['Sortie non admissible, quel que soit son coût.'],
          'proofs': [{'name': 'Réponse de Modèle B', 'piece_id': None}]},
     ]
+    if repeated:
+        # Deux essais du même modèle sur le même exemple, aux verdicts différents
+        rows = [dict(rows[0], repetition=1), dict(rows[1], panel_position=1, repetition=2)]
     shown = [row for row in rows if row['panel_position'] == 1] if filtered else rows
     return {
         'kind': 'results', 'task_id': 'tache-fictive', 'version_id': 'version-resultats',
@@ -339,7 +342,7 @@ def results_view(*, withdrawn=False, unavailable=None, filtered=False):
                        'conversion': None},
         'cases': cases, 'panel': panel, 'columns': columns,
         'obligations': [{'id': 'O1', 'label': 'Toutes les actions présentes', 'states': ['PASS', 'FAIL']}],
-        'rows': shown, 'population': len(rows), 'filter_scope': {'configuration': '1'} if filtered else {},
+        'rows': shown, 'population': len(rows), 'population_rows': rows, 'filter_scope': {'configuration': '1'} if filtered else {},
         'pending': [], 'acquisition_dates': ['2026-10-23T10:00:00+00:00', '2026-10-23T10:01:00+00:00'],
         'unknowns': ['Coût observé inconnu pour 1 réponse : aucun rang de coût.',
                      'Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables.'],

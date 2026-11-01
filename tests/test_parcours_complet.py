@@ -2010,6 +2010,11 @@ class ParcoursComplet(unittest.TestCase):
 
         self.assertEqual(2, raw.count(b'<tr id="reponse-'))
         self.assertEqual(1, self.request(first + '?configuration=1')[2].count(b'<tr id="reponse-'))
+        # Le bilan porte sur toute la population : le filtre ne change que le tableau
+        for filtre in ('?configuration=1', '?verdict=SATISFAIT'):
+            bilan = self.request(first + filtre)[0].visible
+            self.assertIn('1 satisfait', bilan, filtre)
+            self.assertIn('1 ne satisfait pas', bilan, filtre)
         self.assertEqual(1, self.request(first + '?verdict=SATISFAIT')[2].count(b'<tr id="reponse-'))
         self.assertEqual(1, self.request(first + '?verdict=NE%20SATISFAIT%20PAS')[2].count(b'<tr id="reponse-'))
         self.assertIn('Aucune réponse ne correspond à ces filtres',

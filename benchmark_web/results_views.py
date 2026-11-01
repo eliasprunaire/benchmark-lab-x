@@ -41,7 +41,9 @@ def _base(value):
 
 
 def _anchor(row):
-    return 'd-' + str(row['panel_position']) + '-' + str(row['case_position'])
+    # Le numéro d'essai distingue les répétitions d'un même modèle sur un même exemple
+    return ('d-' + str(row['panel_position']) + '-' + str(row['case_position'])
+            + ('-' + str(row['repetition']) if row.get('repetition') else ''))
 
 
 def _active_filters(value):
@@ -360,8 +362,9 @@ def render_results(value):
         subtitle += ' · ' + ('reçues le ' + jour_lisible(dates[0]) if len(dates) == 1 else
                              'reçues du ' + jour_lisible(dates[0]) + ' au ' + jour_lisible(dates[-1]))
     examples = ''
+    # Bilan sur toute la population : les filtres ne réduisent que le tableau
     for case in value['cases']:
-        rows = [row for row in value['rows'] if row['case_position'] == case['position']]
+        rows = [row for row in value['population_rows'] if row['case_position'] == case['position']]
         counts = ''
         for verdict, ton, one, many in (('SATISFAIT', 'ok', 'satisfait', 'satisfont'), ('NE SATISFAIT PAS', 'ko', 'ne satisfait pas', 'ne satisfont pas'),
                                         (None, 'att', 'à reprendre', 'à reprendre')):

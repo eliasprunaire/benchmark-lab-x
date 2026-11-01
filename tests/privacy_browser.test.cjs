@@ -234,6 +234,7 @@ with tempfile.TemporaryDirectory() as empty_dir:
     editorial_empty = views.render(editorial.catalog_view(str(Path(empty_dir).resolve())), '').decode()
 print(json.dumps({**browser_views(), 'published-results': views.render(results_view(), '').decode(),
                   'published-results-filtered': views.render(results_view(filtered=True), '').decode(),
+                  'published-results-repeated': views.render(results_view(repeated=True), '').decode(),
                   'published-results-withdrawn': views.render(results_view(withdrawn=True), '').decode(),
                   'published-results-trial-withdrawn': views.render(results_view(unavailable='trial-withdrawn'), '').decode(),
                   'reference_search': reference_search, 'reference_notices': reference_notices,
@@ -2170,6 +2171,12 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       const dialogs = [], errors = [];
       page.on('dialog', dialog => {dialogs.push(dialog.message()); dialog.dismiss();});
       page.on('pageerror', error => errors.push(error.message));
+      // Deux essais du même modèle sur le même exemple : chaque lien « Preuves » mène au détail de son essai
+      await page.goto(origin + '/render/published-results-repeated');
+      const cibles = await page.locator('main a.lien[href^="#"]').filter({hasText: 'Preuves'}).evaluateAll(links => links.map(link => link.getAttribute('href')));
+      assert.equal(cibles.length, 2);
+      assert.equal(new Set(cibles).size, 2, 'ancre de preuve partagée entre deux essais');
+      for (const cible of cibles) assert.equal(await page.locator(cible).count(), 1, cible);
       await page.goto(origin + '/render/published-results');
       const main = await page.textContent('main');
       assert.match(main, /Tableau <script>alert\(1\)<\/script>/);
