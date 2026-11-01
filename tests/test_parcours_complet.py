@@ -40,6 +40,11 @@ from tests.hermetique.sitecustomize import garder_module as setUpModule  # noqa:
 LAUNCH_REGISTRY_READS = 10
 
 
+def couloirs(page):
+    """Couloirs du suivi, dans l'ordre : le texte lu va du nom du modèle à son statut"""
+    return [n['text'].strip() for n in page.nodes if n['tag'] == 'li' and 'couloir' in n['attrs'].get('class', '').split()]
+
+
 class Page(HTMLParser):
     """Lire les formulaires, le texte hors dépliants et l'ordre natif de tabulation"""
     def __init__(self, raw):
@@ -1767,7 +1772,7 @@ class ParcoursComplet(unittest.TestCase):
             transport_factory=lambda channel, key: self.candidate, access_secret=SECRET,
             access_transport=self.access)
         page, _, _ = self.request(dossier)
-        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
         # Troisième campagne partielle : deux réponses vides, coût connu et coût inconnu
@@ -1793,7 +1798,7 @@ class ParcoursComplet(unittest.TestCase):
             transport_factory=lambda channel, key: partiel, access_secret=SECRET,
             access_transport=self.access)
         page, _, _ = self.request(dossier)
-        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
         # Quatrième campagne seulement préparée : jamais publiée
@@ -3225,7 +3230,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('2026-09-15T12:00:00+00:00', page.visible)
         form = page.form('/configurations')
         # Niveau adapté à chaque modèle : aucun refus, l'adaptation est montrée avant le lancement
-        tuning = next(n for n in page.nodes if n['tag'] == 'details' and 'Ajuster le niveau par modèle' in n['text'])
+        tuning = next(n for n in page.nodes if n['tag'] == 'details' and 'Choisir un niveau différent pour un modèle' in n['text'])
         self.assertIn('Modèle C', tuning['text'])
         self.assertNotIn('Modèle B', tuning['text'])
         # « Continuer » mène droit au récapitulatif de la sélection qui vient d'être enregistrée
@@ -3243,19 +3248,19 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(headers['Location'].endswith('-c2/conditions'))
         page, _, _ = self.request(headers['Location'])
         models = next(n for n in page.nodes if n['tag'] == 'table')
-        self.assertEqual(2, models['text'].count('adapté'))
+        self.assertEqual(2, models['text'].count('non accepté par ce modèle'))
         older = self.submit(self.request(configurations)[0], '/configurations', {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
             'tier': 'low', 'effort:mistralai/mistral-small-2603': 'none'})
         older_recap = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c3/conditions'
         models = next(n for n in older.nodes if n['tag'] == 'table')
-        self.assertEqual(['Modèle', 'Niveau de raisonnement', 'Limite de sortie', 'Coût estimé'],
+        self.assertEqual(['Modèle', 'Raisonnement', 'Longueur de réponse', 'Coût estimé'],
                          [n['text'] for n in older.nodes if n['tag'] == 'th' and n['attrs'].get('scope') == 'col'])
         self.assertIn('Modèle A', models['text'])
-        self.assertIn('Élevé (high) · adapté : ce modèle n’accepte pas Faible (low)', models['text'])
-        self.assertIn('Niveau de raisonnement fixe', models['text'])
+        self.assertIn('Élevé (high)Faible non accepté par ce modèle', models['text'])
+        self.assertIn('Fixe', models['text'])
         self.assertIn('Désactivé (none)', models['text'])
-        self.assertEqual(1, models['text'].count('adapté'))
+        self.assertEqual(1, models['text'].count('non accepté par ce modèle'))
         _, _, raw = self.request(form['action'], form['fields'] | {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
             'tier': 'high'}, status=201, json_response=True)
@@ -3274,22 +3279,22 @@ class ParcoursComplet(unittest.TestCase):
                           and n['attrs'].get('name') == 'models' and 'checked' in n['attrs']})
         page, _, raw = self.request(recap)
         self.examine(page, recap, 'prêt à lancer', 'Lancer le benchmark')
-        # Synthèse d'abord : prévision des réponses et réservation de l'évaluation restent deux montants
-        synthesis = next(n['text'] for n in page.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
-        self.assertRegex(synthesis, r'^2 modèles · réponses estimées : [0-9,]+ USD · réservé pour l’évaluation : '
-                                    r'[0-9,]+ USD · crédit restant : 18,5 USD$')
-        self.assertIn('Tout est prêt.', page.visible)
+        # Récapitulatif avant dépense : prévision des réponses et réservation de la vérification restent deux montants
+        pupitre = next(n['text'] for n in page.nodes if n['tag'] == 'form' and 'pupitre' in n['attrs'].get('class', ''))
+        self.assertRegex(pupitre, r'2modèles comparés.*Réponses, estimation[0-9,]+ USD.*Réservé pour la vérification des réponses[0-9,]+ USD'
+                                  r'.*Crédit restant18,5(?: / [0-9,]+)? USD')
+        self.assertIn('Tout est prêt', page.visible)
         self.assertNotIn('✓', page.visible)
         order = [next(i for i, n in enumerate(page.nodes) if test(n)) for test in (
-            lambda n: n['tag'] == 'p' and 'réponses estimées' in n['text'],
-            lambda n: n['tag'] == 'button' and n['text'] == 'Lancer le benchmark',
-            lambda n: n['tag'] == 'a' and n['text'] == 'Modifier la sélection',
-            lambda n: n['tag'] == 'table')]
+            lambda n: n['tag'] == 'a' and n['text'].strip() == 'Modifier la sélection',
+            lambda n: n['tag'] == 'table',
+            lambda n: n['tag'] == 'form' and 'pupitre' in n['attrs'].get('class', ''),
+            lambda n: n['tag'] == 'button' and n['text'] == 'Lancer le benchmark')]
         self.assertEqual(sorted(order), order)
         self.assertEqual(configurations, page.link('Modifier la sélection'))
-        self.assertNotIn('button', page.nodes[order[2]]['attrs'].get('class', ''))
+        self.assertNotIn('btn', page.nodes[order[0]]['attrs'].get('class', ''))
         models = next(n for n in page.nodes if n['tag'] == 'table')
-        self.assertIn('table-scroll', next(n for n in reversed(page.nodes[:order[3]])
+        self.assertIn('table-defile', next(n for n in reversed(page.nodes[:order[1]])
                                            if n['tag'] == 'div')['attrs'].get('class', ''))
         # Les candidats gardent le nom vu au choix, avec leur effort traduit
         self.assertIn('Modèle A', models['text'])
@@ -3317,27 +3322,27 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual((0, 0, 0), tuple(store._connection.execute(
                 f'SELECT count(*) FROM {table}').fetchone()[0] for table in ('s4_admissions', 's4_attempts', 's4_emissions')))
         page, _, _ = self.request(dossier)
-        self.examine(page, dossier, 'comparaison préparée', 'Vérifier puis lancer la comparaison')
-        self.assertIn('Comparaison prête à lancer', page.visible)
+        self.examine(page, dossier, 'comparaison préparée', 'Vérifier puis lancer le benchmark')
+        self.assertIn('Benchmark prêt à lancer', page.visible)
         # Une sélection sans essai : étape Modèles, aucun résultat à ouvrir
         self.assertEqual(('04Modèles', None), self.etape(page))
         self.assertEqual(recap, page.link('Vérifier puis lancer'))
         page, _, _ = self.request(recap)
         self.assertIn('Relever toutes les actions dans les notes', page.visible)
-        self.assertIn('réponses estimées', page.visible)
+        self.assertIn('Réponses, estimation', page.visible)
         criteria = next(n for n in page.nodes if n['tag'] == 'details' and
-                        'Détail des critères et des réglages' in n['text'])
-        for label in ('Critères', 'Obligations', 'Erreurs éliminatoires', 'Résultat attendu',
-                      'Modèles comparés', 'Limites', 'Harnais Pi'):
+                        'Critères et conditions' in n['text'])
+        for label in ('Obligations', 'Résultat attendu', 'Limites', 'Date de gel', 'Harnais', 'pi.dev'):
             self.assertIn(label, criteria['text'])
+        self.assertNotRegex(criteria['text'], r'\b[0-9]+\.[0-9]+\.[0-9]+\b')
         for key in ('criteria', 'obligations', 'eliminatory_errors', 'result_expected',
-                    'panel', 'limits', 'pi'):
+                    'panel', 'limits'):
             self.assertNotRegex(criteria['text'], rf'\b{re.escape(key)}\b')
         with patch.object(self, 'candidate', None):
             closed, _, _ = self.request(recap)
             self.examine(closed, recap, 'appels candidats fermés', None)
             self.assertIn('Impossible de lancer pour l’instant : Exécution des essais momentanément indisponible', closed.visible)
-            self.assertIn('✕ Exécution des essais', closed.visible)
+            self.assertIn('Exécution des essais', closed.visible)
             self.assertNotIn('Lancement enregistré', closed.visible)
             self.assertFalse(any(f['action'].endswith('/start') for f in closed.forms))
         # #517 : l'admission répond après l'échéance du relais. L'attente expire, la campagne reste à consulter
@@ -3413,7 +3418,7 @@ class ParcoursComplet(unittest.TestCase):
         # Consulter puis renvoyer le même lancement : ni émission, ni intention, ni seconde campagne
         for _ in range(2):
             consulted, _, _ = self.request(recap)
-            self.assertEqual('Benchmark en cours', next(n['text'] for n in consulted.nodes if n['tag'] == 'h1'))
+            self.assertEqual('Suivi du benchmark', next(n['text'] for n in consulted.nodes if n['tag'] == 'h1'))
             self.assertFalse(any(f['action'].endswith('/start') for f in consulted.forms))
         # Lancement déjà admis : le formulaire de lancement initial n'a plus la forme d'un lancement à accepter
         self.request(start_form['action'], start_form['fields'], status=400)
@@ -3425,28 +3430,28 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual({'openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'},
                          {n['attrs']['value'] for n in chosen.nodes if n['tag'] == 'input'
                           and n['attrs'].get('name') == 'models' and 'checked' in n['attrs']})
-        self.assertIn('selected', next(n for n in chosen.nodes if n['tag'] == 'option'
-                                       and n['attrs'].get('value') == 'high')['attrs'])
+        self.assertIn('checked', next(n for n in chosen.nodes if n['tag'] == 'input' and n['attrs'].get('name') == 'tier'
+                                      and n['attrs'].get('value') == 'high')['attrs'])
         page, _, _ = self.request(recap)
-        self.examine(page, recap, 'essais en attente', 'Actualiser le suivi')
-        self.assertEqual('Benchmark en cours', next(n['text'] for n in page.nodes if n['tag'] == 'h1'))
-        self.assertIn('en attente', page.visible)
-        self.assertNotIn('Comparaison terminée', page.visible)
-        self.assertIn('Modèle B · Niveau de raisonnement fixe : en attente de démarrage', page.visible)
+        self.examine(page, recap, 'essais en attente', None)
+        self.assertEqual('Suivi du benchmark', next(n['text'] for n in page.nodes if n['tag'] == 'h1'))
+        self.assertIn('En file', page.visible)
+        self.assertNotIn('Benchmark terminé', page.visible)
+        self.assertTrue(any('Modèle BRaisonnement fixeEn file' in n['text'] for n in page.nodes if n['tag'] == 'li'))
         self.assertFalse(any(f['action'].endswith('/cap') for f in page.forms))
         self.assertEqual(3, len(self.calls))
         execution.execute_launch(self.data, attempts[:1], self.candidate,
                                  access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(recap)
-        self.examine(page, recap, 'réception partielle', 'Actualiser le suivi')
-        self.assertIn('réponse reçue', page.visible)
-        self.assertIn('en attente', page.visible)
+        self.examine(page, recap, 'réception partielle', None)
+        self.assertIn('Reçue', page.visible)
+        self.assertIn('En file', page.visible)
         execution.execute_launch(self.data, attempts[1:], self.candidate,
                                  access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(recap)
         # Parcours à clé personnelle : l'évaluation, payée par la clé, reste à lancer tant qu'aucun jugement n'a tourné
-        self.examine(page, recap, 'réponses reçues', 'Évaluer les réponses reçues')
-        self.assertIn('Toutes les réponses sont arrivées. Leur évaluation n’est pas encore lancée.', page.visible)
+        self.examine(page, recap, 'réponses reçues', 'Vérifier les réponses reçues')
+        self.assertIn('Toutes les réponses sont arrivées. Leur vérification n’est pas encore lancée.', page.visible)
         comparison = recap.removesuffix('/conditions')
         empty, _, raw = self.request(comparison)
         self.examine(empty, comparison, 'jugements absents', None)
@@ -3456,10 +3461,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Revenir au cas d’usage', empty.visible)
         # Réponses reçues, évaluation jamais lancée : le cas mène au suivi, seul endroit où elle se lance
         page, _, _ = self.request(dossier)
-        self.examine(page, dossier, 'évaluation à lancer', 'Lancer l’évaluation')
-        self.assertIn('Évaluation à lancer', page.visible)
-        self.assertNotIn('Comparaison terminée', page.visible)
-        self.assertEqual(recap, page.link('Lancer l’évaluation'))
+        self.examine(page, dossier, 'vérification à lancer', 'Lancer la vérification des réponses')
+        self.assertIn('Vérification des réponses à lancer', page.visible)
+        self.assertNotIn('Benchmark terminé', page.visible)
+        self.assertEqual(recap, page.link('Lancer la vérification des réponses'))
         self.assertEqual(('05Résultats', recap), self.etape(page))
         self.assertNotIn('choisissez les modèles', page.visible)
         with closing(storage.Store(self.data)) as store:
@@ -3489,7 +3494,7 @@ class ParcoursComplet(unittest.TestCase):
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
             'tier': 'high'}, status=303)
         page, _, _ = self.request(dossier)
-        self.examine(page, dossier, 'nouvelle comparaison préparée', 'Vérifier puis lancer la comparaison')
+        self.examine(page, dossier, 'nouvelle comparaison préparée', 'Vérifier puis lancer le benchmark')
         # Étape Modèles en cours ; l'onglet Résultats garde la comparaison lancée, pas la sélection en attente
         self.assertEqual(('04Modèles', recap), self.etape(page))
         listed = next(n for n in page.nodes if n['attrs'].get('id') == 'comparaison')
@@ -3508,8 +3513,8 @@ class ParcoursComplet(unittest.TestCase):
         # Le rang suit l'identifiant de campagne : les sélections adaptées enregistrées plus haut le précèdent
         rank = previous['campaign_id'].rsplit('-c', 1)[1]
         self.assertIn(f'Comparaison {rank} du ' + views.date_lisible_utc(previous['conditions']['frozen_at']), texts)
-        self.assertIn('évaluation à lancer', listed['text'])
-        self.assertIn('comparaison prête à lancer', listed['text'])
+        self.assertIn('vérification des réponses à lancer', listed['text'])
+        self.assertIn('benchmark prêt à lancer', listed['text'])
         # Seul le retrait de sa clé ferme la préparation d'un visiteur ; aucune fermeture globale n'existe
         access, _, _ = self.request('/preparation/access')
         disconnect = access.form('/disconnect')
@@ -4251,9 +4256,9 @@ class ParcoursComplet(unittest.TestCase):
         recap = premier + '/campaigns/' + premier.rsplit('/', 1)[1] + '-c1/conditions'
         # 1. Panel, exemples, réglages, essais et leur estimation, avant toute confirmation
         self.examine(page, recap, 'récapitulatif de deux exemples', 'Lancer le benchmark')
-        synthese = next(n['text'] for n in page.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
-        self.assertRegex(synthese, r'^3 modèles · 2 exemples · 6 essais · réponses estimées : [0-9,]+ USD · '
-                                   r'réservé pour l’évaluation : [0-9,]+ USD · crédit restant : [0-9,]+ USD$')
+        pupitre = next(n['text'] for n in page.nodes if n['tag'] == 'form' and 'pupitre' in n['attrs'].get('class', ''))
+        self.assertRegex(pupitre, r'3modèles comparés.*Essais6.*Exemples2.*Réponses, estimation[0-9,]+ USD.*Réservé pour la vérification des réponses[0-9,]+ USD'
+                                  r'.*Crédit restant[0-9,]+(?: / [0-9,]+)? USD')
         exemples = next(n['text'] for n in page.nodes if n['attrs'].get('id') == 'exemples')
         self.assertIn('Exemple 1', exemples)
         self.assertIn('Exemple 2 : Une action sans responsable, pour vérifier qu’elle est signalée', exemples)
@@ -4265,7 +4270,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(3, sum(ligne.startswith('Exemple 1') for ligne in lignes))
         self.assertEqual(3, sum(ligne.startswith('Exemple 2') for ligne in lignes))
         self.assertTrue(all('USD' in ligne for ligne in lignes))
-        self.assertTrue(any(n['tag'] == 'details' and 'Détail des critères et des réglages' in n['text'] for n in page.nodes))
+        self.assertTrue(any(n['tag'] == 'details' and 'Critères et conditions' in n['text'] for n in page.nodes))
         with closing(storage.Store(self.data)) as store:
             manifeste = campaigns.inspect(store, recap.split('/')[-2])['manifest']
         # Chaque essai porte l'estimation de son exemple ; celle d'un modèle est la somme de ses essais
@@ -4295,7 +4300,7 @@ class ParcoursComplet(unittest.TestCase):
                                                      'tier': 'low'})
         exemples = next(n['text'] for n in seul.nodes if n['attrs'].get('id') == 'exemples')
         self.assertIn('Exemple 2 : Une action sans responsable, pour vérifier qu’elle est signalée · pas inclus : pas encore validé', exemples)
-        self.assertNotIn('exemples · ', next(n['text'] for n in seul.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text']))
+        self.assertNotIn('Exemples', next(n['text'] for n in seul.nodes if n['tag'] == 'form' and 'pupitre' in n['attrs'].get('class', '')))
         qualifier(second)
         page, _, _ = self.request(premier + '/configurations')
         page = self.submit(page, '/configurations', {
@@ -4340,7 +4345,7 @@ class ParcoursComplet(unittest.TestCase):
         # Couverture de l'arrêt : chaque essai garde son état, sous son exemple, sans lancement possible
         suivi, _, _ = self.request(recap)
         self.assertFalse(any(f['action'].endswith('/start') for f in suivi.forms))
-        self.assertEqual(4, suivi.visible.count('réponse reçue'))
+        self.assertEqual(4, suivi.visible.count('Reçue'))
         # Quinze minutes après l'envoi, l'ambigu est clos sans relance ; l'évaluation s'ouvre alors
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
@@ -4467,7 +4472,8 @@ class ParcoursComplet(unittest.TestCase):
         premier, recap, envois, _ = self.lancer_avec_reprises(
             ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'], comportement,
             qualifier=lambda: self.deux_exemples_454()[0])
-        self.assertIn('2 exemples · 4 essais', recap.visible)
+        self.assertIn('Exemples 2', ' '.join(n['text'] for n in recap.nodes if n['tag'] == 'dt' or n['tag'] == 'dd'))
+        self.assertIn('Essais 4', ' '.join(n['text'] for n in recap.nodes if n['tag'] == 'dt' or n['tag'] == 'dd'))
         tour = [('openai/gpt-5.6-sol', 4096), ('mistralai/mistral-small-2603', 4096), ('mistralai/mistral-small-2603', 8192)]
         self.assertEqual(tour + tour, envois)
         with closing(storage.Store(self.data)) as store:
@@ -4510,8 +4516,8 @@ class ParcoursComplet(unittest.TestCase):
         recap = self.submit(page, '/configurations', {'models': modeles, 'tier': 'low', 'repetitions': '3'})
         suivi = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions'
         self.examine(recap, suivi, 'récapitulatif de trois essais par modèle', 'Lancer le benchmark')
-        synthese = next(n['text'] for n in recap.nodes if n['tag'] == 'p' and 'réponses estimées' in n['text'])
-        self.assertRegex(synthese, r'^2 modèles · 3 essais par modèle · 6 essais · réponses estimées : [0-9,]+ USD · ')
+        pupitre = next(n['text'] for n in recap.nodes if n['tag'] == 'form' and 'pupitre' in n['attrs'].get('class', ''))
+        self.assertRegex(pupitre, r'2modèles comparés.*Essais6 \(3 par modèle\).*Réponses, estimation[0-9,]+ USD')
         self.assertIn('Chaque modèle répond 3 fois à l’exemple', recap.visible)
         essais = next(n for n in recap.nodes if n['tag'] == 'table' and n['attrs'].get('aria-label') == 'Essais prévus')
         lignes = [n['text'] for n in recap.nodes if n['tag'] == 'tr' and n['text'] in essais['text']][1:]
@@ -4536,7 +4542,7 @@ class ParcoursComplet(unittest.TestCase):
             campaigns.create(store, incomplet)
         # Le choix se relit sur la page des modèles
         _, _, raw = self.request(dossier + '/configurations')
-        self.assertRegex(raw.decode(), r'name="repetitions"[^>]*>(?:(?!</select>).)*<option value="3" selected>')
+        self.assertRegex(raw.decode(), r'name="repetitions" value="3" checked>')
         self.submit(recap, '/start', {}, status=303)
         attempts = self.starts.get_nowait()['candidate_attempts']
         self.assertEqual(6, len(attempts))
@@ -4568,13 +4574,14 @@ class ParcoursComplet(unittest.TestCase):
                          [etats[cell['cell_id']] for cell in manifeste['plan']])
         # 4. Le suivi nomme chaque essai de chaque modèle
         page, _, _ = self.request(suivi)
-        lignes = [n['text'] for n in page.nodes if n['tag'] == 'li' and ' · essai ' in n['text']]
-        self.assertEqual([('Modèle A', '1', 'réponse reçue'), ('Modèle C', '1', 'réponse reçue'),
-                          ('Modèle A', '2', 'réponse reçue'), ('Modèle C', '2', 'réponse reçue'),
-                          ('Modèle A', '3', 'réponse non confirmée, à vérifier'),
-                          # Issue #525 : la comparaison arrêtée n'enverra plus cet essai
-                          ('Modèle C', '3', 'non appelé : la comparaison s’est arrêtée avant cet essai')],
-                         [(ligne[:8], *re.search(r' · essai (\d) : (.*)$', ligne).groups()) for ligne in lignes])
+        lignes = couloirs(page)
+        self.assertEqual([('Modèle A', '1', 'Reçue'), ('Modèle C', '1', 'Reçue'),
+                          ('Modèle A', '2', 'Reçue'), ('Modèle C', '2', 'Reçue'),
+                          ('Modèle A', '3', 'À vérifier'),
+                          # Issue #525 : le benchmark arrêté n'enverra plus cet essai
+                          ('Modèle C', '3', 'Non appelé')],
+                         [(ligne[:8], *re.match(r'Modèle \w(?:Exemple \d+ · )?Essai (\d).*?(Reçue|À vérifier|Non appelé)$', ligne).groups())
+                          for ligne in lignes])
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
         page, _, _ = self.request(suivi)
@@ -4647,7 +4654,8 @@ class ParcoursComplet(unittest.TestCase):
                     self.coupee(value, 'Action : relire', limit)
         dossier, recap, envois, _ = self.lancer_avec_reprises(
             ['openai/gpt-5.6-sol', 'mistralai/mistral-small-2603'], comportement, repetitions=2)
-        self.assertIn('2 modèles · 2 essais par modèle · 4 essais', recap.visible)
+        self.assertRegex(next(n['text'] for n in recap.nodes if n['tag'] == 'form' and 'pupitre' in n['attrs'].get('class', '')),
+                         r'2modèles comparés.*Essais4 \(2 par modèle\)')
         self.assertEqual([('openai/gpt-5.6-sol', 4096), ('mistralai/mistral-small-2603', 4096)] * 2
                          + [('mistralai/mistral-small-2603', 8192)], envois)
         with closing(storage.Store(self.data)) as store:
@@ -5000,8 +5008,8 @@ class ParcoursComplet(unittest.TestCase):
             return value
         execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(dossier)
-        self.examine(page, dossier, 'évaluation à lancer', 'Lancer l’évaluation')
-        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        self.examine(page, dossier, 'vérification à lancer', 'Lancer la vérification des réponses')
+        page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.assertEqual(recap, urlsplit(page.link('Actualiser le suivi')).path)
         self.submit(page, '/evaluate', {})
         ids = self.starts.get_nowait()['judgment_operations']
@@ -5015,7 +5023,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'comparaison partielle terminée', 'Voir les résultats')
         state = next(n for n in page.nodes if 'etat' in n['attrs'].get('class', '').split())
-        self.assertIn('Comparaison terminée', state['text'])
+        self.assertIn('Benchmark terminé', state['text'])
         self.assertIn('1 modèle sur 3 n’a pas donné de réponse exploitable', state['text'])
         self.assertNotIn('Cet exemple correspond-il', state['text'])
         self.assertEqual('ok', state['attrs']['data-ton'])
@@ -5031,7 +5039,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('doit être relue', results.visible)
         self.assertNotIn('les essais se sont arrêtés avant la fin', results.visible)
         followup, _, _ = self.request(recap)
-        self.assertIn('Réponses évaluées : 2 sur 2', followup.visible)
+        self.assertIn('2 /2 réponses vérifiées', followup.visible)
         # Une nouvelle sélection ne retire pas l'accès aux résultats de la comparaison évaluée
         page, _, _ = self.request(dossier + '/configurations')
         self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'tier': 'high'})
@@ -5097,7 +5105,7 @@ class ParcoursComplet(unittest.TestCase):
             return value
         execution.execute_launch(self.data, attempts, candidat, access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(dossier)
-        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
         # Seule la réponse complète de Modèle A est jugée
@@ -5176,7 +5184,7 @@ class ParcoursComplet(unittest.TestCase):
         execution.execute_launch(self.data, self.starts.get_nowait()['candidate_attempts'], self.candidate,
                                  access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(dossier)
-        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
         self.assertEqual(2, judge.request.call_count)
@@ -5312,7 +5320,7 @@ class ParcoursComplet(unittest.TestCase):
                                   ajuste=lambda vue, findings: omission(vue, findings)
                                   if vue['output']['content'] == omise else findings)
         page, _, _ = self.request(dossier)
-        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
         self.assertEqual(2, judge.request.call_count)
@@ -5397,7 +5405,7 @@ class ParcoursComplet(unittest.TestCase):
         # 1 et 2. Profil autorisé introuvable après la maintenance : refus explicite, rien n'est réservé ni envoyé
         deploiement(())
         page, _, _ = self.request(dossier)
-        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.submit(page, '/evaluate', {}, status=409)
         self.assertTrue(self.starts.empty())
         self.assertEqual([], self.judge_systems)
@@ -5503,7 +5511,7 @@ class ParcoursComplet(unittest.TestCase):
     def evaluer(self, dossier):
         from benchmark import automatic_judgment as auto
         page, _, _ = self.request(dossier)
-        page, _, _ = self.request(page.link('Lancer l’évaluation'))
+        page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
@@ -5566,11 +5574,11 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, judge.request.call_count)
         # Revue PR #540 : la dernière reprise encore coupée n'est pas présentée comme une réponse reçue
         page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
-        bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
-        self.assertTrue(bloc.split('Modèle C')[1].strip().endswith(': pas de réponse exploitable'), bloc)
-        self.assertTrue(bloc.split('Modèle B')[1].split('Modèle C')[0].strip().endswith(': réponse reçue'), bloc)
+        lignes = couloirs(page)
+        self.assertTrue(next(l for l in lignes if l.startswith('Modèle C')).endswith('Sans réponse'), lignes)
+        self.assertTrue(next(l for l in lignes if l.startswith('Modèle B')).endswith('Reçue'), lignes)
         # Issue #541 : la ligne de compte ne la compte pas non plus comme une réponse reçue
-        self.assertIn('Réponses reçues : 2 sur 3.', page.visible)
+        self.assertIn('2 /3 réponses reçues', page.visible)
         rows = html.split('<tbody>')[1].split('</tbody>')[0]
         self.assertEqual(2, rows.count('<tr id="attempt-'))
         reprise = next(chunk for chunk in rows.split('<tr id="attempt-')[1:] if '<strong>Modèle B</strong>' in chunk)
@@ -5653,7 +5661,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(' (arrêt pour longueur, plafond demandé : 8192 jetons de sortie ; 1 reprise ; reprise '
                          'suivante non tentée : la reprise n’a pas allongé la réponse coupée)', ligne)
         page, _, _ = self.request(dossier + '/campaigns/' + source_id + '/conditions')
-        self.assertIn('Réponses reçues : 1 sur 2.', page.visible)
+        self.assertIn('1 /2 réponses reçues', page.visible)
         self.assertEqual(3, len(envois))
         self.assertEqual(effects[:2], persisted()[:2])
 
@@ -6736,15 +6744,12 @@ class ParcoursComplet(unittest.TestCase):
         # Consultations, puis redémarrage de l'exécuteur : aucun essai de plus, preuves inchangées
         for _ in range(2):
             page, _, _ = self.request(suivi)
-            self.assertIn('Une réponse reçue n’indique ni le modèle qui a répondu ni son coût. La comparaison '
-                          's’est arrêtée', page.visible)
+            self.assertIn('Une réponse reçue n’indique ni le modèle qui a répondu ni son coût. Le benchmark '
+                          's’est arrêté', page.visible)
             self.assertNotIn('problème technique', page.visible)
-            bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
-            self.assertEqual(['réponse reçue', 'pas de réponse exploitable',
-                              'non appelé : la comparaison s’est arrêtée avant cet essai'],
-                             [ligne.rsplit(' : ', 1)[-1].strip() if 'non appelé' not in ligne
-                              else ligne[ligne.index('non appelé'):].strip() for ligne in bloc.split('Modèle ')[1:]])
-            self.assertIn('Réponses reçues : 1 sur 3.', page.visible)
+            self.assertEqual(['Reçue', 'Sans réponse', 'Non appelé'], [
+                next(mot for mot in ('Reçue', 'Sans réponse', 'Non appelé') if ligne.endswith(mot)) for ligne in couloirs(page)])
+            self.assertIn('1 /3 réponses reçues', page.visible)
         with closing(storage.Store(self.data)) as store:
             runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
         self.clock += timedelta(hours=1)
@@ -6783,7 +6788,7 @@ class ParcoursComplet(unittest.TestCase):
         dossier, _, envois, _ = self.lancer_avec_reprises(list(self.MAJORANTS), comportement)
         self.assertEqual([('openai/gpt-5.6-sol', 4096)], envois)
         page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
-        self.assertIn('Le coût d’une réponse reçue n’est pas connu. La comparaison s’est arrêtée', page.visible)
+        self.assertIn('Le coût d’une réponse reçue n’est pas connu. Le benchmark s’est arrêté', page.visible)
 
     def test_reprise_refusee_ne_bloque_pas_la_comparaison(self):
         """Une reprise refusée avant envoi (clé révoquée, par exemple) ne reste pas en attente
@@ -6889,10 +6894,10 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(suivi)
         self.assertIn('OpenRouter limite temporairement les demandes. Nouvelle tentative automatique dans 9 min. '
                       'Les autres réponses sont conservées.', page.visible)
-        self.assertNotIn('La comparaison s’est arrêtée', page.visible)
-        self.assertNotIn('Évaluer les réponses reçues', page.visible)
+        self.assertNotIn('Le benchmark s’est arrêté', page.visible)
+        self.assertNotIn('Vérifier les réponses reçues', page.visible)
         page, _, _ = self.request(dossier)
-        self.assertNotIn('Lancer l’évaluation', page.visible)
+        self.assertNotIn('Lancer la vérification des réponses', page.visible)
         # Les résultats ne déclarent pas sans réponse un modèle dont la relance est programmée
         _, _, raw = self.request(suivi.removesuffix('/conditions'))
         self.assertIn('Relance automatique programmée après un incident fournisseur.', raw.decode())
@@ -7023,15 +7028,14 @@ class ParcoursComplet(unittest.TestCase):
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
         page, _, _ = self.request(comparison + '/conditions')
         self.assertNotIn('Nouvelle tentative automatique', page.visible)
-        self.assertIn('Évaluation terminée.', page.visible)
+        self.assertIn('Vérification des réponses terminée.', page.visible)
         # Issue #535 : le suivi nomme la cause et le nombre de tentatives, comme la page de résultats
         self.assertIn('1 modèle sur 2 n’a pas donné de réponse exploitable (OpenRouter limite temporairement les '
                       'demandes ; 5 tentatives) : il n’est pas évalué.', page.visible)
-        # Issue #537 : le bloc « Modèle par modèle » ne dit pas « réponse reçue » pour le modèle épuisé
-        bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
-        ligne_a, ligne_b = bloc.split('Modèle B')
-        self.assertTrue(ligne_a.strip().endswith(': pas de réponse exploitable'), ligne_a)
-        self.assertTrue(ligne_b.strip().endswith(': réponse reçue'), ligne_b)
+        # Issue #537 : le couloir du modèle épuisé ne dit pas « Reçue »
+        ligne_a, ligne_b = couloirs(page)[:2]
+        self.assertTrue(ligne_a.endswith('Sans réponse'), ligne_a)
+        self.assertTrue(ligne_b.endswith('Reçue'), ligne_b)
         results, _, raw = self.request(comparison)
         self.examine(results, comparison, 'résultats après relances épuisées', None)
         html = raw.decode()
@@ -7071,11 +7075,10 @@ class ParcoursComplet(unittest.TestCase):
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(1, len(store.close_expired_ambiguous(datetime.now(timezone.utc) + timedelta(minutes=16))))
         page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
-        bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
-        ligne_a, ligne_b = bloc.split('Modèle B')
-        self.assertTrue(ligne_a.strip().endswith(': réponse non confirmée, appel clos'), ligne_a)
-        self.assertTrue(ligne_b.strip().endswith(': réponse reçue'), ligne_b)
-        self.assertIn('Réponses reçues : 1 sur 2.', page.visible)
+        ligne_a, ligne_b = couloirs(page)[:2]
+        self.assertTrue(ligne_a.endswith('Non confirmée'), ligne_a)
+        self.assertTrue(ligne_b.endswith('Reçue'), ligne_b)
+        self.assertIn('1 /2 réponses reçues', page.visible)
 
     def test_autre_appel_ambigu_au_redemarrage_la_relance_n_attend_pas(self):
         """Issue #537 : un autre appel resté ambigu au redémarrage interdit la relance, qui n'est pas attendue sans fin
@@ -7137,13 +7140,13 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Nouvelle tentative automatique', page.visible)
         self.assertIn('relance impossible : un autre appel n’a pas de réponse confirmée', page.visible)
         # L'appel clos sans réponse confirmée n'est ni « réponse reçue » ni compté parmi les réponses reçues
-        bloc = page.visible.split('Modèle par modèle')[1].split('Réponses reçues :')[0]
-        self.assertTrue(bloc.split('Modèle C')[1].strip().endswith(': réponse non confirmée, appel clos'), bloc)
+        lignes = couloirs(page)
+        self.assertTrue(next(l for l in lignes if l.startswith('Modèle C')).endswith('Non confirmée'), lignes)
         # Issue #541 : Modèle A, sans réponse exploitable, n'est pas compté non plus
-        self.assertTrue(bloc.split('Modèle A')[1].split('Modèle B')[0].strip().endswith(': pas de réponse exploitable'), bloc)
-        self.assertIn('Réponses reçues : 1 sur 3.', page.visible)
+        self.assertTrue(next(l for l in lignes if l.startswith('Modèle A')).endswith('Sans réponse'), lignes)
+        self.assertIn('1 /3 réponses reçues', page.visible)
         page, _, _ = self.request(suivis[0].split('/campaigns/')[0])
-        self.assertIn('Lancer l’évaluation', page.visible)
+        self.assertIn('Lancer la vérification des réponses', page.visible)
         self.assertEqual(avant, effets()[0])
 
     def test_tous_les_modeles_epuises_le_suivi_nomme_la_cause(self):
@@ -7214,7 +7217,7 @@ class ParcoursComplet(unittest.TestCase):
         self.clock += timedelta(hours=1)
         self.assertEqual([], self.relancer())
         page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
-        self.assertIn('OpenRouter limite temporairement les demandes. La comparaison s’est arrêtée', page.visible)
+        self.assertIn('OpenRouter limite temporairement les demandes. Le benchmark s’est arrêté', page.visible)
 
     def test_plafond_de_cinq_tentatives_compte_les_reprises_pour_longueur(self):
         """Issue #533 : cinq tentatives au plus par cellule, reprises pour longueur comprises (revue de la PR #534)"""
@@ -7272,7 +7275,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, len(envois))
         page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
         self.assertIn('Crédit OpenRouter épuisé pour votre clé : rechargez-le ou relevez son plafond. '
-                      'La comparaison s’est arrêtée', page.visible)
+                      'Le benchmark s’est arrêté', page.visible)
 
     def test_cout_complet_inconnu_tant_qu_un_envoi_attend(self):
         """Issue #441 : un envoi réservé mais pas encore parti peut encore coûter
@@ -7389,8 +7392,10 @@ class ParcoursComplet(unittest.TestCase):
         for node in page.nodes:
             if node['tag'] == 'select':
                 select = node['attrs']['name']
+            elif node['tag'] == 'input' and node['attrs'].get('name') == 'tier' and 'checked' in node['attrs']:
+                fields['tier'] = node['attrs']['value']
             elif (node['tag'] == 'option' and 'selected' in node['attrs'] and node['attrs']['value']
-                  and (select == 'tier' or select.startswith('effort:'))):
+                  and select.startswith('effort:')):
                 fields[select] = node['attrs']['value']
             elif node['tag'] == 'input' and node['attrs'].get('name') == 'models' and 'checked' in node['attrs']:
                 fields['models'].append(node['attrs']['value'])
@@ -7451,7 +7456,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual({'max_tokens:' + model_id for model_id in bornes}, set(champs))
         self.assertEqual('16000', champs['max_tokens:openai/gpt-5.6-sol']['max'])
         self.assertNotIn('max', champs['max_tokens:deepseek/deepseek-v4.1-flash'])
-        limites = next(n for n in page.nodes if n['tag'] == 'details' and 'Ajuster la limite de sortie' in n['text'])
+        limites = next(n for n in page.nodes if n['tag'] == 'details' and 'Fixer une limite pour un modèle' in n['text'])
         self.assertIn('Modèle B · borne publiée inconnue', limites['text'])
         self.assertIn('Modèle A · borne publiée : 16000', limites['text'])
         form = page.form('/configurations')
@@ -7484,7 +7489,7 @@ class ParcoursComplet(unittest.TestCase):
             attendu = (Decimal('0.000002') * config['estimate']['assumptions']['input_tokens']
                        + Decimal('0.00001') * config['parameters']['max_tokens'])
             self.assertEqual(attendu, Decimal(config['estimate']['amount_usd']))
-        self.assertEqual(['Modèle', 'Niveau de raisonnement', 'Limite de sortie', 'Coût estimé'],
+        self.assertEqual(['Modèle', 'Raisonnement', 'Longueur de réponse', 'Coût estimé'],
                          [n['text'] for n in recap.nodes if n['tag'] == 'th' and n['attrs'].get('scope') == 'col'])
         lignes = {lettre: next(n['text'] for n in recap.nodes if n['tag'] == 'tr' and 'Modèle ' + lettre in n['text'])
                   for lettre in 'ABC'}
@@ -7523,10 +7528,10 @@ class ParcoursComplet(unittest.TestCase):
                           ('mistralai/mistral-small-2603', 4096)], envois)
         # Retrouvable après résultat : les réglages utilisés portent la limite envoyée
         reglages, _, _ = self.request(dossier + '/campaigns/' + prefix + '-c1/configurations')
-        sections = [n['text'] for n in reglages.nodes if n['tag'] == 'section']
-        self.assertIn('12000', next(t for t in sections if 'Modèle A' in t))
-        self.assertIn('Limite de tokens', next(t for t in sections if 'Modèle A' in t))
-        self.assertIn('6000', next(t for t in sections if 'Modèle B' in t))
+        sections = [n['text'] for n in reglages.nodes if n['tag'] == 'li' and 'carte' in n['attrs'].get('class', '').split()]
+        self.assertIn('12000 jetons', next(t for t in sections if 'Modèle A' in t))
+        self.assertIn('Longueur de réponse', next(t for t in sections if 'Modèle A' in t))
+        self.assertIn('6000 jetons', next(t for t in sections if 'Modèle B' in t))
         # Modèle A décoché : sa limite pré-remplie part avec le formulaire, comme dans un navigateur, et reste ignorée
         page, _, _ = self.request(configurations)
         self.submit(page, '/configurations', valeurs | {'models': list(bornes)[1:], 'tier': 'low'})

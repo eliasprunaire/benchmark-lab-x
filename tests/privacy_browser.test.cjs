@@ -864,7 +864,7 @@ test('per-model reasoning tuning opens without JavaScript, stays in the form and
     try {
       const page = await context.newPage(); page.setDefaultTimeout(3000);
       await page.goto(origin + '/render/configurations');
-      const tuning = page.locator('details', {hasText: 'Ajuster le niveau par modèle'});
+      const tuning = page.locator('details', {hasText: 'Choisir un niveau différent pour un modèle'});
       assert.equal(await tuning.count(), 1, colorScheme);
       const select = page.locator('select[name="effort:mistralai/mistral-medium-3-5"]');
       assert.equal(await select.isVisible(), false, `${colorScheme} dépliant fermé par défaut`);
@@ -1247,20 +1247,21 @@ test('pre-launch summary: synthesis, single launch button as confirmation, model
       await page.evaluate(() => document.fonts.ready);
       const main = await page.locator('main').innerText();
       // Prévision et réservation affichées séparément, jamais additionnées
-      assert.match(main, /2 modèles · réponses estimées : non estimable · réservé pour l’évaluation : 0,30 USD · crédit restant : 18,5 USD/, colorScheme);
+      assert.match(main, /2\s*MODÈLES COMPARÉS/i, colorScheme);
+      for (const row of [/Réponses, estimation\s+non estimable/, /Réservé pour la vérification des réponses\s+0,30 USD/, /Crédit restant\s+18,5 \/ 20 USD/])
+        assert.match(main, row, colorScheme);
       assert.equal(await page.locator('main input[type="checkbox"]').count(), 0, `${colorScheme} case à cocher`);
-      assert.equal(await page.locator('main button:not(.sec)').count(), 1, `${colorScheme} un seul bouton principal`);
+      assert.equal(await page.locator('main button:not(.btn-sec)').count(), 1, `${colorScheme} un seul bouton principal`);
       assert.equal(await page.locator('form[action$="/start"] input[name="confirm"]').getAttribute('value'), 'yes');
       assert.equal(await page.evaluate(() => {
-        const synthesis = [...document.querySelectorAll('main p')].find(p => p.textContent.includes('réponses estimées'));
-        const nodes = [synthesis, document.querySelector('form[action$="/start"] button'),
-                       [...document.querySelectorAll('main a')].find(a => a.textContent === 'Modifier la sélection'),
-                       document.querySelector('.table-scroll table')];
+        const nodes = [[...document.querySelectorAll('main a')].find(a => a.textContent === 'Modifier la sélection'),
+                       document.querySelector('.table-defile table'), document.querySelector('form.pupitre'),
+                       document.querySelector('form[action$="/start"] button')];
         return nodes.every(Boolean) && nodes.every((node, i) => !i || nodes[i - 1].compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
-      }), true, `${colorScheme} ordre synthèse, bouton, lien, tableau`);
-      assert.match(await page.locator('.table-scroll table').innerText(), /adapté/);
+      }), true, `${colorScheme} ordre lien, tableau, récapitulatif, bouton`);
+      assert.match(await page.locator('.table-defile table').innerText(), /Faible non accepté par ce modèle/);
       // K5 : les nombres du tableau s'alignent en chiffres de largeur fixe
-      assert.match(await page.locator('.table-scroll td').first().evaluate(cell => getComputedStyle(cell).fontVariantNumeric),
+      assert.match(await page.locator('.table-defile td.nb').first().evaluate(cell => getComputedStyle(cell).fontVariantNumeric),
                    /tabular-nums/, `${colorScheme} chiffres du lancement`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${colorScheme} débordement`);
       assert.deepEqual(await page.evaluate(contrastFailures), [], colorScheme);
@@ -1296,7 +1297,7 @@ test('an expired launch wait claims neither failure nor success and only offers 
     // La consultation est une lecture : elle ouvre le suivi de la même campagne sans rien envoyer
     await page.getByRole('link', {name: 'Consulter l’état du lancement'}).click();
     await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1/conditions');
-    assert.equal(await page.locator('h1').textContent(), 'Benchmark en cours');
+    assert.equal(await page.locator('h1').textContent(), 'Suivi du benchmark');
     assert.equal(posts.length, sent, 'consultation émise en POST');
     assert.deepEqual(failures, []);
   } finally {await context.close();}
@@ -1329,7 +1330,7 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     };
     const running = () => page.locator('#preparation-progress progress').isVisible();
     await start();
-    assert.equal(await page.locator('h1').textContent(), 'Benchmark en cours');
+    assert.equal(await page.locator('h1').textContent(), 'Suivi du benchmark');
     // Une zone `aria-live` réécrite à l'identique serait annoncée de nouveau : rien n'est remplacé sans changement
     await page.evaluate(() => {
       window.statusMutations = 0;
@@ -1383,11 +1384,11 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     }
     // La mise à jour réécrit la zone d'état : la composition est remplacée entière, sans doublon
     await start();
-    assert.equal((await page.locator('.cote').innerText()).includes('Réponses évaluées'), false);
+    assert.equal((await page.locator('#campaign-status').textContent()).includes('réponses vérifiées'), false);
     await tick(3000, 'mixed-EMISSION_POSSIBLE-WAITING', 'FOLLOWUP_ACTIVE');
-    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.colonnes').length,
-      document.querySelectorAll('#campaign-status > .colonnes').length]), [1, 1]);
-    assert.match(await page.locator('.cote').innerText(), /Réponses évaluées : 0 sur 2\./);
+    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.direct-tete').length,
+      document.querySelectorAll('#campaign-status > .direct-tete').length]), [1, 1]);
+    assert.match(await page.locator('#campaign-status').textContent(), /0\/2\s*réponses vérifiées/);
     await start();
     await tick(3000, 'followup-stopped', 'FOLLOWUP_COMPLETE');
     await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1/conditions');
@@ -1472,8 +1473,8 @@ test('access and launch screens preserve available actions, estimates and refusa
       }
       if (state === 'connected') assert.equal(await page.locator('form[action="/preparation/access/disconnect"]').count(), 1);
     }
-    for (const [name, text] of [['estimate-known', 'réservé pour l’évaluation : 0,125 USD'],
-      ['estimate-unknown', 'réservé pour l’évaluation : inconnu'],
+    for (const [name, text] of [['estimate-known', '0,125 USD'],
+      ['estimate-unknown', 'Réservé pour la vérification des réponses'],
       ['launch-judgment-blocked', 'Budget insuffisant pour l’évaluation']]) {
       await page.goto(origin + '/render/' + name);
       assert.ok((await page.textContent('main')).includes(text), name);
@@ -1486,18 +1487,18 @@ test('access and launch screens preserve available actions, estimates and refusa
     for (const state of ['ready', 'blocked']) {
       await page.goto(origin + '/render/launch-' + state);
       const text = await page.textContent('main');
-      assert.equal(text.includes('Tout est prêt.'), state === 'ready');
+      assert.equal(text.includes('Tout est prêt'), state === 'ready');
       assert.equal(text.includes('✓'), false);
       assert.equal(await page.getByRole('button', {name: 'Lancer le benchmark', exact: true}).count(), state === 'ready' ? 1 : 0);
       assert.equal(await page.locator('form[action$="/cap"], input[name="confirm"][required]').count(), 0);
       assert.equal(await page.getByRole('link', {name: 'Modifier la sélection'}).getAttribute('href'), '/preparation/dossiers/d1/configurations');
       if (state === 'ready') {
-        assert.ok(text.includes('crédit restant : 12,50 USD'));
-        assert.ok(text.includes('réponses estimées : 3,50 USD'));
+        assert.match(await page.locator('.pupitre').innerText(), /Crédit restant\s+12,50 USD/);
+        assert.ok(text.includes('Réponses estimées à 3,50 USD'));
         assert.equal(await page.locator('input[name="confirm"]').getAttribute('type'), 'hidden');
         assert.equal(await page.locator('input[name="confirm"]').inputValue(), 'yes');
       } else {
-        for (const phrase of ['Modèle à choisir de nouveau', 'Ce que la vérification de l’exemple a relevé', 'Quantité à confirmer'])
+        for (const phrase of ['Modèle à choisir de nouveau', 'relevé par le contrôle', 'Quantité à confirmer'])
           assert.ok(text.includes(phrase), phrase);
       }
       assert.ok((await page.locator('form').evaluateAll(forms => forms.map(f => [f.method, f.getAttribute('action')]))).every(
@@ -1507,15 +1508,15 @@ test('access and launch screens preserve available actions, estimates and refusa
     await page.goto(origin + '/render/configurations-selected');
     assert.equal(await page.locator('form#configurations-form').getAttribute('action'), '/preparation/dossiers/d1/configurations');
     assert.equal(await page.locator('input[name="models"]:checked').count(), 2);
-    assert.equal(await page.locator('select[name="tier"]').inputValue(), 'high');
-    assert.equal(await page.locator('select[name="tier"]').getAttribute('aria-describedby'), 'reasoning-help');
+    assert.equal(await page.locator('input[name="tier"]:checked').getAttribute('value'), 'high');
+    assert.equal(await page.locator('input[name="tier"]:checked').getAttribute('form'), 'configurations-form');
     const effort = page.locator('select[name="effort:modele-a"]');
     assert.equal(await effort.getAttribute('form'), 'configurations-form');
     assert.equal(await effort.inputValue(), 'xhigh');
     assert.equal(await page.locator('select[name="effort:modele-b"]').count(), 0);
     const selection = await page.textContent('main');
-    for (const phrase of ['reçoit le niveau le plus proche qu’il propose', 'Ajuster le niveau par modèle',
-      'sans garantir qu’elle soit meilleure', 'niveau de raisonnement fixe']) assert.ok(selection.includes(phrase), phrase);
+    for (const phrase of ['reçoit le plus proche', 'Choisir un niveau différent pour un modèle',
+      'sans garantie d’être meilleur', 'Raisonnement fixe']) assert.ok(selection.includes(phrase), phrase);
     assert.equal(/Votre sélection|Coût total estimé|Plafond :/.test(selection), false);
     assert.equal(await page.locator('a[href$="/campaigns/d1-c1/conditions"]').count(), 0);
     assert.equal(await page.getByRole('button', {name: 'Continuer', exact: true}).count(), 1);
@@ -1546,24 +1547,28 @@ test('access and launch screens preserve available actions, estimates and refusa
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} colonne de la clé`);
       assert.equal(layout.overflow, 0, `${width} débordement de la clé`);
       await page.goto(origin + '/render/configurations-selected');
-      layout = await zones();
-      assert.ok(layout.side.includes('Enregistrer ce choix n’appelle aucun modèle.'), `${width} aucun appel`);
-      assert.equal(await page.locator('.cote button[form="configurations-form"]').innerText(), 'Continuer');
-      assert.ok(width === 1440 ? layout.right : layout.below, `${width} colonne des modèles`);
-      assert.equal(layout.overflow, 0, `${width} débordement des modèles`);
+      assert.ok((await page.textContent('main')).includes('Enregistrer ce choix n’appelle aucun modèle.'), `${width} aucun appel`);
+      assert.equal(await page.locator('.barre-choix button[form="configurations-form"]').innerText(), 'Continuer');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0, `${width} débordement des modèles`);
       await page.goto(origin + '/render/launch-ready');
-      layout = await zones();
-      // Synthèse, conditions puis bouton dans la colonne lue en premier ; le tableau reste dans la zone principale
-      for (const phrase of ['ESTIMATION DES RÉPONSES\n3,50 USD', 'réponses estimées : 3,50 USD', 'Tout est prêt.', 'Lancer le benchmark'])
-        assert.ok(layout.side.includes(phrase), `${width} ${phrase}`);
-      assert.ok(layout.side.indexOf('Tout est prêt.') < layout.side.indexOf('Lancer le benchmark'), `${width} conditions avant le bouton`);
+      // Le récapitulatif porte les montants et le seul bouton ; le tableau reste dans la colonne de lecture
+      const pupitre = await page.locator('form.pupitre').innerText();
+      for (const phrase of [/RÉPONSES, ESTIMATION\s+3,50 USD/i, /Lancer le benchmark/])
+        assert.match(pupitre, phrase, `${width}`);
       assert.equal(await page.locator('.pile-l table').count(), 1);
-      assert.ok(width === 1440 ? layout.right : layout.above, `${width} colonne du lancement`);
-      assert.equal(layout.overflow, 0, `${width} débordement du lancement`);
+      const place = await page.evaluate(() => {
+        const box = selector => document.querySelector(selector).getBoundingClientRect();
+        const side = box('.pupitre'), table = box('.pile-l table'), checklist = box('.checklist');
+        return {right: side.left >= box('.pile-l').right, between: side.top >= checklist.bottom && side.bottom <= table.top + 1,
+                overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
+      });
+      // Sur une colonne, le récapitulatif et son bouton suivent la liste des contrôles, avant le tableau
+      assert.ok(width === 1440 ? place.right : place.between, `${width} colonne du lancement`);
+      assert.equal(place.overflow, 0, `${width} débordement du lancement`);
       await page.goto(origin + '/render/launch-blocked');
-      layout = await zones();
-      assert.ok(layout.side.includes('Impossible de lancer pour l’instant'));
-      assert.equal(layout.side.includes('Lancer le benchmark'), false);
+      const blocked = await page.locator('.pupitre').innerText();
+      assert.ok(blocked.includes('Impossible de lancer pour l’instant'));
+      assert.equal(blocked.includes('Lancer le benchmark'), false);
     }
   } finally {await context.close();}
 });
@@ -1574,27 +1579,27 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
     const page = await context.newPage();
     for (const [state, active, terminal, message] of [
       ['running', true, false, 'Benchmark en cours'], ['queued', true, false, 'Les essais n’ont pas encore démarré'],
-      ['stopped', false, false, 'La comparaison s’est arrêtée avant la fin'],
+      ['stopped', false, false, 'Le benchmark s’est arrêté avant la fin'],
       ['ambiguous', false, false, 'Un essai n’a pas pu être confirmé'],
       ['incident', false, false, 'Un problème technique est survenu'], ['received', false, true, 'Réponses reçues'],
       // #525 : un incident fournisseur non relançable nommé, jamais présenté comme un problème technique anonyme
-      ['credit-exhausted', false, false, 'Crédit OpenRouter épuisé pour votre clé : rechargez-le ou relevez son plafond. La comparaison s’est arrêtée'],
+      ['credit-exhausted', false, false, ['Crédit OpenRouter épuisé pour votre clé : rechargez-le ou relevez son plafond.', 'Le benchmark s’est arrêté']],
       // #537 : l'incident est attribué au canal appelé, jamais à OpenRouter par défaut
-      ['official-limited', false, false, 'L’API officielle du fournisseur limite temporairement les demandes. La comparaison s’est arrêtée'],
+      ['official-limited', false, false, ['L’API officielle du fournisseur limite temporairement les demandes.', 'Le benchmark s’est arrêté']],
       // #539 : campagne opérateur, le modèle épuisé n'est pas présenté comme une réponse reçue
-      ['operator-exhausted', false, false, 'Modèle A · Niveau de raisonnement non renseigné : pas de réponse exploitable']]) {
+      ['operator-exhausted', false, false, ['Modèle A', 'Raisonnement non renseigné', 'Sans réponse']]]) {
       await page.goto(origin + '/render/followup-' + state);
       const text = await page.textContent('main');
-      assert.ok(text.includes(message), state);
+      for (const part of [message].flat()) assert.ok(text.includes(part), state + ' ' + part);
       assert.equal(await page.locator('#preparation-progress').count(), Number(active), state);
       assert.equal(await page.locator('[data-results-href]').count(), Number(terminal), state);
       assert.equal(await page.locator('main form, #cap_usd').count(), 0);
       assert.equal(await page.locator('script').count() > 0, active || terminal);
       assert.equal(await page.locator('nav.piste a[href="/preparation/dossiers/d1/revisions/2"]').count() > 0, true);
       assert.equal(await page.locator('nav.piste a[href="#exemple"]').count(), 0);
-      if (terminal) assert.ok(text.includes('Celles qui n’ont pas encore de verdict attendent leur évaluation.'));
+      if (terminal) assert.ok(text.includes('Celles qui n’ont pas encore de verdict attendent leur vérification.'));
       // #541 : la ligne de compte ne présente pas le modèle épuisé comme une réponse reçue
-      if (state === 'operator-exhausted') assert.ok(text.includes('Réponses reçues : 0 sur 1.'), text);
+      if (state === 'operator-exhausted') assert.match(text, /0\/1\s*réponses reçues/, text);
     }
     for (const status of ['NOT_STARTED', 'WAITING', 'RUNNING', 'COMPLETE', 'BLOCKED']) {
       await page.goto(origin + '/render/judgment-' + status);
@@ -1602,8 +1607,8 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       const text = await page.textContent('main');
       assert.equal(await page.locator('#preparation-progress').count(), Number(active));
       assert.equal(await page.locator('[data-results-href]').count(), Number(ready));
-      assert.ok(text.includes('Réponses reçues : 1 sur 1'));
-      assert.ok(text.includes(`Réponses évaluées : ${Number(ready)} sur 1`));
+      assert.match(text, /1\/1\s*réponses reçues/);
+      assert.match(text, new RegExp(`${Number(ready)}/1\\s*réponses vérifiées`));
       assert.equal(await page.locator('form[action$="/evaluate"]').count(), Number(status === 'NOT_STARTED'));
       assert.equal(await page.locator('script').count() > 0, active || ready);
       if (status === 'NOT_STARTED') {
@@ -1616,7 +1621,7 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       ['EMISSION_POSSIBLE', 'WAITING', true], ['RECEIVED', 'None', false], ['RECEIVED', 'BLOCKED', false]]) {
       await page.goto(origin + '/render/mixed-' + state + '-' + judgment);
       assert.equal(await page.locator('#preparation-progress').count(), Number(active));
-      assert.equal((await page.title()).includes('Benchmark en cours'), active);
+      assert.ok((await page.title()).includes('Suivi du benchmark'));
       assert.equal(await page.locator('script').count() > 0, active);
     }
     // Composition S18 : état en tête, liste des modèles en zone principale, compteurs en synthèse, actions hors de la zone réécrite
@@ -1625,21 +1630,18 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       for (const view of ['followup-running', 'followup-credit-exhausted', 'judgment-NOT_STARTED', 'followup-received']) {
         await page.goto(origin + '/render/' + view);
         const layout = await page.evaluate(() => {
-          const status = document.getElementById('campaign-status'), bench = status.querySelector('.colonnes');
-          const side = bench.querySelector('.cote'), main = bench.querySelector('.pile-l');
-          const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-          return {right: a.left >= b.right, below: a.top >= b.bottom,
-                  overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-                  stateFirst: Boolean(status.querySelector('.etat').compareDocumentPosition(bench) & Node.DOCUMENT_POSITION_FOLLOWING),
-                  list: main.querySelector('h2')?.textContent, side: side.innerText,
-                  actionsInside: document.querySelectorAll('.colonnes #preparation-progress, .colonnes form, .colonnes a.button').length};
+          const status = document.getElementById('campaign-status');
+          return {overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+                  head: Boolean(status.querySelector('.direct-tete h2')), list: status.querySelector('ol.couloirs')?.getAttribute('aria-label'),
+                  lanes: status.querySelectorAll('.couloir').length, counter: status.querySelector('.compteur')?.textContent,
+                  actionsInside: status.querySelectorAll('#preparation-progress, form, a.btn, a.lien, button').length};
         });
         assert.equal(layout.overflow, 0, `${width} ${view} sans débordement`);
-        assert.ok(layout.stateFirst, `${width} ${view} état en tête`);
-        assert.equal(layout.list, 'Modèle par modèle', `${width} ${view} liste en zone principale`);
-        assert.match(layout.side, /Réponses reçues : \d+ sur \d+\./, `${width} ${view} compteurs en synthèse`);
-        assert.equal(layout.actionsInside, 0, `${width} ${view} actions hors de la composition`);
-        assert.ok(width === 1440 ? layout.right : layout.below, `${width} ${view} position de la synthèse`);
+        assert.ok(layout.head, `${width} ${view} titre d'état en tête`);
+        assert.equal(layout.list, 'Modèle par modèle', `${width} ${view} liste des couloirs`);
+        assert.ok(layout.lanes > 0, `${width} ${view} un couloir par modèle`);
+        assert.match(layout.counter, /\d+\/\d+\s*réponses reçues/, `${width} ${view} compteur`);
+        assert.equal(layout.actionsInside, 0, `${width} ${view} actions hors de la zone réécrite`);
       }
     }
   } finally {await context.close();}
@@ -2294,7 +2296,7 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
     assert.equal(await page.locator('img[src="x"]').count(), 0);
     assert.equal((await page.textContent('main')).split('<img src=x onerror="alert(1)">Correction requise').length, 2);
     await page.goto(origin + '/render/stopped-history');
-    assert.ok((await page.textContent('main')).includes('Aucun nouvel essai ne peut être lancé pour cette comparaison.'));
+    assert.ok((await page.textContent('main')).includes('Aucun nouvel essai ne peut être lancé pour ce benchmark.'));
     assert.ok((await page.textContent('main')).includes('Service momentanément indisponible'));
     for (const [stage, status, prior, pending] of [['waiting', 'none', false, true], ['waiting', 'none', true, false],
       ['clarification', 'none', false, false], ['suspended', 'none', false, false], ['preview', 'PENDING', false, true],

@@ -374,3 +374,9 @@ def personal_key_form(csrf, access, back, *, opened=False):
         content += ('<p class="hint">Attendez la fin d’une préparation ou d’une vérification en cours avant de changer de clé. '
                     'Une fois la clé retirée, Evaly ne lance plus aucun nouvel appel. La clé reste active chez OpenRouter, et une comparaison déjà lancée n’est pas annulée.</p>')
     return content
+
+
+# ——— Lot campagne ———
+def statut(ton, texte, icone):
+    """Tampon de statut libre (couloirs et en-tête du suivi) : ton, mot et icône choisis par l'écran"""
+    return '<span class="tampon tampon-' + ton + '">' + ic(icone) + text(texte) + '</span>'

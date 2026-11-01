@@ -1305,3 +1305,11 @@ body { overflow-wrap: break-word; }
   .colonnes > .cote-avant:first-child { grid-column: 2; grid-row: 1; }
   .colonnes > .cote-avant:first-child + .pile-l { grid-column: 1; grid-row: 1; }
 }
+
+/* —— lot campagne —— */
+/* Le script de suivi et celui des modèles absents montrent et masquent par l'attribut hidden : les boutons et liens à display explicite l'ignoreraient */
+.btn[hidden], .lien[hidden] { display: none; }
+/* Fond inversé en thème sombre : les nombres de la barre de choix quittent le jaune, illisible sur le papier clair */
+@media (prefers-color-scheme: dark) { .barre-choix .resume b { color: var(--papier); } }
+/* Arrêt de la mise à jour automatique de la page du cas : cible tactile de 44 px (le balisage de cette page garde la classe sec) */
+#preparation-progress button { min-height: 44px; }
