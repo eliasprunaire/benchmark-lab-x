@@ -2416,6 +2416,60 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       assert.ok(layout.consent && layout.consentAfter, `${width} partage dans les blocs du bas, après la validation`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de validation`);
     }
+    // Parcours clavier de la préparation à 390 px, sans souris ni JavaScript : saisie, question de l'assistant, aperçu,
+    // correction. Chaque arrêt du focus est visible dans l'écran, entier en largeur, non masqué par l'en-tête fixe
+    await page.setViewportSize({width: 390, height: 844});
+    const tabulerJusqua = async (cible, {retour = false, max = 80} = {}) => {
+      for (let i = 0; i < max; i++) {
+        await page.keyboard.press(retour ? 'Shift+Tab' : 'Tab');
+        const arret = await page.evaluate(selecteur => {
+          // Le champ unique et la réponse à l'assistant montrent leur focus sur leur cadre, pas sur la zone de texte
+          const el = document.activeElement, r = el.getBoundingClientRect(), style = getComputedStyle(el.matches('textarea') && el.closest('.compo-champ, .reponse') || el);
+          const dessus = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 20));
+          return {cible: el.matches(selecteur), nom: el.tagName + '#' + el.id + ' ' + (el.textContent || '').trim().slice(0, 40)
+              + ' [' + [r.left, r.top, r.right, r.bottom].map(Math.round) + ' / ' + innerWidth + '×' + innerHeight + ']',
+            // Visible et entier en largeur ; un champ haut n'est montré qu'en partie, comme le fait le navigateur
+            entier: r.width > 0 && r.left >= -1 && r.right <= innerWidth + 1 && r.bottom > 0 && r.top < innerHeight - 16,
+            devant: !!dessus && (el === dessus || el.contains(dessus) || dessus.contains(el)),
+            contour: style.outlineStyle !== 'none' || style.boxShadow !== 'none'};
+        }, cible);
+        assert.ok(arret.entier, 'focus hors de l’écran : ' + arret.nom);
+        assert.ok(arret.devant, 'focus masqué : ' + arret.nom);
+        assert.ok(arret.contour, 'focus sans contour : ' + arret.nom);
+        if (arret.cible) return;
+      }
+      assert.fail('cible jamais atteinte au clavier : ' + cible);
+    };
+    // Saisie : le besoin, puis les précisions facultatives dans leur tiroir
+    await page.goto(origin + '/render/availability-open');
+    await tabulerJusqua('#request');
+    await page.keyboard.type('Je reçois des notes de réunion en vrac et je veux un compte rendu clair.');
+    await tabulerJusqua('details:has(#useful) > summary');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('details:has(#useful)').evaluate(d => d.open), true, 'tiroir des précisions ouvert au clavier');
+    await tabulerJusqua('#useful');
+    await page.keyboard.type('Une liste des décisions.');
+    // Le bouton d'envoi précède le tiroir : retour en arrière au clavier
+    await tabulerJusqua('form#nouveau button[type="submit"]', {retour: true});
+    // Question de l'assistant : la réponse puis son envoi
+    await page.goto(origin + '/render/question');
+    await tabulerJusqua('#message');
+    await page.keyboard.type('Les notes viennent d’une réunion d’équipe.');
+    await tabulerJusqua('button[type="submit"]:not([disabled])');
+    assert.match(await page.evaluate(() => document.activeElement.textContent), /Envoyer ma réponse/);
+    // Aperçu : une pièce s'ouvre et se lit au clavier
+    await page.goto(origin + '/render/apercu');
+    await tabulerJusqua('#piece-1 > summary');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('#piece-1').evaluate(d => d.open), true, 'pièce ouverte au clavier');
+    // Correction : le tiroir s'ouvre, le message se tape, puis le bouton jaune devient « Corriger ce travail »
+    await tabulerJusqua('#corriger > summary');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('#corriger').evaluate(d => d.open), true, 'tiroir de correction ouvert au clavier');
+    await tabulerJusqua('#corriger #message');
+    await page.keyboard.type('Ajouter une action sans échéance.');
+    await tabulerJusqua('button[form="form-corriger"]');
+    assert.match(await page.evaluate(() => document.activeElement.textContent), /Corriger ce travail/);
   } finally {await context.close();}
 });
 

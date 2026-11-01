@@ -177,6 +177,10 @@ def browser_views():
             sample = example_view()
             value.update({key: sample[key] for key in ('package', 'example_contents', 'criteria', 'criteria_rule', 'package_sha256', 'changes', 'piece_changes') if key in sample})
         examples[f'progress-{stage}-{qualification.get("status", "none")}-{prior}'] = value
+    # Question de l'assistant à laquelle le demandeur peut répondre : parcours clavier de la préparation
+    examples['question'] = dict(examples['progress-clarification-none-False'], availability=available)
+    # Aperçu de l'exemple, correction ouverte au demandeur
+    examples['apercu'] = dict(example_view(), availability=available)
     history = example_view()
     stopped = deepcopy(ready['campaign'])
     stopped['conditions'].update(pi=dict(package='pi', version='1', status='PINNED'),

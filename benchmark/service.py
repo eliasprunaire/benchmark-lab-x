@@ -100,10 +100,10 @@ READ_TIMEOUT_RESULT = {'status': 503, 'value': {
     'error_code': 'READ_TIMEOUT', 'unavailable': True}}
 # Place réservée à la santé quand tous les fils travaillent : une requête ordinaire y est refusée sans être traitée
 SATURATED_RESULT = {'status': 503, 'value': {
-    'error': 'Bench-X reçoit trop de demandes en ce moment. Votre action n’a pas été traitée. Réessayez dans un instant.',
+    'error': 'Evaly reçoit trop de demandes en ce moment. Votre action n’a pas été traitée. Réessayez dans un instant.',
     'error_code': 'SATURATED', 'unavailable': True}}
 MAINTENANCE_RESULT = {'status': 503, 'value': {
-    'error': 'Bench-X est en maintenance. Votre action n’a pas été traitée et rien n’a été modifié. '
+    'error': 'Evaly est en maintenance. Votre action n’a pas été traitée et rien n’a été modifié. '
              'Réessayez dans quelques minutes.', 'error_code': 'MAINTENANCE', 'unavailable': True}}
 
 
@@ -318,7 +318,7 @@ def denied_response(error):
     unavailable = {
         'ACCESS_UNAVAILABLE': 'L’accès aux clés OpenRouter est indisponible sur le serveur pour le moment. '
                               'Aucun appel n’a été lancé. Réessayez dans quelques minutes.',
-        'PRIVACY_MIGRATION_PENDING': 'Bench-X termine une mise à jour de ses données. Réessayez dans quelques minutes.',
+        'PRIVACY_MIGRATION_PENDING': 'Evaly termine une mise à jour de ses données. Réessayez dans quelques minutes.',
     }
     if error.code in unavailable:
         return {'status': 503, 'value': {'error': unavailable[error.code], 'error_code': error.code,
@@ -336,19 +336,19 @@ def denied_response(error):
         'COPY_SOURCE_INVALID': 'La copie demandée ne correspond plus au paquet publié. Aucun dossier n’a été créé.',
         'ACCESS_KEY_REJECTED': 'OpenRouter n’a pas pu vérifier cette clé. Votre clé précédente reste en place.',
         'ACCESS_CAP_REQUIRED': 'Utilisez une clé OpenRouter avec un plafond non renouvelable de 50 USD maximum et un solde disponible.',
-        'ACCESS_REQUIRED': 'Ajoutez votre clé OpenRouter avant de lancer la comparaison.',
-        'NOT_QUALIFIED': 'L’exemple doit d’abord être vérifié. Attendez la fin de la vérification avant de lancer la comparaison.',
-        'CONTRACT_MISSING': "Les conditions de la comparaison ne sont pas encore fixées. Attendez la fin de la vérification de l’exemple.",
+        'ACCESS_REQUIRED': 'Ajoutez votre clé OpenRouter avant de lancer le benchmark.',
+        'NOT_QUALIFIED': 'L’exemple doit d’abord passer le contrôle. Attendez la fin du contrôle avant de lancer le benchmark.',
+        'CONTRACT_MISSING': "Les conditions du benchmark ne sont pas encore fixées. Attendez la fin du contrôle de l’exemple.",
         'STEP_INCOMPLETE': 'Terminez l’étape précédente avant de poursuivre.',
         'SELECTION_SUPERSEDED': 'Cette sélection a été remplacée par une plus récente. Elle ne peut plus être lancée ; rien n’a été lancé ni débité.',
-        'OUT_OF_SCOPE': 'Bench-X ne peut pas comparer cette tâche. Décrivez un autre cas d’usage pour continuer.',
-        'example_validated': 'Validez l’exemple avant de lancer la comparaison.',
-        'example_qualified': 'L’exemple doit être vérifié avant de lancer la comparaison.',
-        'configurations_available': 'Certains modèles choisis ne sont plus disponibles. Remplacez-les avant de lancer la comparaison.',
-        'access_connected': 'Ajoutez votre clé OpenRouter avant de lancer la comparaison.',
-        'estimate_available': 'Le coût de cette comparaison n’a pas pu être estimé. Il doit l’être avant le lancement.',
+        'OUT_OF_SCOPE': 'Evaly ne peut pas comparer ce cas d’usage. Décrivez un autre cas d’usage pour continuer.',
+        'example_validated': 'Validez l’exemple avant de lancer le benchmark.',
+        'example_qualified': 'L’exemple doit passer le contrôle avant de lancer le benchmark.',
+        'configurations_available': 'Certains modèles choisis ne sont plus disponibles. Remplacez-les avant de lancer le benchmark.',
+        'access_connected': 'Ajoutez votre clé OpenRouter avant de lancer le benchmark.',
+        'estimate_available': 'Le coût de ce benchmark n’a pas pu être estimé. Il doit l’être avant le lancement.',
         'examples_current': 'Un autre exemple a changé depuis ce choix. Choisissez de nouveau les modèles ; rien n’a été lancé ni débité.',
-        'QUALIFICATION_UNAVAILABLE': 'La vérification de l’exemple est indisponible pour le moment. Réessayez plus tard.',
+        'QUALIFICATION_UNAVAILABLE': 'Le contrôle de l’exemple est indisponible pour le moment. Réessayez plus tard.',
         'ADMISSION_CLOSED': 'Ajoutez ou vérifiez votre clé OpenRouter pour continuer. Aucun appel n’a été lancé.',
         'PROBE_SLUG_INVALID': 'Copiez l’identifiant exact du modèle sur sa fiche OpenRouter, au format constructeur/modèle. Les adresses web et les routeurs automatiques ne sont pas acceptés.',
         'PROBE_UNAVAILABLE': 'La vérification des modèles est indisponible pour le moment. Réessayez plus tard.',
