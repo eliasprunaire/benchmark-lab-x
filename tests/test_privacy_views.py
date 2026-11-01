@@ -1,4 +1,6 @@
 """Fixtures HTML du harnais Chromium existant, sans accès fournisseur"""
+from datetime import datetime, timedelta, timezone
+
 from benchmark_web import views
 
 
@@ -31,8 +33,10 @@ def browser_views():
     reasons = set(re.findall(r"reason = '(\w+)'", inspect.getsource(preparation.availability)))
     assert 'daily_cap' not in reasons
     for reason in reasons:
-        examples['availability-' + reason] = dict(dossiers=[], availability=dict(
-            available, can_submit=reason == 'open', reason=reason))
+        # Un cas existe quand une préparation est en cours, interrompue ou en restauration : la liste ne se dit pas vide
+        examples['availability-' + reason] = dict(
+            dossiers=[dict(dossier_id='d1', need='Trier des notes', revision=2)] if reason in ('interrupted', 'waiting', 'restore') else [],
+            availability=dict(available, can_submit=reason == 'open', reason=reason))
     for status in ('disconnected', 'connected', 'invalid', 'unavailable'):
         access = dict(kind='access', status=status, connected=status == 'connected',
                       limit_usd='25', limit_remaining_usd='12.50', reason='KEY_REJECTED')
@@ -156,7 +160,6 @@ def browser_views():
             qualified=status == 'QUALIFIED', qualification=dict(status=status, qualification_status=status,
                 approval_status=status, summary='<img src=x onerror="alert(1)">Correction requise', findings=[]))
         if status == 'BLOCKED':
-            value.update(package=None)
             value['qualification']['operation_id'] = 'op'
         examples['example-' + status] = value
     for stage, qualification, prior, pending in (
@@ -165,11 +168,19 @@ def browser_views():
             ('preview', {'operation_id': 'op', 'status': 'BLOCKED'}, False, False),
             ('preview', {'operation_id': 'op', 'status': 'QUALIFIED'}, False, False)):
         value = dict(base, revision=1, current_revision=2 if prior else 1, stage=stage,
-            qualification=dict(qualification, summary='Contrôle', findings=[]),
+            qualification=dict(qualification, summary='correction requise' if qualification.get('status') == 'BLOCKED' else 'Contrôle', findings=[]),
             validation={'validated_at': '2026-09-17'} if qualification else None,
             qualified=qualification.get('status') == 'QUALIFIED',
             availability=dict(available, reason='waiting', can_submit=False))
+        if qualification.get('status') in ('BLOCKED', 'QUALIFIED'):
+            # contrôle terminé : l'exemple contrôlé s'affiche (B50)
+            sample = example_view()
+            value.update({key: sample[key] for key in ('package', 'example_contents', 'criteria', 'criteria_rule', 'package_sha256', 'changes', 'piece_changes') if key in sample})
         examples[f'progress-{stage}-{qualification.get("status", "none")}-{prior}'] = value
+    # Question de l'assistant à laquelle le demandeur peut répondre : parcours clavier de la préparation
+    examples['question'] = dict(examples['progress-clarification-none-False'], availability=available)
+    # Aperçu de l'exemple, correction ouverte au demandeur
+    examples['apercu'] = dict(example_view(), availability=available)
     history = example_view()
     stopped = deepcopy(ready['campaign'])
     stopped['conditions'].update(pi=dict(package='pi', version='1', status='PINNED'),
@@ -180,7 +191,29 @@ def browser_views():
     examples['stopped-history'] = history
     metadata = deepcopy(example_view()['privacy'])
     metadata.update(content_version=4, contribution=dict(enabled=False, revision=2, example_revision=1))
-    examples['privacy-listing'] = dict(dossiers=[], privacy=metadata)
+    # Mes cas d'usage avec ses contrôles de confidentialité : chaque carte porte ses boutons de gestion
+    liste = {key: metadata[key] for key in ('csrf_token', 'session_expires_at')}
+    examples['privacy-listing'] = dict(dossiers=[dict(dossier_id='d1', need='Trier des notes de réunion', revision=2),
+                                                 dict(dossier_id='d2', need='Rédiger des réponses aux clients', revision=1)],
+                                       availability=available, privacy=liste)
+    # L'échéance d'effacement n'est connue de la vue que si l'exécuteur la fournit : sans elle, aucune alerte
+    soon = (datetime.now(timezone.utc) + timedelta(hours=30)).isoformat()
+    examples['listing-expiring'] = dict(dossiers=[dict(dossier_id='d1', need='Trier des notes de réunion', revision=2, expires_at=soon),
+                                                  dict(dossier_id='d2', need='Rédiger des réponses aux clients', revision=1)],
+                                        availability=available, privacy=liste)
+    examples['listing-deleted'] = dict(dossiers=[], availability=available, deleted=True)
+    examples['case-delete'] = dict(kind='case_delete', dossier=dict(dossier_id='d1', need='Trier des notes de réunion <b>', revision=2),
+                                   return_path='/preparation/dossiers/d1', privacy=dict(metadata, dossier_id='d1', content_version=1))
+    examples['case-delete-closed'] = dict(kind='case_delete', dossier=dict(dossier_id='d1', need='Trier des notes de réunion', revision=2),
+                                          return_path='//evil.test', privacy=dict(metadata, session_expires_at='2000-01-01T00:00:00Z'))
+    for status, title, message in ((404, 'Page introuvable', 'Cette adresse n’existe pas sur ce service.'),
+                                   (405, 'Requête non acceptée', 'Ce type de requête n’est pas accepté.'),
+                                   (500, 'Une erreur est survenue', 'Une erreur interne a empêché d’afficher cette page.'),
+                                   (503, 'Service momentanément indisponible', 'Evaly est momentanément indisponible.'),
+                                   (504, 'Réponse non reçue à temps', 'Evaly n’a pas répondu à temps.'),
+                                   (403, 'Votre action n’a pas abouti', 'Votre session a expiré.'),
+                                   (409, 'Copie impossible', 'Cette version est retirée.')):
+        examples['error-' + str(status)] = dict(error=message, title=title, http_status=status)
     for name, expired, prior in (('current', False, False), ('expired', True, False), ('prior', False, True)):
         value = example_view()
         value.update(revision=3, current_revision=4 if prior else 3)
@@ -204,7 +237,7 @@ def browser_views():
     copy.pop('criteria', None)
     copy['source'] = dict(task_id='tache-fictive', version_id='version-1', title='Tableau <script>alert(1)</script>',
                           work='Préparer un tableau par opération', cases=['Cinq débits inventés'],
-                          limits=['Ne certifie aucune comptabilité'], qualification_status='QUALIFIED',
+                          limits=['Ne certifie aucune comptabilité'], qualification_status='ABSENT',
                           pieces=[dict(id='consigne', label='Consigne',
                                        text='Pièce source <script>alert(1)</script>')])
     copy['source_notice'] = dict(withdrawn=False, reports=[dict(
@@ -212,7 +245,8 @@ def browser_views():
     examples['copy-dossier'] = copy
     examples['copy-confirmation'] = {'kind': 'copy_source', 'source': copy['source'],
                                      'source_notice': copy['source_notice']}
-    rendered = {name: views.render(value, 'csrf', error=bool(value.get('error'))).decode()
+    rendered = {name: views.render(value, 'csrf', error=bool(value.get('error')),
+                                   status=value.get('http_status', 400) if value.get('error') else None).decode()
                 for name, value in examples.items()}
     for name, source, version in (('checkout', 'abcdef0123456789', ''),
                                   ('release', 'abcdef0123456789', '0.2.0'), ('unknown', '', '0.2.0')):
@@ -226,7 +260,7 @@ def browser_views():
     return rendered
 
 
-def results_view(*, withdrawn=False, unavailable=None, filtered=False):
+def results_view(*, withdrawn=False, unavailable=None, filtered=False, repeated=False):
     """Restitution publique fermée, sans accès privé : fixture du harnais Chromium"""
     cases = [{'position': 1}]
     panel = [
@@ -285,6 +319,9 @@ def results_view(*, withdrawn=False, unavailable=None, filtered=False):
          'limits': ['Sortie non admissible, quel que soit son coût.'],
          'proofs': [{'name': 'Réponse de Modèle B', 'piece_id': None}]},
     ]
+    if repeated:
+        # Deux essais du même modèle sur le même exemple, aux verdicts différents
+        rows = [dict(rows[0], repetition=1), dict(rows[1], panel_position=1, repetition=2)]
     shown = [row for row in rows if row['panel_position'] == 1] if filtered else rows
     return {
         'kind': 'results', 'task_id': 'tache-fictive', 'version_id': 'version-resultats',
@@ -305,7 +342,7 @@ def results_view(*, withdrawn=False, unavailable=None, filtered=False):
                        'conversion': None},
         'cases': cases, 'panel': panel, 'columns': columns,
         'obligations': [{'id': 'O1', 'label': 'Toutes les actions présentes', 'states': ['PASS', 'FAIL']}],
-        'rows': shown, 'population': len(rows), 'filter_scope': {'configuration': '1'} if filtered else {},
+        'rows': shown, 'population': len(rows), 'population_rows': rows, 'filter_scope': {'configuration': '1'} if filtered else {},
         'pending': [], 'acquisition_dates': ['2026-10-23T10:00:00+00:00', '2026-10-23T10:01:00+00:00'],
         'unknowns': ['Coût observé inconnu pour 1 réponse : aucun rang de coût.',
                      'Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables.'],

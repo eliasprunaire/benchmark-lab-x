@@ -18,8 +18,10 @@ from benchmark.preparation import INCIDENT_TEXT, NOT_SENT_TEXT, incident_text
 from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
 
-from .fragments import (VERDICT_BADGES, valeur_mesure, access_summary, badge, date_lisible_utc, form, hidden, icon, jour_lisible, listing, montant_lisible,
-                        personal_key_form, readable_fields, readout, section, state_block, text, workbench)
+from .fragments import (VERDICT_BADGES, access_summary, badge, bilan, bilan_exemple, bouton, btn, cles, date_lisible_utc, disque, etat, form,
+                        harnais, hidden, ic, info_modele, jour_lisible, lien, ligne_modele, listing, montant_lisible, mot, personal_key_form,
+                        puce, readable_fields, releves, ruban, section, signal, statut, table_cas, tampon, text, tiroir,
+                        valeur_mesure)
 
 COMPARISON_FOCUS_SCRIPT = """document.addEventListener('click', event => {
   const link = event.target.closest('tr[id] [data-result]');
@@ -40,7 +42,7 @@ window.addEventListener('pageshow', () => {
     status.textContent = '';
     const alert = element('p', 'Le détail n’a pas pu être chargé. ');
     alert.setAttribute('role', 'alert');
-    const retry = element('button', 'Réessayer', {type: 'button', className: 'sec'});
+    const retry = element('button', 'Réessayer', {type: 'button', className: 'btn btn-sec'});
     retry.addEventListener('click', () => load(href));
     alert.append(retry);
     body.replaceChildren(alert);
@@ -148,11 +150,16 @@ CUSTOM_MODELS_SCRIPT = """(() => {
       const model = value.models.find(item => item.id === record.slug);
       const choices = document.getElementById('model-choices');
       if (choices && model && !Array.from(choices.querySelectorAll('input')).some(input => input.value === model.id)) {
-        const label = document.createElement('label');
+        const item = document.createElement('li'), label = document.createElement('label');
         const input = document.createElement('input');
+        const part = (className, content) => Object.assign(document.createElement('span'), {className, textContent: content});
+        label.className = 'mligne';
         input.type = 'checkbox'; input.name = 'models'; input.value = model.id;
-        label.append(input, ' ' + model.name + (model.not_adjustable ? ' · niveau de raisonnement fixe' : ''));
-        choices.append(label);
+        const setting = part('regl', '');
+        setting.append(part('puce', model.not_adjustable ? 'Raisonnement fixe' : 'Raisonnement réglable'));
+        label.append(input, part('nom', model.name), part('fournisseur', model.id), setting);
+        item.append(label);
+        choices.querySelector('.mliste').insertBefore(item, choices.querySelector('.mliste').lastElementChild);
       }
     }
   }
@@ -209,13 +216,13 @@ CUSTOM_MODELS_SCRIPT = """(() => {
 })();"""
 
 
-def render_custom_models(value, csrf, dossier_url):
-    content = '<details id="custom-models" class="corr custom-models"><summary class="button sec">Ajouter un modèle absent de la liste</summary><div>'
-    content += '<p id="slug-help">Copiez l’identifiant exact du modèle depuis sa page OpenRouter, par exemple <code>openai/gpt-6-astra</code>.</p>'
-    content += '<p class="hint">Pour vérifier que le modèle répond, nous l’appelons une fois, brièvement, avec votre clé. Cet appel est payant. Il ne lance pas la comparaison.</p>'
+def render_custom_models(value, csrf, dossier_url, *, detail=False):
+    """Réglage « Modèle absent » : vérifier un identifiant OpenRouter par un appel payant, puis l'ajouter à la liste"""
+    content = ('<div class="reglage" id="ajout"><div><b>Modèle absent</b><p class="petit">Un appel court et payant vérifie '
+               'qu’il répond. Il ne lance pas le benchmark.</p></div><div id="custom-models" class="custom-models">')
     request = value.get('probe_request', {})
     if request.get('error'):
-        content += '<p class="note">' + text(request['error']) + '</p>'
+        content += '<p class="petit">' + text(request['error']) + '</p>'
     elif request.get('pending') and not any(record['operation_id'] == request['request_id']
                                           for record in value.get('custom_models', [])):
         content += '<p role="status" data-probe-request="' + text(request['request_id']) + '">Vérification du modèle et de votre accès…</p>'
@@ -228,16 +235,21 @@ def render_custom_models(value, csrf, dossier_url):
                         else ' Coût de cette vérification inconnu. Le montant mis de côté pour cet appel, ' + text(montant_lisible(record['reserve_usd'])) + ' USD, reste conservé.')
         content += '</span></p>'
         if record['status'] == 'EMISSION_POSSIBLE':
-            content += '<p><progress aria-label="Vérification du modèle"></progress> <a href="' + text(
+            content += '<p><progress aria-label="Vérification du modèle"></progress> <a class="lien" href="' + text(
                 dossier_url + '/configurations#custom-models') + '">Voir où en est la vérification</a></p>'
     content += '<div class="custom-model-forms">' + form(csrf, dossier_url + '/custom-models',
         {'action_id': secrets.token_hex(16)},
-        '<label for="custom-slug">Identifiant du modèle sur OpenRouter</label>'
+        '<div class="champ"><label for="custom-slug">Identifiant OpenRouter du modèle</label>'
+        '<p class="aide" id="slug-help">Copiez l’identifiant exact du modèle depuis sa page OpenRouter, par exemple <code>openai/gpt-6-astra</code>.</p>'
         '<input id="custom-slug" name="slug" type="text" required maxlength="256" spellcheck="false" '
-        'autocapitalize="none" autocomplete="off" aria-describedby="slug-help" placeholder="constructeur/modèle">'
-        '<button class="sec" type="submit">Tester et ajouter</button><p role="status" aria-live="polite"></p>')
-    content += '</div><button class="sec" type="button" data-add-slug hidden>Ajouter un autre modèle</button>'
-    return content + '</div></details><script>' + CUSTOM_MODELS_SCRIPT + '</script>'
+        'autocapitalize="none" autocomplete="off" aria-describedby="slug-help" placeholder="constructeur/modèle"></div>'
+        '<div class="actions">' + bouton('Tester et ajouter', sec=True, icone='plus') + '</div><p role="status" aria-live="polite"></p>')
+    content += '</div>'
+    if detail:
+        content += ('<p class="petit">Pour vérifier que le modèle répond, nous l’appelons une fois, brièvement, avec votre clé. '
+                    'Cet appel est payant. Enregistrer ce choix n’appelle aucun modèle.</p>')
+    content += '<button class="btn btn-sec" type="button" data-add-slug hidden>Ajouter un autre modèle</button></div></div>'
+    return content + '<script>' + CUSTOM_MODELS_SCRIPT + '</script>'
 
 
 def _readable(record, value):
@@ -344,22 +356,6 @@ def render_evaluations(evaluations, dossier_url):
     return content
 
 
-def _numeric(value):
-    try:
-        return float(value) >= 0
-    except (TypeError, ValueError):
-        return False
-
-
-def cost_bar(value, known):
-    """Barre proportionnelle au coût le plus élevé connu du même cas ; vide si inconnu"""
-    if value is None or not _numeric(value) or not known or max(known) <= 0:
-        return '<div class="costbar none" aria-hidden="true"></div>'
-    # Largeur en attribut SVG : un `style` inline serait bloqué par `style-src 'self'`
-    return ('<svg class="costbar" aria-hidden="true"><rect width="' + str(round(100 * float(value) / max(known)))
-            + '%" height="100%"/></svg>')
-
-
 EFFORT_LABELS = {'none': 'Désactivé (none)', 'minimal': 'Minimal (minimal)', 'low': 'Faible (low)',
                  'medium': 'Moyen (medium)', 'high': 'Élevé (high)', 'xhigh': 'Très élevé (xhigh)', 'max': 'Maximal (max)',
                  'standard': 'Fixe'}
@@ -396,7 +392,7 @@ def output_label(configuration, recoveries):
 
 # Raison de l'absence de conseil, calculée par restitution._recommendation
 ABSTENTION_REASONS = {
-    'incomplete': 'toutes les réponses prévues ne sont pas évaluées.',
+    'incomplete': 'une partie des réponses prévues n’est pas encore vérifiée.',
     'repeated': 'un modèle compte plus d’un essai sur un même exemple.',
     'recovered': 'une reprise a été demandée pour un modèle.',
     'few': 'moins de deux réponses satisfont l’exemple.',
@@ -481,8 +477,8 @@ def render_expenses(expenses, names):
     if not expenses:
         return ''
     known = montant_lisible(expenses['known']) + ' ' + expenses['unit']
-    content = '<details id="expenses"><summary>' + text(
-        ('Coût complet connu : ' if expenses['complete'] else 'Coût complet inconnu · sous-total connu : ') + known) + '</summary>'
+    summary = ('Coût complet connu : ' if expenses['complete'] else 'Coût complet inconnu · sous-total connu : ') + known
+    content = ''
     if not expenses['complete']:
         content += '<p>Au moins une dépense manque : le sous-total ne donne que la somme des dépenses connues, pas le coût complet.'
         awaiting = expenses.get('awaiting_judgment', 0)
@@ -496,7 +492,7 @@ def render_expenses(expenses, names):
         title, note = EXPENSE_GROUPS[group['key']]
         subtotal = montant_lisible(group['known']) + ' ' + expenses['unit']
         content += '<h3>' + text(title + ' : ' + (subtotal if group['complete'] else 'inconnu, sous-total connu ' + subtotal)) + '</h3>'
-        content += '<p class="hint">' + text(note) + '</p><ul>'
+        content += '<p class="petit">' + text(note) + '</p><ul>'
         for item in group['operations']:
             cost = item['cost']
             if cost is not None and cost['status'] == 'KNOWN':
@@ -522,37 +518,128 @@ def render_expenses(expenses, names):
                                      + ' : ' + amount) + '<details><summary>Source et référence</summary><p>'
             content += text(' · '.join(details)) + ' · réf. <code>' + text(item['operation_id'][-8:]) + '</code></p></details></li>'
         content += '</ul>'
-    return content + '</details>'
+    return tiroir(summary, content, ident='expenses')
+
+
+def _tampons_compte(records):
+    """Tampons comptés d'un exemple : « 3 satisfont », « 1 ne satisfait pas », « 2 à reprendre »"""
+    tampons = ''
+    for verdict, ton, one, many in (('SATISFAIT', 'ok', 'satisfait', 'satisfont'),
+                                    ('NE SATISFAIT PAS', 'ko', 'ne satisfait pas', 'ne satisfont pas'),
+                                    (None, 'att', 'à reprendre', 'à reprendre')):
+        count = sum(record['decision']['verdict'] == verdict for record in records)
+        if count:
+            tampons += tampon(ton, str(count) + ' ' + (one if count == 1 else many))
+    return tampons
+
+
+def _filters_summary(value, query):
+    """Ce que le tiroir « Tri et filtres » annonce replié : la priorité, le nombre de filtres, le tri"""
+    parts = []
+    if query.get('priority'):
+        parts.append('Priorité : ' + priority_label(value, query['priority']))
+    filters = [key for key in query if key in ('case', 'configuration', 'verdict', 'obligation')]
+    if filters:
+        parts.append(_plural(len(filters), 'filtre'))
+    if query.get('sort'):
+        parts.append('tri choisi')
+    return ', '.join(parts) or 'Aucun filtre'
+
+
+def _advice(value, names, panel, number, query):
+    """Le conseil, ou son absence motivée, sous forme de ticket ; puis le compromis de la priorité choisie"""
+    abstention, choice = value.get('abstention'), value.get('recommendation')
+    empty = ''
+    if abstention:
+        reason = ABSTENTION_REASONS[abstention['reason']]
+        sentence = ('Exemple ' + str(number(abstention['case_id'])) + ' : ' + reason if abstention['case_id']
+                    else reason[0].upper() + reason[1:])
+        marker = mot('Incomplet', 'vig') if abstention['reason'] == 'incomplete' else mot('Sans conseil', 'inc')
+        content = ('<section class="ticket ticket-vide" aria-labelledby="no-choice-title"><div><span class="etiq">Conseil</span>'
+                   '<h2 id="no-choice-title">Pas de conseil</h2><div class="contexte">' + marker + '</div></div>'
+                   '<div class="pourquoi"><div><p>' + text(sentence) + '</p>')
+        if abstention.get('choices'):
+            content += '<p>' + text(' · '.join('Exemple ' + str(number(item['case_id'])) + ' : '
+                                                + candidate_label(item['configuration'], names)
+                                                for item in abstention['choices'])) + '</p>'
+        if query.get('priority'):
+            content += '<p>Priorité choisie : <strong>' + text(priority_label(value, query['priority'])) + '</strong>.</p>'
+        content += '</div>'
+        if query.get('priority'):
+            content += lien(priority_href(value, query), 'Revenir au conseil par défaut', 'retour')
+        elif abstention['reason'] == 'incomplete':
+            content += lien(value['href'] + '/conditions', 'Voir l’avancement', 'actualiser')
+        empty = content + '</section>'
+    if not choice or not value['population']:
+        return empty, ''
+    # Décision D06 d'Ayo (#458) : un coût par exemple, jamais leur somme
+    costs = ([('', montant_lisible(choice['amount']), choice['unit'])] if 'cases' not in choice else
+             [('Exemple ' + str(number(item['case_id'])) + ' · ', montant_lisible(item['amount']), item['unit']) for item in choice['cases']])
+    priority = choice.get('priority')
+    kicker = 'Notre conseil' + (' · priorité : ' + priority_label(value, priority) if priority else '')
+    content = ('<section class="ticket" aria-labelledby="economic-choice-title"><div><span class="etiq">' + text(kicker) + '</span>'
+              '<h2 id="economic-choice-title">' + text(model_name(choice['configuration'], names)) + '</h2>'
+              '<div class="contexte">' + puce(effort_label(choice['configuration']))
+              + (puce('Priorité choisie : ' + priority_label(value, priority), icone='stylo') if priority else '') + '</div></div>'
+              '<div class="cout">' + ''.join('<span class="etiq">' + text(prefix) + 'Coût observé</span><p class="val">' + text(amount)
+                                             + '<small>' + text(unit) + '</small></p>' for prefix, amount, unit in costs) + '</div>')
+    compromises = []
+    if priority:
+        compromises = [tradeoff_sentence(item, names, panel) for item in choice.get('compromises', [])]
+        if 'cases' in choice:
+            compromises += ['Exemple ' + str(number(item['case_id'])) + ' : ' + tradeoff_sentence(trade, names, panel)
+                            for item in choice['cases'] for trade in item.get('compromises', [])]
+        if priority == 'cost':
+            why = ('<strong>Priorité choisie : coût observé.</strong> Nous retenons l’unique réponse conforme la moins coûteuse. '
+                   'Une autre réponse peut être meilleure sur un critère de qualité.')
+        else:
+            why = ('<strong>Priorité choisie : ' + text(priority_label(value, priority)) + '.</strong> '
+                   'Nous retenons la meilleure valeur observée sur ce critère, selon le sens fixé par le contrat. '
+                   'En cas d’égalité, le coût observé le plus bas départage.')
+    elif choice['basis'] in ('quality_then_cost', 'each_case'):
+        why = ('Nous retenons d’abord la qualité observée la plus élevée. À qualité égale, le coût observé le plus bas l’emporte.'
+               + (' Ce modèle est retenu sur chaque exemple, lu séparément.' if 'cases' in choice else ''))
+    else:
+        why = ('Les ' + text(choice['count']) + ' réponses qui satisfont l’exemple ont la même qualité observée. '
+               'Nous retenons la moins coûteuse.')
+    if 'cases' in choice:
+        links = ''.join(lien(item['detail_href'], 'Voir sa réponse · exemple ' + str(number(item['case_id'])))
+                        for item in choice['cases'] if item.get('detail_href'))
+    else:
+        links = lien(choice['detail_href'], 'Voir sa réponse') if choice.get('detail_href') else ''
+    if compromises:
+        links += lien('#t-compromis', 'Voir les compromis')
+    elif priority:
+        links += lien(priority_href(value, query), 'Revenir au conseil par défaut', 'retour')
+    content += '<div class="pourquoi"><p>' + why + '</p>' + links + '</div></section>'
+    scope = ('Ce conseil repose sur un seul exemple.' if 'cases' not in choice else
+             'Ce conseil repose sur ' + str(len(choice['cases'])) + ' exemples.')
+    content += '<p class="petit">' + scope + ' Sur d’autres cas d’usage, le résultat peut changer.</p>'
+    tradeoff = ''
+    if compromises:
+        tradeoff = ('<section class="g-compromis" aria-labelledby="t-compromis"><div class="zone-titre"><h2 id="t-compromis">'
+                    'Ce que cette priorité sacrifie</h2></div><ul>'
+                    + ''.join('<li>' + mot('Compromis', 'vig') + '<span>' + text(item) + '</span></li>' for item in compromises)
+                    + '</ul><p class="petit">Ce conseil ne compare que des réponses qui satisfont toutes les obligations : '
+                    'aucune obligation non satisfaite n’est compensée.</p><div class="actions">'
+                    + lien(priority_href(value, query), 'Revenir au conseil par défaut', 'retour') + '</div></section>')
+    return empty + content, tradeoff
 
 
 def render_comparison(value):
     base, query = value['href'], value['filter_scope']
     names = value.get('model_names', {})
     multiple_cases = len(value['cases']) > 1
-    # Un lecteur arrivé par lien direct sait d'abord ce qui est comparé
-    content = '<p class="hint">' + text(value['need']) + ' · Résultat attendu : ' + text(value['result_expected'])
-    content += ' · Résultats visibles uniquement dans ce navigateur · Exemple validé '
-    content += text(value['task']['version']) + ' · <a href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a></p>'
-    summary = ''
-    summary += '<div class="campaign-summary" aria-label="Bilan de la comparaison"><span class="ic">' + icon('i-scale') + '</span>'
-    summary += '<p class="eyebrow">Bilan de la comparaison</p>'
-    latest = {record['attempt_id']: record for record in value['history']}
-    for case_number, case in enumerate(value['cases'], 1):
-        records = [record for record in latest.values() if record['case_id'] == case['id']]
-        if records:
-            counts = []
-            for verdict, label in (('SATISFAIT', 'Satisfait'), ('NE SATISFAIT PAS', 'Ne satisfait pas'), (None, 'À reprendre')):
-                count = sum(record['decision']['verdict'] == verdict for record in records)
-                if count:
-                    counts.append(label + ' : ' + str(count))
-            prefix = '<strong>' + text(example_label(case, case_number)) + '</strong> : ' if multiple_cases else ''
-            summary += '<p>' + prefix + text(' · '.join(counts)) + '.</p>'
-    if not latest:
-        received = any(cell['state'] == 'RECEIVED' for cell in value['cells'])
-        summary += '<p>' + ('Des réponses sont arrivées. Leur verdict n’est pas encore disponible.' if received else
-                             'Aucune réponse n’a encore été évaluée. Le suivi indique où en est la comparaison.') + '</p>'
     panel = {configuration['id']: configuration for configuration in value.get('panel', [])}
     repetitions = max((cell.get('repetition', 1) for cell in value['cells']), default=1)
+    latest = {record['attempt_id']: record for record in value['history']}
+    coverage = value['coverage']
+
+    def number(case_id):
+        return next(n for n, case in enumerate(value['cases'], 1) if case['id'] == case_id)
+
+    # Le conseil, ou son absence motivée, se lit avant le bilan (critère K1 du diagnostic)
+    advice, tradeoff = _advice(value, names, panel, number, query)
 
     def pending_reason(item):
         # Le modèle sans réponse exploitable est nommé comme dans le tableau, avec la cause lue dans son reçu
@@ -576,121 +663,62 @@ def render_comparison(value):
                 + (' · ' + effort_label(configuration) if sum(c['model'] == configuration['model'] for c in panel.values()) > 1 else '')
                 + attempt + ' (' + ' ; '.join(details) + ')'
                 + '. ' + ('Cet essai' if attempt else 'Ce modèle') + ' n’est pas évalué et n’entre pas dans la comparaison.')
-    pending_reasons = list(dict.fromkeys('<li>' + text(pending_reason(item)) + receipt_observations(item) + '</li>'
+    pending_reasons = list(dict.fromkeys('<li>' + mot('Sans réponse', 'vig') + '<div><p>' + text(pending_reason(item)) + '</p>'
+                                         + receipt_observations(item) + '</div></li>'
                                          for item in value.get('pending_attempts', [])))
-    if pending_reasons:
-        summary += '<ul>' + ''.join(pending_reasons) + '</ul>'
     # Un modèle sans réponse exploitable est terminé : il ne fait pas dire que les essais se sont arrêtés
     open_pending = [item for item in value.get('pending_attempts', []) if item['state'] not in ('NO_USABLE_RESPONSE', 'NOT_SENT')]
-    coverage = value['coverage']
-    summary += '<p class="note">Réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : '
-    summary += text(coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '. '
-    if value['economic_status'] != 'COMPLETE':
-        summary += 'Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables. '
-    summary += '</p>'
+    examples = ''
+    for case_number, case in enumerate(value['cases'], 1):
+        records = [record for record in latest.values() if record['case_id'] == case['id']]
+        if records:
+            examples += bilan_exemple(example_label(case, case_number),
+                                      ' <span class="petit">' + text(_plural(len(records), 'réponse')) + '</span>', _tampons_compte(records))
+    signals = ''.join(pending_reasons)
     if multiple_cases or repetitions > 1:
         # Décision d'Ayo du 2026-10-16 : tout résultat sur plusieurs exemples ou plusieurs essais annonce cette limite
-        summary += ('<p class="note">Le juge automatique n’est pas qualifié : ses verdicts n’ont pas été comparés '
-                    'à des jugements humains.'
-                    + (' Chaque verdict vaut pour un exemple ; les exemples ne s’additionnent pas.' if multiple_cases else '')
-                    + (' Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.' if repetitions > 1 else '')
-                    + '</p>')
+        signals += signal(mot('Juge', 'vig'), 'Le juge automatique n’est pas qualifié : ses verdicts n’ont pas été comparés '
+                          'à des jugements humains.'
+                          + (' Chaque verdict vaut pour un exemple ; les exemples ne s’additionnent pas.' if multiple_cases else '')
+                          + (' Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.' if repetitions > 1 else ''))
     if value.get('stop_reason') and (coverage['not_started'] or open_pending):
-        summary += '<p>Comparaison incomplète : les essais se sont arrêtés avant la fin. Vous pouvez lire les réponses déjà reçues.</p>'
+        signals += signal(mot('Incomplet', 'vig'), 'Comparaison incomplète : les essais se sont arrêtés avant la fin. '
+                          'Vous pouvez lire les réponses déjà reçues.')
+    if value['economic_status'] != 'COMPLETE':
+        signals += signal(mot('Coûts', 'inc'), 'Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables.')
+    if not latest:
+        received = any(cell['state'] == 'RECEIVED' for cell in value['cells'])
+        signals = signal(mot('Verdicts', 'att'), 'Des réponses sont arrivées. Leur verdict n’est pas encore disponible.' if received else
+                         'Aucune réponse n’a encore été évaluée. Le suivi indique où en est la comparaison.') + signals
     dates = sorted(set(date[:10] for date in value.get('acquisition_dates', [])))
+    subtitle = (str(coverage['attempted_cells']) + (' essai lancé' if coverage['attempted_cells'] == 1 else ' essais lancés')
+                + ' sur ' + str(coverage['planned_cells']))
     if dates:
-        summary += '<p class="hint">Réponses reçues ' + text('le ' + jour_lisible(dates[0]) if len(dates) == 1 else
-                                                          'du ' + jour_lisible(dates[0]) + ' au ' + jour_lisible(dates[-1])) + '.</p>'
-    summary += '</div>'
-
-    def number(case_id):
-        return next(n for n, case in enumerate(value['cases'], 1) if case['id'] == case_id)
-    # Le conseil, ou son absence motivée, se lit avant le bilan (critère K1 du diagnostic)
-    advice = ''
-    # Une comparaison sans réponse évaluée explique aussi l'absence de conseil
-    if value.get('abstention'):
-        abstention = value['abstention']
-        reason = ABSTENTION_REASONS[abstention['reason']]
-        advice += '<aside class="economic-choice" aria-labelledby="no-choice-title"><h2 id="no-choice-title">Pas de conseil</h2><p>'
-        advice += text('Exemple ' + str(number(abstention['case_id'])) + ' : ' + reason if abstention['case_id']
-                        else reason[0].upper() + reason[1:]) + '</p>'
-        if abstention.get('choices'):
-            advice += '<p>' + text(' · '.join('Exemple ' + str(number(item['case_id'])) + ' : '
-                                               + candidate_label(item['configuration'], names)
-                                               for item in abstention['choices'])) + '</p>'
-        if query.get('priority'):
-            advice += '<p>Priorité choisie : <strong>' + text(priority_label(value, query['priority'])) + '</strong>.</p>'
-            advice += '<p><a href="' + text(priority_href(value, query)) + '">Revenir au conseil par défaut</a></p>'
-        advice += '</aside>'
+        subtitle += ' · ' + ('reçues le ' + jour_lisible(dates[0]) if len(dates) == 1 else
+                             'reçues du ' + jour_lisible(dates[0]) + ' au ' + jour_lisible(dates[-1]))
+    evaluated = coverage['evaluated_attempts']
+    summary = bilan('Aucune réponse vérifiée' if not evaluated else _plural(evaluated, 'réponse') + ' vérifiée' + ('s' if evaluated > 1 else ''),
+                    subtitle, examples, signals)
+    content = '<div class="pile-l">' + advice + tradeoff + summary
     if not value['population']:
-        return content + advice + summary + render_expenses(value.get('expenses'), names)
-    choice = value.get('recommendation')
-    if choice:
-        advice += '<aside class="economic-choice" aria-labelledby="economic-choice-title">'
-        advice += '<h2 id="economic-choice-title">Notre conseil</h2><div class="choice-highlight"><div>'
-        advice += '<p class="choice-model">' + text(model_name(choice['configuration'], names)) + '</p>'
-        advice += '<p>' + text(effort_label(choice['configuration'])) + '</p></div>'
-        # Décision D06 d'Ayo (#458) : un coût par exemple, jamais leur somme
-        costs = ([(montant_lisible(choice['amount']) + ' ' + choice['unit'])] if 'cases' not in choice else
-                 ['Exemple ' + str(number(item['case_id'])) + ' : ' + montant_lisible(item['amount']) + ' ' + item['unit']
-                  for item in choice['cases']])
-        advice += '<p class="choice-cost">Coût observé' + ''.join('<strong>' + text(cost) + '</strong>' for cost in costs) + '</p></div>'
-        # Compromis et portée du conseil : repliés sur téléphone pour le critère K1, dépliés sur ordinateur
-        detail = ''
-        if choice.get('priority'):
-            if choice['priority'] == 'cost':
-                advice += '<p><strong>Priorité choisie : coût observé.</strong> Nous retenons l’unique réponse conforme la moins coûteuse. '
-                advice += 'Une autre réponse peut être meilleure sur un critère de qualité : le compromis est indiqué ci-dessous.</p>'
-            else:
-                advice += '<p><strong>Priorité choisie : ' + text(priority_label(value, choice['priority'])) + '.</strong> '
-                advice += 'Nous retenons la meilleure valeur observée sur ce critère, selon le sens fixé par le contrat. '
-                advice += 'En cas d’égalité, le coût observé le plus bas départage.</p>'
-            advice += '<p><a href="' + text(priority_href(value, query)) + '">Revenir au conseil par défaut</a></p>'
-            for item in choice.get('compromises', []):
-                detail += '<p class="priority-tradeoff">' + text(tradeoff_sentence(item, names, panel)) + '</p>'
-            if 'cases' in choice:
-                for item in choice['cases']:
-                    for trade in item.get('compromises', []):
-                        detail += '<p class="priority-tradeoff">' + text(
-                            'Exemple ' + str(number(item['case_id'])) + ' : ' + tradeoff_sentence(trade, names, panel)) + '</p>'
-            detail += '<p class="hint">Ce conseil ne compare que des réponses qui satisfont toutes les obligations : '
-            detail += 'aucune obligation non satisfaite n’est compensée.</p>'
-        elif choice['basis'] in ('quality_then_cost', 'each_case'):
-            criteria = list(dict.fromkeys(definition.get('measure') or definition.get('label')
-                                          for definition in choice['quality']
-                                          if definition.get('measure') or definition.get('label')))
-            definition = ('Ici, la qualité désigne les critères fixés pour votre cas d’usage '
-                          'et vérifiés dans chaque réponse' + (text(' : ' + ' ; '.join(criteria)) if criteria else '') + '.')
-            advice += '<p>Nous retenons d’abord la <span class="quality-term"><span class="quality-help" tabindex="0" '
-            advice += 'aria-describedby="quality-definition">qualité observée</span>'
-            advice += '<span id="quality-definition" class="quality-tooltip" role="tooltip">' + definition + '</span></span> la plus élevée. '
-            advice += 'À qualité égale, le coût observé le plus bas l’emporte.'
-            advice += (' Ce modèle est retenu sur chaque exemple, lu séparément.' if 'cases' in choice else '') + '</p>'
-        else:
-            advice += '<p>Les ' + text(choice['count']) + ' réponses qui satisfont l’exemple ont la même qualité observée. Nous retenons la moins coûteuse.</p>'
-        detail += ('<p class="hint">Ce conseil repose sur ' + ('un seul exemple' if 'cases' not in choice else
-                   text(len(choice['cases'])) + ' exemples') + '. Sur d’autres tâches, le résultat peut être différent.</p>')
-        advice += '<details class="choice-detail"><summary>Détail du conseil</summary><div>' + detail + '</div></details></aside>'
-    content += advice + summary
+        return content + render_expenses(value.get('expenses'), names) + '</div>'
     sort_column = next((column for column in value['columns'] if column['id'] == query.get('sort')), None)
     sort_label = (sort_column['definition'].get('measure', 'Coût observé') if sort_column else 'sans tri')
     quality_columns = [column for column in value['columns'] if 'criterion_id' in column]
-    priority_control = ''
+
+    def field(key, label, default, choices, selected, extra=''):
+        return ('<div class="champ"><label for="filter-' + key + '">' + text(label) + '</label><select id="filter-' + key
+                + '" name="' + key + '"' + extra + '>'
+                + ''.join('<option value="' + text(val) + '"' + (' selected' if selected == val else '') + '>' + text(title) + '</option>'
+                          for val, title in [('', default)] + choices) + '</select></div>')
+    controls = ''
     if value['columns']:
-        selected_priority = query.get('priority', '')
-        priority_choices = [('', 'Conseil par défaut'), ('cost', 'Priorité au coût observé')]
-        priority_choices += [(column['id'], 'Priorité : ' + priority_label(value, column['id']))
-                             for column in quality_columns]
-        priority_control = ('<div><label for="filter-priority">Priorité du conseil</label>'
-                            '<select id="filter-priority" name="priority" aria-describedby="priority-help">'
-                            + ''.join('<option value="' + text(value_) + '"' + (' selected' if selected_priority == value_ else '')
-                                      + '>' + text(title) + '</option>' for value_, title in priority_choices)
-                            + '</select><p class="hint" id="priority-help">Changer la priorité ne modifie ni les verdicts '
-                            'ni les coûts. Le conseil porte sur toute la comparaison, même si un filtre masque la réponse '
-                            'conseillée.</p></div>')
+        controls += field('priority', 'Priorité du conseil', 'Conseil par défaut',
+                          [('cost', 'Priorité au coût observé')] + [(column['id'], 'Priorité : ' + priority_label(value, column['id']))
+                                                                     for column in quality_columns],
+                          query.get('priority', ''), ' aria-describedby="priority-help"')
     options = {
-        'case': ('Exemple', 'Tous les exemples', [(v['id'], example_label(v, number))
-                         for number, v in enumerate(value['cases'], 1)] if multiple_cases else []),
+        'case': ('Exemple', 'Tous les exemples', [(v['id'], example_label(v, n)) for n, v in enumerate(value['cases'], 1)] if multiple_cases else []),
         'configuration': ('Modèle', 'Tous les modèles', [(v['id'], model_name(v, names) +
                            (' · ' + effort_label(v) if sum(p['model'] == v['model'] for p in value['panel']) > 1 else '')) for v in value['panel']]),
         'verdict': ('Résultat', 'Tous les résultats', [('SATISFAIT', 'Satisfait'), ('NE SATISFAIT PAS', 'Ne satisfait pas'), ('A_REPRENDRE', 'À reprendre')]),
@@ -700,202 +728,278 @@ def render_comparison(value):
                         for v in value['obligations'] for state, label in
                         (('PASS', 'Respectée'), ('FAIL', 'Non respectée'), ('INDETERMINE', 'Non vérifiable'))]),
     }
-    content += '<section class="comparison-results"><h2>Comparaison des modèles</h2>'
-    content += '<p class="table-hint">Sur petit écran, faites défiler le tableau horizontalement.</p>'
-    content += '<details id="filters" class="comparison-filters"' + (' open' if query else '') + '><summary>Conseil, tri et filtres</summary>'
-    content += '<form method="get" action="' + text(base) + '#filters"><div class="filter-grid">' + priority_control
-    advanced = ''
-    for key, (label, default, values) in options.items():
-        if not values:
-            continue
-        selected = query.get(key, '')
-        if key == 'direction' and selected == 'asc':
-            selected = ''
-        control = '<div><label for="filter-' + key + '">' + label + '</label><select id="filter-' + key + '" name="' + key + '">'
-        for val, title in [('', default)] + values:
-            control += '<option value="' + text(val) + '"' + (' selected' if selected == val else '') + '>' + text(title) + '</option>'
-        control += '</select></div>'
-        if key == 'obligation':
-            advanced = '<details class="filter-advanced"' + (' open' if key in query else '') + '><summary>Filtrer par exigence</summary>'
-            advanced += '<p class="hint">Pour retrouver les réponses qui respectent ou non une exigence précise.</p>' + control + '</details>'
-        else:
-            content += control
-    content += '</div>' + advanced + '<div class="actions"><button type="submit">Appliquer</button>'
-    content += '<a class="button sec" href="' + text(base) + '#filters">Retirer les filtres</a></div></form></details>'
-    content += '<p class="view-scope note">' + text(len(value['rows'])) + (' réponse affichée sur ' if len(value['rows']) == 1 else ' réponses affichées sur ')
-    content += text(len(value['population'])) + ' · ' + text('triées par ' + sort_label[:1].lower() + sort_label[1:] if sort_column else sort_label)
-    if sort_column:
-        content += ', ordre décroissant' if query.get('direction') == 'desc' else ', ordre croissant'
-    content += '.</p>'
+    for key, (label, default, choices) in options.items():
+        if choices:
+            selected = query.get(key, '')
+            controls += field(key, label, default, choices, '' if key == 'direction' and selected == 'asc' else selected)
+    form_html = ('<form method="get" action="' + text(base) + '#filters"><div class="filtres-grille">' + controls + '</div>'
+                 + ('<p class="petit" id="priority-help">Changer la priorité ne modifie ni les verdicts ni les coûts. Le conseil porte sur '
+                    'tout le benchmark, même si un filtre masque la réponse conseillée.</p>' if value['columns'] else '')
+                 + '<div class="actions">' + bouton('Appliquer', sec=True, icone=None) + lien(base + '#filters', 'Retirer les filtres', 'croix')
+                 + '</div></form>')
+    shown = len(value['rows'])
+    scope = (_plural(shown, 'réponse') + (' affichée' if shown == 1 else ' affichées') + ' sur ' + str(len(value['population']))
+             + ' · ' + ('triées par ' + sort_label[:1].lower() + sort_label[1:] if sort_column else sort_label)
+             + ((', ordre décroissant' if query.get('direction') == 'desc' else ', ordre croissant') if sort_column else ''))
+    content += ('<section aria-labelledby="t-comp"><div class="zone-titre"><h2 id="t-comp">Comparaison des modèles</h2><span class="petit">'
+                + text(scope) + '</span></div><div class="filtres">'
+                + tiroir('Tri et filtres', form_html, resume=_filters_summary(value, query), ouvert=bool(query), ident='filters') + '</div>')
     if not value['rows']:
-        content += '<p class="note">Aucune réponse ne correspond à ces filtres. Retirez un filtre pour revoir les autres : rien n’a été supprimé.</p>'
+        content += '<p class="etat-ligne">Aucune réponse ne correspond à ces filtres. Retirez un filtre pour revoir les autres : rien n’a été supprimé.</p>'
     for case_number, case in enumerate(value['cases'], 1):
         rows = [r for r in value['rows'] if r['case_id'] == case['id']]
         if not rows and (not multiple_cases or query.get('case', case['id']) != case['id']):
             continue
-        label = example_label(case, case_number) if multiple_cases else 'Comparaison des modèles'
-        if multiple_cases:
-            # Un filtre ne retire ni l'exemple ni son dénominateur
-            evaluated = len({r['attempt_id'] for r in latest.values() if r['case_id'] == case['id']})
-            planned = sum(cell['case_id'] == case['id'] for cell in value['cells'])
-            content += '<h3>' + text(label) + '</h3><p class="hint">' + text(
-                _plural(evaluated, 'réponse évaluée') + ' sur ' + _plural(planned, 'essai prévu')) + '</p>'
-            if not rows:
-                # Sans filtre, le dénominateur suffit ; sans aucune réponse affichée, la note générale le dit déjà
-                if query and value['rows']:
-                    content += '<p class="note">Aucune réponse de cet exemple ne correspond à ces filtres.</p>'
-                continue
-        content += '<div class="table-scroll" role="region" tabindex="0" aria-label="' + text(label) + '">'
-        content += '<table><caption>Chaque verdict concerne la réponse obtenue sur cet exemple.</caption><thead><tr>'
-        titles = ['Modèle', 'Résultat'] + (['Qualité observée'] if quality_columns else []) + ['Coût observé', 'Détails']
-        for title in titles:
-            content += '<th scope="col">' + text(title) + '</th>'
-        content += '</tr></thead><tbody>'
-        # Échelle des barres sur toutes les réponses de l'exemple : un filtre ne la change pas
-        known = [float(r['candidate_cost']['amount']) for r in latest.values() if r['case_id'] == case['id']
-                 and r['candidate_cost'] is not None and _numeric(r['candidate_cost']['amount'])]
+        label = example_label(case, case_number)
+        # Un filtre ne retire ni l'exemple ni son dénominateur
+        evaluated = len({r['attempt_id'] for r in latest.values() if r['case_id'] == case['id']})
+        planned = sum(cell['case_id'] == case['id'] for cell in value['cells'])
+        denominator = _plural(evaluated, 'réponse évaluée') + ' sur ' + _plural(planned, 'essai prévu')
+        if not rows:
+            # Sans filtre, le dénominateur suffit ; sans aucune réponse affichée, la note générale le dit déjà
+            if query and value['rows']:
+                content += ('<div class="cas-titre"><h3>' + text(label) + '</h3><span class="petit">' + text(denominator) + '</span></div>'
+                            '<p class="etat-ligne">Aucune réponse de cet exemple ne correspond à ces filtres.</p>')
+            continue
+        lines = []
         for row in rows:
-            content += '<tr id="attempt-' + text(row['attempt_id']) + '"' + ('' if row['verdict'] == 'SATISFAIT' else ' class="out"') + ' tabindex="-1"><th scope="row">'
-            content += '<strong>' + text(model_name(row['requested_configuration'], names)) + '</strong>'
-            content += '<p class="hint">' + text(effort_label(row['requested_configuration'])) + '</p>'
+            configuration = row['requested_configuration']
+            hints = ''
             if row.get('repetition'):
-                content += '<p class="hint">' + text('Essai ' + str(row['repetition']) + ' sur ' + str(repetitions)) + '</p>'
+                hints += '<p class="petit">' + text('Essai ' + str(row['repetition']) + ' sur ' + str(repetitions)) + '</p>'
             if row.get('relaunch'):
-                content += '<p class="hint">' + text('Réponse obtenue à la tentative ' + str(row['relaunch'])
-                                                     + ', après un incident fournisseur') + '</p>'
+                hints += '<p class="petit">' + text('Réponse obtenue à la tentative ' + str(row['relaunch'])
+                                                    + ', après un incident fournisseur') + '</p>'
             if row.get('recovery_limit'):
-                content += '<p class="hint">' + text('Reprise après arrêt pour longueur : limite de sortie de '
-                                                     + str(row['recovery_limit']) + ' jetons') + '</p>'
-            content += receipt_observations(row)
-            content += '</th>'
+                hints += '<p class="petit">' + text('Reprise après arrêt pour longueur : longueur de réponse de '
+                                                    + str(row['recovery_limit']) + ' jetons') + '</p>'
+            hints += receipt_observations(row)
             # Les critères qui fondent le verdict, entiers ; l'explication du juge reste dans le détail
             reason = ('Toutes les exigences sont respectées.' if row['verdict'] == 'SATISFAIT' else
                       _failure_reason(row) if row['verdict'] == 'NE SATISFAIT PAS' else 'Le verdict n’est pas encore disponible.')
-            content += '<td>' + badge(row['verdict']) + '<p class="hint">' + text(reason) + '</p></td>'
+            measures = ''
             if quality_columns:
-                content += '<td><ul class="quality-list">'
+                measures = '<ul class="mesures">'
                 for column in quality_columns:
                     measure = next(m for m in row['measures'] if m['criterion_id'] == column['criterion_id'])
-                    shown = valeur_mesure(measure['value'], measure.get('unit')).capitalize()
-                    content += '<li><strong>' + text(column['definition']['measure']) + '</strong> : ' + text(shown) + '</li>'
+                    shown_value = valeur_mesure(measure['value'], measure.get('unit')).capitalize()
+                    measures += '<li><b>' + text(column['definition']['measure']) + '</b> : ' + text(shown_value)
                     if measure['rank'] is None:
-                        content += '<li class="hint">Non comparable : ' + text(measure['reason']) + '</li>'
-                content += '</ul></td>'
-            content += '<td>'
+                        measures += ' <span class="nc">non comparable : ' + text(measure['reason']) + '</span>'
+                    measures += '</li>'
+                measures += '</ul>'
             cost = row['cost']
-            content += '<span class="source-value">' + text('Inconnu' if cost['value'] is None else montant_lisible(cost['value']) + ' ' + cost['unit']) + '</span>'
+            cost_html = text('inconnu' if cost['value'] is None else montant_lisible(cost['value']) + ' ' + cost['unit'])
             if cost['value'] is not None and cost['rank'] is None:
-                content += '<p class="hint">Coût non comparable</p>'
-            content += cost_bar(cost['value'], known) + '</td>'
-            content += '<td><a class="text-link" data-result href="' + text(row['detail_href']) + '">Détail et preuves</a></td></tr>'
-        content += '</tbody></table></div>'
+                cost_html += ' <span class="nc">non comparable</span>'
+            name = model_name(configuration, names)
+            link = ('<span class="actions"><a class="lien" data-result href="' + text(row['detail_href']) + '">Preuves<span class="cache"> et détail de '
+                    + text(name) + '</span>' + ic('fleche') + '</a>'
+                    + info_modele(name, [('Identifiant', configuration['model']), ('Raisonnement', effort_label(configuration)),
+                                         ('Longueur de réponse', output_label(configuration, None))]) + '</span>')
+            lines.append(ligne_modele('attempt-' + row['attempt_id'], name, effort_label(configuration),
+                                      badge(row['verdict']) + '<p class="motif">' + text(reason) + '</p>', measures, cost_html, link,
+                                      sous_nom_html=hints, classe='' if row['verdict'] == 'SATISFAIT' else 'out', attrs=' tabindex="-1"'))
+        content += table_cas(label, denominator, lines, region=label if multiple_cases else 'Comparaison des modèles')
+    content += '</section>'
     conditions = value['conditions']
-    content += '</section>' + render_expenses(value.get('expenses'), names)
-    content += '<details id="method"><summary>Comment lire ces résultats</summary>'
-    content += '<ul><li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
-    content += '<li><strong>Ne satisfait pas</strong> : une exigence n’est pas respectée ou une erreur éliminatoire a été relevée ; la réponse n’est pas utilisable, quel que soit son coût.</li>'
-    content += '<li><strong>À reprendre</strong> : la preuve ne permet pas encore de conclure ; ce n’est pas un échec du modèle.</li>'
-    content += '<li>Lisez d’abord le verdict, puis la qualité observée. Le coût observé sert seulement à départager des réponses qui satisfont l’exemple avec la même qualité. Un coût inconnu ne change pas le verdict.</li>'
-    content += '<li>' + text(value['conclusion']['attribution']) + '</li>'
-    if value['conclusion']['limits']:
-        content += '<li>Limite principale : ' + text(value['conclusion']['limits'][0]) + '</li>'
-    content += '<li>Conditions communes : tous les modèles reçoivent la même consigne et les mêmes pièces, et travaillent avec le même outil, '
-    content += text(conditions['pi']['package'] + ' ' + conditions['pi']['version'])
-    content += ', fixé le ' + text(date_lisible_utc(conditions['frozen_at'])) + '.</li></ul></details>'
-    content += '<p><a href="' + text(base + '/preview') + '">Voir l’aperçu d’une publication</a> (rien n’est publié)</p>'
-    content += '<dialog id="result-dialog" class="result-dialog" aria-label="Détail et preuves">'
-    content += '<div class="result-head"><button type="button" class="sec" data-close autofocus>Fermer</button>'
-    content += '<p class="result-status" role="status"></p></div><div class="result-body"></div>'
-    content += '</dialog>'
-    return content
+    # La qualité observée désigne les critères du contrat : leur liste se lit ici, sans survol
+    definitions = (value.get('recommendation') or {}).get('quality') or [column['definition'] for column in quality_columns]
+    criteria = list(dict.fromkeys(definition.get('measure') or definition.get('label') for definition in definitions
+                                  if definition.get('measure') or definition.get('label')))
+    method = ('<p>Résultat attendu : ' + text(value['result_expected']) + '</p>'
+              '<ul><li><strong>Satisfait</strong> : toutes les exigences sont respectées et aucune erreur éliminatoire n’a été relevée.</li>'
+              '<li><strong>Ne satisfait pas</strong> : une exigence n’est pas respectée ou une erreur éliminatoire a été relevée ; la réponse n’est pas utilisable, quel que soit son coût.</li>'
+              '<li><strong>À reprendre</strong> : la preuve ne permet pas encore de conclure ; ce n’est pas un échec du modèle.</li>'
+              '<li>Lisez d’abord le verdict, puis la qualité observée'
+              + (' : elle désigne les critères fixés pour votre cas d’usage et vérifiés dans chaque réponse (' + text(' ; '.join(criteria)) + ')'
+                 if criteria else '')
+              + '. Le coût observé sert seulement à départager des réponses qui satisfont l’exemple avec la même qualité. Un coût inconnu ne change pas le verdict.</li>'
+              '<li>' + text(value['conclusion']['attribution']) + '</li>'
+              + ('<li>Limite principale : ' + text(value['conclusion']['limits'][0]) + '</li>' if value['conclusion']['limits'] else '')
+              + '<li>Conditions communes : tous les modèles reçoivent la même consigne et les mêmes pièces, et travaillent avec le même harnais, '
+              'pi.dev, dans la même version pour tout le benchmark, fixée le ' + text(date_lisible_utc(conditions['frozen_at'])) + '.</li></ul>')
+    content += '<div>' + render_expenses(value.get('expenses'), names) + tiroir('Comment lire ces résultats', method, ident='method') + '</div>'
+    content += '<p>' + lien(base + '/preview', 'Voir l’aperçu d’une publication', 'oeil') + '</p>'
+    content += ('<dialog id="result-dialog" aria-label="Détail et preuves"><div class="result-head">'
+                '<button type="button" class="btn btn-sec" data-close autofocus>Fermer</button>'
+                '<p class="result-status" role="status"></p></div><div class="result-body"></div></dialog>')
+    return content + '</div>'
+
+
+def niveau_court(niveau):
+    """« Faible (low) » devient « Faible » ; un niveau inconnu garde son code"""
+    return str(EFFORT_LABELS.get(niveau, niveau)).split(' (')[0]
+
+
+def lignes_raisonnement(configuration):
+    """Réglage de raisonnement en une ou deux lignes : le niveau appliqué, puis la raison d'un écart avec le niveau demandé"""
+    if configuration.get('effort_limit') == 'not_adjustable':
+        return ['Raisonnement fixe']
+    effort = configuration.get('parameters', {}).get('reasoning', {}).get('effort', configuration.get('effort', 'off'))
+    if effort == 'off':
+        return ['Raisonnement non renseigné']
+    if effort == 'on':
+        return ['Raisonnement activé', 'Niveau non renseigné']
+    niveau = str(EFFORT_LABELS.get(effort, effort))
+    lignes = ['Raisonnement ' + niveau[:1].lower() + niveau[1:]]
+    requested = configuration.get('effort_requested')
+    if requested:
+        lignes.append(niveau_court(requested) + ' non accepté par ce modèle')
+    return lignes
+
+
+def contexte_campagne(*, retour, revision=None, besoin=None, extra=''):
+    """Puces sous le titre h1 des écrans modèles, lancement et suivi ; `retour` est (texte, adresse) ou None"""
+    return ((puce(besoin, plein=True) if besoin else '') + (puce('Version ' + str(revision)) if revision else '')
+            + ruban('Exemple inventé') + extra + (lien(retour[1], retour[0], 'retour') if retour else ''))
+
+
+def contexte_vue(value):
+    """Contexte du titre pour les vues configurations, campaign_launch et campaign_models"""
+    kind = value.get('kind')
+    if kind == 'campaign_models':
+        return contexte_campagne(retour=None, besoin=value.get('need'), extra=puce(
+            'Exemple validé · v' + str(value['task']['version'])) + puce(_plural(len(value['panel']), 'modèle')))
+    dossier_url = '/preparation/dossiers/' + value['dossier_id']
+    if kind == 'configurations':
+        return contexte_campagne(retour=('Revenir au cas d’usage', dossier_url))
+    campaign = value['campaign']
+    revision = campaign.get('task', {}).get('revision')
+    if campaign['attempts']:
+        return contexte_campagne(retour=None, revision=revision)
+    if 'checks' in value:
+        return contexte_campagne(retour=('Modifier la sélection', dossier_url + '/configurations'), revision=revision)
+    return contexte_campagne(retour=('Revenir au cas d’usage', dossier_url), revision=revision)
+
+
+def titre_vue(value):
+    """Titre h1 des vues configurations, campaign_launch et campaign_models"""
+    kind = value.get('kind')
+    if kind == 'configurations':
+        return 'Choisissez les modèles à comparer'
+    if kind == 'campaign_models':
+        return 'Modèles de ce benchmark'
+    return 'Suivi du benchmark' if value['campaign']['attempts'] else 'Vérifier, puis lancer'
 
 
 def render_campaign_models(value):
-    content = '<p>Voici les modèles et les réglages utilisés pour cette comparaison. Consulter cette page ne change rien et n’appelle aucun modèle.</p>'
+    names = value.get('model_names', {})
+    cards = ''
     for model in value['panel']:
-        content += section(model_name(model, value.get('model_names', {})), '<p>' + text(effort_label(model)) + '</p>' +
-                           '<details><summary>Réglages utilisés</summary>' + readable_fields(model['parameters']) + '</details>')
-    content += '<p><a href="' + text(value['href']) + '">Revenir aux résultats</a></p>'
-    content += '<p class="hint">Pour changer les modèles ou l’exemple, préparez une nouvelle comparaison depuis le cas d’usage. Les résultats actuels seront conservés.</p>'
-    return content
+        parameters = model['parameters']
+        rows = [('Route', text(model['model']))]
+        if model.get('effort_requested'):
+            rows += [('Raisonnement demandé', text(model['effort_requested'])), ('Raisonnement appliqué', text(model['effort']))]
+        elif model.get('effort_limit') == 'not_adjustable':
+            rows.append(('Raisonnement', 'non réglable'))
+        else:
+            rows.append(('Raisonnement', text(model['effort'])))
+        rows.append(('Longueur de réponse', text(str(parameters['max_tokens']) + ' jetons') if 'max_tokens' in parameters else 'par défaut'))
+        rest = {key: item for key, item in parameters.items() if key not in ('max_tokens', 'reasoning')}
+        rows += [(key.replace('_', ' ').capitalize(), readable_fields(item)) for key, item in rest.items()]
+        cards += ('<li class="carte"><h3>' + text(model_name(model, names)) + '</h3><p class="petit">'
+                  + '<br>'.join(text(line) for line in lignes_raisonnement(model)) + '</p>'
+                  + tiroir('Réglages utilisés', cles(rows)) + '</li>')
+    return ('<div class="pile-l"><p class="texte-l">Voici les modèles et les réglages utilisés. Consulter cette page n’appelle aucun modèle.</p>'
+            '<ul class="g-liste-modeles">' + cards + '</ul><div class="actions">' + btn(value['href'], 'Revenir aux résultats') + '</div>'
+            '<p class="petit">Pour changer les modèles ou l’exemple, préparez un nouveau benchmark depuis le cas d’usage. '
+            'Les résultats actuels sont conservés.</p></div>')
+
+
+def cadre_haut(html):
+    """Encadré d'état posé au-dessus du contenu d'un écran ; rien s'il n'y a pas d'état à dire"""
+    return '<div class="g-haut">' + html + '</div>' if html else ''
+
+
+def _segments(identifiant, nom, choix, courant):
+    """Contrôle segmenté de radios natifs liés au formulaire des modèles ; `choix` : (valeur, libellé, code ou '')"""
+    return ('<div class="segments" role="radiogroup" aria-labelledby="' + identifiant + '">' + ''.join(
+        '<label><input type="radio" form="configurations-form" name="' + nom + '" value="' + text(valeur) + '"'
+        + (' checked' if str(courant) == str(valeur) else '') + '>' + text(libelle)
+        + ('<small>' + text(code) + '</small>' if code else '') + '</label>' for valeur, libelle, code in choix) + '</div>')
 
 
 def render_configurations(value, csrf):
-    """Choix des modèles et du palier, puis estimation de la sélection courante"""
+    """Choix des modèles, du niveau de raisonnement, des essais et de la longueur de réponse"""
     dossier_url = '/preparation/dossiers/' + value['dossier_id']
-    content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
-    content += '<p class="note">Choisissez au moins deux modèles et un niveau de raisonnement.</p>'
-    # La synthèse suit les réglages : elle dit l'absence d'appel et porte la validation du formulaire
-    side = '<p>Enregistrer ce choix n’appelle aucun modèle.</p>'
-    main = ''
     if not value.get('catalogue_available', True):
-        main += '<p>' + text(value['detail']) + '</p>'
-        main += render_custom_models(value, csrf, dossier_url)
-    else:
-        if value.get('catalogue_stale'):
-            main += '<p class="note">La liste des modèles n’a pas pu être mise à jour. Vous voyez la dernière liste disponible, qui peut ne plus être à jour.</p>'
-        choices = ''
-        for model in value['models']:
-            checked = ' checked' if model['selected'] else ''
-            choices += '<label><input type="checkbox" name="models" value="' + text(
-                model['id']) + '"' + checked + '> ' + text(model['name'])
-            if model['not_adjustable']:
-                choices += ' · niveau de raisonnement fixe'
-            choices += '</label>'
-        labels = EFFORT_LABELS
-        tiers = '<label for="reasoning-effort">Niveau de raisonnement demandé</label>'
-        tiers += '<select id="reasoning-effort" form="configurations-form" name="tier" aria-describedby="reasoning-help">'
-        tiers += ''.join('<option value="' + text(tier) + '"' +
-                         (' selected' if value['current_tier'] == tier else '') + '>' +
-                         text(labels.get(tier, tier)) + '</option>' for tier in value['available_tiers'])
-        tiers += '</select><p class="hint" id="reasoning-help">Ce niveau est transmis aux modèles qui le proposent. '
-        tiers += 'Un modèle qui ne l’accepte pas reçoit le niveau le plus proche qu’il propose, affiché dans le récapitulatif. Les modèles à niveau fixe sont comparés tels quels. Un niveau plus élevé peut rendre la réponse plus lente et plus chère, sans garantir qu’elle soit meilleure.</p>'
-        tunable = [model for model in value['models'] if len(model.get('levels', ())) > 1]
-        if tunable:
-            tiers += '<details><summary>Ajuster le niveau par modèle</summary><p class="hint">« Automatique » suit le niveau demandé ci-dessus. Seuls les niveaux acceptés par chaque modèle sont proposés.</p>'
-            for index, model in enumerate(tunable, 1):
-                field = 'effort-' + str(index)
-                tiers += ('<label for="' + field + '">' + text(model['name']) + '</label><select id="' + field +
-                          '" form="configurations-form" name="' + text('effort:' + model['id']) + '">' +
-                          '<option value="">Automatique</option>' +
-                          ''.join('<option value="' + text(level) + '"' + (' selected' if model.get('chosen') == level else '') +
-                                  '>' + text(labels.get(level, level)) + '</option>' for level in model['levels']) +
-                          '</select>')
-            tiers += '</details>'
-        default = str(value.get('default_output_tokens', ''))
-        limits = ('<details><summary>Ajuster la limite de sortie par modèle</summary><p class="hint">Vide : '
-                  + (default + ' jetons de sortie' if default else 'limite par défaut') + '. Le coût estimé compte une '
-                  'réponse qui atteint cette limite. Une limite au-delà de la borne publiée pour le modèle est refusée, '
-                  'jamais réduite.</p>')
-        for index, model in enumerate(value['models'], 1):
-            field = 'max-tokens-' + str(index)
-            bound = model.get('output_bound')
-            limits += ('<label for="' + field + '">' + text(model['name'] + ' · ' + (
-                'borne publiée : ' + str(bound) if bound else 'borne publiée inconnue')) + '</label>'
-                '<input id="' + field + '" form="configurations-form" type="number" inputmode="numeric" min="1" step="1"'
-                + ('' if not bound else ' max="' + str(bound) + '"') + ' placeholder="' + text(default)
-                + '" name="' + text('max_tokens:' + model['id']) + '" value="' + text(str(model.get('output_limit') or '')) + '">')
-        limits += '</details>'
-        main += ('<form id="configurations-form" method="post" action="' + text(dossier_url + '/configurations') + '">' +
-                    hidden('csrf_token', csrf) + '<fieldset id="model-choices"><legend>Modèles à comparer</legend>' +
-                    choices + '</fieldset></form>')
-        main += render_custom_models(value, csrf, dossier_url)
-        # Décision d'Ayo du 2026-10-17 : un même nombre d'essais pour chaque modèle et chaque exemple
-        repetitions = ('<label for="repetitions">Essais par modèle et par exemple</label>'
-                       '<select id="repetitions" form="configurations-form" name="repetitions" aria-describedby="repetitions-help">'
-                       + ''.join('<option value="' + str(count) + '"' + (' selected' if value.get('repetitions', 1) == count else '')
-                                 + '>' + str(count) + (' essais' if count > 1 else ' essai') + '</option>'
-                                 for count in range(1, value.get('max_repetitions', 1) + 1))
-                       + '</select><p class="hint" id="repetitions-help">Chaque essai est une réponse distincte, payée et '
-                       'évaluée séparément. Tous les essais partent, quel que soit le résultat des autres. Plusieurs essais '
-                       'montrent si les réponses d’un modèle varient ; ils ne mesurent pas sa fiabilité. Avec plus d’un essai, '
-                       'aucun conseil n’est donné.</p>')
-        # Le récapitulatif de la sélection suit l'enregistrement : le serveur y redirige
-        main += ('<fieldset><legend>Raisonnement</legend>' + tiers + '</fieldset>'
-                 '<fieldset><legend>Essais</legend>' + repetitions + '</fieldset>'
-                 '<fieldset><legend>Limite de sortie</legend>' + limits + '</fieldset>')
-        side += '<button form="configurations-form" type="submit">Continuer</button>'
-    return content + workbench(main, section('Votre choix', side), 'Votre choix')
+        return (cadre_haut(etat('vig', 'Indisponible', value['detail'],
+                                'Aucun modèle à choisir pour le moment. Ajoutez-en un par son identifiant OpenRouter : le benchmark en demande au moins deux.',
+                                lien(dossier_url + '/configurations', 'Actualiser la liste', 'actualiser')))
+                + '<div class="reglages">' + render_custom_models(value, csrf, dossier_url, detail=True) + '</div>')
+    models = value['models']
+    chosen = [model for model in models if model['selected']]
+    head = ''
+    if value.get('catalogue_stale'):
+        head = etat('vig', 'Liste ancienne', 'La liste des modèles n’a pas pu être mise à jour',
+                    'Vous voyez la dernière liste disponible, qui peut ne plus être à jour.')
+    elif value.get('current_campaign_id') and chosen:
+        head = etat('ok', 'Sélection prête', _plural(len(chosen), 'modèle sélectionné'),
+                    'Vous pouvez ajuster le raisonnement, les essais et la longueur de réponse, puis continuer. '
+                    'Enregistrer ce choix n’appelle aucun modèle.')
+    tiles = ''
+    for model in models:
+        tiles += ('<li><label class="mligne"><input type="checkbox" name="models" value="' + text(model['id']) + '"'
+                  + (' checked' if model['selected'] else '') + '><span class="nom">' + text(model['name'])
+                  + '</span><span class="fournisseur">' + text(model['id']) + '</span><span class="regl">'
+                  + puce('Raisonnement fixe' if model['not_adjustable'] else 'Raisonnement réglable') + '</span></label></li>')
+    tiles += ('<li><a class="mligne mligne-ajout" href="#ajout">' + ic('plus') + '<span>Ajouter un modèle absent de la liste</span></a></li>')
+    choices = ('<form id="configurations-form" method="post" action="' + text(dossier_url + '/configurations') + '">' + hidden('csrf_token', csrf)
+               + '<fieldset id="model-choices"><legend class="cache">Modèles à comparer</legend>'
+               + ('' if head else '<p class="texte-l">Au moins deux. Enregistrer ce choix n’appelle aucun modèle.</p>')
+               + '<ul class="mliste">' + tiles + '</ul></fieldset></form>')
+    tiers = value['available_tiers']
+    current = value['current_tier']
+    tunable = [model for model in models if len(model.get('levels', ())) > 1]
+    fixed = [model for model in chosen if model['not_adjustable']]
+    modified = sum(bool(model.get('chosen')) for model in tunable)
+    per_model = ''.join(
+        '<li><label for="effort-' + str(index) + '">' + text(model['name']) + '</label><select id="effort-' + str(index)
+        + '" form="configurations-form" name="' + text('effort:' + model['id']) + '"><option value="">Comme ci-dessus ('
+        + text(niveau_court(current)) + ')</option>' + ''.join(
+            '<option value="' + text(level) + '"' + (' selected' if model.get('chosen') == level else '') + '>'
+            + text(EFFORT_LABELS.get(level, level)) + '</option>' for level in model['levels']) + '</select></li>'
+        for index, model in enumerate(tunable, 1))
+    per_model += ''.join('<li><span>' + text(model['name']) + '</span>' + puce('Non réglable : comparé tel quel') + '</li>' for model in fixed)
+    reasoning = ('<div class="reglage"><div><span class="lbl" id="l-tier"><b>Raisonnement</b></span>'
+                 '<p class="petit">Le temps de réflexion accordé au modèle avant qu’il réponde.</p></div><div>'
+                 + _segments('l-tier', 'tier', [(tier, niveau_court(tier), tier) for tier in tiers], current)
+                 + '<p class="petit">Plus élevé : souvent plus lent et plus cher, sans garantie d’être meilleur. '
+                 'Un modèle qui n’a pas ce niveau reçoit le plus proche, affiché dans le récapitulatif. '
+                 'Les modèles à niveau fixe sont comparés tels quels.</p>'
+                 + (tiroir('Choisir un niveau différent pour un modèle', '<ul class="par-modele">' + per_model + '</ul>',
+                           resume=_plural(modified, 'modèle modifié') if modified else '', ouvert=bool(modified)) if per_model else '')
+                 + '</div></div>')
+    repetitions = value.get('repetitions', 1)
+    # Décision d'Ayo du 2026-10-17 : un même nombre d'essais pour chaque modèle et chaque exemple
+    attempts = ('<div class="reglage"><div><span class="lbl" id="l-rep"><b>Essais par modèle</b></span>'
+                '<p class="petit">Chaque essai est payé et vérifié à part. Le nombre vaut pour chaque modèle et chaque exemple.</p></div><div>'
+                + _segments('l-rep', 'repetitions', [(count, '1 essai' if count == 1 else str(count), '')
+                                                     for count in range(1, value.get('max_repetitions', 1) + 1)], repetitions)
+                + '<p class="petit">Tous les essais partent, quel que soit le résultat des autres. Plusieurs essais montrent '
+                'si les réponses d’un modèle varient ; ils ne mesurent pas sa fiabilité. Avec plus d’un essai, aucun conseil n’est donné.</p></div></div>')
+    default = str(value.get('default_output_tokens', ''))
+    limited = sum(bool(model.get('output_limit')) for model in models)
+    limits = ''.join(
+        '<li><label for="max-tokens-' + str(index) + '">' + text(model['name'] + ' · ' + (
+            'borne publiée : ' + str(model['output_bound']) if model.get('output_bound') else 'borne publiée inconnue')) + '</label>'
+        '<input id="max-tokens-' + str(index) + '" form="configurations-form" type="number" inputmode="numeric" min="1" step="1"'
+        + ('' if not model.get('output_bound') else ' max="' + str(model['output_bound']) + '"') + ' placeholder="jetons" name="'
+        + text('max_tokens:' + model['id']) + '" value="' + text(str(model.get('output_limit') or '')) + '"></li>'
+        for index, model in enumerate(models, 1))
+    length = ('<div class="reglage"><div><b>Longueur de réponse</b><p class="petit">Par défaut, chaque modèle garde sa limite habituelle'
+              + (' (' + text(default) + ' jetons de sortie)' if default else '') + '.</p></div><div>'
+              + tiroir('Fixer une limite pour un modèle', '<ul class="par-modele">' + limits + '</ul><p class="petit">Le coût estimé compte une '
+                       'réponse qui atteint cette limite. Une limite au-delà de la borne publiée pour le modèle est refusée, jamais réduite.</p>',
+                       resume=_plural(limited, 'modèle limité') if limited else '', ouvert=bool(limited)) + '</div></div>')
+    summary = ('<b>' + str(len(chosen)) + '</b> ' + ('modèles' if len(chosen) > 1 else 'modèle')
+               + '<span class="hors-mobile"> · raisonnement ' + text(niveau_court(current).lower()) + '</span> · <b>'
+               + str(repetitions) + '</b> ' + ('essais' if repetitions > 1 else 'essai')) if chosen else 'Choisissez au moins deux modèles'
+    bar = ('<div class="barre-choix"><span class="resume">' + summary + '</span><button class="btn" type="submit" form="configurations-form">'
+           'Continuer' + ic('fleche') + '</button></div>')
+    return (cadre_haut(head) + choices + '<div class="reglages carte">' + reasoning + attempts + length
+            + render_custom_models(value, csrf, dossier_url) + '</div>' + bar)
 
 
 def missing_evidence(attempt):
@@ -913,46 +1017,61 @@ def missing_evidence(attempt):
     return 'Le coût d’une réponse reçue n’est pas connu.' if cost else None
 
 
-def campaign_followup(campaign):
-    """État d’affichage seulement : ne crée aucune autorité ni reprise"""
+# Aspect d'un état du suivi : (ton, mot, icône) du tampon, ou DIRECT pour le repère « Benchmark en cours »
+DIRECT = ('direct', 'Benchmark en cours', 'horloge')
+# Tampon propre à chaque cause d'arrêt nommée par le fournisseur
+INCIDENT_ASPECTS = {'KEY_REJECTED': ('ko', 'Clé refusée', 'croix'), 'CREDIT_EXHAUSTED': ('ko', 'Crédit épuisé', 'croix'),
+                    'RATE_LIMITED': ('vig', 'Limite de débit', 'alerte'), 'PROVIDER_ERROR': ('ko', 'Incident', 'alerte')}
+
+
+def _suivi(campaign):
+    """Titre, détail et aspect de l'état du suivi : (actif, terminé, titre, détail, aspect), affichage seulement"""
     cells = campaign['cells']
     judgment = campaign.get('judgment')
     if judgment:
         status = judgment['status']
         if status == 'COMPLETE':
             # Couverture partielle : le nombre de modèles sans réponse exploitable reste dit
-            return False, True, ' '.join(filter(None, ('Évaluation terminée.', judgment.get('reason'), 'Vos résultats sont prêts.')))
+            return (False, True, 'Vérification des réponses terminée.', ' '.join(filter(None, (judgment.get('reason'), 'Vos résultats sont prêts.'))),
+                    ('ok', 'Terminée', 'check'))
         if status == 'BLOCKED':
-            return False, False, judgment.get('reason') or 'L’évaluation s’est arrêtée. Elle ne reprendra pas d’elle-même.'
+            return (False, False, 'La vérification des réponses est bloquée.',
+                    judgment.get('reason') or 'Elle s’est arrêtée et ne reprendra pas d’elle-même.', ('ko', 'Vérification bloquée', 'croix'))
         if judgment.get('relaunch') and not any(c['state'] in ('EMISSION_POSSIBLE', 'INTENT_RECORDED') for c in cells):
             # Relance d'un appel candidat après un incident fournisseur : cause et délai, rien n'est à faire
-            return True, False, judgment['reason'] + ' Les autres réponses sont conservées.'
+            return True, False, judgment['reason'], 'Les autres réponses sont conservées.', ('att', 'Relance prévue', 'horloge')
         if judgment.get('relaunching') and not judgment.get('recovering'):
-            return True, False, ('Un modèle est interrogé de nouveau après un incident fournisseur. '
-                                 'Sa réponse arrive au fur et à mesure.')
+            return (True, False, 'Un modèle est interrogé de nouveau après un incident fournisseur.',
+                    'Sa réponse arrive au fur et à mesure.', ('att', 'Relance en cours', 'horloge'))
         if judgment.get('recovering'):
             count = judgment['recovering']
-            return True, False, (str(count) + (' modèles arrêtés' if count > 1 else ' modèle arrêté')
-                                 + ' par la limite de longueur ' + ('sont relancés' if count > 1 else 'est relancé')
-                                 + ' avec une limite de sortie plus haute. Les réponses arrivent au fur et à mesure.')
+            return (True, False, str(count) + (' modèles arrêtés' if count > 1 else ' modèle arrêté')
+                    + ' par la limite de longueur ' + ('sont relancés' if count > 1 else 'est relancé') + ' avec une longueur de réponse plus haute.',
+                    'Les réponses arrivent au fur et à mesure.', ('att', 'Reprise en cours', 'horloge'))
         if status in ('WAITING', 'RUNNING') and cells and all(c['state'] == 'RECEIVED' for c in cells):
             # Une relance automatique programmée dit sa cause et son délai ; rien n'est à faire
-            return True, False, ('Toutes les réponses sont arrivées. Leur évaluation attend son tour.' if status == 'WAITING'
-                                 else 'Évaluation en cours. ' + judgment['reason'] if judgment.get('reason')
-                                 else 'Évaluation en cours : chaque réponse est vérifiée selon les critères de votre exemple.')
+            if status == 'WAITING':
+                return (True, False, 'La vérification des réponses attend son tour.', 'Toutes les réponses sont arrivées.',
+                        ('inc', 'En attente', 'horloge'))
+            return (True, False, 'Les réponses sont vérifiées.', judgment.get('reason') or 'Chaque réponse est vérifiée selon les critères de votre exemple.',
+                    ('att', 'Vérification en cours', 'horloge'))
         if status == 'NOT_STARTED' and cells and all(c['state'] == 'RECEIVED' for c in cells):
-            return False, False, ' '.join(filter(None, ('Toutes les réponses sont arrivées. Leur évaluation n’est pas encore lancée.',
-                                                         judgment.get('reason'))))
+            return (False, False, 'La vérification des réponses est à lancer.', ' '.join(filter(None, (
+                'Toutes les réponses sont arrivées. Leur vérification n’est pas encore lancée.', judgment.get('reason')))),
+                    ('att', 'À lancer', 'horloge'))
     stopped = campaign.get('stop_reason') or campaign.get('restore_pending') or not campaign.get('admission_open')
     # Un modèle encore interrogé garde le suivi actif, même si un autre a déjà rencontré un incident
     if not stopped and any(c['state'] == 'EMISSION_POSSIBLE' for c in cells):
-        return True, False, 'Les modèles sont interrogés. Les réponses arrivent au fur et à mesure.'
+        return True, False, 'Les modèles travaillent.', 'Les réponses arrivent au fur et à mesure. Vous pouvez quitter cette page et revenir.', DIRECT
     if not stopped and any(c['state'] == 'INTENT_RECORDED' for c in cells):
-        return True, False, 'Votre lancement est enregistré. Les essais n’ont pas encore démarré.'
+        # Un modèle a déjà répondu : l'autre essai attend son tour
+        return (True, False, 'Un essai attend son tour.' if any(c['state'] == 'RECEIVED' for c in cells) else 'Le lancement est enregistré.',
+                'Les essais n’ont pas encore démarré.', ('inc', 'En file', 'horloge'))
     if any(a.get('incident') == 'CONNECTION_FAILED' for a in campaign['attempts']):
-        return False, False, NOT_SENT_TEXT + ' La comparaison s’est arrêtée et rien n’est relancé automatiquement.'
+        return (False, False, NOT_SENT_TEXT, 'Le benchmark s’est arrêté et rien n’est relancé automatiquement.', ('vig', 'Non envoyé', 'alerte'))
     if any(a.get('incident') == AMBIGUOUS_EXPIRED for a in campaign['attempts']):
-        return False, False, AMBIGUOUS_EXPIRED_TEXT + ' La comparaison s’est arrêtée ; les réponses déjà reçues restent consultables.'
+        return (False, False, AMBIGUOUS_EXPIRED_TEXT, 'Le benchmark s’est arrêté ; les réponses déjà reçues restent consultables.',
+                ('vig', 'Appel clos', 'alerte'))
     # Incident fournisseur reçu (#525) : sa cause est dite, l'arrêt reste celui du contrat financier
     # Un incident de clé l'emporte : depuis #533, une limite de débit sur un autre modèle n'arrête rien
     incidents = [a for a in campaign['attempts'] if a.get('incident') in INCIDENT_TEXT]
@@ -961,9 +1080,11 @@ def campaign_followup(campaign):
         # Texte du canal appelé, comme sur la page de résultats (#537)
         cell = next((c for c in cells if c.get('cell_id') == named.get('cell_id')), {})
         config = next((p for p in campaign['panel'] if p['id'] == cell.get('configuration_id')), {})
-        return False, False, (incident_text(config.get('channel_id'), named['incident'])
-                              + ' La comparaison s’est arrêtée ; les réponses déjà reçues '
-                              'restent consultables et rien n’est relancé automatiquement.')
+        aspect = INCIDENT_ASPECTS[named['incident']]
+        official = incident_text(config.get('channel_id'), named['incident']) != INCIDENT_TEXT[named['incident']]
+        return (False, False, incident_text(config.get('channel_id'), named['incident']),
+                'Le benchmark s’est arrêté ; les réponses déjà reçues restent consultables et rien n’est relancé automatiquement.',
+                ('vig', 'Limite officielle', 'alerte') if official else aspect)
     # Preuve d'acquisition incomplète (#525) : le dernier reçu en cause dit ce qui manque, sans cause devinée
     missing = next(filter(None, map(missing_evidence, sorted(
         campaign['attempts'], key=lambda a: a.get('received_at') or '', reverse=True))), None)
@@ -971,53 +1092,65 @@ def campaign_followup(campaign):
     # Sans incident, le seul coût inconnu n'est dit que s'il a empêché un essai de partir
     if campaign.get('stop_reason') == 'ACQUISITION_EVIDENCE_INCOMPLETE' and missing and (
             incident or any(c['state'] == 'INTENT_RECORDED' for c in cells)):
-        return False, False, (missing + ' La comparaison s’est arrêtée ; les réponses déjà reçues '
-                              'restent consultables et rien n’est relancé automatiquement.')
+        return (False, False, missing, 'Le benchmark s’est arrêté ; les réponses déjà reçues restent consultables et rien n’est relancé automatiquement.',
+                ('vig', 'Preuve incomplète', 'alerte'))
     if incident:
-        return False, False, 'Un problème technique est survenu. Le suivi s’est arrêté et rien n’est relancé automatiquement.'
+        return (False, False, 'Un problème technique est survenu.', 'Le suivi s’est arrêté et rien n’est relancé automatiquement.',
+                ('ko', 'Incident', 'alerte'))
     if any(c['state'] == 'AMBIGUOUS' for c in cells) or campaign.get('state') == 'BLOCKED':
-        return False, False, 'Un essai n’a pas pu être confirmé : nous ne savons pas si le modèle a répondu. Rien n’est relancé automatiquement.'
+        return (False, False, 'Un essai n’a pas pu être confirmé.',
+                'Nous ne savons pas si le modèle a répondu. Rien n’est relancé automatiquement.', ('vig', 'À vérifier', 'alerte'))
     # Toutes les réponses reçues est l'issue normale : la fermeture d'admission qui suit ne la masque pas
     if cells and all(c['state'] == 'RECEIVED' for c in cells):
-        return False, True, 'Toutes les réponses sont arrivées. Celles qui n’ont pas encore de verdict attendent leur évaluation.'
+        return (False, True, 'Benchmark terminé.', 'Toutes les réponses sont arrivées. Celles qui n’ont pas encore de verdict attendent leur vérification.',
+                ('ok', 'Réponses reçues', 'check'))
     if stopped:
-        return False, False, 'La comparaison s’est arrêtée avant la fin. Vous pouvez lire les réponses déjà reçues.'
-    return False, False, 'Les essais n’ont pas encore démarré. Actualisez la page dans un moment pour voir s’ils ont commencé.'
+        return (False, False, 'Le benchmark s’est arrêté avant la fin.', 'Vous pouvez lire les réponses déjà reçues.', ('vig', 'Arrêté', 'pause'))
+    return (False, False, 'Les essais n’ont pas encore démarré.', 'Actualisez la page dans un moment pour voir s’ils ont commencé.',
+            ('inc', 'Non démarré', 'horloge'))
+
+
+def campaign_followup(campaign):
+    """État d’affichage seulement : ne crée aucune autorité ni reprise"""
+    active, ready, title, detail, _ = _suivi(campaign)
+    return active, ready, ' '.join(filter(None, (title, detail)))
 
 
 def campaign_status(campaign, dossier_url):
-    """Ton, titre, phrase, cible et action d'une comparaison : même lecture sur la page du cas et le suivi"""
+    """Ton, titre, phrase, cible et action d'un benchmark : même lecture sur la page du cas et le suivi"""
     base = dossier_url + '/campaigns/' + campaign['campaign_id']
     if not campaign['attempts']:
-        return ('action', 'Comparaison prête à lancer', 'Vérifiez les modèles et les coûts estimés, puis lancez la comparaison.',
-                base + '/conditions', 'Vérifier puis lancer la comparaison')
+        return ('action', 'Benchmark prêt à lancer', 'Vérifiez les modèles et les coûts estimés, puis lancez le benchmark.',
+                base + '/conditions', 'Vérifier puis lancer le benchmark')
     if (campaign.get('judgment') or {}).get('can_start'):
-        # Le bouton qui lance l'évaluation payante est sur le suivi : le cas y mène, jamais vers des résultats vides
-        return ('action', 'Évaluation à lancer', 'Les réponses sont arrivées. Leur évaluation, payée avec votre clé '
-                'OpenRouter, se lance depuis le suivi de la comparaison.', base + '/conditions', 'Lancer l’évaluation')
+        # Le bouton qui lance la vérification payante est sur le suivi : le cas y mène, jamais vers des résultats vides
+        return ('action', 'Vérification des réponses à lancer', 'Les réponses sont arrivées. Leur vérification, payée avec votre clé '
+                'OpenRouter, se lance depuis le suivi du benchmark.', base + '/conditions', 'Lancer la vérification des réponses')
     active, ready, message = campaign_followup(campaign)
     if ready:
-        return 'done', 'Comparaison terminée', message, base, 'Voir les résultats'
+        return 'done', 'Benchmark terminé', message, base, 'Voir les résultats'
     if active:
-        return 'wait', 'Benchmark en cours', message, base + '/conditions', 'Suivre la comparaison'
-    return 'warn', 'La comparaison demande votre attention', message, base + '/conditions', 'Voir ce qui s’est passé'
+        return 'wait', 'Benchmark en cours', message, base + '/conditions', 'Suivre le benchmark'
+    return 'warn', 'Le benchmark demande votre attention', message, base + '/conditions', 'Voir ce qui s’est passé'
 
 
 def render_campaign_followup(value, csrf):
     campaign = value['campaign']
     base = '/preparation/dossiers/' + value['dossier_id'] + '/campaigns/' + campaign['campaign_id']
-    active, ready, message = campaign_followup(campaign)
-    content = '<div id="campaign-followup"' + (' data-results-href="' + text(base) + '"' if ready else '') + '>'
-    content += '<div id="campaign-status" aria-live="polite">'
-    tone, heading, _, _, _ = campaign_status(campaign, '/preparation/dossiers/' + value['dossier_id'])
-    content += state_block(tone, 'Où en est la comparaison', heading, '<p>' + text(message) + '</p>')
-    states = {'NOT_STARTED': 'non démarré', 'INTENT_RECORDED': 'en attente de démarrage',
-              'EMISSION_POSSIBLE': 'en cours', 'RECEIVED': 'réponse reçue',
-              'AMBIGUOUS': 'réponse non confirmée, à vérifier'}
-    models = {item['id']: candidate_label(item, value.get('model_names', {})) for item in campaign['panel']}
-    cases = campaign.get('cases', [])
+    active, ready, title, detail, aspect = _suivi(campaign)
+    if aspect == DIRECT:
+        marque = '<p class="en-direct">' + text(DIRECT[1]) + '</p>'
+    else:
+        marque = '<div class="g-statut">' + statut(*aspect) + '</div>'
+    cells = campaign['cells']
+    states = {'NOT_STARTED': statut('inc', 'Non démarré', 'horloge'), 'INTENT_RECORDED': statut('inc', 'En file', 'horloge'),
+              'EMISSION_POSSIBLE': statut('att', 'En cours', 'horloge'), 'RECEIVED': statut('ok', 'Reçue', 'check'),
+              'AMBIGUOUS': statut('vig', 'À vérifier', 'alerte')}
+    names = value.get('model_names', {})
+    models = {item['id']: item for item in campaign['panel']}
+    ordered = campaign.get('cases', [])
     # Plusieurs essais d'un modèle : chaque ligne nomme son exemple et son essai
-    examples = {case['id']: example_label(case, number) + ' : ' for number, case in enumerate(cases, 1)} if len(cases) > 1 else {}
+    examples = {case['id']: example_label(case, number) for number, case in enumerate(ordered, 1)} if len(ordered) > 1 else {}
     # Modèle resté en incident fournisseur à sa dernière tentative (#537) : sa réponse reçue n'est pas exploitable
     # Comparaison du demandeur : lu dans son évaluation ; campagne opérateur : dans sa projection (#539)
     outcome = campaign.get('judgment') or campaign
@@ -1025,41 +1158,70 @@ def render_campaign_followup(value, csrf):
     # Appel clos sans réponse confirmée (#537), dans la comparaison ou sa chaîne de relances : ni reçu ni compté
     closed = set(outcome.get('closed_cells', ())) | {
         a.get('cell_id') for a in campaign['attempts'] if a.get('incident') == AMBIGUOUS_EXPIRED}
-    models_list = section('Modèle par modèle', listing(
-        examples.get(cell.get('case_id'), '') + models.get(cell['configuration_id'], 'Modèle')
-        + (' · essai ' + str(cell['repetition']) if 'repetition' in cell else '')
-        + ' : ' + ('réponse non confirmée, appel clos' if cell.get('cell_id') in closed and cell['state'] == 'RECEIVED'
-                   else 'pas de réponse exploitable' if cell.get('cell_id') in unusable and cell['state'] == 'RECEIVED'
-                   # Sans admission, une intention n'est jamais émise (#525), comme sur la page de résultats
-                   else 'non appelé : la comparaison s’est arrêtée avant cet essai'
-                   if cell['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open')
-                   else states.get(cell['state'], 'état inconnu'))
-        for cell in campaign['cells']))
-    received = sum(cell['state'] == 'RECEIVED' for cell in campaign['cells'])
-    all_received = bool(campaign['cells']) and received == len(campaign['cells'])
+    lanes = ''
+    for cell in cells:
+        model = models.get(cell['configuration_id'])
+        lines = lignes_raisonnement(model) if model else []
+        prefix = ' · '.join(filter(None, (examples.get(cell.get('case_id')), 'Essai ' + str(cell['repetition']) if 'repetition' in cell else '')))
+        position = {'INTENT_RECORDED': 'p0', 'NOT_STARTED': 'p0', 'RECEIVED': 'p100', 'AMBIGUOUS': 'pm'}.get(cell['state'], '')
+        if cell['state'] == 'RECEIVED' and cell.get('cell_id') in closed:
+            mark, position = statut('vig', 'Non confirmée', 'alerte'), 'pm'
+        elif cell['state'] == 'RECEIVED' and cell.get('cell_id') in unusable:
+            mark, position = statut('ko', 'Sans réponse', 'croix'), 'p0'
+        elif cell['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open'):
+            # Sans admission, une intention n'est jamais émise (#525), comme sur la page de résultats
+            mark, position = statut('inc', 'Non appelé', 'pause'), 'p0'
+        else:
+            mark = states.get(cell['state'], statut('inc', 'État inconnu', 'question'))
+        lanes += couloir(model_name(model, names) if model else 'Modèle', ([prefix] if prefix else []) + lines, mark, position)
+    received = sum(cell['state'] == 'RECEIVED' for cell in cells)
     # Ni l'appel clos ni la cellule sans réponse exploitable ne comptent comme une réponse reçue (#541)
-    received -= sum(cell['state'] == 'RECEIVED' and cell.get('cell_id') in closed | unusable for cell in campaign['cells'])
-    counts = '<p>Réponses reçues : ' + str(received) + ' sur ' + str(len(campaign['cells'])) + '.</p>'
+    received -= sum(cell['state'] == 'RECEIVED' and cell.get('cell_id') in closed | unusable for cell in cells)
+    counters = ('<div class="compteur" role="status"><p class="val">' + str(received) + '<small>/' + str(len(cells))
+                + '</small></p><p class="etiq">réponses reçues</p></div>')
     judgment = campaign.get('judgment')
     if judgment:
-        counts += '<p>Réponses évaluées : ' + text(judgment['completed']) + ' sur ' + text(judgment['total']) + '.</p>'
+        counters += ('<div class="compteur"><p class="val val-eval">' + text(judgment['completed']) + '<small>/' + text(judgment['total'])
+                     + '</small></p><p class="etiq">réponses vérifiées</p></div>')
     # La composition reste dans la zone d'état : le script de suivi la remplace entière à chaque mise à jour
-    # Les compteurs suivent directement la liste, sans titre intermédiaire (parcours complets)
-    content += workbench(models_list, counts, 'Réponses') + '</div>'
+    status = ('<div id="campaign-status" aria-live="polite"><div class="direct-tete"><div>' + marque + '<h2 id="t-direct">' + text(title) + '</h2>'
+              + ('<p>' + text(detail) + '</p>' if detail else '') + '</div><div class="g-compteurs">' + counters + '</div></div>'
+              '<ol class="couloirs' + (' vit' if active else '') + '" aria-label="Modèle par modèle">' + lanes + '</ol></div>')
+    refresh = lien(base + '/conditions', 'Actualiser le suivi', 'actualiser')
+    note = ''
     if active:
-        content += '<div id="preparation-progress"><progress aria-label="Benchmark en cours"></progress>'
-        content += '<p class="hint" role="status">Cette page se met à jour seule si JavaScript est activé. Sinon, actualisez-la.</p><div class="actions">'
-        content += '<a class="button" href="' + text(base + '/conditions') + '">Actualiser le suivi</a>'
-        content += '<button type="button" class="sec" hidden>Arrêter la mise à jour automatique</button></div></div>'
+        # Le script de suivi masque le lien et montre le bouton ; sans script, le lien reste la seule action
+        foot = ('<div class="direct-pied" id="preparation-progress"><span role="status"></span><span class="actions">'
+                '<progress class="cache" aria-label="Benchmark en cours"></progress>' + refresh
+                + '<button type="button" class="btn btn-sec" hidden>' + ic('pause') + 'Arrêter la mise à jour</button></span></div>')
     else:
-        content += '<p><a class="button' + (' sec' if all_received else '') + '" href="' + text(base + '/conditions') + '">Actualiser le suivi</a></p>'
-    if judgment and judgment['can_start']:
-        content += form(csrf, base + '/evaluate', {'confirm': 'yes'},
-            '<p>L’évaluation des réponses reçues est payée avec votre clé OpenRouter. Les modèles comparés ne sont pas appelés une seconde fois.</p>'
-            '<button type="submit">Évaluer les réponses reçues</button>')
-    if not active and (ready or not judgment or judgment['completed'] > 0):
-        content += '<p><a class="button' + ('' if all_received else ' sec') + '" href="' + text(base) + '">Voir les résultats</a></p>'
-    return content + '</div>'
+        actions = []
+        if judgment and judgment['status'] == 'BLOCKED':
+            actions.append(lien('/preparation/access', 'Gérer ma clé', 'cle'))
+        # Aucune réponse arrivée : pas de lien vers des résultats vides, l'action principale change (B62)
+        ambiguous = any(c['state'] == 'AMBIGUOUS' for c in cells) or campaign.get('state') == 'BLOCKED'
+        empty = bool(cells) and received == 0 and all(c['state'] == 'RECEIVED' for c in cells)
+        results = not active and (ready or not judgment or judgment['completed'] > 0) and not (received == 0 and (ambiguous or empty))
+        if judgment and judgment['can_start']:
+            note = ('<p class="g-note"><strong>La vérification des réponses est payée avec votre clé OpenRouter.</strong> '
+                    'Les modèles comparés ne sont pas appelés une seconde fois.</p>')
+            actions += [refresh, form(csrf, base + '/evaluate', {'confirm': 'yes'}, bouton('Vérifier les réponses reçues'))]
+        elif results:
+            actions += [refresh, btn(base, 'Voir les résultats')]
+        elif empty and not ambiguous:
+            actions += [refresh, btn('/preparation', 'Retour à mes cas d’usage')]
+        else:
+            actions.append('<a class="btn" href="' + text(base + '/conditions') + '">Actualiser le suivi' + ic('actualiser') + '</a>')
+        foot = '<div class="direct-pied"><span></span><span class="actions">' + ''.join(actions) + '</span></div>'
+    return ('<div id="campaign-followup"' + (' data-results-href="' + text(base) + '"' if ready else '') + '><section class="direct" aria-labelledby="t-direct">'
+            + status + note + foot + '</section></div>')
+
+
+def couloir(nom, lignes, statut_html, position=''):
+    """Un couloir du suivi : le modèle et son réglage, sa piste avec le disque d'essai, puis son statut"""
+    return ('<li class="couloir"><span class="couloir-nom">' + text(nom) + ('<small>' + ''.join('<span>' + text(ligne) + '</span>' for ligne in lignes)
+            + '</small>' if lignes else '') + '</span><span class="voie"><span class="coureur' + (' ' + position if position else '')
+            + '"><span class="trace"></span>' + disque() + '</span></span>' + statut_html + '</li>')
 
 
 def example_label(case, number):
@@ -1068,8 +1230,19 @@ def example_label(case, number):
     return 'Exemple ' + (suffix if suffix.isdigit() else str(number))
 
 
+def _coche(ton, libelle, note=''):
+    """Ligne de la liste « Avant de lancer » : pastille (ok, ko, vig, inc), contrôle, constat"""
+    icone = {'ok': 'check', 'ko': 'croix', 'vig': 'alerte', 'inc': 'question'}[ton]
+    return ('<li><span class="coche' + ('' if ton == 'ok' else ' coche-' + ton) + '">' + ic(icone) + '</span><span>'
+            + text(libelle) + '</span><span class="petit">' + text(note) + '</span></li>')
+
+
+def _cout_ligne(montant, inconnu):
+    return inconnu if montant is None else montant_lisible(montant) + ' USD'
+
+
 def render_campaign_launch_requester(value, csrf):
-    """Récapitulatif avant dépense : synthèse, bouton, détail ; puis suivi une fois lancé"""
+    """Récapitulatif avant dépense : état, liste des contrôles, réglages, critères et pupitre ; puis suivi une fois lancé"""
     campaign = value['campaign']
     if campaign['attempts']:
         return render_campaign_followup(value, csrf)
@@ -1077,139 +1250,220 @@ def render_campaign_launch_requester(value, csrf):
     base = dossier_url + '/campaigns/' + campaign['campaign_id']
     names = value.get('model_names', {})
     panel = campaign['panel']
-    # Prévision des réponses et réservation de l'évaluation restent deux montants distincts (RULES.md, contrôle de dépense)
-    def usd(amount, unknown):
-        return unknown if amount is None else montant_lisible(amount) + ' USD'
+    access = value.get('access', {})
     cases = campaign.get('cases', [])
     repetitions = max((cell.get('repetition', 1) for cell in campaign['cells']), default=1)
-    content = '<p><a href="' + text(dossier_url) + '">Revenir au cas d’usage</a></p>'
-    synthesis = '<p class="synthesis">' + text(
-        str(len(panel)) + (' modèles' if len(panel) > 1 else ' modèle')
-        + (' · ' + str(len(cases)) + ' exemples' if len(cases) > 1 else '')
-        + (' · ' + str(repetitions) + ' essais par modèle' + (' et par exemple' if len(cases) > 1 else '') if repetitions > 1 else '')
-        + (' · ' + str(len(campaign['cells'])) + ' essais' if len(cases) > 1 or repetitions > 1 else '')
-        + ' · réponses estimées : ' + usd(value.get('estimate_total_usd'), 'non estimable')
-        + ' · réservé pour l’évaluation : ' + usd(value.get('judgment_estimate_usd'), 'inconnu')
-        + ' · crédit restant : ' + usd(value.get('access', {}).get('limit_remaining_usd'), 'inconnu')) + '</p>'
-    launch = ''
+    checks = value['checks']
+    failures = [check for check in checks if not check['ok']]
+    failed = failures[0] if failures else None
+    remaining = _cout_ligne(access.get('limit_remaining_usd'), 'inconnu')
+    revision = campaign.get('task', {}).get('revision')
+    frozen = campaign['conditions']['frozen_at']
+    # Prévision des réponses et réservation de la vérification restent deux montants distincts (RULES.md, contrôle de dépense)
+    rows = ''
+    for check in checks:
+        key, detail = check['key'], check['detail']
+        detail = detail if type(detail) is str else ''
+        if check['ok']:
+            rows += _coche('ok', *{
+                'selection_current': ('Sélection la plus récente', ''),
+                'example_validated': ('Exemple validé', 'version ' + str(revision) if revision else ''),
+                'example_qualified': ('Contrôle de l’exemple', 'réussi'),
+                'configurations_available': (_plural(len(panel), 'modèle choisi'),
+                                             str(repetitions) + (' essais chacun' if repetitions > 1 else ' essai chacun')),
+                'access_connected': ('Clé OpenRouter connectée', 'crédit restant ' + remaining),
+                'estimate_available': ('Estimation des réponses', _cout_ligne(value.get('estimate_total_usd'), 'non estimable')),
+                'examples_current': ('Chaque exemple est vérifié', 'à la version choisie'),
+                'judgment_available': ('Budget de la vérification des réponses', 'suffisant'),
+            }.get(key, (detail, '')))
+        elif key == 'example_qualified':
+            rows += _coche('ko', 'Contrôle de l’exemple', 'à refaire' if validated(checks) else detail)
+            rows += ''.join(_coche('vig', finding['text'], 'relevé par le contrôle') for finding in check.get('findings', []))
+        elif key == 'access_connected':
+            status = access.get('status')
+            rows += _coche('ko' if status == 'invalid' else 'vig' if status == 'unavailable' else 'ko', 'Clé OpenRouter',
+                           'refusée' if status == 'invalid' else 'service indisponible' if status == 'unavailable' else 'absente')
+        else:
+            rows += _coche('ko', {'selection_current': 'Sélection remplacée', 'example_validated': 'Exemple à valider',
+                                  'configurations_available': 'Modèle à choisir de nouveau', 'estimate_available': 'Estimation incomplète',
+                                  'examples_current': 'Autre exemple modifié',
+                                  'judgment_available': 'Budget de la vérification des réponses',
+                                  'execution_available': 'Exécution des essais', 'launch_pending': 'Lancement en cours'}.get(key, detail),
+                           'sélection invalide' if key == 'configurations_available' else detail)
+    rows += _coche('ok', 'Critères gelés', jour_lisible(frozen))
+    # Un état dit où l'on en est ; la clé s'ajoute ici même puis revient à ce récapitulatif
+    links = {
+        'selection_current': (dossier_url + '/campaigns/' + str(failed.get('latest') if failed else '') + '/conditions', 'Voir la dernière sélection'),
+        'example_validated': (dossier_url + '#validation', 'Valider l’exemple'),
+        'example_qualified': (dossier_url, 'Voir le contrôle de l’exemple'),
+        'examples_current': (dossier_url + '/configurations', 'Choisir de nouveau les modèles'),
+        'configurations_available': (dossier_url + '/configurations', 'Choisir de nouveau les modèles'),
+        'estimate_available': (dossier_url + '/configurations', 'Revoir les modèles choisis'),
+        'access_connected': None,
+    }
+    estimate = value.get('estimate_total_usd')
     if value['launchable']:
-        # Le bouton est la confirmation : le serveur exige toujours `confirm=yes`
-        launch = form(csrf, base + '/start', {
-            'manifest_version': campaign['version'],
-            'frozen_at': campaign['conditions']['frozen_at'], 'confirm': 'yes'},
-            '<button type="submit">Lancer le benchmark</button>')
-    change = '<p><a href="' + text(dossier_url + '/configurations') + '">Modifier la sélection</a></p>'
+        head = etat('ok', 'Prêt', 'Tout est prêt', 'Réponses estimées à ' + _cout_ligne(estimate, 'un montant non estimable')
+                    + '. Le montant réservé pour la vérification des réponses est ' + _cout_ligne(value.get('judgment_estimate_usd'), 'inconnu') + '.')
+    elif failed is None:
+        head = etat('vig', 'Indisponible', 'Le service d’exécution est indisponible',
+                    ('Estimation complète : réponses ' + _cout_ligne(estimate, 'non estimable') + ', vérification des réponses '
+                     + _cout_ligne(value.get('judgment_estimate_usd'), 'inconnu') + '. ' if value.get('judgment_estimate_usd') is not None else
+                     'Estimation incomplète : le montant réservé pour la vérification des réponses est inconnu. ') + 'Réessayez dans quelques minutes.',
+                    btn(base + '/conditions', 'Réessayer', icone='actualiser'))
+    elif failed['key'] == 'access_connected':
+        head = {'invalid': etat('ko', 'Clé refusée', 'Cette clé ne peut pas être utilisée',
+                                'OpenRouter refuse cette clé, ou elle n’a pas de plafond de 50 USD maximum avec un solde disponible. Remplacez-la.'),
+                'unavailable': etat('vig', 'Indisponible', 'Enregistrement de clé indisponible',
+                                    'Vous ne pouvez pas enregistrer de clé pour le moment. Réessayez plus tard : aucun modèle n’a été appelé.',
+                                    btn(base + '/conditions', 'Réessayer', icone='actualiser'))
+                }.get(access.get('status'), etat('att', 'Clé manquante', 'Aucune clé OpenRouter enregistrée',
+                                                 'La clé paie les appels aux modèles. Ajoutez-la pour pouvoir lancer.'))
+    elif failed['key'] in ('execution_available', 'launch_pending'):
+        # Indisponibilité passagère : relire la page suffit, aucune autre action à proposer
+        head = etat('vig', 'Indisponible', 'L’exécution des essais est indisponible' if failed['key'] == 'execution_available'
+                    else 'Un lancement est déjà en cours d’enregistrement', failed['detail'], lien(base + '/conditions', 'Actualiser', 'actualiser'))
+    else:
+        href, label = links.get(failed['key']) or (dossier_url + '/configurations', 'Modifier la sélection')
+        titre = {'example_qualified': 'L’exemple doit passer le contrôle', 'example_validated': 'L’exemple doit être validé',
+                 'selection_current': 'Cette sélection a été remplacée', 'configurations_available': 'Un modèle est à choisir de nouveau',
+                 'examples_current': 'Un autre exemple a changé', 'estimate_available': 'Le coût des réponses n’est pas estimable',
+                 'judgment_available': 'La vérification des réponses est indisponible'}.get(failed['key'], 'Le lancement est bloqué')
+        points = len(failed.get('findings', []))
+        texte = ('Le contrôle de l’exemple a relevé ' + _plural(points, 'point') + '. Corrigez-' + ('les' if points > 1 else 'le') + ' avant de lancer.'
+                 if failed['key'] == 'example_qualified' and points else failed['detail'] if type(failed['detail']) is str else '')
+        head = etat('vig' if failed['key'] in ('estimate_available', 'selection_current') else 'ko',
+                    'Remplacée' if failed['key'] == 'selection_current' else 'Bloqué', titre, texte, btn(href, label))
+    # Clé : formulaire tant qu'elle manque ; solde et plafond en relevé compact quand elle est connectée
+    key = ''
+    if access.get('status') == 'connected' and not value['launchable']:
+        key = ('<div class="g-cle carte">' + releves([
+            ('Solde restant selon OpenRouter',) + ((None, '', '') if access.get('limit_remaining_usd') is None
+                                                    else (montant_lisible(access['limit_remaining_usd']), 'USD', '')),
+            ('Plafond de la clé',) + ((None, '', '') if access.get('limit_usd') is None
+                                       else (montant_lisible(access['limit_usd']), 'USD', ''))], compact=True, icone='cle')
+               + personal_key_form(csrf, access, base + '/conditions') + '</div>')
+    elif failed is not None and failed['key'] == 'access_connected' and access.get('status') != 'unavailable':
+        key = personal_key_form(csrf, access, base + '/conditions', opened=True)
+    check = ('<section aria-labelledby="t-check"><div class="zone-titre"><h2 id="t-check">Avant de lancer</h2></div>'
+             '<ul class="checklist carte">' + rows + '</ul></section>')
     recoveries = value.get('recovery_limits') or {}
-    rows = ''.join('<tr><th scope="row">' + text(model_name(item, names)) + '</th><td>'
-                   + text(effort_label(item).removeprefix('Niveau de raisonnement : ')) + '</td><td>'
-                   + text(output_label(item, recoveries)) + '</td><td>'
-                   + text(usd(item['estimate']['amount_usd'], 'non estimable')) + '</td></tr>' for item in panel)
-    main = ('<div class="table-scroll" role="region" tabindex="0" aria-label="Modèles sélectionnés">'
-                '<table class="compact"><thead><tr><th scope="col">Modèle</th><th scope="col">Niveau de raisonnement</th>'
-                '<th scope="col">Limite de sortie</th><th scope="col">Coût estimé</th></tr></thead><tbody>'
-                + rows + '</tbody></table></div>')
+    lines = ''
+    for item in panel:
+        reasoning = lignes_raisonnement(item)
+        level = reasoning[0].removeprefix('Raisonnement ')
+        limit = item.get('parameters', {}).get('max_tokens')
+        output = [('limite non renseignée' if limit is None else str(limit) + ' jetons')] + [
+            part for part in output_label(item, recoveries).split(' · ')[1:]]
+        amount = item['estimate']['amount_usd']
+        lines += ('<tr><td data-th="Modèle"><span class="modele">' + text(model_name(item, names)) + '</span></td><td data-th="Raisonnement">'
+                  + text(level[:1].upper() + level[1:]) + ''.join('<br><span class="petit">' + text(line) + '</span>' for line in reasoning[1:])
+                  + '</td><td data-th="Longueur de réponse">' + text(' · '.join(output))
+                  + '</td><td data-th="Coût estimé"' + ('' if amount is None else ' class="nb"') + '>'
+                  + text(_cout_ligne(amount, 'non estimable')) + '</td></tr>')
+    models = ('<section aria-labelledby="t-modeles"><div class="zone-titre"><h2 id="t-modeles">Modèles et réglages</h2></div>'
+              '<div class="table-defile"><table class="empile"><thead><tr><th scope="col">Modèle</th><th scope="col">Raisonnement</th>'
+              '<th scope="col">Longueur de réponse</th><th scope="col">Coût estimé</th></tr></thead><tbody>' + lines + '</tbody></table></div>')
+    if any(recoveries.values()):
+        # Reprises préautorisées par ce lancement (RULES.md §9) : leur coût reste distinct de la prévision
+        models += ('<p class="petit">' + text(
+            'Un modèle arrêté par la limite de longueur est relancé au plus deux fois, sa longueur de réponse doublée '
+            'à chaque fois dans la limite de sa route, comme l’indique le tableau ; chaque reprise apparaît sur sa '
+            'propre ligne. Coût estimé si chaque modèle était repris jusqu’à sa dernière limite : '
+            + _cout_ligne(value.get('recovery_estimate_usd'), 'non estimable') + '.') + '</p>')
+    models += '</section>'
     if value.get('examples'):
         items = []
         for example in value.get('examples', []):
             label = 'Exemple ' + str(example['number']) + (' : ' + example['difference'] if example['difference'] else '')
             items.append(label + ('' if example['excluded'] is None else ' · pas inclus : ' + example['excluded']))
         # Plusieurs essais : le paragraphe qui suit dit combien de fois chaque modèle répond
-        main += ('<div id="exemples"><p>Exemples comparés' + (' : chaque modèle répond une fois à chacun' if repetitions == 1 else '') + '. '
-                    'Plusieurs exemples ne prouvent pas qu’ils représentent votre travail.</p>' + listing(items) + '</div>')
+        models += ('<section id="exemples"><div class="zone-titre"><h2>Exemples comparés</h2></div><p class="petit">'
+                   + ('Chaque modèle répond une fois à chacun. ' if repetitions == 1 else '')
+                   + 'Plusieurs exemples ne prouvent pas qu’ils représentent votre travail.</p>' + listing(items) + '</section>')
     if repetitions > 1:
-        main += '<p>' + text('Chaque modèle répond ' + str(repetitions) + ' fois à '
-                                + ('chaque exemple' if len(cases) > 1 else 'l’exemple') + '. Chaque essai est une réponse '
-                                'distincte, payée et évaluée séparément ; tous partent, quel que soit le résultat des autres.') + '</p>'
+        models += '<p class="petit">' + text('Chaque modèle répond ' + str(repetitions) + ' fois à '
+                                             + ('chaque exemple' if len(cases) > 1 else 'l’exemple') + '. Chaque essai est une réponse '
+                                             'distincte, payée et vérifiée séparément ; tous partent, quel que soit le résultat des autres.') + '</p>'
     if len(cases) > 1 or repetitions > 1:
         labels = {case['id']: example_label(case, number) for number, case in enumerate(cases, 1)}
         columns = (['Exemple'] if len(cases) > 1 else []) + (['Essai'] if repetitions > 1 else []) + ['Modèle', 'Coût estimé']
-        rows = ''
+        planned = ''
         for cell in campaign['cells']:
             values = (([labels[cell['case_id']]] if len(cases) > 1 else [])
                       + (['Essai ' + str(cell['repetition'])] if repetitions > 1 else [])
                       + [model_name(next(item for item in panel if item['id'] == cell['configuration_id']), names),
-                         usd(cell['estimate']['amount_usd'], 'non estimable')])
-            rows += ('<tr><th scope="row">' + text(values[0]) + '</th>'
-                     + ''.join('<td>' + text(item) + '</td>' for item in values[1:]) + '</tr>')
-        main += ('<div class="table-scroll" role="region" tabindex="0" aria-label="Essais prévus">'
-                    '<table class="compact" aria-label="Essais prévus"><thead><tr>'
-                    + ''.join('<th scope="col">' + title + '</th>' for title in columns) + '</tr></thead><tbody>'
-                    + rows + '</tbody></table></div>')
-    main += '<p>Tous les appels passent par votre clé OpenRouter. Son plafond est la seule limite de dépense. Les montants affichés ici sont une prévision et une réservation, pas des dépenses facturées.</p>'
-    if any(recoveries.values()):
-        # Reprises préautorisées par ce lancement (RULES.md §9) : leur coût reste distinct de la prévision
-        main += '<p>' + text(
-            'Un modèle arrêté par la limite de longueur est relancé au plus deux fois, sa limite de sortie doublée '
-            'à chaque fois dans la limite de sa route, comme l’indique le tableau ; chaque reprise apparaît sur sa '
-            'propre ligne. Coût estimé si chaque modèle était repris jusqu’à sa dernière limite : '
-            + usd(value.get('recovery_estimate_usd'), 'non estimable') + '.') + '</p>'
-    main += section('Ce qui sera testé', '<p>' + text(value['criteria']['result_expected']) + '</p>' +
-        ('<p>Chaque modèle reçoit la même consigne et, pour chaque exemple, les mêmes pièces. Chaque verdict vaudra pour un exemple et pour un modèle tel qu’il est réglé ici, sans conclure sur le modèle en général ni additionner les exemples.</p>'
-         if len(cases) > 1 else
-         '<p>Chaque modèle reçoit la même consigne et les mêmes pièces. Le verdict vaudra pour cet exemple et pour chaque modèle tel qu’il est réglé ici, sans conclure sur le modèle en général.</p>') +
-        '<details><summary>Détail des critères et des réglages</summary>' + readable_fields(
-            {'criteria': value['criteria'], 'conditions': campaign['conditions'], 'panel': panel}) + '</details>')
-    failures = [check for check in value['checks'] if not check['ok']]
-    check_content = '' if failures else '<p class="note">Tout est prêt.</p>'
-    if failures:
-        check_content += '<ul>'
-        for check in failures:
-            detail = check['detail']
-            if type(detail) is dict:
-                detail = ('Crédit restant sur votre clé : ' + usd(detail.get('limit_remaining_usd'), 'inconnu') +
-                          ', pour un plafond de ' + usd(detail.get('limit_usd'), 'inconnu'))
-            check_content += '<li>' + text('✕ ' + str(detail))
-            if check['key'] == 'example_qualified' and check.get('findings'):
-                check_content += '<p>Ce que la vérification de l’exemple a relevé</p>' + listing(
-                    finding['text'] for finding in check['findings'])
-            check_content += '</li>'
-        check_content += '</ul>'
-    failed = failures[0] if failures else None
-    if failed and not value['launchable']:
-        # Chaque contrôle mène à son étape ; la clé, elle, s'ajoute ici même puis revient à ce récapitulatif
-        links = {
-            'selection_current': (dossier_url + '/campaigns/' + str(failed.get('latest')) + '/conditions',
-                                  'Voir la dernière sélection'),
-            'example_validated': (dossier_url + '#validation', 'Valider l’exemple'),
-            'example_qualified': (dossier_url, 'Voir la vérification de l’exemple'),
-            'examples_current': (dossier_url + '/configurations', 'Choisir de nouveau les modèles'),
-            'configurations_available': (dossier_url + '/configurations', 'Changer de modèles'),
-            'access_connected': None,
-            'estimate_available': (dossier_url + '/configurations', 'Revoir les modèles choisis'),
-        }
-        detail = failed['detail'] if type(failed['detail']) is str else 'ajoutez d’abord votre clé OpenRouter'
-        check_content += '<p class="note">Impossible de lancer pour l’instant : ' + text(detail) + '.'
-        if links.get(failed['key']):
-            href, label = links[failed['key']]
-            check_content += ' <a class="button" href="' + text(href) + '">' + text(label) + '</a>'
-        check_content += '</p>'
-        if failed['key'] == 'access_connected':
-            check_content += personal_key_form(csrf, value.get('access', {}), base + '/conditions', opened=True)
-    elif not value['launchable']:
-        check_content = '<p class="note">Impossible de lancer pour l’instant : le service d’exécution est indisponible. Réessayez dans quelques minutes.</p>'
-    # Synthèse, conditions puis bouton : lus avant le détail, sur téléphone comme sur ordinateur
-    side = (readout('Estimation des réponses', usd(value.get('estimate_total_usd'), 'non estimable')) + synthesis
-            + section('Avant de lancer', check_content) + launch + change)
-    return content + workbench(main, side, 'Avant de lancer', side_first=True)
+                         _cout_ligne(cell['estimate']['amount_usd'], 'non estimable')])
+            planned += ('<tr>' + ''.join('<td data-th="' + text(title) + '">' + text(item) + '</td>' for title, item in zip(columns, values)) + '</tr>')
+        models += ('<section aria-labelledby="t-essais"><div class="zone-titre"><h2 id="t-essais">Essais prévus</h2></div><div class="table-defile">'
+                   '<table class="empile" aria-label="Essais prévus"><thead><tr>' + ''.join('<th scope="col">' + text(title) + '</th>' for title in columns)
+                   + '</tr></thead><tbody>' + planned + '</tbody></table></div></section>')
+    criteria = value['criteria']
+    result = criteria['result_expected']
+
+    def puces(entries):
+        return '<ul class="liste-simple">' + ''.join('<li>' + text(item['description']) + '</li>' for item in entries) + '</ul>'
+    eliminatory = criteria['eliminatory_errors']
+    terms = cles([('Résultat attendu', text(result)),
+                  ('Obligations', puces(criteria['obligations']) if criteria['obligations'] else 'Aucune'),
+                  ('Erreur éliminatoire' if len(eliminatory) == 1 else 'Erreurs éliminatoires', puces(eliminatory) if len(eliminatory) > 1
+                   else text(eliminatory[0]['description']) if eliminatory else 'Aucune'),
+                  ('Limites', puces([{'description': item} for item in criteria['limits']]) if criteria.get('limits') else 'Aucune déclarée'),
+                  ('Date de gel', text(date_lisible_utc(frozen))), ('Harnais', harnais())])
+    consigne = ('<section class="consigne">' + ruban('Ce qui sera testé') + '<blockquote>' + text(result) + '</blockquote><p class="petit">'
+                + ('Même consigne pour chaque modèle et, pour chaque exemple, mêmes pièces. Chaque verdict vaudra pour un exemple et pour un modèle '
+                   'tel qu’il est réglé ici, sans conclure sur le modèle en général ni additionner les exemples.' if len(cases) > 1 else
+                   'Même consigne, mêmes pièces pour chaque modèle. Le verdict vaudra pour cet exemple et ces réglages, pas pour le modèle en général.')
+                + '</p></section>' + tiroir('Critères et conditions', terms, resume=date_lisible_utc(frozen)))
+    left = '<div class="pile-l">' + key + check + models + consigne + '</div>'
+    total = [('Réponses, estimation', _cout_ligne(estimate, 'non estimable')),
+             ('Réservé pour la vérification des réponses', _cout_ligne(value.get('judgment_estimate_usd'), 'inconnu')),
+             ('Crédit restant', remaining if access.get('limit_usd') is None or access.get('limit_remaining_usd') is None
+              else montant_lisible(access['limit_remaining_usd']) + ' / ' + montant_lisible(access['limit_usd']) + ' USD')]
+    if len(cases) > 1:
+        total.insert(0, ('Exemples', str(len(cases))))
+    if repetitions > 1 or len(cases) > 1:
+        total.insert(0, ('Essais', str(len(campaign['cells'])) + (' (' + str(repetitions) + ' par modèle' + (' et par exemple' if len(cases) > 1 else '') + ')' if repetitions > 1 else '')))
+    if value['launchable']:
+        # Le bouton est la confirmation : le serveur exige toujours `confirm=yes`
+        action = bouton('Lancer le benchmark', xl=True)
+        opening, closing = form(csrf, base + '/start', {'manifest_version': campaign['version'], 'frozen_at': frozen, 'confirm': 'yes'},
+                                '@@').split('@@')
+        opening = opening.replace('<form ', '<form class="pupitre" ', 1)
+        lock = ''
+    else:
+        action, opening, closing = '', '<div class="pupitre">', '</div>'
+        detail = failed['detail'] if failed and type(failed['detail']) is str else (
+            'ajoutez d’abord votre clé OpenRouter' if failed else 'le service d’exécution est indisponible. Réessayez dans quelques minutes')
+        lock = '<p class="g-verrou">' + ic('cadenas') + '<span>' + text('Impossible de lancer pour l’instant : ' + detail + '.') + '</span></p>'
+    pupitre = ('<aside aria-label="Récapitulatif avant dépense">' + opening + '<span class="etiq">Récapitulatif avant dépense</span><p class="grand">'
+               + str(len(panel)) + '<small>' + ('modèles comparés' if len(panel) > 1 else 'modèle comparé') + '</small></p><dl>'
+               + ''.join('<div><dt>' + text(label) + '</dt><dd>' + text(amount) + '</dd></div>' for label, amount in total) + '</dl>' + lock + action
+               + '<p>Payé avec votre clé OpenRouter, dans la limite de son plafond. Ces montants sont estimés : '
+               'seuls les appels réellement faits sont facturés.</p>' + closing + '</aside>')
+    return cadre_haut(head) + '<div class="depart">' + left + pupitre + '</div>'
+
+
+def validated(checks):
+    """Vrai quand l'exemple est validé : son contrôle seul reste à refaire"""
+    return any(check['key'] == 'example_validated' and check['ok'] for check in checks)
 
 
 def render_campaign_launch_operator(value, csrf):
-    """Comparaison préparée et admise par l'opérateur, confirmée par le demandeur"""
+    """Benchmark préparé et admis par l'opérateur, confirmé par le demandeur"""
     campaign = value['campaign']
     if campaign['attempts']:
         return render_campaign_followup(value, csrf)
     base = '/preparation/dossiers/' + value['dossier_id'] + '/campaigns/' + campaign['campaign_id']
-    content = '<p>Cette comparaison a été préparée et autorisée par l’équipe Bench-X. En confirmant, vous lancez seulement les essais qu’elle a autorisés.</p>'
-    content += '<p><a href="' + text('/preparation/dossiers/' + value['dossier_id']) + '">Revenir au cas d’usage</a></p>'
-    groups = '<div class="crit">'
+    content = '<p class="texte-l">Ce benchmark a été préparé et autorisé par l’équipe Evaly. En confirmant, vous lancez seulement les essais qu’il a autorisés.</p>'
+    groups = ''
     if value['criteria']['eliminatory_errors']:
-        groups += '<div class="grp elim"><h3>' + badge('NE SATISFAIT PAS') + 'Erreurs éliminatoires</h3>' + listing(item['description'] for item in value['criteria']['eliminatory_errors']) + '</div>'
-    groups += '<div class="grp oblig"><h3>' + badge('SATISFAIT') + 'Exigences à respecter</h3>' + listing(item['description'] for item in value['criteria']['obligations']) + '</div></div>'
+        groups += '<h3>' + badge('NE SATISFAIT PAS') + ' Erreurs éliminatoires</h3>' + listing(item['description'] for item in value['criteria']['eliminatory_errors'])
+    groups += '<h3>' + badge('SATISFAIT') + ' Exigences à respecter</h3>' + listing(item['description'] for item in value['criteria']['obligations'])
     content += section('Ce qui sera vérifié', '<p>' + text(value['criteria']['result_expected']) + '</p>' + groups)
     content += section('Modèles et conditions', listing([candidate_label(item, value.get('model_names', {})) for item in campaign['panel']]) +
-        '<p>Outil commun à tous les modèles : Pi ' + text(campaign['conditions']['pi']['package']) + ' ' + text(campaign['conditions']['pi']['version']) +
-        '. Conditions fixées le ' + text(date_lisible_utc(campaign['conditions']['frozen_at'])) + '.</p>' +
-        '<details><summary>Détail technique des réglages</summary><pre>' + text(encode(dict(panel=campaign['panel'], conditions=campaign['conditions']))) + '</pre></details>')
+        cles([('Harnais', harnais()), ('Conditions fixées le', text(date_lisible_utc(campaign['conditions']['frozen_at'])))]) +
+        tiroir('Détail technique des réglages', '<pre>' + text(encode(dict(panel=campaign['panel'], conditions=campaign['conditions']))) + '</pre>'))
     access = value.get('access', {'status': 'unavailable'})
     if access.get('status') == 'unavailable':
         access_content = '<p>Impossible d’enregistrer une clé pour le moment.</p>'
@@ -1219,24 +1473,25 @@ def render_campaign_launch_operator(value, csrf):
         access_content += personal_key_form(csrf, access, base + '/conditions', opened=access.get('status') != 'connected')
     content += section('Votre clé OpenRouter', access_content)
     estimate = value['estimate']
-    content += '<h2>Coût</h2><p>Coût estimé : ' + text(
-        estimate['amount'] + ' ' + estimate['currency'] if estimate else 'aucune estimation fournie') + '.</p>'
+    cost = '<p>Coût estimé : ' + text(estimate['amount'] + ' ' + estimate['currency'] if estimate else 'aucune estimation fournie') + '.</p>'
     if estimate:
-        content += '<p>' + text(estimate['assumptions']) + ' Source : ' + text(estimate['source']) + '.</p>'
+        cost += '<p>' + text(estimate['assumptions']) + ' Source : ' + text(estimate['source']) + '.</p>'
     budget = campaign['budget']
     if budget:
-        content += '<p>Budget autorisé : ' + text(budget['limit']) + ' ' + text(budget['currency']) + '.</p>'
-    content += '<p>Montant mis de côté par essai : ' + text(', '.join(key + ' : ' + amount for key, amount in campaign['reserve_amounts'].items()) if campaign['reserve_amounts'] else 'aucun') + '.</p>'
-    content += '<p>L’estimation, le montant mis de côté et le coût observé sont trois montants différents. Le montant mis de côté ne garantit pas un plafond de facturation.</p>'
+        cost += '<p>Budget autorisé : ' + text(budget['limit']) + ' ' + text(budget['currency']) + '.</p>'
+    cost += '<p>Montant mis de côté par essai : ' + text(', '.join(key + ' : ' + amount for key, amount in campaign['reserve_amounts'].items()) if campaign['reserve_amounts'] else 'aucun') + '.</p>'
+    cost += '<p class="petit">L’estimation, le montant mis de côté et le coût observé sont trois montants différents. Le montant mis de côté ne garantit pas un plafond de facturation.</p>'
+    content += section('Coût', cost)
     if value['can_launch']:
         content += form(csrf, base + '/start', {'manifest_version': campaign['version'],
             'frozen_at': campaign['conditions']['frozen_at'], 'admission_id': value['admission_id']},
-            '<label><input type="checkbox" name="confirm" value="yes" required> Je confirme le lancement des essais autorisés ci-dessus.</label><button type="submit">Lancer la comparaison</button>')
+            '<label><input type="checkbox" name="confirm" value="yes" required> Je confirme le lancement des essais autorisés ci-dessus.</label>'
+            + bouton('Lancer le benchmark'))
     else:
-        content += '<p class="note">' + ('Lancement enregistré. Consultez les essais et leurs résultats ci-dessous.' if campaign['attempts'] else 'Impossible de lancer pour l’instant. L’équipe Bench-X doit vérifier les autorisations et s’assurer que les comparaisons peuvent être exécutées.') + '</p>'
+        content += '<p class="petit">' + ('Lancement enregistré. Consultez les essais et leurs résultats ci-dessous.' if campaign['attempts'] else 'Impossible de lancer pour l’instant. L’équipe Evaly doit vérifier les autorisations et s’assurer que les benchmarks peuvent être exécutés.') + '</p>'
     models = {item['id']: candidate_label(item, value.get('model_names', {})) for item in campaign['panel']}
     content += section('Suivi des essais', listing([models.get(cell['configuration_id'], 'Modèle') + ' : ' + {'NOT_STARTED': 'non démarré', 'INTENT_RECORDED': 'en attente', 'EMISSION_POSSIBLE': 'en cours', 'RECEIVED': 'réponse reçue', 'AMBIGUOUS': 'réponse non confirmée, à vérifier'}.get(cell['state'], cell['state']) for cell in campaign['cells']]))
-    content += '<p><a href="' + text(base + '/conditions') + '">Actualiser le suivi</a> · <a href="' + text(base) + '">Voir les résultats</a></p>'
+    content += '<p>' + lien(base + '/conditions', 'Actualiser le suivi', 'actualiser') + ' ' + lien(base, 'Voir les résultats') + '</p>'
     return content
 
 
@@ -1266,10 +1521,8 @@ def _dotted_pairs(value, prefix=''):
 PREVIEW_LENGTH = 200
 
 CRITERION_STATES = {
-    'obligation': {'PASS': ('b-ok', 'i-check', 'Respectée'), 'FAIL': ('b-ko', 'i-cross', 'Non respectée'),
-                   'INDETERMINE': ('b-ind', 'i-help', 'Non vérifiable')},
-    'eliminatory': {'PASS': ('b-ok', 'i-check', 'Évitée'), 'FAIL': ('b-ko', 'i-cross', 'Commise'),
-                    'INDETERMINE': ('b-ind', 'i-help', 'Non vérifiable')},
+    'obligation': {'PASS': ('ok', 'Respectée'), 'FAIL': ('ko', 'Non respectée'), 'INDETERMINE': ('inc', 'Non vérifiable')},
+    'eliminatory': {'PASS': ('ok', 'Évitée'), 'FAIL': ('ko', 'Commise'), 'INDETERMINE': ('inc', 'Non vérifiable')},
 }
 
 def _plural(count, label, *, number=True):
@@ -1300,41 +1553,39 @@ def _proof(name, passage, target):
 
 
 def _criteria_list(record, criteria, kind):
+    """Une ligne `.preuve` par critère, suivie de celles de ses éléments quand l'obligation est composée"""
     found = _states(record)
-    content = '<ul class="checks">'
+    content = ''
     for criterion in criteria:
         elements = criterion.get('elements', [])
         # Une obligation composée montre l'état et les constats de chacun de ses éléments
-        nested = '<ul class="checks">' + ''.join(
+        content += _check(record, kind, criterion_state(found, criterion['id']), criterion['description'],
+                          [] if elements else [f for f in record['findings'] if f['criterion_id'] == criterion['id']])
+        content += ''.join(
             _check(record, kind, found.get((criterion['id'], e['id']), 'INDETERMINE'), e['description'],
                    [f for f in record['findings'] if (f['criterion_id'], f['control_id']) == (criterion['id'], e['id'])])
-            for e in elements) + '</ul>' if elements else ''
-        content += _check(record, kind, criterion_state(found, criterion['id']), criterion['description'],
-                          [] if elements else [f for f in record['findings'] if f['criterion_id'] == criterion['id']], nested)
-    return content + '</ul>'
+            for e in elements)
+    return content
 
 
-def _check(record, kind, state, description, findings, nested=''):
-    """Ligne d'état, ses constats, puis `nested` : les éléments d'une obligation composée"""
-    tone, name, label = CRITERION_STATES[kind][state]
-    content = '<li><span class="badge ' + tone + '">' + icon(name) + label + '</span><span>' + text(description) + '</span>'
-    if findings:
-        content += '<details><summary>Constats et extraits</summary><ul>'
-        for finding in findings:
-            content += '<li>' + text(_readable(record, finding['finding']))
-            if finding['attribution'] not in ('candidate', 'evidence'):
-                content += (' <span class="hint">(ce constat provient de la référence d’évaluation et non de la réponse du modèle)</span>'
-                            if finding['attribution'] == 'reference' else
-                            ' <span class="hint">(attribué à : ' + text(finding['attribution']) + ')</span>')
-            for proof in finding['evidence']:
-                link, target = _proof_anchor(record, proof['piece_id'])
-                if link is None:
-                    continue
-                content += _proof('la réponse du modèle' if link['piece_id'] == record['output_piece_id'] else link['name'],
-                                  proof['passage'], target)
-            content += '</li>'
-        content += '</ul></details>'
-    return content + nested + '</li>'
+def _check(record, kind, state, description, findings):
+    """Ligne d'état : le tampon porte son mot, puis le critère, puis ses constats entre guillemets et leurs extraits"""
+    tone, label = CRITERION_STATES[kind][state]
+    content = '<div class="preuve">' + tampon(tone, label) + '<div><p><b>' + text(description) + '</b></p>'
+    for finding in findings:
+        content += '<blockquote>' + text(_readable(record, finding['finding']))
+        if finding['attribution'] not in ('candidate', 'evidence'):
+            content += (' <span class="petit">(ce constat provient de la référence d’évaluation et non de la réponse du modèle)</span>'
+                        if finding['attribution'] == 'reference' else
+                        ' <span class="petit">(attribué à : ' + text(finding['attribution']) + ')</span>')
+        content += '</blockquote>'
+        for proof in finding['evidence']:
+            link, target = _proof_anchor(record, proof['piece_id'])
+            if link is None:
+                continue
+            content += _proof('la réponse du modèle' if link['piece_id'] == record['output_piece_id'] else link['name'],
+                              proof['passage'], target)
+    return content + '</div></div>'
 
 
 CALIBRATION_SENTENCES = {
@@ -1369,7 +1620,25 @@ def render_calibration(scope):
     return content + '</div>'
 
 
-def render_result(record, names=None, place=None, compose=False):
+def _excerpt(output):
+    """Début de la réponse : les premières lignes, puis « … » quand la suite reste dans la réponse complète"""
+    lines = output.strip().splitlines()
+    shown = '\n'.join(lines[:7])[:PREVIEW_LENGTH * 2].rstrip()
+    return shown + ('\n…' if len(shown) < len(output.strip()) else '')
+
+
+def _measure_release(measure):
+    """Relevé d'une mesure chiffrée avec son unité : inconnue, elle se lit « inconnu », jamais zéro"""
+    unit = measure['unit']
+    label = measure['definition']['measure']
+    if measure['status'] == 'UNKNOWN' or measure['value'] is None:
+        return (label, None, '', 'l’un de vos critères')
+    shown = valeur_mesure(measure['value'], unit)
+    suffix = ' ' + str(unit)
+    return (label, shown[:-len(suffix)] if shown.endswith(suffix) else shown, unit if shown.endswith(suffix) else '', 'l’un de vos critères')
+
+
+def render_result(record, names=None, place=None):
     """Lecture humaine compacte d'une évaluation : fragment partagé par la page directe et la modale.
 
     Le rendu technique complet reste `render_evaluations` sur les révisions du cas
@@ -1381,35 +1650,37 @@ def render_result(record, names=None, place=None, compose=False):
     spec = record['qualification']['contract']['specification']
     configuration = record['requested_configuration']
     verdict = record['decision']['verdict']
-    content = '<section class="result" id="evaluation-' + text(eid) + '"><p class="eyebrow">' + text(place or 'Résultat sur cet exemple') + '</p>'
     name = model_name(configuration, names or {})
-    content += '<h2>' + text(name) + '</h2><p class="hint">' + text(effort_label(configuration)) + '</p>'
-    if name != configuration['model']:
-        content += '<details><summary>Identifiant OpenRouter</summary><p><code>' + text(configuration['model']) + '</code></p></details>'
+    ton, _, verdict_label = VERDICT_BADGES.get(verdict, ('inc', 'question', str(verdict)))
+    contexte = puce(effort_label(configuration)) + (puce(configuration['model']) if name != configuration['model'] else '')
+    content = ('<div id="evaluation-' + text(eid) + '" class="pile-l"><section class="verdict-tete carte" aria-labelledby="t-modele-' + text(eid)
+               + '"><div><span class="etiq">' + text(place or 'Résultat sur cet exemple') + '</span><h2 id="t-modele-' + text(eid) + '">'
+               + text(name) + '</h2><div class="contexte">' + contexte + '</div></div>' + tampon(ton, verdict_label, xl=True) + '</section>')
     cost = record['candidate_cost']
-    content += '<p class="result-verdict">' + badge(verdict) + ' <span>Coût observé : ' + text(
-        'inconnu' if cost is None or cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']) + '</span></p>'
+    judged = record['judgment']['cost']
+    releve = [('Coût observé', montant_lisible(cost['amount']) if cost and cost['status'] == 'KNOWN' else None,
+               cost['currency'] if cost and cost['status'] == 'KNOWN' else '', cost['source'] if cost and cost['status'] == 'KNOWN' else '')]
+    releve += [_measure_release(measure) for measure in record['measures'] if str(measure['unit']).lower() not in ('bool', 'boolean', 'booléen')]
+    releve.append(('Coût de la vérification', montant_lisible(judged['amount']) if judged['status'] == 'KNOWN' else None,
+                   judged['currency'] if judged['status'] == 'KNOWN' else '', 'compté à part'))
+    content += releves(releve)
     if verdict is None and record['decision'].get('next_action'):
         content += '<p>' + text(record['decision']['next_action']) + '</p>'
-    # Page de détail : le modèle, son verdict et son coût en synthèse, les preuves en zone principale
-    head = len(content)
     # Ce que le modèle a produit
-    content += '<h3>La réponse du modèle</h3>'
     output_id = record['output_piece_id']
     link, target = _proof_anchor(record, output_id) if output_id else (None, None)
     output = record.get('proof_contents', {}).get(output_id) if output_id else None
+    answer = '<section class="pile" aria-labelledby="t-rep-' + text(eid) + '"><h2 id="t-rep-' + text(eid) + '">La réponse du modèle</h2>'
     if output is not None:
-        preview = output[:PREVIEW_LENGTH].strip()
-        content += '<p class="hint">Début de la réponse</p>'
-        content += '<div class="proof-text preview">' + text(preview) + ('…' if len(output) > PREVIEW_LENGTH else '') + '</div>'
-        content += '<details class="proof-content" id="proof-' + text(eid + '-' + output_id) + '"><summary>Lire la réponse complète</summary>'
-        content += '<div class="proof-text">' + text(output) + '</div></details>'
+        answer += '<div class="sortie"><pre>' + text(_excerpt(output)) + '</pre></div>'
+        answer += tiroir('Lire la réponse complète', '<div class="sortie"><pre>' + text(output) + '</pre></div>',
+                         resume=_plural(len(output), 'caractère'), ident='proof-' + eid + '-' + output_id)
     elif link is not None:
-        content += '<p><a href="' + text(link['href']) + '">' + text(link['name']) + '</a></p>'
+        answer += '<p><a href="' + text(link['href']) + '">' + text(link['name']) + '</a></p>'
     else:
-        content += '<p>Aucune réponse n’a été enregistrée pour ce modèle.</p>'
+        answer += '<p>Aucune réponse n’a été enregistrée pour ce modèle.</p>'
+    answer += '</section>'
     # Pourquoi ce verdict
-    content += '<h3>Pourquoi ce verdict</h3>'
     found = _states(record)
     obligations = [criterion_state(found, c['id']) for c in spec['obligations']]
     eliminatory = [criterion_state(found, c['id']) for c in spec['eliminatory_errors']]
@@ -1418,89 +1689,96 @@ def render_result(record, names=None, place=None, compose=False):
         summary.append(_plural(obligations.count('FAIL'), 'non respectée'))
     if obligations.count('INDETERMINE'):
         summary.append(_plural(obligations.count('INDETERMINE'), 'non vérifiable'))
-    content += '<p>' + ', '.join(summary) + '.'
+    why = '<section class="carte pile" aria-labelledby="t-preuves-' + text(eid) + '"><h2 id="t-preuves-' + text(eid) + '">Exigences et preuves</h2>'
+    why += '<h3>Pourquoi ce verdict</h3><p>' + ', '.join(summary) + '.'
     if eliminatory:
-        content += (' Aucune erreur éliminatoire relevée.' if all(state == 'PASS' for state in eliminatory) else
-                    ' ' + _plural(eliminatory.count('FAIL'), 'erreur éliminatoire relevée') + '.' if 'FAIL' in eliminatory else
-                    ' Les erreurs éliminatoires n’ont pas toutes pu être vérifiées.')
-    content += '</p>'
+        why += (' Aucune erreur éliminatoire relevée.' if all(state == 'PASS' for state in eliminatory) else
+                ' ' + _plural(eliminatory.count('FAIL'), 'erreur éliminatoire relevée') + '.' if 'FAIL' in eliminatory else
+                ' Les erreurs éliminatoires n’ont pas toutes pu être vérifiées.')
+    why += '</p>'
     reason = _readable_reason(record)
-    content += ('<p class="hint">' + text(reason) + '</p>' if len(reason) <= PREVIEW_LENGTH else
-                '<details><summary>Explication de l’évaluation</summary><p>' + text(reason) + '</p></details>')
-    content += '<details><summary>Voir les exigences vérifiées</summary>' + _criteria_list(record, spec['obligations'], 'obligation') + '</details>'
+    why += ('<p class="petit">' + text(reason) + '</p>' if len(reason) <= PREVIEW_LENGTH else
+            tiroir('Explication de l’évaluation', '<p>' + text(reason) + '</p>'))
+    why += _criteria_list(record, spec['obligations'], 'obligation')
     if spec['eliminatory_errors']:
-        content += '<details><summary>Erreurs éliminatoires recherchées</summary>' + _criteria_list(record, spec['eliminatory_errors'], 'eliminatory') + '</details>'
-    if record['measures']:
-        content += '<details><summary>Autres observations</summary><p class="hint">Elles complètent le verdict sans former une note globale.</p><ul>'
-        for measure in record['measures']:
-            content += '<li>' + text(measure['definition']['measure']) + ' : '
-            if measure['status'] == 'UNKNOWN':
-                content += 'non observée'
-            else:
-                content += readable_fields(measure['value']) + ('' if measure['unit'] in ('bool', 'boolean', 'booléen') else ' ' + text(measure['unit']))
-            content += '</li>'
-        content += '</ul></details>'
-    # Réserves
+        why += '<h3>Erreurs éliminatoires recherchées</h3>' + _criteria_list(record, spec['eliminatory_errors'], 'eliminatory')
+    why += '</section>'
+    content += '<div class="colonnes-moitie">' + answer + why + '</div>'
+    # Tiroirs : vérification, conditions de l'essai, observations, limites, pièces
+    observed = record['observed_configuration'] or {}
+    unknown = (None, 'INCONNU', 'UNKNOWN')
+    observed_effort = observed.get('effort')
+    drawers = tiroir('Vérification de la réponse', cles([
+        ('Verdict', text(verdict_label)),
+        ('Coût', text(montant_lisible(judged['amount']) + ' ' + judged['currency'] if judged['status'] == 'KNOWN' else 'inconnu'))])
+        + '<h3>Étalonnage du juge</h3>' + render_calibration(record['calibration']))
+    drawers += tiroir('Conditions de l’essai', cles([
+        ('Fournisseur', text(configuration['provider'])), ('Identifiant OpenRouter', '<code>' + text(configuration['model']) + '</code>'),
+        ('Raisonnement', text('demandé ' + str(configuration['effort']) + ', observé '
+                              + ('inconnu' if observed_effort in unknown else str(observed_effort)))),
+        ('Harnais', harnais())]))
+    others = [measure for measure in record['measures'] if str(measure['unit']).lower() in ('bool', 'boolean', 'booléen')]
+    if others:
+        items = ''
+        for measure in others:
+            items += '<li>' + text(measure['definition']['measure']) + ' : '
+            items += 'non observée' if measure['status'] == 'UNKNOWN' else readable_fields(measure['value'])
+            items += '</li>'
+        drawers += tiroir('Autres observations', '<p class="petit">Elles complètent le verdict sans former une note globale.</p><ul>' + items + '</ul>')
     limits = list(dict.fromkeys(record['limits']))
     if limits:
-        content += '<h3>Limites de ce résultat</h3>' + listing(limits)
-    content += '<h3>Étalonnage du juge</h3>' + render_calibration(record['calibration'])
-    # Pièces
+        drawers += tiroir('Limites de ce résultat', listing(limits))
     references = {piece['id'] for piece in record['qualification']['contract']['reference_pieces']}
-    content += '<details><summary>Pièces de l’exemple</summary><ul>'
+    pieces = ''
     for piece in record['proof_links']:
         if piece['piece_id'] == output_id:
             continue
         role = 'Référence réservée à l’évaluation' if piece['piece_id'] in references else 'Pièce fournie au modèle'
-        content += '<li><span class="hint">' + role + '</span>'
+        pieces += '<li><span class="petit">' + role + '</span> '
         if piece['piece_id'] in record.get('proof_contents', {}):
-            content += '<details class="proof-content" id="proof-' + text(eid + '-' + piece['piece_id']) + '"><summary>Lire la pièce complète : ' + text(piece['name']) + '</summary>'
-            content += '<div class="proof-text">' + text(record['proof_contents'][piece['piece_id']]) + '</div></details>'
+            pieces += tiroir('Lire la pièce complète : ' + piece['name'],
+                             '<div class="sortie"><pre>' + text(record['proof_contents'][piece['piece_id']]) + '</pre></div>',
+                             ident='proof-' + eid + '-' + piece['piece_id'])
         else:
-            content += ' <a href="' + text(piece['href']) + '">' + text(piece['name']) + '</a>'
-        content += '</li>'
-    content += '</ul></details>'
-    if compose:
-        opening = content.index('>') + 1
-        content = (content[:opening] + workbench(content[head:], content[opening:head], 'Verdict et coût', side_first=True))
-    return content + '</section>'
+            pieces += '<a href="' + text(piece['href']) + '">' + text(piece['name']) + '</a>'
+        pieces += '</li>'
+    drawers += tiroir('Pièces de l’exemple', '<ul>' + pieces + '</ul>')
+    return content + '<div>' + drawers + '</div></div>'
 
 
 def render_attempt_detail(value):
     """Page privée du détail ; la modale n'en extrait que `#attempt-detail`"""
     history = value['history']
-    content = '<p><a href="' + text(value['back_href']) + '">Revenir aux résultats</a></p>'
     names = value.get('model_names', {})
     # Exemple et essai de la réponse, dans le fragment que la modale extrait aussi
     where = value['place']
     place = [example_label(where['case'], where['number'])] if where['examples'] > 1 else []
     if history[-1].get('repetition'):
         place.append('Essai ' + str(history[-1]['repetition']) + ' sur ' + str(where['repetitions']))
-    content += '<div id="attempt-detail">' + render_result(history[-1], names, ' · '.join(place), compose=True)
+    content = '<div id="attempt-detail">' + render_result(history[-1], names, ' · '.join(place))
     for record in reversed(history[:-1]):
-        content += '<details><summary>Ancienne évaluation, remplacée le ' + text(date_lisible_utc(record['created_at'])) + '</summary>'
-        content += render_result(record, names) + '</details>'
+        content += tiroir('Ancienne évaluation, remplacée le ' + date_lisible_utc(record['created_at']), render_result(record, names))
     # Hors de `#attempt-detail` : dans la modale, la page des résultats porte déjà cette portée et cette couverture
     conclusion, coverage = value['conclusion'], value['coverage']
-    content += '</div><p class="note">' + text(conclusion['attribution'] + ' ' + conclusion['limits'][0]) + '</p>'
-    return content + '<p class="hint">Comparaison : réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : ' + text(
+    content += '</div><p class="petit">' + text(conclusion['attribution'] + ' ' + conclusion['limits'][0]) + '</p>'
+    return content + '<p class="petit">Comparaison : réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : ' + text(
         coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '.</p>'
 
 
 def render_campaign_records(campaigns, url):
-    """Comparaisons enregistrées d'un cas d'usage, cellules et tentatives comprises"""
-    content = '<p>Journal privé des comparaisons de ce cas d’usage, sur un exemple inventé. '
-    content += 'Il enregistre ce que chaque appel a produit et coûté. Il ne juge pas les réponses : les verdicts figurent dans les évaluations.</p>'
+    """Benchmarks enregistrés d'un cas d'usage, cellules et tentatives comprises"""
+    content = '<p class="petit">Journal privé des benchmarks de ce cas, sur un exemple inventé. '
+    content += 'Il enregistre ce que chaque appel a produit et coûté. Il ne juge pas les réponses : les verdicts figurent dans les vérifications des réponses.</p>'
     technical = {'NOT_STARTED': 'Pas lancé', 'INTENT_RECORDED': 'Lancement enregistré, appel en attente d’envoi',
                  'EMISSION_POSSIBLE': 'Appel peut-être envoyé, réponse attendue',
                  'AMBIGUOUS': 'Résultat de l’appel inconnu : pas de nouvel essai automatique', 'RECEIVED': 'Réponse et coût enregistrés'}
     for campaign in campaigns:
         task = campaign['task']
-        content += '<article><h3>Comparaison ' + text(campaign['campaign_id']) + '</h3>'
+        content += '<article><h3>Benchmark ' + text(campaign['campaign_id']) + '</h3>'
         if campaign.get('recovery_of'):
             content += '<p>Reprise de l’essai ' + text(campaign['recovery_of']) + ' après un problème technique. Les réponses et coûts déjà enregistrés sont conservés.</p>'
         if 'evaluations' in campaign:
-            content += '<p><a href="' + text(url) + '/campaigns/' + text(campaign['campaign_id']) + '">Voir les résultats de cette comparaison</a></p>'
+            content += '<p><a href="' + text(url) + '/campaigns/' + text(campaign['campaign_id']) + '">Voir les résultats de ce benchmark</a></p>'
         content += '<p>Exemple validé ' + text(task['version']) + ', version ' + text(task['revision']) + '.</p>'
         content += '<h4>Modèles et réglages demandés</h4>' + listing(
             f'{c["id"]} : {c["model"]}, révision {c["revision"]}, fournisseur {c["provider"]}, '
@@ -1508,14 +1786,12 @@ def render_campaign_records(campaigns, url):
             f'paramètres {encode(c["parameters"])} ; observations exigées : {", ".join(c["required_observations"])}'
             for c in campaign['panel'])
         conditions = campaign['conditions']
-        pi = conditions['pi']
-        content += '<h4>Conditions communes (Pi)</h4><p>' + text(
-            f'{pi["package"]} {pi["version"]} ; état {pi["status"]} ; fixé le {conditions["frozen_at"]}') + '</p>'
+        content += '<h4>Harnais</h4><p>' + harnais(', fixée le ' + jour_lisible(conditions['frozen_at'])) + '</p>'
         content += '<details><summary>Contexte et environnement communs</summary>' + listing(
             f'{k} : {encode(conditions[k])}' for k in ('packages', 'tools', 'skills', 'defaults', 'environment')) + '</details>'
         content += '<h4>Essais et budget</h4><p>' + (
             'Essais pouvant être lancés : ' + text(', '.join(campaign['allowed_cells'])) + '.' if campaign['admission_open'] else
-            'Aucun nouvel essai ne peut être lancé pour cette comparaison.') + '</p>'
+            'Aucun nouvel essai ne peut être lancé pour ce benchmark.') + '</p>'
         if campaign['restore_pending']:
             content += '<p>Service momentanément indisponible, réessayez plus tard.</p>'
         if campaign['stop_reason']:
@@ -1533,7 +1809,7 @@ def render_campaign_records(campaigns, url):
         content += '<p>Montant mis de côté par essai : ' + text(
             encode(campaign['reserve_amounts']) if campaign['reserve_amounts'] else 'inconnu') + '.</p>'
         content += '<p>Mode de calcul du coût : ' + text(encode(campaign['cost_basis'])) + '.</p>'
-        content += '<p>Le montant mis de côté ne garantit pas un plafond de facturation. La préparation et l’évaluation sont comptées séparément.</p>'
+        content += '<p>Le montant mis de côté ne garantit pas un plafond de facturation. La préparation et la vérification des réponses sont comptées séparément.</p>'
         content += '<h4>Essais prévus</h4>' + listing(
             f'{c["cell_id"]} : cas {c["case_id"]}, modèle {c["configuration_id"]}, {technical[c["state"]]}'
             for c in campaign['cells'])
@@ -1560,5 +1836,5 @@ def render_campaign_records(campaigns, url):
             content += '</details>'
         content += '</article>'
     if not campaigns:
-        content += '<p>Aucune comparaison lancée pour ce cas d’usage.</p>'
-    return '<details><summary>Historique détaillé des comparaisons</summary>' + content + '</details>'
+        content += '<p>Aucun benchmark lancé pour ce cas d’usage.</p>'
+    return tiroir('Historique détaillé des benchmarks', content, resume=_plural(len(campaigns), 'benchmark') if campaigns else 'Aucun benchmark')

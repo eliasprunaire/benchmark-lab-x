@@ -237,6 +237,11 @@ class PrivacyTests(unittest.TestCase):
 
     def test_activite_jointe_n_annule_pas_l_ecriture_et_ne_ressuscite_pas_une_echeance(self):
         session, _ = self.dossier()
+        # La liste transmet l'échéance de chaque cas : l'alerte « Bientôt effacé » en dépend
+        with patch.object(privacy, 'now', return_value=NOW):
+            _, listing, _, _ = web_api.dispatch(self.store, 'GET', '/preparation', self.token, None, 'a' * 40, None)
+        echeance = self.store._connection.execute("SELECT expires_at FROM s7_dossiers WHERE dossier_id='private-case'").fetchone()[0]
+        self.assertEqual([('private-case', echeance)], [(d['dossier_id'], d['expires_at']) for d in listing['dossiers']])
         connection = self.store._connection
         before = connection.execute("SELECT expires_at,content_version FROM s7_dossiers WHERE dossier_id='private-case'").fetchone()
         # Le dossier expire entre l'autorisation de l'effet et le COMMIT d'une écriture de journalisation

@@ -498,19 +498,21 @@ export async function mountPrivacy(root = document) {
       const id = element.dataset.dossierId;
       const archive = element.querySelector('[data-privacy-action="archive"]');
       const enable = element.querySelector('[data-privacy-action="enable-case"]');
-      const active = element.hasAttribute('data-privacy-activity');
+      const active = element.hasAttribute('data-privacy-activity') || element.hasAttribute('data-privacy-manual');
       const update = async () => {
         await connect();
         const state = store ? await store.state(id) : {enabled: false, chosen: false};
         archive.hidden = !active || !state.enabled;
         enable.hidden = !active || !state.chosen || state.enabled;
+        // Carte de la liste : message seulement après une action (réussite ou erreur), jamais l'état par défaut sur chaque carte
+        if (element.hasAttribute('data-privacy-manual')) return;
         if (!state.chosen) status.textContent = 'Historique local désactivé : ce cas n’est pas gardé dans ce navigateur. Pour l’activer, cochez la case de contribution ou passez par Mes données.';
         else if (!state.enabled) status.textContent = 'Historique local en pause : ce cas n’est plus gardé dans ce navigateur. Réactivez-le dans Mes données, ou pour ce cas seulement avec le bouton ci-dessous.';
       };
       refreshers.push(update);
       const save = () => run(archive, async () => {
         status.textContent = 'Copie en cours dans ce navigateur…';
-        const saved = await store.archive(id, Number(element.dataset.contentVersion));
+        const saved = await store.archive(id, Number(element.dataset.contentVersion || 0));
         status.textContent = saved ? 'Copie gardée dans ce navigateur.' : 'Ce navigateur a déjà la version la plus récente de ce cas.';
         await changed();
       });
@@ -521,7 +523,7 @@ export async function mountPrivacy(root = document) {
         if (!(await store.state()).enabled) status.textContent = 'L’historique est réactivé pour ce cas, mais il reste en pause pour tout ce navigateur. Réactivez-le aussi dans Mes données.';
       }));
       await update();
-      if (active && element.hasAttribute('data-content-version') && store && (await store.state(id)).enabled) await save();
+      if (element.hasAttribute('data-privacy-activity') && element.hasAttribute('data-content-version') && store && (await store.state(id)).enabled) await save();
     }
   }
   window.addEventListener('focus', () => {void refresh();});

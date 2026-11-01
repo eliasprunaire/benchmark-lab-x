@@ -33,7 +33,7 @@ class S10ProofTests(unittest.TestCase):
         parsed = Markup(page.encode())
         self.assertEqual(1, sum(tag == 'form' for tag, _ in parsed.tags))
         self.assertEqual(1, page.count('>Appliquer</button>'))
-        self.assertIn('>Retirer les filtres</a>', page)
+        self.assertIn('Retirer les filtres<svg class="ic"', page)
         self.assertIn('value="" selected', page)
         self.assertNotIn('name="case"', page)
         self.assertNotIn('<p class="lead">', page)
@@ -41,10 +41,10 @@ class S10ProofTests(unittest.TestCase):
         self.assertNotIn('les essais se sont arrêtés avant la fin', page)
         value['coverage']['not_started'] = 1
         self.assertIn('les essais se sont arrêtés avant la fin', views.render(value, '').decode())
-        table = page.split('<table>', 1)[1].split('</table>', 1)[0]
+        table = page.split('<table class="empile comparatif">', 1)[1].split('</table>', 1)[0]
         self.assertNotIn('Demandée, observée et sources', table)
         self.assertNotIn('Sans rang', table)
-        self.assertIn('Détail et preuves', table)
+        self.assertIn('Preuves<span class="cache"> et détail de', table)
         self.assertEqual(5, sum(tag == 'th' and attrs.get('scope') == 'col' for tag, attrs in parsed.tags))
 
     def test_campaign_models_are_private_frozen_and_read_only(self):
@@ -55,8 +55,9 @@ class S10ProofTests(unittest.TestCase):
         self.assertEqual((200, None, None), (code, cookie, start))
         self.assertEqual(value['panel'], models['panel'])
         page = views.render(models, '').decode()
-        self.assertIn('<h1>Modèles de cette comparaison</h1>', page)
-        self.assertIn('aria-current="step"><span class="n">4</span>Modèles', page)
+        self.assertIn('<h1>Modèles de ce benchmark</h1>', page)
+        self.assertIn('<li aria-current="step"><a href="', page)
+        self.assertIn('<span class="n">04</span><span class="l">Modèles</span><span class="cache"> (étape en cours)</span>', page)
         self.assertNotIn('<form', page)
         self.assertNotIn('<script>', page)
         self.assertIn(value['href'], Markup(page.encode()).links)
@@ -77,7 +78,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertEqual(views.STEP_SCRIPT, views.page_script(value))
         for anchor in ('besoin', 'exemple', 'validation'):
             self.assertIn('id="' + anchor + '"', page)
-        self.assertIn('>Préparer une nouvelle comparaison</a>', page)
+        self.assertIn('>Nouveau benchmark<', page)
         self.assertIn(comparison['href'] + '/configurations', Markup(page.encode()).links)
         for suffix in ('campaign=foreign', 'campaign=comparison&campaign=proof', 'campaign=', 'unknown=comparison'):
             with self.subTest(suffix=suffix), self.assertRaises((p.Denied, ValueError)):
@@ -92,7 +93,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertNotIn('/dossiers/fixture/configurations', steps)
         page = views.render(r.comparison(self.store, self.sid, 'fixture', 'comparison',
                                          query={'sort': 'duration', 'configuration': 'near'}), '').decode()
-        self.assertIn('Non comparable', page)
+        self.assertIn('non comparable', page)
         self.assertIn('Valeur impossible à placer sur l’échelle prévue', page)
         self.assertNotIn('>Oui</span> s', page)
 
@@ -108,7 +109,7 @@ class S10ProofTests(unittest.TestCase):
         parsed = Markup(page.encode())
         row = next(attrs for tag, attrs in parsed.tags if attrs.get('id') == 'attempt-long')
         self.assertEqual('-1', row['tabindex'])
-        region = next(attrs for tag, attrs in parsed.tags if attrs.get('class') == 'table-scroll')
+        region = next(attrs for tag, attrs in parsed.tags if attrs.get('class') == 'table-defile')
         self.assertEqual(('region', '0', 'Comparaison des modèles'),
                          (region['role'], region['tabindex'], region['aria-label']))
         self.assertEqual(5, sum(tag == 'th' and attrs.get('scope') == 'col' for tag, attrs in parsed.tags))
@@ -157,7 +158,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertEqual(1, guarded.call_count)
         self.assertEqual(self.output, record['proof_contents'][record['output_piece_id']])
         page = views.render(detail, '')
-        self.assertIn(('<div class="proof-text">' + escape(self.output, quote=True) + '</div>').encode(), page)
+        self.assertIn(('<pre>' + escape(self.output, quote=True) + '</pre>').encode(), page)
         parsed = Markup(page)
         self.assertFalse(any(tag == 'script' or any(k.startswith('on') for k in attrs)
                              for tag, attrs in parsed.tags))
@@ -165,7 +166,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertEqual([], [attrs for tag, attrs in parsed.tags if tag == 'img' and attrs['src'] != '/bench-x.svg'])
         self.assertTrue(detail['back_href'].endswith('#attempt-long'))
         self.assertEqual(query, detail['filter_scope'])
-        self.assertTrue(any(tag == 'details' and attrs.get('class') == 'proof-content' for tag, attrs in parsed.tags))
+        self.assertTrue(any(tag == 'details' and attrs.get('class') == 'tiroir' and attrs.get('id', '').startswith('proof-') for tag, attrs in parsed.tags))
         for link in record['proof_links']:
             self.assertNotIn(link['href'], parsed.links)
             anchor = 'proof-' + record['evaluation_id'] + '-' + link['piece_id']
@@ -216,9 +217,9 @@ class S10ProofTests(unittest.TestCase):
                          [attrs['href'] for tag, attrs in parsed.tags if tag == 'a' and 'data-result' in attrs])
         self.assertFalse(any(tag == 'button' and 'data-result' in attrs for tag, attrs in parsed.tags))
         self.assertLess(page.index('economic-choice-title'), page.index('id="filters"'))
-        self.assertIn('<h2 id="economic-choice-title">Notre conseil</h2>', page)
+        self.assertIn('<span class="etiq">Notre conseil</span><h2 id="economic-choice-title">', page)
         self.assertNotIn('Si le coût est votre priorité', page)
-        self.assertIn('<p class="choice-model">' + row['requested_configuration']['model'] + '</p>', page)
+        self.assertIn('<h2 id="economic-choice-title">' + row['requested_configuration']['model'] + '</h2>', page)
         self.assertIn(campaign_views.effort_label(row['requested_configuration']), page)
         self.assertIn('Les 2 réponses qui satisfont l’exemple ont la même qualité observée. Nous retenons la moins coûteuse.', page)
         value['recommendation'].update(
@@ -226,15 +227,13 @@ class S10ProofTests(unittest.TestCase):
             quality=[{'measure': 'Clarté du résultat'}, {'measure': 'Précision des arbitrages'}],
         )
         page = views.render(value, '').decode()
-        self.assertIn('Nous retenons d’abord la <span class="quality-term"', page)
-        self.assertIn('<span class="quality-help" tabindex="0"', page)
-        self.assertNotIn('aria-hidden="true">?</span>', page)
+        self.assertIn('Nous retenons d’abord la qualité observée la plus élevée', page)
+        self.assertNotIn('quality-help', page)
         self.assertIn('À qualité égale, le coût observé le plus bas l’emporte.', page)
-        self.assertIn('role="tooltip"', page)
         self.assertIn('Clarté du résultat', page)
         self.assertIn('Précision des arbitrages', page)
         self.assertNotIn('Ouvrir la page complète', page)
-        self.assertIn('<strong>0,00113885 USD</strong>', page)
+        self.assertIn('<p class="val">0,00113885<small>USD</small></p>', page)
         self.assertNotIn('>Détails et réserves</a>', page)
         for word in ('recommand', 'meilleur', 'innerHTML', 'gagnant'):
             self.assertNotIn(word, page.lower())
@@ -247,17 +246,19 @@ class S10ProofTests(unittest.TestCase):
         self.assertIn('<link rel="stylesheet" href="/preparation/style.css">', raw)
         self.assertIn('<h1>Détail et preuves</h1>', raw)
         self.assertIn(detail['back_href'], Markup(raw.encode()).links)
-        self.assertIn('href="' + detail['href'] + '" aria-current="step"><span class="n">5</span>Résultats', raw)
+        self.assertIn('<li aria-current="step"><a href="' + detail['href'] + '"><span class="disque" aria-hidden="true"></span>'
+                      '<span class="n">05</span><span class="l">Résultats</span>', raw)
         self.assertEqual(1, raw.count('id="attempt-detail"'))
         fragment = raw.split('id="attempt-detail"', 1)[1]
         self.assertNotIn(detail['need'], fragment)
         for absent in ('evidence-fields', 'Identifiants', 'Responsable :', 'Dépense de jugement'):
             self.assertNotIn(absent, fragment)
-        for present in ('Résultat sur cet exemple', 'Coût observé', 'Début de la réponse', 'Lire la réponse complète',
+        for present in ('Résultat sur cet exemple', 'Coût observé', 'La réponse du modèle', 'Lire la réponse complète',
                         'Pourquoi ce verdict', 'Limites de ce résultat', 'Autres observations', 'Pièces de l’exemple'):
             self.assertIn(present, fragment)
-        self.assertIn(escape(self.output[:200].strip(), quote=True) + '…', fragment)
-        self.assertLess(fragment.index('Début de la réponse'), fragment.index('Lire la réponse complète'))
+        # Extrait : les sept premières lignes, puis « … » ; la réponse entière reste dans le tiroir
+        self.assertIn(escape('\n'.join(self.output.strip().splitlines()[:7]), quote=True) + '\n…', fragment)
+        self.assertLess(fragment.index('La réponse du modèle'), fragment.index('Lire la réponse complète'))
         self.assertIn('id="evaluation-' + detail['history'][-1]['evaluation_id'] + '"', fragment)
 
     def test_standard_reasoning_label_does_not_claim_reasoning_is_disabled(self):
@@ -269,12 +270,12 @@ class S10ProofTests(unittest.TestCase):
         for query in ({}, {'verdict': 'SATISFAIT'}, {'verdict': 'NE SATISFAIT PAS'}):
             value = r.comparison(self.store, self.sid, 'fixture', 'proof', query=query)
             page = views.render(value, '').decode()
-            self.assertEqual(1, page.count('<h2>Comparaison des modèles</h2>'))
-            self.assertLess(page.index('<h2>Comparaison des modèles</h2>'), page.index('id="filters"'))
-            self.assertLess(page.index('id="filters"'), page.index('class="view-scope'))
+            self.assertEqual(1, page.count('<h2 id="t-comp">Comparaison des modèles</h2>'))
+            self.assertLess(page.index('<h2 id="t-comp">Comparaison des modèles</h2>'), page.index('id="filters"'))
+            self.assertLess(page.index('<h2 id="t-comp">'), page.index('affichée'))
             if value['rows']:
-                self.assertLess(page.index('class="view-scope'), page.index('<table>'))
-                self.assertNotIn('<h2>', page[page.index('id="filters"'):page.index('<table>')])
+                self.assertLess(page.index('id="filters"'), page.index('<table class="empile comparatif">'))
+                self.assertNotIn('<h2>', page[page.index('id="filters"'):page.index('<table class="empile comparatif">')])
             else:
                 self.assertIn('Aucune réponse ne correspond à ces filtres', page)
 
@@ -284,16 +285,16 @@ class S10ProofTests(unittest.TestCase):
         page = views.render(value, '').decode()
         filtered = views.render(r.comparison(self.store, self.sid, 'fixture', 'comparison',
                                         query={'verdict': 'NE SATISFAIT PAS', 'sort': 'cost'}), '').decode()
-        summary = lambda html: html.split('aria-label="Bilan de la comparaison">', 1)[1].split('</div>', 1)[0]
+        summary = lambda html: html.split('aria-labelledby="t-bilan">', 1)[1].split('</section>', 1)[0]
         self.assertEqual(summary(page), summary(filtered))
-        self.assertIn('5 réponses affichées sur 5 · sans tri.', page)
-        self.assertIn('1 réponse affichée sur 5 · triées par coût observé, ordre croissant.', filtered)
-        self.assertIn('Ne satisfait pas : 1', summary(page))
-        self.assertIn('Satisfait : 3', summary(page))
+        self.assertIn('5 réponses affichées sur 5 · sans tri<', page)
+        self.assertIn('1 réponse affichée sur 5 · triées par coût observé, ordre croissant<', filtered)
+        self.assertIn('1 ne satisfait pas', summary(page))
+        self.assertIn('3 satisfont', summary(page))
         self.assertIn('Comparaison des coûts incomplète', summary(page))
         self.assertIn('body class="s9 comparison"', page)
         self.assertIn('<h1>Résultats</h1>', page)
-        self.assertLess(page.index('<table>'), page.index('id="method"'))
+        self.assertLess(page.index('<table class="empile comparatif">'), page.index('id="method"'))
         self.assertNotIn('open', next(attrs for tag, attrs in Markup(page.encode()).tags if attrs.get('id') == 'filters'))
         # Le rendu technique complet reste sur les évaluations enregistrées ; la page directe garde la lecture humaine
         _, dossier, _, _ = web_api.dispatch(self.store, 'GET', value['dossier_href'], self.token, None, 'a' * 40, None)
@@ -322,7 +323,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertNotIn('href="#method">Méthode et limites', page)
         self.assertNotIn('id="filters"', page)
         self.assertNotIn('id="method"', page)
-        method = evaluated_page.split('<details id="method">', 1)[1].split('</details>', 1)[0]
+        method = evaluated_page.split('<details class="tiroir" id="method">', 1)[1].split('</details>', 1)[0]
         self.assertNotIn('Ce qui restera à faire par une personne', method)
         self.assertIn('la même consigne et les mêmes pièces', method)
         self.assertNotIn('<dl', method)
@@ -330,11 +331,11 @@ class S10ProofTests(unittest.TestCase):
         self.assertNotIn('Contrat et portée exacte', method)
         main = page.split('<main', 1)[1].split('</main>', 1)[0]
         self.assertNotIn('>Mes cas d’usage</a>', main)
-        nav = page.split('<nav class="steps"', 1)[1].split('</nav>', 1)[0]
+        nav = page.split('<nav class="piste"', 1)[1].split('</nav>', 1)[0]
         self.assertIn('href="' + value['dossier_href'] + '"', nav)
         self.assertNotIn('#validation', nav)
         self.assertIn(value['href'] + '/configurations', nav)
-        self.assertIn('aria-current="step"><span class="n">5</span>Résultats', nav)
+        self.assertIn('<span class="n">05</span><span class="l">Résultats</span><span class="cache"> (étape en cours)</span>', nav)
 
     def test_unconfigured_judgment_is_visible_in_empty_results_without_model_failure(self):
         value = r.comparison(self.store, self.sid, 'fixture', 'comparison')
@@ -343,7 +344,7 @@ class S10ProofTests(unittest.TestCase):
             'next_action': 'Réponse reçue. Le jugement de ce parcours n’est pas encore raccordé.'}])
         value['coverage']['evaluated_attempts'] = 0
         page = views.render(value, '').decode()
-        summary = page.split('aria-label="Bilan de la comparaison">', 1)[1].split('</div>', 1)[0]
+        summary = page.split('aria-labelledby="t-bilan">', 1)[1].split('</section>', 1)[0]
         self.assertIn('Des réponses sont arrivées. Leur verdict n’est pas encore disponible.', summary)
         self.assertIn('Le jugement de ce parcours n’est pas encore raccordé.', summary)
         self.assertNotIn('private-attempt', summary)

@@ -12,8 +12,10 @@ from tests.test_s2_review_regressions import Authorized, response_for
 from tests.test_s6_regressions import build
 from tests.test_web_access import setUpModule  # noqa: F401  contrôle global des pages rendues
 
-# Polices S18 servies en local, chacune avec sa licence OFL
-FONTS = ('MonaSans', 'HubotSans', 'HostGrotesk', 'GeistMono', 'Silkscreen')
+# Polices chargées par la feuille, servies en local avec leur licence OFL
+FONTS = ('MonaSans', 'GeistMono', 'Silkscreen')
+# Polices encore servies et nommées par les mentions légales, sans être chargées par la feuille
+FONTS_NOMMEES = ('HubotSans', 'HostGrotesk')
 
 
 class TemplateTests(unittest.TestCase):
@@ -33,31 +35,33 @@ class TemplateTests(unittest.TestCase):
             return sum(weight * (v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4)
                        for weight, v in zip((.2126, .7152, .0722), channels))
 
-        text_pairs = [(fg, bg) for fg in ('ink', 'ink-2', 'muted', 'accent-ink')
-                      for bg in ('paper', 'surface', 'soft')]
-        text_pairs += [(tone, tone + '-soft') for tone in ('warm', 'ok', 'ko', 'warn', 'unk', 'wait')]
-        text_pairs += [('on-btn', 'btn'), ('on-btn', 'btn-hover'), ('surface', 'accent')]
+        # Paires de reports/refonte-c/contrastes.md : texte sur fond, 4,5:1 au moins dans chaque thème
+        text_pairs = [('encre', 'papier'), ('encre', 'carte'), ('encre-2', 'papier'), ('discret', 'papier'),
+                      ('discret', 'carte'), ('discret', 'creux'), ('ok', 'carte'), ('ko', 'carte'),
+                      ('sur-signal', 'signal'), ('sur-ruban', 'ruban'), ('nuit-2', 'nuit'), ('sur-nuit', 'nuit'),
+                      ('signal', 'nuit'), ('focus', 'papier')]
+        text_pairs += [(tone, tone + '-fond') for tone in ('ok', 'ko', 'att', 'vig', 'inc')]
         for name, colors in (('clair', themes[0]), ('sombre', themes[0] | themes[1])):
-            with self.subTest(theme=name, état='survol'):
-                low, high = sorted((luminance(colors['btn']), luminance(colors['btn-hover'])))
-                self.assertGreaterEqual((high + .05) / (low + .05), 1.4)
-            pairs = [(fg, bg, 4.5) for fg, bg in text_pairs]
-            pairs += [(fg, bg, 3) for fg in ('focus', 'line-2') for bg in ('paper', 'surface')]
-            for fg, bg, minimum in pairs:
+            for fg, bg in text_pairs:
                 with self.subTest(theme=name, texte=fg, fond=bg):
                     low, high = sorted((luminance(colors[fg]), luminance(colors[bg])))
-                    self.assertGreaterEqual((high + .05) / (low + .05), minimum)
+                    self.assertGreaterEqual((high + .05) / (low + .05), 4.5)
 
 
     def test_fonts_and_projection_stylesheet_are_local_files(self):
-        for name in FONTS:
+        for name in FONTS + FONTS_NOMMEES:
             self.assertTrue((views.FONTS_PATH / (name + '.woff2')).is_file(), name)
             self.assertTrue((views.FONTS_PATH / ('OFL-' + name + '.txt')).is_file(), name)
+        for name in FONTS:
             self.assertIn('/preparation/fonts/' + name + '.woff2', views.STYLESHEET_PATH.read_text())
+        # Toute police de la feuille est servie par la route des polices
+        for name in re.findall(r'url\("/preparation/fonts/([A-Za-z]+)\.woff2"\)', views.STYLESHEET_PATH.read_text()):
+            self.assertIn(name, FONTS)
         self.assertEqual(Path('projection.css'), Path(projection.STYLESHEET_PATH.name))
         self.assertNotIn(b'@font-face', projection.STYLESHEET_PATH.read_bytes())
-        # La page publiée reprend les couleurs S18 du parcours, en clair comme en sombre
-        palette = lambda css: [dict(re.findall(r'--([a-z0-9-]+):\s*(#[0-9a-f]{6})', block))
+        # La page publiée reprend les couleurs du parcours, en clair comme en sombre
+        # Seul le premier bloc :root de chaque thème compte : une règle plus loin peut redéfinir une variable localement
+        palette = lambda css: [dict(re.findall(r'--([a-z0-9-]+):\s*(#[0-9a-f]{6})', re.search(r':root\s*\{([^}]*)\}', block)[1]))
                                for block in re.split(r'@media\s*\(prefers-color-scheme:\s*dark\)', css)[:2]]
         published, private = palette(projection.STYLESHEET_PATH.read_text()), palette(views.STYLESHEET_PATH.read_text())
         for shade, (mine, theirs) in zip(('clair', 'sombre'), zip(published, private)):
@@ -104,23 +108,23 @@ class DossierPageTests(unittest.TestCase):
         page = render({'eliminatory': ['Erreur bloquante'], 'obligations': ['Action présente'],
                        'quality': [{'label': 'Clarté', 'scale': ['excellent', 'acceptable', 'faible'],
                                     'favorable': 'excellent'}]})
-        for expected in ('class="grp elim"', '<h3>Éliminatoires</h3>', 'Erreur bloquante',
-                         'class="grp oblig"', '<h3>Obligations</h3>', 'Action présente',
-                         'class="grp sec"', '<h3>Qualité</h3>', 'Clarté', rule):
+        for expected in ('<ul class="criteres">', '<span class="genre">Erreur éliminatoire</span>', 'Erreur bloquante',
+                         '<span class="genre">Obligation</span>', 'Action présente',
+                         '<span class="genre">Qualité</span>', 'Clarté', rule):
             self.assertIn(expected, page)
         for raw_key in ('<li>eliminatory</li>', '<li>obligations</li>', '<li>quality</li>'):
             self.assertNotIn(raw_key, page)
         self.assertNotIn('<li>faible</li>', page)
-        self.assertIn('<h1>Est-ce le travail que vous voulez tester ?</h1>', page)
-        self.assertIn('<title>Est-ce le travail que vous voulez tester ?', page)
+        self.assertIn('<h1>Est-ce le travail à tester ?</h1>', page)
+        self.assertIn('<title>Est-ce le travail à tester ?', page)
 
         single_group = render(['Toutes les actions présentes'])
-        self.assertIn('<h3>Obligations</h3>', single_group)
-        self.assertIn('<li>Toutes les actions présentes</li>', single_group)
-        self.assertNotIn('<h3>Éliminatoires</h3>', single_group)
-        self.assertNotIn('<h3>Qualité</h3>', single_group)
+        self.assertIn('<span class="genre">Obligation</span>', single_group)
+        self.assertIn('Toutes les actions présentes', single_group)
+        self.assertNotIn('<span class="genre">Erreur éliminatoire</span>', single_group)
+        self.assertNotIn('<span class="genre">Qualité</span>', single_group)
         self.assertIn(rule, single_group)
-        self.assertIn('<h1>Est-ce le travail que vous voulez tester ?</h1>', single_group)
+        self.assertIn('<h1>Est-ce le travail à tester ?</h1>', single_group)
 
 
     def test_state_block_steps_and_hidden_correction_without_digests(self):
@@ -139,13 +143,15 @@ class DossierPageTests(unittest.TestCase):
                 code, view, _, _ = web_api.dispatch(store, 'GET', '/preparation/dossiers/inline', token, None, 'a' * 40, None)
                 self.assertEqual(200, code)
                 page = views.render(view, csrf).decode()
-        self.assertIn('class="state action"', page)
-        self.assertIn('Où j’en suis', page)
+        # Avant validation, le bloc jaune porte la décision ; le tiroir de correction est celui que ce bloc commande
+        self.assertIn('<form class="decision" method="post"', page)
+        self.assertIn('<details class="tiroir" id="corriger">', page)
+        self.assertIn('<form id="form-corriger" method="post"', page)
         self.assertIn('aria-current="step"', page)
-        self.assertIn('<span class="n">3</span>Validation', page)
-        self.assertIn('<details class="corr"><summary class="button sec">', page)
+        self.assertIn('<span class="n">03</span><span class="l">Validation</span>', page)
         self.assertIn('Oui, c’est le travail à tester', page)
-        self.assertIn('>Actualiser</a>', page)
+        self.assertIn('type="submit" form="form-corriger"', page)
+        self.assertIn('>Actualiser<svg', page)
         self.assertIn('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>', page)
         self.assertNotIn(view['package_sha256'], page.replace('name="package_sha256" value="' + view['package_sha256'] + '"', ''))
 
@@ -153,16 +159,17 @@ class DossierPageTests(unittest.TestCase):
 class ComparisonPageTests(unittest.TestCase):
 
 
-    def test_badges_and_cost_bars(self):
+    def test_badges_without_cost_bars(self):
         with tempfile.TemporaryDirectory() as temporary:
             data = Path(temporary).resolve() / 'private'
             with patch('socket.socket.connect', side_effect=AssertionError('No network in fixtures')):
                 store, sid, _, _, _ = build(data)
             with closing(store):
                 page = views.render(r.comparison(store, sid, 'fixture', 'comparison'), '').decode()
-        self.assertIn('<span class="badge b-ok">', page)
-        self.assertIn('<span class="badge b-ko">', page)
-        self.assertIn('class="costbar"', page)
+        self.assertIn('<span class="tampon tampon-ok">', page)
+        self.assertIn('<span class="tampon tampon-ko">', page)
+        # Pas de barres de coût : le montant se lit en chiffres
+        self.assertNotIn('costbar', page)
         self.assertIn('<nav aria-label="Informations légales"><h2>Informations légales</h2>', page)
         self.assertNotIn('SHA-256', page)
 
@@ -175,8 +182,8 @@ class ComparisonPageTests(unittest.TestCase):
                 page = views.render(r.comparison(store, sid, 'fixture', 'comparison'), '').decode()
         options = dict(re.findall(r'<option value="([^"]+)"(?: selected)?>(Exemple [0-9]+)</option>', page))
         titles = set(re.findall(r'<h3>(Exemple [0-9]+)</h3>', page))
-        self.assertEqual(1, page.count('<h2>Comparaison des modèles</h2>'))
-        self.assertLess(page.index('<h2>Comparaison des modèles</h2>'), page.index('id="filters"'))
+        self.assertEqual(1, page.count('<h2 id="t-comp">Comparaison des modèles</h2>'))
+        self.assertLess(page.index('<h2 id="t-comp">Comparaison des modèles</h2>'), page.index('id="filters"'))
         self.assertEqual({'notes': 'Exemple 1', 'distinct': 'Exemple 2'}, options)
         self.assertEqual(set(options.values()), titles)
 

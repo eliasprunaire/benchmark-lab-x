@@ -406,7 +406,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
                 self.assertEqual(allowed, selection['estimate_available'])
                 self.assertEqual(allowed, budget['ok'])
                 self.assertEqual(total, selection['estimate_total_usd'])
-                self.assertIn('réponses estimées : ' + total.replace('.', ',') + ' USD',
+                self.assertIn('<dt>Réponses, estimation</dt><dd>' + total.replace('.', ',') + ' USD</dd>',
                               views.render(self.summary(snapshot, selection), 'csrf').decode())
                 self.assertEqual('Estimation totale : ' + total.replace('.', ',') +
                                  ' USD', budget['detail'])
@@ -420,10 +420,10 @@ class RequesterCampaignLaunch(unittest.TestCase):
         self.assertEqual('0.00000002', selection['estimate_total_usd'])
         self.assertNotIn('E', selection['estimate_total_usd'])
         page = views.render(self.summary(snapshot, selection), 'csrf').decode()
-        self.assertIn('réponses estimées : 0,00000002 USD', page)
+        self.assertIn('<dt>Réponses, estimation</dt><dd>0,00000002 USD</dd>', page)
         self.assertIn('0,00000001 USD', page)
         # Synthèse et tableau ; le dépliant des réglages garde le manifeste tel quel
-        self.assertNotIn('E-', page.split('Détail des critères')[0])
+        self.assertNotIn('E-', page.split('Critères et conditions')[0])
 
     def test_cles_controles_alignees_entre_moteur_erreurs_et_liens(self):
         summary = c.launch_view(self.store, self.sid, 'fixture', self.campaign_id)
@@ -447,14 +447,14 @@ class RequesterCampaignLaunch(unittest.TestCase):
         with patch.object(c, '_requester_campaigns', return_value=[snapshot]):
             selection = c.configurations_view(self.store, self.sid, 'fixture')
         page = views.render(self.summary(snapshot, selection), 'csrf').decode()
-        self.assertIn('<td>non estimable</td>', page)
-        self.assertIn('réponses estimées : non estimable', page)
+        self.assertIn('<td data-th="Coût estimé">non estimable</td>', page)
+        self.assertIn('<dt>Réponses, estimation</dt><dd>non estimable</dd>', page)
         checks = c._requester_checks(self.store, self.store._connection, snapshot, self.sid, {})
         self.assertEqual('Estimation totale : non estimable',
                          next(check for check in checks if check['key'] == 'estimate_available')['detail'])
         preview = p.view(self.store, self.sid, 'fixture')
         preview['indicative_cost'] = None
-        self.assertIn('Coût estimé de cette préparation : non estimable',
+        self.assertIn('Coût estimé de la préparation</dt><dd><span class="val">inconnu</span><span class="note">non estimable</span>',
                       views.render(preview, 'csrf').decode())
 
     def test_chaque_controle_bloque_avec_sa_cle(self):

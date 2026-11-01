@@ -7,6 +7,9 @@ const {execFileSync} = require('node:child_process');
 const {createHash, randomBytes} = require('node:crypto');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 let server, browser, origin, rendered;
+// Scripts autres que celui des filtres des catalogues, constante du serveur : un contenu hostile n'en crée jamais
+const scriptsEtrangers = (page, zone = 'script') => page.locator(zone)
+  .evaluateAll((scripts, permis) => scripts.filter(script => script.src || script.textContent !== permis).length, rendered.filtres_script);
 let record, manifest, chunks, mode = 'normal', release, arrived;
 let posts = [], postStatus = 200, followupReplies = [];
 const fresh = (version = 1) => ({format: 'bench-x/history/v1', dossier_id: 'd1', content_version: version,
@@ -96,7 +99,7 @@ launched = example_page.replace(consent, '').replace(controls, render_privacy_co
 from pathlib import Path
 from unittest.mock import patch
 with patch.object(views, 'BENCHMARK_REFERENCES', json.loads(Path('tests/fixtures/external-references.json').read_text())):
-    reference_queries = [('', '', ''), ('corriger', 'coding', 'verified'), ('introuvable', '', ''),
+    reference_queries = [('', '', ''), ('corriger', '', ''), ('corriger', 'coding', ''), ('corriger', 'coding', 'verified'), ('introuvable', '', ''),
                          ('<script>alert(2)</script>', '', '')]
     reference_search = {json.dumps(list(query), separators=(',', ':')):
         views.render(dict(kind='references', **dict(zip(('q', 'category', 'verification'), query))), '').decode()
@@ -169,7 +172,7 @@ with tempfile.TemporaryDirectory() as editorial_dir:
         characteristics={'expected_result': 'Note longue', 'inputs': ['Textes fournis'],
                          'language': 'Français', 'tools': [editorial_long_tool], 'difficulty': 'Facile'})
     editorial.fixture_publish(editorial_dir, packed_long, packed_long_approval)
-    editorial_queries = ({}, {'q': 'note'}, {'q': 'note', 'langue': 'Français', 'outil': 'Tableur'},
+    editorial_queries = ({}, {'q': 'note'}, {'q': 'note', 'langue': 'Français'}, {'q': 'note', 'langue': 'Français', 'outil': 'Tableur'},
                          {'q': 'introuvable'}, {'outil': editorial_long_tool})
     editorial_search = {
         json.dumps([query.get(key, '') for key in editorial_search_fields], ensure_ascii=False, separators=(',', ':')):
@@ -231,6 +234,7 @@ with tempfile.TemporaryDirectory() as empty_dir:
     editorial_empty = views.render(editorial.catalog_view(str(Path(empty_dir).resolve())), '').decode()
 print(json.dumps({**browser_views(), 'published-results': views.render(results_view(), '').decode(),
                   'published-results-filtered': views.render(results_view(filtered=True), '').decode(),
+                  'published-results-repeated': views.render(results_view(repeated=True), '').decode(),
                   'published-results-withdrawn': views.render(results_view(withdrawn=True), '').decode(),
                   'published-results-trial-withdrawn': views.render(results_view(unavailable='trial-withdrawn'), '').decode(),
                   'reference_search': reference_search, 'reference_notices': reference_notices,
@@ -265,7 +269,7 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
                   'followup_done': views.render(launch('RECEIVED'), 'csrf').decode(),
                   'launch_timeout': views.render(dict(RESPONSE_TIMEOUT), '', '/preparation/dossiers/d1/campaigns/c1/start',
                                                  error=True).decode(),
-                  'progress_script': views.PREPARATION_PROGRESS_SCRIPT}))
+                  'progress_script': views.PREPARATION_PROGRESS_SCRIPT, 'filtres_script': views.FILTRES_SCRIPT}))
 `], {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024}));
   server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -304,7 +308,8 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
            ?? rendered.editorial_pages[url.pathname]);
       if (!html) {res.writeHead(404).end('introuvable'); return;}
       res.setHeader('Content-Type', 'text/html');
-      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      // Comme le serveur Python : le script des filtres, autorisé par son empreinte, relit ces pages
+      res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'sha256-${createHash('sha256').update(rendered.filtres_script).digest('base64')}'; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
       res.end(html);
     } else if (url.pathname === '/evaluations-externes/aide') {
       if (req.method === 'POST') {
@@ -325,7 +330,8 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
         ? rendered.reference_search[JSON.stringify(['q', 'category', 'verification'].map(key => url.searchParams.get(key) || ''))]
         : rendered.reference_notices[url.pathname.split('/').pop()];
       res.setHeader('Content-Type', 'text/html');
-      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      // Comme le serveur Python : le script des filtres, autorisé par son empreinte, relit ces pages
+      res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'sha256-${createHash('sha256').update(rendered.filtres_script).digest('base64')}'; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
       res.end(html);
     } else if (url.pathname.startsWith('/render/') || url.pathname === rendered.detail_href) {
       const hashes = [rendered.script, rendered.comparison_script, rendered.progress_script]
@@ -560,6 +566,9 @@ test('rendered pages write nothing before the single choice, then checking it st
     assert.deepEqual(await databases(), []);
     assert.equal(await page.locator('[data-privacy-action="archive"]').isHidden(), true);
     assert.equal(await page.locator('[data-privacy-action="enable-case"]').isHidden(), true);
+    // Replié par défaut : le statut « Facultatif · non partagé » se lit sans l'ouvrir
+    assert.match(await page.locator('.privacy-consent summary').first().textContent(), /Partager cet exemple\s*Facultatif · non partagé/);
+    await openConsent(page);
     assert.equal(await page.getByRole('checkbox').isChecked(), false);
     assert.equal(await page.getByRole('checkbox').isEnabled(), true);
     mkdirSync('reports/privacy-browser', {recursive: true});
@@ -568,12 +577,33 @@ test('rendered pages write nothing before the single choice, then checking it st
     await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
     await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
     assert.deepEqual(await databases(), []);
+    await openConsent(page);
     await page.getByRole('checkbox').check();
     await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
     await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('Copie gardée dans ce navigateur.'));
     assert.deepEqual(posts.filter(post => post.path.endsWith('/contribution')).map(post => [post.path, post.body.enabled]), [
       ['/preparation/dossiers/d1/contribution', false], ['/preparation/dossiers/d1/contribution', true]]);
     assert.deepEqual(await databases(), ['bench-x-history']);
+    // Cartes de Mes cas d'usage : aucun message par défaut, puis un message visible après la copie, réussie ou non
+    await page.goto(origin + '/render/privacy-listing');
+    const carte = id => page.locator('.ge-cas [data-dossier-id="' + id + '"]');
+    await carte('d1').locator('[data-privacy-action="archive"]').waitFor();
+    assert.deepEqual(await page.locator('.ge-cas [data-privacy-status]').allTextContents(), ['', '']);
+    await carte('d1').locator('[data-privacy-action="archive"]').click();
+    const statut1 = carte('d1').locator('[data-privacy-status]');
+    await page.waitForFunction(() => document.querySelector('.ge-cas [data-dossier-id="d1"] [data-privacy-status]').textContent !== ''
+      && !document.querySelector('.ge-cas [data-dossier-id="d1"] [data-privacy-action="archive"]').disabled);
+    assert.match(await statut1.textContent(), /Copie gardée dans ce navigateur|déjà la version la plus récente/);
+    assert.equal(await statut1.isVisible(), true, 'réussite visible à l’écran');
+    // d2 n'a pas de copie servie par la fixture : l'échec se lit à l'écran, pas seulement par un lecteur d'écran
+    await carte('d2').locator('[data-privacy-action="archive"]').click();
+    const statut2 = carte('d2').locator('[data-privacy-status]');
+    await page.waitForFunction(() => {
+      const texte = document.querySelector('.ge-cas [data-dossier-id="d2"] [data-privacy-status]').textContent;
+      return texte !== '' && texte !== 'Copie en cours dans ce navigateur…';
+    });
+    assert.doesNotMatch(await statut2.textContent(), /Copie gardée/);
+    assert.equal(await statut2.isVisible(), true, 'échec visible à l’écran');
     await page.goto(origin + '/render/data');
     await page.waitForFunction(() => document.querySelector('[data-privacy-list] > details'));
     await page.locator('[data-privacy-list] > details > summary').click();
@@ -592,6 +622,7 @@ test('the box state sent to the server is the one that decides local history', a
     await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
     let held;
     await page.route('**/preparation/dossiers/d1/contribution', route => {held = route;});
+    await openConsent(page);
     await page.getByRole('button', {name: 'Enregistrer mon choix'}).click();
     await page.waitForFunction(() => document.querySelector('.privacy-consent form').dataset.busy);
     await page.getByRole('checkbox').check();
@@ -664,6 +695,7 @@ test('native consent form remains usable without JavaScript, with no preselected
   try {
     const page = await context.newPage();
     await page.goto(origin + '/render/example');
+    await openConsent(page);
     assert.equal(await page.getByRole('checkbox').isChecked(), false);
     assert.match(await page.locator('.privacy-consent').textContent(), /besoin de JavaScript ; sans lui, seule la contribution/i);
     await page.getByRole('checkbox').check();
@@ -724,6 +756,9 @@ test('case deletion tombstones locally before POST and retains explicit failure 
     const page = await context.newPage(); page.setDefaultTimeout(3000);
     await page.goto(origin + '/render/example');
     await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('Copie gardée dans ce navigateur.'));
+    // La suppression passe par sa page de confirmation, ouverte avec la copie déjà gardée
+    await page.goto(origin + '/render/case-delete');
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('version la plus récente'));
     fixture(2); mode = 'delay';
     const waiting = new Promise(resolve => {arrived = resolve;});
     pending = observer.evaluate(() => historyStore.archive('d1', 2).catch(error => error.message));
@@ -733,7 +768,6 @@ test('case deletion tombstones locally before POST and retains explicit failure 
       observed = await observer.evaluate(async () => ({record: await historyStore.get('d1'), state: await historyStore.state('d1')}));
       await route.fulfill({status: 503, contentType: 'application/json', body: '{}'});
     });
-    await page.locator('.privacy-controls > summary').click();
     const deletionResponse = page.waitForResponse(response => response.url().endsWith('/d1/delete'));
     await page.locator('form[data-privacy-post="delete"] button').click();
     await deletionResponse;
@@ -742,7 +776,10 @@ test('case deletion tombstones locally before POST and retains explicit failure 
     const status = await page.locator('form[data-privacy-post="delete"] [data-privacy-status]').textContent();
     assert.match(status, /Copie de ce navigateur effacée/);
     assert.match(status, /La suppression sur le serveur, contribution comprise, n’est pas confirmée/);
-    assert.equal(page.url(), origin + '/render/example');
+    assert.equal(page.url(), origin + '/render/case-delete');
+    // L'échec du serveur laisse le formulaire actif : annuler comme réessayer restent possibles
+    assert.equal(await page.locator('.annuler').isVisible(), true);
+    assert.equal(await page.locator('form[data-privacy-post="delete"] button[type="submit"]').isDisabled(), false);
     release();
     assert.match(await pending, /effac|suspend|annul/i);
     assert.equal(await observer.evaluate(() => historyStore.get('d1')), null);
@@ -771,6 +808,8 @@ test('case deletion still requests server purge when IndexedDB is unavailable an
 
 
 const LEGAL = ['mentions-legales', 'cgu', 'confidentialite'];
+// Le choix de partage est replié dans son tiroir : sa case et son bouton ne se lisent qu'ouvert
+const openConsent = page => page.locator('.privacy-consent summary').first().click();
 // WCAG 2.x : 4.5:1, 3:1 pour le grand texte ; fond pris au premier ancêtre opaque
 function contrastFailures() {
   const channels = color => color.match(/[\d.]+/g).map(Number);
@@ -828,24 +867,36 @@ test('legal pages keep CSP, French headings, visible focus, AA contrast and fit 
           const outline = await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle);
           assert.notEqual(outline, 'none', `${where} focus invisible`);
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} débordement`);
-          // Composition S18 : sommaire en synthèse, replié avant le texte sur téléphone, ouvert à droite sur ordinateur
+          // Pages légales : sommaire ouvert, à gauche du texte et collant sous l'en-tête sur ordinateur, avant le texte sur téléphone
           const toc = await page.evaluate(() => {
-            const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
+            const side = document.querySelector('main .g-toc'), main = document.querySelector('main .g-texte');
             if (!side || !main) return null;
             const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-            const links = [...side.querySelectorAll('nav[aria-label="Sommaire"] a[href^="#"]')];
+            const links = [...side.querySelectorAll('nav[aria-label="Sommaire de la page"] a[href^="#"]')];
             const targets = links.map(link => main.querySelector(link.getAttribute('href') + ' > h2'));
-            return {right: a.left >= b.right, above: a.bottom <= b.top, headings: side.querySelectorAll('h1, h2, h3').length,
+            return {left: a.right <= b.left, above: a.bottom <= b.top, headings: side.querySelectorAll('h1, h2, h3').length,
                     links: links.length, sections: main.querySelectorAll('section > h2').length,
                     targeted: targets.every(Boolean), visible: links.filter(link => link.checkVisibility()).length,
-                    open: Boolean(side.querySelector('details[open]'))};
+                    open: Boolean(side.querySelector('details[open]')), position: getComputedStyle(side).position};
           });
           assert.ok(toc, `${where} page légale sans composition`);
           assert.ok(toc.links > 0 && toc.links === toc.sections && toc.targeted, `${where} sommaire incomplet : ` + JSON.stringify(toc));
           assert.equal(toc.headings, 0, `${where} titre dans le sommaire`);
-          assert.equal(toc.open, false, `${where} sommaire ouvert par défaut`);
-          assert.ok(viewport.width === 390 ? toc.above && toc.visible === 0 : toc.right && toc.visible === toc.links,
+          assert.equal(toc.open, true, `${where} sommaire replié par défaut`);
+          assert.ok(viewport.width === 390 ? toc.above && toc.visible === toc.links : toc.left && toc.visible === toc.links,
                     `${where} position ou ouverture du sommaire : ` + JSON.stringify(toc));
+          if (viewport.width > 390) {
+            assert.equal(toc.position, 'sticky', `${where} sommaire non collant`);
+            // Sous l'en-tête fixe (jusqu'à 78 px) : un sommaire collé à 20 px passerait dessous
+            const stuck = await page.evaluate(() => {
+              if (document.documentElement.scrollHeight < innerHeight + 900) return null;
+              scrollTo(0, 600);
+              const side = document.querySelector('main .g-toc').getBoundingClientRect();
+              const header = document.querySelector('header.haut').getBoundingClientRect();
+              return {top: Math.round(side.top), headerBottom: Math.round(header.bottom), bottom: Math.round(side.bottom), height: innerHeight};
+            });
+            if (stuck) assert.ok(stuck.top >= stuck.headerBottom && stuck.bottom <= stuck.height, `${where} sommaire collé sous l'en-tête : ` + JSON.stringify(stuck));
+          }
           if (viewport.width === 390) {
             mkdirSync('reports/privacy-browser', {recursive: true});
             await page.screenshot({path: `reports/privacy-browser/legal-${name}-${colorScheme}-mobile.png`, fullPage: true});
@@ -863,7 +914,7 @@ test('per-model reasoning tuning opens without JavaScript, stays in the form and
     try {
       const page = await context.newPage(); page.setDefaultTimeout(3000);
       await page.goto(origin + '/render/configurations');
-      const tuning = page.locator('details', {hasText: 'Ajuster le niveau par modèle'});
+      const tuning = page.locator('details', {hasText: 'Choisir un niveau différent pour un modèle'});
       assert.equal(await tuning.count(), 1, colorScheme);
       const select = page.locator('select[name="effort:mistralai/mistral-medium-3-5"]');
       assert.equal(await select.isVisible(), false, `${colorScheme} dépliant fermé par défaut`);
@@ -900,8 +951,8 @@ test('pages expose no decorative SVG, keep status roles for live zones and hide 
           .map(zone => zone.textContent.trim().slice(0, 60)), LIVE_STATUS), [], `${where} role="status" statique`);
         assert.deepEqual(await page.evaluate(contrastFailures), [], where);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} débordement`);
-        if (name !== 'example' && name !== 'comparison')
-          assert.equal(await page.locator('.lead').evaluate(lead => getComputedStyle(lead).borderLeftStyle), 'none',
+        if (name === 'home')
+          assert.equal(await page.locator('.accroche').evaluate(lead => getComputedStyle(lead).borderLeftStyle), 'none',
             `${where} l’accroche est un paragraphe, sans filet latéral (DESIGN.md)`);
       }
       await page.route('**/preparation/style.css', route => route.abort());
@@ -933,7 +984,7 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
   try {
     const page = watch(await off.newPage());
     await page.goto(origin + '/render/comparison');
-    await page.getByRole('link', {name: 'Détail et preuves'}).click();
+    await page.getByRole('link', {name: /Preuves/}).first().click();
     await page.waitForURL(origin + rendered.detail_href);
     assert.equal(await page.getAttribute('html', 'lang'), 'fr');
     assert.equal(await page.locator('h1').textContent(), 'Détail et preuves');
@@ -942,23 +993,25 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
     assert.equal(await page.locator('#attempt-detail').isVisible(), true);
     assert.match(await page.locator('#attempt-detail').textContent(), /Pourquoi ce verdict/);
     assert.equal(await page.getByRole('link', {name: 'Revenir aux résultats'}).getAttribute('href'), rendered.back_href);
-    assert.match(await page.locator('nav.steps [aria-current="step"]').textContent(), /Résultats/);
+    assert.match(await page.locator('nav.piste [aria-current="step"]').textContent(), /Résultats/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
     mkdirSync('reports/privacy-browser', {recursive: true});
     await page.screenshot({path: 'reports/privacy-browser/attempt-detail-nojs-mobile.png', fullPage: true});
-    // Composition S18 : le verdict et le coût en synthèse, lus avant la réponse sur téléphone
+    // Le verdict et le coût se lisent avant la réponse ; la réponse et ses preuves sont côte à côte sur ordinateur, l'une sous l'autre sur téléphone
     for (const width of [390, 1440]) {
       await page.setViewportSize({width, height: 900});
       const layout = await page.evaluate(`((root = document) => {
-      const side = root.querySelector('.wb-side'), main = root.querySelector('.wb-main');
-      if (!side || !main) return null;
-      const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-      return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText};
+      const head = root.querySelector('.verdict-tete'), figures = root.querySelector('.releves');
+      const [answer, proofs] = [...root.querySelectorAll('.colonnes-moitie > section')];
+      if (!head || !figures || !answer || !proofs) return null;
+      const h = head.getBoundingClientRect(), f = figures.getBoundingClientRect(), a = answer.getBoundingClientRect(), p = proofs.getBoundingClientRect();
+      return {headFirst: h.bottom <= f.top, figuresFirst: f.bottom <= a.top, right: p.left >= a.right, below: p.top >= a.bottom, figures: figures.innerText, proofs: proofs.innerText};
     })(document.getElementById('attempt-detail'))`);
       assert.ok(layout, `${width} détail sans composition`);
-      assert.match(layout.side, /Coût observé/, `${width} coût hors synthèse`);
-      assert.match(layout.main, /Pourquoi ce verdict/, `${width} preuves hors zone principale`);
-      assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la synthèse du détail`);
+      assert.ok(layout.headFirst && layout.figuresFirst, `${width} ordre du verdict, des chiffres et de la réponse`);
+      assert.match(layout.figures, /coût observé/i, `${width} coût hors des chiffres`);
+      assert.match(layout.proofs, /Pourquoi ce verdict/, `${width} preuves hors de leur colonne`);
+      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position des preuves du détail`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0, `${width} débordement du détail`);
     }
   } finally {await off.close();}
@@ -966,31 +1019,21 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
   try {
     const page = watch(await on.newPage());
     await page.goto(origin + '/render/comparison');
-    // Seule tentative, donc la plus chère : la barre de coût est pleine, peinte et distincte de sa piste
-    const bar = await page.$eval('.costbar', track => {
-      const rect = track.querySelector('rect');
-      const box = rect?.getBoundingClientRect();
-      return {track: track.getBoundingClientRect().width, width: box?.width ?? 0, height: box?.height ?? 0,
-              fill: rect ? getComputedStyle(rect).fill : 'none', background: getComputedStyle(track).backgroundColor};
-    });
-    assert.ok(bar.width > 0 && bar.height > 0, 'barre de coût sans surface');
-    assert.equal(bar.width, bar.track);
-    assert.doesNotMatch(bar.fill, /^(none|transparent|rgba\(.*, 0\))$/, 'barre de coût sans remplissage');
-    assert.notEqual(bar.fill, bar.background, 'barre de coût confondue avec sa piste');
-    await page.getByRole('button', {name: 'Détail et preuves'}).focus();
+    // Aucune barre de coût : le montant se lit en chiffres
+    assert.equal(await page.locator('.costbar').count(), 0, 'barre de coût présente');
+    await page.getByRole('button', {name: /Preuves/}).first().focus();
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.querySelector('#result-dialog .result-status').textContent === 'Détail chargé.');
     assert.equal(page.url(), origin + '/render/comparison');
     assert.equal(await page.evaluate(() => document.getElementById('result-dialog').open), true);
     assert.match(await page.locator('#result-dialog .result-body').textContent(), /Pourquoi ce verdict/);
-    // Dans la fenêtre, la synthèse et les preuves restent en une colonne
+    // Dans la fenêtre, la réponse et les preuves restent en une colonne
     const modal = await page.evaluate(`((root = document) => {
-      const side = root.querySelector('.wb-side'), main = root.querySelector('.wb-main');
-      if (!side || !main) return null;
-      const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-      return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText};
+      const [answer, proofs] = [...root.querySelectorAll('.colonnes-moitie > section')];
+      if (!answer || !proofs) return null;
+      return {below: proofs.getBoundingClientRect().top >= answer.getBoundingClientRect().bottom};
     })(document.querySelector('#result-dialog .result-body'))`);
-    assert.ok(modal && modal.above, 'fenêtre de détail en deux colonnes');
+    assert.ok(modal && modal.below, 'fenêtre de détail en deux colonnes');
     assert.equal(await page.evaluate(() => document.activeElement.matches('#result-dialog [data-close]')), true);
     await page.keyboard.press('Escape');
     assert.equal(await page.evaluate(() => document.getElementById('result-dialog').open), false);
@@ -1008,7 +1051,7 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
     const page = watch(await legacy.newPage());
     await page.addInitScript(() => {delete HTMLDialogElement.prototype.showModal;});
     await page.goto(origin + '/render/comparison');
-    await page.getByRole('link', {name: 'Détail et preuves'}).click();
+    await page.getByRole('link', {name: /Preuves/}).first().click();
     await page.waitForURL(origin + rendered.detail_href);
     assert.equal(await page.locator('h1').textContent(), 'Détail et preuves');
     await page.goBack();
@@ -1017,7 +1060,7 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
   assert.deepEqual(failures, []);
 });
 
-test('results and publication preview stay readable at 390 px: whole words, pinned model, neutral bars, touch help', async () => {
+test('results and publication preview stay readable at 390 px: whole words, stacked rows, no cost bars, method definition', async () => {
   const failures = [];
   const context = await browser.newContext({viewport: {width: 390, height: 844}, hasTouch: true, isMobile: true});
   try {
@@ -1029,9 +1072,9 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
     // K1 : le conseil et sa raison se lisent au premier écran, avant le bilan
     const advice = () => page.evaluate(() => {
-      const aside = document.querySelector('.economic-choice');
-      return {bottom: aside.getBoundingClientRect().bottom + scrollY,
-              first: Boolean(aside.compareDocumentPosition(document.querySelector('.campaign-summary')) & Node.DOCUMENT_POSITION_FOLLOWING)};
+      const ticket = document.querySelector('.ticket');
+      return {bottom: ticket.getBoundingClientRect().bottom + scrollY, title: ticket.querySelector('h2').getBoundingClientRect().bottom + scrollY,
+              first: Boolean(ticket.compareDocumentPosition(document.querySelector('section[aria-labelledby="t-bilan"]')) & Node.DOCUMENT_POSITION_FOLLOWING)};
     });
     for (const [width, height] of [[390, 844], [1440, 900]]) {
       await page.setViewportSize({width, height});
@@ -1039,33 +1082,28 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
       await page.evaluate(() => document.fonts.ready);
       const k1 = await advice();
       assert.ok(k1.first, `${width} conseil après le bilan`);
-      assert.ok(k1.bottom <= height, `${width} conseil sous le premier écran : ${k1.bottom}`);
+      // Sur téléphone, la piste et le titre de la maquette occupent le haut : le titre du ticket se lit au premier écran, le ticket entier sur ordinateur
+      assert.ok((width === 1440 ? k1.bottom : k1.title) <= height, `${width} conseil sous le premier écran : ${k1.bottom}`);
     }
-    // Chaque bloc de conseil : détail replié sur téléphone, déplié sans JavaScript sur ordinateur, où le bloc entier tient au premier écran
+    // Chaque ticket de conseil tient au premier écran sur ordinateur ; le compromis d'une priorité se lit sans dépliant, sur téléphone aussi
     for (const [width, height] of [[390, 844], [1440, 900]]) {
       await page.setViewportSize({width, height});
       for (const state of ['results', 'results_priority']) {
         await page.goto(origin + '/render/' + state);
         await page.evaluate(() => document.fonts.ready);
-        const blocks = await page.$$eval('.economic-choice', asides => asides.map(aside => {
-          const detail = aside.querySelector('details.choice-detail');
-          return {bottom: aside.getBoundingClientRect().bottom + scrollY,
-                  detail: detail ? detail.querySelector('summary').nextElementSibling.checkVisibility() : null};
-        }));
-        assert.ok(blocks.some(block => block.detail !== null), `${state} sans détail du conseil`);
-        for (const block of blocks.filter(block => block.detail !== null)) {
-          assert.equal(block.detail, width === 1440, `${state} ${width} détail du conseil`);
-        }
-        if (width === 1440) {
-          for (const block of blocks) assert.ok(block.bottom <= height, `${state} conseil sous le premier écran : ${block.bottom}`);
-        }
+        // Le premier ticket : l'état « results » en porte deux, la fixture ajoutant un conseil à une absence de conseil
+        const bottom = await page.$eval('.ticket', ticket => ticket.getBoundingClientRect().bottom + scrollY);
+        if (width === 1440) assert.ok(bottom <= height, `${state} conseil sous le premier écran : ${bottom}`);
       }
+      await page.goto(origin + '/render/results_priority');
+      assert.equal(await page.locator('section.g-compromis').isVisible(), true, `${width} compromis masqué`);
+      assert.match(await page.locator('section.g-compromis').innerText(), /Compromis sur/);
     }
     await page.setViewportSize({width: 390, height: 844});
     await page.goto(origin + '/render/results');
     await page.evaluate(() => document.fonts.ready);
     // Aucun mot coupé : chaque cellule offre au moins la largeur de son mot visible le plus long
-    const cut = await page.$$eval('.table-scroll td, .table-scroll th', cells => cells.flatMap(cell => {
+    const cut = await page.$$eval('.table-defile td', cells => cells.flatMap(cell => {
       const probe = document.createElement('span');
       Object.assign(probe.style, {whiteSpace: 'nowrap', position: 'absolute', visibility: 'hidden'});
       cell.append(probe);
@@ -1079,51 +1117,35 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
       return words;
     }));
     assert.deepEqual(cut, [], 'mots coupés dans le tableau');
-    // Tableau défilé jusqu'au coût : le nom du candidat reste à gauche
-    await page.$eval('.table-scroll', scroller => {scroller.scrollLeft = scroller.scrollWidth;});
-    assert.equal(await page.$eval('.table-scroll tbody th', th =>
-      Math.abs(th.getBoundingClientRect().left - th.closest('.table-scroll').getBoundingClientRect().left) < 1), true,
-      'colonne Modèle non épinglée');
-    await page.$eval('.table-scroll', scroller => {scroller.scrollLeft = 0;});
-    // Une barre de coût est une donnée : jamais la couleur d'accent réservée à l'interaction
-    const accent = await page.evaluate(() => {
-      const probe = document.createElement('i');
-      probe.style.color = 'var(--accent)'; document.body.append(probe);
-      const color = getComputedStyle(probe).color; probe.remove(); return color;
-    });
-    const fills = await page.$$eval('.costbar rect', rects => rects.map(rect => getComputedStyle(rect).fill));
-    assert.ok(fills.length > 1, 'barres de coût absentes');
-    assert.ok(fills.every(fill => fill !== accent), 'barre de coût en couleur d’accent');
+    // À 390 px, chaque ligne s'empile : aucun tableau ne défile horizontalement, aucune barre de coût
+    assert.equal(await page.$$eval('.table-defile', regions => regions.every(region => region.scrollWidth <= region.clientWidth)), true, 'tableau défilant à 390 px');
+    assert.equal(await page.locator('.costbar').count(), 0, 'barre de coût présente');
     // Verdict et exigence en défaut, entière ; l'explication du juge reste dans le détail
     assert.match((await page.locator('table').allInnerTexts()).join(' '), /Exigence non respectée : Action présente <img src=x onerror=alert\(1\)>\./);
     assert.equal(await page.locator('table img').count(), 0, 'motif du juge interprété comme HTML');
     // Une mesure booléenne se lit Oui ou Non, jamais True ou False
     assert.doesNotMatch((await page.locator('table').allInnerTexts()).join(' '), /\b(True|False)\b/);
-    // Pied de page : liens légaux en colonne, Code source à droite de la version
-    const bottom = await page.$eval('footer .bottom', row => {
+    // Pied de page : le lien « Code source » reste dans la ligne du bas, avec son icône, aligné à gauche sur téléphone (maquette)
+    const bottom = await page.$eval('footer .pied-bas', row => {
       const source = row.querySelector('a.source');
-      return {right: Math.round(row.getBoundingClientRect().right - source.getBoundingClientRect().right),
+      return {inside: source.getBoundingClientRect().left >= row.getBoundingClientRect().left && source.getBoundingClientRect().right <= row.getBoundingClientRect().right,
               icon: Boolean(source.querySelector('svg[aria-hidden="true"]'))};
     });
-    assert.deepEqual(bottom, {right: 0, icon: true});
-    assert.match(await page.locator('main').innerText(), /Résultat attendu :/);
+    assert.deepEqual(bottom, {inside: true, icon: true});
     const method = await page.locator('#method').textContent();
+    assert.match(method, /Résultat attendu :/);
     assert.match(method, /Le verdict vaut pour chaque modèle tel qu’il a été réglé et appelé ici/);
-    assert.match(method, /la même consigne et les mêmes pièces, et travaillent avec le même outil/);
-    // Au toucher, la définition de la qualité s'affiche et tient dans l'écran
-    await page.locator('.quality-help').tap();
-    const tooltip = await page.$eval('.quality-tooltip', tip => ({visible: getComputedStyle(tip).visibility === 'visible',
-      left: tip.getBoundingClientRect().left, right: tip.getBoundingClientRect().right}));
-    assert.equal(tooltip.visible, true, 'infobulle absente au toucher');
-    assert.ok(tooltip.left >= 0 && tooltip.right <= 390, 'infobulle hors écran ' + JSON.stringify(tooltip));
+    assert.match(method, /la même consigne et les mêmes pièces, et travaillent avec le même harnais/);
+    // La définition de la qualité se lit dans le tiroir de lecture, sans survol ni toucher
+    assert.match(method, /critères fixés pour votre cas d’usage et vérifiés dans chaque réponse \(Durée fictive/);
     mkdirSync('reports/privacy-browser', {recursive: true});
     // Deux exemples : chaque tableau garde son titre et son dénominateur, et le clavier atteint chacun
-    assert.deepEqual(await page.$$eval('.comparison-results h3', titles => titles.map(title =>
+    assert.deepEqual(await page.$$eval('.cas-titre h3', titles => titles.map(title =>
       /^\d+ réponses? évaluées? sur \d+ essais? prévus?$/.test(title.nextElementSibling.textContent))), [true, true]);
     const reached = new Set();
     for (let press = 0; press < 120 && reached.size < 2; press++) {
       await page.keyboard.press('Tab');
-      const region = await page.evaluate(() => document.activeElement.matches('.table-scroll[role="region"]')
+      const region = await page.evaluate(() => document.activeElement.matches('.table-defile[role="region"]')
         ? document.activeElement.getAttribute('aria-label') : null);
       if (region) reached.add(region);
     }
@@ -1136,18 +1158,17 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     assert.doesNotMatch(await page.locator('fieldset').innerText(), /reference\.txt/);
     assert.doesNotMatch(await page.locator('main').innerText(), /\b[0-9a-f]{32,64}\b|\bPASS\b|\bFAIL\b/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'aperçu déborde à 390 px');
-    // Composition S18 : le choix des pièces en synthèse, lu avant le corps publié sur téléphone, à droite sur ordinateur
+    // Le choix des pièces se lit avant la page du lecteur, sur téléphone comme sur ordinateur
     for (const width of [390, 1440]) {
       await page.setViewportSize({width, height: 844});
       const layout = await page.evaluate(() => {
-        const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
-        if (!side || !main) return null;
-        const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-        return {right: a.left >= b.right, above: a.bottom <= b.top, form: Boolean(side.querySelector('form fieldset')),
-                body: main.querySelectorAll('h2').length, overflow: document.documentElement.scrollWidth - innerWidth};
+        const form = document.querySelector('main form'), sheet = document.querySelector('main .g-feuillet');
+        if (!form || !sheet) return null;
+        return {above: form.getBoundingClientRect().bottom <= sheet.getBoundingClientRect().top, form: Boolean(form.querySelector('fieldset')),
+                body: sheet.querySelectorAll('h2').length, overflow: document.documentElement.scrollWidth - innerWidth};
       });
       assert.ok(layout && layout.form && layout.body > 0, `${width} aperçu sans composition : ` + JSON.stringify(layout));
-      assert.ok(width === 1440 ? layout.right : layout.above, `${width} position du choix des pièces`);
+      assert.ok(layout.above, `${width} position du choix des pièces`);
       assert.equal(layout.overflow, 0, `${width} débordement de l’aperçu`);
     }
     await page.setViewportSize({width: 390, height: 844});
@@ -1182,23 +1203,20 @@ test('priority advice stays native, escaped, keyboard reachable and readable at 
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
     const select = page.locator('#filter-priority');
     assert.equal(await select.count(), 1, 'priorité absente du formulaire');
-    assert.match(await page.locator('#filters > summary').innerText(), /Conseil/);
+    assert.match(await page.locator('#filters > summary').innerText(), /Tri et filtres/);
     assert.equal(await select.inputValue(), 'duration');
     assert.deepEqual(await page.locator('#filter-priority option').evaluateAll(options => options.map(option => option.value)),
                      ['', 'cost', 'duration', 'present']);
     assert.match(await page.locator('label[for="filter-priority"]').innerText(), /Priorité du conseil/);
-    // La priorité reste visible ; son compromis se replie sous « Détail du conseil » (critère K1) ; les libellés du contrat restent du texte
-    const advice = page.locator('.economic-choice');
-    const detail = advice.locator('details.choice-detail');
+    // La priorité reste visible ; son compromis se lit sous le ticket, sans dépliant ; les libellés du contrat restent du texte
+    const advice = page.locator('section.ticket');
+    const tradeoff = page.locator('section.g-compromis');
     assert.match(await advice.innerText(), /Priorité choisie/);
-    assert.equal(await detail.locator('summary').innerText(), 'Détail du conseil');
-    assert.equal(await detail.evaluate(node => node.open), false, 'détail du conseil ouvert sur téléphone');
-    assert.doesNotMatch(await advice.innerText(), /Compromis sur/);
-    assert.match(await detail.textContent(), /Compromis sur/);
-    assert.equal(await advice.locator('img, script').count(), 0, 'compromis interprété comme HTML');
+    assert.match(await tradeoff.innerText(), /Compromis sur/);
+    assert.equal(await advice.locator('img, script').count() + await tradeoff.locator('img, script').count(), 0, 'compromis interprété comme HTML');
     assert.equal(await page.locator('#filter-priority img, #filter-priority script').count(), 0,
                  'libellé de critère interprété comme HTML');
-    assert.match(await advice.textContent(), /<img src=x onerror=alert\(1\)>/);
+    assert.match(await tradeoff.textContent(), /<img src=x onerror=alert\(1\)>/);
     assert.match(await select.textContent(), /<script>alert\(4\)<\/script>/);
     // GET natif : le contrôle et le bouton vivent dans le formulaire existant
     const form = page.locator('form[action$="#filters"]');
@@ -1215,9 +1233,6 @@ test('priority advice stays native, escaped, keyboard reachable and readable at 
     assert.deepEqual(reached, ['filter-priority', 'Appliquer']);
     mkdirSync('reports/privacy-browser', {recursive: true});
     await page.screenshot({path: 'reports/privacy-browser/priority-mobile.png', fullPage: true});
-    // Le résumé déplie le compromis au toucher
-    await detail.locator('summary').tap();
-    assert.match(await advice.innerText(), /Compromis sur/);
   } finally {await context.close();}
   // Sans JavaScript, le choix reste lisible et soumissible
   const off = await browser.newContext({javaScriptEnabled: false, viewport: {width: 390, height: 844}});
@@ -1227,9 +1242,8 @@ test('priority advice stays native, escaped, keyboard reachable and readable at 
     assert.equal(await page.locator('#filter-priority').count(), 1);
     assert.equal(await page.locator('#filter-priority').inputValue(), 'duration');
     assert.equal(await page.locator('form[action$="#filters"] button[type="submit"]').isVisible(), true);
-    // Sans JavaScript, le détail natif se déplie et montre le compromis
-    await page.locator('.economic-choice details.choice-detail > summary').click();
-    assert.match(await page.locator('.economic-choice').innerText(), /Compromis sur/);
+    // Sans JavaScript, le compromis est déjà lisible
+    assert.match(await page.locator('section.g-compromis').innerText(), /Compromis sur/);
   } finally {await off.close();}
   assert.deepEqual(failures, []);
 });
@@ -1246,20 +1260,21 @@ test('pre-launch summary: synthesis, single launch button as confirmation, model
       await page.evaluate(() => document.fonts.ready);
       const main = await page.locator('main').innerText();
       // Prévision et réservation affichées séparément, jamais additionnées
-      assert.match(main, /2 modèles · réponses estimées : non estimable · réservé pour l’évaluation : 0,30 USD · crédit restant : 18,5 USD/, colorScheme);
+      assert.match(main, /2\s*MODÈLES COMPARÉS/i, colorScheme);
+      for (const row of [/Réponses, estimation\s+non estimable/, /Réservé pour la vérification des réponses\s+0,30 USD/, /Crédit restant\s+18,5 \/ 20 USD/])
+        assert.match(main, row, colorScheme);
       assert.equal(await page.locator('main input[type="checkbox"]').count(), 0, `${colorScheme} case à cocher`);
-      assert.equal(await page.locator('main button:not(.sec)').count(), 1, `${colorScheme} un seul bouton principal`);
+      assert.equal(await page.locator('main button:not(.btn-sec)').count(), 1, `${colorScheme} un seul bouton principal`);
       assert.equal(await page.locator('form[action$="/start"] input[name="confirm"]').getAttribute('value'), 'yes');
       assert.equal(await page.evaluate(() => {
-        const synthesis = [...document.querySelectorAll('main p')].find(p => p.textContent.includes('réponses estimées'));
-        const nodes = [synthesis, document.querySelector('form[action$="/start"] button'),
-                       [...document.querySelectorAll('main a')].find(a => a.textContent === 'Modifier la sélection'),
-                       document.querySelector('.table-scroll table')];
+        const nodes = [[...document.querySelectorAll('main a')].find(a => a.textContent === 'Modifier la sélection'),
+                       document.querySelector('.table-defile table'), document.querySelector('form.pupitre'),
+                       document.querySelector('form[action$="/start"] button')];
         return nodes.every(Boolean) && nodes.every((node, i) => !i || nodes[i - 1].compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
-      }), true, `${colorScheme} ordre synthèse, bouton, lien, tableau`);
-      assert.match(await page.locator('.table-scroll table').innerText(), /adapté/);
+      }), true, `${colorScheme} ordre lien, tableau, récapitulatif, bouton`);
+      assert.match(await page.locator('.table-defile table').innerText(), /Faible non accepté par ce modèle/);
       // K5 : les nombres du tableau s'alignent en chiffres de largeur fixe
-      assert.match(await page.locator('.table-scroll td').first().evaluate(cell => getComputedStyle(cell).fontVariantNumeric),
+      assert.match(await page.locator('.table-defile td.nb').first().evaluate(cell => getComputedStyle(cell).fontVariantNumeric),
                    /tabular-nums/, `${colorScheme} chiffres du lancement`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${colorScheme} débordement`);
       assert.deepEqual(await page.evaluate(contrastFailures), [], colorScheme);
@@ -1295,7 +1310,7 @@ test('an expired launch wait claims neither failure nor success and only offers 
     // La consultation est une lecture : elle ouvre le suivi de la même campagne sans rien envoyer
     await page.getByRole('link', {name: 'Consulter l’état du lancement'}).click();
     await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1/conditions');
-    assert.equal(await page.locator('h1').textContent(), 'Benchmark en cours');
+    assert.equal(await page.locator('h1').textContent(), 'Suivi du benchmark');
     assert.equal(posts.length, sent, 'consultation émise en POST');
     assert.deepEqual(failures, []);
   } finally {await context.close();}
@@ -1328,7 +1343,7 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     };
     const running = () => page.locator('#preparation-progress progress').isVisible();
     await start();
-    assert.equal(await page.locator('h1').textContent(), 'Benchmark en cours');
+    assert.equal(await page.locator('h1').textContent(), 'Suivi du benchmark');
     // Une zone `aria-live` réécrite à l'identique serait annoncée de nouveau : rien n'est remplacé sans changement
     await page.evaluate(() => {
       window.statusMutations = 0;
@@ -1382,11 +1397,11 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     }
     // La mise à jour réécrit la zone d'état : la composition est remplacée entière, sans doublon
     await start();
-    assert.equal((await page.locator('.wb-side').innerText()).includes('Réponses évaluées'), false);
+    assert.equal((await page.locator('#campaign-status').textContent()).includes('réponses vérifiées'), false);
     await tick(3000, 'mixed-EMISSION_POSSIBLE-WAITING', 'FOLLOWUP_ACTIVE');
-    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.workbench').length,
-      document.querySelectorAll('#campaign-status > .workbench').length]), [1, 1]);
-    assert.match(await page.locator('.wb-side').innerText(), /Réponses évaluées : 0 sur 2\./);
+    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.direct-tete').length,
+      document.querySelectorAll('#campaign-status > .direct-tete').length]), [1, 1]);
+    assert.match(await page.locator('#campaign-status').textContent(), /0\/2\s*réponses vérifiées/);
     await start();
     await tick(3000, 'followup-stopped', 'FOLLOWUP_COMPLETE');
     await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1/conditions');
@@ -1458,8 +1473,8 @@ test('access and launch screens preserve available actions, estimates and refusa
       if (state === 'disconnected') assert.equal(await page.locator('input[name="return"]').inputValue(), '/preparation/access');
       if (state === 'connected') {
         const text = await page.textContent('main');
-        assert.ok(text.includes('Solde restant selon OpenRouter : 12,50 USD'));
-        assert.ok(text.includes('Plafond de la clé : 25 USD'));
+        assert.ok(text.includes('Solde restant') && text.includes('12,50') && text.includes('selon OpenRouter'));
+        assert.ok(text.includes('Plafond de la clé') && text.includes('25'));
         assert.ok(text.includes('Retirer la clé de ce navigateur'));
       }
       if (state === 'invalid') assert.ok((await page.textContent('main')).includes('OpenRouter refuse cette clé'));
@@ -1471,13 +1486,13 @@ test('access and launch screens preserve available actions, estimates and refusa
       }
       if (state === 'connected') assert.equal(await page.locator('form[action="/preparation/access/disconnect"]').count(), 1);
     }
-    for (const [name, text] of [['estimate-known', 'réservé pour l’évaluation : 0,125 USD'],
-      ['estimate-unknown', 'réservé pour l’évaluation : inconnu'],
+    for (const [name, text] of [['estimate-known', '0,125 USD'],
+      ['estimate-unknown', 'Réservé pour la vérification des réponses'],
       ['launch-judgment-blocked', 'Budget insuffisant pour l’évaluation']]) {
       await page.goto(origin + '/render/' + name);
       assert.ok((await page.textContent('main')).includes(text), name);
       assert.equal(await page.getByRole('button', {name: 'Lancer le benchmark', exact: true}).count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.locator('[id="cap_usd"], form[action$="/cap"]').count(), 0);
     }
     await page.goto(origin + '/render/estimate-known');
@@ -1485,18 +1500,18 @@ test('access and launch screens preserve available actions, estimates and refusa
     for (const state of ['ready', 'blocked']) {
       await page.goto(origin + '/render/launch-' + state);
       const text = await page.textContent('main');
-      assert.equal(text.includes('Tout est prêt.'), state === 'ready');
+      assert.equal(text.includes('Tout est prêt'), state === 'ready');
       assert.equal(text.includes('✓'), false);
       assert.equal(await page.getByRole('button', {name: 'Lancer le benchmark', exact: true}).count(), state === 'ready' ? 1 : 0);
       assert.equal(await page.locator('form[action$="/cap"], input[name="confirm"][required]').count(), 0);
       assert.equal(await page.getByRole('link', {name: 'Modifier la sélection'}).getAttribute('href'), '/preparation/dossiers/d1/configurations');
       if (state === 'ready') {
-        assert.ok(text.includes('crédit restant : 12,50 USD'));
-        assert.ok(text.includes('réponses estimées : 3,50 USD'));
+        assert.match(await page.locator('.pupitre').innerText(), /Crédit restant\s+12,50 USD/);
+        assert.ok(text.includes('Réponses estimées à 3,50 USD'));
         assert.equal(await page.locator('input[name="confirm"]').getAttribute('type'), 'hidden');
         assert.equal(await page.locator('input[name="confirm"]').inputValue(), 'yes');
       } else {
-        for (const phrase of ['Modèle à choisir de nouveau', 'Ce que la vérification de l’exemple a relevé', 'Quantité à confirmer'])
+        for (const phrase of ['Modèle à choisir de nouveau', 'relevé par le contrôle', 'Quantité à confirmer'])
           assert.ok(text.includes(phrase), phrase);
       }
       assert.ok((await page.locator('form').evaluateAll(forms => forms.map(f => [f.method, f.getAttribute('action')]))).every(
@@ -1506,15 +1521,15 @@ test('access and launch screens preserve available actions, estimates and refusa
     await page.goto(origin + '/render/configurations-selected');
     assert.equal(await page.locator('form#configurations-form').getAttribute('action'), '/preparation/dossiers/d1/configurations');
     assert.equal(await page.locator('input[name="models"]:checked').count(), 2);
-    assert.equal(await page.locator('select[name="tier"]').inputValue(), 'high');
-    assert.equal(await page.locator('select[name="tier"]').getAttribute('aria-describedby'), 'reasoning-help');
+    assert.equal(await page.locator('input[name="tier"]:checked').getAttribute('value'), 'high');
+    assert.equal(await page.locator('input[name="tier"]:checked').getAttribute('form'), 'configurations-form');
     const effort = page.locator('select[name="effort:modele-a"]');
     assert.equal(await effort.getAttribute('form'), 'configurations-form');
     assert.equal(await effort.inputValue(), 'xhigh');
     assert.equal(await page.locator('select[name="effort:modele-b"]').count(), 0);
     const selection = await page.textContent('main');
-    for (const phrase of ['reçoit le niveau le plus proche qu’il propose', 'Ajuster le niveau par modèle',
-      'sans garantir qu’elle soit meilleure', 'niveau de raisonnement fixe']) assert.ok(selection.includes(phrase), phrase);
+    for (const phrase of ['reçoit le plus proche', 'Choisir un niveau différent pour un modèle',
+      'sans garantie d’être meilleur', 'Raisonnement fixe']) assert.ok(selection.includes(phrase), phrase);
     assert.equal(/Votre sélection|Coût total estimé|Plafond :/.test(selection), false);
     assert.equal(await page.locator('a[href$="/campaigns/d1-c1/conditions"]').count(), 0);
     assert.equal(await page.getByRole('button', {name: 'Continuer', exact: true}).count(), 1);
@@ -1529,40 +1544,43 @@ test('access and launch screens preserve available actions, estimates and refusa
     // Composition S18 : l'état d'abord, puis la zone principale et la colonne de synthèse, à droite sur ordinateur
     const zones = () => page.evaluate(() => {
       const box = selector => document.querySelector(selector).getBoundingClientRect();
-      const side = box('.wb-side'), main = box('.wb-main');
+      const side = box('.cote'), main = box('.pile-l');
       return {right: side.left >= main.right, below: side.top >= main.bottom, above: side.bottom <= main.top,
               overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-              side: document.querySelector('.wb-side').innerText};
+              side: document.querySelector('.cote').innerText};
     });
     for (const width of [1440, 390]) {
       await page.setViewportSize({width, height: 900});
       await page.goto(origin + '/render/access-connected');
       let layout = await zones();
-      assert.equal(await page.locator('.readout').innerText(), 'SOLDE RESTANT SELON OPENROUTER\n12,50 USD', `${width} relevé du solde`);
-      assert.equal(await page.evaluate(() => document.querySelector('.state').compareDocumentPosition(document.querySelector('.workbench'))
-        & Node.DOCUMENT_POSITION_FOLLOWING), 4, `${width} état avant les formulaires`);
-      assert.ok(layout.side.includes('Son plafond est la seule limite de dépense.'), `${width} colonne dépense`);
+      assert.match((await page.locator('.releves').innerText()).replace(/\s+/g, ' '), /SOLDE RESTANT 12,50\s*USD selon OpenRouter PLAFOND DE LA CLÉ 25\s*USD/i, `${width} relevés du solde`);
+      assert.equal(await page.locator('.pile-l > .etat').count(), 1, `${width} état avant le formulaire`);
+      assert.ok(layout.side.includes('Ce plafond est la seule limite de dépense.'), `${width} colonne de la clé`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} colonne de la clé`);
       assert.equal(layout.overflow, 0, `${width} débordement de la clé`);
       await page.goto(origin + '/render/configurations-selected');
-      layout = await zones();
-      assert.ok(layout.side.includes('Enregistrer ce choix n’appelle aucun modèle.'), `${width} aucun appel`);
-      assert.equal(await page.locator('.wb-side button[form="configurations-form"]').innerText(), 'Continuer');
-      assert.ok(width === 1440 ? layout.right : layout.below, `${width} colonne des modèles`);
-      assert.equal(layout.overflow, 0, `${width} débordement des modèles`);
+      assert.ok((await page.textContent('main')).includes('Enregistrer ce choix n’appelle aucun modèle.'), `${width} aucun appel`);
+      assert.equal(await page.locator('.barre-choix button[form="configurations-form"]').innerText(), 'Continuer');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0, `${width} débordement des modèles`);
       await page.goto(origin + '/render/launch-ready');
-      layout = await zones();
-      // Synthèse, conditions puis bouton dans la colonne lue en premier ; le tableau reste dans la zone principale
-      for (const phrase of ['ESTIMATION DES RÉPONSES\n3,50 USD', 'réponses estimées : 3,50 USD', 'Tout est prêt.', 'Lancer le benchmark'])
-        assert.ok(layout.side.includes(phrase), `${width} ${phrase}`);
-      assert.ok(layout.side.indexOf('Tout est prêt.') < layout.side.indexOf('Lancer le benchmark'), `${width} conditions avant le bouton`);
-      assert.equal(await page.locator('.wb-main table').count(), 1);
-      assert.ok(width === 1440 ? layout.right : layout.above, `${width} colonne du lancement`);
-      assert.equal(layout.overflow, 0, `${width} débordement du lancement`);
+      // Le récapitulatif porte les montants et le seul bouton ; le tableau reste dans la colonne de lecture
+      const pupitre = await page.locator('form.pupitre').innerText();
+      for (const phrase of [/RÉPONSES, ESTIMATION\s+3,50 USD/i, /Lancer le benchmark/])
+        assert.match(pupitre, phrase, `${width}`);
+      assert.equal(await page.locator('.pile-l table').count(), 1);
+      const place = await page.evaluate(() => {
+        const box = selector => document.querySelector(selector).getBoundingClientRect();
+        const side = box('.pupitre'), table = box('.pile-l table'), checklist = box('.checklist');
+        return {right: side.left >= box('.pile-l').right, between: side.top >= checklist.bottom && side.bottom <= table.top + 1,
+                overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
+      });
+      // Sur une colonne, le récapitulatif et son bouton suivent la liste des contrôles, avant le tableau
+      assert.ok(width === 1440 ? place.right : place.between, `${width} colonne du lancement`);
+      assert.equal(place.overflow, 0, `${width} débordement du lancement`);
       await page.goto(origin + '/render/launch-blocked');
-      layout = await zones();
-      assert.ok(layout.side.includes('Impossible de lancer pour l’instant'));
-      assert.equal(layout.side.includes('Lancer le benchmark'), false);
+      const blocked = await page.locator('.pupitre').innerText();
+      assert.ok(blocked.includes('Impossible de lancer pour l’instant'));
+      assert.equal(blocked.includes('Lancer le benchmark'), false);
     }
   } finally {await context.close();}
 });
@@ -1573,27 +1591,27 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
     const page = await context.newPage();
     for (const [state, active, terminal, message] of [
       ['running', true, false, 'Benchmark en cours'], ['queued', true, false, 'Les essais n’ont pas encore démarré'],
-      ['stopped', false, false, 'La comparaison s’est arrêtée avant la fin'],
+      ['stopped', false, false, 'Le benchmark s’est arrêté avant la fin'],
       ['ambiguous', false, false, 'Un essai n’a pas pu être confirmé'],
       ['incident', false, false, 'Un problème technique est survenu'], ['received', false, true, 'Réponses reçues'],
       // #525 : un incident fournisseur non relançable nommé, jamais présenté comme un problème technique anonyme
-      ['credit-exhausted', false, false, 'Crédit OpenRouter épuisé pour votre clé : rechargez-le ou relevez son plafond. La comparaison s’est arrêtée'],
+      ['credit-exhausted', false, false, ['Crédit OpenRouter épuisé pour votre clé : rechargez-le ou relevez son plafond.', 'Le benchmark s’est arrêté']],
       // #537 : l'incident est attribué au canal appelé, jamais à OpenRouter par défaut
-      ['official-limited', false, false, 'L’API officielle du fournisseur limite temporairement les demandes. La comparaison s’est arrêtée'],
+      ['official-limited', false, false, ['L’API officielle du fournisseur limite temporairement les demandes.', 'Le benchmark s’est arrêté']],
       // #539 : campagne opérateur, le modèle épuisé n'est pas présenté comme une réponse reçue
-      ['operator-exhausted', false, false, 'Modèle A · Niveau de raisonnement non renseigné : pas de réponse exploitable']]) {
+      ['operator-exhausted', false, false, ['Modèle A', 'Raisonnement non renseigné', 'Sans réponse']]]) {
       await page.goto(origin + '/render/followup-' + state);
       const text = await page.textContent('main');
-      assert.ok(text.includes(message), state);
+      for (const part of [message].flat()) assert.ok(text.includes(part), state + ' ' + part);
       assert.equal(await page.locator('#preparation-progress').count(), Number(active), state);
       assert.equal(await page.locator('[data-results-href]').count(), Number(terminal), state);
       assert.equal(await page.locator('main form, #cap_usd').count(), 0);
       assert.equal(await page.locator('script').count() > 0, active || terminal);
-      assert.equal(await page.locator('nav.steps a[href="/preparation/dossiers/d1/revisions/2"]').count() > 0, true);
-      assert.equal(await page.locator('nav.steps a[href="#exemple"]').count(), 0);
-      if (terminal) assert.ok(text.includes('Celles qui n’ont pas encore de verdict attendent leur évaluation.'));
+      assert.equal(await page.locator('nav.piste a[href="/preparation/dossiers/d1/revisions/2"]').count() > 0, true);
+      assert.equal(await page.locator('nav.piste a[href="#exemple"]').count(), 0);
+      if (terminal) assert.ok(text.includes('Celles qui n’ont pas encore de verdict attendent leur vérification.'));
       // #541 : la ligne de compte ne présente pas le modèle épuisé comme une réponse reçue
-      if (state === 'operator-exhausted') assert.ok(text.includes('Réponses reçues : 0 sur 1.'), text);
+      if (state === 'operator-exhausted') assert.match(text, /0\/1\s*réponses reçues/, text);
     }
     for (const status of ['NOT_STARTED', 'WAITING', 'RUNNING', 'COMPLETE', 'BLOCKED']) {
       await page.goto(origin + '/render/judgment-' + status);
@@ -1601,8 +1619,8 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       const text = await page.textContent('main');
       assert.equal(await page.locator('#preparation-progress').count(), Number(active));
       assert.equal(await page.locator('[data-results-href]').count(), Number(ready));
-      assert.ok(text.includes('Réponses reçues : 1 sur 1'));
-      assert.ok(text.includes(`Réponses évaluées : ${Number(ready)} sur 1`));
+      assert.match(text, /1\/1\s*réponses reçues/);
+      assert.match(text, new RegExp(`${Number(ready)}/1\\s*réponses vérifiées`));
       assert.equal(await page.locator('form[action$="/evaluate"]').count(), Number(status === 'NOT_STARTED'));
       assert.equal(await page.locator('script').count() > 0, active || ready);
       if (status === 'NOT_STARTED') {
@@ -1615,7 +1633,7 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       ['EMISSION_POSSIBLE', 'WAITING', true], ['RECEIVED', 'None', false], ['RECEIVED', 'BLOCKED', false]]) {
       await page.goto(origin + '/render/mixed-' + state + '-' + judgment);
       assert.equal(await page.locator('#preparation-progress').count(), Number(active));
-      assert.equal((await page.title()).includes('Benchmark en cours'), active);
+      assert.ok((await page.title()).includes('Suivi du benchmark'));
       assert.equal(await page.locator('script').count() > 0, active);
     }
     // Composition S18 : état en tête, liste des modèles en zone principale, compteurs en synthèse, actions hors de la zone réécrite
@@ -1624,21 +1642,18 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       for (const view of ['followup-running', 'followup-credit-exhausted', 'judgment-NOT_STARTED', 'followup-received']) {
         await page.goto(origin + '/render/' + view);
         const layout = await page.evaluate(() => {
-          const status = document.getElementById('campaign-status'), bench = status.querySelector('.workbench');
-          const side = bench.querySelector('.wb-side'), main = bench.querySelector('.wb-main');
-          const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-          return {right: a.left >= b.right, below: a.top >= b.bottom,
-                  overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-                  stateFirst: Boolean(status.querySelector('.state').compareDocumentPosition(bench) & Node.DOCUMENT_POSITION_FOLLOWING),
-                  list: main.querySelector('h2')?.textContent, side: side.innerText,
-                  actionsInside: document.querySelectorAll('.workbench #preparation-progress, .workbench form, .workbench a.button').length};
+          const status = document.getElementById('campaign-status');
+          return {overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+                  head: Boolean(status.querySelector('.direct-tete h2')), list: status.querySelector('ol.couloirs')?.getAttribute('aria-label'),
+                  lanes: status.querySelectorAll('.couloir').length, counter: status.querySelector('.compteur')?.textContent,
+                  actionsInside: status.querySelectorAll('#preparation-progress, form, a.btn, a.lien, button').length};
         });
         assert.equal(layout.overflow, 0, `${width} ${view} sans débordement`);
-        assert.ok(layout.stateFirst, `${width} ${view} état en tête`);
-        assert.equal(layout.list, 'Modèle par modèle', `${width} ${view} liste en zone principale`);
-        assert.match(layout.side, /Réponses reçues : \d+ sur \d+\./, `${width} ${view} compteurs en synthèse`);
-        assert.equal(layout.actionsInside, 0, `${width} ${view} actions hors de la composition`);
-        assert.ok(width === 1440 ? layout.right : layout.below, `${width} ${view} position de la synthèse`);
+        assert.ok(layout.head, `${width} ${view} titre d'état en tête`);
+        assert.equal(layout.list, 'Modèle par modèle', `${width} ${view} liste des couloirs`);
+        assert.ok(layout.lanes > 0, `${width} ${view} un couloir par modèle`);
+        assert.match(layout.counter, /\d+\/\d+\s*réponses reçues/, `${width} ${view} compteur`);
+        assert.equal(layout.actionsInside, 0, `${width} ${view} actions hors de la zone réécrite`);
       }
     }
   } finally {await context.close();}
@@ -1657,68 +1672,108 @@ test('external references remain readable, searchable and safe without JavaScrip
         return route.fulfill({status: 200, contentType: 'text/html', body: '<h1>Source fictive</h1>'});
       });
       await page.goto(origin + '/render/home');
-      await page.getByRole('navigation', {name: 'Navigation principale'}).getByRole('link', {name: 'Évaluations externes'}).click();
-      assert.equal(await page.locator('main h2').count(), 3);
-      // Composition S18 : recherche et filtres en synthèse, lus avant la liste sur téléphone ; la fiche garde un rappel en synthèse
+      await page.getByRole('navigation', {name: 'Parcours'}).getByRole('link', {name: 'Benchmarks publics'}).click();
+      assert.equal(await page.locator('main h3').count(), 3);
+      // La recherche et les filtres se lisent avant la liste ; la fiche garde la source en synthèse
       const zones = () => page.evaluate(() => {
-        const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
+        const side = document.querySelector('main .cote'), main = document.querySelector('main .pile-l');
         if (!side || !main) return null;
         const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-        return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText,
-                h2Side: side.querySelectorAll('h2').length, search: Boolean(side.querySelector('form[method="get"] #q')),
+        return {right: a.left >= b.right, below: a.top >= b.bottom, side: side.innerText, main: main.innerText,
+                overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
+      });
+      const search = () => page.evaluate(() => {
+        const form = document.querySelector('main form[role="search"]'), list = document.querySelector('main .g-grille');
+        return {above: form.getBoundingClientRect().bottom <= list.getBoundingClientRect().top, field: Boolean(form.querySelector('#q')),
                 overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
       });
       for (const width of [390, 1440]) {
         await page.setViewportSize({width, height: 844});
         await page.goto(origin + '/evaluations-externes');
-        let layout = await zones();
-        assert.ok(layout && layout.search && layout.h2Side === 0, `${width} recherche des évaluations hors synthèse`);
-        assert.match(layout.main, /Travail mesuré/, `${width} notices hors zone principale`);
-        assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la recherche des évaluations`);
-        assert.equal(layout.overflow, 0, `${width} débordement de la liste des évaluations`);
+        const found = await search();
+        assert.ok(found.field && found.above, `${width} recherche des benchmarks avant la liste`);
+        assert.equal(found.overflow, 0, `${width} débordement de la liste des benchmarks`);
         await page.goto(origin + '/render/approved-mteb');
-        layout = await zones();
-        assert.ok(layout, `${width} fiche d'évaluation sans composition`);
-        assert.match(layout.main, /Travail mesuré/, `${width} notice hors zone principale`);
-        assert.match(layout.side, /ne prouvent pas la réussite sur votre besoin/, `${width} rappel hors synthèse`);
-        assert.match(layout.side, /Décrire mon cas d’usage/, `${width} lien du besoin hors synthèse`);
+        const layout = await zones();
+        assert.ok(layout, `${width} fiche sans composition`);
+        assert.match(layout.main, /elle mesure/i, `${width} notice hors zone principale`);
+        assert.match(layout.main, /ne prouvent pas la réussite sur votre cas d’usage/, `${width} rappel hors zone principale`);
+        assert.match(layout.main, /Décrire mon cas d’usage/, `${width} lien du besoin hors zone principale`);
+        assert.match(layout.side, /source officielle/i, `${width} source hors synthèse`);
         assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de la fiche`);
+        assert.equal(layout.overflow, 0, `${width} débordement de la fiche`);
       }
       await page.setViewportSize({width: 390, height: 844});
       await page.goto(origin + '/evaluations-externes');
-      assert.equal(await page.locator('#category').inputValue(), '');
-      assert.equal(await page.locator('#verification').inputValue(), '');
-      assert.equal(await page.locator('main script, main img').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.locator('input[name="category"]').inputValue(), '');
+      assert.equal(await page.locator('input[name="verification"]').inputValue(), '');
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.getByLabel('Rechercher une évaluation').fill('corriger');
-      await page.getByLabel('Travail mesuré', {exact: true}).selectOption('coding');
-      await page.getByLabel('Vérification éditoriale', {exact: true}).selectOption('verified');
-      await page.getByRole('button', {name: 'Rechercher', exact: true}).click();
-      assert.equal(await page.locator('main h2').count(), 1);
+      // Le lien « Décrire mon cas d’usage » n'existe que dans les états vides
+      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).count(), 0);
+      if (javaScriptEnabled) {
+        // Avec JavaScript : la recherche filtre dès 3 caractères, sans rechargement ; un filtre cliqué garde la position
+        assert.equal(await page.locator('script').count(), 1);
+        await page.evaluate(() => {window.sansRechargement = true;});
+        await page.getByLabel('Rechercher un benchmark').fill('co');
+        await page.waitForTimeout(400);
+        assert.equal(new URL(page.url()).searchParams.get('q'), null, 'filtrage sous 3 caractères');
+        await page.getByLabel('Rechercher un benchmark').fill('corriger');
+        await page.waitForFunction(() => new URL(location.href).searchParams.get('q') === 'corriger');
+        // Le contenu affiché est celui que le serveur rend pour cette recherche
+        const attendu = (rendered.reference_search[JSON.stringify(['corriger', '', ''])].split('<main')[1].match(/<h3/g) || []).length;
+        await page.waitForFunction(n => document.querySelectorAll('main h3').length === n && /corriger/.test(document.querySelector('main').textContent), attendu);
+        assert.equal(await page.locator('#q').inputValue(), 'corriger');
+        assert.equal(await page.evaluate(() => document.activeElement?.id), 'q', 'la saisie garde le focus');
+        await page.evaluate(() => window.scrollTo(0, 300));
+        const avant = await page.evaluate(() => scrollY);
+        assert.ok(avant > 0, 'page trop courte pour mesurer la position');
+        // Les filtres s'appliquent au clic et gardent le texte cherché dans l'adresse
+        await page.getByRole('link', {name: 'Programmation', exact: true}).click();
+        await page.waitForFunction(() => new URL(location.href).searchParams.get('category') === 'coding');
+        assert.equal(new URL(page.url()).searchParams.get('q'), 'corriger');
+        assert.equal(await page.evaluate(() => scrollY), avant, 'la page remonte au clic sur un filtre');
+        await page.getByRole('link', {name: 'Vérifiée', exact: true}).click();
+        await page.waitForFunction(() => new URL(location.href).searchParams.get('verification') === 'verified');
+        assert.equal(await page.evaluate(() => window.sansRechargement), true, 'page rechargée');
+      } else {
+        // Sans JavaScript : recherche native, puis filtres-liens qui gardent le texte cherché dans l'adresse
+        await page.getByLabel('Rechercher un benchmark').fill('corriger');
+        await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
+        await page.getByRole('link', {name: 'Programmation', exact: true}).click();
+        assert.equal(new URL(page.url()).searchParams.get('q'), 'corriger');
+        await page.getByRole('link', {name: 'Vérifiée', exact: true}).click();
+      }
+      assert.deepEqual([...new URL(page.url()).searchParams.entries()].sort(),
+        [['category', 'coding'], ['q', 'corriger'], ['verification', 'verified']]);
+      assert.equal(await page.locator('main h3').count(), 1);
       assert.equal(await page.locator('#q').inputValue(), 'corriger');
-      assert.equal(await page.locator('#category').inputValue(), 'coding');
-      assert.equal(await page.locator('#verification').inputValue(), 'verified');
+      assert.equal(await page.locator('input[name="category"]').inputValue(), 'coding');
+      assert.equal(await page.locator('input[name="verification"]').inputValue(), 'verified');
+      assert.deepEqual(await page.locator('main .segments-liens a[aria-current]').allTextContents().then(texts => texts.sort()), ['Programmation', 'Vérifiée']);
       await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
-      assert.equal(await page.locator('main h2').count(), 3);
-      await page.getByLabel('Rechercher une évaluation').fill('introuvable');
-      await page.getByRole('button', {name: 'Rechercher', exact: true}).click();
-      assert.match(await page.textContent('main'), /Aucune évaluation ne correspond/);
+      assert.equal(await page.locator('main h3').count(), 3);
+      assert.equal(await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).count(), 0);
+      await page.getByLabel('Rechercher un benchmark').fill('introuvable');
+      await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
+      assert.match(await page.textContent('main'), /Aucun benchmark ne correspond/);
       assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
       await page.goto(origin + '/evaluations-externes?q=' + encodeURIComponent('<script>alert(2)</script>'));
       assert.equal(await page.locator('#q').inputValue(), '<script>alert(2)</script>');
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       await page.goto(origin + '/render/reference-empty');
-      assert.match(await page.textContent('main'), /Aucune évaluation externe disponible/);
+      assert.match(await page.textContent('main'), /Aucun benchmark public disponible/);
       await page.goto(origin + '/evaluations-externes/atelier-inconnu');
       assert.match(await page.textContent('main'), /Vérification insuffisante/);
-      assert.match(await page.textContent('main'), /Inconnue/);
+      assert.match(await page.textContent('main'), /inconnu/);
       await page.goto(origin + '/evaluations-externes/atelier-retire');
       assert.match(await page.textContent('main'), /Source retirée/);
       assert.equal(await page.locator('main a[href^="https:"]').count(), 0);
       await page.goto(origin + '/render/reference-referral');
       const target = page.locator('main a[href="/evaluations-externes/atelier-code"]');
-      assert.equal(await target.getAttribute('rel'), 'noreferrer');
+      // Le lien officiel du benchmark s'ouvre sans référent ni lien avec la page d'origine
+      assert.deepEqual((await page.locator('main a[href="https://code.example/evaluation"]').getAttribute('rel')).split(/\s+/).sort(), ['noopener', 'noreferrer']);
       await target.click();
       assert.equal(await page.locator('main h1').textContent(), 'Atelier Code fictif <script>alert(1)</script>');
       assert.equal((await page.textContent('main')).includes('Besoin privé'), false);
@@ -1745,8 +1800,8 @@ test('external references remain readable, searchable and safe without JavaScrip
                            'aucune information personnelle ou confidentielle',
                            'reste disponible', 'Demander l’aide'])
         assert.ok(help.includes(value), value);
-      assert.equal(await page.locator('main script, main img').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       const formulationField = page.getByLabel('Formulation à comparer');
       await formulationField.fill('Corriger un programme fictif et résoudre un calcul inventé');
@@ -1770,43 +1825,43 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.match(suggestions, /Atelier Maths fictif/);
       assert.match(suggestions, /ne prouve ni adéquation/);
       assert.equal(await page.locator('main details summary').filter({hasText: 'Reçu technique'}).count(), 1);
-      assert.equal(await page.locator('main a[href="/evaluations-externes"]').count(), 1);
-      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.ok(await page.locator('main a[href="/evaluations-externes"]').count() >= 1);
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.screenshot({path: 'reports/462/suggestions-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
       await page.goto(origin + '/render/reference_help_unavailable');
       assert.match(await page.textContent('main'), /Aide indisponible/);
       assert.match(await page.textContent('main'), /désactivé/);
-      assert.equal(await page.locator('main a[href="/evaluations-externes"]').count(), 1);
+      assert.ok(await page.locator('main a[href="/evaluations-externes"]').count() >= 1);
       await page.goto(origin + '/render/approved-index');
       const approved = await page.textContent('main');
       for (const name of ['MathArena', 'LiveCodeBench', 'SWE-bench', 'MTEB', 'Artificial Analysis, performances API'])
         assert.ok(approved.includes(name), name);
       assert.equal(/HELM/i.test(approved), false);
-      assert.ok(approved.includes('Ayo est responsable de la maintenance de cette sélection.'));
+      assert.equal(approved.includes('Ayo'), false);
       assert.ok(approved.includes('22 octobre 2026'));
-      assert.ok(approved.includes('La disponibilité d’un lien reste distincte de cette vérification.'));
-      assert.equal(await page.locator('main script, main img').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
-      assert.equal(await page.locator('#category option[value="retrieval"]').textContent(), 'Recherche documentaire');
-      assert.equal(await page.locator('#category option[value="api"]').textContent(), 'Performances des services');
-      assert.equal(await page.locator('#category option').evaluateAll(nodes => nodes.some(node => /helm/i.test(node.value + node.textContent))), false);
+      assert.ok(approved.includes('Ce contrôle est fait à part de la relecture.'));
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
+      const categories = await page.locator('main .segments-liens a[href*="category="]').allTextContents();
+      assert.ok(categories.includes('Recherche documentaire'));
+      assert.ok(categories.includes('Performances des services'));
+      assert.equal(categories.some(name => /helm/i.test(name)), false);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/approved-retrieval');
-      assert.equal(await page.locator('main h2').count(), 1);
+      assert.equal(await page.locator('main h3').count(), 1);
       assert.match(await page.textContent('main'), /MTEB/);
       assert.equal((await page.textContent('main')).includes('MathArena'), false);
-      assert.equal(await page.locator('#category').inputValue(), 'retrieval');
+      assert.equal(await page.locator('input[name="category"]').inputValue(), 'retrieval');
       await page.goto(origin + '/render/approved-api');
       assert.match(await page.textContent('main'), /Artificial Analysis, performances API/);
-      assert.match(await page.textContent('main'), /2\.2\.0/);
       assert.equal((await page.textContent('main')).includes('MTEB'), false);
-      assert.equal(await page.locator('#category').inputValue(), 'api');
+      assert.equal(await page.locator('input[name="category"]').inputValue(), 'api');
       assert.equal(await page.locator('#q').inputValue(), 'API');
       await page.goto(origin + '/render/approved-matharena');
       const matharena = await page.textContent('main');
-      assert.match(matharena, /Inconnue/);
-      assert.match(matharena, /2026-10-22/);
+      assert.match(matharena, /inconnu/);
+      assert.match(matharena, /22 octobre 2026/);
       assert.match(matharena, /aucune version unique retenue/);
       assert.match(matharena, /expected performance/);
       assert.equal(matharena.includes('%'), false);
@@ -1818,16 +1873,17 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.match(await page.textContent('main'), /n’est pas certifiée/);
       await page.goto(origin + '/render/approved-swe-bench');
       assert.match(await page.textContent('main'), /Multimodal/);
-      assert.match(await page.textContent('main'), /Inconnue/);
+      assert.match(await page.textContent('main'), /inconnu/);
       await page.goto(origin + '/render/approved-mteb');
       assert.match(await page.textContent('main'), /n’a pas été essayé/);
       assert.equal(await page.locator('main a[href="https://github.com/embeddings-benchmark/mteb"]').count(), 1);
       await page.goto(origin + '/render/approved-artificial-analysis-api');
       const apiNotice = await page.textContent('main');
-      assert.match(apiNotice, /2026-03-02/);
-      assert.match(apiNotice, /Leur indice global n’entre pas dans Bench-X/);
+      assert.match(apiNotice, /2\.2\.0/);
+      assert.match(apiNotice, /2 mars 2026/);
+      assert.match(apiNotice, /Leur indice global n’entre pas dans Evaly/);
       assert.equal(apiNotice.includes('%'), false);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.deepEqual(dialogs, []);
       assert.deepEqual(errors, []);
       assert.deepEqual(await context.cookies(), []);
@@ -1845,27 +1901,31 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       page.on('dialog', dialog => {dialogs.push(dialog.message()); dialog.dismiss();});
       page.on('pageerror', error => errors.push(error.message));
       await page.goto(origin + '/render/home');
-      await page.getByRole('navigation', {name: 'Navigation principale'}).getByRole('link', {name: 'Épreuves', exact: true}).click();
+      // À 390 px, le menu est le dépliant natif « Menu »
+      await page.locator('.nav-mobile > summary').click();
+      await page.locator('.nav-mobile').getByRole('link', {name: 'Épreuves', exact: true}).click();
       assert.match(await page.textContent('main'), /Tableau <script>alert\(1\)<\/script>/);
-      // Composition S18 : la recherche en synthèse avant la liste ; sur la fiche, la copie suit les pièces qu'elle annonce « ci-dessus »
+      // La recherche se lit avant la liste ; sur la fiche, la copie reste en synthèse à droite ou sous les pièces
       const zones = () => page.evaluate(() => {
-        const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
+        const side = document.querySelector('main .cote'), main = document.querySelector('main .pile-l');
         if (!side || !main) return null;
         const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-        return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText,
-                h2Side: side.querySelectorAll('h2').length, search: Boolean(side.querySelector('form[method="get"] #q')),
+        return {right: a.left >= b.right, below: a.top >= b.bottom, side: side.innerText, main: main.innerText,
                 overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
       });
       for (const width of [390, 1440]) {
         await page.setViewportSize({width, height: 844});
         await page.goto(origin + '/epreuves');
-        let layout = await zones();
-        assert.ok(layout && layout.search && layout.h2Side === 0, `${width} recherche des épreuves hors synthèse`);
-        assert.match(layout.main, /Tableau <script>alert\(1\)<\/script>/, `${width} épreuves hors zone principale`);
-        assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la recherche des épreuves`);
-        assert.equal(layout.overflow, 0, `${width} débordement de la liste des épreuves`);
+        const found = await page.evaluate(() => {
+          const form = document.querySelector('main form[role="search"]'), list = document.querySelector('main .g-grille');
+          return {above: form.getBoundingClientRect().bottom <= list.getBoundingClientRect().top, field: Boolean(form.querySelector('#q')),
+                  text: list.innerText, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
+        });
+        assert.ok(found.field && found.above, `${width} recherche des épreuves avant la liste`);
+        assert.match(found.text, /Tableau <script>alert\(1\)<\/script>/, `${width} épreuves dans la liste`);
+        assert.equal(found.overflow, 0, `${width} débordement de la liste des épreuves`);
         await page.goto(origin + '/epreuves/tache-fictive/version-1');
-        layout = await zones();
+        const layout = await zones();
         assert.ok(layout, `${width} fiche d'épreuve sans composition`);
         assert.match(layout.main, /Pièces/, `${width} pièces hors zone principale`);
         assert.match(layout.side, /Créer mon dossier privé/, `${width} copie hors synthèse`);
@@ -1874,20 +1934,25 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       }
       await page.setViewportSize({width: 390, height: 844});
       await page.goto(origin + '/epreuves');
-      assert.equal(await page.locator('main script, main img').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      // Recherche native, filtres combinés, critères visibles et effaçables, sans JavaScript
+      // Recherche native, puis filtres appliqués au clic qui gardent le texte cherché ; critères visibles et effaçables, sans JavaScript
       const searchField = page.getByLabel('Rechercher une épreuve');
       await searchField.focus();
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
       await searchField.fill('note');
-      await page.getByLabel('Langue').selectOption('Français');
-      await page.getByLabel('Outil').selectOption('Tableur');
-      await page.getByRole('button', {name: 'Rechercher'}).click();
+      await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
       assert.match(page.url(), /q=note/);
+      await page.getByRole('link', {name: 'Français', exact: true}).click();
+      await page.waitForFunction(() => new URL(location.href).searchParams.get('langue') === 'Français');
+      await page.getByRole('link', {name: 'Tableur', exact: true}).click();
+      await page.waitForFunction(() => new URL(location.href).searchParams.get('outil') === 'Tableur');
+      assert.equal(new URL(page.url()).searchParams.get('q'), 'note');
+      assert.equal(new URL(page.url()).searchParams.get('langue'), 'Français');
+      assert.equal(new URL(page.url()).searchParams.get('outil'), 'Tableur');
+      assert.equal(await page.locator('main [aria-label="Critères actifs"]').count(), 1);
       const filtered = await page.textContent('main');
-      assert.match(filtered, /Critères actifs/);
       assert.match(filtered, /Français/);
       assert.match(filtered, /Tableur/);
       assert.equal(filtered.includes('Tableau <script>alert(1)</script>'), false);
@@ -1897,47 +1962,47 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.equal(await page.locator('h1').textContent(), 'Note <script>alert(4)</script>');
       assert.match(await page.textContent('main'), /Retour aux résultats/);
       await page.getByRole('link', {name: 'Retour aux résultats'}).click();
-      assert.match(await page.textContent('main'), /Critères actifs/);
+      assert.equal(await page.locator('main [aria-label="Critères actifs"]').count(), 1);
       await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
       assert.equal(new URL(page.url()).search, '');
       assert.equal(await page.getByLabel('Rechercher une épreuve').inputValue(), '');
       assert.match(await page.textContent('main'), /Tableau <script>alert\(1\)<\/script>/);
       await page.getByLabel('Rechercher une épreuve').fill('introuvable');
-      await page.getByRole('button', {name: 'Rechercher'}).click();
+      await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
       const withoutResult = await page.textContent('main');
       assert.match(withoutResult, /Aucune épreuve ne correspond à cette recherche/);
-      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true})
-        .getAttribute('href'), '/preparation');
+      // Seul un catalogue vide propose de décrire un besoin
+      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).count(), 0);
       mkdirSync('reports/464', {recursive: true});
       await page.screenshot({path: 'reports/464/recherche-mobile-'
         + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
-      // Une valeur longue proposée reste sélectionnable et utilisable
+      // Une valeur longue proposée reste utilisable : son lien porte la valeur entière
       await page.goto(origin + '/epreuves');
-      await page.getByLabel('Outil').selectOption(rendered['editorial-long-tool']);
-      await page.getByRole('button', {name: 'Rechercher'}).click();
+      await page.locator('main .segments-liens a[href*="outil="]').filter({hasText: 'Tableur de contrôle'}).click();
+      await page.waitForFunction(() => new URL(location.href).searchParams.has('outil'));
       const longResult = await page.textContent('main');
       assert.match(longResult, /Version longue/);
-      assert.match(longResult, /Critères actifs/);
+      assert.equal(await page.locator('main [aria-label="Critères actifs"]').count(), 1);
       assert.equal(new URL(page.url()).searchParams.get('outil'), rendered['editorial-long-tool']);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      // Un filtre devenu indisponible reste sélectionné lors d'une nouvelle soumission
+      // Un filtre devenu indisponible reste actif lors d'une nouvelle soumission
       await page.goto(origin + '/render/editorial-unavailable');
-      assert.equal(await page.getByLabel('Outil').inputValue(), 'Tableur retiré');
-      assert.match(await page.locator('option[value="Tableur retiré"]').textContent(), /indisponible/);
+      assert.equal(await page.locator('input[name="outil"]').inputValue(), 'Tableur retiré');
+      assert.match(await page.locator('main .segments-liens a[aria-current]').filter({hasText: 'Tableur retiré'}).textContent(), /indisponible/);
       await page.getByLabel('Rechercher une épreuve').fill('note');
-      await page.getByRole('button', {name: 'Rechercher'}).click();
+      await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
       const retained = await page.textContent('main');
-      assert.match(retained, /Critères actifs/);
+      assert.equal(await page.locator('main [aria-label="Critères actifs"]').count(), 1);
       assert.match(retained, /Tableur retiré \(indisponible\)/);
       assert.match(retained, /Aucune épreuve ne correspond à cette recherche/);
       assert.equal(retained.includes('Version au tableur retiré'), false);
       assert.equal(new URL(page.url()).searchParams.get('outil'), 'Tableur retiré');
-      assert.equal(await page.getByLabel('Outil').inputValue(), 'Tableur retiré');
+      assert.equal(await page.locator('input[name="outil"]').inputValue(), 'Tableur retiré');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.screenshot({path: 'reports/464/filtre-indisponible-mobile-'
         + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
       await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
-      assert.equal(await page.getByLabel('Outil').inputValue(), '');
+      assert.equal(await page.locator('input[name="outil"]').count(), 0);
       const cleared = await page.textContent('main');
       assert.match(cleared, /Note <script>alert\(4\)<\/script>/);
       assert.equal(cleared.includes('Version au tableur retiré'), false);
@@ -1954,33 +2019,34 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.match(text, /Erreur de fixture <script>alert\(3\)<\/script>/);
       assert.match(text, /Signalement éditorial/);
       assert.equal(text.includes('Qualification réussie'), false);
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // La pièce se lit dans sa feuille : on l'atteint au clavier, on l'ouvre sans JavaScript
       let focused = false;
       for (let press = 0; press < 40 && !focused; press++) {
         await page.keyboard.press('Tab');
-        focused = await page.evaluate(() => document.activeElement?.getAttribute('href')?.endsWith('/pieces/consigne'));
+        focused = await page.evaluate(() => document.activeElement?.matches('.feuille summary'));
       }
-      assert.ok(focused, 'lien de pièce non atteint au clavier');
+      assert.ok(focused, 'feuille de pièce non atteinte au clavier');
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
       mkdirSync('reports/463', {recursive: true});
       await page.screenshot({path: 'reports/463/epreuve-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
       await page.keyboard.press('Enter');
-      assert.match(await page.locator('body').innerText(), /Pièce <script>alert\(1\)<\/script>/);
+      assert.match(await page.locator('.feuille details[open] pre').innerText(), /Pièce <script>alert\(1\)<\/script>/);
       await page.goto(origin + '/epreuves/tache-fictive/version-1');
       const copyLink = page.getByRole('link', {name: 'Créer mon dossier privé'});
       await copyLink.focus();
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/copy-confirmation');
       const confirmation = await page.textContent('main');
       assert.match(confirmation, /Épreuve source/);
       assert.match(confirmation, /Tableau <script>alert\(1\)<\/script>/);
       assert.match(confirmation, /Erreur signalée <script>alert\(2\)<\/script>/);
-      assert.match(confirmation, /Pièces copiées/);
+      assert.match(confirmation, /pièces copiées/);
       assert.match(confirmation, /Créer mon dossier privé/);
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       const copyButton = page.getByRole('button', {name: 'Créer mon dossier privé'});
       await copyButton.focus();
@@ -1989,17 +2055,16 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       for (const width of [390, 1440]) {
         await page.setViewportSize({width, height: 844});
         const layout = await page.evaluate(`((root = document) => {
-      const side = root.querySelector('.wb-side'), main = root.querySelector('.wb-main');
+      const side = root.querySelector('.cote'), main = root.querySelector('.pile-l');
       if (!side || !main) return null;
       const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
       return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText};
     })()`);
         assert.ok(layout, `${width} copie sans composition`);
         assert.match(layout.main, /Épreuve source/, `${width} épreuve hors zone principale`);
-        assert.match(layout.side, /Aucune clé ni aucun appel aux modèles/, `${width} conditions hors synthèse`);
-        assert.match(layout.side, /Créer mon dossier privé/, `${width} bouton hors synthèse`);
-        // La note annonce les pièces « ci-dessous » : elle et le bouton précèdent l'épreuve sur téléphone
-        assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la synthèse de la copie`);
+        assert.match(await page.locator('header.tete').innerText(), /Aucune clé ni aucun appel aux modèles/, `${width} conditions sous le titre`);
+        assert.match(layout.side, /Créer mon dossier privé/, `${width} bouton hors zone principale`);
+        assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la décision de la copie`);
       }
       await page.setViewportSize({width: 390, height: 844});
       await page.goto(origin + '/render/copy-dossier');
@@ -2008,23 +2073,24 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.match(copied, /Tableau <script>alert\(1\)<\/script>/);
       assert.match(copied, /Pièce source <script>alert\(1\)<\/script>/);
       assert.match(copied, /Erreur signalée <script>alert\(2\)<\/script>/);
-      assert.match(copied, /Sa qualification publiée ne qualifie pas ce dossier/);
-      assert.match(copied, /La copie reste consultable sans clé/);
+      assert.match(copied, /Aucune qualification n’est publiée pour cette épreuve/);
+      assert.match(copied, /la copie reste consultable sans elle/);
       // Copie sans exemple préparé : son état et la consultation sans clé sont dits au premier écran
-      assert.match(copied, /Copie d’épreuve · version 1/);
+      assert.match(copied, /Copie d’épreuve/);
+      assert.match(copied, /Version 1/);
       assert.equal(copied.includes('Exemple inventé'), false);
       assert.match(copied, /Votre copie est enregistrée\./);
       assert.match(copied, /sans clé ni appel aux modèles/);
       assert.match(copied, /servira à préparer votre exemple/);
       assert.equal(copied.includes('Ajoutez votre clé OpenRouter pour préparer un exemple.'), false);
-      assert.match(copied, /Aucun appel modèle effectué pour ce dossier/);
+      assert.match(copied, /aucun appel modèle effectué/);
       await page.reload();
       const reloadedCopy = await page.textContent('main');
-      assert.match(reloadedCopy, /Copie d’épreuve · version 1/);
+      assert.match(reloadedCopy, /Copie d’épreuve/);
       assert.match(reloadedCopy, /Épreuve source/);
       assert.match(reloadedCopy, /Pièce source <script>alert\(1\)<\/script>/);
-      assert.match(reloadedCopy, /Qualification réussie/);
-      assert.match(reloadedCopy, /Aucun appel modèle effectué pour ce dossier/);
+      assert.match(reloadedCopy, /Qualification absente/);
+      assert.match(reloadedCopy, /aucun appel modèle effectué/);
       assert.equal(await page.locator('script[src*="privacy.js"]').count(), 1);
       assert.equal(await page.locator('main script:not([src])').count(), 1);
       assert.equal(await page.locator('main img, main script[src*="alert"]').count(), 0);
@@ -2046,20 +2112,24 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       const formulation = page.getByLabel('Formulation à comparer');
       await formulation.focus();
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/editorial-help-result');
       const helpResult = await page.textContent('main');
       assert.match(helpResult, /Correspondance forte/);
       assert.match(helpResult, /Correspondance partielle/);
-      assert.match(helpResult, /Cette appréciation ne prouve ni adéquation ni qualification/);
-      assert.match(helpResult, /Résultat attendu/);
+      assert.match(helpResult, /ne prouve ni adéquation ni qualification/);
       assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-1"]').count(), 1);
       assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-2"]').count(), 1);
-      assert.equal(await page.locator('main script').count(), 0);
-      const suggestion = page.locator('main a[href="/epreuves/tache-fictive/version-2"]');
-      await suggestion.focus();
-      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
+      // La suggestion s'atteint au clavier ; son cadre porte l'anneau de focus
+      let suggestionReached = false;
+      for (let press = 0; press < 80 && !suggestionReached; press++) {
+        await page.keyboard.press('Tab');
+        suggestionReached = await page.evaluate(() => document.activeElement?.getAttribute('href') === '/epreuves/tache-fictive/version-2');
+      }
+      assert.ok(suggestionReached, 'suggestion non atteinte au clavier');
+      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement.closest('.g-fiche')).outlineStyle), 'none');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       mkdirSync('reports/467', {recursive: true});
       await page.screenshot({path: 'reports/467/aide-catalogue-mobile-'
@@ -2070,7 +2140,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.equal(withdrawnHelp.includes('Tableau <script>alert(1)</script>'), false);
       assert.match(withdrawnHelp, /Note <script>alert\(4\)<\/script>/);
       assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-1"]').count(), 0);
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/editorial-empty');
       assert.match(await page.textContent('main'), /Aucune épreuve publiée/);
@@ -2084,7 +2154,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.equal(withdrawn.includes('Pièce <script>'), false);
       assert.equal(withdrawn.includes('Tableau'), false);
       assert.equal(await page.locator('main a[href*="/pieces/"]').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       assert.deepEqual(dialogs, []);
       assert.deepEqual(errors, []);
@@ -2101,6 +2171,12 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       const dialogs = [], errors = [];
       page.on('dialog', dialog => {dialogs.push(dialog.message()); dialog.dismiss();});
       page.on('pageerror', error => errors.push(error.message));
+      // Deux essais du même modèle sur le même exemple : chaque lien « Preuves » mène au détail de son essai
+      await page.goto(origin + '/render/published-results-repeated');
+      const cibles = await page.locator('main a.lien[href^="#"]').filter({hasText: 'Preuves'}).evaluateAll(links => links.map(link => link.getAttribute('href')));
+      assert.equal(cibles.length, 2);
+      assert.equal(new Set(cibles).size, 2, 'ancre de preuve partagée entre deux essais');
+      for (const cible of cibles) assert.equal(await page.locator(cible).count(), 1, cible);
       await page.goto(origin + '/render/published-results');
       const main = await page.textContent('main');
       assert.match(main, /Tableau <script>alert\(1\)<\/script>/);
@@ -2111,24 +2187,25 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       assert.match(main, /Coût observé inconnu pour 1 réponse/);
       assert.match(main, /pièce non publiée/i);
       assert.match(main, /un filtre ne change ni les verdicts ni la population/i);
-      assert.match(main, /Réponses évaluées : 2 · essais lancés : 2 sur 2/);
-      assert.equal(await page.locator('main script, main img').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.match(main, /2 essais lancés sur 2/);
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      // Composition S18 : comparaison en zone principale, cadre de lecture en synthèse, après la comparaison sur téléphone
+      // Une seule colonne : bilan, comparaison, conditions communes, lecture, puis ce que la publication permet de vérifier
       for (const width of [1440, 390]) {
         await page.setViewportSize({width, height: 844});
         const layout = await page.evaluate(() => {
-          const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
-          if (!side || !main) return null;
-          const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-          return {right: a.left >= b.right, below: a.top >= b.bottom, table: Boolean(main.querySelector('.comparison-results table')),
-                  side: side.innerText, overflow: document.documentElement.scrollWidth - innerWidth};
+          const main = document.querySelector('main');
+          const at = selector => main.querySelector(selector)?.getBoundingClientRect().top ?? null;
+          return {table: Boolean(main.querySelector('table.comparatif')), text: main.innerText,
+                  order: [at('section[aria-labelledby="t-bilan"]'), at('section[aria-labelledby="t-comp"]'), at('section[aria-labelledby="t-cond"]'),
+                          at('#method'), at('.g-pied-pub')],
+                  overflow: document.documentElement.scrollWidth - innerWidth};
         });
-        assert.ok(layout && layout.table, `${width} résultats publiés sans composition`);
-        for (const heading of [/Limites/, /Conditions communes/, /Ce que cette publication permet de vérifier/, /Comment lire ces résultats/])
-          assert.match(layout.side, heading, `${width} ${heading} hors synthèse`);
-        assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse publiée`);
+        assert.ok(layout.table, `${width} résultats publiés sans tableau`);
+        for (const heading of [/Conditions communes/, /Ce que cette publication permet de vérifier/, /Comment lire ces résultats/, /Harnais/i])
+          assert.match(layout.text, heading, `${width} ${heading} absent`);
+        assert.ok(layout.order.every((top, index) => top !== null && (index === 0 || top > layout.order[index - 1])), `${width} ordre des blocs publiés : ` + layout.order);
         assert.equal(layout.overflow, 0, `${width} débordement des résultats publiés`);
       }
       // Filtres natifs visibles, un seul tableau à une ligne sur la vue filtrée
@@ -2136,7 +2213,7 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       await page.goto(origin + '/render/published-results-filtered');
       const filtered = await page.textContent('main');
       assert.match(filtered, /1 réponse affichée sur 2/);
-      assert.equal(await page.locator('.comparison-results > .table-scroll > table > tbody > tr').count(), 1);
+      assert.equal(await page.locator('table.comparatif tbody tr').count(), 1);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/published-results');
       // Un dépliant puis la preuve publiée restent utilisables au clavier, sans JavaScript
@@ -2147,10 +2224,9 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       }
       assert.ok(focused, 'dépliant non atteint au clavier');
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      await page.getByText('Détail et preuves').first().click();
-      // Détail ouvert : la colonne Modèle garde des mots entiers, jamais une lettre par ligne
+      await page.locator('section[aria-labelledby="t-det"] summary').first().click();
+      // Détail ouvert : le nom du modèle garde des mots entiers, jamais une lettre par ligne ; aucun tableau ne défile à 390 px
       const column = await page.evaluate(() => {
-        const table = document.querySelector('section.comparison-results > .table-scroll > table');
         const splitWords = node => {
           const range = document.createRange(), lines = [];
           for (let index = 0; index < node.length; index++) {
@@ -2165,15 +2241,12 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
             && /\p{L}/u.test(node.data[line.first] ?? ''))
             .map(line => node.data.slice(line.first, line.last + 1));
         };
-        const header = table.querySelector('thead th');
-        const name = table.querySelector('tbody th strong');
-        return {head: splitWords(header.firstChild), name: splitWords(name.firstChild),
-                width: Math.round(table.querySelector('tbody th').getBoundingClientRect().width),
-                characters: name.firstChild.length, scroll: table.parentElement.scrollWidth};
+        const name = document.querySelector('table.comparatif tbody .modele');
+        return {name: splitWords(name.firstChild), characters: name.firstChild.length,
+                scroll: [...document.querySelectorAll('.table-defile:has(table.comparatif)')].every(region => region.scrollWidth <= region.clientWidth)};
       });
-      assert.deepEqual(column.head, [], 'en-tête de la colonne Modèle coupé entre deux lettres : ' + JSON.stringify(column));
       assert.deepEqual(column.name, [], 'nom du modèle coupé entre deux lettres : ' + JSON.stringify(column));
-      assert.ok(column.scroll > 390, 'le tableau ne défile plus horizontalement : ' + JSON.stringify(column));
+      assert.ok(column.scroll, 'un tableau défile horizontalement à 390 px : ' + JSON.stringify(column));
       let proofFocused = false;
       for (let press = 0; press < 40 && !proofFocused; press++) {
         await page.keyboard.press('Tab');
@@ -2210,18 +2283,20 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
     for (const reason of rendered['availability-reasons']) {
       await page.goto(origin + '/render/availability-' + reason);
       assert.equal(await page.locator('#availability').count(), Number(reason !== 'open'), reason);
-      if (reason !== 'open') assert.ok((await page.locator('#availability p').first().textContent()).length >= 20, reason);
+      if (reason !== 'open') assert.ok((await page.locator('#availability').textContent()).length >= 20, reason);
       assert.equal(await page.locator('form form').count(), 0);
     }
     await page.goto(origin + '/render/availability-access');
     assert.equal(await page.locator('a').first().getAttribute('href'), '#main');
     assert.equal(await page.locator('main').getAttribute('tabindex'), '-1');
     assert.equal(await page.locator('#request').getAttribute('aria-describedby'), 'request-help availability');
-    assert.equal(await page.locator('button[form]').getAttribute('form'), 'prepare-case');
-    assert.equal(await page.locator('#prepare-case').count(), 1);
+    assert.equal(await page.locator('form#nouveau button[type="submit"]').count(), 1);
+    assert.equal(await page.locator('form#nouveau #request').count(), 1);
+    // La clé s'ajoute sur sa page : l'état de la clé précède le champ, et la page ne porte plus de formulaire de clé
     const ordering = await page.textContent('main');
-    assert.ok(ordering.indexOf('Enregistrer la clé') < ordering.indexOf('Décrivez une tâche de votre travail'));
-    assert.ok(await page.locator('#availability').evaluate(node => Boolean(node.compareDocumentPosition(document.getElementById('openrouter-key')) & Node.DOCUMENT_POSITION_FOLLOWING)));
+    assert.ok(ordering.indexOf('Ajoutez votre clé OpenRouter') < ordering.indexOf('Décrivez votre cas d’usage'));
+    assert.equal(await page.locator('#openrouter-key').count(), 0);
+    assert.equal(await page.locator('main a[href="/preparation/access"]').count() >= 2, true);
     assert.deepEqual(await page.evaluate(() => {
       const nodes = [...document.querySelectorAll('[id]')], ids = nodes.map(n => n.id);
       return [ids.length === new Set(ids).size,
@@ -2238,31 +2313,31 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
         assert.equal(await page.locator('#request').getAttribute('minlength'), '40');
         assert.equal(await page.locator('#request').getAttribute('maxlength'), '1500');
         assert.equal(await page.locator('#request').getAttribute('required'), '');
-        assert.ok((await page.textContent('main')).includes('en 40 caractères au moins'));
+        assert.ok((await page.textContent('main')).includes('40 caractères au moins'));
       }
     }
     await page.goto(origin + '/render/prior-example');
-    assert.equal(await page.locator('nav.steps [aria-disabled="true"]').count(), 4);
-    for (const text of ['1Besoin', '2Exemple', '3Validation', '4Modèles', '5Résultats'])
-      assert.ok((await page.locator('nav.steps').textContent()).includes(text));
-    assert.equal(await page.locator('nav.steps a[href="#besoin"]').count(), 1);
+    assert.equal(await page.locator('nav.piste span.st').count(), 4);
+    for (const text of ['01Besoin', '02Exemple', '03Validation', '04Modèles', '05Résultats'])
+      assert.ok((await page.locator('nav.piste').textContent()).includes(text));
+    assert.equal(await page.locator('nav.piste a[href="#besoin"]').count(), 1);
     await page.goto(origin + '/render/example-QUALIFIED');
-    assert.ok((await page.locator('nav.steps [aria-current="step"]').textContent()).includes('Validation'));
-    assert.equal(await page.locator('nav.steps a[href$="/configurations"]').count(), 1);
+    assert.ok((await page.locator('nav.piste [aria-current="step"]').textContent()).includes('Validation'));
+    assert.equal(await page.locator('nav.piste a[href$="/configurations"]').count(), 1);
     await page.goto(origin + '/render/scope');
     assert.ok((await page.textContent('main')).includes('Précisez le travail à comparer'));
-    assert.ok((await page.textContent('main')).includes('Aucune comparaison ne peut être lancée à cette étape.'));
+    assert.ok((await page.textContent('main')).includes('Aucun benchmark ne se lance à cette étape.'));
     assert.equal((await page.textContent('main')).includes('Choisir les modèles'), false);
     assert.equal(await page.locator('a[href="#exemple"], a[href="#validation"], form[action$="/validation"], #openrouter-key').count(), 0);
     for (const category of ['math', 'coding', 'other']) {
       await page.goto(origin + '/render/out-of-scope-' + category);
       const text = await page.textContent('main');
-      assert.ok(text.includes('Bench-X ne peut pas comparer cette tâche'));
-      assert.ok(text.includes('Décrire un autre cas d’usage'));
-      assert.equal(/Envoyer ma réponse|Choisir les modèles|équipe Bench-X|n’est pas encore/.test(text), false);
+      assert.ok(text.includes(category === 'other' ? 'Evaly compare des modèles sur un travail précis' : 'Ce travail est déjà mesuré par des benchmarks publics'));
+      assert.ok(text.includes('Décrire un cas d’usage précis'));
+      assert.equal(/Envoyer ma réponse|Choisir les modèles|équipe (Bench-X|Evaly)|n’est pas encore/.test(text), false);
       assert.equal(await page.locator('form[action$="/validation"], #availability').count(), 0);
       assert.equal(await page.locator('a[href="/evaluations-externes/matharena"]').count(), Number(category === 'math'));
-      assert.equal(await page.locator('main a[href="/evaluations-externes"]').count(), 1);
+      assert.ok(await page.locator('main a[href="/evaluations-externes"]').count() >= 1);
       assert.equal(await page.locator('a[href="/evaluations-externes/livecodebench"]').count(), Number(category === 'coding'));
     }
     for (const reason of ['open', 'interrupted', 'restore']) {
@@ -2275,71 +2350,133 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       if (reason === 'interrupted') assert.ok(text.includes('cette opération sera close automatiquement'));
       if (reason === 'restore') assert.ok(text.includes('Service momentanément indisponible'));
     }
-    // K7 : à 390 px, menu, étapes et liens du pied de page offrent 44 px de haut
+    // K7 : à 390 px, menu, étapes et liens du pied de page offrent 44 px de haut (décision du 1er novembre 2026)
     await page.setViewportSize({width: 390, height: 844});
     await page.goto(origin + '/render/example-PENDING');
-    const small = await page.$$eval('header.site nav a, .steps > a, footer.site a',
+    const small = await page.$$eval('header.haut nav a, .piste a, footer.pied a',
       links => links.filter(link => link.getClientRects().length && link.getBoundingClientRect().height < 44)
         .map(link => link.textContent.trim() + ' ' + Math.round(link.getBoundingClientRect().height)));
     assert.deepEqual(small, [], 'cibles sous 44 px');
-    assert.ok((await page.textContent('main')).includes('La vérification de l’exemple n’a pas pu démarrer.'));
+    assert.ok((await page.textContent('main')).includes('Le contrôle de l’exemple n’a pas pu démarrer.'));
     assert.equal((await page.textContent('main')).includes('Approbation'), false);
     await page.goto(origin + '/render/example-BLOCKED');
-    assert.ok((await page.textContent('main')).includes('Exemple à revoir avant comparaison'));
+    assert.ok((await page.textContent('main')).includes('Exemple à revoir avant le benchmark'));
     assert.equal(await page.locator('img[src="x"]').count(), 0);
     assert.equal((await page.textContent('main')).split('<img src=x onerror="alert(1)">Correction requise').length, 2);
     await page.goto(origin + '/render/stopped-history');
-    assert.ok((await page.textContent('main')).includes('Aucun nouvel essai ne peut être lancé pour cette comparaison.'));
+    assert.ok((await page.textContent('main')).includes('Aucun nouvel essai ne peut être lancé pour ce benchmark.'));
     assert.ok((await page.textContent('main')).includes('Service momentanément indisponible'));
     for (const [stage, status, prior, pending] of [['waiting', 'none', false, true], ['waiting', 'none', true, false],
       ['clarification', 'none', false, false], ['suspended', 'none', false, false], ['preview', 'PENDING', false, true],
       ['preview', 'BLOCKED', false, false], ['preview', 'QUALIFIED', false, false]]) {
       await page.goto(origin + `/render/progress-${stage}-${status}-${prior ? 'True' : 'False'}`);
       assert.equal(await page.locator('#preparation-progress').count(), Number(pending));
-      assert.equal(await page.locator('progress').count(), Number(pending));
+      assert.equal(await page.locator('.etat .disque.tourne').count(), Number(pending));
       if (pending) {
         assert.equal(await page.locator('#availability').count(), 1);
-        assert.equal(await page.locator('aside#availability, progress[value]').count(), 0);
-        assert.ok((await page.textContent('main')).includes('Cette page se met à jour d’elle-même si JavaScript est activé'));
+        assert.equal(await page.locator('aside#availability').count(), 0);
+        // La barre `progress` sert au script de suivi ; à l'écran, seul le disque tourne
+        assert.equal(await page.locator('#preparation-progress progress.cache').count(), 1);
+        // Sans JavaScript, aucune phrase ne promet une mise à jour automatique ; le bouton d'arrêt reste masqué
+        assert.equal((await page.locator('main').innerText()).includes('se met à jour d’elle-même'), false);
+        assert.equal(await page.locator('#preparation-progress button').isHidden(), true);
       }
     }
     // Composition S18 : zone principale et colonne de synthèse, l'état reste en tête et le consentement suit la validation
     const zones = () => page.evaluate(() => {
-      const box = node => node.getBoundingClientRect(), side = box(document.querySelector('.wb-side')), main = box(document.querySelector('.wb-main'));
+      const box = node => node.getBoundingClientRect(), side = box(document.querySelector('.cote')), main = box(document.querySelector('.pile-l, .entretien'));
       const inside = (selector, zone) => Boolean(document.querySelector(selector)?.closest(zone));
       const follows = (a, b) => Boolean(document.querySelector(a).compareDocumentPosition(document.querySelector(b)) & Node.DOCUMENT_POSITION_FOLLOWING);
       return {right: side.left >= main.right, below: side.top >= main.bottom, above: side.bottom <= main.top,
               overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-              key: inside('#openrouter-key', '.wb-side'), form: inside('#prepare-case', '.wb-main'),
-              reply: inside('textarea#message', '.wb-main'), validation: inside('#validation', '.wb-side'),
-              example: inside('#exemple', '.wb-main'), correction: inside('details.corr', '.wb-main'),
-              consent: inside('.privacy-consent', '.workbench'), side: document.querySelector('.wb-side').innerText,
-              bar: document.querySelector('.wb-side .actionbar') && getComputedStyle(document.querySelector('.wb-side .actionbar')).position,
-              stateFirst: document.querySelector('.state') ? follows('.state', '.workbench') : null,
-              consentAfter: document.querySelector('.privacy-consent') ? follows('#validation', '.privacy-consent') : null};
+              reply: inside('textarea#message', '.entretien'), validation: inside('#validation', '.cote'),
+              example: inside('#exemple', '.pile-l'), correction: inside('details#corriger', '.pile-l'),
+              consent: inside('.privacy-consent, .contribution', '.pile-bas'), side: document.querySelector('.cote').innerText,
+              state: Boolean(document.querySelector('.cote .etat')),
+              consentAfter: document.querySelector('.privacy-consent, .contribution') ? follows('#validation', '.privacy-consent, .contribution') : null};
     });
     for (const width of [1440, 390]) {
       await page.setViewportSize({width, height: 900});
       await page.goto(origin + '/render/availability-access');
-      let layout = await zones();
-      assert.equal(layout.overflow, 0, `${width} besoin sans débordement`);
-      assert.ok(layout.key && layout.form, `${width} clé en synthèse, formulaire en zone principale`);
-      assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la synthèse du besoin`);
+      // Mes cas d'usage : l'état, puis le champ unique, puis les cas et la bande de la clé, sur une seule colonne
+      const cas = await page.evaluate(() => {
+        const follows = (a, b) => Boolean(document.querySelector(a).compareDocumentPosition(document.querySelector(b)) & Node.DOCUMENT_POSITION_FOLLOWING);
+        return {overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+                ordre: follows('.compo-zone .etat', 'form#nouveau') && follows('form#nouveau', '.ge-mes-cas'),
+                deuxColonnes: document.querySelectorAll('.colonnes').length, bande: document.querySelector('.ge-bande a').getAttribute('href')};
+      });
+      assert.equal(cas.overflow, 0, `${width} besoin sans débordement`);
+      assert.ok(cas.ordre, `${width} état, champ, puis cas`);
+      assert.deepEqual([cas.deuxColonnes, cas.bande], [0, '/preparation/access'], `${width} bande de la clé`);
+      let layout;
       await page.goto(origin + '/render/progress-clarification-none-False');
       layout = await zones();
       assert.equal(layout.overflow, 0, `${width} préparation sans débordement`);
-      assert.ok(layout.reply && layout.stateFirst, `${width} état en tête, réponse en zone principale`);
-      assert.match(layout.side, /Coût observé/, `${width} coût en synthèse`);
+      assert.ok(layout.reply && layout.state, `${width} réponse dans la conversation, état en synthèse`);
+      assert.match(layout.side, /Coût de la préparation/, `${width} coût en synthèse`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de préparation`);
       await page.goto(origin + '/render/consent-current');
       layout = await zones();
       assert.equal(layout.overflow, 0, `${width} validation sans débordement`);
       assert.ok(layout.example && layout.correction && layout.validation, `${width} exemple et correction en zone principale, validation en synthèse`);
       assert.match(layout.side, /Oui, c’est le travail à tester/, `${width} bouton de validation en synthèse`);
-      assert.equal(layout.bar, 'static', `${width} la barre de validation ne recouvre pas le texte de la synthèse`);
-      assert.ok(!layout.consent && layout.consentAfter, `${width} consentement séparé, après la validation`);
+      assert.ok(layout.consent && layout.consentAfter, `${width} partage dans les blocs du bas, après la validation`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de validation`);
     }
+    // Parcours clavier de la préparation à 390 px, sans souris ni JavaScript : saisie, question de l'assistant, aperçu,
+    // correction. Chaque arrêt du focus est visible dans l'écran, entier en largeur, non masqué par l'en-tête fixe
+    await page.setViewportSize({width: 390, height: 844});
+    const tabulerJusqua = async (cible, {retour = false, max = 80} = {}) => {
+      for (let i = 0; i < max; i++) {
+        await page.keyboard.press(retour ? 'Shift+Tab' : 'Tab');
+        const arret = await page.evaluate(selecteur => {
+          // Le champ unique et la réponse à l'assistant montrent leur focus sur leur cadre, pas sur la zone de texte
+          const el = document.activeElement, r = el.getBoundingClientRect(), style = getComputedStyle(el.matches('textarea') && el.closest('.compo-champ, .reponse') || el);
+          const dessus = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 20));
+          return {cible: el.matches(selecteur), nom: el.tagName + '#' + el.id + ' ' + (el.textContent || '').trim().slice(0, 40)
+              + ' [' + [r.left, r.top, r.right, r.bottom].map(Math.round) + ' / ' + innerWidth + '×' + innerHeight + ']',
+            // Visible et entier en largeur ; un champ haut n'est montré qu'en partie, comme le fait le navigateur
+            entier: r.width > 0 && r.left >= -1 && r.right <= innerWidth + 1 && r.bottom > 0 && r.top < innerHeight - 16,
+            devant: !!dessus && (el === dessus || el.contains(dessus) || dessus.contains(el)),
+            contour: style.outlineStyle !== 'none' || style.boxShadow !== 'none'};
+        }, cible);
+        assert.ok(arret.entier, 'focus hors de l’écran : ' + arret.nom);
+        assert.ok(arret.devant, 'focus masqué : ' + arret.nom);
+        assert.ok(arret.contour, 'focus sans contour : ' + arret.nom);
+        if (arret.cible) return;
+      }
+      assert.fail('cible jamais atteinte au clavier : ' + cible);
+    };
+    // Saisie : le besoin, puis les précisions facultatives dans leur tiroir
+    await page.goto(origin + '/render/availability-open');
+    await tabulerJusqua('#request');
+    await page.keyboard.type('Je reçois des notes de réunion en vrac et je veux un compte rendu clair.');
+    await tabulerJusqua('details:has(#useful) > summary');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('details:has(#useful)').evaluate(d => d.open), true, 'tiroir des précisions ouvert au clavier');
+    await tabulerJusqua('#useful');
+    await page.keyboard.type('Une liste des décisions.');
+    // Le bouton d'envoi précède le tiroir : retour en arrière au clavier
+    await tabulerJusqua('form#nouveau button[type="submit"]', {retour: true});
+    // Question de l'assistant : la réponse puis son envoi
+    await page.goto(origin + '/render/question');
+    await tabulerJusqua('#message');
+    await page.keyboard.type('Les notes viennent d’une réunion d’équipe.');
+    await tabulerJusqua('button[type="submit"]:not([disabled])');
+    assert.match(await page.evaluate(() => document.activeElement.textContent), /Envoyer ma réponse/);
+    // Aperçu : une pièce s'ouvre et se lit au clavier
+    await page.goto(origin + '/render/apercu');
+    await tabulerJusqua('#piece-1 > summary');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('#piece-1').evaluate(d => d.open), true, 'pièce ouverte au clavier');
+    // Correction : le tiroir s'ouvre, le message se tape, puis le bouton jaune devient « Corriger ce travail »
+    await tabulerJusqua('#corriger > summary');
+    await page.keyboard.press('Enter');
+    assert.equal(await page.locator('#corriger').evaluate(d => d.open), true, 'tiroir de correction ouvert au clavier');
+    await tabulerJusqua('#corriger #message');
+    await page.keyboard.type('Ajouter une action sans échéance.');
+    await tabulerJusqua('button[form="form-corriger"]');
+    assert.match(await page.evaluate(() => document.activeElement.textContent), /Corriger ce travail/);
   } finally {await context.close();}
 });
 
@@ -2349,23 +2486,52 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     const page = await context.newPage();
     await page.goto(origin + '/render/example');
     const text = await page.textContent('main');
-    assert.ok(text.indexOf('Les pièces de l’exemple') < text.indexOf('Oui, c’est le travail à tester'));
+    assert.ok(text.indexOf('Les pièces') < text.indexOf('Oui, c’est le travail à tester'));
     assert.ok(text.indexOf('Oui, c’est le travail à tester') < text.indexOf('conserver cet exemple pendant 6 mois'));
-    for (const phrase of ['historique local', 'votre besoin, vos messages et les versions successives',
-      'Cette copie contient plus que la contribution', 'a besoin de JavaScript', 'sans lui, seule la contribution',
-      'efface la copie de ce cas gardée dans ce navigateur', 'vos cas ne sont plus accessibles après 7 jours', 'Votre clé ne l’est plus après 30 jours'])
+    for (const phrase of ['historique local', 'besoin, messages et versions compris', 'copie complète de chaque cas ouvert',
+      'a besoin de JavaScript', 'sans lui, seule la contribution', 'Cybrel', 'sans le publier',
+      'Efface la copie de ce navigateur et demande la suppression sur le serveur'])
       assert.ok(text.includes(phrase), phrase);
+    // La conservation 7 jours / 30 jours s'explique dans Mes données, plus sur la page du cas
+    assert.equal(/effacé après 7 jours|effacée après 30 jours/.test(text), false);
     assert.equal(/Clé retirée après|11 jours|conserve votre copie locale/.test(text), false);
     assert.equal(await page.locator('script[src="/preparation/privacy.js"]').count(), 1);
     assert.ok(await page.locator('script:not([src])').count() > 0);
     await page.goto(origin + '/render/privacy-listing');
-    const activity = page.locator('[data-privacy-activity]');
-    assert.equal(await activity.getAttribute('data-dossier-id'), 'd1');
-    assert.equal(await activity.getAttribute('data-content-version'), '4');
+    // Le repère de session précède les cartes : `privacy.js` lit le premier, qui ne désigne aucun cas
+    const activity = page.locator('[data-privacy-activity]').first();
+    assert.equal(await activity.getAttribute('data-dossier-id'), null);
     assert.equal(await activity.getAttribute('data-csrf-token'), 'privacy-token');
-    assert.equal(await page.locator('form[action="/preparation/access/key"] input[name="csrf_token"]').inputValue(), 'csrf');
+    assert.equal(await page.locator('form#nouveau input[name="csrf_token"]').inputValue(), 'csrf');
     assert.equal(await page.locator('[data-privacy-post="contribution"]').count(), 0);
+    // Chaque carte garde sa copie (privacy.js) et mène à la confirmation de suppression, avec son adresse de retour
+    assert.deepEqual(await page.locator('.ge-cas [data-privacy-controls]').evaluateAll(cards => cards.map(card => card.dataset.dossierId)), ['d1', 'd2']);
+    assert.deepEqual(await page.locator('.ge-cas a.btn-danger').evaluateAll(links => links.map(link => link.getAttribute('href'))),
+      ['/preparation/dossiers/d1/delete?retour=/preparation', '/preparation/dossiers/d2/delete?retour=/preparation']);
+    assert.equal(await page.locator('[data-privacy-post="delete"]').count(), 0);
+    // Le consentement couvre le cas ouvert : une carte de la liste montre le bouton de copie sans copier au chargement
+    assert.equal(await page.locator('.ge-cas [data-privacy-activity], .ge-cas [data-content-version]').count(), 0);
+    assert.equal(await page.locator('.ge-cas [data-privacy-manual]').count(), 2);
+    assert.equal(await page.locator('.alerte-exp').count(), 0, 'sans échéance connue, aucune alerte');
+    await page.goto(origin + '/render/listing-expiring');
+    assert.equal(await page.locator('.alerte-exp').count(), 1);
+    assert.match(await page.locator('.alerte-exp').textContent(), /Bientôt effacé.*ce cas sera effacé le (lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) \d{1,2} \p{L}+/u);
+    assert.equal(await page.locator('.ge-cas:has(.alerte-exp) h3').textContent(), 'Trier des notes de réunion');
+    await page.goto(origin + '/render/listing-deleted');
+    assert.match(await page.locator('.etat').first().textContent(), /Le cas d’usage a été supprimé/);
+    await page.goto(origin + '/render/case-delete');
     assert.equal(await page.locator('[data-privacy-post="delete"]').count(), 1);
+    assert.equal(await page.locator('form.confirmer input[name="csrf_token"]').inputValue(), 'privacy-token');
+    assert.equal(await page.locator('.annuler a').getAttribute('href'), '/preparation/dossiers/d1');
+    assert.equal(await page.locator('form.confirmer button[type="submit"]').isDisabled(), false);
+    await page.goto(origin + '/render/case-delete-closed');
+    assert.equal(await page.locator('form.confirmer button[type="submit"]').isDisabled(), true);
+    assert.equal(await page.locator('.annuler a').count(), 1);
+    assert.equal(await page.locator('.annuler a').getAttribute('href'), '/preparation', 'adresse de retour refusée : Mes cas d’usage');
+    // Formulaire désactivé (accès fermé ou cas déjà effacé) : l'annulation n'a plus d'objet, le retour à Mes cas d'usage la remplace
+    assert.equal(await page.locator('.annuler').isVisible(), false);
+    assert.equal(await page.locator('.apres-suppression a').isVisible(), true);
+    assert.equal((await page.content()).includes('//evil.test'), false);
     for (const name of ['current', 'expired', 'prior']) {
       await page.goto(origin + '/render/consent-' + name);
       const box = page.locator('[data-privacy-post="contribution"] input[type="checkbox"]');
@@ -2398,30 +2564,21 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     await page.goto(origin + '/render/data');
     assert.equal(await page.locator('[data-privacy-history]').count(), 1);
     assert.equal(await page.locator('[data-privacy-activity]').count(), 0);
-    // Composition S18 : les données en zone principale, les liens et explications en synthèse
-    const zones = () => page.evaluate(() => {
-      const side = document.querySelector('main .wb-side'), main = document.querySelector('main .wb-main');
-      if (!side || !main) return null;
-      const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-      return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText,
-              h2Side: side.querySelectorAll('h2').length, search: Boolean(side.querySelector('form[method="get"] #q')),
-              overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
-    });
+    // Mes données : conservation expliquée, historique local, puis les liens ; aucune page ne déborde
+    const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     for (const width of [390, 1440]) {
       await page.setViewportSize({width, height: 844});
       await page.goto(origin + '/render/data');
-      let layout = await zones();
-      assert.ok(layout, `${width} Mes données sans composition`);
-      assert.match(layout.main, /Vos cas gardés dans ce navigateur/, `${width} cas gardés hors zone principale`);
-      assert.match(layout.side, /Mes contributions/, `${width} liens hors synthèse`);
-      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de Mes données`);
+      const main = await page.locator('main').innerText();
+      for (const phrase of ['Conservation automatique', 'Un cas d’usage est effacé après 7 jours sans activité', 'Votre clé OpenRouter est effacée après 30 jours sans activité',
+        'Vos cas gardés dans ce navigateur', 'Mes cas d’usage et ma clé', 'Mes contributions', 'Confidentialité']) assert.ok(main.includes(phrase), `${width} ${phrase}`);
+      assert.equal(await overflow(), 0, `${width} débordement de Mes données`);
       await page.goto(origin + '/render/contribution-active-2099');
-      layout = await zones();
-      assert.ok(layout, `${width} Mes contributions sans composition`);
-      assert.match(layout.main, /Contribution du 18 septembre 2026/, `${width} contributions hors zone principale`);
-      assert.match(layout.side, /arrête seulement la contribution concernée/, `${width} explication hors synthèse`);
-      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse des contributions`);
-      assert.equal(layout.overflow, 0, `${width} débordement des contributions`);
+      const contributions = await page.locator('main').textContent();
+      assert.ok(contributions.includes('Contribution du 18 septembre 2026'), `${width} contribution`);
+      assert.ok(contributions.includes('arrête seulement la contribution concernée'), `${width} explication du retrait`);
+      assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes données', `${width} entrée de menu des contributions`);
+      assert.equal(await overflow(), 0, `${width} débordement des contributions`);
     }
   } finally {await context.close();}
 });
@@ -2438,7 +2595,7 @@ test('public and private pages retain legal information and exact release identi
       if (LEGAL.includes(name)) {
         assert.equal(await page.locator('script, [data-privacy-activity], [aria-current], blockquote').count(), 0);
         assert.equal(await page.locator('h1').count(), 1);
-        assert.equal(await page.title(), (await page.locator('h1').textContent()) + ' · Bench-X');
+        assert.equal(await page.title(), (await page.locator('h1').textContent()) + ' · Evaly');
         assert.equal(/\[\[|Formulation à retenir|N’annoncez pas|aucune route ne les expose|annoncez une fermeture d’accès/.test(await page.textContent('body')), false);
       }
     }
@@ -2465,18 +2622,18 @@ test('public and private pages retain legal information and exact release identi
       if (label) assert.ok(text.includes(label));
       else assert.equal(text.includes('v0.2.0'), false);
       assert.equal(/v0.1.0|Version du site|Aucune ressource externe chargée|sha256/.test(text), false);
-      assert.equal(await page.locator('a[aria-current="page"]').textContent(), 'Accueil');
+      assert.equal(await page.locator('.nav a[aria-current="page"]').textContent(), 'Accueil');
       assert.equal(await page.locator('a[href="/index.html"]').count(), 0);
       assert.ok(text.includes('Un seul manquement suffit'));
       assert.equal(text.includes('Comparaisons publiées'), false);
     }
     await page.goto(origin + '/render/listing');
-    assert.equal(await page.locator('a[aria-current="page"]').textContent(), 'Mes cas d’usage');
-    assert.equal(await page.locator('ul.dossiers a[href="/preparation/dossiers/d1"]').count(), 1);
+    assert.equal(await page.locator('.nav a[aria-current="page"]').textContent(), 'Mes cas d’usage');
+    assert.equal(await page.locator('ul.ge-liste a[href="/preparation/dossiers/d1"]').count(), 1);
     for (const name of ['waiting', 'honeypot']) {
       await page.goto(origin + '/render/' + name);
       assert.ok((await page.title()).startsWith('Demande enregistrée'));
-      assert.equal(await page.locator('.state.wait').count(), 1);
+      assert.equal(await page.locator('.etat[data-ton="att"]').count(), 1);
       assert.ok((await page.textContent('main')).includes('Votre envoi est bien enregistré'));
       assert.ok((await page.textContent('main')).includes('Suivre mon cas d’usage'));
       assert.equal(await page.locator('#openrouter-key').count(), 0);

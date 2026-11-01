@@ -76,7 +76,7 @@ _METHODS = frozenset(('GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'
 # Envoi dont l'exécuteur n'a pas répondu dans le délai du relais, qu'il traite peut-être encore (#517) :
 # ni échec, ni indisponibilité, la page mène à l'état enregistré, jamais à un renvoi
 RESPONSE_TIMEOUT = {'title': 'Réponse non reçue à temps', 'error_code': 'RESPONSE_TIMEOUT',
-                    'error': 'Bench-X n’a pas répondu à temps, mais rien n’indique qu’il a échoué : votre envoi est '
+                    'error': 'Evaly n’a pas répondu à temps, mais rien n’indique qu’il a échoué : votre envoi est '
                              'peut-être encore en cours de traitement. Consultez son état avant de renvoyer quoi que ce soit.'}
 
 
@@ -243,7 +243,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 policy += "; script-src 'sha256-" + b64encode(sha256(script.encode()).digest()).decode() + "'"
                 if privacy_script:
                     policy += " 'self'"
-                if script in (views.PREPARATION_PROGRESS_SCRIPT, views.CUSTOM_MODELS_SCRIPT, views.COMPARISON_FOCUS_SCRIPT):
+                if script in (views.PREPARATION_PROGRESS_SCRIPT, views.CUSTOM_MODELS_SCRIPT, views.COMPARISON_FOCUS_SCRIPT, views.FILTRES_SCRIPT):
                     policy += "; connect-src 'self'"
             elif privacy_script:
                 policy += "; script-src 'self'"
@@ -264,14 +264,14 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 # La ligne est déjà partie : un `except OSError` appelant enverrait un second statut sur le fil
                 self.close_connection = True
 
-        def error_page(self, code, title, message, headers=None):
+        def error_page(self, code, title, message, headers=None, path='/preparation'):
             """Toute erreur emprunte respond() : en-têtes de sécurité et gabarit français"""
             # Ici la page est le défaut, le tableau de BX-04 la demande en curl ; `not_found` garde le contrat JSON
             if 'application/json' in self.headers.get('Accept', ''):
                 self.respond(code, {'error': message}, headers=headers)
                 return
             try:
-                page = views.render({'error': message, 'title': title}, '', error=True)
+                page = views.render({'error': message, 'title': title}, '', path, error=True, status=code)
             except Exception:
                 page = _failure_document(message)
             self.respond(code, page, 'text/html; charset=utf-8', headers)
@@ -293,7 +293,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 headers['Allow'] = 'GET, HEAD, POST'
                 self.error_page(405, 'Requête non acceptée',
                                 'Ce type de requête n’est pas accepté. '
-                                'Bench-X permet seulement de consulter des pages et d’envoyer des formulaires.', headers)
+                                'Evaly permet seulement de consulter des pages et d’envoyer des formulaires.', headers)
                 return
             # Ligne de requête refusée avant les en-têtes : aucun navigateur à servir, et `self.headers` peut manquer
             self.respond(code, {'error': 'Cette requête n’a pas pu être traitée.'}, headers=headers)
@@ -318,7 +318,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             expected = public_url.rstrip('/') if public_url else f'http://{address}:{port}'
             if self.headers.get('Origin') not in (None, expected) or \
                     self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin', 'none'):
-                self.error_page(403, 'Copie refusée', 'Cette demande ne vient pas de Bench-X.')
+                self.error_page(403, 'Copie refusée', 'Cette demande ne vient pas d’Evaly.')
                 return
             try:
                 length = self.headers.get('Content-Length', '')
@@ -345,7 +345,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 return
             if token is None:
                 self.error_page(403, 'Session requise',
-                                'Votre session a expiré. Ouvrez de nouveau la confirmation de copie.')
+                                'Votre session a expiré. Ouvrez de nouveau la confirmation de copie.', path=reference_path)
                 return
             source = self._copy_source(task_id, version_id)
             if source is None:
@@ -435,6 +435,38 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 headers['Set-Cookie'] = _session_cookie(result['cookie'])
             self.respond(200, page, 'text/html; charset=utf-8', headers)
 
+        def delete_confirmation(self, dossier_id):
+            """Page de confirmation avant suppression : le cas doit être visible de cette session, le retour est revalidé"""
+            query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+            if set(query) - {'retour'} or len(query.get('retour', [])) > 1:
+                self.error_page(400, 'Adresse invalide', 'Cette page ne prend aucun paramètre sauf l’adresse de retour.')
+                return
+            try:
+                retour = _return_path(query.get('retour', ['/preparation'])[0])
+            except ValueError:
+                retour = '/preparation'
+            cookies = SimpleCookie(self.headers.get('Cookie', ''))
+            cookie = cookies.get('benchmark_session')
+            try:
+                result = preparation_request(socket_path, 'GET', '/preparation', cookie.value if cookie else None)
+            except OSError:
+                self.error_page(503, 'Service momentanément indisponible',
+                                'La confirmation ne peut pas s’afficher, mais rien n’a été modifié. Réessayez dans un instant.')
+                return
+            value = result['value']
+            if result['status'] >= 400 or type(value) is not dict:
+                self.error_page(result['status'] if result['status'] >= 400 else 503, 'Votre action n’a pas abouti',
+                                value.get('error', 'La confirmation ne peut pas s’afficher.') if type(value) is dict else 'La confirmation ne peut pas s’afficher.')
+                return
+            dossier = next((item for item in value.get('dossiers', []) if item.get('dossier_id') == dossier_id), None)
+            if dossier is None:
+                self.not_found()
+                return
+            headers = {'Set-Cookie': _session_cookie(result['cookie'])} if result.get('cookie') else {}
+            page = views.render({'kind': 'case_delete', 'dossier': dossier, 'return_path': retour,
+                                 'privacy': value.get('privacy', {})}, value.get('csrf_token', ''), urlsplit(self.path).path)
+            self.respond(200, page, 'text/html; charset=utf-8', headers)
+
         def preparation(self):
             if re.fullmatch(r'/preparation/fonts/(OFL-)?[A-Za-z]+\.(woff2|txt)', self.path) and self.command in ('GET', 'HEAD'):
                 self.respond(404, {'error': 'NOT_FOUND'})
@@ -445,6 +477,11 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 # Adresse d'envoi et de suivi JSON des slugs : en HTML, la page est celle des configurations
                 self.respond(303, b'', 'text/html; charset=utf-8',
                              {'Location': self.path.removesuffix('/custom-models') + '/configurations#custom-models'})
+                return
+            confirmation = (re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/delete', urlsplit(self.path).path)
+                            if self.command in ('GET', 'HEAD') and not wants_json else None)
+            if confirmation:
+                self.delete_confirmation(confirmation[1])
                 return
             # Après le relais, une erreur ne vient plus du formulaire mais du rendu ou du protocole
             relayed = False
@@ -498,7 +535,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                             for key in [key for key in form_body if key.startswith('max_tokens:')]:
                                 if (limit := values[key][0]) and key.removeprefix('max_tokens:') in values.get('models', []):
                                     if not re.fullmatch('[1-9][0-9]{0,8}', limit):
-                                        raise ValueError('Limite de sortie invalide')
+                                        raise ValueError('Longueur de réponse invalide')
                                     limits[key.removeprefix('max_tokens:')] = int(limit)
                                 del form_body[key]
                             if limits:
@@ -547,10 +584,15 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                         body = dict(body)
                         body.pop('website', None)
                         body['source_sha256'] = _source_fingerprint(self.headers, self.client_address, source_salt, trusted_proxies)
+                # Après une suppression sans JavaScript, Mes cas d'usage l'annonce ; l'exécuteur ne voit pas ce repère
+                deleted = self.command in ('GET', 'HEAD') and self.path == '/preparation?supprime=1'
+                relay_path = '/preparation' if deleted else self.path
                 result = preparation_request(socket_path, 'GET' if self.command == 'HEAD' else self.command,
-                                             self.path, token, body, management_token=management_token)
+                                             relay_path, token, body, management_token=management_token)
                 relayed = True
                 value = result.get('value')
+                if deleted and type(value) is dict and 'dossiers' in value:
+                    value['deleted'] = True
                 if type(value) is dict and type(value.get('source')) is dict:
                     source = value['source']
                     try:
@@ -572,7 +614,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     management_headers = []
                 if self.command == 'POST' and result['status'] < 400 and self.path.endswith(('/contribution', '/withdraw', '/delete')):
                     if not wants_json:
-                        target = ('/preparation/data' if self.path.endswith('/delete') else
+                        target = ('/preparation?supprime=1' if self.path.endswith('/delete') else
                                   '/preparation/contributions' if self.path.endswith('/withdraw') else self.path.rsplit('/', 1)[0])
                         self.respond(303, b'', 'text/html; charset=utf-8', list(headers.items()) + management_headers + [('Location', target)])
                     else:
@@ -626,7 +668,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     self.respond(result['status'], result['value'], headers=headers)
                 else:
                     csrf = body.get('csrf_token', '') if type(body) is dict else ''
-                    view_path = self.path
+                    view_path = relay_path
                     if result['status'] < 400 and result['value'].get('kind') not in ('privacy_data', 'session_bootstrap', 'contributions'):
                         if 'csrf_token' in result['value'] and ('operation_id' not in result['value']
                                                                 or 'availability' in result['value']):
@@ -643,7 +685,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     elif self.command == 'POST' and type(body) is dict:
                         result['value']['form'] = {key: value for key, value in body.items()
                                                    if key not in ('csrf_token', 'source_sha256', 'website', 'key')}
-                    page = views.render(result['value'], csrf, view_path, error=result['status'] >= 400)
+                    page = views.render(result['value'], csrf, view_path, error=result['status'] >= 400, status=result['status'])
                     script = views.page_script(result['value']) if result['status'] < 400 else None
                     self.respond(result['status'], page, 'text/html; charset=utf-8', headers, script=script)
             except (ValueError, TypeError, KeyError, CookieError) as error:
@@ -656,32 +698,32 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                         self.respond(500, value)
                         return
                     try:
-                        page = views.render(value, '', error=True)
+                        page = views.render(value, '', error=True, status=500)
                     except Exception:
                         page = _failure_document(value['error'])
                     self.respond(500, page, 'text/html; charset=utf-8')
                     return
                 value = {'error': 'Ce formulaire n’a pas pu être traité. Rechargez la page, puis réessayez. Aucun appel n’a été lancé.'}
-                self.respond(400, value if wants_json else views.render(value, '', error=True),
+                self.respond(400, value if wants_json else views.render(value, '', error=True, status=400),
                              'application/json' if wants_json else 'text/html; charset=utf-8')
             except OSError as error:
                 read_only = self.command in ('GET', 'HEAD')
                 if isinstance(error, TimeoutError) and not read_only:
                     value = dict(RESPONSE_TIMEOUT)
-                    self.respond(504, value if wants_json else views.render(value, '', urlsplit(self.path).path, error=True),
+                    self.respond(504, value if wants_json else views.render(value, '', urlsplit(self.path).path, error=True, status=504),
                                  'application/json' if wants_json else 'text/html; charset=utf-8')
                     return
                 # L'archive s'enregistre à sa première demande : après un délai, rien ne prouve le contraire
                 writing_read = urlsplit(self.path).path.endswith('/archive')
-                value = {'error': 'Bench-X est momentanément indisponible. Cette page ne peut pas s’afficher. '
+                value = {'error': 'Evaly est momentanément indisponible. Cette page ne peut pas s’afficher. '
                          'Réessayez dans un instant.'
                          if read_only and writing_read else
-                         'Bench-X est momentanément indisponible. Cette page ne peut pas s’afficher, '
+                         'Evaly est momentanément indisponible. Cette page ne peut pas s’afficher, '
                          'mais rien n’a été modifié. Réessayez dans un instant.'
                          if read_only else
-                         'Bench-X est momentanément indisponible et ne peut pas confirmer votre envoi. '
+                         'Evaly est momentanément indisponible et ne peut pas confirmer votre envoi. '
                          'Il a peut-être été enregistré : ouvrez votre cas d’usage avant de renvoyer quoi que ce soit.', 'unavailable': True}
-                self.respond(503, value if wants_json else views.render(value, '', error=True),
+                self.respond(503, value if wants_json else views.render(value, '', error=True, status=503),
                              'application/json' if wants_json else 'text/html; charset=utf-8')
 
         def evaluations_help(self):
@@ -950,7 +992,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     self.error_page(400, 'Recherche invalide', 'Modifiez votre recherche ou effacez les filtres.')
                     return
                 value = {'kind': 'references', 'reference_id': identity, **fields}
-                self.respond(200, views.render(value, '', self.path), 'text/html; charset=utf-8')
+                self.respond(200, views.render(value, '', self.path), 'text/html; charset=utf-8', script=views.page_script(value))
                 return
             if reference_path == '/epreuves/aide':
                 if urlsplit(self.path).query:
@@ -1028,6 +1070,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 try:
                     if reference_path == '/epreuves':
                         payload = editorial.search_view(public, criteria)
+                        # Une recherche envoyée sans aucun critère s'annonce telle quelle (C3)
+                        payload['search_sent'] = bool(urlsplit(self.path).query)
                         for entry in payload['versions']:
                             try:
                                 entry['results'] = public_results.published(
@@ -1050,7 +1094,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 except ValueError:
                     self.not_found()
                     return
-                self.respond(200, views.render(payload, '', reference_path), 'text/html; charset=utf-8')
+                self.respond(200, views.render(payload, '', reference_path), 'text/html; charset=utf-8', script=views.page_script(payload))
                 return
             if self.path in _RESOURCES:
                 raw, media, etag = resources[self.path] if resources else _load_resource(*_RESOURCES[self.path])
@@ -1068,7 +1112,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             if reference_path.startswith('/preparation/copies/'):
                 self.copy_from_editorial()
                 return
-            if self.path == '/preparation' or self.path.startswith('/preparation/'):
+            if self.path in ('/preparation', '/preparation?supprime=1') or self.path.startswith('/preparation/'):
                 self.preparation()
                 return
             if self.path in views.LEGAL_PAGES:
