@@ -37,9 +37,9 @@ _VOLATILE_PRESENTATION = re.compile(
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
-    '14': {
-        'index.html': 'ff58e14105a57c2bb462bd3eb2baed78c15a2fc922a2479a895e54950baf3173',
-        'style.css': '67ee5e3b69519730419b6c99cd68b7505a1414f3c44bc6247a9b0d0fe76572d6',
+    '15': {
+        'index.html': '633ec854df69cf003b9242eb4aa754cd7abd06f3201d123e1985c152e9f166f2',
+        'style.css': '97b862cb6ea94990ffee87589ea32274c015011a990a432845fe2f90d34d05aa',
     },
 }
 # Feuille fictive distincte des octets actifs : aucun actif scellé n'est dupliqué
@@ -200,7 +200,7 @@ class S6Regressions(unittest.TestCase):
                 labeled = dict(manifest, presentation_version=old)
                 raw = storage._strict_json(labeled).encode()
                 pub._manifest(raw, sha256(raw).hexdigest())
-        unknown = dict(manifest, presentation_version='15')
+        unknown = dict(manifest, presentation_version='16')
         raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
             pub._manifest(raw, sha256(raw).hexdigest())
@@ -260,7 +260,7 @@ class S6Regressions(unittest.TestCase):
         self.assertEqual([('script', {})], [(tag, attrs) for tag, attrs in markup.tags if tag == 'script'])
         self.assertFalse(any(k.startswith('on') for _, attrs in markup.tags for k in attrs))
         self.assertEqual(views.COMPARISON_FOCUS_SCRIPT.encode(), comparison_html.split(b'<script>')[1].split(b'</script>')[0])
-        self.assertEqual('nien9Aoz/oWmdtDJhzMnQH8Brg81Tu1m+0JvUXLAmzI=',
+        self.assertEqual('xdkX+3m2MWHmWrCZ+SsEjAvS/CN7CgIWms4gYXQdRHM=',
                          b64encode(sha256(views.COMPARISON_FOCUS_SCRIPT.encode()).digest()).decode())
         detail = next(attrs['href'] for tag, attrs in markup.tags
                       if tag == 'a' and 'data-result' in attrs and '/attempts/attempt-error' in attrs['href'])
@@ -343,7 +343,7 @@ class S6Regressions(unittest.TestCase):
                     raw = result.read()
                     expected = policy
                     if path == self.base and accept == 'text/html':
-                        expected += "; script-src 'sha256-nien9Aoz/oWmdtDJhzMnQH8Brg81Tu1m+0JvUXLAmzI='; connect-src 'self'"
+                        expected += "; script-src 'sha256-xdkX+3m2MWHmWrCZ+SsEjAvS/CN7CgIWms4gYXQdRHM='; connect-src 'self'"
                         self.assertEqual(1, raw.count(b'<script>'))
                         self.assertNotIn(b'innerHTML', raw)
                         self.assertEqual(1, raw.count(b'<dialog '))

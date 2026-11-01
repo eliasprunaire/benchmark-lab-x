@@ -1949,21 +1949,21 @@ class ParcoursComplet(unittest.TestCase):
         main = next(node for node in page.nodes if node['tag'] == 'main')['text']
         for value in (title, work, 'Modèle A', 'Modèle C', 'Satisfait', 'Ne satisfait pas',
                       'Une action annoncée par la consigne manque au tableau.',
-                      'Réponses évaluées : 2 · essais lancés : 2 sur 2',
+                      '2 réponses vérifiées', '2 essais lancés sur 2',
                       'Comparaison des coûts incomplète', 'Coût observé inconnu pour 1 réponse',
-                      'Conditions communes', 'Campagne du', 'Toutes les épreuves'):
+                      'Conditions communes', 'Benchmark du', 'Toutes les épreuves'):
             self.assertIn(value, page.visible)
         for private_value in (need, reformulation or '', KEY, judge_text, 'operation_id', 'body_base64',
                              'receipt', '/preparation/dossiers/'):
             if private_value:
                 self.assertNotIn(private_value, main)
-        self.assertIn('un filtre ne change ni les verdicts ni la population', page.visible.lower())
+        self.assertIn('un filtre ne change ni les verdicts ni la population', page.depliant('Tri et filtres').lower())
         self.assertIn('pièce non publiée', main.lower())
         # Configuration demandée, observée et sources : différence et inconnue explicites
         page_raw = raw.decode()
         self.assertIn('fournisseur-observe', page_raw)
         self.assertRegex(page_raw, r'Fournisseur</th><td>OpenRouter</td><td>fournisseur-observe</td>')
-        self.assertRegex(page_raw, r'Observations inconnues :[^<]*Effort de raisonnement')
+        self.assertRegex(page_raw, r'Observations inconnues :[^<]*Raisonnement')
 
         piece_url = first + '/pieces/' + selected[0]
         _, piece_headers, piece_raw = self.request(piece_url, cookies=SimpleCookie())
@@ -1994,13 +1994,14 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('prive', rejected.visible)
 
         page, _, second_raw = self.request(second)
-        self.assertIn('Campagne du', page.visible)
+        self.assertIn('Benchmark du', page.visible)
         self.assertEqual({first, partial}, {node['attrs']['href'] for node in page.nodes
-                                           if node['tag'] == 'a' and 'Campagne du' in node['text']})
+                                           if node['tag'] == 'a' and 'Benchmark du' in node['text']})
         self.assertEqual(2, second_raw.count(b'<tr id="reponse-'))
         self.assertIn('coûts complets', page.visible.lower())
         page, _, partial_raw = self.request(partial)
-        self.assertIn('Réponses évaluées : 1 · essais lancés : 3 sur 3', page.visible)
+        self.assertIn('1 réponse vérifiée', page.visible)
+        self.assertIn('3 essais lancés sur 3', page.visible)
         self.assertIn('Réponses en attente ou incidents', page.visible)
         self.assertIn('Aucune réponse exploitable', page.visible)
         self.assertIn('Coût observé : 0,10 USD', page.visible)
@@ -2008,7 +2009,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Comparaison des coûts incomplète', page.visible)
         self.assertEqual(1, partial_raw.count(b'<tr id="reponse-'))
         self.assertEqual({first, second}, {node['attrs']['href'] for node in page.nodes
-                                           if node['tag'] == 'a' and 'Campagne du' in node['text']})
+                                           if node['tag'] == 'a' and 'Benchmark du' in node['text']})
 
         # Lecture autonome : le stockage privé source a disparu et le relais privé est interdit
         moved = self.data.with_name(self.data.name + '-absent')
@@ -2051,7 +2052,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn(b'<script', withdrawn_raw)
         self.request(piece_url, status=404)
         self.request(first + '/pieces/' + 'a' * 32, status=404)
-        self.assertIn('Campagne du', self.request(second)[0].visible)
+        self.assertIn('Benchmark du', self.request(second)[0].visible)
         trial_page = self.request('/epreuves/' + task + '/' + version)[0]
         self.assertIn(title, trial_page.visible)
         self.assertNotIn(first, [node['attrs']['href'] for node in trial_page.nodes if node['tag'] == 'a'])
@@ -2168,7 +2169,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual([1, 2, 3], order('?sort=' + precision))
         self.assertEqual([1, 2, 3], order('?sort=' + precision + '&direction=desc'))
         page = self.request(url + '?sort=' + precision)[0]
-        self.assertIn('Non comparable : Mesure non relevée ou sans preuve', page.visible)
+        self.assertIn('non comparable : Mesure non relevée ou sans preuve', page.visible)
 
     def test_copie_epreuve_expiration_et_purge(self):
         """#465 : la copie et sa source suivent les règles privées de conservation, sans réactivation"""
@@ -4353,7 +4354,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(5, len(recus))
         # Issue #458 : avant toute évaluation, la comparaison dit déjà pourquoi elle ne conseille pas
         avant, _, _ = self.request(recap.removesuffix('/conditions'))
-        self.assertIn('Exemple 1 : toutes les réponses prévues ne sont pas évaluées.', avant.visible)
+        self.assertIn('Exemple 1 : une partie des réponses prévues n’est pas encore vérifiée.', avant.visible)
         # 4. L'essai jamais parti ne retient pas l'évaluation des réponses déjà reçues
         page, _, _ = self.request(recap)
         self.submit(page, '/evaluate', {})
@@ -4377,7 +4378,7 @@ class ParcoursComplet(unittest.TestCase):
         results, _, raw = self.request(comparison)
         self.examine(results, comparison, 'résultats de deux exemples', None)
         # 3. Chaque verdict, coût et incident sous son exemple et son modèle
-        sections = raw.decode().split('<h3>Exemple ')
+        sections = raw.decode().split('<div class="cas-titre"><h3>Exemple ')
         self.assertEqual(3, len(sections))
         premier_tableau, second_tableau = (Page(part.encode()).visible for part in sections[1:])
         self.assertIn('Modèle A', premier_tableau)
@@ -4391,7 +4392,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual({('case-1', m) for m in modeles} | {('case-2', modeles[0])}, set(lignes))
         self.assertEqual('SATISFAIT', lignes[('case-2', 'openai/gpt-5.6-sol')]['verdict'])
         # Le détail d'une réponse de l'exemple 2 montre ses pièces et sa réponse, jamais celles de l'exemple 1
-        detail_href = Page(sections[2].encode()).link('Détail et preuves')
+        detail_href = Page(sections[2].encode()).link('Preuves')
         detail, _, raw = self.request(detail_href)
         self.examine(detail, detail_href, 'détail d’une réponse de l’exemple 2', None)
         self.assertIn(notes[2].strip(), raw.decode())
@@ -4406,40 +4407,37 @@ class ParcoursComplet(unittest.TestCase):
         # 4. Couverture prévue et observée : la réponse perdue et l'essai jamais parti restent visibles
         self.assertIn('Exemple 2 : Aucune réponse exploitable pour Modèle B', results.visible)
         self.assertNotIn('Modèle C', second_tableau)
-        self.assertRegex(results.visible, r'essais lancés : 5 sur 6')
+        self.assertRegex(results.visible, r'5 essais lancés sur 6')
         self.assertIn('Exemple 2 : Modèle C n’a pas été appelé : la comparaison s’est arrêtée avant cet essai.', results.visible)
         self.assertNotIn('doit être relue', results.visible)
         # 5. Aucun conseil sur plusieurs exemples ; la limite du juge est dite avec les verdicts
         self.assertNotIn('Notre conseil', results.visible)
         # Issue #458 : l'absence de conseil nomme l'exemple incomplet
-        self.assertIn('Exemple 2 : toutes les réponses prévues ne sont pas évaluées.', results.visible)
+        self.assertIn('Exemple 2 : une partie des réponses prévues n’est pas encore vérifiée.', results.visible)
         self.assertIn('Le juge automatique n’est pas qualifié', results.visible)
         self.sans_promesse(results)
         # Issue #456 : un filtre garde chaque exemple, son dénominateur, ses essais manquants et l'échelle de ses coûts
-        sous_filtre, echelles = {}, {}
+        sous_filtre = {}
         for filtre in ('', 'verdict=NE+SATISFAIT+PAS', 'configuration=configuration-1'):
             page, _, raw = self.request(comparison + ('?' + filtre if filtre else ''))
-            # Modèle A coûte 0,11 USD sur l'exemple 1, dont la réponse la plus chère coûte 0,12 USD
-            echelles[filtre] = '<rect width="92%"' in raw.decode().split('<h3>Exemple ')[1]
-            parties = [Page(part.encode()).visible for part in raw.decode().split('<h3>Exemple ')]
+            parties = [Page(part.encode()).visible for part in raw.decode().split('<div class="cas-titre"><h3>Exemple ')]
             self.assertEqual(3, len(parties))
             self.assertIn('3 réponses évaluées sur 3 essais prévus', parties[1])
             self.assertIn('1 réponse évaluée sur 3 essais prévus', parties[2])
             self.assertIn('Exemple 2 : Modèle C n’a pas été appelé', page.visible)
-            self.assertRegex(page.visible, r'essais lancés : 5 sur 6')
+            self.assertRegex(page.visible, r'5 essais lancés sur 6')
             self.assertNotIn('Notre conseil', page.visible)
-            self.assertIn('Exemple 2 : toutes les réponses prévues ne sont pas évaluées.', page.visible)
+            self.assertIn('Exemple 2 : une partie des réponses prévues n’est pas encore vérifiée.', page.visible)
             self.assertIn('Le juge automatique n’est pas qualifié', page.visible)
-            sous_filtre[filtre] = [(part.count('Détail et preuves'),
+            sous_filtre[filtre] = [(part.count('et détail de'),
                                     'Aucune réponse de cet exemple ne correspond à ces filtres.' in part)
                                    for part in parties[1:]]
         self.assertEqual([(3, False), (1, False)], sous_filtre[''])
         self.assertEqual([(1, False), (0, True)], sous_filtre['verdict=NE+SATISFAIT+PAS'])
         self.assertEqual([(1, False), (1, False)], sous_filtre['configuration=configuration-1'])
-        self.assertTrue(echelles[''] and echelles['configuration=configuration-1'])
         # Choisir un exemple n'affiche que lui
         _, _, raw = self.request(comparison + '?case=case-2')
-        self.assertEqual(2, len(raw.decode().split('<h3>Exemple ')))
+        self.assertEqual(2, len(raw.decode().split('<div class="cas-titre"><h3>Exemple ')))
         artefacts = os.environ.get('BENCHX_E2E_ARTEFACTS')
         if artefacts:
             Path(artefacts).mkdir(parents=True, exist_ok=True)
@@ -4485,7 +4483,7 @@ class ParcoursComplet(unittest.TestCase):
                          [(r['case_id'], r['pieces'][0]['content']) for r in reprises])
         raw = self.evaluer(premier)
         # 3. Chaque exemple garde ses deux modèles, la reprise comprise, sous son propre titre
-        sections = raw.split('<h3>Exemple ')
+        sections = raw.split('<div class="cas-titre"><h3>Exemple ')
         self.assertEqual(3, len(sections))
         for section in sections[1:]:
             self.assertIn('Modèle A', Page(section.encode()).visible)
@@ -4604,7 +4602,7 @@ class ParcoursComplet(unittest.TestCase):
         # 4. Les deux essais manquants restent visibles, chacun sous son numéro
         self.assertIn('Aucune réponse exploitable pour Modèle A, essai 3', results.visible)
         self.assertIn('Modèle C, essai 3, n’a pas été appelé', results.visible)
-        self.assertRegex(results.visible, r'essais lancés : 5 sur 6')
+        self.assertRegex(results.visible, r'5 essais lancés sur 6')
         # 5. Ni conseil, ni taux : les essais se lisent un par un
         self.assertNotIn('Notre conseil', results.visible)
         self.assertIn('Le juge automatique n’est pas qualifié', results.visible)
@@ -4614,7 +4612,7 @@ class ParcoursComplet(unittest.TestCase):
         # Issue #456 : filtré sur Mistral, ses deux essais restent séparés et numérotés, sans conseil ni taux
         filtre, _, raw = self.request(comparison + '?configuration=configuration-2')
         self.assertEqual(2, raw.decode().count('<tr id="attempt-'))
-        for attendu in ('Essai 1 sur 3', 'Essai 2 sur 3', 'Modèle C, essai 3, n’a pas été appelé', 'essais lancés : 5 sur 6',
+        for attendu in ('Essai 1 sur 3', 'Essai 2 sur 3', 'Modèle C, essai 3, n’a pas été appelé', '5 essais lancés sur 6',
                         'Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.'):
             self.assertIn(attendu, filtre.visible)
         self.assertNotIn('Notre conseil', filtre.visible)
@@ -4675,7 +4673,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(1, len(reprises))
         self.assertIn('Essai 2 sur 2', reprises[0])
         self.assertIn('0,03 USD', reprises[0])
-        self.assertIn('Réponses évaluées : 4 · essais lancés : 4 sur 4.', Page(html.encode()).visible)
+        self.assertIn('4 essais lancés sur 4', Page(html.encode()).visible)
         # 3. L'envoi coupé reste dans les autres envois, avec son propre coût
         _, phases = self.depenses(html)
         self.assertTrue(any('0,02' in item for item in phases['Autres envois aux modèles']))
@@ -5117,14 +5115,14 @@ class ParcoursComplet(unittest.TestCase):
 
         def ligne(nom):
             return next(chunk for chunk in html.split('<tr id="attempt-')[1:]
-                        if '<strong>' + nom + '</strong>' in chunk).split('</tr>')[0]
+                        if '<span class="modele">' + nom + '<small>' in chunk).split('</tr>')[0]
         cellule = ligne('Modèle A')
         self.assertIn('Erreur éliminatoire : Inventer une décision absente du compte rendu. '
                       'Exigence non respectée : ' + tableau + '.', cellule)
         self.assertNotIn('Le tableau a bien', cellule)
         self.assertNotIn(echeances, cellule)
         self.assertNotIn('…', cellule)
-        self.assertNotIn('<strong>Modèle C</strong>', html.split('<table')[1])
+        self.assertNotIn('<span class="modele">Modèle C<small>', html.split('<table')[1])
         self.assertIn('Aucune réponse exploitable pour Modèle C (arrêt pour longueur, '
                       'plafond demandé : 4096 jetons de sortie). Ce modèle', html)
         self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu). Ce modèle', html)
@@ -5134,7 +5132,7 @@ class ParcoursComplet(unittest.TestCase):
         _, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
         text = raw.decode()
         self.assertIn('0 exigence sur 2 respectée, 1 non respectée, 1 non vérifiable. 1 erreur éliminatoire relevée.', text)
-        states = re.findall(r'>([^<>]+)</span><span>([^<]+)</span>', text)
+        states = re.findall(r'>([^<>]+)</span><div><p><b>([^<]+)</b>', text)
         self.assertIn(('Non respectée', tableau), states)
         self.assertIn(('Non vérifiable', echeances), states)
         self.assertIn(explication, text)
@@ -5198,18 +5196,18 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(results, comparison, 'obligation composée', None)
         self.assertNotIn('O1_', results.visible)
         cellule = next(chunk for chunk in raw.decode().split('<tr id="attempt-')[1:]
-                       if '<strong>Modèle A</strong>' in chunk).split('</tr>')[0]
+                       if '<span class="modele">Modèle A<small>' in chunk).split('</tr>')[0]
         self.assertIn('Exigence non respectée : ' + composee + ' (' + echeance + ').', cellule)
 
         def modeles(page):
-            return [n['text'] for n in page.nodes if n['tag'] == 'strong']
+            return [n['text'][:8] for n in page.nodes if n['tag'] == 'span' and n['attrs'].get('class') == 'modele']
         self.assertNotIn('Modèle A', modeles(self.request(comparison + '?obligation=O1%3APASS')[0]))
         self.assertIn('Modèle A', modeles(self.request(comparison + '?obligation=O1%3AFAIL')[0]))
         detail, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
         text = raw.decode()
         self.assertNotIn('O1_', detail.visible)
         self.assertIn('1 exigence sur 2 respectée, 1 non respectée.', text)
-        states = re.findall(r'>([^<>]+)</span><span>([^<]+)</span>', text)
+        states = re.findall(r'>([^<>]+)</span><div><p><b>([^<]+)</b>', text)
         for state in (('Non respectée', composee), ('Respectée', forme), ('Non respectée', echeance), ('Respectée', simple)):
             self.assertIn(state, states)
         self.assertIn(echeance + ' non respecté : 12 mars inventé, absent des notes', text)
@@ -5330,14 +5328,14 @@ class ParcoursComplet(unittest.TestCase):
 
         def ligne(nom):
             return next(chunk for chunk in raw.decode().split('<tr id="attempt-')[1:]
-                        if '<strong>' + nom + '</strong>' in chunk).split('</tr>')[0]
+                        if '<span class="modele">' + nom + '<small>' in chunk).split('</tr>')[0]
         self.assertIn('Satisfait', ligne('Modèle A'))
         self.assertNotIn('Ne satisfait pas', ligne('Modèle A'))
         self.assertIn('Exigence non respectée : ' + exigence + '.', ligne('Modèle B'))
         # 4 et 5. Le détail relie l'exigence visible, le passage des notes, la réponse examinée et le constat
         detail, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', ligne('Modèle B'))[1].replace('&amp;', '&'))
         text = raw.decode()
-        self.assertIn(('Non respectée', exigence), re.findall(r'>([^<>]+)</span><span>([^<]+)</span>', text))
+        self.assertIn(('Non respectée', exigence), re.findall(r'>([^<>]+)</span><div><p><b>([^<]+)</b>', text))
         self.assertIn(constat, text)
         self.assertIn('Extrait de notes.txt</summary><pre>' + passage + '</pre>', text)
         self.assertIn('Absence constatée dans la réponse du modèle', text)
@@ -5581,8 +5579,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('2 /3 réponses reçues', page.visible)
         rows = html.split('<tbody>')[1].split('</tbody>')[0]
         self.assertEqual(2, rows.count('<tr id="attempt-'))
-        reprise = next(chunk for chunk in rows.split('<tr id="attempt-')[1:] if '<strong>Modèle B</strong>' in chunk)
-        self.assertIn('Reprise après arrêt pour longueur : limite de sortie de 8192 jetons', reprise)
+        reprise = next(chunk for chunk in rows.split('<tr id="attempt-')[1:] if '<span class="modele">Modèle B<small>' in chunk)
+        self.assertIn('Reprise après arrêt pour longueur : longueur de réponse de 8192 jetons', reprise)
         # Issue #442 : la reprise réussie garde consultables les observations de l'essai coupé
         self.assertIn('Essai d’origine · motif de fin transmis : length · consommation transmise : '
                       'completion_tokens 4096, prompt_tokens 120', reprise)
@@ -5696,7 +5694,7 @@ class ParcoursComplet(unittest.TestCase):
 
     def depenses(self, html):
         """Récapitulatif des dépenses de la comparaison : texte entier et lignes de chaque phase"""
-        bloc = html.split('<details id="expenses">')[1].split('<details id="method">')[0].rsplit('</details>', 1)[0]
+        bloc = html.split('<details class="tiroir" id="expenses">')[1].split('<details class="tiroir" id="method">')[0].rsplit('</details>', 1)[0]
         phases = {titre.split(' : ')[0]: re.findall(r'<li>(.*?)</li>', corps, re.S)
                   for titre, corps in re.findall(r'<h3>(.*?)</h3>(.*?)(?=<h3>|$)', bloc, re.S)}
         return Page(('<details>' + bloc + '</details>').encode()).nodes[0]['text'], phases
@@ -5762,7 +5760,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotRegex(texte, r'(?i)par mois|heure de travail|plafond|traceur')
         # Le tableau garde le coût de chaque réponse, sans les autres phases
         lignes = html.split('<tbody>')[1].split('</tbody>')[0]
-        self.assertEqual(['0,05 USD', '0,10 USD'], sorted(re.findall(r'<span class="source-value">(.*?)</span>', lignes)))
+        self.assertEqual(['0,05 USD', '0,10 USD'], sorted(re.findall(r'<td data-th="Coût observé" class="nb">(.*?)</td>', lignes)))
 
     def test_cout_complet_inconnu_annonce_un_sous_total(self):
         """Issue #441 : une dépense nécessaire manque, le total reste inconnu
@@ -5840,12 +5838,12 @@ class ParcoursComplet(unittest.TestCase):
         dossier, html = self.comparer(['Clarté du tableau'],
                                       lambda critere, sortie: 'acceptable' if sortie == self.SORTIE_C else 'excellent',
                                       comportement=comportement)
-        conseil = Page(html.split('<aside class="economic-choice"')[1].split('</aside>')[0].encode())
+        conseil = Page(html.split('<section class="ticket" aria-labelledby="economic-choice-title"')[1].split('</section>')[0].encode())
         self.assertIn('Modèle A', conseil.visible)
         self.assertIn('Nous retenons d’abord la', conseil.visible)
         self.assertIn('À qualité égale, le coût observé le plus bas l’emporte.', conseil.visible)
-        # Sur téléphone, la portée du conseil se replie sous « Détail du conseil » (critère K1)
-        self.assertIn('Ce conseil repose sur un seul exemple.', conseil.depliant('Détail du conseil'))
+        # La portée du conseil se lit sous le ticket, sans dépliant
+        self.assertIn('Ce conseil repose sur un seul exemple.', Page(html.encode()).visible)
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
         _, _, raw = self.request(comparison, json_response=True)
         self.assertCountEqual([('excellent', 1), ('acceptable', 2)], [
@@ -5854,9 +5852,10 @@ class ParcoursComplet(unittest.TestCase):
         filtre = re.findall(r'<option value="([^"]+)">Modèle C', options)[0]
         filtree, _, raw = self.request(comparison + '?configuration=' + filtre)
         self.assertIn('1 réponse affichée sur 2', filtree.visible)
-        self.assertEqual(html.split('<aside class="economic-choice"')[1].split('</aside>')[0],
-                         raw.decode().split('<aside class="economic-choice"')[1].split('</aside>')[0])
-        page, _, _ = self.request(filtree.link('Détail et preuves'))
+        # Le conseil porte sur toute la comparaison : seul le lien vers la réponse garde le filtre de retour
+        sans_lien = lambda texte: re.sub(r' href="[^"]*"', '', texte.split('<section class="ticket" aria-labelledby="economic-choice-title"')[1].split('</section>')[0])
+        self.assertEqual(sans_lien(html), sans_lien(raw.decode()))
+        page, _, _ = self.request(filtree.link('Preuves'))
         self.examine(page, comparison, 'détail ouvert seul', None)
         self.assertIn('Modèle C', page.visible)
         self.assertIn(ATTRIBUTION, page.visible)
@@ -5864,7 +5863,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Comparaison : réponses évaluées : 2 · essais lancés : 2 sur 2.', page.visible)
         resultats = Page(html.encode())
         self.assertIn(ATTRIBUTION, next(n for n in resultats.nodes if n['attrs'].get('id') == 'method')['text'])
-        self.assertIn('Réponses évaluées : 2 · essais lancés : 2 sur 2.', resultats.visible)
+        self.assertIn('2 essais lancés sur 2', resultats.visible)
         apercu, _, _ = self.request(comparison + '/preview')
         self.assertIn(ATTRIBUTION, apercu.visible)
         self.assertIn(LIMIT, apercu.visible)
@@ -5889,7 +5888,7 @@ class ParcoursComplet(unittest.TestCase):
         """
         from benchmark import automatic_judgment as auto, calibration
         dossier, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent')
-        detail = Page(html.encode()).link('Détail et preuves')
+        detail = Page(html.encode()).link('Preuves')
         with closing(storage.Store(self.data)) as store:
             juges = [op for op in store.inspect_operations() if op['engine_version'] == auto.FORMAT]
             avant = storage._strict_json(store.inspect_operations())
@@ -5903,6 +5902,9 @@ class ParcoursComplet(unittest.TestCase):
                         perimeter=dict(description='Exemples fictifs de test uniquement', dossier_ids=[dossier_id]),
                         limits=['Fiche fictive : aucune qualification d’un modèle réel']) | changes
 
+        # Le tiroir « Vérification de la réponse » porte la portée de l'étalonnage : son texte compte avec le texte visible
+        etalonnage = lambda page: page.visible + ' ' + page.depliant('Vérification de la réponse')
+
         def lire(*fiches):
             with tempfile.TemporaryDirectory() as dossier_fiches:
                 for index, valeur in enumerate(fiches):
@@ -5915,28 +5917,28 @@ class ParcoursComplet(unittest.TestCase):
         autre_methode = dict(identite, method=dict(identite['method'], version='autre-version'))
         autre_juge = dict(identite, observed=dict(identite['observed'], provider='autre-fournisseur'))
         sans, _ = lire()
-        self.assertIn('Aucun étalonnage enregistré pour ce juge et cette méthode.', sans.visible)
-        self.assertNotRegex(sans.visible, r'(?i)certifi|qualifiée pour')
+        self.assertIn('Aucun étalonnage enregistré pour ce juge et cette méthode.', etalonnage(sans))
+        self.assertNotRegex(etalonnage(sans), r'(?i)certifi|qualifiée pour')
         qualifiee, brut = lire(fiche())
-        self.assertIn('Méthode qualifiée pour le périmètre déclaré', qualifiee.visible)
-        self.assertIn('Exemples fictifs de test uniquement', qualifiee.visible)
-        self.assertIn('4 octobre 2026', qualifiee.visible)
-        self.assertIn('Ce dossier fait partie de ce périmètre.', qualifiee.visible)
-        self.assertNotIn('pas recoupé', qualifiee.visible)
+        self.assertIn('Méthode qualifiée pour le périmètre déclaré', etalonnage(qualifiee))
+        self.assertIn('Exemples fictifs de test uniquement', etalonnage(qualifiee))
+        self.assertIn('4 octobre 2026', etalonnage(qualifiee))
+        self.assertIn('Ce dossier fait partie de ce périmètre.', etalonnage(qualifiee))
+        self.assertNotIn('pas recoupé', etalonnage(qualifiee))
         for autre in (autre_methode, autre_juge):
             page, _ = lire(fiche(judge_identity=autre))
             self.assertIn('Un étalonnage existe pour une autre version ou un autre juge ; il ne s’applique pas à ce résultat.',
-                          page.visible)
-            self.assertNotIn('Exemples fictifs de test uniquement', page.visible)
-            self.assertNotIn('Méthode qualifiée', page.visible)
+                          etalonnage(page))
+            self.assertNotIn('Exemples fictifs de test uniquement', etalonnage(page))
+            self.assertNotIn('Méthode qualifiée', etalonnage(page))
         for hors in ('autre-dossier', 'fixture'):
             page, _ = lire(fiche(perimeter=dict(description='Périmètre d’un autre dossier', dossier_ids=[hors])))
-            self.assertIn('mais son périmètre ne couvre pas ce dossier ; il ne s’applique pas à ce résultat.', page.visible)
-            self.assertNotIn('Périmètre d’un autre dossier', page.visible)
-            self.assertNotIn('Méthode qualifiée', page.visible)
+            self.assertIn('mais son périmètre ne couvre pas ce dossier ; il ne s’applique pas à ce résultat.', etalonnage(page))
+            self.assertNotIn('Périmètre d’un autre dossier', etalonnage(page))
+            self.assertNotIn('Méthode qualifiée', etalonnage(page))
         refusee, _ = lire(fiche(status='NOT_QUALIFIED'))
-        self.assertIn('Étalonnage examiné : qualification non retenue', refusee.visible)
-        self.assertNotIn('Méthode qualifiée', refusee.visible)
+        self.assertIn('Étalonnage examiné : qualification non retenue', etalonnage(refusee))
+        self.assertNotIn('Méthode qualifiée', etalonnage(refusee))
         bloc = next(n for n in Page(brut.encode()).nodes if n['attrs'].get('class') == 'calibration')['text']
         self.assertIn('decision-fictive', bloc)
         self.assertIn('Fiche fictive : aucune qualification d’un modèle réel', bloc)
@@ -5948,7 +5950,7 @@ class ParcoursComplet(unittest.TestCase):
             (Path(dossier_fiches) / 'fiche.json').write_text('{', encoding='utf-8')
             with patch.object(calibration, 'DECISIONS_DIR', Path(dossier_fiches)):
                 illisible, _, _ = self.request(detail)
-        self.assertIn('Les fiches d’étalonnage ne sont pas lisibles', illisible.visible)
+        self.assertIn('Les fiches d’étalonnage ne sont pas lisibles', etalonnage(illisible))
         # Fiches mal formées ou ambiguës : refusées à la lecture, jamais ignorées ni départagées
         autre = fiche(decision_id='decision-bis')
         perimetre = lambda **valeurs: fiche(perimeter=dict(description='Périmètre', dossier_ids=[dossier_id]) | valeurs)
@@ -5979,7 +5981,7 @@ class ParcoursComplet(unittest.TestCase):
             if model == 'openai/gpt-5.6-sol':
                 value['cost'].update(amount='0.30')
         _, html = self.comparer(['Clarté du tableau'], lambda critere, sortie: 'excellent', comportement=comportement)
-        conseil = Page(html.split('<aside class="economic-choice"')[1].split('</aside>')[0].encode())
+        conseil = Page(html.split('<section class="ticket" aria-labelledby="economic-choice-title"')[1].split('</section>')[0].encode())
         self.assertIn('Modèle C', conseil.visible)
         self.assertIn('Les 2 réponses qui satisfont l’exemple ont la même qualité observée. Nous retenons la moins coûteuse.',
                       conseil.visible)
@@ -6032,10 +6034,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Notre conseil', cout.visible)
         self.assertIn('Modèle C', cout.visible)
         self.assertIn('Priorité choisie : coût observé.', cout.visible)
-        # Le compromis et sa règle restent dans la page, repliés sous « Détail du conseil » (critère K1)
+        # Le compromis et sa règle se lisent sous le ticket, sans dépliant
         self.assertIn('Compromis sur « Clarté du tableau » : la réponse retenue vaut acceptable, '
-                      'alors que Modèle A vaut excellent.', cout.depliant('Détail du conseil'))
-        self.assertIn('aucune obligation non satisfaite n’est compensée', cout.depliant('Détail du conseil'))
+                      'alors que Modèle A vaut excellent.', cout.visible)
+        self.assertIn('aucune obligation non satisfaite n’est compensée', cout.visible)
         self.assertIn('Revenir au conseil par défaut', cout.visible)
         self.assertIn('Coûtobservé0,10USD', cout.visible.replace(' ', ''))
         _, _, raw = self.request(comparison + '?priority=cost', json_response=True)
@@ -6051,7 +6053,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Modèle A', clarte_page.visible)
         self.assertIn('Priorité choisie : Clarté du tableau.', clarte_page.visible)
         self.assertIn('Compromis sur « Concision du tableau » : la réponse retenue vaut acceptable, '
-                      'alors que Modèle C vaut excellent.', clarte_page.depliant('Détail du conseil'))
+                      'alors que Modèle C vaut excellent.', clarte_page.visible)
         self.assertIn('Coûtobservé0,30USD', clarte_page.visible.replace(' ', ''))
         _, _, raw = self.request(comparison + '?priority=' + clarte['id'], json_response=True)
         self.assertEqual(('priority_criterion', 'openai/gpt-5.6-sol'),
@@ -6062,7 +6064,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Modèle C', concision_page.visible)
         self.assertIn('Priorité choisie : Concision du tableau.', concision_page.visible)
         self.assertIn('Compromis sur « Clarté du tableau » : la réponse retenue vaut acceptable, '
-                      'alors que Modèle A vaut excellent.', concision_page.depliant('Détail du conseil'))
+                      'alors que Modèle A vaut excellent.', concision_page.visible)
         # Effacement : le défaut revient sans substitution implicite
         efface, _, raw = self.request(comparison + '?priority=')
         self.assertIn('Pas de conseil', efface.visible)
@@ -6084,7 +6086,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual({'priority': 'cost', 'configuration': filtre},
                          json.loads(self.request(comparison + '?priority=cost&configuration=' + filtre,
                                                  json_response=True)[2])['filter_scope'])
-        detail_href = filtree.link('Détail et preuves')
+        detail_href = filtree.link('Preuves')
         attempt_id = re.search(r'/attempts/([^?]+)', detail_href).group(1)
         detail = self.request(detail_href)[0]
         self.assertEqual(comparison + '?priority=cost&configuration=' + filtre + '#attempt-' + attempt_id,
@@ -6169,7 +6171,7 @@ class ParcoursComplet(unittest.TestCase):
                                                    cookies=cookies)
         self.assertIn('Notre conseil', ambiguous.visible)
         self.assertIn('Modèle A', ambiguous.visible)
-        tradeoff = re.search(r'<p class="priority-tradeoff">(.*?)</p>', ambiguous_raw.decode()).group(1)
+        tradeoff = re.search(r'<li><span class="mot"[^>]*>.*?</span><span>(Compromis sur.*?)</span></li>', ambiguous_raw.decode()).group(1)
         self.assertIn('Modèle A · Niveau de raisonnement : Élevé (high) vaut', tradeoff)
         self.assertNotIn('alors que Modèle A vaut', tradeoff)
         self.assertNotIn('Faible (low)', tradeoff)
@@ -6283,16 +6285,16 @@ class ParcoursComplet(unittest.TestCase):
                             self.assertNotIn('amount', choice)
                             self.assertEqual([('notes', '3', 'quality_then_cost'), ('other', '2', 'quality_then_cost')],
                                              [(c['case_id'], c['amount'], c['basis']) for c in choice['cases']])
-                            aside = next(n for n in page.nodes if n['attrs'].get('class') == 'economic-choice')['text']
-                            self.assertIn('Exemple 1 : 3 TEST', aside)
-                            self.assertIn('Exemple 2 : 2 TEST', aside)
-                            self.assertIn('Ce conseil repose sur 2 exemples', aside)
+                            aside = next(n for n in page.nodes if n['attrs'].get('class') == 'ticket')['text']
+                            self.assertIn('Exemple 1 · Coût observé3TEST', aside)
+                            self.assertIn('Exemple 2 · Coût observé2TEST', aside)
+                            self.assertIn('Ce conseil repose sur 2 exemples', page.visible)
                             self.assertIsNone(result['abstention'])
                         elif advised:
                             winner = 'y' if scenario == 'equal-quality' else 'x'
                             basis = 'equal_quality_cost' if scenario == 'equal-quality' else 'quality_then_cost'
                             amount = '2' if winner == 'y' else '3'
-                            self.assertIn('fictional-' + winner, next(n for n in page.nodes if n['attrs'].get('class') == 'economic-choice')['text'])
+                            self.assertIn('fictional-' + winner, next(n for n in page.nodes if n['attrs'].get('class') == 'ticket')['text'])
                             self.assertEqual(('fictional-' + winner, basis, amount, 'TEST', 2), (
                                 result['recommendation']['configuration']['model'], result['recommendation']['basis'],
                                 result['recommendation']['amount'], result['recommendation']['unit'], result['recommendation']['count']))
@@ -6361,7 +6363,7 @@ class ParcoursComplet(unittest.TestCase):
                                                   ('other', '2', 'priority_criterion')],
                                                  [(item['case_id'], item['amount'], item['basis'])
                                                   for item in choix['recommendation']['cases']])
-                                self.assertIn('Ce conseil repose sur 2 exemples', priorite_page.depliant('Détail du conseil'))
+                                self.assertIn('Ce conseil repose sur 2 exemples', priorite_page.visible)
                             elif kind == 'disagree':
                                 self.assertIsNone(choix['recommendation'])
                                 self.assertEqual('disagreement', choix['abstention']['reason'])
@@ -6445,13 +6447,13 @@ class ParcoursComplet(unittest.TestCase):
                                       comportement=comportement,
                                       models=('openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash',
                                               'mistralai/mistral-small-2603'))
-        self.assertIn('Satisfait : 2', html)
+        self.assertIn('2 satisfont', html)
         self.assertIn('Aucune réponse exploitable pour Modèle B', html)
         self.assertNotIn('Notre conseil', html)
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
         priorite, _, _ = self.request(comparison + '?priority=cost')
         self.assertNotIn('Notre conseil', priorite.visible)
-        self.assertIn('Toutes les réponses prévues ne sont pas évaluées.', priorite.visible)
+        self.assertIn('Une partie des réponses prévues n’est pas encore vérifiée.', priorite.visible)
 
     def test_priorite_au_cout_ne_conseille_jamais_une_reponse_non_conforme(self):
         """La réponse non conforme la moins chère reste éliminatoire, même avec la priorité au coût"""
@@ -6472,15 +6474,15 @@ class ParcoursComplet(unittest.TestCase):
                                       ajuste=ajuste, comportement=comportement,
                                       models=('openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash',
                                               'mistralai/mistral-small-2603'))
-        self.assertIn('Ne satisfait pas : 1', html)
+        self.assertIn('1 ne satisfait pas', html)
         # Par défaut, la meilleure clarté l'emporte malgré son coût
-        defaut = Page(html.split('<aside class="economic-choice"')[1].split('</aside>')[0].encode())
+        defaut = Page(html.split('<section class="ticket" aria-labelledby="economic-choice-title"')[1].split('</section>')[0].encode())
         self.assertIn('Modèle C', defaut.visible)
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
         _, _, raw = self.request(comparison + '?priority=cost')
-        aside = Page(raw.decode().split('<aside class="economic-choice" aria-labelledby="economic-choice-title"')[1]
-                     .split('</aside>')[0].encode())
-        detail = aside.depliant('Détail du conseil')
+        aside = Page(raw.decode().split('<section class="ticket" aria-labelledby="economic-choice-title"')[1]
+                     .split('</section>')[0].encode())
+        detail = Page(raw.decode().split('<section class="g-compromis"')[1].split('</section>')[0].encode()).visible
         self.assertIn('Modèle A', aside.visible)
         self.assertNotIn('Modèle B', aside.visible + detail)
         self.assertIn('Compromis sur « Clarté du tableau » : la réponse retenue vaut acceptable, '
@@ -6581,8 +6583,8 @@ class ParcoursComplet(unittest.TestCase):
                                 lambda critere, sortie: 'excellent' if '<script>' in sortie else 'acceptable',
                                 constat=constat, comportement=comportement,
                                 models=('openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'))
-        self.assertIn('À reprendre : 1', html)
-        self.assertIn('Satisfait : 2', html)
+        self.assertIn('1 à reprendre', html)
+        self.assertIn('2 satisfont', html)
         self.assertNotIn('Notre conseil', html)
 
     def test_sortie_vide_ou_coupee_expliquee_par_le_recu(self):
@@ -6622,9 +6624,9 @@ class ParcoursComplet(unittest.TestCase):
         html = self.evaluer(dossier)
         self.assertEqual(1, judge.request.call_count)
         rows = html.split('<tbody>')[1].split('</tbody>')[0]
-        self.assertNotIn('<strong>Modèle B</strong>', rows)
-        self.assertNotIn('<strong>Modèle C</strong>', rows)
-        ligne_b = next(li for li in html.split('<li>') if li.startswith('Aucune réponse exploitable pour Modèle B'))
+        self.assertNotIn('<span class="modele">Modèle B<small>', rows)
+        self.assertNotIn('<span class="modele">Modèle C<small>', rows)
+        ligne_b = next(li for li in html.split('<li>') if '<p>Aucune réponse exploitable pour Modèle B' in li)
         self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu). Ce modèle', ligne_b)
         self.assertNotIn('longueur', ligne_b)
         self.assertNotIn('épuisé', html)
@@ -6683,7 +6685,7 @@ class ParcoursComplet(unittest.TestCase):
         html = self.evaluer(dossier)
         self.assertEqual(2, judge.request.call_count)
         rows = html.split('<tbody>')[1].split('</tbody>')[0]
-        self.assertNotIn('<strong>Modèle C</strong>', rows)
+        self.assertNotIn('<span class="modele">Modèle C<small>', rows)
         self.assertIn('Aucune réponse exploitable pour Modèle C (cause non établie par le reçu). Ce modèle', html)
         self.assertIn('Essai d’origine · motif de fin transmis : stop · consommation transmise : '
                       'completion_tokens 40, prompt_tokens 120', html)
@@ -6771,7 +6773,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(1, judge.request.call_count)
         self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu)', html)
         self.assertIn('Modèle C n’a pas été appelé : la comparaison s’est arrêtée avant cet essai.', html)
-        self.assertIn('essais lancés : 2 sur 3', html)
+        self.assertIn('2 essais lancés sur 3', html)
         self.assertIn('Comparaison des coûts incomplète', html)
         self.assertNotIn('Notre conseil', html)
         self.assertEqual(2, len(envois))

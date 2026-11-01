@@ -17,8 +17,8 @@ from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MO
 from .fragments import (ETAPES, bouton, btn, cadre, champ, date_lisible_utc, disque, erreur_champ, etat, form,
                         ic, icon, lien, listing, montant_lisible, piste, puce, ruban, section, state_block, tampon,
                         tete, text, tiroir, workbench)
-from .projection import candidate_names, piece_name, projection_body
-from .results_views import render_results
+from .projection import projection_body
+from .results_views import (contexte_apercu, contexte_publication, contexte_resultats, render_preview, render_results)
 from .legal_views import LEGAL_PAGES, legal_layout
 from .privacy_views import (PRIVACY_SCRIPT, actions_erreur, alerte_expiration, erreur_grande, gestion_cas, historique_local, liens_donnees, marqueur_activite,
                             render_access, render_bootstrap, render_contribution, render_contributions, render_deleted,
@@ -1103,6 +1103,7 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         title, content = render_editorial_help(value)
     elif value.get('kind') == 'results':
         title, content = render_results(value)
+        contexte = contexte_publication(value)
     elif value.get('kind') == 'privacy_data':
         title, content = render_privacy_page(value, csrf)
     elif value.get('kind') == 'access':
@@ -1116,6 +1117,7 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         content = render_campaign_models(value)
     elif value.get('kind') == 'attempt_detail':
         title = 'Détail et preuves'
+        contexte = contexte_resultats(value, retour=(value['back_href'], 'Revenir aux résultats', 'retour'))
         content = render_attempt_detail(value)
     elif value.get('kind') == 'campaign_launch' and 'checks' in value:
         title, contexte = titre_vue(value), contexte_vue(value)
@@ -1137,27 +1139,12 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         content += '<p><a href="/preparation">Revenir à mes cas d’usage</a></p>'
     elif value.get('kind') == 'comparison':
         title = 'Résultats'
+        contexte = contexte_resultats(value, retour=(value['dossier_href'], 'Revenir au cas d’usage', 'retour'))
         content = render_comparison(value) + '<script>' + COMPARISON_FOCUS_SCRIPT + '</script>'
     elif value.get('kind') == 'projection_preview':
         title = 'Aperçu d’une publication'
-        comparison = value['comparison']
-        candidates = candidate_names(comparison)
-        rows = {link['piece_id']: row for row in comparison['rows'] for link in row['proof_links']}
-        content = ('<p class="note">Aperçu privé, non approuvé : rien n’est publié. Cette page montre ce qu’un lecteur '
-                   'verrait si cette comparaison était publiée.</p>')
-        content += '<p><a href="' + text(comparison['href']) + '">Revenir aux résultats</a></p>'
-        choice = '<form method="get" action="' + text(comparison['href'] + '/preview') + '">'
-        choice += '<fieldset><legend>Pièces que la publication montrerait</legend>'
-        choice += '<p class="hint">Si vous ne cochez aucune pièce, seuls les verdicts et leurs motifs apparaissent.</p>'
-        for piece in value['pieces']:
-            pid = piece['piece_id']
-            choice += '<label><input type="checkbox" name="piece" value="' + text(pid) + '"'
-            choice += (' checked' if pid in value['selected_links'] else '') + '> ' + text(piece_name(rows[pid], piece, candidates)) + '</label>'
-        choice += '</fieldset><button type="submit">Actualiser l’aperçu</button></form>'
-        choice += '<p class="hint">L’aperçu montre toute la comparaison : les filtres des résultats ne s’appliquent pas ici.</p>'
-        # Le choix des pièces se lit avant le corps qu'il modifie
-        content += workbench(projection_body(comparison, value['selected_links'], level=2), choice,
-                             'Pièces à montrer', side_first=True)
+        contexte = contexte_apercu(value)
+        content = render_preview(value, projection_body(value['comparison'], value['selected_links'], level=2))
     elif value.get('kind') == 'constructed_response':
         title = 'Réponse construite'
         declaree = 'producteur' in value

@@ -1323,3 +1323,23 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
 @media (prefers-color-scheme: dark) { .barre-choix .resume b { color: var(--papier); } }
 /* Arrêt de la mise à jour automatique de la page du cas : cible tactile de 44 px (le balisage de cette page garde la classe sec) */
 #preparation-progress button { min-height: 44px; }
+/* ——— Lot résultats : fenêtre de détail, preuves et extraits ——— */
+#result-dialog { width: min(100% - 32px, 52rem); max-height: 90vh; overflow: auto; padding: 16px 22px 24px; border: 2px solid var(--filet); border-radius: var(--r); background: var(--papier); color: var(--encre); }
+#result-dialog::backdrop { background: rgb(20 19 17 / .55); }
+.result-head { position: sticky; top: -16px; z-index: 1; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; padding: 8px 0; margin-bottom: 8px; background: var(--papier); }
+.result-status { margin: 0; color: var(--discret); font-size: .9rem; }
+.result-body progress { width: 100%; }
+/* dans la fenêtre, la réponse et ses preuves restent en une colonne */
+#result-dialog .colonnes-moitie, #result-dialog .verdict-tete { grid-template-columns: minmax(0, 1fr); }
+.preuve details { margin-top: 6px; }
+.preuve blockquote { margin: 8px 0 0; }
+.preuve details pre { white-space: pre-wrap; overflow-wrap: anywhere; font: .88rem/1.55 var(--mono); margin: 8px 0 0; }
+.tiroir-corps h3, .tiroir-corps h4 { margin-top: 18px; }
+.tiroir-corps h3:first-child, .tiroir-corps h4:first-child { margin-top: 0; }
+.tiroir-corps ul { padding-left: 1.2em; }
+.tiroir-corps li + li { margin-top: 6px; }
+.signaux li > div p { margin: 0 0 6px; }
+#attempt-detail + .petit { margin-top: 28px; }
+/* le ticket sans conseil a le fond d'une carte creuse : ses liens et puces gardent la couleur du texte, y compris en thème sombre */
+.ticket-vide .lien { color: var(--encre); }
+.ticket-vide .puce { border-color: var(--filet); }

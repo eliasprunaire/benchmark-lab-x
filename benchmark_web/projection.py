@@ -78,10 +78,10 @@ def projection_body(value, selected, level=1):
         body += '<p>Réponses évaluées : ' + t(coverage['evaluated_attempts']) + ' · essais lancés : ' + t(coverage['attempted_cells'])
         body += ' sur ' + t(coverage['planned_cells']) + '.</p>'
     body += '<p>Comparaison des coûts ' + ('complète' if value['economic_status'] == 'COMPLETE' else 'incomplète')
-    body += '. Le coût des réponses des modèles et celui de leur évaluation sont comptés séparément.</p>'
+    body += '. Le coût des réponses des modèles et celui de leur vérification sont comptés séparément.</p>'
     if conditions:
-        body += '<p>Conditions communes : même outil pour tous les modèles, ' + t(conditions['pi']['package'] + ' ' + conditions['pi']['version'])
-        body += ', fixé le ' + t(jour_lisible(conditions['frozen_at'])) + '.</p>'
+        body += '<p><strong>Conditions communes</strong></p>'
+        body += '<p>Exécution : pi.dev, même version pour tout le benchmark, fixée le ' + t(jour_lisible(conditions['frozen_at'])) + '.</p>'
     for pending in value.get('pending_attempts', []):
         prefix = '' if pending['state'] == 'NO_USABLE_RESPONSE' else 'Une réponse reste à évaluer : '
         body += '<p>' + prefix + t(pending['next_action']) + '</p>'
@@ -109,7 +109,7 @@ def projection_body(value, selected, level=1):
         body += t(_remplacer_criteres(row['reason'], row_labels)) + '</p>'
         if row.get('decision', {}).get('next_action'):
             body += '<p>' + t(row['decision']['next_action']) + '</p>'
-        body += '<p>Coût observé : ' + t(_montant(row['cost'])) + ' · coût de l’évaluation : ' + t(_montant(row['judgment']['cost'])) + '.</p>'
+        body += '<p>Coût observé : ' + t(_montant(row['cost'])) + ' · coût de la vérification : ' + t(_montant(row['judgment']['cost'])) + '.</p>'
         body += '<ul>'
         for finding in row['findings']:
             criterion = row_labels.get(finding['criterion_id'], finding['criterion_id'])
