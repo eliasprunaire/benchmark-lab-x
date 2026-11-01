@@ -56,12 +56,14 @@ class BrandingTests(unittest.TestCase):
         }, {}).decode()
         profile = openrouter.load_profile(openrouter.ASSISTANT)
 
-        for surface in (readme, public_page, profile['system']):
+        for surface in (readme, profile['system']):
             with self.subTest(surface=surface[:40]):
                 self.assertIn('Bench-X', surface)
                 self.assertNotIn('Benchmark Lab-X', surface)
         self.assertIn('by Le Lab-X', readme)
-        # Le parcours privé s'appelle Evaly ; les pages publiées, le README et l'assistant gardent Bench-X
+        # Le parcours privé et la page publiée s'appellent Evaly ; le README et l'assistant gardent Bench-X
+        self.assertIn('· Evaly</title>', public_page)
+        self.assertNotIn('Bench-X', public_page)
         self.assertIn('· Evaly</title>', template)
         self.assertIn('aria-label="Evaly, accueil"', template)
         self.assertIn('Par Cybrel · né au Lab-X', template)

@@ -139,7 +139,7 @@ def public_page(value, selected):
     body += 'qu’après contrôle de son intégrité.</p>'
     body += projection_body(value, selected)
     return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" '
-            'content="width=device-width, initial-scale=1"><title>Aperçu de publication · Bench-X</title>'
+            'content="width=device-width, initial-scale=1"><title>Aperçu de publication · Evaly</title>'
             '<link rel="stylesheet" href="style.css"></head><body><a class="skip" href="#main">Aller au contenu</a>'
             '<main id="main">' + body + '</main><footer><nav aria-label="Informations légales">'
             '<a href="/mentions-legales">Mentions légales</a> · <a href="/cgu">Conditions d’utilisation</a> · '

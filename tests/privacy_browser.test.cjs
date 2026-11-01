@@ -2343,11 +2343,11 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       if (reason === 'interrupted') assert.ok(text.includes('cette opération sera close automatiquement'));
       if (reason === 'restore') assert.ok(text.includes('Service momentanément indisponible'));
     }
-    // K7 : à 390 px, menu et étapes offrent 44 px de haut ; les liens du pied de page 32 px (liens resserrés, retour du 31 octobre 2026)
+    // K7 : à 390 px, menu, étapes et liens du pied de page offrent 44 px de haut (décision du 1er novembre 2026)
     await page.setViewportSize({width: 390, height: 844});
     await page.goto(origin + '/render/example-PENDING');
     const small = await page.$$eval('header.haut nav a, .piste a, footer.pied a',
-      links => links.filter(link => link.getClientRects().length && link.getBoundingClientRect().height < (link.closest('footer') ? 32 : 44))
+      links => links.filter(link => link.getClientRects().length && link.getBoundingClientRect().height < 44)
         .map(link => link.textContent.trim() + ' ' + Math.round(link.getBoundingClientRect().height)));
     assert.deepEqual(small, [], 'cibles sous 44 px');
     assert.ok((await page.textContent('main')).includes('Le contrôle de l’exemple n’a pas pu démarrer.'));
