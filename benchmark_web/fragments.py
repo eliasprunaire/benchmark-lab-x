@@ -374,3 +374,59 @@ def personal_key_form(csrf, access, back, *, opened=False):
         content += ('<p class="hint">Attendez la fin d’une préparation ou d’une vérification en cours avant de changer de clé. '
                     'Une fois la clé retirée, Evaly ne lance plus aucun nouvel appel. La clé reste active chez OpenRouter, et une comparaison déjà lancée n’est pas annulée.</p>')
     return content
+
+
+# ——— Lot résultats : contexte du cas, tableau comparatif, signaux ———
+
+def contexte_cas(besoin, version, *autres_html):
+    """Puces sous le titre d'un écran de résultats : cas (tronqué), version de l'exemple, ruban, puces ajoutées"""
+    mots = str(besoin).split()
+    court = besoin if len(mots) <= 8 else ' '.join(mots[:8]) + '…'
+    return puce(court, plein=True) + puce(version) + ruban('Exemple inventé') + ''.join(autres_html)
+
+
+def signal(mot_html, texte_html):
+    """Ligne d'un bloc `signaux` : un statut avec son mot, puis sa phrase"""
+    return '<li>' + mot_html + '<span>' + texte_html + '</span></li>'
+
+
+def info_modele(nom, rubriques):
+    """Info-bulle « i » des conditions de test d'un modèle ; `rubriques` : (étiquette, valeur) en texte brut"""
+    corps = ''.join('<dt>' + text(cle) + '</dt><dd>' + text(valeur) + '</dd>' for cle, valeur in rubriques)
+    return ('<details class="info"><summary aria-label="Conditions de test de ' + text(nom)
+            + '"><span class="i" aria-hidden="true">i</span></summary><div class="bulle-info"><dl>' + corps + '</dl></div></details>')
+
+
+def ligne_modele(ident, nom, effort, resultat_html, mesures_html, cout_html, detail_html, *, sous_nom_html='', classe='', attrs=''):
+    """Ligne du tableau comparatif : modèle, résultat, qualité observée, coût observé, preuves ; chaque cellule porte son `data-th`"""
+    ligne_id = ' id="' + text(ident) + '"' if ident else ''
+    return ('<tr' + ligne_id + (' class="' + text(classe) + '"' if classe else '') + attrs + '>'
+            '<td data-th="Modèle"><span class="modele">' + text(nom) + '<small>' + text(effort) + '</small></span>' + sous_nom_html + '</td>'
+            '<td data-th="Résultat">' + resultat_html + '</td>'
+            '<td data-th="Qualité observée">' + mesures_html + '</td>'
+            '<td data-th="Coût observé" class="nb">' + cout_html + '</td>'
+            '<td data-th="Détails">' + detail_html + '</td></tr>')
+
+
+def table_cas(titre, sous_titre, lignes_html, *, region):
+    """Titre d'un exemple, puis son tableau comparatif ; la région défilable reste atteignable au clavier"""
+    return ('<div class="cas-titre"><h3>' + text(titre) + '</h3><span class="petit">' + text(sous_titre) + '</span></div>'
+            '<div class="table-defile" role="region" tabindex="0" aria-label="' + text(region) + '"><table class="empile comparatif">'
+            '<caption class="cache">' + text(region) + ' : verdict, qualité et coût par modèle</caption>'
+            '<colgroup><col class="c-mod"><col class="c-res"><col class="c-qua"><col class="c-cout"><col class="c-det"></colgroup>'
+            '<thead><tr><th scope="col">Modèle</th><th scope="col">Résultat</th><th scope="col">Qualité observée</th>'
+            '<th scope="col">Coût observé</th><th scope="col"><span class="cache">Détails</span></th></tr></thead>'
+            '<tbody>' + ''.join(lignes_html) + '</tbody></table></div>')
+
+
+def bilan(titre, sous_titre, exemples_html, signaux_html='', *, ident='t-bilan'):
+    """Bilan d'un benchmark : titre, un bloc par exemple (tampons comptés), puis les signaux de limites"""
+    return ('<section aria-labelledby="' + ident + '"><div class="zone-titre"><span class="etiq">Bilan</span><h2 id="' + ident + '">'
+            + text(titre) + '</h2><span class="petit">' + text(sous_titre) + '</span></div>'
+            + ('<div class="bilan">' + exemples_html + '</div>' if exemples_html else '')
+            + ('<ul class="signaux" aria-label="Limites de ce benchmark">' + signaux_html + '</ul>' if signaux_html else '') + '</section>')
+
+
+def bilan_exemple(titre, nombre_html, tampons_html):
+    """Carte d'un exemple dans le bilan : titre, nombre de réponses, tampons comptés"""
+    return '<div class="bilan-ex"><h3>' + text(titre) + nombre_html + '</h3><div class="compte">' + tampons_html + '</div></div>'

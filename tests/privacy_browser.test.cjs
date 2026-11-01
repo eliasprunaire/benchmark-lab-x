@@ -934,7 +934,7 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
   try {
     const page = watch(await off.newPage());
     await page.goto(origin + '/render/comparison');
-    await page.getByRole('link', {name: 'Détail et preuves'}).click();
+    await page.getByRole('link', {name: /Preuves/}).first().click();
     await page.waitForURL(origin + rendered.detail_href);
     assert.equal(await page.getAttribute('html', 'lang'), 'fr');
     assert.equal(await page.locator('h1').textContent(), 'Détail et preuves');
@@ -947,19 +947,21 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
     mkdirSync('reports/privacy-browser', {recursive: true});
     await page.screenshot({path: 'reports/privacy-browser/attempt-detail-nojs-mobile.png', fullPage: true});
-    // Composition S18 : le verdict et le coût en synthèse, lus avant la réponse sur téléphone
+    // Le verdict et le coût se lisent avant la réponse ; la réponse et ses preuves sont côte à côte sur ordinateur, l'une sous l'autre sur téléphone
     for (const width of [390, 1440]) {
       await page.setViewportSize({width, height: 900});
       const layout = await page.evaluate(`((root = document) => {
-      const side = root.querySelector('.cote'), main = root.querySelector('.pile-l');
-      if (!side || !main) return null;
-      const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-      return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText};
+      const head = root.querySelector('.verdict-tete'), figures = root.querySelector('.releves');
+      const [answer, proofs] = [...root.querySelectorAll('.colonnes-moitie > section')];
+      if (!head || !figures || !answer || !proofs) return null;
+      const h = head.getBoundingClientRect(), f = figures.getBoundingClientRect(), a = answer.getBoundingClientRect(), p = proofs.getBoundingClientRect();
+      return {headFirst: h.bottom <= f.top, figuresFirst: f.bottom <= a.top, right: p.left >= a.right, below: p.top >= a.bottom, figures: figures.innerText, proofs: proofs.innerText};
     })(document.getElementById('attempt-detail'))`);
       assert.ok(layout, `${width} détail sans composition`);
-      assert.match(layout.side, /Coût observé/, `${width} coût hors synthèse`);
-      assert.match(layout.main, /Pourquoi ce verdict/, `${width} preuves hors zone principale`);
-      assert.ok(width === 1440 ? layout.right : layout.above, `${width} position de la synthèse du détail`);
+      assert.ok(layout.headFirst && layout.figuresFirst, `${width} ordre du verdict, des chiffres et de la réponse`);
+      assert.match(layout.figures, /coût observé/i, `${width} coût hors des chiffres`);
+      assert.match(layout.proofs, /Pourquoi ce verdict/, `${width} preuves hors de leur colonne`);
+      assert.ok(width === 1440 ? layout.right : layout.below, `${width} position des preuves du détail`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0, `${width} débordement du détail`);
     }
   } finally {await off.close();}
@@ -967,31 +969,21 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
   try {
     const page = watch(await on.newPage());
     await page.goto(origin + '/render/comparison');
-    // Seule tentative, donc la plus chère : la barre de coût est pleine, peinte et distincte de sa piste
-    const bar = await page.$eval('.costbar', track => {
-      const rect = track.querySelector('rect');
-      const box = rect?.getBoundingClientRect();
-      return {track: track.getBoundingClientRect().width, width: box?.width ?? 0, height: box?.height ?? 0,
-              fill: rect ? getComputedStyle(rect).fill : 'none', background: getComputedStyle(track).backgroundColor};
-    });
-    assert.ok(bar.width > 0 && bar.height > 0, 'barre de coût sans surface');
-    assert.equal(bar.width, bar.track);
-    assert.doesNotMatch(bar.fill, /^(none|transparent|rgba\(.*, 0\))$/, 'barre de coût sans remplissage');
-    assert.notEqual(bar.fill, bar.background, 'barre de coût confondue avec sa piste');
-    await page.getByRole('button', {name: 'Détail et preuves'}).focus();
+    // Aucune barre de coût : le montant se lit en chiffres
+    assert.equal(await page.locator('.costbar').count(), 0, 'barre de coût présente');
+    await page.getByRole('button', {name: /Preuves/}).first().focus();
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => document.querySelector('#result-dialog .result-status').textContent === 'Détail chargé.');
     assert.equal(page.url(), origin + '/render/comparison');
     assert.equal(await page.evaluate(() => document.getElementById('result-dialog').open), true);
     assert.match(await page.locator('#result-dialog .result-body').textContent(), /Pourquoi ce verdict/);
-    // Dans la fenêtre, la synthèse et les preuves restent en une colonne
+    // Dans la fenêtre, la réponse et les preuves restent en une colonne
     const modal = await page.evaluate(`((root = document) => {
-      const side = root.querySelector('.cote'), main = root.querySelector('.pile-l');
-      if (!side || !main) return null;
-      const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-      return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText};
+      const [answer, proofs] = [...root.querySelectorAll('.colonnes-moitie > section')];
+      if (!answer || !proofs) return null;
+      return {below: proofs.getBoundingClientRect().top >= answer.getBoundingClientRect().bottom};
     })(document.querySelector('#result-dialog .result-body'))`);
-    assert.ok(modal && modal.above, 'fenêtre de détail en deux colonnes');
+    assert.ok(modal && modal.below, 'fenêtre de détail en deux colonnes');
     assert.equal(await page.evaluate(() => document.activeElement.matches('#result-dialog [data-close]')), true);
     await page.keyboard.press('Escape');
     assert.equal(await page.evaluate(() => document.getElementById('result-dialog').open), false);
@@ -1009,7 +1001,7 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
     const page = watch(await legacy.newPage());
     await page.addInitScript(() => {delete HTMLDialogElement.prototype.showModal;});
     await page.goto(origin + '/render/comparison');
-    await page.getByRole('link', {name: 'Détail et preuves'}).click();
+    await page.getByRole('link', {name: /Preuves/}).first().click();
     await page.waitForURL(origin + rendered.detail_href);
     assert.equal(await page.locator('h1').textContent(), 'Détail et preuves');
     await page.goBack();
@@ -1018,7 +1010,7 @@ test('attempt proofs open a complete page without JavaScript and the modal with 
   assert.deepEqual(failures, []);
 });
 
-test('results and publication preview stay readable at 390 px: whole words, pinned model, neutral bars, touch help', async () => {
+test('results and publication preview stay readable at 390 px: whole words, stacked rows, no cost bars, method definition', async () => {
   const failures = [];
   const context = await browser.newContext({viewport: {width: 390, height: 844}, hasTouch: true, isMobile: true});
   try {
@@ -1030,9 +1022,9 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
     // K1 : le conseil et sa raison se lisent au premier écran, avant le bilan
     const advice = () => page.evaluate(() => {
-      const aside = document.querySelector('.economic-choice');
-      return {bottom: aside.getBoundingClientRect().bottom + scrollY,
-              first: Boolean(aside.compareDocumentPosition(document.querySelector('.campaign-summary')) & Node.DOCUMENT_POSITION_FOLLOWING)};
+      const ticket = document.querySelector('.ticket');
+      return {bottom: ticket.getBoundingClientRect().bottom + scrollY, title: ticket.querySelector('h2').getBoundingClientRect().bottom + scrollY,
+              first: Boolean(ticket.compareDocumentPosition(document.querySelector('section[aria-labelledby="t-bilan"]')) & Node.DOCUMENT_POSITION_FOLLOWING)};
     });
     for (const [width, height] of [[390, 844], [1440, 900]]) {
       await page.setViewportSize({width, height});
@@ -1040,33 +1032,28 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
       await page.evaluate(() => document.fonts.ready);
       const k1 = await advice();
       assert.ok(k1.first, `${width} conseil après le bilan`);
-      assert.ok(k1.bottom <= height, `${width} conseil sous le premier écran : ${k1.bottom}`);
+      // Sur téléphone, la piste et le titre de la maquette occupent le haut : le titre du ticket se lit au premier écran, le ticket entier sur ordinateur
+      assert.ok((width === 1440 ? k1.bottom : k1.title) <= height, `${width} conseil sous le premier écran : ${k1.bottom}`);
     }
-    // Chaque bloc de conseil : détail replié sur téléphone, déplié sans JavaScript sur ordinateur, où le bloc entier tient au premier écran
+    // Chaque ticket de conseil tient au premier écran sur ordinateur ; le compromis d'une priorité se lit sans dépliant, sur téléphone aussi
     for (const [width, height] of [[390, 844], [1440, 900]]) {
       await page.setViewportSize({width, height});
       for (const state of ['results', 'results_priority']) {
         await page.goto(origin + '/render/' + state);
         await page.evaluate(() => document.fonts.ready);
-        const blocks = await page.$$eval('.economic-choice', asides => asides.map(aside => {
-          const detail = aside.querySelector('details.choice-detail');
-          return {bottom: aside.getBoundingClientRect().bottom + scrollY,
-                  detail: detail ? detail.querySelector('summary').nextElementSibling.checkVisibility() : null};
-        }));
-        assert.ok(blocks.some(block => block.detail !== null), `${state} sans détail du conseil`);
-        for (const block of blocks.filter(block => block.detail !== null)) {
-          assert.equal(block.detail, width === 1440, `${state} ${width} détail du conseil`);
-        }
-        if (width === 1440) {
-          for (const block of blocks) assert.ok(block.bottom <= height, `${state} conseil sous le premier écran : ${block.bottom}`);
-        }
+        // Le premier ticket : l'état « results » en porte deux, la fixture ajoutant un conseil à une absence de conseil
+        const bottom = await page.$eval('.ticket', ticket => ticket.getBoundingClientRect().bottom + scrollY);
+        if (width === 1440) assert.ok(bottom <= height, `${state} conseil sous le premier écran : ${bottom}`);
       }
+      await page.goto(origin + '/render/results_priority');
+      assert.equal(await page.locator('section.g-compromis').isVisible(), true, `${width} compromis masqué`);
+      assert.match(await page.locator('section.g-compromis').innerText(), /Compromis sur/);
     }
     await page.setViewportSize({width: 390, height: 844});
     await page.goto(origin + '/render/results');
     await page.evaluate(() => document.fonts.ready);
     // Aucun mot coupé : chaque cellule offre au moins la largeur de son mot visible le plus long
-    const cut = await page.$$eval('.table-scroll td, .table-scroll th', cells => cells.flatMap(cell => {
+    const cut = await page.$$eval('.table-defile td', cells => cells.flatMap(cell => {
       const probe = document.createElement('span');
       Object.assign(probe.style, {whiteSpace: 'nowrap', position: 'absolute', visibility: 'hidden'});
       cell.append(probe);
@@ -1080,51 +1067,35 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
       return words;
     }));
     assert.deepEqual(cut, [], 'mots coupés dans le tableau');
-    // Tableau défilé jusqu'au coût : le nom du candidat reste à gauche
-    await page.$eval('.table-scroll', scroller => {scroller.scrollLeft = scroller.scrollWidth;});
-    assert.equal(await page.$eval('.table-scroll tbody th', th =>
-      Math.abs(th.getBoundingClientRect().left - th.closest('.table-scroll').getBoundingClientRect().left) < 1), true,
-      'colonne Modèle non épinglée');
-    await page.$eval('.table-scroll', scroller => {scroller.scrollLeft = 0;});
-    // Une barre de coût est une donnée : jamais la couleur d'accent réservée à l'interaction
-    const accent = await page.evaluate(() => {
-      const probe = document.createElement('i');
-      probe.style.color = 'var(--accent)'; document.body.append(probe);
-      const color = getComputedStyle(probe).color; probe.remove(); return color;
-    });
-    const fills = await page.$$eval('.costbar rect', rects => rects.map(rect => getComputedStyle(rect).fill));
-    assert.ok(fills.length > 1, 'barres de coût absentes');
-    assert.ok(fills.every(fill => fill !== accent), 'barre de coût en couleur d’accent');
+    // À 390 px, chaque ligne s'empile : aucun tableau ne défile horizontalement, aucune barre de coût
+    assert.equal(await page.$$eval('.table-defile', regions => regions.every(region => region.scrollWidth <= region.clientWidth)), true, 'tableau défilant à 390 px');
+    assert.equal(await page.locator('.costbar').count(), 0, 'barre de coût présente');
     // Verdict et exigence en défaut, entière ; l'explication du juge reste dans le détail
     assert.match((await page.locator('table').allInnerTexts()).join(' '), /Exigence non respectée : Action présente <img src=x onerror=alert\(1\)>\./);
     assert.equal(await page.locator('table img').count(), 0, 'motif du juge interprété comme HTML');
     // Une mesure booléenne se lit Oui ou Non, jamais True ou False
     assert.doesNotMatch((await page.locator('table').allInnerTexts()).join(' '), /\b(True|False)\b/);
-    // Pied de page : liens légaux en colonne, Code source à droite de la version
+    // Pied de page : le lien « Code source » reste dans la ligne du bas, avec son icône, aligné à gauche sur téléphone (maquette)
     const bottom = await page.$eval('footer .pied-bas', row => {
       const source = row.querySelector('a.source');
-      return {right: Math.round(row.getBoundingClientRect().right - source.getBoundingClientRect().right),
+      return {inside: source.getBoundingClientRect().left >= row.getBoundingClientRect().left && source.getBoundingClientRect().right <= row.getBoundingClientRect().right,
               icon: Boolean(source.querySelector('svg[aria-hidden="true"]'))};
     });
-    assert.deepEqual(bottom, {right: 0, icon: true});
-    assert.match(await page.locator('main').innerText(), /Résultat attendu :/);
+    assert.deepEqual(bottom, {inside: true, icon: true});
     const method = await page.locator('#method').textContent();
+    assert.match(method, /Résultat attendu :/);
     assert.match(method, /Le verdict vaut pour chaque modèle tel qu’il a été réglé et appelé ici/);
-    assert.match(method, /la même consigne et les mêmes pièces, et travaillent avec le même outil/);
-    // Au toucher, la définition de la qualité s'affiche et tient dans l'écran
-    await page.locator('.quality-help').tap();
-    const tooltip = await page.$eval('.quality-tooltip', tip => ({visible: getComputedStyle(tip).visibility === 'visible',
-      left: tip.getBoundingClientRect().left, right: tip.getBoundingClientRect().right}));
-    assert.equal(tooltip.visible, true, 'infobulle absente au toucher');
-    assert.ok(tooltip.left >= 0 && tooltip.right <= 390, 'infobulle hors écran ' + JSON.stringify(tooltip));
+    assert.match(method, /la même consigne et les mêmes pièces, et travaillent avec le même harnais/);
+    // La définition de la qualité se lit dans le tiroir de lecture, sans survol ni toucher
+    assert.match(method, /critères fixés pour votre cas d’usage et vérifiés dans chaque réponse \(Durée fictive/);
     mkdirSync('reports/privacy-browser', {recursive: true});
     // Deux exemples : chaque tableau garde son titre et son dénominateur, et le clavier atteint chacun
-    assert.deepEqual(await page.$$eval('.comparison-results h3', titles => titles.map(title =>
+    assert.deepEqual(await page.$$eval('.cas-titre h3', titles => titles.map(title =>
       /^\d+ réponses? évaluées? sur \d+ essais? prévus?$/.test(title.nextElementSibling.textContent))), [true, true]);
     const reached = new Set();
     for (let press = 0; press < 120 && reached.size < 2; press++) {
       await page.keyboard.press('Tab');
-      const region = await page.evaluate(() => document.activeElement.matches('.table-scroll[role="region"]')
+      const region = await page.evaluate(() => document.activeElement.matches('.table-defile[role="region"]')
         ? document.activeElement.getAttribute('aria-label') : null);
       if (region) reached.add(region);
     }
@@ -1137,18 +1108,17 @@ test('results and publication preview stay readable at 390 px: whole words, pinn
     assert.doesNotMatch(await page.locator('fieldset').innerText(), /reference\.txt/);
     assert.doesNotMatch(await page.locator('main').innerText(), /\b[0-9a-f]{32,64}\b|\bPASS\b|\bFAIL\b/);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'aperçu déborde à 390 px');
-    // Composition S18 : le choix des pièces en synthèse, lu avant le corps publié sur téléphone, à droite sur ordinateur
+    // Le choix des pièces se lit avant la page du lecteur, sur téléphone comme sur ordinateur
     for (const width of [390, 1440]) {
       await page.setViewportSize({width, height: 844});
       const layout = await page.evaluate(() => {
-        const side = document.querySelector('main .cote'), main = document.querySelector('main .pile-l');
-        if (!side || !main) return null;
-        const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-        return {right: a.left >= b.right, above: a.bottom <= b.top, form: Boolean(side.querySelector('form fieldset')),
-                body: main.querySelectorAll('h2').length, overflow: document.documentElement.scrollWidth - innerWidth};
+        const form = document.querySelector('main form'), sheet = document.querySelector('main .g-feuillet');
+        if (!form || !sheet) return null;
+        return {above: form.getBoundingClientRect().bottom <= sheet.getBoundingClientRect().top, form: Boolean(form.querySelector('fieldset')),
+                body: sheet.querySelectorAll('h2').length, overflow: document.documentElement.scrollWidth - innerWidth};
       });
       assert.ok(layout && layout.form && layout.body > 0, `${width} aperçu sans composition : ` + JSON.stringify(layout));
-      assert.ok(width === 1440 ? layout.right : layout.above, `${width} position du choix des pièces`);
+      assert.ok(layout.above, `${width} position du choix des pièces`);
       assert.equal(layout.overflow, 0, `${width} débordement de l’aperçu`);
     }
     await page.setViewportSize({width: 390, height: 844});
@@ -1183,23 +1153,20 @@ test('priority advice stays native, escaped, keyboard reachable and readable at 
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'débordement à 390 px');
     const select = page.locator('#filter-priority');
     assert.equal(await select.count(), 1, 'priorité absente du formulaire');
-    assert.match(await page.locator('#filters > summary').innerText(), /Conseil/);
+    assert.match(await page.locator('#filters > summary').innerText(), /Tri et filtres/);
     assert.equal(await select.inputValue(), 'duration');
     assert.deepEqual(await page.locator('#filter-priority option').evaluateAll(options => options.map(option => option.value)),
                      ['', 'cost', 'duration', 'present']);
     assert.match(await page.locator('label[for="filter-priority"]').innerText(), /Priorité du conseil/);
-    // La priorité reste visible ; son compromis se replie sous « Détail du conseil » (critère K1) ; les libellés du contrat restent du texte
-    const advice = page.locator('.economic-choice');
-    const detail = advice.locator('details.choice-detail');
+    // La priorité reste visible ; son compromis se lit sous le ticket, sans dépliant ; les libellés du contrat restent du texte
+    const advice = page.locator('section.ticket');
+    const tradeoff = page.locator('section.g-compromis');
     assert.match(await advice.innerText(), /Priorité choisie/);
-    assert.equal(await detail.locator('summary').innerText(), 'Détail du conseil');
-    assert.equal(await detail.evaluate(node => node.open), false, 'détail du conseil ouvert sur téléphone');
-    assert.doesNotMatch(await advice.innerText(), /Compromis sur/);
-    assert.match(await detail.textContent(), /Compromis sur/);
-    assert.equal(await advice.locator('img, script').count(), 0, 'compromis interprété comme HTML');
+    assert.match(await tradeoff.innerText(), /Compromis sur/);
+    assert.equal(await advice.locator('img, script').count() + await tradeoff.locator('img, script').count(), 0, 'compromis interprété comme HTML');
     assert.equal(await page.locator('#filter-priority img, #filter-priority script').count(), 0,
                  'libellé de critère interprété comme HTML');
-    assert.match(await advice.textContent(), /<img src=x onerror=alert\(1\)>/);
+    assert.match(await tradeoff.textContent(), /<img src=x onerror=alert\(1\)>/);
     assert.match(await select.textContent(), /<script>alert\(4\)<\/script>/);
     // GET natif : le contrôle et le bouton vivent dans le formulaire existant
     const form = page.locator('form[action$="#filters"]');
@@ -1216,9 +1183,6 @@ test('priority advice stays native, escaped, keyboard reachable and readable at 
     assert.deepEqual(reached, ['filter-priority', 'Appliquer']);
     mkdirSync('reports/privacy-browser', {recursive: true});
     await page.screenshot({path: 'reports/privacy-browser/priority-mobile.png', fullPage: true});
-    // Le résumé déplie le compromis au toucher
-    await detail.locator('summary').tap();
-    assert.match(await advice.innerText(), /Compromis sur/);
   } finally {await context.close();}
   // Sans JavaScript, le choix reste lisible et soumissible
   const off = await browser.newContext({javaScriptEnabled: false, viewport: {width: 390, height: 844}});
@@ -1228,9 +1192,8 @@ test('priority advice stays native, escaped, keyboard reachable and readable at 
     assert.equal(await page.locator('#filter-priority').count(), 1);
     assert.equal(await page.locator('#filter-priority').inputValue(), 'duration');
     assert.equal(await page.locator('form[action$="#filters"] button[type="submit"]').isVisible(), true);
-    // Sans JavaScript, le détail natif se déplie et montre le compromis
-    await page.locator('.economic-choice details.choice-detail > summary').click();
-    assert.match(await page.locator('.economic-choice').innerText(), /Compromis sur/);
+    // Sans JavaScript, le compromis est déjà lisible
+    assert.match(await page.locator('section.g-compromis').innerText(), /Compromis sur/);
   } finally {await off.close();}
   assert.deepEqual(failures, []);
 });
@@ -2114,24 +2077,25 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       assert.match(main, /Coût observé inconnu pour 1 réponse/);
       assert.match(main, /pièce non publiée/i);
       assert.match(main, /un filtre ne change ni les verdicts ni la population/i);
-      assert.match(main, /Réponses évaluées : 2 · essais lancés : 2 sur 2/);
+      assert.match(main, /2 essais lancés sur 2/);
       assert.equal(await page.locator('main script, main img').count(), 0);
       assert.equal(await page.locator('script').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      // Composition S18 : comparaison en zone principale, cadre de lecture en synthèse, après la comparaison sur téléphone
+      // Une seule colonne : bilan, comparaison, conditions communes, lecture, puis ce que la publication permet de vérifier
       for (const width of [1440, 390]) {
         await page.setViewportSize({width, height: 844});
         const layout = await page.evaluate(() => {
-          const side = document.querySelector('main .cote'), main = document.querySelector('main .pile-l');
-          if (!side || !main) return null;
-          const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-          return {right: a.left >= b.right, below: a.top >= b.bottom, table: Boolean(main.querySelector('.comparison-results table')),
-                  side: side.innerText, overflow: document.documentElement.scrollWidth - innerWidth};
+          const main = document.querySelector('main');
+          const at = selector => main.querySelector(selector)?.getBoundingClientRect().top ?? null;
+          return {table: Boolean(main.querySelector('table.comparatif')), text: main.innerText,
+                  order: [at('section[aria-labelledby="t-bilan"]'), at('section[aria-labelledby="t-comp"]'), at('section[aria-labelledby="t-cond"]'),
+                          at('#method'), at('.g-pied-pub')],
+                  overflow: document.documentElement.scrollWidth - innerWidth};
         });
-        assert.ok(layout && layout.table, `${width} résultats publiés sans composition`);
-        for (const heading of [/Limites/, /Conditions communes/, /Ce que cette publication permet de vérifier/, /Comment lire ces résultats/])
-          assert.match(layout.side, heading, `${width} ${heading} hors synthèse`);
-        assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse publiée`);
+        assert.ok(layout.table, `${width} résultats publiés sans tableau`);
+        for (const heading of [/Conditions communes/, /Ce que cette publication permet de vérifier/, /Comment lire ces résultats/, /Harnais/i])
+          assert.match(layout.text, heading, `${width} ${heading} absent`);
+        assert.ok(layout.order.every((top, index) => top !== null && (index === 0 || top > layout.order[index - 1])), `${width} ordre des blocs publiés : ` + layout.order);
         assert.equal(layout.overflow, 0, `${width} débordement des résultats publiés`);
       }
       // Filtres natifs visibles, un seul tableau à une ligne sur la vue filtrée
@@ -2139,7 +2103,7 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       await page.goto(origin + '/render/published-results-filtered');
       const filtered = await page.textContent('main');
       assert.match(filtered, /1 réponse affichée sur 2/);
-      assert.equal(await page.locator('.comparison-results > .table-scroll > table > tbody > tr').count(), 1);
+      assert.equal(await page.locator('table.comparatif tbody tr').count(), 1);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/published-results');
       // Un dépliant puis la preuve publiée restent utilisables au clavier, sans JavaScript
@@ -2150,10 +2114,9 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       }
       assert.ok(focused, 'dépliant non atteint au clavier');
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      await page.getByText('Détail et preuves').first().click();
-      // Détail ouvert : la colonne Modèle garde des mots entiers, jamais une lettre par ligne
+      await page.locator('section[aria-labelledby="t-det"] summary').first().click();
+      // Détail ouvert : le nom du modèle garde des mots entiers, jamais une lettre par ligne ; aucun tableau ne défile à 390 px
       const column = await page.evaluate(() => {
-        const table = document.querySelector('section.comparison-results > .table-scroll > table');
         const splitWords = node => {
           const range = document.createRange(), lines = [];
           for (let index = 0; index < node.length; index++) {
@@ -2168,15 +2131,12 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
             && /\p{L}/u.test(node.data[line.first] ?? ''))
             .map(line => node.data.slice(line.first, line.last + 1));
         };
-        const header = table.querySelector('thead th');
-        const name = table.querySelector('tbody th strong');
-        return {head: splitWords(header.firstChild), name: splitWords(name.firstChild),
-                width: Math.round(table.querySelector('tbody th').getBoundingClientRect().width),
-                characters: name.firstChild.length, scroll: table.parentElement.scrollWidth};
+        const name = document.querySelector('table.comparatif tbody .modele');
+        return {name: splitWords(name.firstChild), characters: name.firstChild.length,
+                scroll: [...document.querySelectorAll('.table-defile:has(table.comparatif)')].every(region => region.scrollWidth <= region.clientWidth)};
       });
-      assert.deepEqual(column.head, [], 'en-tête de la colonne Modèle coupé entre deux lettres : ' + JSON.stringify(column));
       assert.deepEqual(column.name, [], 'nom du modèle coupé entre deux lettres : ' + JSON.stringify(column));
-      assert.ok(column.scroll > 390, 'le tableau ne défile plus horizontalement : ' + JSON.stringify(column));
+      assert.ok(column.scroll, 'un tableau défile horizontalement à 390 px : ' + JSON.stringify(column));
       let proofFocused = false;
       for (let press = 0; press < 40 && !proofFocused; press++) {
         await page.keyboard.press('Tab');

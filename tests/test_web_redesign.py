@@ -59,11 +59,14 @@ class TemplateTests(unittest.TestCase):
             self.assertIn(name, FONTS)
         self.assertEqual(Path('projection.css'), Path(projection.STYLESHEET_PATH.name))
         self.assertNotIn(b'@font-face', projection.STYLESHEET_PATH.read_bytes())
-        # La page publiée garde sa palette S18 (projection.css n'est pas migrée) : elle définit ses couleurs en clair comme en sombre
-        palette = lambda css: [dict(re.findall(r'--([a-z0-9-]+):\s*(#[0-9a-f]{6})', block))
+        # La page publiée reprend les couleurs du parcours, en clair comme en sombre
+        # Seul le premier bloc :root de chaque thème compte : une règle plus loin peut redéfinir une variable localement
+        palette = lambda css: [dict(re.findall(r'--([a-z0-9-]+):\s*(#[0-9a-f]{6})', re.search(r':root\s*\{([^}]*)\}', block)[1]))
                                for block in re.split(r'@media\s*\(prefers-color-scheme:\s*dark\)', css)[:2]]
-        for shade, mine in zip(('clair', 'sombre'), palette(projection.STYLESHEET_PATH.read_text())):
+        published, private = palette(projection.STYLESHEET_PATH.read_text()), palette(views.STYLESHEET_PATH.read_text())
+        for shade, (mine, theirs) in zip(('clair', 'sombre'), zip(published, private)):
             self.assertTrue(mine, shade)
+            self.assertLessEqual(mine.items(), theirs.items(), shade)
         for retired in ('Syne', 'AtkinsonHyperlegibleNext', 'AtkinsonHyperlegibleMono'):
             self.assertFalse((views.FONTS_PATH / (retired + '.woff2')).exists(), retired)
         # Les mentions légales nomment exactement les polices servies
@@ -154,7 +157,7 @@ class DossierPageTests(unittest.TestCase):
 class ComparisonPageTests(unittest.TestCase):
 
 
-    def test_badges_and_cost_bars(self):
+    def test_badges_without_cost_bars(self):
         with tempfile.TemporaryDirectory() as temporary:
             data = Path(temporary).resolve() / 'private'
             with patch('socket.socket.connect', side_effect=AssertionError('No network in fixtures')):
@@ -163,7 +166,8 @@ class ComparisonPageTests(unittest.TestCase):
                 page = views.render(r.comparison(store, sid, 'fixture', 'comparison'), '').decode()
         self.assertIn('<span class="tampon tampon-ok">', page)
         self.assertIn('<span class="tampon tampon-ko">', page)
-        self.assertIn('class="costbar"', page)
+        # Pas de barres de coût : le montant se lit en chiffres
+        self.assertNotIn('costbar', page)
         self.assertIn('<nav aria-label="Informations légales"><h2>Informations légales</h2>', page)
         self.assertNotIn('SHA-256', page)
 
@@ -176,8 +180,8 @@ class ComparisonPageTests(unittest.TestCase):
                 page = views.render(r.comparison(store, sid, 'fixture', 'comparison'), '').decode()
         options = dict(re.findall(r'<option value="([^"]+)"(?: selected)?>(Exemple [0-9]+)</option>', page))
         titles = set(re.findall(r'<h3>(Exemple [0-9]+)</h3>', page))
-        self.assertEqual(1, page.count('<h2>Comparaison des modèles</h2>'))
-        self.assertLess(page.index('<h2>Comparaison des modèles</h2>'), page.index('id="filters"'))
+        self.assertEqual(1, page.count('<h2 id="t-comp">Comparaison des modèles</h2>'))
+        self.assertLess(page.index('<h2 id="t-comp">Comparaison des modèles</h2>'), page.index('id="filters"'))
         self.assertEqual({'notes': 'Exemple 1', 'distinct': 'Exemple 2'}, options)
         self.assertEqual(set(options.values()), titles)
 
