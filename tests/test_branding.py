@@ -61,7 +61,8 @@ class BrandingTests(unittest.TestCase):
                 self.assertNotIn('Benchmark Lab-X', surface)
         self.assertIn('Evaly', readme)
         self.assertNotIn('Bench-X', readme)
-        self.assertIn('by Le Lab-X', readme)
+        self.assertIn('par Cybrel · né au Lab-X', readme)
+        self.assertNotIn('by Le Lab-X', readme)
         # Le prompt de l'assistant garde Bench-X : un changement de prompt touche la mesure
         self.assertIn('Bench-X', profile['system'])
         self.assertIn('· Evaly</title>', public_page)

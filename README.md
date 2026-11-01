@@ -1,7 +1,7 @@
 <div align="center">
   <img src="benchmark_web/static/bench-x.svg" width="96" height="96" alt="Logo Evaly : un Y dans un carré jaune">
   <h1 id="evaly">Evaly</h1>
-  <p><strong>by Le Lab-X</strong></p>
+  <p><strong>par Cybrel · né au Lab-X</strong></p>
   <p>Choisir une configuration de modèle d’IA à partir d’une tâche précise, de résultats observés, de preuves consultables et de leur coût.</p>
   <p>
     <a href="https://github.com/eliasprunaire/benchmark-lab-x/actions/workflows/ci.yml"><img alt="CI Python" src="https://github.com/eliasprunaire/benchmark-lab-x/actions/workflows/ci.yml/badge.svg"></a>
@@ -123,7 +123,7 @@ Evaly est distribué sous licence [AGPL-3.0-only](LICENSE).
 ---
 
 <div align="center">
-  <p><strong>Evaly</strong> by <strong>Le Lab-X</strong></p>
+  <p><strong>Evaly</strong> par Cybrel · né au Lab-X</p>
   <p>Des choix de modèles fondés sur des tâches précises et des preuves lisibles.</p>
   <p><a href="#evaly">Retour en haut</a></p>
 </div>
