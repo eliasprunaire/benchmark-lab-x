@@ -14,14 +14,15 @@ from benchmark.storage import _strict_json as encode
 from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MODELS_SCRIPT, render_attempt_detail, render_campaign_records,
                              render_campaign_launch_operator, render_campaign_launch_requester,
                              render_comparison, render_configurations, render_campaign_models, campaign_followup)
-from .fragments import (ACCESS_REASONS, ETAPES, access_summary, btn, cadre, champ, date_lisible_utc, disque, erreur_champ, etat, form,
-                        ic, icon, lien, listing, montant_lisible, personal_key_form, piste, puce, readout, ruban, section, state_block, tampon,
+from .fragments import (ETAPES, bouton, btn, cadre, champ, date_lisible_utc, disque, erreur_champ, etat, form,
+                        ic, icon, lien, listing, montant_lisible, piste, puce, ruban, section, state_block, tampon,
                         tete, text, tiroir, workbench)
 from .projection import candidate_names, piece_name, projection_body
 from .results_views import render_results
 from .legal_views import LEGAL_PAGES, legal_layout
-from .privacy_views import (PRIVACY_SCRIPT, render_privacy_page, render_privacy_controls,
-                            render_contribution, render_contributions, render_bootstrap)
+from .privacy_views import (PRIVACY_SCRIPT, actions_erreur, alerte_expiration, erreur_grande, gestion_cas, historique_local, liens_donnees, marqueur_activite,
+                            render_access, render_bootstrap, render_contribution, render_contributions, render_deleted,
+                            render_delete_confirmation, render_privacy_controls, render_privacy_page)
 
 TEMPLATE_PATH = Path(__file__).with_name('templates') / 'preparation.html'
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'preparation.css'
@@ -978,12 +979,18 @@ def render_cases(value, csrf):
     """Mes cas d'usage : état du service, champ unique de description, cas enregistrés, bande de la clé"""
     state = value.get('availability', {})
     carte, bloque = ('', False) if state.get('can_submit', False) else disponibilite_cas(state.get('reason'))
+    if value.get('deleted'):
+        carte = render_deleted() + carte
     creation = composeur(csrf, '/preparation/dossiers', {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16)}, bloque=bloque)
+    privacy = value.get('privacy')
     if value['dossiers']:
         corps = '<ul class="ge-liste">' + ''.join(
             '<li class="ge-cas"><h3>' + text(d.get('need') or 'Cas d’usage sans description') + '</h3><div class="contexte">'
-            + puce('Version ' + str(d['revision'])) + ruban('Exemple inventé') + '</div><div class="actions">'
-            + lien('/preparation/dossiers/' + d['dossier_id'], 'Reprendre ce cas') + '</div></li>' for d in value['dossiers']) + '</ul>'
+            + puce('Version ' + str(d['revision'])) + ruban('Exemple inventé') + '</div>' + alerte_expiration(d) + '<div class="actions">'
+            + lien('/preparation/dossiers/' + d['dossier_id'], 'Reprendre ce cas') + '</div>' + gestion_cas(d, privacy) + '</li>'
+            for d in value['dossiers']) + '</ul>'
+        corps += ('<p class="petit">Supprimer efface la copie de ce navigateur et demande la suppression sur le serveur, contribution comprise. '
+                  'Des copies peuvent rester dans les sauvegardes du serveur.</p>')
         corps += '<p>' + lien('/preparation/catalogue', 'Exemples validés et benchmarks') + '</p>'
     else:
         corps = ('<div class="ge-vide"><p><strong>Aucun cas d’usage dans ce navigateur.</strong></p>'
@@ -992,12 +999,14 @@ def render_cases(value, csrf):
                           'Si ses cookies ont été effacés, les cas ne peuvent plus être retrouvés.</p>'))
     bande = ('<div class="ge-bande">' + ic('cle') + '<p>La clé OpenRouter paie les appels aux modèles.</p>'
              + lien('/preparation/access', 'Ma clé OpenRouter') + '</div>')
+    # L'historique local suit la bande quand les contrôles de confidentialité sont servis
+    historique = historique_local() + liens_donnees() if privacy else ''
     return ('<section class="compo-zone"><div class="cadre">' + carte + creation + '</div></section>'
-            '<div class="cadre ge-pile ge-mes-cas"><section class="ge-pile" aria-labelledby="t-liste"><h2 id="t-liste">Vos cas d’usage, dans ce navigateur</h2>'
-            + corps + '</section>' + bande + '</div>')
+            '<div class="cadre ge-pile ge-mes-cas">' + marqueur_activite(privacy, csrf) + '<section class="ge-pile" aria-labelledby="t-liste"><h2 id="t-liste">Vos cas d’usage, dans ce navigateur</h2>'
+            + corps + '</section>' + bande + historique + '</div>')
 
 
-def render(value, csrf, path='/preparation', *, error=False):
+def render(value, csrf, path='/preparation', *, error=False, status=None):
     """Native HTML forms, inert evidence and a fixed comparison focus script"""
     def field_attributes(name):
         return f' aria-describedby="{text(name)}-error"' if value.get('error_field') == name else ''
@@ -1029,47 +1038,61 @@ def render(value, csrf, path='/preparation', *, error=False):
     menu = ''.join('<li><a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a></li>'
                    for href, label in MENU)
     if error:
+        # Le serveur seul connaît le statut HTTP : la page d'erreur le montre
+        decrit = dict(value, http_status=status) if status else value
         title = value.get('title') or ('Service momentanément indisponible' if value.get('unavailable') else 'Votre action n’a pas abouti')
         submitted = value.get('form')
         attached = (value.get('error_field') if type(submitted) is dict
                     and value.get('error_field') in submitted else None)
-        content = '' if attached else '<p role="alert">' + text(value['error']) + '</p>'
+        content = ''
         if value.get('step') == 'example_qualified' and value.get('findings'):
             content += '<p>Ce que la vérification de l’exemple a relevé</p>' + listing(
                 finding['text'] for finding in value['findings'])
+        principal, autres = actions_erreur(decrit, path)
+        message, phrase, corrigeable = value['error'], None, False
         if type(submitted) is dict and 'request' in submitted:
-            content += composeur(csrf, path, {key: submitted[key] for key in ('dossier_id', 'action_id')},
+            corrigeable = True
+            phrase = 'Un champ n’est pas valide. Votre saisie est conservée : corrigez-la, puis renvoyez.' if attached else None
+            content += '<div class="g-err-compo">' + composeur(csrf, path, {key: submitted[key] for key in ('dossier_id', 'action_id')},
                 request=submitted['request'], useful=submitted.get('useful', ''), context=submitted.get('context', ''),
                 erreur=(value['error_field'], value['error']) if value.get('error_field') in ('request', 'useful', 'context') else None,
-                envoi='Corriger et renvoyer', titre_niveau='h2')
+                envoi='Corriger et renvoyer', titre_niveau='h2') + '</div>'
         elif type(submitted) is dict and 'message' in submitted:
+            corrigeable = True
+            phrase = 'Votre message n’a pas été envoyé. Votre saisie est conservée : corrigez-la, puis renvoyez.' if attached else None
             content += form(csrf, path, {key: str(submitted.get(key, '')) for key in ('action_id', 'revision')}
                             | {'kind': str(submitted.get('kind', 'clarify'))},
-                '<label for="message">Votre précision ou correction</label>'
-                '<textarea id="message" name="message" required maxlength="1000" rows="4"' + field_attributes('message') + '>' + text(submitted['message']) + '</textarea>' + field_error('message') +
-                HONEYPOT +
-                '<button type="submit">Corriger et renvoyer</button>')
+                '<div class="champ"><label for="message">Votre précision ou correction</label>'
+                '<textarea id="message" name="message" required maxlength="1000" rows="4"' + field_attributes('message')
+                + (' aria-invalid="true"' if attached else '') + '>' + text(submitted['message']) + '</textarea>'
+                + field_error('message') + '</div>' + HONEYPOT + '<div class="actions">' + bouton('Corriger et renvoyer')
+                + lien('/preparation', 'Retrouver mes cas d’usage') + '</div>', classe='g-err-form')
         latest = value.get('step') if value.get('error_code') == 'SELECTION_SUPERSEDED' else None
         if latest and '/campaigns/' in path and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', str(latest)):
-            content += ('<p><a href="' + text(path.split('/campaigns/', 1)[0] + '/campaigns/' + latest + '/conditions')
-                        + '">Voir la dernière sélection</a></p>')
+            autres += (lien(path.split('/campaigns/', 1)[0] + '/campaigns/' + latest + '/conditions', 'Voir la dernière sélection'),)
         if value.get('error_code') == 'OUTPUT_LIMIT_ABOVE_BOUND' and path.endswith('/configurations'):
-            content += '<p><a class="button" href="' + text(path) + '">Revenir au choix des modèles</a></p>'
+            principal, autres = btn(path, 'Revenir au choix des modèles'), (lien('/preparation', 'Retrouver mes cas d’usage'),) + autres
         # Attente expirée d'un lancement : l'état enregistré se lit sur son suivi, sans rien renvoyer
         followup = (re.fullmatch(r'(/preparation/dossiers/[A-Za-z0-9_-]{1,128}/campaigns/[A-Za-z0-9_-]{1,128})/(?:start|evaluate)', path)
                     if value.get('error_code') == 'RESPONSE_TIMEOUT' else None)
         if followup:
-            content += '<p><a class="button" href="' + text(followup[1] + '/conditions') + '">Consulter l’état du lancement</a></p>'
-        back_class = ('button sec' if type(submitted) is dict and ('request' in submitted or 'message' in submitted)
-                      or value.get('error_code') == 'OUTPUT_LIMIT_ABOVE_BOUND' or followup else 'button')
-        content += '<p><a class="' + back_class + '" href="/preparation">Retrouver mes cas d’usage</a></p>'
+            principal, autres = btn(followup[1] + '/conditions', 'Consulter l’état du lancement'), (lien('/preparation', 'Retrouver mes cas d’usage'),) + autres
+        # Un formulaire corrigeable est la suite de la page : le retour aux cas passe en lien discret
+        if corrigeable:
+            principal, autres = '', ()
+            if type(submitted) is dict and 'request' in submitted:
+                content += '<p>' + lien('/preparation', 'Retrouver mes cas d’usage') + '</p>'
+        content = erreur_grande(decrit, phrase or message, principal, autres, mot_texte='Texte à corriger' if phrase else None,
+                                alerte=not attached) + content
+    elif value.get('kind') == 'case_delete':
+        title, contexte, content = render_delete_confirmation(value, csrf)
     elif value.get('kind') == 'contributions':
         title, content = render_contributions(value)
     elif value.get('kind') == 'session_bootstrap':
         title, content = render_bootstrap(value)
     elif value.get('kind') == 'legal':
         title, _, content = LEGAL_PAGES[value['path']]
-        content = legal_layout(content)
+        contexte, content = legal_layout(content)
     elif value.get('kind') == 'references':
         title, content = render_references(value)
     elif value.get('kind') == 'references_help':
@@ -1084,24 +1107,7 @@ def render(value, csrf, path='/preparation', *, error=False):
         title, content = render_privacy_page(value, csrf)
     elif value.get('kind') == 'access':
         title = 'Ma clé OpenRouter'
-        status = value['status']
-        if status == 'connected':
-            content = state_block('done', 'Clé OpenRouter', 'Clé enregistrée', '<p>' + access_summary(value) + '</p>')
-        elif status == 'invalid':
-            content = state_block('err', 'Clé OpenRouter', 'Clé à remplacer', '<p>Cette clé ne peut pas être utilisée : ' + text(
-                ACCESS_REASONS.get(value.get('reason'), value.get('reason') or 'raison inconnue')) + '.</p>')
-        elif status == 'disconnected':
-            content = state_block('action', 'Clé OpenRouter', 'Aucune clé enregistrée',
-                                  '<p>Ajoutez une clé réservée à Evaly. Elle paie les appels aux modèles : préparation de l’exemple, vérification, puis comparaison.</p>')
-        else:
-            content = state_block('err', 'Clé OpenRouter', 'Enregistrement de clé indisponible',
-                                  '<p>Vous ne pouvez pas enregistrer de clé pour le moment. Réessayez plus tard ; aucun modèle n’a été appelé.</p>')
-        if status == 'connected' and value.get('limit_remaining_usd') is not None:
-            content += readout('Solde restant selon OpenRouter', montant_lisible(value['limit_remaining_usd']) + ' USD')
-        forms = personal_key_form(csrf, value, '/preparation/access', opened=status != 'connected') if status != 'unavailable' else ''
-        content += workbench(forms, section('Dépense', '<p>Tous les appels passent par votre clé OpenRouter. '
-                                                       'Son plafond est la seule limite de dépense.</p>'), 'Dépense')
-        content += '<p><a href="/preparation">Revenir à mes cas d’usage</a></p>'
+        content = render_access(value, csrf)
     elif value.get('kind') == 'configurations':
         title = 'Choisissez les modèles à comparer'
         content = render_configurations(value, csrf)
@@ -1526,9 +1532,7 @@ def render(value, csrf, path='/preparation', *, error=False):
     if not error:
         if value.get('kind') == 'home':
             content += '<span data-privacy-home hidden></span>'
-        if 'dossiers' in value and value.get('privacy'):
-            content += render_privacy_page({'kind': 'privacy_data'}, preparation=True)[1]
-        content += render_privacy_controls(value, csrf, folded_contribution)
+        content += render_privacy_controls(value, csrf, folded_contribution, path)
         if value.get('privacy') or value.get('kind') in ('home', 'privacy_data', 'contributions', 'session_bootstrap'):
             content += PRIVACY_SCRIPT
     # Une vue `plein` écrit son h1 et ses bandes ; les autres reçoivent l'en-tête commun et la colonne centrée
@@ -1540,6 +1544,8 @@ def render(value, csrf, path='/preparation', *, error=False):
         tete_html = tete(title, piste_html=navigation, contexte_html=contexte)
     template = TEMPLATE or TEMPLATE_PATH.read_text()
     body_class = 's9 comparison' if value.get('kind') == 'comparison' else 's9' if s9 else ''
+    if value.get('kind') == 'legal':
+        body_class = 'g-cat g-page-legale'
     # Offre de source AGPL §13 : un numéro et un lien vers l'arbre du commit seulement sous identité de release,
     # construite depuis ce commit ; un checkout peut être modifié ou non poussé, il renvoie au dépôt
     identity = '<span class="identite">' + text(('Version : v' + RELEASE_VERSION + ' (' + SOURCE_SHA[:7] + ')') if SOURCE_SHA and RELEASE_VERSION

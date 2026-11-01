@@ -20,7 +20,7 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from benchmark import preparation, privacy, provider_access, service, storage
 from benchmark_web.server import serve_web
@@ -412,6 +412,23 @@ class PrivacyHTTPTests(unittest.TestCase):
         _, cookies, _ = self.consent(owner)
         before = self.store.inspect_budget('personal-preparation-' + owner['id'])
         path = '/preparation/dossiers/case-a'
+        # Confirmation avant suppression : le cas doit appartenir à la session, le serveur revalide l'adresse de retour
+        code, headers, page = self.request('GET', path + '/delete?retour=' + path, cookies=cookies, native=True)
+        self.assertEqual(200, code)
+        self.assertIn('Oui, supprimer définitivement', page)
+        self.assertIn('<span class="annuler"><a class="lien" href="' + path + '">', page)
+        self.assertIn('action="' + path + '/delete"', page)
+        self.assertIn('name="csrf_token" value="' + owner['csrf'] + '"', page)
+        self.assertFalse(headers.get_all('Set-Cookie'))
+        for retour in ('//evil.test', 'https://evil.test/x', '/autre', '/preparation/../x', '/preparation?x=1', '\\evil', ''):
+            with self.subTest(retour=retour):
+                code, _, page = self.request('GET', path + '/delete?retour=' + quote(retour), cookies=cookies, native=True)
+                self.assertEqual(200, code)
+                self.assertIn('<span class="annuler"><a class="lien" href="/preparation">', page)
+                self.assertNotIn('evil', page)
+        self.assertEqual(400, self.request('GET', path + '/delete?autre=1', cookies=cookies, native=True)[0])
+        self.assertEqual(404, self.request('GET', '/preparation/dossiers/absent/delete', cookies=cookies, native=True)[0])
+        self.assertEqual(404, self.request('GET', path + '/delete', cookies=self.new_session()['cookies'], native=True)[0])
         code, headers, value = self.request('POST', path + '/delete', cookies=cookies, body={'csrf_token': owner['csrf']})
         self.assertEqual((202, 'delete_requested'), (code, value['status']))
         self.assertFalse(headers.get_all('Set-Cookie'))
@@ -421,6 +438,13 @@ class PrivacyHTTPTests(unittest.TestCase):
         code, headers, value = self.request('POST', path + '/delete', cookies=cookies, body={'csrf_token': owner['csrf']})
         self.assertEqual((202, 'purged'), (code, value['status']))
         self.assertFalse(headers.get_all('Set-Cookie'))
+        # Sans JavaScript, le formulaire revient sur Mes cas d'usage, qui annonce la suppression
+        code, headers, _ = self.request('POST', path + '/delete', cookies=cookies, native=True, body={'csrf_token': owner['csrf']})
+        self.assertEqual((303, '/preparation?supprime=1'), (code, headers['Location']))
+        code, _, page = self.request('GET', '/preparation?supprime=1', cookies=cookies, native=True)
+        self.assertEqual(200, code)
+        self.assertIn('Le cas d’usage a été supprimé', page)
+        self.assertNotIn('Le cas d’usage a été supprimé', self.request('GET', '/preparation', cookies=cookies, native=True)[2])
         self.assertEqual(before, self.store.inspect_budget('personal-preparation-' + owner['id']))
         self.assertEqual([], list((self.data / 'pieces').iterdir()))
         self.assertTrue(self.store.verify_storage()['integrity_ok'])

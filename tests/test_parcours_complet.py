@@ -3541,7 +3541,7 @@ class ParcoursComplet(unittest.TestCase):
         '/', '/epreuves', '/mentions-legales', '/cgu', '/confidentialite',
         '/preparation', '/preparation/data', '/preparation/catalogue',
         '/preparation/access', '/preparation/dossiers/<id>', '/preparation/dossiers/<id>/revisions/<n>',
-        '/preparation/dossiers/<id>/configurations',
+        '/preparation/dossiers/<id>/configurations', '/preparation/dossiers/<id>/delete',
         '/preparation/dossiers/<id>/campaigns/<id>', '/preparation/dossiers/<id>/campaigns/<id>/conditions',
         '/preparation/dossiers/<id>/campaigns/<id>/configurations'))
 
@@ -7558,7 +7558,7 @@ class ParcoursComplet(unittest.TestCase):
     def test_acces_openrouter_factice_et_retours(self):
         self.request('/preparation')
         page, _, _ = self.request('/preparation/access')
-        self.examine(page, '/preparation/access', 'aucune clé', None)
+        self.examine(page, '/preparation/access', 'aucune clé', 'Enregistrer la clé')
         self.assertIn('Aucune clé enregistrée', page.visible)
         # Un seul mécanisme : la clé saisie ; plus aucune autorisation déléguée
         self.assertFalse(any(f['action'].endswith(('/access/start', '/access/callback')) for f in page.forms))
@@ -7573,14 +7573,14 @@ class ParcoursComplet(unittest.TestCase):
         _, headers, raw = self.request(form['action'], form['fields'] | {'key': KEY}, status=303)
         self.assertEqual('/preparation/access', headers['Location'])
         page, _, raw = self.request(headers['Location'])
-        self.examine(page, '/preparation/access', 'clé enregistrée', None)
-        self.assertIn('Solde restant selon OpenRouter : 18,5 USD. Plafond de la clé : 20 USD.', page.visible)
+        self.examine(page, '/preparation/access', 'clé enregistrée', 'Enregistrer la clé')
+        self.assertRegex(page.visible, r'Solde restant\s+18,5\s*USD\s+selon OpenRouter\s+Plafond de la clé\s+20\s*USD')
         self.assertNotIn(KEY.encode(), raw)
         form = page.form('/disconnect')
         _, headers, _ = self.request(form['action'], form['fields'], status=303)
         self.assertEqual('/preparation/access', headers['Location'])
         page, _, _ = self.request('/preparation/access')
-        self.examine(page, '/preparation/access', 'clé retirée', None)
+        self.examine(page, '/preparation/access', 'clé retirée', 'Enregistrer la clé')
         self.assertIn('Aucune clé enregistrée', page.visible)
         self.assertEqual([], self.calls)
         self.assertEqual([], self.qualifier.calls)

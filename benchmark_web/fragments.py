@@ -345,32 +345,54 @@ ACCESS_REASONS = {
 }
 
 
-def access_summary(access):
-    """Solde et plafond annoncés par Openrouter, jamais la clé"""
-    def amount(key):
-        return 'inconnu' if access.get(key) is None else montant_lisible(access[key])
-    return 'Solde restant selon OpenRouter : ' + text(amount('limit_remaining_usd')) + ' USD. Plafond de la clé : ' + text(amount('limit_usd')) + ' USD.'
+def access_summary(access, *, page_cle=False):
+    """Solde et plafond annoncés par OpenRouter en relevés, jamais la clé ; une valeur absente se lit « inconnu »"""
+    def montant(libelle, cle, note=''):
+        valeur = access.get(cle)
+        return (libelle, None if valeur is None else montant_lisible(valeur), 'USD', note)
+    solde = montant('Solde restant', 'limit_remaining_usd', 'selon OpenRouter') if page_cle else montant('Solde restant selon OpenRouter', 'limit_remaining_usd')
+    return releves([solde, montant('Plafond de la clé', 'limit_usd')], compact=not page_cle, icone='cle')
+
+
+def champ_cle(libelle, aide='', *, stockage=True):
+    """Champ de la clé OpenRouter : saisie masquée, jamais mémorisée ni préremplie par le navigateur ; `stockage` lie la note `key-storage`"""
+    decrit = (['key-help'] if aide else []) + (['key-storage'] if stockage else [])
+    return ('<div class="champ"><label for="openrouter-key">' + text(libelle) + '</label>'
+            + ('<p class="aide" id="key-help">' + text(aide) + '</p>' if aide else '')
+            + '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512"'
+            + (' aria-describedby="' + ' '.join(decrit) + '"' if decrit else '') + '></div>')
+
+
+CLE_STOCKAGE = ('La clé est chiffrée et conservée sur notre serveur. Un cookie garde votre accès dans ce navigateur, '
+                'jusqu’à 30 jours sans activité. Enregistrer ou retirer la clé ne lance aucun modèle.')
+CLE_REMPLACEMENT = ('Attendez la fin d’une préparation ou d’un contrôle de l’exemple en cours avant de changer de clé. '
+                    'Retirer la clé n’annule pas un benchmark déjà lancé, et la clé reste active chez OpenRouter.')
+CLE_RETRAIT = ('Attendez la fin d’une préparation ou d’un contrôle de l’exemple en cours avant de changer de clé. '
+               'Une fois la clé retirée, Evaly ne lance plus aucun nouvel appel. La clé reste active chez OpenRouter, '
+               'et un benchmark déjà lancé n’est pas annulé.')
+
+
+def retrait_cle(csrf, back, *, page_cle=False):
+    """Formulaire « Retirer la clé de ce navigateur » ; sur la page de la clé, sa mise en garde le suit"""
+    if page_cle:
+        return (form(csrf, '/preparation/access/disconnect', {'return': back}, bouton('Retirer la clé de ce navigateur', sec=True, icone=None))
+                + '<p class="petit">' + text(CLE_RETRAIT) + '</p>')
+    return form(csrf, '/preparation/access/disconnect', {'return': back},
+                '<div class="actions">' + bouton('Retirer la clé de ce navigateur', sec=True, icone='poubelle') + '</div>')
 
 
 def personal_key_form(csrf, access, back, *, opened=False):
-    """Seul moyen de fournir un accès Openrouter : la clé saisie, puis retour à `back`"""
+    """Seul moyen de fournir un accès OpenRouter : la clé saisie, puis retour à `back`"""
     status = access.get('status')
-    summary = 'Remplacer ma clé OpenRouter' if status == 'connected' else 'Ajouter ma clé OpenRouter'
-    content = ('<details class="corr personal-key"' + (' open' if opened else '') + '><summary class="button sec">'
-               + summary + '</summary><div>')
-    content += form(csrf, '/preparation/access/key', {'return': back},
-        '<label for="openrouter-key">Clé API OpenRouter</label>'
-        '<input id="openrouter-key" name="key" type="password" autocomplete="new-password" required maxlength="512" aria-describedby="key-help key-storage">'
-        '<p id="key-help">Créez sur OpenRouter une clé réservée à Evaly, avec un plafond non renouvelable de 50 USD maximum. Ce plafond est la seule limite de dépense.</p>'
-        '<p id="key-storage" class="hint">Votre clé est chiffrée et conservée sur notre serveur. '
-        'Un cookie garde votre accès dans ce navigateur d’une visite à l’autre ; il est supprimé au plus tard après 30 jours sans activité. '
-        'Vous pouvez aussi retirer la clé ici à tout moment. '
-        'Enregistrer ou retirer la clé ne lance aucun modèle.</p>'
-        '<button type="submit">Enregistrer la clé</button>')
-    content += '</div></details>'
-    if status in ('connected', 'invalid'):
-        content += form(csrf, '/preparation/access/disconnect', {'return': back},
-            '<button type="submit" class="sec">Retirer la clé de ce navigateur</button>')
-        content += ('<p class="hint">Attendez la fin d’une préparation ou d’une vérification en cours avant de changer de clé. '
-                    'Une fois la clé retirée, Evaly ne lance plus aucun nouvel appel. La clé reste active chez OpenRouter, et une comparaison déjà lancée n’est pas annulée.</p>')
-    return content
+    if status == 'connected':
+        envoi = form(csrf, '/preparation/access/key', {'return': back},
+                     champ_cle('Nouvelle clé API OpenRouter', stockage=False) + '<p class="petit">' + text(CLE_REMPLACEMENT) + '</p>'
+                     '<div class="actions">' + bouton('Enregistrer la nouvelle clé', sec=True, icone='cle') + '</div>')
+        return ('<div class="g-cle carte">' + access_summary(access)
+                + tiroir('Remplacer ou retirer la clé', envoi + '<hr class="sep">' + retrait_cle(csrf, back), ouvert=opened) + '</div>')
+    envoi = form(csrf, '/preparation/access/key', {'return': back},
+                 champ_cle('Clé API OpenRouter', 'Clé réservée à Evaly, avec un plafond non renouvelable de 50 USD maximum. '
+                           'Ce plafond est la seule limite de dépense.') + '<p class="petit" id="key-storage">' + text(CLE_STOCKAGE) + '</p>'
+                 '<div class="actions">' + bouton('Enregistrer la nouvelle clé' if status == 'invalid' else 'Enregistrer la clé', icone='cle') + '</div>',
+                 classe='g-cle carte')
+    return envoi + retrait_cle(csrf, back) if status == 'invalid' else envoi
