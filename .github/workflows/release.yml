@@ -1,4 +1,4 @@
-name: Release Bench-X
+name: Release Evaly
 
 on:
   push:
@@ -170,7 +170,7 @@ jobs:
             case "$VERSION" in *-*) flags+=(--prerelease);; esac
             gh release create "$TAG" benchmark-runtime.tar.gz build-receipt.json release-decision.json SHA256SUMS \
               --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --title "$TAG" \
-              --notes "Bench-X $VERSION\n\nCommit source: $SOURCE_SHA\nLa provenance est vérifiée par le constructeur et le contrôleur.\n" "${flags[@]}"
+              --notes "Evaly $VERSION\n\nCommit source: $SOURCE_SHA\nLa provenance est vérifiée par le constructeur et le contrôleur.\n" "${flags[@]}"
           fi
 
       - name: Vérifier ou compléter chaque asset sans écraser une divergence

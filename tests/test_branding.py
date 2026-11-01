@@ -1,4 +1,4 @@
-"""Nom public de Bench-X et compatibilité des identifiants techniques"""
+"""Nom public d’Evaly et compatibilité des identifiants techniques"""
 from pathlib import Path
 from http.client import HTTPConnection
 import tempfile
@@ -58,10 +58,12 @@ class BrandingTests(unittest.TestCase):
 
         for surface in (readme, profile['system']):
             with self.subTest(surface=surface[:40]):
-                self.assertIn('Bench-X', surface)
                 self.assertNotIn('Benchmark Lab-X', surface)
+        self.assertIn('Evaly', readme)
+        self.assertNotIn('Bench-X', readme)
         self.assertIn('by Le Lab-X', readme)
-        # Le parcours privé et la page publiée s'appellent Evaly ; le README et l'assistant gardent Bench-X
+        # Le prompt de l'assistant garde Bench-X : un changement de prompt touche la mesure
+        self.assertIn('Bench-X', profile['system'])
         self.assertIn('· Evaly</title>', public_page)
         self.assertNotIn('Bench-X', public_page)
         self.assertIn('· Evaly</title>', template)

@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="benchmark_web/static/bench-x.svg" width="96" height="96" alt="Logo Bench-X : trois barres de comparaison">
-  <h1 id="bench-x">Bench-X</h1>
+  <img src="benchmark_web/static/bench-x.svg" width="96" height="96" alt="Logo Evaly : un Y dans un carré jaune">
+  <h1 id="evaly">Evaly</h1>
   <p><strong>by Le Lab-X</strong></p>
   <p>Choisir une configuration de modèle d’IA à partir d’une tâche précise, de résultats observés, de preuves consultables et de leur coût.</p>
   <p>
@@ -8,7 +8,7 @@
     <a href="LICENSE"><img alt="Licence AGPL-3.0" src="https://img.shields.io/badge/licence-AGPL--3.0-blue.svg"></a>
   </p>
   <p>
-    <a href="#ce-que-fait-bench-x">Fonctionnalités</a> ·
+    <a href="#ce-que-fait-evaly">Fonctionnalités</a> ·
     <a href="#démarrage-local">Démarrage</a> ·
     <a href="#architecture-du-dépôt">Architecture</a> ·
     <a href="#documentation">Documentation</a> ·
@@ -16,13 +16,13 @@
   </p>
 </div>
 
-## Pourquoi Bench-X
+## Pourquoi Evaly
 
-Un modèle n’est jamais « le meilleur » dans l’absolu. Bench-X compare des configurations dans des conditions communes, sur une tâche définie avant l’exécution. Chaque conclusion reste liée à son contrat, à ses cas d’essai, à la configuration réellement observée, aux preuves conservées et à la date de la campagne.
+Un modèle n’est jamais « le meilleur » dans l’absolu. Evaly compare des configurations dans des conditions communes, sur une tâche définie avant l’exécution. Chaque conclusion reste liée à son contrat, à ses cas d’essai, à la configuration réellement observée, aux preuves conservées et à la date de la campagne.
 
 Le projet sépare clairement la préparation, l’acquisition, l’évaluation et la restitution. Une simulation teste le logiciel ; elle ne devient jamais un résultat de benchmark réel.
 
-## Ce que fait Bench-X
+## Ce que fait Evaly
 
 - prépare un dossier entièrement fictif à partir d’un besoin général ;
 - qualifie un contrat de réussite avant les appels candidats ;
@@ -95,7 +95,7 @@ tests/                 régressions hors ligne et parcours locaux
 tools/                 construction reproductible du runtime
 ```
 
-Les identifiants techniques du produit conservent le préfixe `benchmark-lab-x`. Ils appartiennent aux formats de données et restent stables malgré le nom public Bench-X.
+Les identifiants techniques du produit conservent le préfixe `benchmark-lab-x`. Ils appartiennent aux formats de données et restent stables malgré le nom public Evaly.
 
 ## Documentation
 
@@ -118,12 +118,12 @@ Ne publiez pas une vulnérabilité dans une Issue, une pull request ou une Discu
 
 ## Licence
 
-Bench-X est distribué sous licence [AGPL-3.0-only](LICENSE).
+Evaly est distribué sous licence [AGPL-3.0-only](LICENSE).
 
 ---
 
 <div align="center">
-  <p><strong>Bench-X</strong> by <strong>Le Lab-X</strong></p>
+  <p><strong>Evaly</strong> by <strong>Le Lab-X</strong></p>
   <p>Des choix de modèles fondés sur des tâches précises et des preuves lisibles.</p>
-  <p><a href="#bench-x">Retour en haut</a></p>
+  <p><a href="#evaly">Retour en haut</a></p>
 </div>

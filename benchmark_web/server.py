@@ -197,7 +197,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
     views.TEMPLATE = views.TEMPLATE_PATH.read_text() if version else None
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = 'Bench-X'
+        server_version = 'Evaly'
         sys_version = ''
 
         def setup(self):
