@@ -3210,7 +3210,8 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, dossier, 'exemple', 'Oui, c’est le travail à tester')
         self.assertIn('Relever toutes les actions', page.visible)
         self.assertNotIn('Evaly ne peut pas comparer ce cas d’usage', page.visible)
-        self.assertIn('ce contrôle est payé avec votre clé OpenRouter', page.visible)
+        # B5 : la phrase de service sur le contrôle payé est retirée du bloc de décision
+        self.assertNotIn('Valider ne lance aucun', page.visible)
         position = {key: next(i for i, n in enumerate(page.nodes) if test(n)) for key, test in (
             ('correction', lambda n: n['tag'] == 'details' and n['attrs'].get('id') == 'corriger'),
             ('validation', lambda n: n['attrs'].get('id') == 'validation'))}

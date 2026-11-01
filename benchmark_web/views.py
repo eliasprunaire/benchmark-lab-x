@@ -1176,8 +1176,7 @@ def decision_validation(csrf, url, value, disabled, estimation_html):
     """Bloc jaune de la validation : valider l'exemple, ou (tiroir de correction ouvert) envoyer la correction"""
     return form(csrf, url + '/validation', binding(value['dossier_id'], value['revision'], value['package_sha256']),
                 '<span class="etiq">Étape 3 sur 5</span><div class="mode-valider" id="validation"><h2>Valider l’exemple</h2>'
-                '<p>Vous confirmez que cet exemple représente bien votre besoin. L’exemple est ensuite contrôlé automatiquement, si ce service est disponible : '
-                'ce contrôle est payé avec votre clé OpenRouter. Valider ne lance aucun des modèles à comparer et ne publie rien.</p>'
+                '<p>Vous confirmez que cet exemple représente bien votre besoin.</p>'
                 + bouton('Oui, c’est le travail à tester', xl=True).replace('type="submit"', 'type="submit"' + disabled) + estimation_html + '</div>'
                 + MODE_CORRIGER, classe='decision')
 
