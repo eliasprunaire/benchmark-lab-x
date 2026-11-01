@@ -97,8 +97,8 @@ def gestion_cas(dossier, privacy):
     identifiant = dossier['dossier_id']
     attributs = ' data-privacy-controls data-dossier-id="' + text(identifiant) + '"'
     if active_session(privacy or {}):
-        # Sans version connue pour la liste, toute copie du serveur convient
-        attributs += ' data-privacy-activity data-content-version="0"'
+        # Bouton de copie seulement : aucune copie automatique au chargement, le consentement ne couvre que le cas ouvert
+        attributs += ' data-privacy-manual'
     titre = dossier.get('need') or 'Cas d’usage sans description'
     # Statut lu par les lecteurs d'écran seulement : `privacy.js` y écrit « Historique local désactivé » sur chaque carte par défaut
     return ('<div class="ge-gerer"' + attributs + '><p class="cache" role="status" data-privacy-status></p>'

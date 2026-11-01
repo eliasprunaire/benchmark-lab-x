@@ -498,7 +498,7 @@ export async function mountPrivacy(root = document) {
       const id = element.dataset.dossierId;
       const archive = element.querySelector('[data-privacy-action="archive"]');
       const enable = element.querySelector('[data-privacy-action="enable-case"]');
-      const active = element.hasAttribute('data-privacy-activity');
+      const active = element.hasAttribute('data-privacy-activity') || element.hasAttribute('data-privacy-manual');
       const update = async () => {
         await connect();
         const state = store ? await store.state(id) : {enabled: false, chosen: false};
@@ -510,7 +510,7 @@ export async function mountPrivacy(root = document) {
       refreshers.push(update);
       const save = () => run(archive, async () => {
         status.textContent = 'Copie en cours dans ce navigateur…';
-        const saved = await store.archive(id, Number(element.dataset.contentVersion));
+        const saved = await store.archive(id, Number(element.dataset.contentVersion || 0));
         status.textContent = saved ? 'Copie gardée dans ce navigateur.' : 'Ce navigateur a déjà la version la plus récente de ce cas.';
         await changed();
       });
@@ -521,7 +521,7 @@ export async function mountPrivacy(root = document) {
         if (!(await store.state()).enabled) status.textContent = 'L’historique est réactivé pour ce cas, mais il reste en pause pour tout ce navigateur. Réactivez-le aussi dans Mes données.';
       }));
       await update();
-      if (active && element.hasAttribute('data-content-version') && store && (await store.state(id)).enabled) await save();
+      if (element.hasAttribute('data-privacy-activity') && element.hasAttribute('data-content-version') && store && (await store.state(id)).enabled) await save();
     }
   }
   window.addEventListener('focus', () => {void refresh();});

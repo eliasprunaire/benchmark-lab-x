@@ -2368,6 +2368,9 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     assert.deepEqual(await page.locator('.ge-cas a.btn-danger').evaluateAll(links => links.map(link => link.getAttribute('href'))),
       ['/preparation/dossiers/d1/delete?retour=/preparation', '/preparation/dossiers/d2/delete?retour=/preparation']);
     assert.equal(await page.locator('[data-privacy-post="delete"]').count(), 0);
+    // Le consentement couvre le cas ouvert : une carte de la liste montre le bouton de copie sans copier au chargement
+    assert.equal(await page.locator('.ge-cas [data-privacy-activity], .ge-cas [data-content-version]').count(), 0);
+    assert.equal(await page.locator('.ge-cas [data-privacy-manual]').count(), 2);
     assert.equal(await page.locator('.alerte-exp').count(), 0, 'sans échéance connue, aucune alerte');
     await page.goto(origin + '/render/listing-expiring');
     assert.equal(await page.locator('.alerte-exp').count(), 1);
