@@ -78,7 +78,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertEqual(views.STEP_SCRIPT, views.page_script(value))
         for anchor in ('besoin', 'exemple', 'validation'):
             self.assertIn('id="' + anchor + '"', page)
-        self.assertIn('>Préparer une nouvelle comparaison</a>', page)
+        self.assertIn('>Nouveau benchmark<', page)
         self.assertIn(comparison['href'] + '/configurations', Markup(page.encode()).links)
         for suffix in ('campaign=foreign', 'campaign=comparison&campaign=proof', 'campaign=', 'unknown=comparison'):
             with self.subTest(suffix=suffix), self.assertRaises((p.Denied, ValueError)):

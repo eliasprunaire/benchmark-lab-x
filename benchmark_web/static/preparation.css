@@ -1305,3 +1305,7 @@ body { overflow-wrap: break-word; }
   .colonnes > .cote-avant:first-child { grid-column: 2; grid-row: 1; }
   .colonnes > .cote-avant:first-child + .pile-l { grid-column: 1; grid-row: 1; }
 }
+
+/* ——— Lot besoin ——— */
+/* Un élément masqué par `hidden` le reste, même quand sa classe lui donne un affichage (bouton d'arrêt de la mise à jour, activé par le script) */
+[hidden] { display: none !important; }

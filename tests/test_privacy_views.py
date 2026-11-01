@@ -158,7 +158,6 @@ def browser_views():
             qualified=status == 'QUALIFIED', qualification=dict(status=status, qualification_status=status,
                 approval_status=status, summary='<img src=x onerror="alert(1)">Correction requise', findings=[]))
         if status == 'BLOCKED':
-            value.update(package=None)
             value['qualification']['operation_id'] = 'op'
         examples['example-' + status] = value
     for stage, qualification, prior, pending in (
@@ -167,10 +166,14 @@ def browser_views():
             ('preview', {'operation_id': 'op', 'status': 'BLOCKED'}, False, False),
             ('preview', {'operation_id': 'op', 'status': 'QUALIFIED'}, False, False)):
         value = dict(base, revision=1, current_revision=2 if prior else 1, stage=stage,
-            qualification=dict(qualification, summary='Contrôle', findings=[]),
+            qualification=dict(qualification, summary='correction requise' if qualification.get('status') == 'BLOCKED' else 'Contrôle', findings=[]),
             validation={'validated_at': '2026-09-17'} if qualification else None,
             qualified=qualification.get('status') == 'QUALIFIED',
             availability=dict(available, reason='waiting', can_submit=False))
+        if qualification.get('status') in ('BLOCKED', 'QUALIFIED'):
+            # contrôle terminé : l'exemple contrôlé s'affiche (B50)
+            sample = example_view()
+            value.update({key: sample[key] for key in ('package', 'example_contents', 'criteria', 'criteria_rule', 'package_sha256', 'changes', 'piece_changes') if key in sample})
         examples[f'progress-{stage}-{qualification.get("status", "none")}-{prior}'] = value
     history = example_view()
     stopped = deepcopy(ready['campaign'])
@@ -206,7 +209,7 @@ def browser_views():
     copy.pop('criteria', None)
     copy['source'] = dict(task_id='tache-fictive', version_id='version-1', title='Tableau <script>alert(1)</script>',
                           work='Préparer un tableau par opération', cases=['Cinq débits inventés'],
-                          limits=['Ne certifie aucune comptabilité'], qualification_status='QUALIFIED',
+                          limits=['Ne certifie aucune comptabilité'], qualification_status='ABSENT',
                           pieces=[dict(id='consigne', label='Consigne',
                                        text='Pièce source <script>alert(1)</script>')])
     copy['source_notice'] = dict(withdrawn=False, reports=[dict(
