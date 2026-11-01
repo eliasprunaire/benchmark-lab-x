@@ -220,6 +220,60 @@ STEP_SCRIPT = """(() => {
 })();"""
 
 
+FILTRES_SCRIPT = """(() => {
+  // Épreuves et Benchmarks publics : un filtre cliqué ou une recherche tapée remplace le contenu, la page garde sa position
+  // Sans script, les filtres restent des liens et la recherche un formulaire GET
+  const SEUIL = 3;
+  const formulaire = () => document.querySelector('main form.g-recherche');
+  const champ = () => formulaire()?.querySelector('input[name="q"]');
+  let requete;
+  async function charger(cible, ajouter) {
+    requete?.abort();
+    requete = new AbortController();
+    const reponse = await fetch(cible, {headers: {Accept: 'text/html'}, cache: 'no-store', redirect: 'error', signal: requete.signal});
+    if (!reponse.ok) throw new Error(String(reponse.status));
+    const suivant = new DOMParser().parseFromString(await reponse.text(), 'text/html').querySelector('main');
+    if (!suivant) throw new Error('page sans contenu');
+    const saisie = champ(), valeur = saisie?.value, focus = document.activeElement === saisie, curseur = saisie?.selectionStart;
+    document.querySelector('main').replaceChildren(...suivant.childNodes);
+    history[ajouter ? 'pushState' : 'replaceState']({filtres: true}, '', cible);
+    const neuf = champ();
+    if (neuf && valeur !== undefined) {
+      neuf.value = valeur;
+      if (focus) { neuf.focus({preventScroll: true}); neuf.setSelectionRange(curseur, curseur); }
+    }
+  }
+  // Recherche tapée : à partir de SEUIL caractères, le serveur filtre avec les filtres déjà choisis
+  let minuterie;
+  document.addEventListener('input', event => {
+    if (!event.target.matches('main form.g-recherche input[name="q"]')) return;
+    clearTimeout(minuterie);
+    minuterie = setTimeout(() => {
+      const form = formulaire(), q = event.target.value.trim();
+      const cible = new URL(form.action);
+      for (const [cle, valeur] of new FormData(form)) if (cle !== 'q' && valeur) cible.searchParams.set(cle, valeur);
+      if (q.length >= SEUIL) cible.searchParams.set('q', q);
+      else if (!new URL(location.href).searchParams.get('q')) return;
+      if (cible.href === location.href) return;
+      charger(cible.href, false).catch(error => { if (error.name !== 'AbortError') console.error('FILTRES_INDISPONIBLES'); });
+    }, 300);
+  });
+  // Filtre cliqué : seul le contenu change ; en cas d'échec, navigation ordinaire
+  document.addEventListener('click', event => {
+    const lien = event.target.closest('main .segments-liens a');
+    if (!lien || event.defaultPrevented || event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const groupe = lien.closest('[aria-labelledby]')?.getAttribute('aria-labelledby');
+    const cible = new URL(lien.href), q = champ()?.value.trim() ?? '';
+    if (q.length >= SEUIL) cible.searchParams.set('q', q); else cible.searchParams.delete('q');
+    charger(cible.href, true)
+      .then(() => document.querySelector('main [aria-labelledby="' + groupe + '"] a[aria-current]')?.focus({preventScroll: true}))
+      .catch(error => { if (error.name !== 'AbortError') location.assign(cible.href); });
+  });
+  window.addEventListener('popstate', () => location.reload());
+})();"""
+
+
 def page_script(value):
     if value.get('kind') == 'campaign_launch' and value['campaign']['attempts']:
         active, ready, _ = campaign_followup(value['campaign'])
@@ -230,6 +284,10 @@ def page_script(value):
         return CUSTOM_MODELS_SCRIPT
     if 'revision' in value:
         return STEP_SCRIPT
+    # Seuls les deux catalogues ont des filtres ; fiches, versions retirées et résultats publiés restent sans script
+    if (value.get('kind') == 'editorial' and not value.get('version_id') and not value.get('withdrawn')) \
+            or (value.get('kind') == 'references' and not value.get('reference_id')):
+        return FILTRES_SCRIPT
     return COMPARISON_FOCUS_SCRIPT if value.get('kind') == 'comparison' else None
 
 
@@ -1752,8 +1810,8 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
     script = page_script(value) if not error else None
     if script is not None and value.get('kind') == 'campaign_launch' and value['campaign']['attempts']:
         content += '<script>' + script + '</script>'
-    if script == STEP_SCRIPT:
-        content += '<script>' + STEP_SCRIPT + '</script>'
+    if script in (STEP_SCRIPT, FILTRES_SCRIPT):
+        content += '<script>' + script + '</script>'
     if not error:
         if value.get('kind') == 'home':
             content += '<span data-privacy-home hidden></span>'

@@ -243,7 +243,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 policy += "; script-src 'sha256-" + b64encode(sha256(script.encode()).digest()).decode() + "'"
                 if privacy_script:
                     policy += " 'self'"
-                if script in (views.PREPARATION_PROGRESS_SCRIPT, views.CUSTOM_MODELS_SCRIPT, views.COMPARISON_FOCUS_SCRIPT):
+                if script in (views.PREPARATION_PROGRESS_SCRIPT, views.CUSTOM_MODELS_SCRIPT, views.COMPARISON_FOCUS_SCRIPT, views.FILTRES_SCRIPT):
                     policy += "; connect-src 'self'"
             elif privacy_script:
                 policy += "; script-src 'self'"
@@ -992,7 +992,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     self.error_page(400, 'Recherche invalide', 'Modifiez votre recherche ou effacez les filtres.')
                     return
                 value = {'kind': 'references', 'reference_id': identity, **fields}
-                self.respond(200, views.render(value, '', self.path), 'text/html; charset=utf-8')
+                self.respond(200, views.render(value, '', self.path), 'text/html; charset=utf-8', script=views.page_script(value))
                 return
             if reference_path == '/epreuves/aide':
                 if urlsplit(self.path).query:
@@ -1094,7 +1094,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 except ValueError:
                     self.not_found()
                     return
-                self.respond(200, views.render(payload, '', reference_path), 'text/html; charset=utf-8')
+                self.respond(200, views.render(payload, '', reference_path), 'text/html; charset=utf-8', script=views.page_script(payload))
                 return
             if self.path in _RESOURCES:
                 raw, media, etag = resources[self.path] if resources else _load_resource(*_RESOURCES[self.path])

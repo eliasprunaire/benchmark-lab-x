@@ -27,6 +27,9 @@ from benchmark.acquisition import campaigns
 from benchmark import editorial, evaluation, model_catalogue, preparation as prep, public_results
 from benchmark import provider_access, qualification, semantic_help, service, storage
 from benchmark_web import projection, server, views
+
+# Seul script admis sur les catalogues : celui des filtres, constante du serveur ; un contenu hostile n'en crée jamais
+FILTRES = ('<script>' + views.FILTRES_SCRIPT + '</script>').encode()
 from tests.test_configurations import NOW, model
 from tests.test_openrouter_qualification import QualificationTransport
 from tests.test_provider_access import AccessTransport, KEY, SECRET
@@ -521,7 +524,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertRegex(help_form['fields']['submission_id'], r'^[0-9a-f]{32}$')
             self.assertEqual(['formulation'],
                              [n['attrs'].get('name') for n in help_form['nodes'] if n['tag'] == 'textarea'])
-            self.assertNotIn(b'<script', help_raw)
+            self.assertNotIn(b'<script', help_raw.replace(FILTRES, b''))
             self.assertEqual([], self.calls)
             self.assertTrue(self.starts.empty())
             self.assertEqual({}, dict(self.cookies))
@@ -539,7 +542,7 @@ class ParcoursComplet(unittest.TestCase):
             index, headers, raw = self.request('/evaluations-externes')
             self.assertIsNone(headers.get('Set-Cookie'))
             self.assertEqual('no-referrer', headers['Referrer-Policy'])
-            self.assertNotIn(b'<script', raw)
+            self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
             self.assertEqual(raw, self.request('/evaluations-externes', cookies=SimpleCookie('benchmark_session=invalid'))[2])
             self.assertNotIn(KEY, index.visible)
             self.assertNotIn('HELM', index.visible)
@@ -622,7 +625,7 @@ class ParcoursComplet(unittest.TestCase):
                 notice, notice_headers, notice_raw = self.request('/evaluations-externes/' + identity)
                 self.assertIsNone(notice_headers.get('Set-Cookie'))
                 self.assertEqual('no-referrer', notice_headers['Referrer-Policy'])
-                self.assertNotIn(b'<script', notice_raw)
+                self.assertNotIn(b'<script', notice_raw.replace(FILTRES, b''))
                 self.assertNotIn(KEY, notice.visible)
                 self.assertNotIn('Besoin privé', notice.visible)
                 self.assertNotIn('%', notice.visible)
@@ -700,7 +703,7 @@ class ParcoursComplet(unittest.TestCase):
             empty, headers, raw = self.request('/epreuves')
             self.assertIsNone(headers.get('Set-Cookie'))
             self.assertEqual('no-referrer', headers['Referrer-Policy'])
-            self.assertNotIn(b'<script', raw)
+            self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
             self.assertIn('Aucune épreuve publiée', empty.visible)
             self.assertEqual('/preparation', empty.link('Décrire mon cas d’usage'))
             empty_search, _, _ = self.request('/epreuves?q=tableau')
@@ -766,7 +769,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIsNone(absent_headers.get('Set-Cookie'))
             self.assertEqual('no-referrer', headers['Referrer-Policy'])
             self.assertEqual(raw, self.request('/epreuves', cookies=SimpleCookie('benchmark_session=invalid'))[2])
-            self.assertNotIn(b'<script', raw)
+            self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
             self.assertNotIn(title.encode(), raw)
             self.assertNotIn(piece.encode(), hidden_raw)
             self.assertNotIn(piece.encode(), absent_raw)
@@ -836,7 +839,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual(piece.encode(), piece_raw)
             self.assertEqual(raw, self.request('/epreuves/' + task + '/' + version,
                                                cookies=SimpleCookie('benchmark_session=invalid'))[2])
-            self.assertNotIn(b'<script', raw)
+            self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
             self.assertNotIn(title.encode(), raw)
             for value in (title, work, case, limit, views.version_lisible(version),
                           'Qualification absente', 'Aucune preuve de qualification n’est publiée',
@@ -898,7 +901,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(title, withdrawn.visible)
             self.assertNotIn(piece, withdrawn.visible)
             self.assertNotIn(work, withdrawn.visible)
-            self.assertNotIn(b'<script', withdrawn_raw)
+            self.assertNotIn(b'<script', withdrawn_raw.replace(FILTRES, b''))
             hidden, _, hidden_raw = self.request(piece_url, status=404)
             self.assertNotIn(piece.encode(), hidden_raw)
             self.assertNotIn(piece, hidden.visible)
@@ -1005,7 +1008,7 @@ class ParcoursComplet(unittest.TestCase):
             catalog, catalog_headers, catalog_raw = self.request('/epreuves')
             self.assertIsNone(catalog_headers.get('Set-Cookie'))
             self.assertEqual('no-referrer', catalog_headers['Referrer-Policy'])
-            self.assertNotIn(b'<script', catalog_raw)
+            self.assertNotIn(b'<script', catalog_raw.replace(FILTRES, b''))
             for value in ('Tableau des débits', 'Note de synthèse', 'Ancienne épreuve', 'Ancienne épreuve enrichie',
                           'Version calcul', 'Version redaction', 'Version ancienne',
                           'Version enrichie', 'Entrées', 'Langue', 'Outils',
@@ -1039,7 +1042,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual('/epreuves/aide', help_link)
             help_page, help_headers, help_raw = self.request(help_link)
             self.assertIsNone(help_headers.get('Set-Cookie'))
-            self.assertNotIn(b'<script', help_raw)
+            self.assertNotIn(b'<script', help_raw.replace(FILTRES, b''))
             self.assertEqual('/epreuves/aide', help_page.form('/epreuves/aide')['action'])
             self.assertIn('TypeSafe', help_page.visible)
             self.request('/epreuves/aide?q=formule-privee', status=400)
@@ -1153,7 +1156,7 @@ class ParcoursComplet(unittest.TestCase):
                 self.assertNotIn('prive', rejected.visible, path)
             hostile_path = query_path({'q': '<script>alert(9)</script>'})
             hostile, _, hostile_raw = self.request(hostile_path)
-            self.assertNotIn(b'<script', hostile_raw)
+            self.assertNotIn(b'<script', hostile_raw.replace(FILTRES, b''))
             self.assertIn('<script>alert(9)</script>', hostile.visible)
 
             # Retrait : absent des résultats et des valeurs proposées
@@ -1960,7 +1963,7 @@ class ParcoursComplet(unittest.TestCase):
         links = [node['attrs']['href'] for node in page.nodes
                  if node['tag'] == 'a' and 'Benchmark du' in node['text']]
         self.assertEqual([first, second, partial], links)
-        self.assertNotIn(b'<script', raw)
+        self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
         self.assertNotIn(need.encode(), raw)
         self.assertNotIn(KEY.encode(), raw)
         catalog, _, _ = self.request('/epreuves')
@@ -1973,7 +1976,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual('no-referrer', headers['Referrer-Policy'])
         self.assertIn("default-src 'none'", headers['Content-Security-Policy'])
         self.assertIn("form-action 'self'", headers['Content-Security-Policy'])
-        self.assertNotIn(b'<script', raw)
+        self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
         main = next(node for node in page.nodes if node['tag'] == 'main')['text']
         for value in (title, work, 'Modèle A', 'Modèle C', 'Satisfait', 'Ne satisfait pas',
                       'Une action annoncée par la consigne manque au tableau.',
@@ -2077,7 +2080,7 @@ class ParcoursComplet(unittest.TestCase):
         withdrawn, _, withdrawn_raw = self.request(first)
         self.assertIn('Cette restitution est retirée', withdrawn.visible)
         self.assertNotIn('Modèle A', withdrawn.visible)
-        self.assertNotIn(b'<script', withdrawn_raw)
+        self.assertNotIn(b'<script', withdrawn_raw.replace(FILTRES, b''))
         self.request(piece_url, status=404)
         self.request(first + '/pieces/' + 'a' * 32, status=404)
         self.assertIn('Benchmark du', self.request(second)[0].visible)
@@ -2099,7 +2102,7 @@ class ParcoursComplet(unittest.TestCase):
             page, _, raw = self.request(campaign)
             self.assertIn('Cette épreuve est retirée', page.visible)
             self.assertNotIn('Modèle A', page.visible)
-            self.assertNotIn(b'<script', raw)
+            self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
             for pid in (selected[0], second_outputs[0], partial_outputs[0]):
                 self.request(campaign + '/pieces/' + pid, status=404)
         self.assertEqual([], public_results.published(self.public, task, version))
@@ -2430,7 +2433,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual('nosniff', headers['X-Content-Type-Options'])
             self.assertEqual('no-referrer', headers['Referrer-Policy'])
             self.assertIn("default-src 'none'", headers['Content-Security-Policy'])
-            self.assertNotIn(b'<script', raw)
+            self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
             self.request('/evaluations-externes/aide?q=prive', status=400)
             self.request('/evaluations-externes/aide/' + 'f' * 32, status=404)
             cross = self.request('/evaluations-externes/aide',
@@ -3054,7 +3057,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual('no-referrer', headers['Referrer-Policy'])
         self.assertIn("default-src 'none'", headers['Content-Security-Policy'])
         self.assertIn("form-action 'self'", headers['Content-Security-Policy'])
-        self.assertNotIn(b'<script', raw)
+        self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
         self.assertIsNone(headers.get('Set-Cookie'))
         self.assertEqual('/epreuves/aide', form_page.form('/epreuves/aide')['action'])
         self.request('/epreuves/aide?q=prive', status=400)

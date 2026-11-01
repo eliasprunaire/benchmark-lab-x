@@ -7,6 +7,9 @@ const {execFileSync} = require('node:child_process');
 const {createHash, randomBytes} = require('node:crypto');
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 let server, browser, origin, rendered;
+// Scripts autres que celui des filtres des catalogues, constante du serveur : un contenu hostile n'en crée jamais
+const scriptsEtrangers = (page, zone = 'script') => page.locator(zone)
+  .evaluateAll((scripts, permis) => scripts.filter(script => script.src || script.textContent !== permis).length, rendered.filtres_script);
 let record, manifest, chunks, mode = 'normal', release, arrived;
 let posts = [], postStatus = 200, followupReplies = [];
 const fresh = (version = 1) => ({format: 'bench-x/history/v1', dossier_id: 'd1', content_version: version,
@@ -265,7 +268,7 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
                   'followup_done': views.render(launch('RECEIVED'), 'csrf').decode(),
                   'launch_timeout': views.render(dict(RESPONSE_TIMEOUT), '', '/preparation/dossiers/d1/campaigns/c1/start',
                                                  error=True).decode(),
-                  'progress_script': views.PREPARATION_PROGRESS_SCRIPT}))
+                  'progress_script': views.PREPARATION_PROGRESS_SCRIPT, 'filtres_script': views.FILTRES_SCRIPT}))
 `], {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024}));
   server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -304,7 +307,8 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
            ?? rendered.editorial_pages[url.pathname]);
       if (!html) {res.writeHead(404).end('introuvable'); return;}
       res.setHeader('Content-Type', 'text/html');
-      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      // Comme le serveur Python : le script des filtres, autorisé par son empreinte, relit ces pages
+      res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'sha256-${createHash('sha256').update(rendered.filtres_script).digest('base64')}'; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
       res.end(html);
     } else if (url.pathname === '/evaluations-externes/aide') {
       if (req.method === 'POST') {
@@ -325,7 +329,8 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
         ? rendered.reference_search[JSON.stringify(['q', 'category', 'verification'].map(key => url.searchParams.get(key) || ''))]
         : rendered.reference_notices[url.pathname.split('/').pop()];
       res.setHeader('Content-Type', 'text/html');
-      res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'");
+      // Comme le serveur Python : le script des filtres, autorisé par son empreinte, relit ces pages
+      res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'sha256-${createHash('sha256').update(rendered.filtres_script).digest('base64')}'; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
       res.end(html);
     } else if (url.pathname.startsWith('/render/') || url.pathname === rendered.detail_href) {
       const hashes = [rendered.script, rendered.comparison_script, rendered.progress_script]
@@ -1466,7 +1471,7 @@ test('access and launch screens preserve available actions, estimates and refusa
       await page.goto(origin + '/render/' + name);
       assert.ok((await page.textContent('main')).includes(text), name);
       assert.equal(await page.getByRole('button', {name: 'Lancer le benchmark', exact: true}).count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.locator('[id="cap_usd"], form[action$="/cap"]').count(), 0);
     }
     await page.goto(origin + '/render/estimate-known');
@@ -1681,17 +1686,44 @@ test('external references remain readable, searchable and safe without JavaScrip
       await page.goto(origin + '/evaluations-externes');
       assert.equal(await page.locator('input[name="category"]').inputValue(), '');
       assert.equal(await page.locator('input[name="verification"]').inputValue(), '');
-      assert.equal(await page.locator('main script, main img').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       // Le lien « Décrire mon cas d’usage » n'existe que dans les états vides
       assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).count(), 0);
-      await page.getByLabel('Rechercher un benchmark').fill('corriger');
-      await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
-      // Les filtres s'appliquent au clic et gardent le texte cherché dans l'adresse
-      await page.getByRole('link', {name: 'Programmation', exact: true}).click();
-      assert.equal(new URL(page.url()).searchParams.get('q'), 'corriger');
-      await page.getByRole('link', {name: 'Vérifiée', exact: true}).click();
+      if (javaScriptEnabled) {
+        // Avec JavaScript : la recherche filtre dès 3 caractères, sans rechargement ; un filtre cliqué garde la position
+        assert.equal(await page.locator('script').count(), 1);
+        await page.evaluate(() => {window.sansRechargement = true;});
+        await page.getByLabel('Rechercher un benchmark').fill('co');
+        await page.waitForTimeout(400);
+        assert.equal(new URL(page.url()).searchParams.get('q'), null, 'filtrage sous 3 caractères');
+        await page.getByLabel('Rechercher un benchmark').fill('corriger');
+        await page.waitForFunction(() => new URL(location.href).searchParams.get('q') === 'corriger');
+        // Le contenu affiché est celui que le serveur rend pour cette recherche
+        const attendu = (rendered.reference_search[JSON.stringify(['corriger', '', ''])].split('<main')[1].match(/<h3/g) || []).length;
+        await page.waitForFunction(n => document.querySelectorAll('main h3').length === n && /corriger/.test(document.querySelector('main').textContent), attendu);
+        assert.equal(await page.locator('#q').inputValue(), 'corriger');
+        assert.equal(await page.evaluate(() => document.activeElement?.id), 'q', 'la saisie garde le focus');
+        await page.evaluate(() => window.scrollTo(0, 300));
+        const avant = await page.evaluate(() => scrollY);
+        assert.ok(avant > 0, 'page trop courte pour mesurer la position');
+        // Les filtres s'appliquent au clic et gardent le texte cherché dans l'adresse
+        await page.getByRole('link', {name: 'Programmation', exact: true}).click();
+        await page.waitForFunction(() => new URL(location.href).searchParams.get('category') === 'coding');
+        assert.equal(new URL(page.url()).searchParams.get('q'), 'corriger');
+        assert.equal(await page.evaluate(() => scrollY), avant, 'la page remonte au clic sur un filtre');
+        await page.getByRole('link', {name: 'Vérifiée', exact: true}).click();
+        await page.waitForFunction(() => new URL(location.href).searchParams.get('verification') === 'verified');
+        assert.equal(await page.evaluate(() => window.sansRechargement), true, 'page rechargée');
+      } else {
+        // Sans JavaScript : recherche native, puis filtres-liens qui gardent le texte cherché dans l'adresse
+        await page.getByLabel('Rechercher un benchmark').fill('corriger');
+        await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
+        await page.getByRole('link', {name: 'Programmation', exact: true}).click();
+        assert.equal(new URL(page.url()).searchParams.get('q'), 'corriger');
+        await page.getByRole('link', {name: 'Vérifiée', exact: true}).click();
+      }
       assert.deepEqual([...new URL(page.url()).searchParams.entries()].sort(),
         [['category', 'coding'], ['q', 'corriger'], ['verification', 'verified']]);
       assert.equal(await page.locator('main h3').count(), 1);
@@ -1708,7 +1740,7 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
       await page.goto(origin + '/evaluations-externes?q=' + encodeURIComponent('<script>alert(2)</script>'));
       assert.equal(await page.locator('#q').inputValue(), '<script>alert(2)</script>');
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       await page.goto(origin + '/render/reference-empty');
       assert.match(await page.textContent('main'), /Aucun benchmark public disponible/);
       await page.goto(origin + '/evaluations-externes/atelier-inconnu');
@@ -1747,8 +1779,8 @@ test('external references remain readable, searchable and safe without JavaScrip
                            'aucune information personnelle ou confidentielle',
                            'reste disponible', 'Demander l’aide'])
         assert.ok(help.includes(value), value);
-      assert.equal(await page.locator('main script, main img').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       const formulationField = page.getByLabel('Formulation à comparer');
       await formulationField.fill('Corriger un programme fictif et résoudre un calcul inventé');
@@ -1773,7 +1805,7 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.match(suggestions, /ne prouve ni adéquation/);
       assert.equal(await page.locator('main details summary').filter({hasText: 'Reçu technique'}).count(), 1);
       assert.ok(await page.locator('main a[href="/evaluations-externes"]').count() >= 1);
-      assert.equal(await page.locator('main script, main img').count(), 0);
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.screenshot({path: 'reports/462/suggestions-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
       await page.goto(origin + '/render/reference_help_unavailable');
@@ -1788,8 +1820,8 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.equal(approved.includes('Ayo'), false);
       assert.ok(approved.includes('22 octobre 2026'));
       assert.ok(approved.includes('Ce contrôle est fait à part de la relecture.'));
-      assert.equal(await page.locator('main script, main img').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       const categories = await page.locator('main .segments-liens a[href*="category="]').allTextContents();
       assert.ok(categories.includes('Recherche documentaire'));
       assert.ok(categories.includes('Performances des services'));
@@ -1830,7 +1862,7 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.match(apiNotice, /2 mars 2026/);
       assert.match(apiNotice, /Leur indice global n’entre pas dans Evaly/);
       assert.equal(apiNotice.includes('%'), false);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.deepEqual(dialogs, []);
       assert.deepEqual(errors, []);
       assert.deepEqual(await context.cookies(), []);
@@ -1881,8 +1913,8 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       }
       await page.setViewportSize({width: 390, height: 844});
       await page.goto(origin + '/epreuves');
-      assert.equal(await page.locator('main script, main img').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       // Recherche native, puis filtres appliqués au clic qui gardent le texte cherché ; critères visibles et effaçables, sans JavaScript
       const searchField = page.getByLabel('Rechercher une épreuve');
@@ -1892,7 +1924,9 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
       assert.match(page.url(), /q=note/);
       await page.getByRole('link', {name: 'Français', exact: true}).click();
+      await page.waitForFunction(() => new URL(location.href).searchParams.get('langue') === 'Français');
       await page.getByRole('link', {name: 'Tableur', exact: true}).click();
+      await page.waitForFunction(() => new URL(location.href).searchParams.get('outil') === 'Tableur');
       assert.equal(new URL(page.url()).searchParams.get('q'), 'note');
       assert.equal(new URL(page.url()).searchParams.get('langue'), 'Français');
       assert.equal(new URL(page.url()).searchParams.get('outil'), 'Tableur');
@@ -1924,6 +1958,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       // Une valeur longue proposée reste utilisable : son lien porte la valeur entière
       await page.goto(origin + '/epreuves');
       await page.locator('main .segments-liens a[href*="outil="]').filter({hasText: 'Tableur de contrôle'}).click();
+      await page.waitForFunction(() => new URL(location.href).searchParams.has('outil'));
       const longResult = await page.textContent('main');
       assert.match(longResult, /Version longue/);
       assert.equal(await page.locator('main [aria-label="Critères actifs"]').count(), 1);
@@ -1963,7 +1998,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.match(text, /Erreur de fixture <script>alert\(3\)<\/script>/);
       assert.match(text, /Signalement éditorial/);
       assert.equal(text.includes('Qualification réussie'), false);
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       // La pièce se lit dans sa feuille : on l'atteint au clavier, on l'ouvre sans JavaScript
       let focused = false;
@@ -1981,7 +2016,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       const copyLink = page.getByRole('link', {name: 'Créer mon dossier privé'});
       await copyLink.focus();
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/copy-confirmation');
       const confirmation = await page.textContent('main');
@@ -1990,7 +2025,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.match(confirmation, /Erreur signalée <script>alert\(2\)<\/script>/);
       assert.match(confirmation, /pièces copiées/);
       assert.match(confirmation, /Créer mon dossier privé/);
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       const copyButton = page.getByRole('button', {name: 'Créer mon dossier privé'});
       await copyButton.focus();
@@ -2056,7 +2091,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       const formulation = page.getByLabel('Formulation à comparer');
       await formulation.focus();
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/editorial-help-result');
       const helpResult = await page.textContent('main');
@@ -2065,7 +2100,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.match(helpResult, /ne prouve ni adéquation ni qualification/);
       assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-1"]').count(), 1);
       assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-2"]').count(), 1);
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       // La suggestion s'atteint au clavier ; son cadre porte l'anneau de focus
       let suggestionReached = false;
       for (let press = 0; press < 80 && !suggestionReached; press++) {
@@ -2084,7 +2119,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.equal(withdrawnHelp.includes('Tableau <script>alert(1)</script>'), false);
       assert.match(withdrawnHelp, /Note <script>alert\(4\)<\/script>/);
       assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-1"]').count(), 0);
-      assert.equal(await page.locator('main script').count(), 0);
+      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/editorial-empty');
       assert.match(await page.textContent('main'), /Aucune épreuve publiée/);
@@ -2098,7 +2133,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.equal(withdrawn.includes('Pièce <script>'), false);
       assert.equal(withdrawn.includes('Tableau'), false);
       assert.equal(await page.locator('main a[href*="/pieces/"]').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       assert.deepEqual(dialogs, []);
       assert.deepEqual(errors, []);
@@ -2126,8 +2161,8 @@ test('published results stay readable without JavaScript, by keyboard at 390 px'
       assert.match(main, /pièce non publiée/i);
       assert.match(main, /un filtre ne change ni les verdicts ni la population/i);
       assert.match(main, /2 essais lancés sur 2/);
-      assert.equal(await page.locator('main script, main img').count(), 0);
-      assert.equal(await page.locator('script').count(), 0);
+      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
+      assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       // Une seule colonne : bilan, comparaison, conditions communes, lecture, puis ce que la publication permet de vérifier
       for (const width of [1440, 390]) {
