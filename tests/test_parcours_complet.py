@@ -3545,8 +3545,8 @@ class ParcoursComplet(unittest.TestCase):
         # Le rang suit l'identifiant de campagne : les sélections adaptées enregistrées plus haut le précèdent
         rank = previous['campaign_id'].rsplit('-c', 1)[1]
         self.assertIn(f'Benchmark {rank} du ' + views.date_lisible_utc(previous['conditions']['frozen_at']), texts)
-        self.assertIn('vérification des réponses à lancer', listed['text'])
-        self.assertIn('benchmark prêt à lancer', listed['text'])
+        self.assertIn('vérification des réponses à lancer', listed['text'].lower())
+        self.assertIn('benchmark prêt à lancer', listed['text'].lower())
         # Seul le retrait de sa clé ferme la préparation d'un visiteur ; aucune fermeture globale n'existe
         access, _, _ = self.request('/preparation/access')
         disconnect = access.form('/disconnect')

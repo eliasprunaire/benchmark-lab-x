@@ -2312,7 +2312,9 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       assert.equal(await page.locator('.etat .disque.tourne').count(), Number(pending));
       if (pending) {
         assert.equal(await page.locator('#availability').count(), 1);
-        assert.equal(await page.locator('aside#availability, progress').count(), 0);
+        assert.equal(await page.locator('aside#availability').count(), 0);
+        // La barre `progress` sert au script de suivi ; à l'écran, seul le disque tourne
+        assert.equal(await page.locator('#preparation-progress progress.cache').count(), 1);
         // Sans JavaScript, aucune phrase ne promet une mise à jour automatique ; le bouton d'arrêt reste masqué
         assert.equal((await page.locator('main').innerText()).includes('se met à jour d’elle-même'), false);
         assert.equal(await page.locator('#preparation-progress button').isHidden(), true);

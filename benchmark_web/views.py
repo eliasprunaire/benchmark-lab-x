@@ -1490,7 +1490,9 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         return 'Hors du champ d’Evaly', contenu, dict(piste_html=navigation, contexte_html=puce('Version ' + str(revision)), cadre_propre=True), sortie
     if pending:
         marque = disque('disque-l tourne')
-        suivi = ('<div class="actions" id="preparation-progress">' + lien(path, 'Actualiser', 'actualiser')
+        # Le script de suivi relit cette adresse et masque la barre `progress` quand il s'arrête
+        suivi = ('<div class="actions" id="preparation-progress"><progress class="cache" aria-label="' + text(titre) + '"></progress>'
+                 + lien('/preparation/dossiers/' + value['dossier_id'], 'Actualiser', 'actualiser')
                  + '<button class="btn btn-sec" type="button" hidden>' + ic('pause') + 'Arrêter la mise à jour automatique</button>'
                  '<p class="cache" role="status"></p></div>')
         # `availability` nomme la raison du refus d'envoi liée au champ désactivé

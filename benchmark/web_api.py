@@ -217,8 +217,11 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
         session_id, csrf, current_token = p.session(store, token, create=True)
         rows = p.connection_for(store).execute('SELECT dossier_id,current_revision FROM s2_dossiers WHERE session_id=? ORDER BY dossier_id',
                                                (session_id,)).fetchall()
+        # Échéance d'effacement de chaque cas : la liste prévient deux jours avant
+        expiry = dict(store._connection.execute('SELECT dossier_id,expires_at FROM s7_dossiers WHERE session_id=?',
+                                                (session_id,)).fetchall())
         return 200, {'csrf_token': csrf, 'availability': p.availability(store, transport, session_id),
-                     'dossiers': [{'dossier_id': d, 'revision': r,
+                     'dossiers': [{'dossier_id': d, 'revision': r, 'expires_at': expiry.get(d),
                                    'need': store.get_dossier(d, r)['request']} for d, r in rows
                                   if privacy.visible(store._connection, session_id, d)]}, (None if token == current_token else current_token), None
     session_id, csrf, _ = p.session(store, token)

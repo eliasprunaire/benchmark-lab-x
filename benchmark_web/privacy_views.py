@@ -61,6 +61,7 @@ def render_privacy_page(value, csrf=''):
                     '<p>Evaly efface seul ce qui ne sert plus. Vous n’avez rien à faire.</p>'
                     '<ul class="liste-faits"><li><b>Un cas d’usage</b> est effacé après 7 jours sans activité.</li>'
                     '<li><b>Votre clé OpenRouter</b> est effacée après 30 jours sans activité.</li></ul>'
+                    '<p>Deux jours avant l’effacement d’un cas, Mes cas d’usage affiche « Bientôt effacé » sur sa carte.</p>'
                     '<p class="petit">Pour supprimer un cas d’usage avant ce délai : bouton rouge « Supprimer ce cas d’usage » dans '
                     '<a href="/preparation">Mes cas d’usage</a>. Des copies peuvent rester dans les sauvegardes du serveur.</p></section>')
     return 'Mes données', '<div class="ge-pile">' + conservation + historique_local() + liens_donnees(cas=True) + '</div>'
