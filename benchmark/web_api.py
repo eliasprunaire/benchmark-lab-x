@@ -219,7 +219,7 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                                                (session_id,)).fetchall()
         # Échéance d'effacement de chaque cas : la liste prévient deux jours avant
         expiry = dict(store._connection.execute('SELECT dossier_id,expires_at FROM s7_dossiers WHERE session_id=?',
-                                                (session_id,)).fetchall())
+                                                (session_id,)).fetchall()) if privacy.available(store._connection) else {}
         return 200, {'csrf_token': csrf, 'availability': p.availability(store, transport, session_id),
                      'dossiers': [{'dossier_id': d, 'revision': r, 'expires_at': expiry.get(d),
                                    'need': store.get_dossier(d, r)['request']} for d, r in rows
