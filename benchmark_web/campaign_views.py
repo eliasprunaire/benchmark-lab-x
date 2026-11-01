@@ -1046,7 +1046,7 @@ def _suivi(campaign):
         if judgment.get('recovering'):
             count = judgment['recovering']
             return (True, False, str(count) + (' modèles arrêtés' if count > 1 else ' modèle arrêté')
-                    + ' par la limite de longueur ' + ('sont relancés' if count > 1 else 'est relancé') + ' avec une limite de sortie plus haute.',
+                    + ' par la limite de longueur ' + ('sont relancés' if count > 1 else 'est relancé') + ' avec une longueur de réponse plus haute.',
                     'Les réponses arrivent au fur et à mesure.', ('att', 'Reprise en cours', 'horloge'))
         if status in ('WAITING', 'RUNNING') and cells and all(c['state'] == 'RECEIVED' for c in cells):
             # Une relance automatique programmée dit sa cause et son délai ; rien n'est à faire
@@ -1367,7 +1367,7 @@ def render_campaign_launch_requester(value, csrf):
     if any(recoveries.values()):
         # Reprises préautorisées par ce lancement (RULES.md §9) : leur coût reste distinct de la prévision
         models += ('<p class="petit">' + text(
-            'Un modèle arrêté par la limite de longueur est relancé au plus deux fois, sa limite de sortie doublée '
+            'Un modèle arrêté par la limite de longueur est relancé au plus deux fois, sa longueur de réponse doublée '
             'à chaque fois dans la limite de sa route, comme l’indique le tableau ; chaque reprise apparaît sur sa '
             'propre ligne. Coût estimé si chaque modèle était repris jusqu’à sa dernière limite : '
             + _cout_ligne(value.get('recovery_estimate_usd'), 'non estimable') + '.') + '</p>')

@@ -535,7 +535,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                             for key in [key for key in form_body if key.startswith('max_tokens:')]:
                                 if (limit := values[key][0]) and key.removeprefix('max_tokens:') in values.get('models', []):
                                     if not re.fullmatch('[1-9][0-9]{0,8}', limit):
-                                        raise ValueError('Limite de sortie invalide')
+                                        raise ValueError('Longueur de réponse invalide')
                                     limits[key.removeprefix('max_tokens:')] = int(limit)
                                 del form_body[key]
                             if limits:

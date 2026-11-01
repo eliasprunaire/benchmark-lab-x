@@ -323,7 +323,7 @@ def readable_fields(value):
               'environment': 'Environnement', 'package': 'Paquet', 'version': 'Version', 'status': 'État',
               'criteria': 'Critères', 'obligations': 'Obligations',
               'eliminatory_errors': 'Erreurs éliminatoires', 'result_expected': 'Résultat attendu',
-              'panel': 'Modèles comparés', 'limits': 'Limites', 'pi': 'Harnais Pi',
+              'panel': 'Modèles comparés', 'limits': 'Limites', 'pi': 'Harnais',
               'conditions': 'Conditions'}
     if isinstance(value, dict):
         return ('<dl class="evidence-fields">' + ''.join(

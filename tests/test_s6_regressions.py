@@ -38,7 +38,7 @@ _VOLATILE_PRESENTATION = re.compile(
 )
 _FIXTURE_PRESENTATION = {
     '15': {
-        'index.html': '633ec854df69cf003b9242eb4aa754cd7abd06f3201d123e1985c152e9f166f2',
+        'index.html': '90e93c9572c46529da67ac043982d64f091ba1cbfe91d798715e2c4076b109f4',
         'style.css': '97b862cb6ea94990ffee87589ea32274c015011a990a432845fe2f90d34d05aa',
     },
 }

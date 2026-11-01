@@ -5597,7 +5597,7 @@ class ParcoursComplet(unittest.TestCase):
                       + montant_lisible(str(maximum)) + ' USD', recap.visible)
         self.assertNotIn('maximal', recap.visible)
         self.assertEqual(1, len(suivis))
-        self.assertIn('relancé avec une limite de sortie plus haute', suivis[0])
+        self.assertIn('relancé avec une longueur de réponse plus haute', suivis[0])
         self.assertNotIn('Toutes les réponses sont arrivées', suivis[0])
         html = self.evaluer(dossier)
         # Modèle A et la reprise de Modèle B ; les réponses coupées de Modèle C ne partent jamais au juge

@@ -16,7 +16,7 @@ from .storage import ConflictError, IntegrityError, _strict_json as encode
 
 ATTRIBUTION = (
     'Le verdict vaut pour chaque modèle tel qu’il a été réglé et appelé ici, dans les conditions communes décrites. '
-    'Le fournisseur, le niveau de raisonnement, Pi (l’outil qui fait travailler les modèles) et ses réglages influent aussi sur la réponse : le verdict ne les sépare pas du modèle. '
+    'Le fournisseur, le niveau de raisonnement, le harnais pi.dev et ses réglages influent aussi sur la réponse : le verdict ne les sépare pas du modèle. '
     'Avec un autre outil, un autre contexte ou un autre environnement, le résultat peut être différent.')
 NO_USABLE_RESPONSE = 'Aucune réponse exploitable de ce modèle : il n’est pas évalué et n’entre pas dans la comparaison.'
 LIMIT = 'Ces résultats portent sur un exemple inventé. Ils ne se transposent pas tels quels à vos dossiers réels et ne s’additionnent pas avec ceux d’autres cas ou d’autres comparaisons.'
