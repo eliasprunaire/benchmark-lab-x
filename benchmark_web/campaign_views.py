@@ -1591,7 +1591,7 @@ def _check(record, kind, state, description, findings):
 CALIBRATION_SENTENCES = {
     'SANS_ETALONNAGE': 'Aucun étalonnage enregistré pour ce juge et cette méthode.',
     'NON_APPLICABLE': 'Un étalonnage existe pour une autre version ou un autre juge ; il ne s’applique pas à ce résultat.',
-    'HORS_PERIMETRE': 'Un étalonnage existe pour ce juge et cette méthode, mais son périmètre ne couvre pas ce dossier ; il ne s’applique pas à ce résultat.',
+    'HORS_PERIMETRE': 'Un étalonnage existe pour ce juge et cette méthode, mais son périmètre ne couvre pas ce cas d’usage ; il ne s’applique pas à ce résultat.',
     'SANS_JUGE_ASSISTE': 'Cette vérification n’a pas été faite par un juge assisté : aucun étalonnage de juge ne s’applique.',
     'IDENTITE_ILLISIBLE': 'L’identité du juge de cette évaluation est illisible : aucun étalonnage ne peut lui être rattaché.',
     'FICHES_ILLISIBLES': 'Les fiches d’étalonnage ne sont pas lisibles : aucune ne peut être rattachée à ce résultat.'}
@@ -1605,7 +1605,7 @@ def render_calibration(scope):
         return content + '<p>' + text(CALIBRATION_SENTENCES[scope['state']]) + '</p></div>'
     dated = 'Décision du ' + jour_lisible(decision['decided_at']) + '.'
     if scope['state'] == 'QUALIFIEE':
-        content += '<p>Méthode qualifiée pour le périmètre déclaré : ' + text('« ' + decision['perimeter']['description'] + ' »') + '. Ce dossier fait partie de ce périmètre. ' + text(dated)
+        content += '<p>Méthode qualifiée pour le périmètre déclaré : ' + text('« ' + decision['perimeter']['description'] + ' »') + '. Ce cas d’usage fait partie de ce périmètre. ' + text(dated)
         content += ' Cette qualification ne vaut que pour cette version de méthode et ce juge.'
         content += '</p>'
     else:
