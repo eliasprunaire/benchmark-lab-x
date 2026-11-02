@@ -489,13 +489,15 @@ def render_editorial(value):
             for option in proposed + ([criteria[key]] if active_unavailable(key) and criteria[key] not in proposed else []):
                 shown = str(EDITORIAL_STATUS.get(option, option) if key == 'qualification' else option)
                 options.append((option, shown + (' (indisponible)' if active_unavailable(key) and option not in proposed else '')))
+            if len(options) == 1:
+                continue  # seule la valeur « Tous » : le groupe ne filtre rien
             selection += segments_liens(label, 'fe-' + key, options, criteria.get(key, ''),
                                         lambda option, key=key: avec_critere('/epreuves', criteria, **{key: option}))
         selection += ''.join('<input type="hidden" name="' + key + '" value="' + text(criteria[key]) + '">'
                              for key, _ in EDITORIAL_FILTERS if criteria.get(key))
         actifs = [(label, criteria[key]) for key, label in EDITORIAL_FILTERS if criteria.get(key)]
         filtres = tiroir('Filtres', '<div class="filtres-liens">' + selection + '</div>', ouvert=True,
-                         resume=str(len(actifs)) + (' actifs' if len(actifs) > 1 else ' actif') if actifs else 'aucun')
+                         resume=str(len(actifs)) + (' actifs' if len(actifs) > 1 else ' actif') if actifs else 'aucun') if 'segments' in selection else ''
         formulaire = ('<form class="g-recherche" method="get" action="/epreuves" role="search"><div class="g-ligne">'
                       + champ('Rechercher une épreuve', 'q', zone=False, type_='search', ident='q', maxlength=200, valeur=criteria.get('q', ''))
                       + bouton('Rechercher', icone='loupe') + '</div>' + filtres + (LIEN_AIDE if SEMANTIC_HELP_ENABLED else '') + '</form>')
@@ -1016,7 +1018,7 @@ def disponibilite_cas(raison):
     """Carte d'état et raison écrite sous le champ quand l'envoi est refusé : (HTML de la carte, bloque)"""
     actualiser = btn('/preparation', 'Actualiser', sec=True, icone=None, avant='actualiser')
     return {
-        'access': (etat('vig', 'Clé requise', 'Ajoutez votre clé OpenRouter', 'Ajoutez votre clé OpenRouter pour préparer un exemple.',
+        'access': (etat('vig', 'Clé requise', 'Ajoutez votre clé OpenRouter', 'Sans clé, l’assistant ne peut pas préparer d’exemple.',
                         btn('/preparation/access', 'Ajouter ma clé OpenRouter', sec=True, avant='cle')),
                    'Ajoutez d’abord votre clé OpenRouter.'),
         'restore': (etat('ko', 'Indisponible', 'Service momentanément indisponible', 'Réessayez plus tard. Vos cas restent en place.', actualiser), True),

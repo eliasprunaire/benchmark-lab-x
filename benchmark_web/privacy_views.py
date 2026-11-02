@@ -39,8 +39,8 @@ def privacy_form(action, csrf, url, fields, body, *, disabled=False, classe=None
 
 # ——— Mes données et historique local ———
 def historique_local():
-    """Section « Vos cas gardés dans ce navigateur » : `privacy.js` remplit le statut et la liste, puis montre les boutons utiles"""
-    return ('<section class="carte ge-pile" data-privacy-history aria-labelledby="t-hist"><h2 id="t-hist">Vos cas gardés dans ce navigateur</h2>'
+    """Section « Historique local de vos cas » : `privacy.js` remplit le statut et la liste, puis montre les boutons utiles"""
+    return ('<section class="carte ge-pile" data-privacy-history aria-labelledby="t-hist"><h2 id="t-hist">Historique local de vos cas</h2>'
             '<p>Votre navigateur peut effacer ces copies sans prévenir, par exemple en navigation privée ou quand il manque de place. '
             'Exportez les cas que vous voulez garder.</p>'
             '<p class="petit ge-avert">' + ic('alerte') + '<span>Toute personne qui utilise ce profil de navigateur peut aussi les lire.</span></p>'

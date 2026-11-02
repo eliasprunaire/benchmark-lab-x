@@ -2571,7 +2571,7 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
       await page.goto(origin + '/render/data');
       const main = await page.locator('main').innerText();
       for (const phrase of ['Conservation automatique', 'Un cas d’usage est effacé après 7 jours sans activité', 'Votre clé OpenRouter est effacée après 30 jours sans activité',
-        'Vos cas gardés dans ce navigateur', 'Mes cas d’usage et ma clé', 'Mes contributions', 'Confidentialité']) assert.ok(main.includes(phrase), `${width} ${phrase}`);
+        'Historique local de vos cas', 'Mes cas d’usage et ma clé', 'Mes contributions', 'Confidentialité']) assert.ok(main.includes(phrase), `${width} ${phrase}`);
       assert.equal(await overflow(), 0, `${width} débordement de Mes données`);
       await page.goto(origin + '/render/contribution-active-2099');
       const contributions = await page.locator('main').textContent();

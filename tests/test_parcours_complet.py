@@ -104,8 +104,10 @@ class Page(HTMLParser):
 
     def segments(self, cle):
         """Valeurs d'un filtre en liens, dans l'ordre du document : la valeur de `cle` dans l'adresse de chaque lien"""
-        debut = next(index for index, node in enumerate(self.nodes) if node['attrs'].get('id') == 'fe-' + cle)
+        debut = next((index for index, node in enumerate(self.nodes) if node['attrs'].get('id') == 'fe-' + cle), None)
         valeurs = []
+        if debut is None:  # groupe masqué : sa seule valeur était « Tous »
+            return valeurs
         for node in self.nodes[debut + 1:]:
             if node['tag'] == 'a':
                 valeurs.append(parse_qs(urlsplit(node['attrs']['href']).query).get(cle, [''])[0])
@@ -711,7 +713,8 @@ class ParcoursComplet(unittest.TestCase):
             self.assertTrue(any(n['attrs'].get('aria-label') == 'Critères actifs' for n in empty_search.nodes))
             self.assertEqual('/epreuves', empty_search.link('Effacer la recherche et les filtres'))
             self.assertEqual('/preparation', empty_search.link('Décrire mon cas d’usage'))
-            self.assertEqual([], empty_search.segments('langue')[1:])
+            # Un groupe dont la seule valeur est « Tous » ne filtre rien : il n'est pas affiché
+            self.assertFalse(any(n['attrs'].get('id', '').startswith('fe-') for n in empty_search.nodes))
             self.assertEqual(['/epreuves'], sorted({n['attrs']['href'] for n in empty.nodes if n['attrs'].get('aria-current') == 'page'}))
             self.assertEqual(raw, self.request('/epreuves', cookies=SimpleCookie('benchmark_session=invalid'))[2])
             leaked, _, leaked_raw = self.request('/epreuves?besoin=prive', status=400)
@@ -3188,7 +3191,8 @@ class ParcoursComplet(unittest.TestCase):
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
         # Sans clé, la page propose d'abord de l'enregistrer : rien d'autre ne ferme la préparation
-        self.assertIn('Ajoutez votre clé OpenRouter pour préparer un exemple.', page.visible)
+        self.assertIn('Sans clé, l’assistant ne peut pas préparer d’exemple.', page.visible)
+        self.assertEqual(1, page.visible.count('Ajoutez votre clé OpenRouter'))
         key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
@@ -3561,7 +3565,7 @@ class ParcoursComplet(unittest.TestCase):
         disconnect = access.form('/disconnect')
         self.request(disconnect['action'], disconnect['fields'], status=303)
         page, _, _ = self.request('/preparation')
-        self.assertIn('Ajoutez votre clé OpenRouter pour préparer un exemple.', page.visible)
+        self.assertIn('Sans clé, l’assistant ne peut pas préparer d’exemple.', page.visible)
         self.assertNotIn('Consulter cette page ne lance aucun appel', page.visible)
         self.assertNotIn('fermées pour le moment', page.visible)
         self.assertTrue(all('disabled' in n['attrs'] for n in page.form('/dossiers')['nodes']
