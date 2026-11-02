@@ -18,7 +18,7 @@ ATTRIBUTION = (
     'Le verdict vaut pour chaque modèle tel qu’il a été réglé et appelé ici, dans les conditions communes décrites. '
     'Le fournisseur, le niveau de raisonnement, le harnais pi.dev et ses réglages influent aussi sur la réponse : le verdict ne les sépare pas du modèle. '
     'Avec un autre outil, un autre contexte ou un autre environnement, le résultat peut être différent.')
-NO_USABLE_RESPONSE = 'Aucune réponse exploitable de ce modèle : il n’est pas évalué et n’entre pas dans la comparaison.'
+NO_USABLE_RESPONSE = 'Aucune réponse exploitable de ce modèle : il n’est pas vérifié et n’entre pas dans le benchmark.'
 LIMIT = 'Ces résultats portent sur un exemple inventé. Ils ne se transposent pas tels quels à vos dossiers réels et ne s’additionnent pas avec ceux d’autres cas ou d’autres comparaisons.'
 VERDICTS = ('SATISFAIT', 'NE SATISFAIT PAS', 'A_REPRENDRE', 'INDETERMINE')
 FILTERS = ('case', 'sort', 'direction', 'verdict', 'obligation', 'configuration', 'priority')
@@ -434,7 +434,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                         for attempt_id in explained}
     pending: list[dict] = [dict(attempt_id=a['operation_id'], verdict=None,
                     state='REVIEW_REQUIRED' if a['state'] == 'RECEIVED' and a['incident'] is None else 'EXECUTION_REQUIRED',
-                    next_action='Cette réponse doit être relue et son évaluation terminée avant de conclure.',
+                    next_action='Cette réponse doit être relue et sa vérification terminée avant de conclure.',
                     candidate_cost=a['observed_cost'],
                     **({'observations': observations[a['operation_id']]} if a['operation_id'] in observations else {}))
                for a in visible if a['operation_id'] not in latest]
@@ -471,7 +471,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
                                **({'repetition': cell['repetition']} if 'repetition' in cell else {}))
             elif attempt['state'] == 'REVIEW_REQUIRED':
                 attempt.update(state='EVALUATION_' + progress_status,
-                    next_action=progress_reason or 'Réponse reçue. Son évaluation automatique n’est pas terminée.')
+                    next_action=progress_reason or 'Réponse reçue. Sa vérification automatique n’est pas terminée.')
     pending += [dict(attempt_id=record['attempt_id'], **record['decision'])
                 for record in latest.values() if record['decision']['verdict'] is None]
     pending += e.pending_judgments(store, connection, campaign_id, latest)
@@ -742,7 +742,7 @@ def _proof_name(store, row, link, candidates):
     if pid == row.get('output_piece_id'):
         return 'Réponse de ' + candidates[row['configuration_id']]
     if store.get_piece(pid)['role'] == 'judge':
-        return 'Pièce réservée à l’évaluation'
+        return 'Pièce réservée à la vérification des réponses'
     return link['name']
 
 

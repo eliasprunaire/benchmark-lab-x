@@ -103,7 +103,7 @@ def authority(connection, ctx):
 def admission(store, connection):
     # Le jugement relève de la clé du demandeur : seule une restauration à rapprocher le suspend
     if os.path.lexists(store._root / 'restore.json'):
-        raise ConflictError('Évaluation fermée pendant la restauration')
+        raise ConflictError('Vérification des réponses fermée pendant la restauration')
     return 'requester'
 
 
@@ -161,7 +161,7 @@ def guard_budget(store, connection, budget_id, *, campaign_id=None):
         grant = json.loads(raw)['authority'].get('automatic_judgment')
         if (grant and grant['budget_id'] == budget_id and cid != campaign_id
                 and not operations(store, connection, cid)):
-            raise BudgetError('Enveloppe personnelle réservée à l’évaluation de la comparaison en cours')
+            raise BudgetError('Enveloppe personnelle réservée à la vérification des réponses du benchmark en cours')
 
 
 def _operation_id(campaign_id, attempt_id, index):
@@ -241,7 +241,7 @@ def preflight(store, session_id, dossier_id, campaign_id, transport, *, check_ac
                 or store._blocking_costs(all_operations, budget, 'judgment')
                 or any(o['budget_id'] == budget_id and o['state'] != 'RECEIVED'
                        for o in all_operations)):
-            raise BudgetError('Budget personnel insuffisant ou coût non résolu pour l’évaluation')
+            raise BudgetError('Budget personnel insuffisant ou coût non résolu pour la vérification des réponses')
         return config, str(total)
 
 
@@ -324,7 +324,7 @@ def _plan(store, connection, session_id, dossier_id, campaign_id, transport):
     from .acquisition.recovery import pending_relaunches
     if (not acquired(c._inspect(store, connection, campaign_id), [a for _, a in attempts])
             or pending_relaunches(store, connection, campaign_id)):
-        raise ConflictError('Réponses candidates à rapprocher avant l’évaluation')
+        raise ConflictError('Réponses candidates à rapprocher avant la vérification des réponses')
     plan = []
     for cid, attempt in attempts:
         # Sortie absente, vide ou blanche, ou essai jamais parti : rien à juger, aucun appel payant
@@ -442,7 +442,7 @@ def _missing(store, connection, family, blocked, cells, total):
     return (f'{missing} modèle{"s" if missing > 1 else ""} sur {cells} '
             f'{"n’ont" if missing > 1 else "n’a"} pas donné de réponse exploitable'
             f'{_exhausted(store, connection, family, blocked)} : '
-            f'{"ils ne sont pas évalués" if missing > 1 else "il n’est pas évalué"}.')
+            f'{"ils ne sont pas vérifiés" if missing > 1 else "il n’est pas vérifié"}.')
 
 
 def status(store, connection, campaign_id, snapshot=None):
@@ -492,7 +492,7 @@ def status(store, connection, campaign_id, snapshot=None):
                           == 'CONNECTION_FAILED' for o in ops)
         closed = any(storage.ambiguous_expired(o) for o in ops)
         result.update(status='BLOCKED', reason=(p.NOT_SENT_TEXT + ' ' if unreachable else '')
-                      + (storage.AMBIGUOUS_EXPIRED_TEXT + ' ' if closed else '') + 'Évaluation interrompue. '
+                      + (storage.AMBIGUOUS_EXPIRED_TEXT + ' ' if closed else '') + 'Vérification des réponses interrompue. '
                       'Les réponses sont conservées ; aucun appel ne sera relancé automatiquement.')
     elif due:
         # Incident du fournisseur : l'évaluation reprend d'elle-même à la première échéance
@@ -501,13 +501,13 @@ def status(store, connection, campaign_id, snapshot=None):
         result.update(status='RUNNING', reason=reason, retry_in=retry_in)
     elif exhausted and all(o['state'] == 'RECEIVED' for o in ops):
         # Rien de dû, rien en cours, campagne non arrêtée : seule une série épuisée garde un incident relancé
-        result.update(status='BLOCKED', reason=f'L’évaluation n’a pas abouti après {p.RETRY_ATTEMPTS} tentatives '
+        result.update(status='BLOCKED', reason=f'La vérification des réponses n’a pas abouti après {p.RETRY_ATTEMPTS} tentatives '
                       f'automatiques. {p._incident_reason(exhausted[0])} Les réponses et reçus sont conservés.')
     elif any(storage.ambiguous_expired(o) for o in latest):
         result.update(status='BLOCKED', reason=storage.AMBIGUOUS_EXPIRED_TEXT
-                      + ' Les réponses et reçus sont conservés ; cette réponse n’est pas évaluée.')
+                      + ' Les réponses et reçus sont conservés ; cette réponse n’est pas vérifiée.')
     elif unusable or any(o['state'] == 'AMBIGUOUS' for o in ops):
-        result.update(status='BLOCKED', reason='L’évaluation n’a pas fourni de preuves exploitables. Les réponses et reçus sont conservés.')
+        result.update(status='BLOCKED', reason='La vérification des réponses n’a pas fourni de preuves exploitables. Les réponses et reçus sont conservés.')
     elif ops:
         # Jugements restants clos sans envoi, ou campagne arrêtée depuis leur réservation (`judgment.execute`
         # les refuse alors avant émission) : seule une vraie interruption arrive ici
@@ -522,7 +522,7 @@ def status(store, connection, campaign_id, snapshot=None):
                 current[json.loads(o['resources'][0])['request']['campaign_id']][key]
                 != json.loads(o['resources'][0])['context']['campaign'][key]
                 for o in ops if o['state'] != 'RECEIVED' for key in ('admission', 'stop_reason', 'restore_pending')):
-            result.update(status='BLOCKED', reason='Évaluation interrompue. Aucun appel ne sera relancé automatiquement.')
+            result.update(status='BLOCKED', reason='Vérification des réponses interrompue. Aucun appel ne sera relancé automatiquement.')
         else:
             result['status'] = 'RUNNING'
     elif relaunches:
@@ -535,7 +535,7 @@ def status(store, connection, campaign_id, snapshot=None):
     elif attempts and all(a['state'] == 'RECEIVED' for a in attempts):
         result['can_start'] = total > 0
         if not result['can_start']:
-            result.update(status='BLOCKED', reason=f'Aucune réponse exploitable à évaluer{_exhausted(store, connection, family, blocked)}.')
+            result.update(status='BLOCKED', reason=f'Aucune réponse exploitable à vérifier{_exhausted(store, connection, family, blocked)}.')
         elif blocked:
             # Relance impossible (#537) : la réponse reçue s'évalue, le suivi dit pourquoi l'autre manque
             result['reason'] = _missing(store, connection, family, blocked, cells, total)
@@ -556,6 +556,6 @@ def records(store, connection, campaign_id):
             continue
         result.append(e._record(store, connection, saved['context'], proposal['report'], evaluation_id=op['operation_id'],
             created_at=op['created_at'], engine_source=saved['engine_source_sha256'],
-            previous_evaluation_id=None, source_operation=op, responsible='Évaluation automatique Bench-X',
+            previous_evaluation_id=None, source_operation=op, responsible='Vérification automatique Evaly',
             authority=saved['request']['authority'], record_format=FORMAT))
     return result
