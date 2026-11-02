@@ -1420,3 +1420,8 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
 .hist-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 22px calc(-1 * clamp(16px, 3vw, 28px)) 0; padding: 16px clamp(16px, 3vw, 28px); border-top: 2px solid var(--filet); background: var(--papier); border-radius: 0 0 calc(var(--r) - 2px) calc(var(--r) - 2px); }
 .hist-actions .hist-effacer { --fg: var(--ko); border-color: var(--ko); }
 .hist-actions .hist-ref { margin-left: auto; }
+
+/* Confirmation sur place d'une suppression : la question prend toute la ligne, sous le bouton qu'elle remplace */
+.confirmation { flex-basis: 100%; display: grid; gap: 10px; padding: 14px 16px; border: 2px solid var(--ko); border-radius: var(--r-s); background: var(--ko-fond); }
+.confirmation[hidden] { display: none; }
+.confirmation p { font-weight: 650; overflow-wrap: anywhere; }

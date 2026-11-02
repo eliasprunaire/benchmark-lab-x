@@ -992,7 +992,7 @@ def render_home():
         '<li>' + ic('check') + '<span><b>Un verdict prouvé</b> pour chaque modèle</span></li>'
         '<li>' + ic('horloge') + '<span><b>Le coût observé</b> de chaque réponse</span></li></ul></div>'
         '<div class="actions">' + btn('/preparation', 'Décrire mon cas d’usage', xl=True, avant='stylo')
-        + lien('/preparation', 'Retrouver mes cas d’usage') + '</div></div>'
+        + lien('/preparation', 'Retrouver mes cas en cours') + '</div></div>'
         '<figure class="banc" aria-labelledby="banc-legende"><div class="banc-tete"><span><b>●</b> Banc d’essai · démonstration</span>'
         '<span class="exemple">' + ic('doc') + 'Exemple : notes de réunion inventées</span></div><ol class="couloirs course">' + couloirs + '</ol>'
         '<figcaption class="banc-pied" id="banc-legende"><span><strong>Même consigne, mêmes pièces, mêmes conditions.</strong> Un verdict par modèle.</span>'
@@ -1710,22 +1710,22 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
                 '<textarea id="message" name="message" required maxlength="1000" rows="4"' + field_attributes('message')
                 + (' aria-invalid="true"' if attached else '') + '>' + text(submitted['message']) + '</textarea>'
                 + field_error('message') + '</div>' + HONEYPOT + '<div class="actions">' + bouton('Corriger et renvoyer')
-                + lien('/preparation', 'Retrouver mes cas d’usage') + '</div>', classe='g-err-form')
+                + lien('/preparation', 'Retrouver mes cas en cours') + '</div>', classe='g-err-form')
         latest = value.get('step') if value.get('error_code') == 'SELECTION_SUPERSEDED' else None
         if latest and '/campaigns/' in path and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', str(latest)):
             autres += (lien(path.split('/campaigns/', 1)[0] + '/campaigns/' + latest + '/conditions', 'Voir la dernière sélection'),)
         if value.get('error_code') == 'OUTPUT_LIMIT_ABOVE_BOUND' and path.endswith('/configurations'):
-            principal, autres = btn(path, 'Revenir au choix des modèles'), (lien('/preparation', 'Retrouver mes cas d’usage'),) + autres
+            principal, autres = btn(path, 'Revenir au choix des modèles'), (lien('/preparation', 'Retrouver mes cas en cours'),) + autres
         # Attente expirée d'un lancement : l'état enregistré se lit sur son suivi, sans rien renvoyer
         followup = (re.fullmatch(r'(/preparation/dossiers/[A-Za-z0-9_-]{1,128}/campaigns/[A-Za-z0-9_-]{1,128})/(?:start|evaluate)', path)
                     if value.get('error_code') == 'RESPONSE_TIMEOUT' else None)
         if followup:
-            principal, autres = btn(followup[1] + '/conditions', 'Consulter l’état du lancement'), (lien('/preparation', 'Retrouver mes cas d’usage'),) + autres
+            principal, autres = btn(followup[1] + '/conditions', 'Consulter l’état du lancement'), (lien('/preparation', 'Retrouver mes cas en cours'),) + autres
         # Un formulaire corrigeable est la suite de la page : le retour aux cas passe en lien discret
         if corrigeable:
             principal, autres = '', ()
             if type(submitted) is dict and 'request' in submitted:
-                content += '<p>' + lien('/preparation', 'Retrouver mes cas d’usage') + '</p>'
+                content += '<p>' + lien('/preparation', 'Retrouver mes cas en cours') + '</p>'
         content = erreur_grande(decrit, phrase or message, principal, autres, mot_texte='Texte à corriger' if phrase else None,
                                 alerte=not attached) + content
     elif value.get('kind') == 'case_delete':

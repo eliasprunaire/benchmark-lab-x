@@ -3363,7 +3363,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(recap, stale.link('Voir la dernière sélection'))
         # Le serveur refuse aussi un envoi direct vers l'ancienne sélection
         refused, _, _ = self.request(older_recap.removesuffix('/conditions') + '/start', start_form['fields'], status=403)
-        self.examine(refused, older_recap, 'sélection remplacée', 'Retrouver mes cas d’usage')
+        self.examine(refused, older_recap, 'sélection remplacée', 'Retrouver mes cas en cours')
         self.assertIn('Cette sélection a été remplacée par une plus récente', refused.visible)
         self.assertEqual(recap, refused.link('Voir la dernière sélection'))
         self.assertTrue(self.starts.empty())
@@ -3529,7 +3529,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(self.starts.empty())
         for cookies in (SimpleCookie(), SimpleCookie('benchmark_session=' + 'f' * 64), foreign):
             lost, _, raw = self.request(dossier, cookies=cookies, status=403)
-            self.examine(lost, dossier, 'accès refusé', 'Retrouver mes cas d’usage')
+            self.examine(lost, dossier, 'accès refusé', 'Retrouver mes cas en cours')
             self.assertNotIn(b'Transformer des notes', raw)
             self.assertNotIn(b'Attendu fictif', raw)
             empty, _, _ = self.request('/preparation', cookies=cookies)
@@ -4878,7 +4878,7 @@ class ParcoursComplet(unittest.TestCase):
                              (start['action'], start['fields'])):
             with self.subTest(route=path):
                 page, _, raw = self.request(path, fields, status=403)
-                self.examine(page, path, 'exemple bloqué par le contrat opérateur', 'Retrouver mes cas d’usage')
+                self.examine(page, path, 'exemple bloqué par le contrat opérateur', 'Retrouver mes cas en cours')
                 self.assertIn('Terminez l’étape précédente avant de poursuivre.', page.visible)
                 self.assertIn('Ce que le contrôle de l’exemple a relevé', page.visible)
                 self.assertIn(affiche, page.visible)
@@ -7628,7 +7628,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual('/preparation/access', form['fields']['return'])
         with patch.object(self.access, 'verify_result', (401, b'{}')):
             refused, _, raw = self.request(form['action'], form['fields'] | {'key': KEY}, status=403)
-        self.examine(refused, '/preparation/access/key', 'clé refusée', 'Retrouver mes cas d’usage')
+        self.examine(refused, '/preparation/access/key', 'clé refusée', 'Retrouver mes cas en cours')
         self.assertIn('OpenRouter n’a pas pu vérifier cette clé. Votre clé précédente reste en place.', refused.visible)
         self.assertNotIn(KEY.encode(), raw)
         _, headers, raw = self.request(form['action'], form['fields'] | {'key': KEY}, status=303)

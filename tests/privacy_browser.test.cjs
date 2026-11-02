@@ -460,7 +460,7 @@ test('public local history renders inert text and exports a complete case after 
     const sections = await fiche.locator('.hist-corps > details > summary').allTextContents();
     assert.deepEqual(sections.map(text => text.trim()), ['Vos messages (1)', 'Version 1 de l’exempleRéussi', 'Benchmark 1 du 15 septembre 2026 à 08:30:00 UTC']);
     assert.equal(await fiche.locator('.hist-corps > :last-child').getAttribute('class'), 'hist-actions');
-    assert.deepEqual(await fiche.locator('.hist-actions button').allTextContents(), ['Télécharger ce cas (JSON)', 'Effacer et ne plus garder ce cas']);
+    assert.deepEqual(await fiche.locator('.hist-actions > button').allTextContents(), ['Télécharger ce cas (JSON)', 'Effacer et ne plus garder ce cas']);
     assert.match(await fiche.locator('.hist-controle').textContent(), /Exemple décidable/);
     assert.match(await fiche.locator('.hist-modele > summary').textContent(), /Modèle.*Satisfait.*0\.02 USD/);
     assert.doesNotMatch(await fiche.textContent(), /Comparaison|Vérification de l’exemple|QUALIFIED|d1-c1/);
@@ -491,7 +491,15 @@ test('public local history renders inert text and exports a complete case after 
     const ancienne = page.locator('[data-privacy-list] > details', {hasText: 'Cas numéro 2'});
     assert.deepEqual((await ancienne.locator('.hist-corps > details > summary').allTextContents()).map(text => text.trim()),
       ['Version 1 de l’exempleRéussi', 'Benchmark 1']);
+    // Toute suppression se confirme sur place : Annuler ne touche à rien et rend le focus au bouton
     await page.getByRole('button', {name: 'Effacer', exact: true}).click();
+    assert.match(await page.getByRole('group', {name: /Effacer toutes les copies/}).textContent(), /ne pourront pas être récupérées/);
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Annuler');
+    await page.getByRole('button', {name: 'Annuler'}).click();
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Effacer');
+    assert.equal((await page.evaluate(() => historyStore.list())).length, 7);
+    await page.getByRole('button', {name: 'Effacer', exact: true}).click();
+    await page.getByRole('button', {name: 'Oui, tout effacer'}).click();
     await page.waitForFunction(() => !document.querySelector('[data-privacy-list]').textContent);
     assert.equal((await page.evaluate(() => historyStore.state())).enabled, false);
   } finally {await context.close();}
@@ -681,13 +689,20 @@ test('withdrawing a contribution keeps local copies active and erasable from Mes
     await page.evaluate(() => historyStore.archive('d1', 1));
     await page.setContent('<form data-privacy-post="withdraw" action="/preparation/contributions/c1/withdraw"><input type="hidden" name="csrf_token" value="purpose"><button>Retirer</button><p data-privacy-status></p></form>');
     await page.evaluate(() => privacy.mountPrivacy());
-    await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Retirer'}).click()]);
+    // Le retrait efface la copie de contribution du serveur : rien n'est envoyé avant la confirmation
+    const avant = posts.length;
+    await page.getByRole('button', {name: 'Retirer'}).click();
+    assert.match(await page.getByRole('group', {name: /Retirer votre consentement/}).textContent(), /copie de contribution/);
+    assert.equal(posts.length, avant);
+    await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Oui, retirer mon consentement'}).click()]);
     assert.deepEqual(posts.at(-1), {path: '/preparation/contributions/c1/withdraw', body: {csrf_token: 'purpose'}});
     await page.goto(origin + '/render/data');
     await page.waitForFunction(() => document.querySelector('[data-privacy-list] > details'));
     assert.match(await page.locator('[data-privacy-status]').first().textContent(), /Cas gardés dans ce navigateur : 1/);
     await page.locator('[data-privacy-list] > details > summary').click();
     await page.getByRole('button', {name: 'Effacer et ne plus garder ce cas'}).click();
+    assert.equal(await page.locator('[data-privacy-list] > details').count(), 1, 'rien n’est effacé avant la confirmation');
+    await page.getByRole('button', {name: 'Oui, effacer ce cas'}).click();
     await page.waitForFunction(() => !document.querySelector('[data-privacy-list]').textContent);
     const state = await page.evaluate(async () => {
       const store = await (await import('/preparation/privacy.js')).openHistory({create: false});
@@ -710,7 +725,10 @@ test('server deletion and withdrawal send only their purpose CSRF and never arch
       if (action === 'delete') {
         await page.waitForFunction(() => document.querySelector('[data-privacy-status]').textContent.includes('lors du prochain nettoyage planifié'));
         assert.equal(page.url(), origin + '/');
-      } else await page.waitForURL(origin + '/');
+      } else {
+        assert.deepEqual(posts, [], 'retrait envoyé seulement après confirmation');
+        await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Oui, retirer mon consentement'}).click()]);
+      }
       assert.deepEqual(posts, [{path, body: {csrf_token: 'purpose-' + action}}]);
       await page.close();
     }

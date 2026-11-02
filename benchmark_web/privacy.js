@@ -342,6 +342,22 @@ async function post(url, body) {
 const consentEffects = checked => ({contribution: checked, localHistory: checked});
 const mounted = new WeakSet();
 const activityMounted = new WeakSet();
+// Toute suppression se confirme sur place, sans fenêtre du navigateur : la question s'affiche après le bouton,
+// le focus va sur Annuler, qui rend la main au bouton sans rien effacer
+function confirmation(button, question, oui, action) {
+  const zone = node('div'); zone.className = 'confirmation'; zone.hidden = true;
+  zone.setAttribute('role', 'group'); zone.setAttribute('aria-label', question);
+  const valider = node('button', oui); valider.type = 'button'; valider.className = 'btn btn-danger btn-s';
+  const annuler = node('button', 'Annuler'); annuler.type = 'button'; annuler.className = 'btn btn-sec btn-s';
+  const actions = node('div'); actions.className = 'actions'; actions.append(valider, annuler);
+  zone.append(node('p', question), actions);
+  button.after(zone);
+  const fermer = () => {zone.hidden = true; button.hidden = false;};
+  annuler.addEventListener('click', () => {fermer(); button.focus();});
+  valider.addEventListener('click', () => {fermer(); action();});
+  return () => {button.hidden = true; zone.hidden = false; annuler.focus();};
+}
+const demandes = new WeakMap();
 function mountForms(root) {
   for (const form of root.querySelectorAll('form[data-privacy-post]')) {
     if (mounted.has(form)) continue;
@@ -350,6 +366,16 @@ function mountForms(root) {
       event.preventDefault();
       if (form.dataset.busy) return;
       const action = form.dataset.privacyPost;
+      // Le retrait efface la copie de contribution du serveur : il attend la confirmation
+      if (action === 'withdraw' && !form.dataset.confirme) {
+        const submitter = event.submitter;
+        if (!submitter) return;
+        if (!demandes.has(form)) demandes.set(form, confirmation(submitter,
+          'Retirer votre consentement ? La copie de contribution gardée sur le serveur sera effacée.',
+          'Oui, retirer mon consentement', () => {form.dataset.confirme = 'true'; form.requestSubmit(submitter);}));
+        demandes.get(form)();
+        return;
+      }
       const url = new URL(form.action, location.href);
       if (url.origin !== location.origin || !/^\/preparation\/(dossiers\/[^/]+\/(delete|contribution)|contributions\/[^/]+\/withdraw)$/.test(url.pathname)) return;
       const fields = new FormData(form);
@@ -407,6 +433,7 @@ function mountForms(root) {
           : error.message || 'Votre demande n’a pas été confirmée. Actualisez la page, puis recommencez.';
       } finally {
         delete form.dataset.busy;
+        delete form.dataset.confirme;
         if (button) button.disabled = false;
       }
     });
@@ -591,11 +618,13 @@ export async function mountPrivacy(root = document) {
             setTimeout(() => URL.revokeObjectURL(url), 0);
           }));
           const remove = node('button', 'Effacer et ne plus garder ce cas'); remove.type = 'button'; remove.className = 'btn btn-sec';
-          remove.addEventListener('click', () => run(remove, async () => {await store.remove(record.dossier_id); await changed();}));
           remove.classList.add('hist-effacer');
           const reference = node('span', 'Enregistrement n° ' + record.content_version); reference.className = 'hist-ref';
           // Actions en bas de la fiche, après tout le contenu lu
           renderRecord(record, corps); actions.append(download, remove, reference); corps.append(actions); entry.append(corps);
+          // La question se place après le bouton : il doit déjà être dans la fiche
+          remove.addEventListener('click', confirmation(remove, 'Effacer la copie de ce cas dans ce navigateur ? Elle ne pourra pas être récupérée.',
+            'Oui, effacer ce cas', () => run(remove, async () => {await store.remove(record.dossier_id); await changed();})));
         }
         filtre?.addEventListener('input', montrer);
         tout?.addEventListener('click', () => {toutes = true; montrer();});
@@ -605,7 +634,10 @@ export async function mountPrivacy(root = document) {
       for (const [action, operation] of [['clear', () => store?.clear()],
         ['enable', async () => {if (!await connect()) store = await openHistory(); await store.enable();}]]) {
         const button = element.querySelector('[data-privacy-action="' + action + '"]');
-        button.addEventListener('click', () => run(button, async () => {await operation(); await changed();}));
+        const lancer = () => run(button, async () => {await operation(); await changed();});
+        button.addEventListener('click', action === 'clear' ? confirmation(button,
+          'Effacer toutes les copies de ce navigateur et arrêter l’historique ? Elles ne pourront pas être récupérées.',
+          'Oui, tout effacer', lancer) : lancer);
       }
       await update();
     } else {

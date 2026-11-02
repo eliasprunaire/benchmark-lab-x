@@ -327,12 +327,12 @@ def actions_erreur(value, path='/preparation'):
     if titre == 'Adresse invalide' or code == 405:
         return btn('/', 'Retour à l’accueil', icone='retour'), ()
     if code == 404:
-        return btn('/preparation', 'Retrouver mes cas d’usage'), (accueil,)
+        return btn('/preparation', 'Retrouver mes cas en cours'), (accueil,)
     if code == 500:
         return btn('/preparation', 'Ouvrir mes cas d’usage'), ()
     if code == 503:
         return btn('/preparation', 'Réessayer', icone='actualiser'), (accueil,)
-    return btn('/preparation', 'Retrouver mes cas d’usage'), ()
+    return btn('/preparation', 'Retrouver mes cas en cours'), ()
 
 
 def erreur_grande(value, texte, principal, autres=(), *, mot_texte=None, alerte=True):
