@@ -1034,7 +1034,7 @@ def disponibilite_cas(raison):
 
 
 def render_cases(value, csrf):
-    """Mes cas d'usage : état du service, champ unique de description, cas enregistrés, bande de la clé"""
+    """Page Benchmark (/preparation) : état du service, champ unique de description, cas en cours, bande de la clé"""
     state = value.get('availability', {})
     carte, bloque = ('', False) if state.get('can_submit', False) else disponibilite_cas(state.get('reason'))
     if value.get('deleted'):
@@ -1089,7 +1089,7 @@ def render_catalogue(value):
                     for task in value['tasks'])
     if not value['tasks']:
         corps = '<p>Aucun cas d’usage validé pour l’instant. Validez un exemple pour le retrouver ici.</p>'
-    corps = '<div class="ge-pile">' + corps + '<p>' + lien('/preparation', 'Revenir à mes cas d’usage', 'retour') + '</p></div>'
+    corps = '<div class="ge-pile">' + corps + '<p>' + lien('/preparation', 'Revenir à mes cas en cours', 'retour') + '</p></div>'
     return 'Exemples validés et benchmarks', corps, dict(sous_titre_html=(
         '<p class="texte-l">Visible par vous seul, dans ce navigateur. Pour chaque cas validé, retrouvez ses exemples et ses benchmarks.</p>'))
 

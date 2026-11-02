@@ -1534,6 +1534,13 @@ test('access and launch screens preserve available actions, estimates and refusa
         assert.ok(text.includes('Solde restant') && text.includes('12,50') && text.includes('selon OpenRouter'));
         assert.ok(text.includes('Plafond de la clé') && text.includes('25'));
         assert.ok(text.includes('Retirer la clé de ce navigateur'));
+        // Retirer la clé se confirme, même sans JavaScript : le bouton d'envoi reste replié derrière la question
+        const confirmationCle = page.locator('details.confirmation-cle:visible').first();
+        const retrait = confirmationCle.getByRole('button', {name: 'Oui, retirer la clé'});
+        assert.equal(await retrait.isVisible(), false);
+        await confirmationCle.locator('summary').click();
+        assert.equal(await retrait.isVisible(), true);
+        assert.match(await confirmationCle.textContent(), /Retirer la clé de ce navigateur \?/);
       }
       if (state === 'invalid') assert.ok((await page.textContent('main')).includes('OpenRouter refuse cette clé'));
       await page.goto(origin + '/render/launch-' + state);
@@ -1542,7 +1549,9 @@ test('access and launch screens preserve available actions, estimates and refusa
         assert.equal(await page.locator('form[action="/preparation/access/key"], form[action="/preparation/access/disconnect"]').count(), 0);
         assert.ok((await page.textContent('main')).includes('Impossible d’enregistrer une clé'));
       }
-      if (state === 'connected') assert.equal(await page.locator('form[action="/preparation/access/disconnect"]').count(), 1);
+      if (state === 'connected') {
+        assert.equal(await page.locator('form[action="/preparation/access/disconnect"]').count(), 1);
+      }
     }
     for (const [name, text] of [['estimate-known', '0,125 USD'],
       ['estimate-unknown', 'Réservé pour la vérification des réponses'],
@@ -2638,6 +2647,8 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
       assert.ok(main.indexOf('Historique local de vos cas') < main.indexOf('Conservation automatique'), `${width} copies avant la conservation`);
       assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes cas d’usage', `${width} entrée de menu des copies`);
       assert.equal(await overflow(), 0, `${width} débordement de Mes données`);
+      await page.goto(origin + '/render/contribution-none');
+      assert.equal(await page.locator('main a[href="/preparation"]', {hasText: 'Revenir à mes cas en cours'}).count(), 1, `${width} retour aux cas en cours`);
       await page.goto(origin + '/render/contribution-active-2099');
       const contributions = await page.locator('main').textContent();
       assert.ok(contributions.includes('Contribution du 18 septembre 2026'), `${width} contribution`);

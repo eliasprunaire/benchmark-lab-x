@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
+import re
 import sqlite3
 import tempfile
 import threading
@@ -363,7 +364,9 @@ class CompositeObligation(unittest.TestCase):
                              ('O1', 'deadline', 'FAIL', 'Contrôle O1 : échéance inventée'), self.ERROR))
         page = render_evaluations(prep.view(self.store, self.session, 'fixture')['campaigns'][0]['evaluations'], '/d')
         # Motif et constats ; les dépliants de provenance gardent volontairement l'enregistrement complet
-        findings = page.split('Pièces utilisées pour cette évaluation')[0]
+        # Vocabulaire des écrans : le travail du juge est une vérification, le benchmark n'est plus une comparaison
+        self.assertNotRegex(re.sub(r'<[^>]+>', ' ', page), r'[ÉéEe]valu|[Cc]omparaison')
+        findings = page.split('Pièces utilisées pour cette vérification')[0]
         self.assertIn('Actions listées avec leur échéance exacte : échéance inventée', findings)
         for raw in ('O1', 'E1', 'format', 'deadline', 'defect'):
             self.assertNotRegex(findings, r'(?<![\w-])' + raw + r'(?![\w-])')

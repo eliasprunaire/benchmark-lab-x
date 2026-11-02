@@ -443,6 +443,9 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual(['Accueil', 'Benchmark', 'Mes cas d’usage', 'Épreuves'], dehors[2:6])
             self.assertEqual(['Décrire un cas d’usage', 'Mes cas d’usage', 'Épreuves', 'Benchmarks publics'], dehors[7:11])
             self.assertTrue(any(n['tag'] == 'img' and n['attrs'].get('src') == '/evaly.svg' and not n['main'] for n in page.nodes))
+            # Un lien vers la page Benchmark nomme les cas en cours, jamais « mes cas d'usage », réservé aux copies gardées
+            self.assertEqual([], [n['text'].strip() for n in page.nodes if n['tag'] == 'a' and n['attrs'].get('href') == '/preparation'
+                                  and 'mes cas d’usage' in n['text'].lower()])
             focus = [n for n in page.nodes if not n['hidden'] and not n['details']
                      and 'disabled' not in n['attrs'] and n['attrs'].get('type') != 'hidden'
                      and n['attrs'].get('tabindex') != '-1'
@@ -5801,7 +5804,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, len(phases['Réponses comparées']))
         self.assertEqual(len(envois) - 2, len(phases['Autres envois aux modèles']))
         self.assertEqual(2, par_phase['judgment'])
-        self.assertEqual(2, len(phases['Évaluation des réponses']))
+        self.assertEqual(2, len(phases['Vérification des réponses']))
         self.assertEqual(par_phase['preparation'] + par_phase.get('correction', 0),
                          len(phases['Préparation de l’exemple']) + len(phases.get('Vérification des modèles choisis', [])))
         self.assertEqual(par_phase['qualification'], len(phases['Contrôle de l’exemple']))
@@ -7360,7 +7363,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, len(envois))
         _, _, raw = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1')
         texte, phases = self.depenses(raw.decode())
-        self.assertNotIn('Évaluation des réponses', phases)
+        self.assertNotIn('Vérification des réponses', phases)
         self.assertIn('Coût complet inconnu · sous-total connu', texte)
         self.assertIn('La vérification de 2 réponses est à venir : son coût n’est pas encore connu.', texte)
 

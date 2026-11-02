@@ -68,7 +68,7 @@ def render_privacy_page(value, csrf=''):
     return 'Mes cas d’usage', '<div class="ge-pile">' + historique_local() + conservation + liens_donnees(cas=True) + '</div>'
 
 
-# ——— Mes cas d'usage : activité, cartes, alerte d'effacement ———
+# ——— Page Benchmark : activité, cartes des cas en cours, alerte d'effacement ———
 def marqueur_activite(privacy, csrf):
     """Repère que `privacy.js` lit pour prolonger l'accès de la session ; absent quand l'accès est fermé"""
     if not privacy or not active_session(privacy):
@@ -136,14 +136,14 @@ def render_delete_confirmation(value, csrf):
              '<p class="petit" role="status" data-privacy-status></p>'
              '<div class="actions"><button class="btn btn-danger" type="submit">' + ic('croix') + 'Oui, supprimer définitivement</button>'
              + '<span class="annuler">' + lien(retour, 'Annuler et garder ce cas', 'retour') + '</span>'
-             '<span class="apres-suppression">' + lien('/preparation', 'Revenir à mes cas d’usage', 'retour') + '</span></div>')
+             '<span class="apres-suppression">' + lien('/preparation', 'Revenir à mes cas en cours', 'retour') + '</span></div>')
     formulaire = privacy_form('delete', privacy.get('csrf_token', csrf), '/preparation/dossiers/' + quote(dossier['dossier_id'], safe='') + '/delete',
                               {}, corps, disabled=not active_session(privacy), classe='carte confirmer')
     return 'Supprimer ce cas d’usage ?', contexte, formulaire
 
 
 def render_deleted():
-    """Bandeau de Mes cas d'usage après une suppression sans JavaScript"""
+    """Bandeau de la page Benchmark après une suppression sans JavaScript"""
     return etat('ok', 'Supprimé', 'Le cas d’usage a été supprimé',
                 'La suppression sur le serveur est demandée. Les copies gardées dans ce navigateur restent : effacez-les dans Mes cas d’usage.')
 
@@ -152,7 +152,7 @@ def render_privacy_controls(value, csrf, contribution='', path='/preparation'):
     """Pied des pages d'un cas : choix de partage replié, suppression, puis copie de ce cas dans ce navigateur"""
     privacy = value.get('privacy')
     if not privacy or 'dossiers' in value:
-        # La liste de Mes cas d'usage écrit son propre repère, avant ses cartes
+        # La liste des cas en cours écrit son propre repère, avant ses cartes
         return ''
     dossier = privacy.get('dossier_id')
     if not dossier:
@@ -238,7 +238,7 @@ def render_contributions(value):
         content += etat(ton, libelle, 'Contribution du ' + jour_lisible(item['created_at']), phrase, retrait, ident='contribution-' + str(numero))
     if not value['contributions']:
         content += etat('inc', 'Sans accès', 'Ce navigateur n’a accès à aucune contribution',
-                        'Un navigateur ne voit que les contributions faites depuis lui.', lien('/preparation', 'Revenir à mes cas d’usage', 'retour'))
+                        'Un navigateur ne voit que les contributions faites depuis lui.', lien('/preparation', 'Revenir à mes cas en cours', 'retour'))
     content += tiroir('Ce que le retrait change',
                       '<p>Vous pouvez retirer votre consentement sans enregistrer de nouveau votre clé OpenRouter : ce navigateur garde un accès séparé, '
                       'réservé à vos contributions.</p><p>Retirer un consentement arrête seulement la contribution concernée. L’historique local continue, et '
@@ -286,7 +286,7 @@ def render_access(value, csrf):
                   'd’une visite à l’autre. Il est supprimé au plus tard après 30 jours sans activité.</p><p>Vous pouvez retirer la clé ici à tout moment. '
                   'Enregistrer ou retirer la clé ne lance aucun modèle.</p>')
            + '<p class="petit">Tous les appels passent par votre clé OpenRouter. Son plafond est la seule limite de dépense.</p>'
-           + '<p>' + lien('/preparation', 'Revenir à mes cas d’usage', 'retour') + '</p>')
+           + '<p>' + lien('/preparation', 'Revenir à mes cas en cours', 'retour') + '</p>')
     if status == 'unavailable':
         return '<div class="colonnes"><div class="ge-pile">' + carte + fin + '</div></div>'
     retrait = retrait_cle(csrf, retour, page_cle=True) if status in ('connected', 'invalid') else ''
@@ -329,7 +329,7 @@ def actions_erreur(value, path='/preparation'):
     if code == 404:
         return btn('/preparation', 'Retrouver mes cas en cours'), (accueil,)
     if code == 500:
-        return btn('/preparation', 'Ouvrir mes cas d’usage'), ()
+        return btn('/preparation', 'Ouvrir mes cas en cours'), ()
     if code == 503:
         return btn('/preparation', 'Réessayer', icone='actualiser'), (accueil,)
     return btn('/preparation', 'Retrouver mes cas en cours'), ()

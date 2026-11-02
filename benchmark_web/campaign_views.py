@@ -291,7 +291,7 @@ def render_evaluations(evaluations, dossier_url):
 
     Rendu complet des évaluations enregistrées ; `render_result` fournit la lecture compacte
     """
-    content = '<h4>Verdicts et preuves</h4><p>Évaluations d’un exemple inventé, réponse par réponse. '
+    content = '<h4>Verdicts et preuves</h4><p>Vérifications d’un exemple inventé, réponse par réponse. '
     content += 'Chaque verdict vaut pour le modèle tel qu’il a été réglé ici, dans les mêmes conditions que les autres. '
     content += 'Il ne dit rien du modèle en général, ni de sa compétence dans votre métier au-delà de cet exemple.</p>'
     for record in evaluations:
@@ -299,10 +299,10 @@ def render_evaluations(evaluations, dossier_url):
         reason = _readable_reason(record)
         label = ('À reprendre : la preuve ne permet pas de conclure' if record['verdict'] == 'INDETERMINE'
                  else VERDICT_BADGES[record['verdict']][2] if record['verdict'] in VERDICT_BADGES
-                 else record['verdict'] or 'Évaluation à reprendre')
+                 else record['verdict'] or 'Vérification à reprendre')
         content += '<section id="evaluation-' + text(eid) + '"><h5>' + text(label) + '</h5>'
-        content += '<p class="note">' + text(reason) + '</p><details><summary>Identifiants de cette évaluation</summary><p>Cas ' + text(record['case_id'])
-        content += ', modèle ' + text(record['configuration_id']) + ', évaluation ' + text(eid) + '.</p></details>'
+        content += '<p class="note">' + text(reason) + '</p><details><summary>Identifiants de cette vérification</summary><p>Cas ' + text(record['case_id'])
+        content += ', modèle ' + text(record['configuration_id']) + ', vérification ' + text(eid) + '.</p></details>'
         content += '<p>Vérification réalisée par ' + text(record['responsible']) + ' le ' + text(record['created_at']) + '.</p>'
         previous = record['previous_evaluation_id']
         if previous:
@@ -323,14 +323,14 @@ def render_evaluations(evaluations, dossier_url):
                           if link['piece_id'] in record.get('proof_contents', {}) else link['href'])
                 content += _proof(link['name'], proof['passage'], target)
             content += '</li>'
-        content += '</ul><p>Pièces utilisées pour cette évaluation :</p><ul>'
+        content += '</ul><p>Pièces utilisées pour cette vérification :</p><ul>'
         for link in record['proof_links']:
             content += '<li>'
             if link['piece_id'] in record.get('proof_contents', {}):
                 content += '<details class="proof-content" id="proof-' + text(eid + '-' + link['piece_id'])
                 content += '"><summary>Lire la pièce complète : ' + text(link['name']) + '</summary>'
                 content += '<div class="proof-text">' + text(record['proof_contents'][link['piece_id']]) + '</div>'
-                content += '<p><a href="' + text(dossier_url) + '">Revenir à la comparaison avec ses filtres</a></p></details>'
+                content += '<p><a href="' + text(dossier_url) + '">Revenir aux résultats du benchmark avec leurs filtres</a></p></details>'
             else:
                 content += '<a href="' + text(link['href']) + '">' + text(link['name']) + '</a>'
             content += '</li>'
@@ -341,18 +341,18 @@ def render_evaluations(evaluations, dossier_url):
             content += ('' if measure['unit'] in ('bool', 'boolean', 'booléen') else ' ' + text(measure['unit']))
             content += '<details><summary>Méthode de mesure</summary>' + readable_fields(measure) + '</details></li>'
         content += '</ul><p>Ce résultat n’est pas combiné avec d’autres cas ou d’autres essais.</p>'
-        for label, cost in (('Coût de la réponse du modèle', record['candidate_cost']), ('Coût de l’évaluation', record['judgment']['cost'])):
+        for label, cost in (('Coût de la réponse du modèle', record['candidate_cost']), ('Coût de la vérification', record['judgment']['cost'])):
             content += '<p>' + label + ' : ' + text('inconnu' if cost is None or cost['status'] == 'UNKNOWN' else cost['amount'] + ' ' + cost['currency'])
             content += ' (source : ' + text(cost['source'] if cost else 'INCONNU') + ').</p>'
         content += '<h6>Étalonnage du juge</h6>' + render_calibration(record['calibration'])
         content += '<p>Limites : ' + text('; '.join(record['limits'])) + '</p>'
         for label, value in (('Méthode et contrôle de l’exemple', record['qualification']),
-                             ('Déroulé de l’évaluation : consignes, pièces lues, désaccords et arbitrages', record['judgment']),
-                             ('Liens connus entre les modèles qui ont préparé, évalué et répondu', record['configuration_links']),
+                             ('Déroulé de la vérification : consignes, pièces lues, désaccords et arbitrages', record['judgment']),
+                             ('Liens connus entre les modèles qui ont préparé, vérifié et répondu', record['configuration_links']),
                              ('Réglages demandés et constatés, avec leurs sources', {k: record[k] for k in ('requested_configuration', 'observed_configuration', 'observation_sources')}),
                              ('Ce que couvre le coût et comment il est compté', {k: record[k] for k in ('cost_basis', 'aggregation')})):
             content += '<details><summary>' + label + '</summary>' + readable_fields(value) + '</details>'
-        content += '<p><a href="' + text(dossier_url) + '">' + ('Revenir à la comparaison' if '/campaigns/' in dossier_url else 'Revenir au cas d’usage') + '</a></p></section>'
+        content += '<p><a href="' + text(dossier_url) + '">' + ('Revenir aux résultats du benchmark' if '/campaigns/' in dossier_url else 'Revenir au cas d’usage') + '</a></p></section>'
     return content
 
 
@@ -455,7 +455,7 @@ EXPENSE_GROUPS = {
     'compared': ('Réponses comparées', 'Leur coût est le coût observé du tableau ; lui seul sert au conseil.'),
     'other_attempts': ('Autres envois aux modèles', 'Réponses remplacées par une reprise, inexploitables ou non envoyées. '
                        'Pour information, hors conseil.'),
-    'judgment': ('Évaluation des réponses', 'Pour information, hors conseil.'),
+    'judgment': ('Vérification des réponses', 'Pour information, hors conseil.'),
     'probes': ('Vérification des modèles choisis', 'Pour information, hors conseil.'),
     'preparation': ('Préparation de l’exemple', 'Pour information, hors conseil. '
                     'Elle sert aussi aux autres benchmarks de cet exemple.'),
@@ -689,7 +689,7 @@ def render_comparison(value):
     if not latest:
         received = any(cell['state'] == 'RECEIVED' for cell in value['cells'])
         signals = signal(mot('Verdicts', 'att'), 'Des réponses sont arrivées. Leur verdict n’est pas encore disponible.' if received else
-                         'Aucune réponse n’a encore été évaluée. Le suivi indique où en est la comparaison.') + signals
+                         'Aucune réponse n’a encore été vérifiée. Le suivi indique où en est le benchmark.') + signals
     dates = sorted(set(date[:10] for date in value.get('acquisition_dates', [])))
     subtitle = (str(coverage['attempted_cells']) + (' essai lancé' if coverage['attempted_cells'] == 1 else ' essais lancés')
                 + ' sur ' + str(coverage['planned_cells']))
@@ -1209,7 +1209,7 @@ def render_campaign_followup(value, csrf):
         elif results:
             actions += [refresh, btn(base, 'Voir les résultats')]
         elif empty and not ambiguous:
-            actions += [refresh, btn('/preparation', 'Retour à mes cas d’usage')]
+            actions += [refresh, btn('/preparation', 'Retour à mes cas en cours')]
         else:
             actions.append('<a class="btn" href="' + text(base + '/conditions') + '">Actualiser le suivi' + ic('actualiser') + '</a>')
         foot = '<div class="direct-pied"><span></span><span class="actions">' + ''.join(actions) + '</span></div>'
@@ -1575,7 +1575,7 @@ def _check(record, kind, state, description, findings):
     for finding in findings:
         content += '<blockquote>' + text(_readable(record, finding['finding']))
         if finding['attribution'] not in ('candidate', 'evidence'):
-            content += (' <span class="petit">(ce constat provient de la référence d’évaluation et non de la réponse du modèle)</span>'
+            content += (' <span class="petit">(ce constat provient de la référence de vérification et non de la réponse du modèle)</span>'
                         if finding['attribution'] == 'reference' else
                         ' <span class="petit">(attribué à : ' + text(finding['attribution']) + ')</span>')
         content += '</blockquote>'
@@ -1698,7 +1698,7 @@ def render_result(record, names=None, place=None):
     why += '</p>'
     reason = _readable_reason(record)
     why += ('<p class="petit">' + text(reason) + '</p>' if len(reason) <= PREVIEW_LENGTH else
-            tiroir('Explication de l’évaluation', '<p>' + text(reason) + '</p>'))
+            tiroir('Explication du verdict', '<p>' + text(reason) + '</p>'))
     why += _criteria_list(record, spec['obligations'], 'obligation')
     if spec['eliminatory_errors']:
         why += '<h3>Erreurs éliminatoires recherchées</h3>' + _criteria_list(record, spec['eliminatory_errors'], 'eliminatory')
@@ -1757,7 +1757,7 @@ def render_attempt_detail(value):
         place.append('Essai ' + str(history[-1]['repetition']) + ' sur ' + str(where['repetitions']))
     content = '<div id="attempt-detail">' + render_result(history[-1], names, ' · '.join(place))
     for record in reversed(history[:-1]):
-        content += tiroir('Ancienne évaluation, remplacée le ' + date_lisible_utc(record['created_at']), render_result(record, names))
+        content += tiroir('Ancienne vérification, remplacée le ' + date_lisible_utc(record['created_at']), render_result(record, names))
     # Hors de `#attempt-detail` : dans la modale, la page des résultats porte déjà cette portée et cette couverture
     conclusion, coverage = value['conclusion'], value['coverage']
     content += '</div><p class="petit">' + text(conclusion['attribution'] + ' ' + conclusion['limits'][0]) + '</p>'
