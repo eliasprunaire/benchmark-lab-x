@@ -2656,6 +2656,9 @@ test('public and private pages retain legal information and exact release identi
       'n’arrête pas l’historique local', 'restent dans ce navigateur']) assert.ok(privacy.includes(term), term);
     assert.ok((await page.getByRole('row').filter({hasText: 'Historique local dans votre navigateur'}).textContent()).includes('Votre consentement (art. 6.1.a)'));
     assert.equal(/N’ÉCRIRE QU’APRÈS|N'ÉCRIRE QU'APRÈS/.test(privacy), false);
+    // La page des copies s'appelle Mes cas d'usage depuis v0.39.4 : aucun lien ne nomme encore l'ancienne entrée
+    assert.ok(privacy.includes('page Mes cas d’usage'));
+    assert.equal(/Mes\s+données/.test(privacy), false);
     assert.equal(await page.locator('a[href="/preparation/data"]').count() > 0, true);
     await page.goto(origin + '/render/cgu');
     assert.ok((await page.textContent('main')).includes('Dernière mise à jour : 29 septembre 2026'));

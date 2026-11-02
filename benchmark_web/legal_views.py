@@ -219,7 +219,7 @@ CONFIDENTIALITE = (
     '<li><strong>retirer une contribution</strong> : page <a href="/preparation/contributions">Mes '
     'contributions</a> ;</li>'
     '<li><strong>exporter ou effacer votre historique local</strong> : page <a href="/preparation/data">Mes '
-    'données</a>.</li></ul>'
+    'cas d’usage</a>.</li></ul>'
     '<p>Pour toute autre demande : <strong>' + CONTACT + '</strong>.</p>'
     '<p><strong>Limite importante que nous devons vous signaler.</strong> Le service ne vous identifie pas. Nous ne '
     'pouvons rattacher une demande à vos données que si elle provient du navigateur porteur du cookie '
