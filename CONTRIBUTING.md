@@ -2,7 +2,7 @@
 style_gate: pass
 ---
 
-# Contribuer à Bench-X
+# Contribuer à Evaly
 
 Une contribution doit préserver les preuves, les frontières d’autorité et la distinction entre simulation, campagne réelle, release et déploiement. La CI vérifie le changement proposé. Après revue et fusion dans `main`, la chaîne de release et de déploiement prend le relais sans intervention humaine lorsque le commit est éligible.
 

@@ -563,13 +563,13 @@ def render_editorial(value):
               + ''.join(feuille(piece['label'], 'Pièce de cette version', piece['text'], 'piece-' + str(index))
                         for index, piece in enumerate(value['pieces'], 1)) + '</ul></section>')
     copy_base = '/preparation/copies/' + value['task_id'] + '/' + value['version_id']
-    dossier = ('<div class="decision"><span class="etiq">Préparer mon dossier privé</span><h2>Partir de cette épreuve.</h2>'
+    dossier = ('<div class="decision"><span class="etiq">Préparer mon cas d’usage privé</span><h2>Partir de cette épreuve.</h2>'
                '<p>Cette copie conserve exactement la notice et les pièces ci-contre. Elle ne demande ni clé ni appel aux modèles : '
-               'vous décrirez ensuite votre besoin et ce qui diffère de cette épreuve.</p>' + btn(copy_base, 'Créer mon dossier privé') + '</div>')
+               'vous décrirez ensuite votre besoin et ce qui diffère de cette épreuve.</p>' + btn(copy_base, 'Créer mon cas d’usage privé') + '</div>')
     besoin = '<div class="actions">' + lien('/preparation', 'Décrire mon cas d’usage') + '</div>'
     corps = ('<div class="cadre g-pile">' + carte + editorial_report(value.get('report')) + '</div><div class="cadre"><div class="colonnes">'
              '<div class="pile-l"><div class="colonnes-moitie">' + cas + limites + '</div>' + pieces + publies + besoin
-             + '</div><aside class="cote" aria-label="Caractéristiques et dossier privé"><div class="carte">'
+             + '</div><aside class="cote" aria-label="Caractéristiques et cas d’usage privé"><div class="carte">'
              + editorial_fields(value) + '</div>' + dossier + '</aside></div></div>')
     contexte = puce(version_lisible(value['version_id'])) + mot(status, 'vig') + (puce('Depuis la recherche : ' + ', '.join(
         str(criteria[key]) for key in ('q',) + tuple(k for k, _ in EDITORIAL_FILTERS) if criteria.get(key)), plein=True) if query else '')
@@ -734,13 +734,13 @@ HELP_TEXTE = (
     'admissibles. Elle utilise TypeSafe et son modèle Jev. Elle ne remplace pas la recherche simple : '
     'celle-ci reste disponible sans cette aide.',
     'Données transmises : la formulation que vous soumettez et les informations publiques utiles des '
-    'notices retenues. Aucun dossier privé, contribution, référence de jugement, historique, clé ni cookie n’est transmis.',
+    'notices retenues. Aucun cas d’usage privé, contribution, référence de jugement, historique, clé ni cookie n’est transmis.',
     'TypeSafe traite ces données selon son traitement standard. Evaly ne promet ni absence de '
     'conservation, ni localisation exclusivement européenne, ni absence d’entraînement. N’écrivez aucune '
     'information personnelle ou confidentielle : cette consigne ne garantit pas leur absence.',
     'Evaly finance cette aide sur une enveloppe limitée, distincte des clés OpenRouter personnelles. '
     'Seuls des reçus techniques et comptables sont conservés, sans le texte recherché. Une probabilité ne '
-    'prouve ni adéquation, ni qualification, et cette aide ne lance aucune campagne.')
+    'prouve ni adéquation, ni qualification, et cette aide ne lance aucun benchmark.')
 
 
 def help_notices():
@@ -837,7 +837,7 @@ def render_aide(value, *, repertoire):
     if formulaire:
         cote = ('<aside class="cote" aria-label="Ce qui est transmis"><div class="carte"><span class="etiq">Ce qui part</span>'
                 '<ul class="g-liste"><li>Votre formulation et les informations publiques des ' + cible + ' retenues.</li>'
-                '<li>Jamais : dossier privé, contribution, historique, clé ni cookie.</li></ul></div>'
+                '<li>Jamais : cas d’usage privé, contribution, historique, clé ni cookie.</li></ul></div>'
                 '<div class="carte carte-douce">' + ic('cadenas') + '<p class="petit">TypeSafe ne promet ni absence de conservation, '
                 'ni localisation européenne, ni absence d’entraînement. N’écrivez rien de personnel ni de confidentiel.</p></div></aside>')
     liens = ('<div class="actions">' + lien(base + '/aide', 'Nouvelle demande', 'actualiser') + lien(simple[0], simple[1], 'loupe')
@@ -1034,7 +1034,7 @@ def disponibilite_cas(raison):
 
 
 def render_cases(value, csrf):
-    """Mes cas d'usage : état du service, champ unique de description, cas enregistrés, bande de la clé"""
+    """Page Benchmark (/preparation) : état du service, champ unique de description, cas en cours, bande de la clé"""
     state = value.get('availability', {})
     carte, bloque = ('', False) if state.get('can_submit', False) else disponibilite_cas(state.get('reason'))
     if value.get('deleted'):
@@ -1089,7 +1089,7 @@ def render_catalogue(value):
                     for task in value['tasks'])
     if not value['tasks']:
         corps = '<p>Aucun cas d’usage validé pour l’instant. Validez un exemple pour le retrouver ici.</p>'
-    corps = '<div class="ge-pile">' + corps + '<p>' + lien('/preparation', 'Revenir à mes cas d’usage', 'retour') + '</p></div>'
+    corps = '<div class="ge-pile">' + corps + '<p>' + lien('/preparation', 'Revenir à mes cas en cours', 'retour') + '</p></div>'
     return 'Exemples validés et benchmarks', corps, dict(sous_titre_html=(
         '<p class="texte-l">Visible par vous seul, dans ce navigateur. Pour chaque cas validé, retrouvez ses exemples et ses benchmarks.</p>'))
 
@@ -1112,9 +1112,9 @@ def render_source_copy(source, notice, *, future=False):
     absente = source.get('qualification_status') in (None, 'ABSENT') or source.get('qualification_status') not in EDITORIAL_STATUS
     statut = EDITORIAL_STATUS.get(source.get('qualification_status'), 'Qualification absente')
     phrase = ('Aucune qualification n’est publiée pour cette épreuve. Votre exemple est contrôlé à part : son contrat et sa référence sont '
-              'construits puis contrôlés pour votre dossier.' if absente else
-              'Sa qualification publiée ne qualifie pas ce dossier : votre exemple est contrôlé à part ; son contrat et sa référence sont '
-              'construits puis contrôlés pour votre dossier.')
+              'construits puis contrôlés pour votre cas d’usage.' if absente else
+              'Sa qualification publiée ne qualifie pas ce cas d’usage : votre exemple est contrôlé à part ; son contrat et sa référence sont '
+              'construits puis contrôlés pour votre cas d’usage.')
     groupes = ''
     if source.get('cases'):
         groupes += '<h3>Cas de l’épreuve source</h3>' + listing(source['cases'])
@@ -1128,7 +1128,7 @@ def render_source_copy(source, notice, *, future=False):
                + '<p class="petit">L’épreuve ' + ('sera conservée' if future else 'est conservée') + ' avec sa version et son empreinte. ' + phrase + '</p>'
                + tiroir('Cas, limites et pièces ' + ('copiées' if future else 'conservées'), '<div class="ge-src">' + groupes + '</div>'))
     if notice.get('withdrawn'):
-        contenu += notice_ligne('Cette version n’est plus disponible au catalogue. Votre copie et ses pièces restent conservées dans ce dossier.')
+        contenu += notice_ligne('Cette version n’est plus disponible au catalogue. Votre copie et ses pièces restent conservées dans ce cas d’usage.')
     if notice.get('unavailable'):
         contenu += notice_ligne('L’état et les signalements de la source sont momentanément indisponibles.')
     if notice.get('reports'):
@@ -1142,13 +1142,13 @@ def render_copy_source(value, csrf):
     """Confirmation de la copie sous le chemin privé, avec le jeton de la session existante"""
     source = value['source']
     path = '/preparation/copies/' + source['task_id'] + '/' + source['version_id']
-    decision = form(csrf, path, {'copy': '1'}, '<span class="etiq">Copie</span><h2>Créer le dossier privé</h2>'
-                    '<p>Le dossier reste privé dans ce navigateur. Vous décrirez ensuite votre besoin.</p>'
-                    + bouton('Créer mon dossier privé', xl=True) + '<p class="effet">' + ic('cadenas') + '<span>Rien n’est publié. Aucun modèle n’est appelé.</span></p>',
+    decision = form(csrf, path, {'copy': '1'}, '<span class="etiq">Copie</span><h2>Créer le cas d’usage privé</h2>'
+                    '<p>Le cas d’usage reste privé dans ce navigateur. Vous décrirez ensuite votre besoin.</p>'
+                    + bouton('Créer mon cas d’usage privé', xl=True) + '<p class="effet">' + ic('cadenas') + '<span>Rien n’est publié. Aucun modèle n’est appelé.</span></p>',
                     classe='decision')
     corps = ('<div class="colonnes"><div class="pile-l">' + render_source_copy(source, value.get('source_notice') or {}, future=True) + '</div><aside class="cote" aria-label="Décision">'
              + decision + lien('/epreuves/' + source['task_id'] + '/' + source['version_id'], 'Retour à l’épreuve', 'retour') + '</aside></div>')
-    return 'Créer mon dossier privé', corps, dict(sous_titre_html=(
+    return 'Créer mon cas d’usage privé', corps, dict(sous_titre_html=(
         '<p class="texte-l">Cette copie garde exactement la notice et les pièces ci-dessous. Aucune clé ni aucun appel aux modèles n’est nécessaire.</p>'))
 
 
@@ -1490,7 +1490,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         action = btn(cible, libelle)
     elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
         action = btn(url + '/configurations', 'Choisir les modèles')
-    h1 = ('Votre cas d’usage' if value['validation'] else 'Est-ce le travail à tester ?' if package else 'Votre dossier privé' if source
+    h1 = ('Votre cas d’usage' if value['validation'] else 'Est-ce le travail à tester ?' if package else 'Votre cas d’usage privé' if source
           else 'Précisons votre besoin')
     if launched and not snapshot and package:
         h1 = 'Exemple validé, benchmark lancé'

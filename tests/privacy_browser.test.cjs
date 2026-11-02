@@ -1534,6 +1534,13 @@ test('access and launch screens preserve available actions, estimates and refusa
         assert.ok(text.includes('Solde restant') && text.includes('12,50') && text.includes('selon OpenRouter'));
         assert.ok(text.includes('Plafond de la clé') && text.includes('25'));
         assert.ok(text.includes('Retirer la clé de ce navigateur'));
+        // Retirer la clé se confirme, même sans JavaScript : le bouton d'envoi reste replié derrière la question
+        const confirmationCle = page.locator('details.confirmation-cle:visible').first();
+        const retrait = confirmationCle.getByRole('button', {name: 'Oui, retirer la clé'});
+        assert.equal(await retrait.isVisible(), false);
+        await confirmationCle.locator('summary').click();
+        assert.equal(await retrait.isVisible(), true);
+        assert.match(await confirmationCle.textContent(), /Retirer la clé de ce navigateur \?/);
       }
       if (state === 'invalid') assert.ok((await page.textContent('main')).includes('OpenRouter refuse cette clé'));
       await page.goto(origin + '/render/launch-' + state);
@@ -1542,7 +1549,9 @@ test('access and launch screens preserve available actions, estimates and refusa
         assert.equal(await page.locator('form[action="/preparation/access/key"], form[action="/preparation/access/disconnect"]').count(), 0);
         assert.ok((await page.textContent('main')).includes('Impossible d’enregistrer une clé'));
       }
-      if (state === 'connected') assert.equal(await page.locator('form[action="/preparation/access/disconnect"]').count(), 1);
+      if (state === 'connected') {
+        assert.equal(await page.locator('form[action="/preparation/access/disconnect"]').count(), 1);
+      }
     }
     for (const [name, text] of [['estimate-known', '0,125 USD'],
       ['estimate-unknown', 'Réservé pour la vérification des réponses'],
@@ -1854,7 +1863,7 @@ test('external references remain readable, searchable and safe without JavaScrip
       // Aide sémantique : information avant envoi, clavier, 390 px et fonctionnement sans JavaScript
       await page.goto(origin + '/evaluations-externes/aide');
       const help = await page.textContent('main');
-      for (const value of ['TypeSafe', 'Jev', 'formulation', 'Aucun dossier privé',
+      for (const value of ['TypeSafe', 'Jev', 'formulation', 'Aucun cas d’usage privé',
                            'aucune information personnelle ou confidentielle',
                            'reste disponible', 'Demander l’aide'])
         assert.ok(help.includes(value), value);
@@ -1986,7 +1995,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
         const layout = await zones();
         assert.ok(layout, `${width} fiche d'épreuve sans composition`);
         assert.match(layout.main, /Pièces/, `${width} pièces hors zone principale`);
-        assert.match(layout.side, /Créer mon dossier privé/, `${width} copie hors synthèse`);
+        assert.match(layout.side, /Créer mon cas d’usage privé/, `${width} copie hors synthèse`);
         assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la copie`);
         assert.equal(layout.overflow, 0, `${width} débordement de la fiche d'épreuve`);
       }
@@ -2092,7 +2101,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       await page.keyboard.press('Enter');
       assert.match(await page.locator('.feuille details[open] pre').innerText(), /Pièce <script>alert\(1\)<\/script>/);
       await page.goto(origin + '/epreuves/tache-fictive/version-1');
-      const copyLink = page.getByRole('link', {name: 'Créer mon dossier privé'});
+      const copyLink = page.getByRole('link', {name: 'Créer mon cas d’usage privé'});
       await copyLink.focus();
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
       assert.equal(await scriptsEtrangers(page, 'main script'), 0);
@@ -2103,10 +2112,10 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.match(confirmation, /Tableau <script>alert\(1\)<\/script>/);
       assert.match(confirmation, /Erreur signalée <script>alert\(2\)<\/script>/);
       assert.match(confirmation, /pièces copiées/);
-      assert.match(confirmation, /Créer mon dossier privé/);
+      assert.match(confirmation, /Créer mon cas d’usage privé/);
       assert.equal(await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      const copyButton = page.getByRole('button', {name: 'Créer mon dossier privé'});
+      const copyButton = page.getByRole('button', {name: 'Créer mon cas d’usage privé'});
       await copyButton.focus();
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
       await page.screenshot({path: 'reports/465/confirmation-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
@@ -2121,7 +2130,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
         assert.ok(layout, `${width} copie sans composition`);
         assert.match(layout.main, /Épreuve source/, `${width} épreuve hors zone principale`);
         assert.match(await page.locator('header.tete').innerText(), /Aucune clé ni aucun appel aux modèles/, `${width} conditions sous le titre`);
-        assert.match(layout.side, /Créer mon dossier privé/, `${width} bouton hors zone principale`);
+        assert.match(layout.side, /Créer mon cas d’usage privé/, `${width} bouton hors zone principale`);
         assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la décision de la copie`);
       }
       await page.setViewportSize({width: 390, height: 844});
@@ -2638,6 +2647,8 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
       assert.ok(main.indexOf('Historique local de vos cas') < main.indexOf('Conservation automatique'), `${width} copies avant la conservation`);
       assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes cas d’usage', `${width} entrée de menu des copies`);
       assert.equal(await overflow(), 0, `${width} débordement de Mes données`);
+      await page.goto(origin + '/render/contribution-none');
+      assert.equal(await page.locator('main a[href="/preparation"]', {hasText: 'Revenir à mes cas en cours'}).count(), 1, `${width} retour aux cas en cours`);
       await page.goto(origin + '/render/contribution-active-2099');
       const contributions = await page.locator('main').textContent();
       assert.ok(contributions.includes('Contribution du 18 septembre 2026'), `${width} contribution`);

@@ -333,7 +333,7 @@ def denied_response(error):
         'TOO_SOON': 'Vous venez d’envoyer un message. Patientez un peu avant le suivant.',
         'SOURCE_RATE_LIMIT': 'La limite d’envois par heure est atteinte. Réessayez plus tard.',
         'SOURCE_MISSING': 'Cet envoi n’a pas pu être vérifié. Rechargez la page, puis renvoyez-le.',
-        'COPY_SOURCE_INVALID': 'La copie demandée ne correspond plus au paquet publié. Aucun dossier n’a été créé.',
+        'COPY_SOURCE_INVALID': 'La copie demandée ne correspond plus au paquet publié. Aucun cas d’usage n’a été créé.',
         'ACCESS_KEY_REJECTED': 'OpenRouter n’a pas pu vérifier cette clé. Votre clé précédente reste en place.',
         'ACCESS_CAP_REQUIRED': 'Utilisez une clé OpenRouter avec un plafond non renouvelable de 50 USD maximum et un solde disponible.',
         'ACCESS_REQUIRED': 'Ajoutez votre clé OpenRouter avant de lancer le benchmark.',

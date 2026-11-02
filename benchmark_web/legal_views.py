@@ -261,11 +261,11 @@ def legal_layout(content):
 
 # Chemin : titre, description pour les moteurs de recherche, contenu
 LEGAL_PAGES = {
-    '/mentions-legales': ('Mentions légales', 'Éditeur, hébergeur, nature du service et code source de Bench-X, '
+    '/mentions-legales': ('Mentions légales', 'Éditeur, hébergeur, nature du service et code source d’Evaly, '
                           'logiciel libre sous licence AGPL-3.0-only.', MENTIONS_LEGALES),
-    '/cgu': ('Conditions générales d’utilisation', 'Conditions d’utilisation de Bench-X : ce que le service fait et ne '
+    '/cgu': ('Conditions générales d’utilisation', 'Conditions d’utilisation d’Evaly : ce que le service fait et ne '
              'fait pas, accès sans compte, vos engagements et publication des résultats.', CGU),
-    '/confidentialite': ('Politique de confidentialité', 'Données traitées par Bench-X, finalités et bases légales, '
+    '/confidentialite': ('Politique de confidentialité', 'Données traitées par Evaly, finalités et bases légales, '
                          'destinataires, transferts hors Union européenne, cookies et exercice de vos droits.',
                          CONFIDENTIALITE),
 }

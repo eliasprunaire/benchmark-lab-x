@@ -706,6 +706,8 @@ class IndexationTests(WebServerCase):
                 descriptions = [attrs['content'] for tag, attrs in tags if tag == 'meta' and attrs.get('name') == 'description']
                 self.assertEqual(1, len(descriptions))
                 self.assertGreaterEqual(len(descriptions[0]), 50)
+                # La description sert aux moteurs et aux aperçus de lien : elle nomme le produit actuel
+                self.assertNotIn('Bench-X', descriptions[0])
                 self.assertEqual(['https://benchmark.example' + path],
                                  [attrs['href'] for tag, attrs in tags if tag == 'link' and attrs.get('rel') == 'canonical'])
 

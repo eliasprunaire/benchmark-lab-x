@@ -381,21 +381,21 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 return editorial.copy_bundle(public, task_id, version_id)
             except editorial.NotFound:
                 self.error_page(404, 'Épreuve introuvable',
-                                'Cette version publiée n’existe plus. Aucun dossier n’a été créé.')
+                                'Cette version publiée n’existe plus. Aucun cas d’usage n’a été créé.')
             except ValueError as error:
                 messages = {
                     'Nouvelle reprise refusée': 'Cette version est retirée : aucune nouvelle copie n’est admise.',
-                    'Autorité éditoriale refusée': 'La version publiée n’a pas une autorité valide. Aucun dossier n’a été créé.',
-                    'Approbation visant d’autres octets': 'La version publiée ne correspond plus à son approbation. Aucun dossier n’a été créé.',
-                    'Paquet incomplet': 'Le paquet publié est incomplet. Aucun dossier n’a été créé.',
-                    'Octets divergents': 'Le paquet publié ne correspond plus à ses empreintes. Aucun dossier n’a été créé.',
-                    'Manifeste divergent': 'Le paquet publié ne correspond plus à ses empreintes. Aucun dossier n’a été créé.',
-                    'Sélection publique fermée': 'Le paquet publié contient un contenu non autorisé. Aucun dossier n’a été créé.',
-                    'Pièce illisible': 'Le paquet publié contient une pièce illisible. Aucun dossier n’a été créé.',
-                    'Identité divergente': 'La version publiée ne correspond plus à son identité. Aucun dossier n’a été créé.',
+                    'Autorité éditoriale refusée': 'La version publiée n’a pas une autorité valide. Aucun cas d’usage n’a été créé.',
+                    'Approbation visant d’autres octets': 'La version publiée ne correspond plus à son approbation. Aucun cas d’usage n’a été créé.',
+                    'Paquet incomplet': 'Le paquet publié est incomplet. Aucun cas d’usage n’a été créé.',
+                    'Octets divergents': 'Le paquet publié ne correspond plus à ses empreintes. Aucun cas d’usage n’a été créé.',
+                    'Manifeste divergent': 'Le paquet publié ne correspond plus à ses empreintes. Aucun cas d’usage n’a été créé.',
+                    'Sélection publique fermée': 'Le paquet publié contient un contenu non autorisé. Aucun cas d’usage n’a été créé.',
+                    'Pièce illisible': 'Le paquet publié contient une pièce illisible. Aucun cas d’usage n’a été créé.',
+                    'Identité divergente': 'La version publiée ne correspond plus à son identité. Aucun cas d’usage n’a été créé.',
                 }
                 self.error_page(409, 'Copie impossible', messages.get(
-                    str(error), 'La copie n’a pas pu être créée. Aucun dossier n’a été modifié.'))
+                    str(error), 'La copie n’a pas pu être créée. Aucun cas d’usage n’a été modifié.'))
             return None
 
         def copy_confirmation(self, task_id, version_id, token, path):
@@ -587,7 +587,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                         body = dict(body)
                         body.pop('website', None)
                         body['source_sha256'] = _source_fingerprint(self.headers, self.client_address, source_salt, trusted_proxies)
-                # Après une suppression sans JavaScript, Mes cas d'usage l'annonce ; l'exécuteur ne voit pas ce repère
+                # Après une suppression sans JavaScript, la page Benchmark l'annonce ; l'exécuteur ne voit pas ce repère
                 deleted = self.command in ('GET', 'HEAD') and self.path == '/preparation?supprime=1'
                 relay_path = '/preparation' if deleted else self.path
                 result = preparation_request(socket_path, 'GET' if self.command == 'HEAD' else self.command,

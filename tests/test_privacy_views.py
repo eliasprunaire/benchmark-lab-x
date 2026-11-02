@@ -226,6 +226,8 @@ def browser_views():
         examples['contribution-' + status + '-' + expiry[:4]] = dict(kind='contributions', csrf_token='purpose-only',
             contributions=[dict(id='opaque-identifier', created_at='2026-09-18T12:00:00Z',
                                 expires_at=expiry + 'T00:00:00Z', status=status)])
+    # Aucune contribution depuis ce navigateur : la page renvoie aux cas en cours
+    examples['contribution-none'] = dict(kind='contributions', csrf_token='purpose-only', contributions=[])
     for name, path in (('safe', '/preparation?view=1'), ('unsafe', '//evil.test')):
         examples['bootstrap-' + name] = dict(kind='session_bootstrap', return_path=path)
     # #465 : copie privée d’une épreuve publiée, sans package ni qualification importée

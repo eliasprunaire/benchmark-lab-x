@@ -443,6 +443,11 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual(['Accueil', 'Benchmark', 'Mes cas d’usage', 'Épreuves'], dehors[2:6])
             self.assertEqual(['Décrire un cas d’usage', 'Mes cas d’usage', 'Épreuves', 'Benchmarks publics'], dehors[7:11])
             self.assertTrue(any(n['tag'] == 'img' and n['attrs'].get('src') == '/evaly.svg' and not n['main'] for n in page.nodes))
+            # Vocabulaire du produit : le travail de l'utilisateur est un cas d'usage, un lancement est un benchmark
+            self.assertNotRegex(page.visible, r'[Dd]ossier privé|\b[Cc]ampagnes?\b|Bench-X')
+            # Un lien vers la page Benchmark nomme les cas en cours, jamais « mes cas d'usage », réservé aux copies gardées
+            self.assertEqual([], [n['text'].strip() for n in page.nodes if n['tag'] == 'a' and n['attrs'].get('href') == '/preparation'
+                                  and 'mes cas d’usage' in n['text'].lower()])
             focus = [n for n in page.nodes if not n['hidden'] and not n['details']
                      and 'disabled' not in n['attrs'] and n['attrs'].get('type') != 'hidden'
                      and n['attrs'].get('tabindex') != '-1'
@@ -523,10 +528,12 @@ class ParcoursComplet(unittest.TestCase):
             help_page, help_headers, help_raw = self.request('/evaluations-externes/aide')
             self.assertIsNone(help_headers.get('Set-Cookie'))
             self.assertEqual('no-referrer', help_headers['Referrer-Policy'])
-            for value in ('TypeSafe', 'Jev', 'formulation', 'Aucun dossier privé',
+            for value in ('TypeSafe', 'Jev', 'formulation', 'Aucun cas d’usage privé',
                           'aucune information personnelle ou confidentielle',
                           'reste disponible', 'Demander l’aide'):
                 self.assertIn(value, help_page.visible + ' ' + help_page.depliant('Texte complet'))
+            # Un lancement s'appelle un benchmark, jamais une campagne
+            self.assertIn('cette aide ne lance aucun benchmark', help_page.visible + ' ' + help_page.depliant('Texte complet'))
             help_form = help_page.form('/evaluations-externes/aide')
             self.assertRegex(help_form['fields']['submission_id'], r'^[0-9a-f]{32}$')
             self.assertEqual(['formulation'],
@@ -1146,7 +1153,7 @@ class ParcoursComplet(unittest.TestCase):
             notice = self.request(result_link)[0]
             self.assertEqual(query_path(combined_fields), notice.link('Retour aux résultats'))
             self.assertEqual('/epreuves', notice.link('Toutes les épreuves'))
-            self.assertEqual('/preparation/copies/' + task + '/version-calcul', notice.link('Créer mon dossier privé'))
+            self.assertEqual('/preparation/copies/' + task + '/version-calcul', notice.link('Créer mon cas d’usage privé'))
             self.assertEqual('Textes fournis', notice.field('Entrées'))
             source = editorial.copy_bundle(self.public, task, 'version-calcul')
             self.assertEqual(calc['package_sha256'], source['package_sha256'])
@@ -1297,7 +1304,7 @@ class ParcoursComplet(unittest.TestCase):
 
     def copie_epreuve(self, version='version-1', *, status=303, task='tache-fictive'):
         page, _, _ = self.request('/epreuves/' + task + '/' + version)
-        confirmation, _, _ = self.request(page.link('Créer mon dossier privé'))
+        confirmation, _, _ = self.request(page.link('Créer mon cas d’usage privé'))
         form = next(item for item in confirmation.forms if '/copies/' in item['action'])
         result, headers, raw = self.request(form['action'], form['fields'], status=status)
         return result, headers, raw
@@ -1326,9 +1333,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIsNone(public_headers.get('Set-Cookie'))
         self.assertEqual('no-referrer', public_headers['Referrer-Policy'])
         self.assertIn("form-action 'self'", public_headers['Content-Security-Policy'])
-        self.assertIn('Créer mon dossier privé', public.visible)
+        self.assertIn('Créer mon cas d’usage privé', public.visible)
         self.assertIn('Qualification réussie', public.visible)
-        link = public.link('Créer mon dossier privé')
+        link = public.link('Créer mon cas d’usage privé')
         self.assertEqual('/preparation/copies/' + task + '/' + version, link)
         # Le cookie privé n’est pas envoyé à la page publique, mais l’est au chemin de confirmation
         self.assertNotIn('benchmark_session', self.cookie_header(self.cookies, '/epreuves/' + task + '/' + version))
@@ -1440,7 +1447,7 @@ class ParcoursComplet(unittest.TestCase):
         public, _, _ = self.request('/epreuves/' + task + '/' + version)
         self.assertNotIn('benchmark_session', self.cookie_header(
             self.cookies, '/epreuves/' + task + '/' + version))
-        link = public.link('Créer mon dossier privé')
+        link = public.link('Créer mon cas d’usage privé')
         self.assertIn('benchmark_session', self.cookie_header(self.cookies, link))
         confirmation, _, _ = self.request(link)
         self.assertEqual(session, self.cookies['benchmark_session'].value)
@@ -1477,7 +1484,7 @@ class ParcoursComplet(unittest.TestCase):
         self.publier_epreuve(version)
         privacy.migrate(self.data, SECRET, 'test-465-bootstrap')
         public, _, _ = self.request('/epreuves/' + task + '/' + version)
-        link = public.link('Créer mon dossier privé')
+        link = public.link('Créer mon cas d’usage privé')
         bootstrap, _, _ = self.request(link)
         self.assertIn('Ouvrir mon espace', bootstrap.visible)
         form = bootstrap.form('/session/open')
@@ -1571,7 +1578,7 @@ class ParcoursComplet(unittest.TestCase):
                 (folder / 'approval.json').write_text(storage._strict_json(approval))
             refused, _, _ = self.request('/preparation/copies/' + task + '/' + other,
                                          form['fields'], status=409)
-            self.assertIn('Aucun dossier n’a été créé', refused.visible)
+            self.assertIn('Aucun cas d’usage n’a été créé', refused.visible)
             with closing(storage.Store(self.data)) as store:
                 self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
         # Parcours autorisé : même session, même jeton, aucun appel ni coût
@@ -2829,7 +2836,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(any(n['attrs'].get('aria-label') == 'Critères actifs' for n in found.nodes))
         opened = self.request('/epreuves/' + task + '/version-calcul')[0]
         self.assertIn('Tableau des débits', opened.visible)
-        self.assertIn('Créer mon dossier privé', opened.visible)
+        self.assertIn('Créer mon cas d’usage privé', opened.visible)
 
         disabled, _ = self.editorial_help_submit('Lister les mouvements mensuels d’un compte fictif',
                                                   status=200)
@@ -2993,8 +3000,8 @@ class ParcoursComplet(unittest.TestCase):
         # La copie part de la suggestion exacte et conserve version et empreinte
         version_page = self.request(page.link('Tableau des débits'))[0]
         self.assertEqual('/preparation/copies/tache-fictive/version-calcul',
-                         version_page.link('Créer mon dossier privé'))
-        confirmation = self.request(version_page.link('Créer mon dossier privé'))[0]
+                         version_page.link('Créer mon cas d’usage privé'))
+        confirmation = self.request(version_page.link('Créer mon cas d’usage privé'))[0]
         copy_form = next(item for item in confirmation.forms if '/copies/' in item['action'])
         with closing(storage.Store(self.data)) as store:
             before_operations = store._connection.execute(
@@ -5801,7 +5808,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, len(phases['Réponses comparées']))
         self.assertEqual(len(envois) - 2, len(phases['Autres envois aux modèles']))
         self.assertEqual(2, par_phase['judgment'])
-        self.assertEqual(2, len(phases['Évaluation des réponses']))
+        self.assertEqual(2, len(phases['Vérification des réponses']))
         self.assertEqual(par_phase['preparation'] + par_phase.get('correction', 0),
                          len(phases['Préparation de l’exemple']) + len(phases.get('Vérification des modèles choisis', [])))
         self.assertEqual(par_phase['qualification'], len(phases['Contrôle de l’exemple']))
@@ -5977,7 +5984,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Méthode qualifiée pour le périmètre déclaré', etalonnage(qualifiee))
         self.assertIn('Exemples fictifs de test uniquement', etalonnage(qualifiee))
         self.assertIn('4 octobre 2026', etalonnage(qualifiee))
-        self.assertIn('Ce dossier fait partie de ce périmètre.', etalonnage(qualifiee))
+        self.assertIn('Ce cas d’usage fait partie de ce périmètre.', etalonnage(qualifiee))
         self.assertNotIn('pas recoupé', etalonnage(qualifiee))
         for autre in (autre_methode, autre_juge):
             page, _ = lire(fiche(judge_identity=autre))
@@ -5987,7 +5994,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn('Méthode qualifiée', etalonnage(page))
         for hors in ('autre-dossier', 'fixture'):
             page, _ = lire(fiche(perimeter=dict(description='Périmètre d’un autre dossier', dossier_ids=[hors])))
-            self.assertIn('mais son périmètre ne couvre pas ce dossier ; il ne s’applique pas à ce résultat.', etalonnage(page))
+            self.assertIn('mais son périmètre ne couvre pas ce cas d’usage ; il ne s’applique pas à ce résultat.', etalonnage(page))
             self.assertNotIn('Périmètre d’un autre dossier', etalonnage(page))
             self.assertNotIn('Méthode qualifiée', etalonnage(page))
         refusee, _ = lire(fiche(status='NOT_QUALIFIED'))
@@ -7360,7 +7367,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, len(envois))
         _, _, raw = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1')
         texte, phases = self.depenses(raw.decode())
-        self.assertNotIn('Évaluation des réponses', phases)
+        self.assertNotIn('Vérification des réponses', phases)
         self.assertIn('Coût complet inconnu · sous-total connu', texte)
         self.assertIn('La vérification de 2 réponses est à venir : son coût n’est pas encore connu.', texte)
 
