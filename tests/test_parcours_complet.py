@@ -7073,7 +7073,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Vérification des réponses terminée.', page.visible)
         # Issue #535 : le suivi nomme la cause et le nombre de tentatives, comme la page de résultats
         self.assertIn('1 modèle sur 2 n’a pas donné de réponse exploitable (OpenRouter limite temporairement les '
-                      'demandes ; 5 tentatives) : il n’est pas évalué.', page.visible)
+                      'demandes ; 5 tentatives) : il n’est pas vérifié.', page.visible)
         # Issue #537 : le couloir du modèle épuisé ne dit pas « Reçue »
         ligne_a, ligne_b = couloirs(page)[:2]
         self.assertTrue(ligne_a.endswith('Sans réponse'), ligne_a)
@@ -7206,7 +7206,7 @@ class ParcoursComplet(unittest.TestCase):
         with closing(storage.Store(self.data)) as store:
             self.assertIsNone(campaigns.inspect(store, self.start['judgment_campaign'])['stop_reason'])
         page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
-        self.assertIn('Aucune réponse exploitable à évaluer (Incident chez OpenRouter ou chez le fournisseur du '
+        self.assertIn('Aucune réponse exploitable à vérifier (Incident chez OpenRouter ou chez le fournisseur du '
                       'modèle ; 5 tentatives).', page.visible)
 
     def test_relance_due_pendant_qu_un_autre_modele_repond(self):

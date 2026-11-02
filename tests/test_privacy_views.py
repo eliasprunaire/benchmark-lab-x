@@ -102,7 +102,7 @@ def browser_views():
             panel=[dict(id='x', model='Modèle A'), dict(id='y', model='Modèle B')])
         if judgment:
             value['campaign']['judgment'] = dict(status=judgment, total=2, completed=0,
-                reason='Évaluation interrompue' if judgment == 'BLOCKED' else None, can_start=False)
+                reason='Vérification des réponses interrompue' if judgment == 'BLOCKED' else None, can_start=False)
         examples['mixed-' + state + '-' + str(judgment)] = value
     examples['configurations-selected'] = {'assumptions': {},
      'available_tiers': ['low', 'high'],
@@ -302,7 +302,7 @@ def results_view(*, withdrawn=False, unavailable=None, filtered=False, repeated=
                       'cost': {'value': '0.02', 'unit': 'USD', 'status': 'KNOWN'}},
          'limits': ['Un exemple inventé ne prouve pas une fiabilité générale.'],
          'proofs': [{'name': 'Réponse de Modèle <script>alert(1)</script>', 'piece_id': 'output-a'},
-                    {'name': 'Pièce réservée à l’évaluation', 'piece_id': None}]},
+                    {'name': 'Pièce réservée à la vérification des réponses', 'piece_id': None}]},
         {'panel_position': 2, 'case_position': 1, 'verdict': 'NE SATISFAIT PAS',
          'reason': 'Une exigence n’est pas respectée : les actions sont omises.', 'next_action': None,
          'configuration': configuration,
