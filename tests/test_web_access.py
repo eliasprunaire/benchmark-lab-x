@@ -722,7 +722,7 @@ class IndexationTests(WebServerCase):
                         self.assertFalse([attrs for tag, attrs in tags if tag == 'meta' and attrs.get('name') == 'description'])
 
     def test_icones_publiques_sans_noindex(self):
-        for path in ('/favicon.ico', '/bench-x.svg', '/robots.txt', '/sitemap.xml'):
+        for path in ('/favicon.ico', '/evaly.ico', '/evaly.svg', '/bench-x.svg', '/robots.txt', '/sitemap.xml'):
             with self.subTest(path=path):
                 status, headers, _ = self.request('GET', path)
                 self.assertEqual((200, None), (status, headers.get('X-Robots-Tag')))
@@ -880,7 +880,7 @@ class StaticResourceTests(unittest.TestCase):
     """Ressources invariantes (BX-05) : lues une fois, revalidées par ETag ; le HTML garde `no-store`"""
     ROOT = Path(__file__).resolve().parents[1] / 'benchmark_web'
     # Ce qu'une page charge : gabarit, feuille de style et ses cinq polices, script de confidentialité
-    FILES = {'/favicon.ico': 'static/favicon.ico', '/bench-x.svg': 'static/bench-x.svg',
+    FILES = {'/evaly.ico': 'static/favicon.ico', '/evaly.svg': 'static/evaly.svg',
              '/preparation/style.css': 'static/preparation.css', '/preparation/privacy.js': 'privacy.js',
              **{'/preparation/fonts/' + name: 'static/fonts/' + name for name in (
                  'MonaSans.woff2', 'HubotSans.woff2', 'HostGrotesk.woff2', 'GeistMono.woff2', 'Silkscreen.woff2')}}

@@ -33,7 +33,7 @@ _ROUTE_MARKERS = {'<id>': r'[A-Za-z0-9_-]{1,128}', '<n>': r'[1-9][0-9]*', '<poli
 
 # Motifs servis, essayés dans l'ordre : un chemin absent de cette liste se journalise `<inconnu>`
 _ROUTE_PATTERNS = (
-    '/', '/healthz', '/readyz', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
+    '/', '/healthz', '/readyz', '/evaly.svg', '/evaly.ico', '/bench-x.svg', '/favicon.ico', '/robots.txt', '/sitemap.xml',
     '/evaluations-externes', '/evaluations-externes/aide', '/evaluations-externes/aide/<id>',
     '/evaluations-externes/<id>',
     '/epreuves', '/epreuves/aide', '/epreuves/aide/resultat/<id>',
@@ -65,7 +65,10 @@ _ROUTES = tuple((re.compile(re.sub('<[a-z]+>', lambda marker: _ROUTE_MARKERS[mar
                 for pattern in _ROUTE_PATTERNS)
 # Ressources invariantes : servies par ETag, jamais sous `no-store` ; les licences OFL accompagnent leurs polices
 _RESOURCES = {
-    '/bench-x.svg': (Path(__file__).with_name('static') / 'bench-x.svg', 'image/svg+xml'),
+    '/evaly.svg': (Path(__file__).with_name('static') / 'evaly.svg', 'image/svg+xml'),
+    '/evaly.ico': (Path(__file__).with_name('static') / 'favicon.ico', 'image/vnd.microsoft.icon'),
+    # Anciennes adresses : les navigateurs demandent /favicon.ico seuls, des liens existants visent /bench-x.svg
+    '/bench-x.svg': (Path(__file__).with_name('static') / 'evaly.svg', 'image/svg+xml'),
     '/favicon.ico': (Path(__file__).with_name('static') / 'favicon.ico', 'image/vnd.microsoft.icon'),
     '/preparation/privacy.js': (Path(__file__).with_name('privacy.js'), 'text/javascript; charset=utf-8'),
     '/preparation/style.css': (views.STYLESHEET_PATH, 'text/css; charset=utf-8'),

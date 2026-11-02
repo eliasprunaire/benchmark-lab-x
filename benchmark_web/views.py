@@ -43,7 +43,7 @@ PUBLIC_PAGES = {
     **{path: description for path, (_, description, _) in LEGAL_PAGES.items()},
 }
 # Menu principal, dans l'ordre de la maquette (A14) ; Benchmarks publics n'y figure plus et reste au pied de page (A12)
-MENU = (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/epreuves', 'Épreuves'), ('/preparation/data', 'Mes données'))
+MENU = (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données'), ('/epreuves', 'Épreuves'))
 # Piège à robots : `hidden` le retire du rendu et de l'arbre d'accessibilité même sans feuille de style
 HONEYPOT = ('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>'
             '<input id="website" name="website" autocomplete="off" tabindex="-1"></div>')
@@ -1051,8 +1051,9 @@ def render_cases(value, csrf):
                   'Des copies peuvent rester dans les sauvegardes du serveur.</p>')
         corps += '<p>' + lien('/preparation/catalogue', 'Exemples validés et benchmarks') + '</p>'
     else:
-        corps = ('<div class="ge-vide"><p><strong>Aucun cas d’usage dans ce navigateur.</strong></p>'
-                 '<p class="petit">Décrivez un cas d’usage pour commencer, dès que la préparation est disponible.</p></div>'
+        corps = ('<div class="ge-vide"><p><strong>Aucun cas en cours.</strong></p>'
+                 '<p class="petit">Décrivez un cas d’usage pour commencer, dès que la préparation est disponible.'
+                 + (' Les copies de vos anciens cas restent lisibles plus bas, dans l’historique local.' if privacy else '') + '</p></div>'
                  + tiroir('Vous en aviez déjà un ?', '<p>Vos cas d’usage sont liés au navigateur où vous les avez créés. Ouvrez Evaly dans ce navigateur-là. '
                           'Si ses cookies ont été effacés, les cas ne peuvent plus être retrouvés.</p>'))
     bande = ('<div class="ge-bande">' + ic('cle') + '<p>La clé OpenRouter paie les appels aux modèles.</p>'
@@ -1060,7 +1061,7 @@ def render_cases(value, csrf):
     # L'historique local suit la bande quand les contrôles de confidentialité sont servis
     historique = historique_local() + liens_donnees() if privacy else ''
     return ('<section class="compo-zone"><div class="cadre">' + carte + creation + '</div></section>'
-            '<div class="cadre ge-pile ge-mes-cas">' + marqueur_activite(privacy, csrf) + '<section class="ge-pile" aria-labelledby="t-liste"><h2 id="t-liste">Vos cas d’usage, dans ce navigateur</h2>'
+            '<div class="cadre ge-pile ge-mes-cas">' + marqueur_activite(privacy, csrf) + '<section class="ge-pile" aria-labelledby="t-liste"><h2 id="t-liste">Vos cas d’usage en cours</h2>'
             + corps + '</section>' + bande + historique + '</div>')
 
 

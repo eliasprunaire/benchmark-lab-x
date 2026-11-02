@@ -23,7 +23,10 @@ class BrandingTests(unittest.TestCase):
             try:
                 for method in ('GET', 'HEAD'):
                     for path, media, filename in (
-                            ('/bench-x.svg', 'image/svg+xml', 'bench-x.svg'),
+                            ('/evaly.svg', 'image/svg+xml', 'evaly.svg'),
+                            ('/evaly.ico', 'image/vnd.microsoft.icon', 'favicon.ico'),
+                            # Anciennes adresses gardées pour les liens et favoris existants
+                            ('/bench-x.svg', 'image/svg+xml', 'evaly.svg'),
                             ('/favicon.ico', 'image/vnd.microsoft.icon', 'favicon.ico')):
                         with self.subTest(method=method, path=path):
                             connection = HTTPConnection(*server.server_address, timeout=2)

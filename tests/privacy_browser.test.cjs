@@ -343,9 +343,9 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
       res.setHeader('Content-Type', 'text/css'); res.end(readFileSync('benchmark_web/static/preparation.css'));
     } else if (/^\/preparation\/fonts\/[A-Za-z]+\.woff2$/.test(url.pathname)) {
       res.setHeader('Content-Type', 'font/woff2'); res.end(readFileSync('benchmark_web/static/fonts/' + url.pathname.split('/').pop()));
-    } else if (url.pathname === '/bench-x.svg' || url.pathname === '/favicon.ico') {
+    } else if (url.pathname === '/evaly.svg' || url.pathname === '/evaly.ico') {
       res.setHeader('Content-Type', url.pathname.endsWith('.svg') ? 'image/svg+xml' : 'image/vnd.microsoft.icon');
-      res.end(readFileSync('benchmark_web/static' + url.pathname));
+      res.end(readFileSync('benchmark_web/static/' + (url.pathname.endsWith('.svg') ? 'evaly.svg' : 'favicon.ico')));
     } else if (url.pathname === '/preparation/privacy.js') {
       try { res.setHeader('Content-Type', 'text/javascript'); res.end(readFileSync('benchmark_web/privacy.js')); }
       catch {res.writeHead(404).end();}
@@ -446,11 +446,37 @@ test('public local history renders inert text and exports a complete case after 
     assert.equal(await page.locator('[data-privacy-list] img, [data-privacy-list] script').count(), 0);
     assert.match(await page.locator('[data-privacy-list]').textContent(), /Réponse intégrale/);
     assert.match(await page.locator('[data-privacy-list]').textContent(), /Passage vérifié/);
+    // Fiche : le besoin en titre, la version et le verdict compté sur la face, le nom Benchmark dans le corps
+    const fiche = page.locator('[data-privacy-list] > details.hist-fiche');
+    assert.equal(await fiche.locator(':scope > summary .hist-titre').textContent(), record.need);
+    assert.match(await fiche.locator(':scope > summary .hist-meta').textContent(), /Version 1 · 1 benchmark/);
+    assert.match(await fiche.locator(':scope > summary').textContent(), /Copie en lecture seule/);
+    assert.equal(await fiche.locator(':scope > summary .mot[data-ton="ok"]').count(), 1);
     await page.locator('[data-privacy-list] > details > summary').click();
+    assert.match(await fiche.textContent(), /Benchmark c1/);
+    assert.doesNotMatch(await fiche.textContent(), /Comparaison|Vérification de l’exemple/);
     const download = page.waitForEvent('download');
     await page.getByRole('button', {name: 'Télécharger ce cas (JSON)'}).click();
+    assert.equal((await download).suggestedFilename(), 'evaly-d1.json');
     const file = await (await download).path();
     assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), record);
+    assert.equal(await page.getByRole('searchbox', {name: 'Filtrer les fiches'}).count(), 0, 'pas de filtre sous sept fiches');
+    // Au-delà de six fiches : les six premières, un filtre sans accents et un bouton pour tout afficher
+    for (let i = 2; i <= 7; i++) {
+      fixture(1, 'Cas numéro ' + i, {dossier_id: 'd' + i}); manifest.dossier_id = 'd' + i;
+      await page.evaluate(id => historyStore.archive(id, 1), 'd' + i);
+    }
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.waitForFunction(() => document.querySelectorAll('[data-privacy-list] > details').length === 7);
+    const visibles = () => page.locator('[data-privacy-list] > details:visible').count();
+    assert.equal(await visibles(), 6);
+    const filtre = page.getByRole('searchbox', {name: 'Filtrer les fiches'});
+    await filtre.fill('NUMERO 7');
+    assert.equal(await visibles(), 1);
+    assert.equal(await page.locator('[data-privacy-list] > details:visible .hist-titre').textContent(), 'Cas numéro 7');
+    await filtre.fill('');
+    await page.getByRole('button', {name: 'Afficher toutes les fiches (7)'}).click();
+    assert.equal(await visibles(), 7);
     await page.getByRole('button', {name: 'Effacer', exact: true}).click();
     await page.waitForFunction(() => !document.querySelector('[data-privacy-list]').textContent);
     assert.equal((await page.evaluate(() => historyStore.state())).enabled, false);
@@ -2438,11 +2464,14 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
             // Visible et entier en largeur ; un champ haut n'est montré qu'en partie, comme le fait le navigateur
             entier: r.width > 0 && r.left >= -1 && r.right <= innerWidth + 1 && r.bottom > 0 && r.top < innerHeight - 16,
             devant: !!dessus && (el === dessus || el.contains(dessus) || dessus.contains(el)),
-            contour: style.outlineStyle !== 'none' || style.boxShadow !== 'none'};
+            contour: style.outlineStyle !== 'none' || style.boxShadow !== 'none',
+            // Le champ unique montre son focus par son cadre animé, sans contour bleu autour
+            sansBleu: !(el.matches('textarea') && el.closest('.compo-champ')) || style.outlineStyle === 'none'};
         }, cible);
         assert.ok(arret.entier, 'focus hors de l’écran : ' + arret.nom);
         assert.ok(arret.devant, 'focus masqué : ' + arret.nom);
         assert.ok(arret.contour, 'focus sans contour : ' + arret.nom);
+        assert.ok(arret.sansBleu, 'contour bleu autour du champ : ' + arret.nom);
         if (arret.cible) return;
       }
       assert.fail('cible jamais atteinte au clavier : ' + cible);
@@ -2623,6 +2652,9 @@ test('public and private pages retain legal information and exact release identi
       else assert.equal(text.includes('v0.2.0'), false);
       assert.equal(/v0.1.0|Version du site|Aucune ressource externe chargée|sha256/.test(text), false);
       assert.equal(await page.locator('.nav a[aria-current="page"]').textContent(), 'Accueil');
+      // Accueil : le lien de retour aux cas se place sous le bouton principal
+      const [cta, retour] = await Promise.all(['.une-bas .actions .btn', '.une-bas .actions .lien'].map(s => page.locator(s).boundingBox()));
+      assert.ok(retour.y >= cta.y + cta.height, 'actions de l’accueil l’une sous l’autre');
       assert.equal(await page.locator('a[href="/index.html"]').count(), 0);
       assert.ok(text.includes('Un seul manquement suffit'));
       assert.equal(text.includes('Comparaisons publiées'), false);

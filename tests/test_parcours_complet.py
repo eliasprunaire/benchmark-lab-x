@@ -438,6 +438,11 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(KEY, page.visible)
             # Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page ne compte sur elle
             self.assertNotIn('équipe Bench-X', ' '.join(n['text'] for n in page.nodes))
+            # Menu puis pied de page : Mes données avant Épreuves, un seul lien vers la saisie, logo image au pied
+            dehors = [n['text'].strip() for n in page.nodes if n['tag'] == 'a' and not n['main'] and not n['hidden'] and not n['details']]
+            self.assertEqual(['Accueil', 'Mes cas d’usage', 'Mes données', 'Épreuves'], dehors[2:6])
+            self.assertEqual(['Décrire un cas d’usage', 'Mes données', 'Épreuves', 'Benchmarks publics'], dehors[7:11])
+            self.assertTrue(any(n['tag'] == 'img' and n['attrs'].get('src') == '/evaly.svg' and not n['main'] for n in page.nodes))
             focus = [n for n in page.nodes if not n['hidden'] and not n['details']
                      and 'disabled' not in n['attrs'] and n['attrs'].get('type') != 'hidden'
                      and n['attrs'].get('tabindex') != '-1'
@@ -3528,7 +3533,10 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(b'Transformer des notes', raw)
             self.assertNotIn(b'Attendu fictif', raw)
             empty, _, _ = self.request('/preparation', cookies=cookies)
-            self.assertIn('Aucun cas d’usage dans ce navigateur', empty.visible)
+            # Pas de cas en cours : la phrase ne contredit pas l'historique local affiché plus bas
+            self.assertIn('Aucun cas en cours.', empty.visible)
+            self.assertIn('Vos cas d’usage en cours', empty.visible)
+            self.assertNotIn('Aucun cas d’usage dans ce navigateur', empty.visible)
             self.assertFalse(any(n['tag'] == 'a' and n['attrs'].get('href') == dossier for n in empty.nodes))
         page, _, _ = self.request('/preparation')
         self.assertIn(dossier, [n['attrs'].get('href') for n in page.nodes])

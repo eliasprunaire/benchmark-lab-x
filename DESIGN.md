@@ -134,7 +134,7 @@ Trois rayons : 14 px (`--r`) pour les cartes, les états et les tableaux ; 12 px
 
 Chaque composant HTML a sa fonction dans `benchmark_web/fragments.py`. Les noms de classe viennent de la feuille.
 
-- **Marque** (`.marque`) : EVAL en lettres grasses larges, suivi d'un carré jaune portant Y, incliné de 6 degrés. Le fichier `static/bench-x.svg` reprend le Y en carré jaune. Le nom de fichier reste, car il figure dans la liste blanche du serveur.
+- **Marque** (`.marque`) : EVAL en lettres grasses larges, suivi d'un carré jaune portant Y, incliné de 6 degrés. Le fichier `static/evaly.svg` reprend le Y en carré jaune, avec un nœud noir à la jonction des branches. Il sert d'icône et de logo du pied de page. Le serveur le sert aussi à l'ancienne adresse `/bench-x.svg`.
 - **Piste** (`piste`) : cinq stations avec leur numéro et leur nom ; la courante porte le disque d'essai, les franchies portent une coche.
 - **Tête** (`tete`) : piste, `h1`, puces de contexte (`puce`, `ruban`).
 - **État** (`etat`) : un seul encadré par écran, réservé à l'état principal. Pastille, mot de statut (`mot`), titre `h2`, une phrase, actions. Une note ordinaire est un paragraphe.

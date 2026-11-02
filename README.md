@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="benchmark_web/static/bench-x.svg" width="96" height="96" alt="Logo Evaly : un Y dans un carré jaune">
+  <img src="benchmark_web/static/evaly.svg" width="96" height="96" alt="Logo Evaly : un Y dans un carré jaune">
   <h1 id="evaly">Evaly</h1>
   <p><strong>par Cybrel · né au Lab-X</strong></p>
   <p>Choisir une configuration de modèle d’IA à partir d’une tâche précise, de résultats observés, de preuves consultables et de leur coût.</p>
