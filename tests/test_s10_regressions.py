@@ -163,7 +163,7 @@ class S10ProofTests(unittest.TestCase):
         self.assertFalse(any(tag == 'script' or any(k.startswith('on') for k in attrs)
                              for tag, attrs in parsed.tags))
         # Seul le logo du gabarit : la sortie du candidat reste du texte
-        self.assertEqual([], [attrs for tag, attrs in parsed.tags if tag == 'img' and attrs['src'] != '/bench-x.svg'])
+        self.assertEqual([], [attrs for tag, attrs in parsed.tags if tag == 'img' and attrs['src'] != '/evaly.svg'])
         self.assertTrue(detail['back_href'].endswith('#attempt-long'))
         self.assertEqual(query, detail['filter_scope'])
         self.assertTrue(any(tag == 'details' and attrs.get('class') == 'tiroir' and attrs.get('id', '').startswith('proof-') for tag, attrs in parsed.tags))

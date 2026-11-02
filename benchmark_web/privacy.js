@@ -230,10 +230,10 @@ function renderRecord(record, parent) {
       group.append(list);
     }
     pieces('Pièces', revision.pieces, group);
-    group.append(node('p', 'Vérification de l’exemple : ' + revision.qualification));
+    group.append(node('p', 'Contrôle de l’exemple : ' + revision.qualification));
   }
   for (const campaign of record.campaigns) {
-    const group = details('Comparaison ' + campaign.id, parent);
+    const group = details('Benchmark ' + campaign.id, parent);
     for (const model of campaign.models) {
       const cost = model.cost.amount === null ? 'Coût inconnu (' + model.cost.currency + ')'
         : model.cost.amount + ' ' + model.cost.currency;
@@ -243,6 +243,27 @@ function renderRecord(record, parent) {
     }
   }
 }
+// Face d'une fiche de l'historique : le besoin, la dernière version, les verdicts comptés ; rien ne s'y reprend
+function face(record) {
+  const summary = node('summary');
+  const titre = node('span', record.need || 'Cas ' + record.dossier_id); titre.className = 'hist-titre';
+  const count = record.campaigns.length;
+  const meta = node('span', 'Version ' + (record.revisions.at(-1)?.number ?? 0) + ' · ' + (count ? count + ' benchmark' + (count > 1 ? 's' : '') : 'aucun benchmark'));
+  meta.className = 'hist-meta';
+  const mots = node('span'); mots.className = 'mots';
+  const verdicts = record.campaigns.flatMap(campaign => campaign.models.map(model => model.verdict));
+  for (const [verdict, ton, un, plusieurs] of [['SATISFAIT', 'ok', ' satisfait', ' satisfaits'],
+    ['NE SATISFAIT PAS', 'ko', ' non satisfait', ' non satisfaits'], ['INDETERMINE', 'inc', ' indéterminé', ' indéterminés']]) {
+    const n = verdicts.filter(value => value === verdict).length;
+    if (!n) continue;
+    const mot = node('span', n + (n > 1 ? plusieurs : un)); mot.className = 'mot'; mot.dataset.ton = ton;
+    mots.append(mot);
+  }
+  const copie = node('span', 'Copie en lecture seule'); copie.className = 'hist-copie';
+  summary.append(titre, meta, mots, copie);
+  return summary;
+}
+const sansAccents = value => value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 async function post(url, body) {
   const response = await fetch(url, {method: 'POST', credentials: 'same-origin', cache: 'no-store',
     redirect: 'error', keepalive: true, headers: {'Content-Type': 'application/json', Accept: 'application/json'},
@@ -454,7 +475,9 @@ export async function mountPrivacy(root = document) {
     };
     if (element.hasAttribute('data-privacy-history')) {
       const list = element.querySelector('[data-privacy-list]');
-      let display = 0;
+      // Six fiches visibles d'abord ; le choix d'afficher les autres survit aux mises à jour de la liste
+      const PREMIERES = 6;
+      let display = 0, toutes = false;
       const update = async () => {
         const serial = ++display;
         await connect();
@@ -468,24 +491,47 @@ export async function mountPrivacy(root = document) {
           : 'Historique local effacé et en pause. Activez-le de nouveau pour garder de nouvelles copies.';
         element.querySelector('[data-privacy-action="enable"]').hidden = state.enabled;
         element.querySelector('[data-privacy-action="clear"]').hidden = !store;
+        list.classList.toggle('hist-liste', records.length > 0);
+        let filtre, tout;
+        if (records.length > PREMIERES) {
+          const outils = node('div'); outils.className = 'hist-outils';
+          filtre = node('input'); filtre.type = 'search'; filtre.placeholder = 'Filtrer les fiches';
+          filtre.setAttribute('aria-label', 'Filtrer les fiches');
+          tout = node('button', 'Afficher toutes les fiches (' + records.length + ')'); tout.type = 'button'; tout.className = 'btn btn-sec';
+          outils.append(filtre, tout); list.append(outils);
+        }
+        const fiches = [];
+        const montrer = () => {
+          const cherche = filtre ? sansAccents(filtre.value.trim()) : '';
+          fiches.forEach(([entry, texte], index) => {
+            entry.hidden = cherche ? !texte.includes(cherche) : !toutes && index >= PREMIERES;
+          });
+          if (tout) tout.hidden = toutes || !!cherche;
+        };
         for (const record of records) {
-          const entry = details(record.need || 'Cas ' + record.dossier_id, list);
+          const entry = node('details'); entry.className = 'hist-fiche';
+          entry.append(face(record)); list.append(entry);
+          fiches.push([entry, sansAccents(record.need || '')]);
+          const corps = node('div'); corps.className = 'hist-corps';
           const actions = node('div'); actions.className = 'actions';
-          const download = node('button', 'Télécharger ce cas (JSON)'); download.type = 'button';
+          const download = node('button', 'Télécharger ce cas (JSON)'); download.type = 'button'; download.className = 'btn btn-sec';
           download.addEventListener('click', () => run(download, async () => {
             const current = await store.get(record.dossier_id);
             if (!current) throw new Error('Cette copie a été effacée dans un autre onglet.');
             const url = URL.createObjectURL(new Blob([JSON.stringify(current, null, 2)], {type: 'application/json'}));
             const link = node('a');
             link.href = url;
-            link.download = 'bench-x-' + record.dossier_id.replace(/[^a-z0-9_-]/gi, '_') + '.json';
+            link.download = 'evaly-' + record.dossier_id.replace(/[^a-z0-9_-]/gi, '_') + '.json';
             link.click();
             setTimeout(() => URL.revokeObjectURL(url), 0);
           }));
-          const remove = node('button', 'Effacer et ne plus garder ce cas'); remove.type = 'button'; remove.className = 'sec';
+          const remove = node('button', 'Effacer et ne plus garder ce cas'); remove.type = 'button'; remove.className = 'btn btn-sec';
           remove.addEventListener('click', () => run(remove, async () => {await store.remove(record.dossier_id); await changed();}));
-          actions.append(download, remove); entry.append(actions); renderRecord(record, entry);
+          actions.append(download, remove); corps.append(actions); entry.append(corps); renderRecord(record, corps);
         }
+        filtre?.addEventListener('input', montrer);
+        tout?.addEventListener('click', () => {toutes = true; montrer();});
+        montrer();
       };
       refreshers.push(update);
       for (const [action, operation] of [['clear', () => store?.clear()],

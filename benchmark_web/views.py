@@ -43,7 +43,7 @@ PUBLIC_PAGES = {
     **{path: description for path, (_, description, _) in LEGAL_PAGES.items()},
 }
 # Menu principal, dans l'ordre de la maquette (A14) ; Benchmarks publics n'y figure plus et reste au pied de page (A12)
-MENU = (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/epreuves', 'Épreuves'), ('/preparation/data', 'Mes données'))
+MENU = (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données'), ('/epreuves', 'Épreuves'))
 # Piège à robots : `hidden` le retire du rendu et de l'arbre d'accessibilité même sans feuille de style
 HONEYPOT = ('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>'
             '<input id="website" name="website" autocomplete="off" tabindex="-1"></div>')
@@ -489,13 +489,15 @@ def render_editorial(value):
             for option in proposed + ([criteria[key]] if active_unavailable(key) and criteria[key] not in proposed else []):
                 shown = str(EDITORIAL_STATUS.get(option, option) if key == 'qualification' else option)
                 options.append((option, shown + (' (indisponible)' if active_unavailable(key) and option not in proposed else '')))
+            if len(options) == 1:
+                continue  # seule la valeur « Tous » : le groupe ne filtre rien
             selection += segments_liens(label, 'fe-' + key, options, criteria.get(key, ''),
                                         lambda option, key=key: avec_critere('/epreuves', criteria, **{key: option}))
         selection += ''.join('<input type="hidden" name="' + key + '" value="' + text(criteria[key]) + '">'
                              for key, _ in EDITORIAL_FILTERS if criteria.get(key))
         actifs = [(label, criteria[key]) for key, label in EDITORIAL_FILTERS if criteria.get(key)]
         filtres = tiroir('Filtres', '<div class="filtres-liens">' + selection + '</div>', ouvert=True,
-                         resume=str(len(actifs)) + (' actifs' if len(actifs) > 1 else ' actif') if actifs else 'aucun')
+                         resume=str(len(actifs)) + (' actifs' if len(actifs) > 1 else ' actif') if actifs else 'aucun') if 'segments' in selection else ''
         formulaire = ('<form class="g-recherche" method="get" action="/epreuves" role="search"><div class="g-ligne">'
                       + champ('Rechercher une épreuve', 'q', zone=False, type_='search', ident='q', maxlength=200, valeur=criteria.get('q', ''))
                       + bouton('Rechercher', icone='loupe') + '</div>' + filtres + (LIEN_AIDE if SEMANTIC_HELP_ENABLED else '') + '</form>')
@@ -1016,7 +1018,7 @@ def disponibilite_cas(raison):
     """Carte d'état et raison écrite sous le champ quand l'envoi est refusé : (HTML de la carte, bloque)"""
     actualiser = btn('/preparation', 'Actualiser', sec=True, icone=None, avant='actualiser')
     return {
-        'access': (etat('vig', 'Clé requise', 'Ajoutez votre clé OpenRouter', 'Ajoutez votre clé OpenRouter pour préparer un exemple.',
+        'access': (etat('vig', 'Clé requise', 'Ajoutez votre clé OpenRouter', 'Sans clé, l’assistant ne peut pas préparer d’exemple.',
                         btn('/preparation/access', 'Ajouter ma clé OpenRouter', sec=True, avant='cle')),
                    'Ajoutez d’abord votre clé OpenRouter.'),
         'restore': (etat('ko', 'Indisponible', 'Service momentanément indisponible', 'Réessayez plus tard. Vos cas restent en place.', actualiser), True),
@@ -1049,8 +1051,9 @@ def render_cases(value, csrf):
                   'Des copies peuvent rester dans les sauvegardes du serveur.</p>')
         corps += '<p>' + lien('/preparation/catalogue', 'Exemples validés et benchmarks') + '</p>'
     else:
-        corps = ('<div class="ge-vide"><p><strong>Aucun cas d’usage dans ce navigateur.</strong></p>'
-                 '<p class="petit">Décrivez un cas d’usage pour commencer, dès que la préparation est disponible.</p></div>'
+        corps = ('<div class="ge-vide"><p><strong>Aucun cas en cours.</strong></p>'
+                 '<p class="petit">Décrivez un cas d’usage pour commencer, dès que la préparation est disponible.'
+                 + (' Les copies de vos anciens cas restent lisibles plus bas, dans l’historique local.' if privacy else '') + '</p></div>'
                  + tiroir('Vous en aviez déjà un ?', '<p>Vos cas d’usage sont liés au navigateur où vous les avez créés. Ouvrez Evaly dans ce navigateur-là. '
                           'Si ses cookies ont été effacés, les cas ne peuvent plus être retrouvés.</p>'))
     bande = ('<div class="ge-bande">' + ic('cle') + '<p>La clé OpenRouter paie les appels aux modèles.</p>'
@@ -1058,7 +1061,7 @@ def render_cases(value, csrf):
     # L'historique local suit la bande quand les contrôles de confidentialité sont servis
     historique = historique_local() + liens_donnees() if privacy else ''
     return ('<section class="compo-zone"><div class="cadre">' + carte + creation + '</div></section>'
-            '<div class="cadre ge-pile ge-mes-cas">' + marqueur_activite(privacy, csrf) + '<section class="ge-pile" aria-labelledby="t-liste"><h2 id="t-liste">Vos cas d’usage, dans ce navigateur</h2>'
+            '<div class="cadre ge-pile ge-mes-cas">' + marqueur_activite(privacy, csrf) + '<section class="ge-pile" aria-labelledby="t-liste"><h2 id="t-liste">Vos cas d’usage en cours</h2>'
             + corps + '</section>' + bande + historique + '</div>')
 
 

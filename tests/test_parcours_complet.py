@@ -104,8 +104,10 @@ class Page(HTMLParser):
 
     def segments(self, cle):
         """Valeurs d'un filtre en liens, dans l'ordre du document : la valeur de `cle` dans l'adresse de chaque lien"""
-        debut = next(index for index, node in enumerate(self.nodes) if node['attrs'].get('id') == 'fe-' + cle)
+        debut = next((index for index, node in enumerate(self.nodes) if node['attrs'].get('id') == 'fe-' + cle), None)
         valeurs = []
+        if debut is None:  # groupe masqué : sa seule valeur était « Tous »
+            return valeurs
         for node in self.nodes[debut + 1:]:
             if node['tag'] == 'a':
                 valeurs.append(parse_qs(urlsplit(node['attrs']['href']).query).get(cle, [''])[0])
@@ -436,6 +438,11 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(KEY, page.visible)
             # Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page ne compte sur elle
             self.assertNotIn('équipe Bench-X', ' '.join(n['text'] for n in page.nodes))
+            # Menu puis pied de page : Mes données avant Épreuves, un seul lien vers la saisie, logo image au pied
+            dehors = [n['text'].strip() for n in page.nodes if n['tag'] == 'a' and not n['main'] and not n['hidden'] and not n['details']]
+            self.assertEqual(['Accueil', 'Mes cas d’usage', 'Mes données', 'Épreuves'], dehors[2:6])
+            self.assertEqual(['Décrire un cas d’usage', 'Mes données', 'Épreuves', 'Benchmarks publics'], dehors[7:11])
+            self.assertTrue(any(n['tag'] == 'img' and n['attrs'].get('src') == '/evaly.svg' and not n['main'] for n in page.nodes))
             focus = [n for n in page.nodes if not n['hidden'] and not n['details']
                      and 'disabled' not in n['attrs'] and n['attrs'].get('type') != 'hidden'
                      and n['attrs'].get('tabindex') != '-1'
@@ -711,7 +718,8 @@ class ParcoursComplet(unittest.TestCase):
             self.assertTrue(any(n['attrs'].get('aria-label') == 'Critères actifs' for n in empty_search.nodes))
             self.assertEqual('/epreuves', empty_search.link('Effacer la recherche et les filtres'))
             self.assertEqual('/preparation', empty_search.link('Décrire mon cas d’usage'))
-            self.assertEqual([], empty_search.segments('langue')[1:])
+            # Un groupe dont la seule valeur est « Tous » ne filtre rien : il n'est pas affiché
+            self.assertFalse(any(n['attrs'].get('id', '').startswith('fe-') for n in empty_search.nodes))
             self.assertEqual(['/epreuves'], sorted({n['attrs']['href'] for n in empty.nodes if n['attrs'].get('aria-current') == 'page'}))
             self.assertEqual(raw, self.request('/epreuves', cookies=SimpleCookie('benchmark_session=invalid'))[2])
             leaked, _, leaked_raw = self.request('/epreuves?besoin=prive', status=400)
@@ -3188,7 +3196,8 @@ class ParcoursComplet(unittest.TestCase):
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
         # Sans clé, la page propose d'abord de l'enregistrer : rien d'autre ne ferme la préparation
-        self.assertIn('Ajoutez votre clé OpenRouter pour préparer un exemple.', page.visible)
+        self.assertIn('Sans clé, l’assistant ne peut pas préparer d’exemple.', page.visible)
+        self.assertEqual(1, page.visible.count('Ajoutez votre clé OpenRouter'))
         key_form = self.formulaire_cle(page)
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
@@ -3524,7 +3533,10 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(b'Transformer des notes', raw)
             self.assertNotIn(b'Attendu fictif', raw)
             empty, _, _ = self.request('/preparation', cookies=cookies)
-            self.assertIn('Aucun cas d’usage dans ce navigateur', empty.visible)
+            # Pas de cas en cours : la phrase ne contredit pas l'historique local affiché plus bas
+            self.assertIn('Aucun cas en cours.', empty.visible)
+            self.assertIn('Vos cas d’usage en cours', empty.visible)
+            self.assertNotIn('Aucun cas d’usage dans ce navigateur', empty.visible)
             self.assertFalse(any(n['tag'] == 'a' and n['attrs'].get('href') == dossier for n in empty.nodes))
         page, _, _ = self.request('/preparation')
         self.assertIn(dossier, [n['attrs'].get('href') for n in page.nodes])
@@ -3561,7 +3573,7 @@ class ParcoursComplet(unittest.TestCase):
         disconnect = access.form('/disconnect')
         self.request(disconnect['action'], disconnect['fields'], status=303)
         page, _, _ = self.request('/preparation')
-        self.assertIn('Ajoutez votre clé OpenRouter pour préparer un exemple.', page.visible)
+        self.assertIn('Sans clé, l’assistant ne peut pas préparer d’exemple.', page.visible)
         self.assertNotIn('Consulter cette page ne lance aucun appel', page.visible)
         self.assertNotIn('fermées pour le moment', page.visible)
         self.assertTrue(all('disabled' in n['attrs'] for n in page.form('/dossiers')['nodes']
