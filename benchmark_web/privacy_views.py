@@ -37,7 +37,7 @@ def privacy_form(action, csrf, url, fields, body, *, disabled=False, classe=None
     return form(csrf, url, fields, content, classe=classe).replace('<form ', '<form data-privacy-post="' + action + '" ', 1)
 
 
-# ——— Mes données et historique local ———
+# ——— Mes cas d'usage (/preparation/data) et historique local ———
 def historique_local():
     """Section « Historique local de vos cas » : `privacy.js` remplit le statut et la liste, puis montre les boutons utiles"""
     return ('<section class="carte ge-pile" data-privacy-history aria-labelledby="t-hist"><h2 id="t-hist">Historique local de vos cas</h2>'
@@ -52,7 +52,7 @@ def historique_local():
 
 
 def liens_donnees(*, cas=False):
-    return ('<div class="actions">' + (lien('/preparation', 'Mes cas d’usage et ma clé') if cas else '')
+    return ('<div class="actions">' + (lien('/preparation', 'Mes cas en cours et ma clé') if cas else '')
             + lien('/preparation/contributions', 'Mes contributions') + lien('/confidentialite', 'Confidentialité') + '</div>')
 
 
@@ -61,10 +61,11 @@ def render_privacy_page(value, csrf=''):
                     '<p>Evaly efface seul ce qui ne sert plus. Vous n’avez rien à faire.</p>'
                     '<ul class="liste-faits"><li><b>Un cas d’usage</b> est effacé après 7 jours sans activité.</li>'
                     '<li><b>Votre clé OpenRouter</b> est effacée après 30 jours sans activité.</li></ul>'
-                    '<p>Deux jours avant l’effacement d’un cas, Mes cas d’usage affiche « Bientôt effacé » sur sa carte.</p>'
+                    '<p>Deux jours avant l’effacement d’un cas, la page Benchmark affiche « Bientôt effacé » sur sa carte.</p>'
                     '<p class="petit">Pour supprimer un cas d’usage avant ce délai : bouton rouge « Supprimer ce cas d’usage » dans '
-                    '<a href="/preparation">Mes cas d’usage</a>. Des copies peuvent rester dans les sauvegardes du serveur.</p></section>')
-    return 'Mes données', '<div class="ge-pile">' + conservation + historique_local() + liens_donnees(cas=True) + '</div>'
+                    '<a href="/preparation">Benchmark</a>. Des copies peuvent rester dans les sauvegardes du serveur.</p></section>')
+    # Page nommée d'après les copies : elles passent avant les règles de conservation
+    return 'Mes cas d’usage', '<div class="ge-pile">' + historique_local() + conservation + liens_donnees(cas=True) + '</div>'
 
 
 # ——— Mes cas d'usage : activité, cartes, alerte d'effacement ———
@@ -131,7 +132,7 @@ def render_delete_confirmation(value, csrf):
              '<li>Des copies peuvent rester dans les sauvegardes du serveur.</li>'
              '<li>Vous ne pourrez pas retrouver ce cas d’usage.</li></ul>'
              '<noscript><p class="petit">Sans JavaScript, seule la suppression sur le serveur est demandée, contribution comprise. '
-             'Pour effacer aussi la copie gardée dans ce navigateur, activez JavaScript puis passez par Mes données.</p></noscript>'
+             'Pour effacer aussi la copie gardée dans ce navigateur, activez JavaScript puis passez par Mes cas d’usage.</p></noscript>'
              '<p class="petit" role="status" data-privacy-status></p>'
              '<div class="actions"><button class="btn btn-danger" type="submit">' + ic('croix') + 'Oui, supprimer définitivement</button>'
              + '<span class="annuler">' + lien(retour, 'Annuler et garder ce cas', 'retour') + '</span>'
@@ -144,7 +145,7 @@ def render_delete_confirmation(value, csrf):
 def render_deleted():
     """Bandeau de Mes cas d'usage après une suppression sans JavaScript"""
     return etat('ok', 'Supprimé', 'Le cas d’usage a été supprimé',
-                'La suppression sur le serveur est demandée. Les copies gardées dans ce navigateur restent : effacez-les dans Mes données.')
+                'La suppression sur le serveur est demandée. Les copies gardées dans ce navigateur restent : effacez-les dans Mes cas d’usage.')
 
 
 def render_privacy_controls(value, csrf, contribution='', path='/preparation'):
@@ -195,7 +196,7 @@ def render_contribution(value, csrf):
                   '<p>Elle active aussi l’historique local : ce navigateur garde une copie complète de chaque cas ouvert, '
                   'besoin, messages et versions compris. L’historique local a besoin de JavaScript ; sans lui, seule la contribution est enregistrée.</p>'
                   '<p>Décocher arrête la contribution. L’historique continue : mettez-le en pause ou effacez-le dans '
-                  '<a href="/preparation/data">Mes données</a>. Votre choix ne change rien à votre accès. '
+                  '<a href="/preparation/data">Mes cas d’usage</a>. Votre choix ne change rien à votre accès. '
                   '<a href="/confidentialite">Politique de confidentialité</a>.</p>')
     corps = ('<fieldset' + arret + '><legend class="cache">Votre choix de partage</legend>'
              '<p class="petit">Evaly le conserve 6 mois pour améliorer le service, sans le publier. Ce navigateur active aussi son historique local.</p>'
@@ -242,8 +243,8 @@ def render_contributions(value):
                       '<p>Vous pouvez retirer votre consentement sans enregistrer de nouveau votre clé OpenRouter : ce navigateur garde un accès séparé, '
                       'réservé à vos contributions.</p><p>Retirer un consentement arrête seulement la contribution concernée. L’historique local continue, et '
                       'les copies déjà gardées dans ce navigateur restent. Pour le mettre en pause ou les effacer, allez dans '
-                      '<a href="/preparation/data">Mes données</a>.</p>')
-    return 'Mes contributions', '<div class="ge-pile">' + content + '<p>' + lien('/preparation/data', 'Mes données') + '</p></div>'
+                      '<a href="/preparation/data">Mes cas d’usage</a>.</p>')
+    return 'Mes contributions', '<div class="ge-pile">' + content + '<p>' + lien('/preparation/data', 'Mes cas d’usage') + '</p></div>'
 
 
 # ——— Ouverture de l'espace ———
@@ -252,7 +253,7 @@ def render_bootstrap(value):
     target = chemin_sur(demande)
     sur = target == demande
     phrase = ('Après l’ouverture, vous revenez à la page demandée.' if sur
-              else 'L’adresse de retour est refusée : vous arrivez sur Mes cas d’usage.')
+              else 'L’adresse de retour est refusée : vous arrivez sur la page Benchmark.')
     carte = etat('ok' if sur else 'vig', 'Adresse de retour sûre' if sur else 'Adresse de retour refusée',
                  'Ouverture de votre espace dans ce navigateur…', corps_html='<p role="status" data-privacy-status>' + text(phrase) + '</p>')
     decision = ('<form class="decision" method="post" action="/preparation/session/open">' + hidden('return_path', urlsplit(target).path)

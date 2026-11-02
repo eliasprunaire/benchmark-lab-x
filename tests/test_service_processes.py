@@ -345,7 +345,7 @@ class ServiceProcessesTests(unittest.TestCase):
 
     def test_refus_inconnu_reste_generique(self):
         generic = ('Vous ne pouvez pas faire cette action depuis ce navigateur. Rouvrez votre cas d’usage '
-                   'depuis Mes cas d’usage.')
+                   'depuis la page Benchmark.')
         with patch('socket.socket.connect', side_effect=AssertionError('No network')):
             responses = [denied_response(preparation.Denied(reason))
                          for reason in ('Motif', 'FUTUR')]

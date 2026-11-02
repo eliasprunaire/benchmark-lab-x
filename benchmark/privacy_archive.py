@@ -4,7 +4,7 @@ The S7 lifecycle and withdrawal journal belong to privacy; this module never
 initializes or migrates storage. Archive parts are zero-based and at most 1 MiB.
 """
 from calendar import monthrange
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import hmac
 import json
@@ -183,7 +183,8 @@ def _configuration(name, value):
     return dict(name=name, text=_text(encode(result)))
 
 
-def _campaigns(store, session_id, dossier_id, campaigns):
+def _campaigns(store, session_id, dossier_id, campaigns, *, dated=False):
+    """`dated` : la copie du propriétaire date chaque benchmark ; la contribution consentie n'en reçoit jamais la date"""
     from .acquisition import campaigns as c
     result: list[dict] = []
     for campaign in campaigns:
@@ -192,7 +193,8 @@ def _campaigns(store, session_id, dossier_id, campaigns):
         # Chaque modèle en attente relit la projection de sa campagne : une inspection par campagne (#543)
         with store.read_snapshot() as connection, c.inspections(connection):
             models = _models(store, connection, session_id, dossier_id, campaign)
-        result.append(dict(id=cid, models=models))
+        result.append(dict(id=cid, models=models, frozen_at=campaign['conditions']['frozen_at']) if dated
+                      else dict(id=cid, models=models))
     return result
 
 
@@ -237,7 +239,7 @@ def _owner_record(store, session_id, dossier_id, version):
                 and view['message']['message']]
     return dict(format='bench-x/history/v1', dossier_id=dossier_id, content_version=version,
         need=_text(current['payload']['request']), messages=messages, revisions=[_revision(view) for view in views],
-        campaigns=_campaigns(store, session_id, dossier_id, current.get('campaigns', [])))
+        campaigns=_campaigns(store, session_id, dossier_id, current.get('campaigns', []), dated=True))
 
 
 def _manifest(dossier_id, version, row):
@@ -601,11 +603,18 @@ def _check_revision(value):
     _pieces(value['pieces'])
 
 
-def _check_campaigns(values):
+def _check_campaigns(values, *, dated=False):
     if type(values) is not list:
         raise ValueError('Campagnes requises')
     for value in values:
-        _fields(value, ('id', 'models'), 'campaign')
+        # Copie du propriétaire : date facultative, absente des copies faites avant elle ; contribution : jamais
+        if dated and type(value) is dict and 'frozen_at' in value:
+            _fields(value, ('id', 'models', 'frozen_at'), 'campaign')
+            if (type(value['frozen_at']) is not str
+                    or datetime.fromisoformat(value['frozen_at'].replace('Z', '+00:00')).utcoffset() != timedelta(0)):
+                raise ValueError('Date de benchmark UTC requise')
+        else:
+            _fields(value, ('id', 'models'), 'campaign')
         identifier(value['id'])
         if type(value['models']) is not list:
             raise ValueError('Modèles requis')
@@ -652,7 +661,7 @@ def verify(store, connection):
                 numbers.append(revision['number'])
             if numbers != sorted(set(numbers)):
                 raise ValueError('Historique divergent')
-            _check_campaigns(value['campaigns'])
+            _check_campaigns(value['campaigns'], dated=True)
         managers = {}
         for identity, digest, created, expiry in connection.execute('SELECT * FROM s7_contribution_managers'):
             identifier(identity)

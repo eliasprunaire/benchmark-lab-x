@@ -267,7 +267,7 @@ class ParcoursComplet(unittest.TestCase):
                     except service.Gone:
                         result = {'status': 410, 'value': {
                             'error': 'Ce cas d’usage n’est plus disponible sur le serveur. '
-                                     'Vos copies gardées dans ce navigateur restent dans Mes données.',
+                                     'Vos copies gardées dans ce navigateur restent dans Mes cas d’usage.',
                             'error_code': 'DOSSIER_EXPIRED'}}
                     except (storage.ConflictError, storage.BudgetError):
                         result = {'status': 409, 'value': {'error': 'Action refusée : consultez le dossier courant.'}}
@@ -438,10 +438,10 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(KEY, page.visible)
             # Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page ne compte sur elle
             self.assertNotIn('équipe Bench-X', ' '.join(n['text'] for n in page.nodes))
-            # Menu puis pied de page : Mes données avant Épreuves, un seul lien vers la saisie, logo image au pied
+            # Menu puis pied de page : Benchmark pour la saisie et les cas en cours, Mes cas d'usage pour les copies gardées
             dehors = [n['text'].strip() for n in page.nodes if n['tag'] == 'a' and not n['main'] and not n['hidden'] and not n['details']]
-            self.assertEqual(['Accueil', 'Mes cas d’usage', 'Mes données', 'Épreuves'], dehors[2:6])
-            self.assertEqual(['Décrire un cas d’usage', 'Mes données', 'Épreuves', 'Benchmarks publics'], dehors[7:11])
+            self.assertEqual(['Accueil', 'Benchmark', 'Mes cas d’usage', 'Épreuves'], dehors[2:6])
+            self.assertEqual(['Décrire un cas d’usage', 'Mes cas d’usage', 'Épreuves', 'Benchmarks publics'], dehors[7:11])
             self.assertTrue(any(n['tag'] == 'img' and n['attrs'].get('src') == '/evaly.svg' and not n['main'] for n in page.nodes))
             focus = [n for n in page.nodes if not n['hidden'] and not n['details']
                      and 'disabled' not in n['attrs'] and n['attrs'].get('type') != 'hidden'
@@ -3540,6 +3540,8 @@ class ParcoursComplet(unittest.TestCase):
             self.assertFalse(any(n['tag'] == 'a' and n['attrs'].get('href') == dossier for n in empty.nodes))
         page, _, _ = self.request('/preparation')
         self.assertIn(dossier, [n['attrs'].get('href') for n in page.nodes])
+        # Les copies gardées par le navigateur ne s'affichent que dans Mes cas d'usage, jamais à côté des cas en cours
+        self.assertFalse(any('data-privacy-history' in n['attrs'] for n in page.nodes))
         self.assertIn('N’indiquez aucune donnée personnelle ni information confidentielle.',
                       next(n['text'] for n in page.nodes if n['tag'] == 'footer'))
         page, _, _ = self.request(configurations)
