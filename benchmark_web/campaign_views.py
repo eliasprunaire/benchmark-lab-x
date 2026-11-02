@@ -303,10 +303,10 @@ def render_evaluations(evaluations, dossier_url):
         content += '<section id="evaluation-' + text(eid) + '"><h5>' + text(label) + '</h5>'
         content += '<p class="note">' + text(reason) + '</p><details><summary>Identifiants de cette évaluation</summary><p>Cas ' + text(record['case_id'])
         content += ', modèle ' + text(record['configuration_id']) + ', évaluation ' + text(eid) + '.</p></details>'
-        content += '<p>Évaluation réalisée par ' + text(record['responsible']) + ' le ' + text(record['created_at']) + '.</p>'
+        content += '<p>Vérification réalisée par ' + text(record['responsible']) + ' le ' + text(record['created_at']) + '.</p>'
         previous = record['previous_evaluation_id']
         if previous:
-            content += '<details><summary>Évaluation précédente</summary><p>Cette évaluation corrige <a href="#evaluation-' + text(previous) + '">' + text(previous) + '</a>.</p></details>'
+            content += '<details><summary>Vérification précédente</summary><p>Cette vérification corrige <a href="#evaluation-' + text(previous) + '">' + text(previous) + '</a>.</p></details>'
         content += '<ul>'
         spec = record['qualification']['contract']['specification']
         for finding in record['findings']:
@@ -346,7 +346,7 @@ def render_evaluations(evaluations, dossier_url):
             content += ' (source : ' + text(cost['source'] if cost else 'INCONNU') + ').</p>'
         content += '<h6>Étalonnage du juge</h6>' + render_calibration(record['calibration'])
         content += '<p>Limites : ' + text('; '.join(record['limits'])) + '</p>'
-        for label, value in (('Méthode et vérification de l’exemple', record['qualification']),
+        for label, value in (('Méthode et contrôle de l’exemple', record['qualification']),
                              ('Déroulé de l’évaluation : consignes, pièces lues, désaccords et arbitrages', record['judgment']),
                              ('Liens connus entre les modèles qui ont préparé, évalué et répondu', record['configuration_links']),
                              ('Réglages demandés et constatés, avec leurs sources', {k: record[k] for k in ('requested_configuration', 'observed_configuration', 'observation_sources')}),
@@ -458,9 +458,9 @@ EXPENSE_GROUPS = {
     'judgment': ('Évaluation des réponses', 'Pour information, hors conseil.'),
     'probes': ('Vérification des modèles choisis', 'Pour information, hors conseil.'),
     'preparation': ('Préparation de l’exemple', 'Pour information, hors conseil. '
-                    'Elle sert aussi aux autres comparaisons de cet exemple.'),
+                    'Elle sert aussi aux autres benchmarks de cet exemple.'),
     'qualification': ('Contrôle de l’exemple', 'Pour information, hors conseil. '
-                      'Il sert aussi aux autres comparaisons de cet exemple.'),
+                      'Il sert aussi aux autres benchmarks de cet exemple.'),
 }
 EXPENSE_STATES = {'NOT_SENT': 'non envoyé', 'STOPPED': 'reprise arrêtée avant envoi',
                   'PROVIDER_INCIDENT': 'incident du fournisseur', 'AMBIGUOUS_EXPIRED': 'réponse incertaine, close sans relance',
@@ -483,10 +483,10 @@ def render_expenses(expenses, names):
         content += '<p>Au moins une dépense manque : le sous-total ne donne que la somme des dépenses connues, pas le coût complet.'
         awaiting = expenses.get('awaiting_judgment', 0)
         if awaiting:
-            content += text(' L’évaluation de ' + _plural(awaiting, 'réponse') + ' est à venir : son coût n’est pas encore connu.')
+            content += text(' La vérification de ' + _plural(awaiting, 'réponse') + ' est à venir : son coût n’est pas encore connu.')
         content += '</p>'
-    content += ('<p>Chaque envoi est compté une fois : réponses des modèles et leurs reprises, évaluation, '
-                'vérification des modèles retenus, préparation et contrôle de l’exemple jusqu’à cette version. '
+    content += ('<p>Chaque envoi est compté une fois : réponses des modèles et leurs reprises, vérification des réponses, '
+                'test des modèles ajoutés, préparation et contrôle de l’exemple jusqu’à cette version. '
                 'Les montants réservés et estimés sont indiqués à part et ne s’ajoutent pas.</p>')
     for group in expenses['groups']:
         title, note = EXPENSE_GROUPS[group['key']]
@@ -504,7 +504,7 @@ def render_expenses(expenses, names):
             if cost is not None:
                 details.append('source : ' + cost['source'])
             if item['state'] == 'STOPPED' and not item['recovery']:
-                details.append('non envoyé : la comparaison s’est arrêtée avant cet essai')
+                details.append('non envoyé : le benchmark s’est arrêté avant cet essai')
             elif item['state'] in EXPENSE_STATES:
                 details.append(EXPENSE_STATES[item['state']])
             if item['recovery'] and item['state'] != 'STOPPED':
@@ -651,8 +651,8 @@ def render_comparison(value):
         attempt = ', essai ' + str(item['repetition']) if item.get('repetition') else ''
         if item['state'] == 'NOT_SENT':
             return (prefix + model_name(configuration, names) + (attempt + ',' if attempt else '')
-                    + ' n’a pas été appelé : la comparaison s’est arrêtée '
-                    'avant cet essai. Il n’est pas évalué et n’entre pas dans la comparaison.')
+                    + ' n’a pas été appelé : le benchmark s’est arrêté '
+                    'avant cet essai. Il n’est pas vérifié et n’entre pas dans le benchmark.')
         count = item.get('recoveries', 0)
         # Une cause que le reçu n'établit pas est dite inconnue, jamais devinée
         details = [item.get('cause') or 'cause non établie par le reçu'] + (
@@ -662,7 +662,7 @@ def render_comparison(value):
         return (prefix + 'Aucune réponse exploitable pour ' + model_name(configuration, names)
                 + (' · ' + effort_label(configuration) if sum(c['model'] == configuration['model'] for c in panel.values()) > 1 else '')
                 + attempt + ' (' + ' ; '.join(details) + ')'
-                + '. ' + ('Cet essai' if attempt else 'Ce modèle') + ' n’est pas évalué et n’entre pas dans la comparaison.')
+                + '. ' + ('Cet essai' if attempt else 'Ce modèle') + ' n’est pas vérifié et n’entre pas dans le benchmark.')
     pending_reasons = list(dict.fromkeys('<li>' + mot('Sans réponse', 'vig') + '<div><p>' + text(pending_reason(item)) + '</p>'
                                          + receipt_observations(item) + '</div></li>'
                                          for item in value.get('pending_attempts', [])))
@@ -682,7 +682,7 @@ def render_comparison(value):
                           + (' Chaque verdict vaut pour un exemple ; les exemples ne s’additionnent pas.' if multiple_cases else '')
                           + (' Chaque essai est affiché séparément ; leur nombre ne mesure pas une fiabilité.' if repetitions > 1 else ''))
     if value.get('stop_reason') and (coverage['not_started'] or open_pending):
-        signals += signal(mot('Incomplet', 'vig'), 'Comparaison incomplète : les essais se sont arrêtés avant la fin. '
+        signals += signal(mot('Incomplet', 'vig'), 'Benchmark incomplet : les essais se sont arrêtés avant la fin. '
                           'Vous pouvez lire les réponses déjà reçues.')
     if value['economic_status'] != 'COMPLETE':
         signals += signal(mot('Coûts', 'inc'), 'Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables.')
@@ -754,7 +754,7 @@ def render_comparison(value):
         # Un filtre ne retire ni l'exemple ni son dénominateur
         evaluated = len({r['attempt_id'] for r in latest.values() if r['case_id'] == case['id']})
         planned = sum(cell['case_id'] == case['id'] for cell in value['cells'])
-        denominator = _plural(evaluated, 'réponse évaluée') + ' sur ' + _plural(planned, 'essai prévu')
+        denominator = _plural(evaluated, 'réponse vérifiée') + ' sur ' + _plural(planned, 'essai prévu')
         if not rows:
             # Sans filtre, le dénominateur suffit ; sans aucune réponse affichée, la note générale le dit déjà
             if query and value['rows']:
@@ -1592,7 +1592,7 @@ CALIBRATION_SENTENCES = {
     'SANS_ETALONNAGE': 'Aucun étalonnage enregistré pour ce juge et cette méthode.',
     'NON_APPLICABLE': 'Un étalonnage existe pour une autre version ou un autre juge ; il ne s’applique pas à ce résultat.',
     'HORS_PERIMETRE': 'Un étalonnage existe pour ce juge et cette méthode, mais son périmètre ne couvre pas ce dossier ; il ne s’applique pas à ce résultat.',
-    'SANS_JUGE_ASSISTE': 'Cette évaluation n’a pas été faite par un juge assisté : aucun étalonnage de juge ne s’applique.',
+    'SANS_JUGE_ASSISTE': 'Cette vérification n’a pas été faite par un juge assisté : aucun étalonnage de juge ne s’applique.',
     'IDENTITE_ILLISIBLE': 'L’identité du juge de cette évaluation est illisible : aucun étalonnage ne peut lui être rattaché.',
     'FICHES_ILLISIBLES': 'Les fiches d’étalonnage ne sont pas lisibles : aucune ne peut être rattachée à ce résultat.'}
 
@@ -1733,7 +1733,7 @@ def render_result(record, names=None, place=None):
     for piece in record['proof_links']:
         if piece['piece_id'] == output_id:
             continue
-        role = 'Référence réservée à l’évaluation' if piece['piece_id'] in references else 'Pièce fournie au modèle'
+        role = 'Référence réservée à la vérification des réponses' if piece['piece_id'] in references else 'Pièce fournie au modèle'
         pieces += '<li><span class="petit">' + role + '</span> '
         if piece['piece_id'] in record.get('proof_contents', {}):
             pieces += tiroir('Lire la pièce complète : ' + piece['name'],
@@ -1761,7 +1761,7 @@ def render_attempt_detail(value):
     # Hors de `#attempt-detail` : dans la modale, la page des résultats porte déjà cette portée et cette couverture
     conclusion, coverage = value['conclusion'], value['coverage']
     content += '</div><p class="petit">' + text(conclusion['attribution'] + ' ' + conclusion['limits'][0]) + '</p>'
-    return content + '<p class="petit">Comparaison : réponses évaluées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : ' + text(
+    return content + '<p class="petit">Benchmark : réponses vérifiées : ' + text(coverage['evaluated_attempts']) + ' · essais lancés : ' + text(
         coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '.</p>'
 
 

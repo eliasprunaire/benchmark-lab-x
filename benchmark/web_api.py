@@ -421,7 +421,7 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                                           access_transport=access_transport, judgment_transport=judgment_transport)
             if requester and campaign_id in _LAUNCHING:
                 value['checks'].append(dict(key='launch_pending', ok=False,
-                    detail='un lancement de cette comparaison est déjà en cours d’enregistrement ; actualisez la page dans un moment'))
+                    detail='un lancement de ce benchmark est déjà en cours d’enregistrement ; actualisez la page dans un moment'))
                 value['launchable'] = False
             if requester:
                 # Une exécution indisponible est un contrôle comme les autres : jamais un refus sans cause affichée

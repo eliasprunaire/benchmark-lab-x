@@ -70,12 +70,12 @@ def projection_body(value, selected, level=1):
     candidates = candidate_names(value)
     coverage = value['coverage']
     conditions = value['conditions']
-    body = '<' + main + '>Comparaison : ' + t(value['need']) + '</' + main + '>'
+    body = '<' + main + '>Benchmark : ' + t(value['need']) + '</' + main + '>'
     body += '<p>Résultat attendu : ' + t(value['result_expected']) + '</p>'
     body += '<p>' + t(value['conclusion']['text']) + '</p><p>' + t(ATTRIBUTION) + '</p>'
     body += '<p>Limites : ' + t('; '.join(value['conclusion']['limits'])) + '</p>'
     if coverage:
-        body += '<p>Réponses évaluées : ' + t(coverage['evaluated_attempts']) + ' · essais lancés : ' + t(coverage['attempted_cells'])
+        body += '<p>Réponses vérifiées : ' + t(coverage['evaluated_attempts']) + ' · essais lancés : ' + t(coverage['attempted_cells'])
         body += ' sur ' + t(coverage['planned_cells']) + '.</p>'
     body += '<p>Comparaison des coûts ' + ('complète' if value['economic_status'] == 'COMPLETE' else 'incomplète')
     body += '. Le coût des réponses des modèles et celui de leur vérification sont comptés séparément.</p>'
@@ -86,7 +86,7 @@ def projection_body(value, selected, level=1):
         prefix = '' if pending['state'] == 'NO_USABLE_RESPONSE' else 'Une réponse reste à évaluer : '
         body += '<p>' + prefix + t(pending['next_action']) + '</p>'
     body += '<p>Les exigences et les erreurs éliminatoires sont publiées sous forme de libellés. '
-    body += 'La référence utilisée pour évaluer et les preuves de la vérification de l’exemple restent privées. '
+    body += 'La référence utilisée pour vérifier les réponses et les preuves du contrôle de l’exemple restent privées. '
     body += 'Un lecteur ne peut donc pas vérifier lui-même comment ces critères ont été validés.</p>'
     body += '<p>' + t(RESTRICTION_PUBLIQUE) + '</p>'
     labels = {}
@@ -126,7 +126,7 @@ def projection_body(value, selected, level=1):
                 body += '<li><a href="' + t(selected[link['piece_id']]) + '">' + t(name) + '</a></li>'
             else:
                 body += '<li>' + t(name) + ' : pièce non publiée.</li>'
-        body += '</ul><p>Évaluée le ' + t(jour_lisible(row['created_at'])) + ' par ' + t(row['responsible']) + '. Relecture par un professionnel du métier : '
+        body += '</ul><p>Vérifiée le ' + t(jour_lisible(row['created_at'])) + ' par ' + t(row['responsible']) + '. Relecture par un professionnel du métier : '
         body += ('aucune' if row['judgment']['professional_review'] == 'ABSENTE' else 'annoncée, sans preuve publiée ici') + '.</p>'
         body += '<p>' + t('; '.join(row['limits'])) + '</p>'
         body += '<p>' + t(RESTRICTION_PUBLIQUE) + '</p></section>'

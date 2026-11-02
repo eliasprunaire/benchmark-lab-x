@@ -567,8 +567,8 @@ def _provider_qualification(operation, incident):
     due, retry_in = _retry_due(operation), None
     if incident in _KEY_INCIDENTS:
         status, cause = 'BLOCKED', 'key'
-        summary = (_incident_reason(incident) + ' La vérification de l’exemple n’a pas eu lieu. Une fois votre '
-                   'clé ou son crédit corrigés, une modification de l’exemple lancera une nouvelle vérification.')
+        summary = (_incident_reason(incident) + ' Le contrôle de l’exemple n’a pas eu lieu. Une fois votre '
+                   'clé ou son crédit corrigés, une modification de l’exemple lancera un nouveau contrôle.')
     elif due is not None:
         status, cause = 'PENDING', 'provider'
         summary, retry_in = retry_notice(operation, due)

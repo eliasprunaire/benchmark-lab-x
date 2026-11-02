@@ -3420,7 +3420,7 @@ class ParcoursComplet(unittest.TestCase):
             # et un envoi direct n'admet rien
             interval, _, _ = self.request(recap)
             self.assertFalse(any(f['action'].endswith('/start') for f in interval.forms))
-            self.assertIn('Impossible de lancer pour l’instant : un lancement de cette comparaison est déjà en cours '
+            self.assertIn('Impossible de lancer pour l’instant : un lancement de ce benchmark est déjà en cours '
                           'd’enregistrement ; actualisez la page dans un moment.', interval.visible)
             self.assertEqual((0, 0, 0), counts())
             again, _, _ = self.request(start_form['action'], start_form['fields'], status=504)
@@ -4448,7 +4448,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Exemple 2 : Aucune réponse exploitable pour Modèle B', results.visible)
         self.assertNotIn('Modèle C', second_tableau)
         self.assertRegex(results.visible, r'5 essais lancés sur 6')
-        self.assertIn('Exemple 2 : Modèle C n’a pas été appelé : la comparaison s’est arrêtée avant cet essai.', results.visible)
+        self.assertIn('Exemple 2 : Modèle C n’a pas été appelé : le benchmark s’est arrêté avant cet essai.', results.visible)
         self.assertNotIn('doit être relue', results.visible)
         # 5. Aucun conseil sur plusieurs exemples ; la limite du juge est dite avec les verdicts
         self.assertNotIn('Notre conseil', results.visible)
@@ -4462,8 +4462,8 @@ class ParcoursComplet(unittest.TestCase):
             page, _, raw = self.request(comparison + ('?' + filtre if filtre else ''))
             parties = [Page(part.encode()).visible for part in raw.decode().split('<div class="cas-titre"><h3>Exemple ')]
             self.assertEqual(3, len(parties))
-            self.assertIn('3 réponses évaluées sur 3 essais prévus', parties[1])
-            self.assertIn('1 réponse évaluée sur 3 essais prévus', parties[2])
+            self.assertIn('3 réponses vérifiées sur 3 essais prévus', parties[1])
+            self.assertIn('1 réponse vérifiée sur 3 essais prévus', parties[2])
             self.assertIn('Exemple 2 : Modèle C n’a pas été appelé', page.visible)
             self.assertRegex(page.visible, r'5 essais lancés sur 6')
             self.assertNotIn('Notre conseil', page.visible)
@@ -5900,14 +5900,14 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Modèle C', page.visible)
         self.assertIn(ATTRIBUTION, page.visible)
         self.assertIn(LIMIT, page.visible)
-        self.assertIn('Comparaison : réponses évaluées : 2 · essais lancés : 2 sur 2.', page.visible)
+        self.assertIn('Benchmark : réponses vérifiées : 2 · essais lancés : 2 sur 2.', page.visible)
         resultats = Page(html.encode())
         self.assertIn(ATTRIBUTION, next(n for n in resultats.nodes if n['attrs'].get('id') == 'method')['text'])
         self.assertIn('2 essais lancés sur 2', resultats.visible)
         apercu, _, _ = self.request(comparison + '/preview')
         self.assertIn(ATTRIBUTION, apercu.visible)
         self.assertIn(LIMIT, apercu.visible)
-        self.assertIn('Réponses évaluées : 2 · essais lancés : 2 sur 2.', apercu.visible)
+        self.assertIn('Réponses vérifiées : 2 · essais lancés : 2 sur 2.', apercu.visible)
         for vue in (resultats, page, apercu):
             self.sans_promesse(vue)
 
@@ -6806,13 +6806,13 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(lignes[1].startswith('Modèle B : dépense inconnue'), lignes[1])
         self.assertIn('montant réservé : ' + montant_lisible(reserves['cell-2']) + ' USD', lignes[1])
         self.assertTrue(lignes[2].startswith('Modèle C : aucune dépense'), lignes[2])
-        self.assertIn('non envoyé : la comparaison s’est arrêtée avant cet essai', lignes[2])
+        self.assertIn('non envoyé : le benchmark s’est arrêté avant cet essai', lignes[2])
         self.assertNotIn('dépense à venir', texte)
         # La réponse exploitable de Modèle A est seule évaluée ; la couverture prévue reste distincte
         html = self.evaluer(dossier)
         self.assertEqual(1, judge.request.call_count)
         self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu)', html)
-        self.assertIn('Modèle C n’a pas été appelé : la comparaison s’est arrêtée avant cet essai.', html)
+        self.assertIn('Modèle C n’a pas été appelé : le benchmark s’est arrêté avant cet essai.', html)
         self.assertIn('2 essais lancés sur 3', html)
         self.assertIn('Comparaison des coûts incomplète', html)
         self.assertNotIn('Notre conseil', html)
@@ -7348,7 +7348,7 @@ class ParcoursComplet(unittest.TestCase):
         texte, phases = self.depenses(raw.decode())
         self.assertNotIn('Évaluation des réponses', phases)
         self.assertIn('Coût complet inconnu · sous-total connu', texte)
-        self.assertIn('L’évaluation de 2 réponses est à venir : son coût n’est pas encore connu.', texte)
+        self.assertIn('La vérification de 2 réponses est à venir : son coût n’est pas encore connu.', texte)
 
     def sonde(self, dossier, slug, action):
         """Vérification réelle d'un modèle hors catalogue, réponse simulée au coût connu de 0.0004 USD"""

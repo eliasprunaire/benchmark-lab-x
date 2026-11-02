@@ -540,7 +540,7 @@ def render_editorial(value):
         items = ''
         for campaign in campaigns:
             shown = ('Benchmark du ' + date_lisible_utc(campaign['frozen_at']) + ' · ' + str(campaign['coverage']['evaluated_attempts'])
-                     + (' réponse évaluée' if campaign['coverage']['evaluated_attempts'] == 1 else ' réponses évaluées')
+                     + (' réponse vérifiée' if campaign['coverage']['evaluated_attempts'] == 1 else ' réponses vérifiées')
                      + ' sur ' + str(campaign['coverage']['planned_cells'])
                      + (' essai prévu' if campaign['coverage']['planned_cells'] == 1 else ' essais prévus') + ' · coûts '
                      + ('complets' if campaign['economic_status'] == 'COMPLETE' else 'incomplets'))
