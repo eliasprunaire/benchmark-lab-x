@@ -136,7 +136,7 @@ def _campaigns(value):
     content += '<ul>'
     for campaign in value['campaigns']:
         shown = ('Benchmark du ' + date_lisible_utc(campaign['frozen_at']) + ' · ' + str(campaign['coverage']['evaluated_attempts'])
-                 + (' réponse évaluée' if campaign['coverage']['evaluated_attempts'] == 1 else ' réponses évaluées')
+                 + (' réponse vérifiée' if campaign['coverage']['evaluated_attempts'] == 1 else ' réponses vérifiées')
                  + ' sur ' + str(campaign['coverage']['planned_cells'])
                  + (' essai prévu' if campaign['coverage']['planned_cells'] == 1 else ' essais prévus') + ' · coûts '
                  + ('complets' if campaign['economic_status'] == 'COMPLETE' else 'incomplets'))
@@ -226,7 +226,7 @@ def _row_detail(value, row):
         content += '<p>Revue professionnelle : aucune.</p>'
     content += '<h4>Preuves</h4>' + _proofs(value, row)
     content += _configuration_table(row)
-    content += '<p class="petit">Évaluée le ' + text(jour_lisible(row['created_at'])) + ' par ' + text(row['responsible']) + '.</p>'
+    content += '<p class="petit">Vérifiée le ' + text(jour_lisible(row['created_at'])) + ' par ' + text(row['responsible']) + '.</p>'
     content += '<h4>Limites</h4>' + listing(row['limits'])
     return content
 

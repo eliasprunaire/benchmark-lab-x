@@ -1452,7 +1452,7 @@ def _requester_checks(store, connection, snapshot, session_id, access):
         {'key': 'example_validated', 'ok': validated,
          'detail': 'Exemple validé' if validated else 'Validez l’exemple présenté'},
         {'key': 'example_qualified', 'ok': qualified,
-         'detail': 'Exemple qualifié' if qualified else 'La qualification de l’exemple est requise',
+         'detail': 'Exemple contrôlé' if qualified else 'L’exemple doit passer le contrôle',
          'findings': qualification_findings},
         {'key': 'configurations_available', 'ok': not missing,
          'detail': ('Tous les modèles sélectionnés sont disponibles' if not missing else
@@ -1515,7 +1515,7 @@ def launch_view(store, session_id, dossier_id, campaign_id, *, access_secret=Non
         try:
             _, judgment_estimate = auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport, check_access=False)
         except (ValueError, ConflictError, BudgetError):
-            judgment_error = 'Évaluation indisponible : vérifiez votre clé, le budget restant ou la disponibilité du service'
+            judgment_error = 'Vérification des réponses indisponible : vérifiez votre clé, le budget restant ou la disponibilité du service'
     with store.read_snapshot() as connection:
         snapshot = _inspect(store, connection, campaign_id)
         if snapshot['task']['dossier_id'] != dossier_id:

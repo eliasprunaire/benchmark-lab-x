@@ -19,7 +19,7 @@ ATTRIBUTION = (
     'Le fournisseur, le niveau de raisonnement, le harnais pi.dev et ses réglages influent aussi sur la réponse : le verdict ne les sépare pas du modèle. '
     'Avec un autre outil, un autre contexte ou un autre environnement, le résultat peut être différent.')
 NO_USABLE_RESPONSE = 'Aucune réponse exploitable de ce modèle : il n’est pas vérifié et n’entre pas dans le benchmark.'
-LIMIT = 'Ces résultats portent sur un exemple inventé. Ils ne se transposent pas tels quels à vos dossiers réels et ne s’additionnent pas avec ceux d’autres cas ou d’autres comparaisons.'
+LIMIT = 'Ces résultats portent sur un exemple inventé. Ils ne se transposent pas tels quels à vos dossiers réels et ne s’additionnent pas avec ceux d’autres cas ou d’autres benchmarks.'
 VERDICTS = ('SATISFAIT', 'NE SATISFAIT PAS', 'A_REPRENDRE', 'INDETERMINE')
 FILTERS = ('case', 'sort', 'direction', 'verdict', 'obligation', 'configuration', 'priority')
 # Refus figé d'une reprise pour longueur que l'exécuteur n'a pas tentée (#526) ; un autre refus reste tu
@@ -466,7 +466,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
             elif attempts[attempt['attempt_id']]['state'] == 'INTENT_RECORDED' and not campaign['admission_open']:
                 # Arrêtée avant son envoi : l'essai ne partira plus, il reste compté comme non lancé
                 cell = next(c for c in campaign['cells'] if c['cell_id'] == attempts[attempt['attempt_id']]['cell_id'])
-                attempt.update(state='NOT_SENT', next_action='Essai jamais envoyé : la comparaison s’est arrêtée avant lui.',
+                attempt.update(state='NOT_SENT', next_action='Essai jamais envoyé : le benchmark s’est arrêté avant lui.',
                                configuration_id=cell['configuration_id'], case_id=cell['case_id'],
                                **({'repetition': cell['repetition']} if 'repetition' in cell else {}))
             elif attempt['state'] == 'REVIEW_REQUIRED':

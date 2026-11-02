@@ -37,8 +37,8 @@ _VOLATILE_PRESENTATION = re.compile(
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
-    '15': {
-        'index.html': '3cd5ea9fba7313db4e9438c73fa3996ed2c5de1e4c1089d4bbba12e12da1b54d',
+    '16': {
+        'index.html': 'dd3a9de7a400e296084dd80dee070ddb5f9d9a0e86604811bc21f99b6f60a5ab',
         'style.css': '97b862cb6ea94990ffee87589ea32274c015011a990a432845fe2f90d34d05aa',
     },
 }
@@ -200,7 +200,7 @@ class S6Regressions(unittest.TestCase):
                 labeled = dict(manifest, presentation_version=old)
                 raw = storage._strict_json(labeled).encode()
                 pub._manifest(raw, sha256(raw).hexdigest())
-        unknown = dict(manifest, presentation_version='16')
+        unknown = dict(manifest, presentation_version='17')
         raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
             pub._manifest(raw, sha256(raw).hexdigest())
@@ -531,7 +531,7 @@ class S6Regressions(unittest.TestCase):
         self.assertNotIn(b'/preparation/', raw)
         self.assertIn('Vérification limitée pour le lecteur'.encode(), raw)
         self.assertIn(('Les exigences et les erreurs éliminatoires sont publiées sous forme de libellés. '
-                       'La référence utilisée pour évaluer et les preuves de la vérification de l’exemple restent privées. '
+                       'La référence utilisée pour vérifier les réponses et les preuves du contrôle de l’exemple restent privées. '
                        'Un lecteur ne peut donc pas vérifier lui-même comment ces critères ont été validés.').encode(), raw)
         self.assertIn('Durée fictive'.encode(), raw)
         # K5 : une durée de 200 s s'écrit en minutes, avec son unité

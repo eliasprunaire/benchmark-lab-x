@@ -1141,7 +1141,7 @@ test('results and publication preview stay readable at 390 px: whole words, stac
     mkdirSync('reports/privacy-browser', {recursive: true});
     // Deux exemples : chaque tableau garde son titre et son dénominateur, et le clavier atteint chacun
     assert.deepEqual(await page.$$eval('.cas-titre h3', titles => titles.map(title =>
-      /^\d+ réponses? évaluées? sur \d+ essais? prévus?$/.test(title.nextElementSibling.textContent))), [true, true]);
+      /^\d+ réponses? vérifiées? sur \d+ essais? prévus?$/.test(title.nextElementSibling.textContent))), [true, true]);
     const reached = new Set();
     for (let press = 0; press < 120 && reached.size < 2; press++) {
       await page.keyboard.press('Tab');
@@ -1488,7 +1488,7 @@ test('access and launch screens preserve available actions, estimates and refusa
     }
     for (const [name, text] of [['estimate-known', '0,125 USD'],
       ['estimate-unknown', 'Réservé pour la vérification des réponses'],
-      ['launch-judgment-blocked', 'Budget insuffisant pour l’évaluation']]) {
+      ['launch-judgment-blocked', 'Vérification des réponses indisponible']]) {
       await page.goto(origin + '/render/' + name);
       assert.ok((await page.textContent('main')).includes(text), name);
       assert.equal(await page.getByRole('button', {name: 'Lancer le benchmark', exact: true}).count(), 0);

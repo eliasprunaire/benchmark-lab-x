@@ -45,13 +45,13 @@ def browser_views():
     ready = campaign_view(dict(status='connected', limit_remaining_usd='12.50'))
     ready.update(launchable=True, estimate_total_usd='3.50', cap_usd='50.00', checks=[
         dict(key='example_validated', ok=True, detail='Exemple validé'),
-        dict(key='example_qualified', ok=True, detail='Exemple qualifié', findings=[
+        dict(key='example_qualified', ok=True, detail='Exemple contrôlé', findings=[
             dict(kind='cohérence', severity='note', text='Quantité à confirmer')]),
         dict(key='configurations_available', ok=True, detail='Tous les modèles sont disponibles')])
     examples['launch-ready'] = ready
     blocked = deepcopy(ready)
     blocked.update(launchable=False)
-    blocked['checks'][1].update(ok=False, detail='La qualification de l’exemple est requise')
+    blocked['checks'][1].update(ok=False, detail='L’exemple doit passer le contrôle')
     blocked['checks'][2].update(ok=False, detail='Modèle à choisir de nouveau')
     examples['launch-blocked'] = blocked
     for estimate in ('0.125', None):
@@ -59,7 +59,7 @@ def browser_views():
         value.update(launchable=False, checks=[], judgment_estimate_usd=estimate)
         examples['estimate-' + ('known' if estimate else 'unknown')] = value
     examples['launch-judgment-blocked'] = dict(ready, launchable=False, checks=[
-        dict(key='judgment_available', ok=False, detail='Budget insuffisant pour l’évaluation')])
+        dict(key='judgment_available', ok=False, detail='Vérification des réponses indisponible : vérifiez votre clé, le budget restant ou la disponibilité du service')])
     for name, state, admission, incident in (
             ('running', 'EMISSION_POSSIBLE', True, None), ('queued', 'INTENT_RECORDED', True, None),
             ('stopped', 'EMISSION_POSSIBLE', False, None), ('ambiguous', 'AMBIGUOUS', True, None),
