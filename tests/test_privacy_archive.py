@@ -285,6 +285,27 @@ class PrivacyArchiveTests(unittest.TestCase):
         snapshot = self.connection.execute('SELECT * FROM s7_archives').fetchone()
         with self.assertRaises(sqlite3.IntegrityError):
             self.connection.execute('INSERT OR REPLACE INTO s7_archives VALUES (?, ?, ?, ?, ?)', snapshot)
+        # Date d'un benchmark : facultative dans la copie du propriétaire (copies anciennes), toujours une vraie date
+        def stored(frozen_at):
+            value = json.loads(snapshot[3])
+            value['campaigns'] = [dict(id='c1', models=[], frozen_at=frozen_at)]
+            raw = json.dumps(value).encode()
+            self.connection.execute('DELETE FROM s7_archives')
+            self.connection.execute('INSERT INTO s7_archives VALUES (?, ?, ?, ?, ?)', snapshot[:3] + (raw, sha256(raw).hexdigest()))
+        stored('2026-11-02T13:22:57Z')
+        archive.verify(self.store, self.connection)
+        stored('hier')
+        with self.assertRaises(storage.IntegrityError):
+            archive.verify(self.store, self.connection)
+        self.connection.execute('DELETE FROM s7_archives')
+        self.connection.execute('INSERT INTO s7_archives VALUES (?, ?, ?, ?, ?)', snapshot)
+        archive.verify(self.store, self.connection)
+        # La contribution consentie reste fermée : aucune date de benchmark n'y entre
+        dated = dict(json.loads(original), campaigns=[dict(id='c1', models=[], frozen_at='2026-11-02T13:22:57Z')])
+        self.connection.execute('UPDATE s7_contributions SET payload_json=?', (json.dumps(dated),))
+        with self.assertRaises(storage.IntegrityError):
+            archive.verify(self.store, self.connection)
+        self.connection.execute('UPDATE s7_contributions SET payload_json=?', (original,))
 
 
     def test_large_record_is_streamed_without_a_total_size_cap_and_rejects_bad_parts(self):

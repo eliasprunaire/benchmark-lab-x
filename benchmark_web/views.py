@@ -21,7 +21,7 @@ from .fragments import (ETAPES, bouton, btn, bulle_assistant, bulle_vous, cadre,
 from .projection import (projection_body)
 from .results_views import (contexte_apercu, contexte_publication, contexte_resultats, render_preview, render_results)
 from .legal_views import LEGAL_PAGES, legal_layout
-from .privacy_views import (PRIVACY_SCRIPT, actions_erreur, active_session, alerte_expiration, erreur_grande, gestion_cas, historique_local,
+from .privacy_views import (PRIVACY_SCRIPT, actions_erreur, active_session, alerte_expiration, erreur_grande, gestion_cas,
                             liens_donnees, marqueur_activite, render_access, render_bootstrap, render_contribution, render_contributions,
                             render_delete_confirmation, render_deleted, render_privacy_controls, render_privacy_page)
 
@@ -42,8 +42,8 @@ PUBLIC_PAGES = {
          'compare les modèles dans les mêmes conditions, coût observé compris.',
     **{path: description for path, (_, description, _) in LEGAL_PAGES.items()},
 }
-# Menu principal, dans l'ordre de la maquette (A14) ; Benchmarks publics n'y figure plus et reste au pied de page (A12)
-MENU = (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données'), ('/epreuves', 'Épreuves'))
+# Menu principal (A14) : Benchmark = saisie et cas en cours, Mes cas d'usage = copies gardées par le navigateur ; Benchmarks publics reste au pied (A12)
+MENU = (('/', 'Accueil'), ('/preparation', 'Benchmark'), ('/preparation/data', 'Mes cas d’usage'), ('/epreuves', 'Épreuves'))
 # Piège à robots : `hidden` le retire du rendu et de l'arbre d'accessibilité même sans feuille de style
 HONEYPOT = ('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>'
             '<input id="website" name="website" autocomplete="off" tabindex="-1"></div>')
@@ -1053,13 +1053,13 @@ def render_cases(value, csrf):
     else:
         corps = ('<div class="ge-vide"><p><strong>Aucun cas en cours.</strong></p>'
                  '<p class="petit">Décrivez un cas d’usage pour commencer, dès que la préparation est disponible.'
-                 + (' Les copies de vos anciens cas restent lisibles plus bas, dans l’historique local.' if privacy else '') + '</p></div>'
+                 + (' Les copies de vos anciens cas se lisent dans <a href="/preparation/data">Mes cas d’usage</a>.' if privacy else '') + '</p></div>'
                  + tiroir('Vous en aviez déjà un ?', '<p>Vos cas d’usage sont liés au navigateur où vous les avez créés. Ouvrez Evaly dans ce navigateur-là. '
                           'Si ses cookies ont été effacés, les cas ne peuvent plus être retrouvés.</p>'))
     bande = ('<div class="ge-bande">' + ic('cle') + '<p>La clé OpenRouter paie les appels aux modèles.</p>'
              + lien('/preparation/access', 'Ma clé OpenRouter') + '</div>')
-    # L'historique local suit la bande quand les contrôles de confidentialité sont servis
-    historique = historique_local() + liens_donnees() if privacy else ''
+    # Les copies gardées par le navigateur restent dans Mes cas d'usage ; ici, seulement les liens
+    historique = liens_donnees() if privacy else ''
     return ('<section class="compo-zone"><div class="cadre">' + carte + creation + '</div></section>'
             '<div class="cadre ge-pile ge-mes-cas">' + marqueur_activite(privacy, csrf) + '<section class="ge-pile" aria-labelledby="t-liste"><h2 id="t-liste">Vos cas d’usage en cours</h2>'
             + corps + '</section>' + bande + historique + '</div>')
@@ -1635,8 +1635,8 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         avant = ' cote-avant'
     if value.get('privacy') and not active_session(value['privacy']) and package:
         haut = '<div class="gb-cote">' + etat('vig', 'Accès fermé', 'Votre accès à ce cas est fermé',
-                                            'Si vous en avez gardé une copie dans ce navigateur, vous pouvez encore la lire dans Mes données.',
-                                            lien('/preparation/data', 'Ouvrir Mes données')) + '</div>' + haut
+                                            'Si vous en avez gardé une copie dans ce navigateur, vous pouvez encore la lire dans Mes cas d’usage.',
+                                            lien('/preparation/data', 'Ouvrir Mes cas d’usage')) + '</div>' + haut
     corps = (haut + '<div class="colonnes"><div class="pile-l">' + gauche + '</div><aside class="cote gb-cote' + avant + '"'
              # La décision porte déjà l'ancre `validation` de la piste ; sinon la colonne d'état la porte
              + ('' if avant_validation else ' id="validation"') + ' aria-label="'
@@ -1801,7 +1801,7 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         content += section('Renseignements de la sortie construite', '<dl class="kv">' + rows + '</dl>')
         content += '<p><a href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a></p>'
     elif 'dossiers' in value:
-        title = 'Mes cas d’usage'
+        title = 'Benchmark'
         content, plein = render_cases(value, csrf), True
     elif value.get('kind') == 'honeypot_ack' or 'operation_id' in value:
         title, content, entete = render_attente(value)

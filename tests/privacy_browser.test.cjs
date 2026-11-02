@@ -15,8 +15,8 @@ let posts = [], postStatus = 200, followupReplies = [];
 const fresh = (version = 1) => ({format: 'bench-x/history/v1', dossier_id: 'd1', content_version: version,
   need: 'Comparer <img src=x onerror=alert(1)>', messages: ['Précision'], revisions: [{number: 1,
   instruction: 'Consigne', deliverables: ['Document'], criteria: ['Exactitude'],
-  pieces: [{name: '<script>pièce</script>', text: 'Pièce entière'}], qualification: 'Qualifiée'}],
-  campaigns: [{id: 'c1', models: [{name: 'Modèle', verdict: 'SATISFAIT', cost: {amount: '0.02', currency: 'USD'},
+  pieces: [{name: '<script>pièce</script>', text: 'Pièce entière'}], qualification: 'QUALIFIED\nExemple décidable'}],
+  campaigns: [{id: 'd1-c1', frozen_at: '2026-09-15T08:30:00Z', models: [{name: 'Modèle', verdict: 'SATISFAIT', cost: {amount: '0.02', currency: 'USD'},
   answer: 'Réponse intégrale', evidence: [{name: 'Preuve', text: 'Passage vérifié'}]}]}]});
 function fixture(version = 1, need, extra = {}) {
   record = {...fresh(version), ...extra};
@@ -441,7 +441,8 @@ test('public local history renders inert text and exports a complete case after 
   try {
     const page = await pageFor(context);
     await page.evaluate(() => historyStore.archive('d1', 1));
-    await page.setContent('<main data-privacy-history><p role="status" data-privacy-status></p><button data-privacy-action="clear">Effacer</button><button data-privacy-action="enable">Réactiver</button><div data-privacy-list></div></main>');
+    // Feuille du site chargée : la coupe du titre et la mise en page de la fiche se mesurent
+    await page.setContent('<link rel="stylesheet" href="' + origin + '/preparation/style.css"><main data-privacy-history><p role="status" data-privacy-status></p><button data-privacy-action="clear">Effacer</button><button data-privacy-action="enable">Réactiver</button><div data-privacy-list></div></main>');
     await page.evaluate(() => privacy.mountPrivacy());
     assert.equal(await page.locator('[data-privacy-list] img, [data-privacy-list] script').count(), 0);
     assert.match(await page.locator('[data-privacy-list]').textContent(), /Réponse intégrale/);
@@ -453,8 +454,16 @@ test('public local history renders inert text and exports a complete case after 
     assert.match(await fiche.locator(':scope > summary').textContent(), /Copie en lecture seule/);
     assert.equal(await fiche.locator(':scope > summary .mot[data-ton="ok"]').count(), 1);
     await page.locator('[data-privacy-list] > details > summary').click();
-    assert.match(await fiche.textContent(), /Benchmark c1/);
-    assert.doesNotMatch(await fiche.textContent(), /Comparaison|Vérification de l’exemple/);
+    // Fiche ouverte : titre toujours coupé, demande entière dans le corps, sections nommées, actions en bas
+    assert.equal(await fiche.locator(':scope > summary .hist-titre').evaluate(el => getComputedStyle(el).webkitLineClamp), '2');
+    assert.equal(await fiche.locator('.hist-demande').textContent(), record.need);
+    const sections = await fiche.locator('.hist-corps > details > summary').allTextContents();
+    assert.deepEqual(sections.map(text => text.trim()), ['Vos messages (1)', 'Version 1 de l’exempleRéussi', 'Benchmark 1 du 15 septembre 2026 à 08:30:00 UTC']);
+    assert.equal(await fiche.locator('.hist-corps > :last-child').getAttribute('class'), 'hist-actions');
+    assert.deepEqual(await fiche.locator('.hist-actions button').allTextContents(), ['Télécharger ce cas (JSON)', 'Effacer et ne plus garder ce cas']);
+    assert.match(await fiche.locator('.hist-controle').textContent(), /Exemple décidable/);
+    assert.match(await fiche.locator('.hist-modele > summary').textContent(), /Modèle.*Satisfait.*0\.02 USD/);
+    assert.doesNotMatch(await fiche.textContent(), /Comparaison|Vérification de l’exemple|QUALIFIED|d1-c1/);
     const download = page.waitForEvent('download');
     await page.getByRole('button', {name: 'Télécharger ce cas (JSON)'}).click();
     assert.equal((await download).suggestedFilename(), 'evaly-d1.json');
@@ -463,7 +472,9 @@ test('public local history renders inert text and exports a complete case after 
     assert.equal(await page.getByRole('searchbox', {name: 'Filtrer les fiches'}).count(), 0, 'pas de filtre sous sept fiches');
     // Au-delà de six fiches : les six premières, un filtre sans accents et un bouton pour tout afficher
     for (let i = 2; i <= 7; i++) {
-      fixture(1, 'Cas numéro ' + i, {dossier_id: 'd' + i}); manifest.dossier_id = 'd' + i;
+      // Copies anciennes : benchmark sans date, aucun message ; la fiche n'affiche pas de section vide
+      fixture(1, 'Cas numéro ' + i, {dossier_id: 'd' + i, messages: [], campaigns: [{...fresh().campaigns[0], frozen_at: undefined}]});
+      manifest.dossier_id = 'd' + i;
       await page.evaluate(id => historyStore.archive(id, 1), 'd' + i);
     }
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -477,6 +488,9 @@ test('public local history renders inert text and exports a complete case after 
     await filtre.fill('');
     await page.getByRole('button', {name: 'Afficher toutes les fiches (7)'}).click();
     assert.equal(await visibles(), 7);
+    const ancienne = page.locator('[data-privacy-list] > details', {hasText: 'Cas numéro 2'});
+    assert.deepEqual((await ancienne.locator('.hist-corps > details > summary').allTextContents()).map(text => text.trim()),
+      ['Version 1 de l’exempleRéussi', 'Benchmark 1']);
     await page.getByRole('button', {name: 'Effacer', exact: true}).click();
     await page.waitForFunction(() => !document.querySelector('[data-privacy-list]').textContent);
     assert.equal((await page.evaluate(() => historyStore.state())).enabled, false);
@@ -2527,6 +2541,8 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     assert.equal(await page.locator('script[src="/preparation/privacy.js"]').count(), 1);
     assert.ok(await page.locator('script:not([src])').count() > 0);
     await page.goto(origin + '/render/privacy-listing');
+    // Les copies gardées ne s'affichent que dans Mes cas d'usage, pas à côté des cas en cours
+    assert.equal(await page.locator('[data-privacy-history]').count(), 0);
     // Le repère de session précède les cartes : `privacy.js` lit le premier, qui ne désigne aucun cas
     const activity = page.locator('[data-privacy-activity]').first();
     assert.equal(await activity.getAttribute('data-dossier-id'), null);
@@ -2600,13 +2616,15 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
       await page.goto(origin + '/render/data');
       const main = await page.locator('main').innerText();
       for (const phrase of ['Conservation automatique', 'Un cas d’usage est effacé après 7 jours sans activité', 'Votre clé OpenRouter est effacée après 30 jours sans activité',
-        'Historique local de vos cas', 'Mes cas d’usage et ma clé', 'Mes contributions', 'Confidentialité']) assert.ok(main.includes(phrase), `${width} ${phrase}`);
+        'Historique local de vos cas', 'Mes cas en cours et ma clé', 'Mes contributions', 'Confidentialité']) assert.ok(main.includes(phrase), `${width} ${phrase}`);
+      assert.ok(main.indexOf('Historique local de vos cas') < main.indexOf('Conservation automatique'), `${width} copies avant la conservation`);
+      assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes cas d’usage', `${width} entrée de menu des copies`);
       assert.equal(await overflow(), 0, `${width} débordement de Mes données`);
       await page.goto(origin + '/render/contribution-active-2099');
       const contributions = await page.locator('main').textContent();
       assert.ok(contributions.includes('Contribution du 18 septembre 2026'), `${width} contribution`);
       assert.ok(contributions.includes('arrête seulement la contribution concernée'), `${width} explication du retrait`);
-      assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes données', `${width} entrée de menu des contributions`);
+      assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes cas d’usage', `${width} entrée de menu des contributions`);
       assert.equal(await overflow(), 0, `${width} débordement des contributions`);
     }
   } finally {await context.close();}
@@ -2660,7 +2678,7 @@ test('public and private pages retain legal information and exact release identi
       assert.equal(text.includes('Comparaisons publiées'), false);
     }
     await page.goto(origin + '/render/listing');
-    assert.equal(await page.locator('.nav a[aria-current="page"]').textContent(), 'Mes cas d’usage');
+    assert.equal(await page.locator('.nav a[aria-current="page"]').textContent(), 'Benchmark');
     assert.equal(await page.locator('ul.ge-liste a[href="/preparation/dossiers/d1"]').count(), 1);
     for (const name of ['waiting', 'honeypot']) {
       await page.goto(origin + '/render/' + name);

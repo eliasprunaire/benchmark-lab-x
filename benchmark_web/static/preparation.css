@@ -1360,22 +1360,63 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
 .hist-liste { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 16px; align-items: start; }
 .hist-outils { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .hist-outils input { flex: 1 1 240px; min-height: 52px; padding: 0 16px; border: 2px solid var(--filet); border-radius: 12px; background: var(--carte); color: var(--encre); font: 500 1rem/1.2 var(--sans); }
-.hist-fiche { min-width: 0; border: 2px solid var(--filet); border-radius: var(--r); background: var(--carte); box-shadow: 4px 4px 0 0 var(--encre); }
+.hist-fiche { min-width: 0; border: 2px solid var(--filet); border-radius: var(--r); background: var(--carte); box-shadow: 4px 4px 0 0 var(--encre); transition: transform .18s ease, box-shadow .18s ease; }
+.hist-fiche:not([open]):hover { transform: translate(-2px, -2px); box-shadow: 6px 6px 0 0 var(--encre); }
 .hist-fiche[hidden] { display: none; }
-.hist-fiche[open] { grid-column: 1 / -1; }
+.hist-fiche[open] { grid-column: 1 / -1; box-shadow: 6px 6px 0 0 var(--encre); }
 .hist-fiche > summary { list-style: none; display: grid; gap: 10px; padding: 18px 20px; cursor: pointer; }
 .hist-fiche > summary::-webkit-details-marker { display: none; }
+.hist-fiche[open] > summary { padding-bottom: 16px; border-bottom: 2px solid var(--filet); background: var(--signal-pale); border-radius: calc(var(--r) - 2px) calc(var(--r) - 2px) 0 0; }
 .hist-fiche > summary:hover .hist-titre { text-decoration: underline; text-underline-offset: 3px; }
+/* Titre coupé à deux lignes, même ouvert : la demande entière se lit dans le corps */
 .hist-titre { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-weight: 750; font-stretch: 108%; font-size: 1.05rem; line-height: 1.35; }
-.hist-fiche[open] .hist-titre { -webkit-line-clamp: unset; }
-.hist-meta, .hist-copie { font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--discret); }
+.hist-meta, .hist-copie, .hist-ref, .hist-cout { font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--discret); }
 .hist-copie { padding-top: 10px; border-top: 1px solid var(--filet-doux); }
+.hist-fiche[open] .hist-copie { border-top-color: transparent; padding-top: 0; }
 .hist-fiche .mots { display: flex; flex-wrap: wrap; gap: 6px; }
 .hist-fiche .mots:empty { display: none; }
-.hist-corps { display: grid; gap: 12px; min-width: 0; padding: 4px 20px 20px; }
-.hist-corps h3 { font-size: .95rem; margin-top: 4px; }
-.hist-corps details { border-top: 1px solid var(--filet-doux); }
-.hist-corps details details { margin-left: 14px; }
-.hist-corps summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; font-weight: 650; overflow-wrap: anywhere; }
-.hist-corps pre { margin: 0 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; font: .88rem/1.55 var(--mono); }
-.hist-corps p, .hist-corps li { overflow-wrap: anywhere; }
+
+/* Corps de la fiche ouverte : demande, sections dépliables au style du tiroir, actions en bas */
+.hist-corps { min-width: 0; padding: 22px clamp(16px, 3vw, 28px) 0; }
+.hist-fiche[open] > .hist-corps { animation: hist-ouvre .28s var(--ressort) both; }
+@keyframes hist-ouvre { from { opacity: 0; transform: translateY(-8px); } }
+.hist-bloc { display: grid; gap: 10px; justify-items: start; margin-bottom: 22px; }
+.hist-bloc h3, .hist-corps h4 { font-family: var(--mono); font-size: .72rem; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; color: var(--discret); }
+.hist-demande-cadre { max-width: 72ch; padding: 14px 18px; border-left: 4px solid var(--signal); background: var(--papier); border-radius: 0 var(--r-s) var(--r-s) 0; }
+.hist-demande { overflow-wrap: anywhere; line-height: 1.6; }
+.hist-lire { padding: 0; border: 0; background: none; color: var(--encre); font: inherit; font-weight: 650; cursor: pointer; }
+.hist-demande.replie { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.hist-corps .tiroir { min-width: 0; }
+.hist-corps > .tiroir:last-of-type { border-bottom: 2px solid var(--filet); }
+.hist-corps .tiroir > summary { gap: 12px; }
+.hist-corps .tiroir > summary .plus { margin-left: auto; }
+.hist-statuts { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.hist-statuts .hist-cout { margin-left: auto; }
+/* Mobile : titre et signe plus sur la première ligne, statuts dessous */
+@media (max-width: 600px) {
+  .hist-corps .tiroir > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: 6px; }
+  .hist-corps .tiroir > summary .plus { grid-column: 2; grid-row: 1; margin-left: 0; }
+  .hist-statuts { grid-column: 1; grid-row: 2; }
+  .hist-statuts .hist-cout { margin-left: 0; }
+}
+.hist-section-titre { overflow-wrap: anywhere; }
+.hist-section-corps { display: grid; gap: 12px; min-width: 0; padding: 4px 0 22px; }
+.tiroir[open] > .hist-section-corps { animation: hist-ouvre .22s ease both; }
+.hist-section > .hist-section-corps { padding-left: clamp(0px, 2vw, 18px); border-left: 2px solid var(--filet-doux); margin-left: 2px; }
+.hist-messages { display: grid; gap: 10px; list-style: none; }
+.hist-messages li { justify-self: start; max-width: 64ch; padding: 10px 14px; border-radius: 14px 14px 14px 4px; background: var(--creux); overflow-wrap: anywhere; }
+.hist-consigne { max-width: 72ch; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.hist-section-corps ul { display: grid; gap: 6px; padding-left: 1.2em; max-width: 72ch; }
+.hist-section-corps li { overflow-wrap: anywhere; }
+.hist-section-corps li ul { margin-top: 6px; list-style: circle; }
+.hist-controle { display: grid; gap: 8px; max-width: 72ch; padding: 14px 16px; border-radius: var(--r-s); background: var(--papier); }
+.hist-controle p { overflow-wrap: anywhere; font-size: .95rem; }
+/* Modèles d'un benchmark et documents : lignes plus basses, même signe plus */
+.hist-modele, .hist-document { border-top-width: 1px; border-top-style: solid; border-top-color: var(--filet-doux); }
+.hist-section-corps > .tiroir:last-of-type { border-bottom: 1px solid var(--filet-doux); }
+.hist-modele > summary, .hist-document > summary { min-height: 52px; font-size: .98rem; font-weight: 650; }
+.hist-modele > summary .plus, .hist-document > summary .plus { width: 24px; height: 24px; }
+.hist-section-corps pre { margin: 0; padding: 14px 16px; border-radius: var(--r-s); background: var(--papier); white-space: pre-wrap; overflow-wrap: anywhere; font: .86rem/1.55 var(--mono); max-height: 26rem; overflow: auto; }
+.hist-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 22px calc(-1 * clamp(16px, 3vw, 28px)) 0; padding: 16px clamp(16px, 3vw, 28px); border-top: 2px solid var(--filet); background: var(--papier); border-radius: 0 0 calc(var(--r) - 2px) calc(var(--r) - 2px); }
+.hist-actions .hist-effacer { --fg: var(--ko); border-color: var(--ko); }
+.hist-actions .hist-ref { margin-left: auto; }

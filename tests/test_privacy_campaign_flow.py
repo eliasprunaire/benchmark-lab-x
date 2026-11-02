@@ -1,6 +1,7 @@
 """Parcours privé S7 complet, vrais gardes et reçus synthétiques sans réseau"""
 from contextlib import closing
 from hashlib import sha256
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
@@ -223,7 +224,12 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertTrue(all(row['answer'] == '  fictional raw output\n' for row in models))
         self.assertTrue(all(row['verdict'] == 'NE SATISFAIT PAS' for row in models))
         self.assertEqual([dict(amount='0.002', currency='USD')] * 2, [row['cost'] for row in models])
+        # La copie du propriétaire date chaque benchmark ; la contribution consentie n'en reçoit pas la date
+        frozen = record['campaigns'][0].pop('frozen_at')
+        self.assertEqual(timezone.utc, datetime.fromisoformat(frozen.replace('Z', '+00:00')).tzinfo)
+        self.assertNotIn('frozen_at', self.corpus('erase')['campaigns'][0])
         self.assertEqual(record['campaigns'], self.corpus('erase')['campaigns'])
+        archive.verify(self.store, self.store._connection)
         metadata = archive.contribution_view(self.store, self.sid, 'erase')['contribution']
         self.assertGreater(metadata['revision'], consent['contribution']['revision'])
         self.assertEqual(consent['contribution']['expires_at'], metadata['expires_at'])
@@ -300,7 +306,7 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertEqual(2, len(models))
         self.assertTrue(all(row['verdict'] is None for row in models))
         self.assertTrue(all(row['answer'] == '  fictional raw output\n' for row in models))
-        self.assertEqual(pending['campaigns'], self.corpus('pending')['campaigns'])
+        self.assertEqual([{k: v for k, v in c.items() if k != 'frozen_at'} for c in pending['campaigns']], self.corpus('pending')['campaigns'])
         self.stage = 'judgment'
         ids = auto.reserve_campaign(self.store, self.sid, 'pending', cid, self.judge)
         service._retention_worker(self.data, 'pending', auto.execute_campaign, self.data, ids, self.judge)
@@ -359,9 +365,9 @@ class PrivacyCampaignFlow(unittest.TestCase):
         loads = []
         prepare = archive._campaigns
 
-        def counted(*args):
+        def counted(*args, **options):
             with patch.object(campaigns, '_load', wraps=campaigns._load) as loaded:
-                result = prepare(*args)
+                result = prepare(*args, **options)
             loads.extend(call.args[2] for call in loaded.call_args_list)
             return result
         with patch.object(archive, '_campaigns', counted):
@@ -372,7 +378,7 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertEqual(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], [row['name'] for row in models])
         self.assertTrue(all(row['verdict'] is None and row['answer'] == '  fictional raw output\n' for row in models))
         self.assertIn('"max_tokens":8192', models[1]['evidence'][0]['text'])
-        self.assertEqual(pending['campaigns'], self.corpus('recovery')['campaigns'])
+        self.assertEqual([{k: v for k, v in c.items() if k != 'frozen_at'} for c in pending['campaigns']], self.corpus('recovery')['campaigns'])
 
     def test_dossier_view_checks_the_database_once_then_only_after_a_change(self):
         self.prepare('vue')

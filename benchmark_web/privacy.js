@@ -10,16 +10,19 @@ const arrayOf = check => value => Array.isArray(value) && value.every(check);
 const piece = value => shape(value, {name: string, text: string});
 // Une obligation composée garde ses éléments séparés, sans séparateur à interpréter
 const criterion = value => string(value) || shape(value, {description: string, elements: strings});
+const model = m => shape(m, {
+  name: string, verdict: v => v === null || string(v),
+  cost: c => shape(c, {amount: a => a === null || string(a), currency: string}),
+  answer: a => a === null || string(a), evidence: arrayOf(piece)});
+// Date du benchmark facultative : les copies gardées avant elle n'en ont pas
+const campaign = v => shape(v, {id: string, models: arrayOf(model)}) || shape(v, {id: string, models: arrayOf(model), frozen_at: string});
 function validRecord(value) {
   return shape(value, {
     format: v => v === 'bench-x/history/v1', dossier_id: string, content_version: integer,
     need: string, messages: strings,
     revisions: arrayOf(v => shape(v, {number: integer, instruction: string, deliverables: strings,
       criteria: arrayOf(criterion), pieces: arrayOf(piece), qualification: string})),
-    campaigns: arrayOf(v => shape(v, {id: string, models: arrayOf(m => shape(m, {
-      name: string, verdict: v => v === null || string(v),
-      cost: c => shape(c, {amount: a => a === null || string(a), currency: string}),
-      answer: a => a === null || string(a), evidence: arrayOf(piece)}))}))
+    campaigns: arrayOf(campaign)
   });
 }
 function integrity(condition) {
@@ -199,49 +202,111 @@ function node(tag, value) {
   if (value !== undefined) element.textContent = value;
   return element;
 }
-function details(label, parent) {
-  const element = node('details');
-  element.append(node('summary', label));
-  parent.append(element);
+const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+// Même forme que date_lisible_utc côté serveur : « 15 septembre 2026 à 08:30:00 UTC » ; null si illisible
+function dateLisible(value) {
+  const moment = new Date(String(value).replace(/(\.\d{3})\d+/, '$1'));
+  if (Number.isNaN(moment.getTime())) return null;
+  const deux = n => String(n).padStart(2, '0');
+  return moment.getUTCDate() + ' ' + MOIS[moment.getUTCMonth()] + ' ' + moment.getUTCFullYear() + ' à '
+    + deux(moment.getUTCHours()) + ':' + deux(moment.getUTCMinutes()) + ':' + deux(moment.getUTCSeconds()) + ' UTC';
+}
+function mot(texte, ton) {
+  const element = node('span', texte);
+  element.className = 'mot'; element.dataset.ton = ton;
   return element;
 }
-function pieces(label, items, parent) {
-  const group = details(label, parent);
-  for (const item of items) details(item.name, group).append(node('pre', item.text));
+// Statuts du serveur traduits avec le vocabulaire des pages du cas ; une valeur inconnue reste lisible telle quelle
+const CONTROLE = {QUALIFIED: ['Réussi', 'ok'], BLOCKED: ['Bloqué', 'ko'], PENDING: ['En attente', 'att']};
+const VERDICT = {'SATISFAIT': ['Satisfait', 'ok'], 'NE SATISFAIT PAS': ['Ne satisfait pas', 'ko'], 'INDETERMINE': ['Indéterminé', 'inc']};
+// Section dépliable du corps d'une fiche, au style du tiroir du site : titre, mots facultatifs, signe plus
+function section(titre, parent, extras = [], classe = 'hist-section') {
+  const element = node('details'); element.className = 'tiroir ' + classe;
+  const summary = node('summary');
+  const label = node('span', titre); label.className = 'hist-section-titre';
+  const plus = node('span'); plus.className = 'plus'; plus.setAttribute('aria-hidden', 'true');
+  summary.append(label);
+  if (extras.length) {
+    const statuts = node('span'); statuts.className = 'hist-statuts';
+    statuts.append(...extras); summary.append(statuts);
+  }
+  summary.append(plus);
+  const corps = node('div'); corps.className = 'hist-section-corps';
+  element.append(summary, corps); parent.append(element);
+  return corps;
+}
+function documents(titre, items, parent) {
+  if (!items.length) return;
+  parent.append(node('h4', titre));
+  for (const item of items) section(item.name, parent, [], 'hist-document').append(node('pre', item.text));
+}
+function liste(titre, items, parent) {
+  if (!items.length) return;
+  parent.append(node('h4', titre));
+  const list = node('ul');
+  for (const item of items) {
+    if (string(item)) { list.append(node('li', item)); continue; }
+    const elements = node('ul');
+    item.elements.forEach(element => elements.append(node('li', element)));
+    const entry = node('li', item.description);
+    entry.append(elements);
+    list.append(entry);
+  }
+  parent.append(list);
 }
 function renderRecord(record, parent) {
-  parent.append(node('p', 'Enregistrement n° ' + record.content_version), node('h3', 'Besoin'), node('p', record.need));
-  const messages = details('Messages', parent);
-  record.messages.forEach(message => messages.append(node('p', message)));
-  for (const revision of record.revisions) {
-    const group = details('Version ' + revision.number + ' de l’exemple', parent);
-    group.append(node('h3', 'Consigne'), node('pre', revision.instruction));
-    for (const [label, items] of [['Livrables', revision.deliverables], ['Critères', revision.criteria]]) {
-      group.append(node('h3', label));
-      const list = node('ul');
-      for (const item of items) {
-        if (string(item)) { list.append(node('li', item)); continue; }
-        const elements = node('ul');
-        item.elements.forEach(element => elements.append(node('li', element)));
-        const entry = node('li', item.description);
-        entry.append(elements);
-        list.append(entry);
-      }
-      group.append(list);
-    }
-    pieces('Pièces', revision.pieces, group);
-    group.append(node('p', 'Contrôle de l’exemple : ' + revision.qualification));
+  // La demande entière : le titre de la face reste coupé à deux lignes
+  const demande = node('div'); demande.className = 'hist-bloc';
+  const texte = node('p', record.need); texte.className = 'hist-demande';
+  // Le cadre porte la marge intérieure : la coupe à quatre lignes ne laisse rien dépasser
+  const cadre = node('div'); cadre.className = 'hist-demande-cadre'; cadre.append(texte);
+  demande.append(node('h3', 'Votre demande'), cadre);
+  if (record.need.length > 280) {
+    texte.classList.add('replie');
+    const lire = node('button', 'Lire la demande entière'); lire.type = 'button'; lire.className = 'lien hist-lire';
+    lire.setAttribute('aria-expanded', 'false');
+    lire.addEventListener('click', () => {
+      const ouvert = texte.classList.toggle('replie') === false;
+      lire.textContent = ouvert ? 'Réduire la demande' : 'Lire la demande entière';
+      lire.setAttribute('aria-expanded', String(ouvert));
+    });
+    demande.append(lire);
   }
-  for (const campaign of record.campaigns) {
-    const group = details('Benchmark ' + campaign.id, parent);
+  parent.append(demande);
+  if (record.messages.length) {
+    const messages = node('ol'); messages.className = 'hist-messages';
+    record.messages.forEach(message => messages.append(node('li', message)));
+    section('Vos messages (' + record.messages.length + ')', parent).append(messages);
+  }
+  for (const revision of record.revisions) {
+    const [statut, ...suite] = revision.qualification.split('\n');
+    const etat = CONTROLE[statut];
+    const corps = section('Version ' + revision.number + ' de l’exemple', parent, etat ? [mot(...etat)] : []);
+    if (revision.instruction) {
+      const consigne = node('p', revision.instruction); consigne.className = 'hist-consigne';
+      corps.append(node('h4', 'Consigne'), consigne);
+    }
+    liste('Livrables', revision.deliverables, corps);
+    liste('Critères', revision.criteria, corps);
+    documents('Pièces', revision.pieces, corps);
+    const controle = node('div'); controle.className = 'hist-controle';
+    controle.append(node('h4', 'Contrôle de l’exemple'));
+    for (const ligne of etat ? suite : [revision.qualification]) controle.append(node('p', ligne));
+    if (controle.childElementCount > 1) corps.append(controle);
+  }
+  record.campaigns.forEach((campaign, index) => {
+    const date = campaign.frozen_at ? dateLisible(campaign.frozen_at) : null;
+    const corps = section('Benchmark ' + (index + 1) + (date ? ' du ' + date : ''), parent);
     for (const model of campaign.models) {
       const cost = model.cost.amount === null ? 'Coût inconnu (' + model.cost.currency + ')'
         : model.cost.amount + ' ' + model.cost.currency;
-      const result = details(model.name + ' · ' + (model.verdict ?? 'Verdict indisponible') + ' · ' + cost, group);
-      result.append(node('h3', 'Réponse'), node('pre', model.answer === null ? 'Aucune réponse conservée' : model.answer));
-      pieces('Preuves', model.evidence, result);
+      const verdict = VERDICT[model.verdict] ?? [model.verdict ?? 'Verdict indisponible', 'inc'];
+      const prix = node('span', cost); prix.className = 'hist-cout';
+      const result = section(model.name, corps, [mot(...verdict), prix], 'hist-modele');
+      result.append(node('h4', 'Réponse'), node('pre', model.answer === null ? 'Aucune réponse conservée' : model.answer));
+      documents('Preuves', model.evidence, result);
     }
-  }
+  });
 }
 // Face d'une fiche de l'historique : le besoin, la dernière version, les verdicts comptés ; rien ne s'y reprend
 function face(record) {
@@ -383,7 +448,7 @@ function mountBootstrap(root) {
     target = new URL(path, location.origin);
     if (target.origin !== location.origin || target.pathname === '/preparation/session/open') throw new Error();
   } catch {
-    status.textContent = 'Ce lien de retour n’est pas valide. Revenez à Mes cas d’usage.';
+    status.textContent = 'Ce lien de retour n’est pas valide. Revenez à la page Benchmark.';
     button.disabled = true;
     return;
   }
@@ -513,7 +578,7 @@ export async function mountPrivacy(root = document) {
           entry.append(face(record)); list.append(entry);
           fiches.push([entry, sansAccents(record.need || '')]);
           const corps = node('div'); corps.className = 'hist-corps';
-          const actions = node('div'); actions.className = 'actions';
+          const actions = node('div'); actions.className = 'hist-actions';
           const download = node('button', 'Télécharger ce cas (JSON)'); download.type = 'button'; download.className = 'btn btn-sec';
           download.addEventListener('click', () => run(download, async () => {
             const current = await store.get(record.dossier_id);
@@ -527,7 +592,10 @@ export async function mountPrivacy(root = document) {
           }));
           const remove = node('button', 'Effacer et ne plus garder ce cas'); remove.type = 'button'; remove.className = 'btn btn-sec';
           remove.addEventListener('click', () => run(remove, async () => {await store.remove(record.dossier_id); await changed();}));
-          actions.append(download, remove); corps.append(actions); entry.append(corps); renderRecord(record, corps);
+          remove.classList.add('hist-effacer');
+          const reference = node('span', 'Enregistrement n° ' + record.content_version); reference.className = 'hist-ref';
+          // Actions en bas de la fiche, après tout le contenu lu
+          renderRecord(record, corps); actions.append(download, remove, reference); corps.append(actions); entry.append(corps);
         }
         filtre?.addEventListener('input', montrer);
         tout?.addEventListener('click', () => {toutes = true; montrer();});
@@ -552,8 +620,8 @@ export async function mountPrivacy(root = document) {
         enable.hidden = !active || !state.chosen || state.enabled;
         // Carte de la liste : message seulement après une action (réussite ou erreur), jamais l'état par défaut sur chaque carte
         if (element.hasAttribute('data-privacy-manual')) return;
-        if (!state.chosen) status.textContent = 'Historique local désactivé : ce cas n’est pas gardé dans ce navigateur. Pour l’activer, cochez la case de contribution ou passez par Mes données.';
-        else if (!state.enabled) status.textContent = 'Historique local en pause : ce cas n’est plus gardé dans ce navigateur. Réactivez-le dans Mes données, ou pour ce cas seulement avec le bouton ci-dessous.';
+        if (!state.chosen) status.textContent = 'Historique local désactivé : ce cas n’est pas gardé dans ce navigateur. Pour l’activer, cochez la case de contribution ou passez par Mes cas d’usage.';
+        else if (!state.enabled) status.textContent = 'Historique local en pause : ce cas n’est plus gardé dans ce navigateur. Réactivez-le dans Mes cas d’usage, ou pour ce cas seulement avec le bouton ci-dessous.';
       };
       refreshers.push(update);
       const save = () => run(archive, async () => {
@@ -566,7 +634,7 @@ export async function mountPrivacy(root = document) {
       enable.addEventListener('click', () => run(enable, async () => {
         // A per-case action never silently lifts the global pause
         await store.enable(id); await changed();
-        if (!(await store.state()).enabled) status.textContent = 'L’historique est réactivé pour ce cas, mais il reste en pause pour tout ce navigateur. Réactivez-le aussi dans Mes données.';
+        if (!(await store.state()).enabled) status.textContent = 'L’historique est réactivé pour ce cas, mais il reste en pause pour tout ce navigateur. Réactivez-le aussi dans Mes cas d’usage.';
       }));
       await update();
       if (element.hasAttribute('data-privacy-activity') && element.hasAttribute('data-content-version') && store && (await store.state(id)).enabled) await save();

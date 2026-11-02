@@ -309,7 +309,7 @@ def executor_health(path):
 
 def denied_response(error):
     generic = ('Vous ne pouvez pas faire cette action depuis ce navigateur. Rouvrez votre cas d’usage '
-               'depuis Mes cas d’usage.')
+               'depuis la page Benchmark.')
     if error.code == 'NOT_FOUND':
         return {'status': 404, 'value': {'error': 'Cette page n’existe pas ou ne vous est pas accessible.', 'error_code': 'NOT_FOUND'}}
     if not error.code:
@@ -324,7 +324,7 @@ def denied_response(error):
         return {'status': 503, 'value': {'error': unavailable[error.code], 'error_code': error.code,
                                          'unavailable': True}}
     messages = {
-        'SESSION_EXPIRED': 'Votre session a expiré. Les copies gardées dans ce navigateur restent consultables dans Mes données.',
+        'SESSION_EXPIRED': 'Votre session a expiré. Les copies gardées dans ce navigateur restent consultables dans Mes cas d’usage.',
         'RESTORE_PENDING': 'Service momentanément indisponible, réessayez plus tard.',
         'CONTRIBUTION_SENSITIVE_DATA': 'Cette contribution n’a pas été envoyée : elle contient peut-être une donnée sensible. Votre cas d’usage et ses résultats restent accessibles.',
         'TEXT_TOO_SHORT': 'Ce texte est trop court.',
@@ -483,7 +483,7 @@ def _handled(message, handle):
         logging.getLogger(__name__).warning('EXECUTOR_READ_INTERRUPTED %s', _logged_route(message))
         return READ_TIMEOUT_RESULT
     except Gone:
-        return {'status': 410, 'value': {'error': 'Ce cas d’usage n’est plus disponible sur le serveur. Vos copies gardées dans ce navigateur restent dans Mes données.', 'error_code': 'DOSSIER_EXPIRED'}}
+        return {'status': 410, 'value': {'error': 'Ce cas d’usage n’est plus disponible sur le serveur. Vos copies gardées dans ce navigateur restent dans Mes cas d’usage.', 'error_code': 'DOSSIER_EXPIRED'}}
     except (ConflictError, BudgetError):
         return {'status': 409, 'value': {'error': CONFLICT_MESSAGE}}
     except (IntegrityError, SchemaError, sqlite3.Error) as error:
