@@ -2,11 +2,11 @@
 style_gate: pass
 ---
 
-# PRD de Bench-X
+# PRD d’Evaly
 
 ## 1. Rôle et autorité
 
-Ce document fixe la vision durable, le besoin, l’audience et les résultats attendus de Bench-X. Les parcours et principes décrivent le produit à long terme ; aucune exigence n’y est rattachée à un numéro de version. Le document ne porte aucun statut de livraison et les options non décidées ne deviennent pas des exigences par leur seule mention.
+Ce document fixe la vision durable, le besoin, l’audience et les résultats attendus d’Evaly. Les parcours et principes décrivent le produit à long terme ; aucune exigence n’y est rattachée à un numéro de version. Le document ne porte aucun statut de livraison et les options non décidées ne deviennent pas des exigences par leur seule mention.
 
 L'approbation de ce document n'autorise aucune campagne ni publication. Les campagnes déjà enregistrées restent sous leurs contrats figés.
 
@@ -138,7 +138,7 @@ L’agent comprend le travail pour construire son épreuve. Il pose seulement le
 
 Une demande trop large, une référence insuffisante, des outils absents ou une action réelle impossible à reproduire doivent être expliqués. L’agent propose un périmètre évaluable soumis à validation ; sans accord ou sans preuve suffisante, la préparation s’arrête. Elle ne promet pas de rendre toute demande benchmarkable.
 
-Les tests génériques de mathématiques ou de programmation sans besoin de travail sont hors du périmètre de Bench-X. Leur préparation s’arrête avec un motif clair et, lorsque le domaine est reconnu, des liens vers des benchmarks spécialisés sélectionnés par le produit. Ce dossier ne peut plus être poursuivi ni envoyé en comparaison. Un besoin métier vague reste à préciser ; une tâche concrète nécessitant du calcul ou du code reste admissible.
+Les tests génériques de mathématiques ou de programmation sans besoin de travail sont hors du périmètre d’Evaly. Leur préparation s’arrête avec un motif clair et, lorsque le domaine est reconnu, des liens vers des benchmarks spécialisés sélectionnés par le produit. Ce dossier ne peut plus être poursuivi ni envoyé en comparaison. Un besoin métier vague reste à préciser ; une tâche concrète nécessitant du calcul ou du code reste admissible.
 
 L’aperçu présente une situation fictive concrète, les informations importantes, la consigne exacte, les livrables, des critères compréhensibles, les ambiguïtés acceptables et le travail humain restant. « Voir l’exemple » ouvre des pièces effectivement construites et consultables. Le résumé référence le même paquet que celui prévu pour les candidats ; une liste de fichiers annoncés ne suffit pas. La référence réservée au jugement reste séparée ; toute exposition choisie est déclarée avec sa conséquence sur la mesure.
 
@@ -171,7 +171,7 @@ La durée des sauvegardes reste distincte de la durée active des données. Une 
 
 L’historique local permet de lire les copies complètes et d’exporter chaque cas après expiration de l’accès serveur. Il ne contient ni secret ni référence privée du juge. Une copie incomplète ne remplace jamais la précédente. Le navigateur peut refuser une écriture ou supprimer ses données ; cet historique ne constitue pas une sauvegarde garantie. Toute personne utilisant le même profil de navigateur peut le consulter.
 
-Après présentation de l’exemple, une case décochée propose d’autoriser son utilisation et celle de ses résultats pour améliorer Bench-X. Le consentement porte sur cette version : toute nouvelle version nécessite un nouveau choix. La copie comprend l’exemple généré, ses pièces, sa qualification, les configurations, réponses, verdicts et coûts autorisés. Elle exclut le besoin initial, les corrections et messages libres, les clés, cookies, adresses réseau et journaux bruts. Un contrôle déterministe exclut les contenus manifestement sensibles sans garantir une anonymisation. Aucun entraînement, transfert tiers ou publication n’est déclenché.
+Après présentation de l’exemple, une case décochée propose d’autoriser son utilisation et celle de ses résultats pour améliorer Evaly. Le consentement porte sur cette version : toute nouvelle version nécessite un nouveau choix. La copie comprend l’exemple généré, ses pièces, sa qualification, les configurations, réponses, verdicts et coûts autorisés. Elle exclut le besoin initial, les corrections et messages libres, les clés, cookies, adresses réseau et journaux bruts. Un contrôle déterministe exclut les contenus manifestement sensibles sans garantir une anonymisation. Aucun entraînement, transfert tiers ou publication n’est déclenché.
 
 Refuser ou retirer une contribution ne dégrade pas le benchmark. Le stockage temporaire et les échanges nécessaires avec Openrouter et les fournisseurs continuent selon leurs conditions propres. Les ajouts ultérieurs de résultats ne prolongent pas les six mois. Les dérivés identifiables restent rattachés à leur contribution et sont retirés avec elle.
 
@@ -191,7 +191,7 @@ Cette illustration de conception n’est ni un contrat gelé ni une campagne. Le
 
 ### Consulter des évaluations externes
 
-Le répertoire d’évaluations externes aide à trouver des sources officielles pertinentes pour un travail recherché. Il reste distinct du catalogue des tâches Bench-X et des comparaisons privées. Une évaluation externe ne prouve pas la réussite sur le besoin particulier du visiteur.
+Le répertoire d’évaluations externes aide à trouver des sources officielles pertinentes pour un travail recherché. Il reste distinct du catalogue des tâches Evaly et des comparaisons privées. Une évaluation externe ne prouve pas la réussite sur le besoin particulier du visiteur.
 
 Le visiteur accède au même répertoire depuis l’accueil, un lien direct ou une préparation suspendue. Il consulte les notices, recherche des termes et applique des filtres explicites, sans session, clé, JavaScript ni création de dossier. Aucun filtre de préférence n’est précoché. Aucun score global ni classement préférentiel des sources n’est produit. La recherche simple ne dépend ni de Jev ni d’un appel modèle.
 
@@ -199,7 +199,7 @@ Chaque notice indique la source officielle, le travail mesuré, sa portée, ses 
 
 Une recherche sans résultat et un répertoire vide proposent de modifier la recherche ou de décrire un besoin. Une source retirée reste signalée comme indisponible lors d’un accès direct. Une source insuffisamment vérifiée porte cette limite et n’est pas présentée comme recommandée. Ces états conservent l’accès à la description d’un besoin.
 
-La consultation ne transmet aucun besoin privé aux sites externes, y compris dans les URL et les référents HTTP. Les notices ne rendent aucun dossier privé public. Le parcours reste utilisable au clavier et sur petit écran. La collecte automatique de sources, la recherche assistée et la publication d’épreuves Bench-X ne font pas partie de cette capacité.
+La consultation ne transmet aucun besoin privé aux sites externes, y compris dans les URL et les référents HTTP. Les notices ne rendent aucun dossier privé public. Le parcours reste utilisable au clavier et sur petit écran. La collecte automatique de sources, la recherche assistée et la publication d’épreuves Evaly ne font pas partie de cette capacité.
 
 ### Demander une aide sémantique facultative
 
@@ -211,7 +211,7 @@ Chaque notice est appréciée indépendamment ; plusieurs correspondances ou auc
 
 Le classement est éphémère. Les notices restent soumises aux contrôles de disponibilité, d’intégrité et de retrait avant affichage, ouverture et copie. L’aide ne modifie ni version, ni caractéristique éditoriale, ni résultat. Une réponse valide sans correspondance affiche une absence de suggestion. Une panne, un délai dépassé ou une réponse invalide affiche une aide indisponible. Les deux états conservent la recherche simple et ses filtres, sans secours génératif.
 
-Bench-X finance cette aide sur un compte TypeSafe dédié, distinct des clés personnelles OpenRouter. Les textes recherchés ne sont pas conservés dans des journaux durables locaux. Seuls les reçus techniques et comptables nécessaires subsistent, sans ces textes. Le traitement standard du fournisseur est annoncé ; aucune absence de conservation ni localisation exclusivement européenne n’est promise sans engagement applicable. L’absence d’entraînement ne prouve pas l’absence de conservation.
+Evaly finance cette aide sur un compte TypeSafe dédié, distinct des clés personnelles OpenRouter. Les textes recherchés ne sont pas conservés dans des journaux durables locaux. Seuls les reçus techniques et comptables nécessaires subsistent, sans ces textes. Le traitement standard du fournisseur est annoncé ; aucune absence de conservation ni localisation exclusivement européenne n’est promise sans engagement applicable. L’absence d’entraînement ne prouve pas l’absence de conservation.
 
 Le service est désactivé par défaut. Son activation exige une autorisation distincte, un compte et un traitement des données vérifiés, une enveloppe et une qualification propre à chaque usage. Les seuils sont établis sur les formulations françaises avant activation ; aucun seuil arbitraire n’est réputé qualifié. Une preuve fictive établit le fonctionnement logiciel seulement. Les limites communes relèvent de l’[ARD](ARD.md#49-aide-sémantique-commune) et les autorités des [règles](RULES.md#3-périmètre-produit).
 
