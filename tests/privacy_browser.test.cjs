@@ -2647,6 +2647,18 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     await page.goto(origin + '/render/data');
     assert.equal(await page.locator('[data-privacy-history]').count(), 1);
     assert.equal(await page.locator('[data-privacy-activity]').count(), 0);
+    // Sans JavaScript, l'historique local n'est pas lisible : aucune action d'effacement local n'est proposée
+    assert.equal(await page.getByRole('button', {name: 'Tout effacer et arrêter l’historique'}).count(), 0);
+    assert.equal(await page.getByRole('button', {name: 'Effacer et ne plus garder ce cas'}).count(), 0);
+    assert.equal(await page.locator('[data-privacy-list] > details').count(), 0);
+    // « Supprimer ce cas d'usage » mène à une page de confirmation ; sans JavaScript, seul son bouton envoie la demande
+    await page.goto(origin + '/render/case-delete');
+    const suppression = page.locator('form[action="/preparation/dossiers/d1/delete"]');
+    assert.equal(await suppression.getAttribute('method'), 'post');
+    assert.deepEqual(await suppression.locator('button[type="submit"]').allTextContents(), ['Oui, supprimer définitivement']);
+    assert.equal(await suppression.locator('button[type="submit"]').isEnabled(), true);
+    assert.equal(await suppression.locator('.annuler a', {hasText: 'Annuler et garder ce cas'}).isVisible(), true);
+    assert.match(await page.locator('main').innerText(), /Sans JavaScript, seule la suppression sur le serveur est demandée/);
     // Mes données : conservation expliquée, historique local, puis les liens ; aucune page ne déborde
     const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     for (const width of [390, 1440]) {

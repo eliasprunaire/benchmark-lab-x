@@ -196,6 +196,9 @@ def browser_views():
     examples['privacy-listing'] = dict(dossiers=[dict(dossier_id='d1', need='Trier des notes de réunion', revision=2),
                                                  dict(dossier_id='d2', need='Rédiger des réponses aux clients', revision=1)],
                                        availability=available, privacy=liste)
+    # Confirmation de « Supprimer ce cas d'usage » : une page du serveur, utilisable sans JavaScript
+    examples['case-delete'] = dict(kind='case_delete', dossier=dict(dossier_id='d1', need='Trier des notes de réunion'),
+                                   privacy=liste, return_path='/preparation')
     # L'échéance d'effacement n'est connue de la vue que si l'exécuteur la fournit : sans elle, aucune alerte
     soon = (datetime.now(timezone.utc) + timedelta(hours=30)).isoformat()
     examples['listing-expiring'] = dict(dossiers=[dict(dossier_id='d1', need='Trier des notes de réunion', revision=2, expires_at=soon),
