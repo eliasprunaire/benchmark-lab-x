@@ -232,9 +232,17 @@ def render_contributions(value):
         phrase = 'Conservée jusqu’au ' + date_lisible_utc(item['expires_at']) + '.'
         if depasse:
             phrase += ' La date de conservation est dépassée\xa0: la contribution s’affiche expirée même si elle était notée active.'
-        retrait = privacy_form('withdraw', value['csrf_token'], '/preparation/contributions/' + quote(item['id'], safe='') + '/withdraw', {},
-                               bouton('Retirer mon consentement', sec=True, icone=None) + '<p class="petit" role="status" data-privacy-status></p>',
-                               disabled=status != 'active')
+        url = '/preparation/contributions/' + quote(item['id'], safe='') + '/withdraw'
+        if status == 'active':
+            # Le retrait efface la copie gardée sur le serveur : il se confirme, même sans JavaScript, comme le retrait de la clé
+            retrait = ('<details class="confirmation-repliee"><summary class="btn btn-sec">Retirer mon consentement</summary>'
+                       '<div class="confirmation"><p>Retirer votre consentement ? La copie de contribution gardée sur le serveur sera effacée.</p>'
+                       + privacy_form('withdraw', value['csrf_token'], url, {},
+                                      '<div class="actions"><button class="btn btn-danger btn-s" type="submit">Oui, retirer mon consentement</button></div>'
+                                      '<p class="petit" role="status" data-privacy-status></p>') + '</div></details>')
+        else:
+            retrait = privacy_form('withdraw', value['csrf_token'], url, {},
+                                   bouton('Retirer mon consentement', sec=True, icone=None), disabled=True)
         content += etat(ton, libelle, 'Contribution du ' + jour_lisible(item['created_at']), phrase, retrait, ident='contribution-' + str(numero))
     if not value['contributions']:
         content += etat('inc', 'Sans accès', 'Ce navigateur n’a accès à aucune contribution',

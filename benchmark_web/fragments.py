@@ -375,7 +375,7 @@ CLE_RETRAIT = ('Attendez la fin d’une préparation ou d’un contrôle de l’
 def retrait_cle(csrf, back, *, page_cle=False):
     """« Retirer la clé de ce navigateur » se confirme, même sans JavaScript : le bouton d'envoi est replié derrière la question ;
     sur la page de la clé, sa mise en garde le suit"""
-    confirmation = ('<details class="confirmation-cle"><summary class="btn btn-sec">' + (ic('poubelle') if not page_cle else '')
+    confirmation = ('<details class="confirmation-repliee"><summary class="btn btn-sec">' + (ic('poubelle') if not page_cle else '')
                     + 'Retirer la clé de ce navigateur</summary><div class="confirmation"><p>Retirer la clé de ce navigateur ? '
                     'Evaly ne lancera plus aucun appel tant que vous n’en enregistrez pas une autre.</p>'
                     + form(csrf, '/preparation/access/disconnect', {'return': back},

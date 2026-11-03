@@ -687,12 +687,13 @@ test('withdrawing a contribution keeps local copies active and erasable from Mes
   try {
     const page = await pageFor(context);
     await page.evaluate(() => historyStore.archive('d1', 1));
-    await page.setContent('<form data-privacy-post="withdraw" action="/preparation/contributions/c1/withdraw"><input type="hidden" name="csrf_token" value="purpose"><button>Retirer</button><p data-privacy-status></p></form>');
+    await page.setContent('<details class="confirmation-repliee"><summary>Retirer mon consentement</summary><div class="confirmation"><p>Retirer votre consentement ? La copie de contribution gardée sur le serveur sera effacée.</p><form data-privacy-post="withdraw" action="/preparation/contributions/c1/withdraw"><input type="hidden" name="csrf_token" value="purpose"><button>Oui, retirer mon consentement</button><p data-privacy-status></p></form></div></details>');
     await page.evaluate(() => privacy.mountPrivacy());
-    // Le retrait efface la copie de contribution du serveur : rien n'est envoyé avant la confirmation
+    // Le retrait efface la copie de contribution du serveur : rien n'est envoyé avant la confirmation, posée une seule fois
     const avant = posts.length;
-    await page.getByRole('button', {name: 'Retirer'}).click();
-    assert.match(await page.getByRole('group', {name: /Retirer votre consentement/}).textContent(), /copie de contribution/);
+    await page.locator('details.confirmation-repliee > summary').click();
+    assert.match(await page.locator('details.confirmation-repliee').textContent(), /copie de contribution/);
+    assert.equal(await page.getByRole('button', {name: 'Oui, retirer mon consentement'}).count(), 1);
     assert.equal(posts.length, avant);
     await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Oui, retirer mon consentement'}).click()]);
     assert.deepEqual(posts.at(-1), {path: '/preparation/contributions/c1/withdraw', body: {csrf_token: 'purpose'}});
@@ -721,13 +722,13 @@ test('server deletion and withdrawal send only their purpose CSRF and never arch
       const page = await pageFor(context);
       await page.setContent(`<form data-privacy-post="${action}" action="${path}"><input type="hidden" name="csrf_token" value="purpose-${action}"><button>Confirmer</button><p data-privacy-status></p></form>`);
       await page.evaluate(() => privacy.mountPrivacy());
-      await page.getByRole('button', {name: 'Confirmer'}).click();
       if (action === 'delete') {
+        await page.getByRole('button', {name: 'Confirmer'}).click();
         await page.waitForFunction(() => document.querySelector('[data-privacy-status]').textContent.includes('lors du prochain nettoyage planifié'));
         assert.equal(page.url(), origin + '/');
       } else {
-        assert.deepEqual(posts, [], 'retrait envoyé seulement après confirmation');
-        await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Oui, retirer mon consentement'}).click()]);
+        // La question est dans le balisage du serveur : le script envoie au premier clic, sans seconde question
+        await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Confirmer'}).click()]);
       }
       assert.deepEqual(posts, [{path, body: {csrf_token: 'purpose-' + action}}]);
       await page.close();
@@ -1535,7 +1536,7 @@ test('access and launch screens preserve available actions, estimates and refusa
         assert.ok(text.includes('Plafond de la clé') && text.includes('25'));
         assert.ok(text.includes('Retirer la clé de ce navigateur'));
         // Retirer la clé se confirme, même sans JavaScript : le bouton d'envoi reste replié derrière la question
-        const confirmationCle = page.locator('details.confirmation-cle:visible').first();
+        const confirmationCle = page.locator('details.confirmation-repliee:visible').first();
         const retrait = confirmationCle.getByRole('button', {name: 'Oui, retirer la clé'});
         assert.equal(await retrait.isVisible(), false);
         await confirmationCle.locator('summary').click();
@@ -2624,6 +2625,16 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
       assert.equal(await page.locator('[data-privacy-activity]').count(), 0);
       const form = page.locator('form[action="/preparation/contributions/opaque-identifier/withdraw"]');
       assert.equal(await form.locator('button').isDisabled(), disabled);
+      // Retirer le consentement se confirme, même sans JavaScript : l'envoi reste replié derrière la question
+      const repli = page.locator('details.confirmation-repliee');
+      assert.equal(await repli.count(), Number(!disabled));
+      if (!disabled) {
+        const oui = form.getByRole('button', {name: 'Oui, retirer mon consentement'});
+        assert.equal(await oui.isVisible(), false);
+        await repli.locator('summary', {hasText: 'Retirer mon consentement'}).click();
+        assert.equal(await oui.isVisible(), true);
+        assert.match(await repli.textContent(), /Retirer votre consentement \?/);
+      }
       assert.equal(await form.locator('input[name="csrf_token"]').inputValue(), 'purpose-only');
     }
     for (const name of ['safe', 'unsafe']) {
