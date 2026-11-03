@@ -1425,6 +1425,6 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
 .confirmation { flex-basis: 100%; display: grid; gap: 10px; padding: 14px 16px; border: 2px solid var(--ko); border-radius: var(--r-s); background: var(--ko-fond); }
 .confirmation[hidden] { display: none; }
 .confirmation p { font-weight: 650; overflow-wrap: anywhere; }
-.confirmation-cle > summary { list-style: none; cursor: pointer; }
-.confirmation-cle > summary::-webkit-details-marker { display: none; }
-.confirmation-cle[open] > summary { margin-bottom: 12px; }
+.confirmation-repliee > summary { list-style: none; cursor: pointer; }
+.confirmation-repliee > summary::-webkit-details-marker { display: none; }
+.confirmation-repliee[open] > summary { margin-bottom: 12px; }

@@ -357,7 +357,6 @@ function confirmation(button, question, oui, action) {
   valider.addEventListener('click', () => {fermer(); action();});
   return () => {button.hidden = true; zone.hidden = false; annuler.focus();};
 }
-const demandes = new WeakMap();
 function mountForms(root) {
   for (const form of root.querySelectorAll('form[data-privacy-post]')) {
     if (mounted.has(form)) continue;
@@ -366,16 +365,6 @@ function mountForms(root) {
       event.preventDefault();
       if (form.dataset.busy) return;
       const action = form.dataset.privacyPost;
-      // Le retrait efface la copie de contribution du serveur : il attend la confirmation
-      if (action === 'withdraw' && !form.dataset.confirme) {
-        const submitter = event.submitter;
-        if (!submitter) return;
-        if (!demandes.has(form)) demandes.set(form, confirmation(submitter,
-          'Retirer votre consentement ? La copie de contribution gardée sur le serveur sera effacée.',
-          'Oui, retirer mon consentement', () => {form.dataset.confirme = 'true'; form.requestSubmit(submitter);}));
-        demandes.get(form)();
-        return;
-      }
       const url = new URL(form.action, location.href);
       if (url.origin !== location.origin || !/^\/preparation\/(dossiers\/[^/]+\/(delete|contribution)|contributions\/[^/]+\/withdraw)$/.test(url.pathname)) return;
       const fields = new FormData(form);
