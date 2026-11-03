@@ -38,7 +38,7 @@ _ROUTE_PATTERNS = (
     '/evaluations-externes/<id>',
     '/epreuves', '/epreuves/aide', '/epreuves/aide/resultat/<id>',
     '/epreuves/<id>/<id>', '/epreuves/<id>/<id>/pieces/<id>',
-    '/epreuves/<id>/<id>/campagnes/<id>', '/epreuves/<id>/<id>/campagnes/<id>/pieces/<id>',
+    '/epreuves/<id>/<id>/benchmarks/<id>', '/epreuves/<id>/<id>/benchmarks/<id>/pieces/<id>',
     '/mentions-legales', '/cgu', '/confidentialite',
     '/preparation', '/preparation/privacy.js', '/preparation/style.css',
     '/preparation/fonts/<police>.woff2', '/preparation/fonts/OFL-<police>.txt',
@@ -1015,10 +1015,10 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                     r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/pieces/([A-Za-z0-9_-]{1,128})',
                     reference_path)
                 campaign = re.fullmatch(
-                    r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/campagnes/([A-Za-z0-9_-]{1,128})',
+                    r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/benchmarks/([A-Za-z0-9_-]{1,128})',
                     reference_path)
                 campaign_piece = re.fullmatch(
-                    r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/campagnes/'
+                    r'/epreuves/([A-Za-z0-9_-]{1,128})/([A-Za-z0-9_-]{1,128})/benchmarks/'
                     r'([A-Za-z0-9_-]{1,128})/pieces/([A-Za-z0-9_-]{1,128})', reference_path)
                 if version_path is None and piece is None and campaign is None and campaign_piece is None \
                         and reference_path != '/epreuves':

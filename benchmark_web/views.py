@@ -546,7 +546,7 @@ def render_editorial(value):
                      + ' sur ' + str(campaign['coverage']['planned_cells'])
                      + (' essai prévu' if campaign['coverage']['planned_cells'] == 1 else ' essais prévus') + ' · coûts '
                      + ('complets' if campaign['economic_status'] == 'COMPLETE' else 'incomplets'))
-            items += '<li>' + lien(base + '/campagnes/' + campaign['campaign_id'], shown) + '</li>'
+            items += '<li>' + lien(base + '/benchmarks/' + campaign['campaign_id'], shown) + '</li>'
         publies = ('<section class="pile" aria-labelledby="g-resultats"><h2 id="g-resultats" class="g-h2">Résultats publiés</h2><p class="petit">'
                    'Chaque benchmark est une restitution approuvée séparément. Elle ne fusionne pas ses résultats avec un autre benchmark.</p>'
                    '<ul class="g-liste">' + items + '</ul>')

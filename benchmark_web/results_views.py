@@ -37,7 +37,7 @@ def _metric(metric):
 
 def _base(value):
     return ('/epreuves/' + text(value['task_id']) + '/' + text(value['version_id']) +
-            '/campagnes/' + text(value['campaign_id']))
+            '/benchmarks/' + text(value['campaign_id']))
 
 
 def _anchor(row):
@@ -144,7 +144,7 @@ def _campaigns(value):
             content += '<li><strong>' + text(shown) + '</strong> (benchmark affiché)</li>'
         else:
             href = ('/epreuves/' + text(value['task_id']) + '/' + text(value['version_id']) +
-                    '/campagnes/' + text(campaign['campaign_id']))
+                    '/benchmarks/' + text(campaign['campaign_id']))
             content += '<li><a href="' + href + '">' + text(shown) + '</a></li>'
     content += '</ul>'
     if any(campaign['contract_sha256'] != value['contract_sha256'] or

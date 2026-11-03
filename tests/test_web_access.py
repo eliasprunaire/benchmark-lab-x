@@ -614,8 +614,8 @@ class AccessServerTests(WebServerCase):
 
     def test_resultats_publics_absents_sans_relais_ni_cookie(self):
         """#466 : une adresse de restitution sans paquet reste un 404 public, sans session ni exécuteur"""
-        for path in ('/epreuves/tache-fictive/version-1/campagnes/campagne-1',
-                     '/epreuves/tache-fictive/version-1/campagnes/campagne-1/pieces/output-a'):
+        for path in ('/epreuves/tache-fictive/version-1/benchmarks/campagne-1',
+                     '/epreuves/tache-fictive/version-1/benchmarks/campagne-1/pieces/output-a'):
             for method in ('GET', 'HEAD'):
                 with self.subTest(path=path, method=method):
                     status, headers, raw = self.request(method, path, headers={'Accept': 'text/html'})
@@ -844,12 +844,12 @@ class RouteCanonicalizationTests(unittest.TestCase):
                 ('/epreuves/tache-fictive/version-1', '/epreuves/<id>/<id>'),
                 ('/epreuves/tache-fictive/version-1?q=tableau', '/epreuves/<id>/<id>'),
                 ('/epreuves/tache-fictive/version-1/pieces/consigne', '/epreuves/<id>/<id>/pieces/<id>'),
-                ('/epreuves/tache-fictive/version-1/campagnes/campagne-1',
-                 '/epreuves/<id>/<id>/campagnes/<id>'),
-                ('/epreuves/tache-fictive/version-1/campagnes/campagne-1?sort=cost&direction=desc',
-                 '/epreuves/<id>/<id>/campagnes/<id>'),
-                ('/epreuves/tache-fictive/version-1/campagnes/campagne-1/pieces/output-a',
-                 '/epreuves/<id>/<id>/campagnes/<id>/pieces/<id>')):
+                ('/epreuves/tache-fictive/version-1/benchmarks/campagne-1',
+                 '/epreuves/<id>/<id>/benchmarks/<id>'),
+                ('/epreuves/tache-fictive/version-1/benchmarks/campagne-1?sort=cost&direction=desc',
+                 '/epreuves/<id>/<id>/benchmarks/<id>'),
+                ('/epreuves/tache-fictive/version-1/benchmarks/campagne-1/pieces/output-a',
+                 '/epreuves/<id>/<id>/benchmarks/<id>/pieces/<id>')):
             self.assertEqual(expected, canonical_route(path), path)
 
     def test_un_chemin_non_servi_ne_ressort_jamais(self):

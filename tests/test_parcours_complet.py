@@ -1805,9 +1805,9 @@ class ParcoursComplet(unittest.TestCase):
         trial = editorial.reprise_admission(self.public, task, version)
         dossier_id = dossier.rsplit('/', 1)[1]
         first_id, second_id, partial_id = dossier_id + '-c1', dossier_id + '-c2', dossier_id + '-c3'
-        first = '/epreuves/' + task + '/' + version + '/campagnes/' + first_id
-        second = '/epreuves/' + task + '/' + version + '/campagnes/' + second_id
-        partial = '/epreuves/' + task + '/' + version + '/campagnes/' + partial_id
+        first = '/epreuves/' + task + '/' + version + '/benchmarks/' + first_id
+        second = '/epreuves/' + task + '/' + version + '/benchmarks/' + second_id
+        partial = '/epreuves/' + task + '/' + version + '/benchmarks/' + partial_id
         # Deuxième campagne de la même épreuve, aux deux mêmes modèles et coûts connus
         page, _, _ = self.request(dossier + '/configurations')
         recap = self.submit(page, '/configurations', {
@@ -1852,7 +1852,7 @@ class ParcoursComplet(unittest.TestCase):
         self.submit(page, '/configurations', {
             'models': ['deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'], 'tier': 'low'})
         third_id = dossier_id + '-c4'
-        third = '/epreuves/' + task + '/' + version + '/campagnes/' + third_id
+        third = '/epreuves/' + task + '/' + version + '/benchmarks/' + third_id
         self.assertTrue(self.starts.empty())
 
         with closing(storage.Store(self.data)) as store:
@@ -1969,6 +1969,8 @@ class ParcoursComplet(unittest.TestCase):
         self.request(first, status=404)
         manifest_path.write_bytes(original_manifest)
         self.request(first)
+        # Un résultat publié se lit sous /benchmarks/ ; l'ancienne adresse /campagnes/ n'existe plus, sans redirection
+        self.request(first.replace('/benchmarks/', '/campagnes/'), status=404)
         self.assertEqual({first_id, second_id, partial_id},
                          {campaign['campaign_id'] for campaign in
                           public_results.published(self.public, task, version)})
@@ -2194,7 +2196,7 @@ class ParcoursComplet(unittest.TestCase):
                                     authority=EVALUATION_AUTHORITY, check=report)
             campaigns.stop(store, 'numeric')
         campaign_id = 'numeric'
-        url = '/epreuves/' + task + '/' + version + '/campagnes/' + campaign_id
+        url = '/epreuves/' + task + '/' + version + '/benchmarks/' + campaign_id
         with closing(storage.Store(self.data)) as store:
             session = store._connection.execute(
                 'SELECT session_id FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
