@@ -396,6 +396,16 @@ class PrivacyHTTPTests(unittest.TestCase):
                 self.assertEqual(200, code, value)
                 self.assertFalse(headers.get_all('Set-Cookie'))
                 self.assertEqual(before, self.dates())
+        # Adresses réservées au script : en HTML, le navigateur est renvoyé vers la page lisible, sans relais ni effet
+        for method, route, page in (('GET', '/preparation/activity', '/preparation'),
+                                    ('POST', '/preparation/activity', '/preparation'),
+                                    ('GET', path + '/archive', path), ('GET', item, path)):
+            with self.subTest(route=route, method=method, html=True):
+                body = {'csrf_token': owner['csrf'], 'dossier_id': 'case-a'} if method == 'POST' else None
+                code, headers, _ = self.request(method, route, cookies=cookies, native=True, body=body)
+                self.assertEqual((303, page), (code, headers['Location']))
+                self.assertFalse(headers.get_all('Set-Cookie'))
+                self.assertEqual(before, self.dates())
         code, headers, value = self.request('POST', '/preparation/activity', cookies=cookies,
             body={'csrf_token': owner['csrf'], 'dossier_id': 'case-a'})
         self.assertEqual(200, code, value)

@@ -481,6 +481,17 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 self.respond(303, b'', 'text/html; charset=utf-8',
                              {'Location': self.path.removesuffix('/custom-models') + '/configurations#custom-models'})
                 return
+            # Activité et archive ne servent qu'au script : en HTML, renvoi vers la page lisible, sans relais ni effet
+            script_only = re.fullmatch(r'/preparation/activity|(/preparation/dossiers/[A-Za-z0-9_-]{1,128})/archive(?:/items/record)?',
+                                       urlsplit(self.path).path)
+            if script_only and not wants_json and self.command in ('GET', 'HEAD', 'POST'):
+                headers = {'Location': script_only[1] or '/preparation'}
+                if self.command == 'POST':
+                    # Le corps n'est pas lu : la connexion se ferme pour qu'il ne passe pas pour une requête suivante
+                    self.close_connection = True
+                    headers['Connection'] = 'close'
+                self.respond(303, b'', 'text/html; charset=utf-8', headers)
+                return
             confirmation = (re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/delete', urlsplit(self.path).path)
                             if self.command in ('GET', 'HEAD') and not wants_json else None)
             if confirmation:
