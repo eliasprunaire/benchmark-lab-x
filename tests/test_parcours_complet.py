@@ -6763,6 +6763,10 @@ class ParcoursComplet(unittest.TestCase):
             if not profondeur:
                 registre = page[debut:debut + balise.end()]
                 break
+        # Une clé sans libellé reste citée telle quelle entre guillemets, jamais déguisée en mots
+        for libelle in re.findall(r'<dt>([^<]*)</dt>', registre):
+            self.assertTrue(libelle[0].isupper() or libelle.startswith('«'), libelle)
+        self.assertIn('<dt>« receipt_id »</dt>', registre)
         # Les verdicts citent la requête exacte envoyée au juge : cette preuve reste verbatim
         registre = re.sub(r'<h4>Verdicts et preuves</h4>.*?(?=<details><summary>Essai |<article>|\Z)', '', registre, flags=re.S)
         texte = unescape(re.sub(r'<[^>]+>', ' ', registre))
@@ -7617,6 +7621,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('12000 jetons', next(t for t in sections if 'Modèle A' in t))
         self.assertIn('Longueur de réponse', next(t for t in sections if 'Modèle A' in t))
         self.assertIn('6000 jetons', next(t for t in sections if 'Modèle B' in t))
+        # Un réglage connu porte son libellé, jamais la clé capitalisée
+        self.assertIn('Fournisseur', next(t for t in sections if 'Modèle A' in t))
+        self.assertNotIn('Provider', ' '.join(sections))
         # Modèle A décoché : sa limite pré-remplie part avec le formulaire, comme dans un navigateur, et reste ignorée
         page, _, _ = self.request(configurations)
         self.submit(page, '/configurations', valeurs | {'models': list(bornes)[1:], 'tier': 'low'})

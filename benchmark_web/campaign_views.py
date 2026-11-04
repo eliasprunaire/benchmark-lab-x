@@ -18,7 +18,7 @@ from benchmark.preparation import INCIDENT_TEXT, NOT_SENT_TEXT, incident_text
 from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
 
-from .fragments import (FIELD_LABELS, VERDICT_BADGES, access_summary, badge, bilan, bilan_exemple, bouton, btn, cles, date_lisible_utc, disque, etat, form,
+from .fragments import (FIELD_LABELS, VERDICT_BADGES, field_label, access_summary, badge, bilan, bilan_exemple, bouton, btn, cles, date_lisible_utc, disque, etat, form,
                         harnais, hidden, ic, info_modele, jour_lisible, lien, ligne_modele, listing, montant_lisible, mot, personal_key_form,
                         puce, readable_fields, releves, ruban, section, signal, statut, table_cas, tampon, text, tiroir,
                         valeur_mesure)
@@ -897,7 +897,7 @@ def render_campaign_models(value):
             rows.append(('Raisonnement', text(model['effort'])))
         rows.append(('Longueur de réponse', text(str(parameters['max_tokens']) + ' jetons') if 'max_tokens' in parameters else 'par défaut'))
         rest = {key: item for key, item in parameters.items() if key not in ('max_tokens', 'reasoning')}
-        rows += [(key.replace('_', ' ').capitalize(), readable_fields(item)) for key, item in rest.items()]
+        rows += [(field_label(key), readable_fields(item)) for key, item in rest.items()]
         cards += ('<li class="carte"><h3>' + text(model_name(model, names)) + '</h3><p class="petit">'
                   + '<br>'.join(text(line) for line in lignes_raisonnement(model)) + '</p>'
                   + tiroir('Réglages utilisés', cles(rows)) + '</li>')
