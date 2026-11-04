@@ -1056,7 +1056,7 @@ def _loaded_stack(workers=None):
                     if time.monotonic() >= deadline:
                         raise
                     time.sleep(0.02)
-            yield port, token
+            yield port, token, sock
         finally:
             for child in children:
                 if child.poll() is None:
@@ -1080,7 +1080,7 @@ class ExecutorConcurrencyTests(unittest.TestCase):
 
     def test_parcours_prive_tient_cinquante_visiteurs_simultanes(self):
         # Configuration livrée : un réglage propre au test ne prouverait rien sur la production
-        with _loaded_stack() as (port, token):
+        with _loaded_stack() as (port, token, _):
             session = {'Cookie': 'benchmark_session=' + token}
             activity = dict(session, Accept='application/json')
             observed = {}
@@ -1101,18 +1101,43 @@ class ExecutorConcurrencyTests(unittest.TestCase):
         aussi sur l'exécuteur sériel d'avant, qui refusait le surplus par débordement de la file
         d'écoute et servait autant de requêtes
         """
-        with _loaded_stack(workers=1) as (port, token):
-            codes, retries, slowest = _concurrent_profile(
-                port, '/preparation', {'Cookie': 'benchmark_session=' + token}, self.TARGET)
+        with _loaded_stack(workers=1) as (port, token, sock):
+            session = {'Cookie': 'benchmark_session=' + token}
+            # Le fil de travail puis le fil réservé prennent deux connexions muettes, dans l'ordre
+            # d'acceptation : la capacité est pleine sans dépendre de la vitesse du runner
+            held = [socket.socket(socket.AF_UNIX) for _ in range(2)]
+            for connection in held:
+                connection.connect(str(sock))
+            # Un octet sans fin de ligne toutes les 0,5 s : la lecture du gestionnaire (délai de 2 s) reste en cours
+            alive = threading.Event()
+
+            def keep():
+                while not alive.wait(0.5):
+                    for connection in held:
+                        connection.sendall(b' ')
+            feeder = threading.Thread(target=keep, daemon=True)
+            feeder.start()
+            try:
+                codes, retries, slowest = _concurrent_profile(port, '/preparation', session, self.TARGET)
+            finally:
+                alive.set()
+                feeder.join()
+                for connection in held:
+                    connection.close()
             print('\nBX-01 saturation :', json.dumps(
                 {'statuts': dict(codes), 'reprises_tcp': retries, 'plus_lente_s': round(slowest, 3)},
                 ensure_ascii=False))
-            self.assertEqual(set(), set(codes) - {200, 503})
-            self.assertGreater(codes[503], 0, codes)
-            # Un `Counter` rend 0 sur une clé absente : borner par le haut seul laissait passer 50 × 503
-            self.assertGreaterEqual(codes[200], 1, codes)
-            self.assertLessEqual(codes[200], 2, codes)
+            # Capacité pleine : chaque requête est refusée tout de suite, aucune n'attend une place
+            self.assertEqual({503: self.TARGET}, dict(codes))
             self.assertLess(slowest, 1)
+            # Capacité rendue : la place libérée sert de nouveau, donc le refus venait de la concurrence configurée
+            deadline = time.monotonic() + 10
+            while True:
+                status = _concurrent_profile(port, '/preparation', session, 1)[0]
+                if status == {200: 1} or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.05)
+            self.assertEqual({200: 1}, dict(status))
 
 
 class ExecutorReadTests(unittest.TestCase):
