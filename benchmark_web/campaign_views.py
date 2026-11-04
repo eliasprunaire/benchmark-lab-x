@@ -1512,8 +1512,8 @@ def receipt_observations(item):
     for number, observed in enumerate(item.get('observations', [])):
         usage = observed['usage']
         lines.append(('Essai d’origine' if number == 0 else 'Reprise ' + str(number))
-                     + ' · motif de fin transmis : ' + (observed['finish_reason'] or 'inconnu')
-                     + (' (précision transmise : ' + observed['finish_detail'] + ')' if observed['finish_detail'] else '')
+                     + ' · motif de fin transmis : ' + (_finish_label(observed['finish_reason']) if observed['finish_reason'] else 'inconnu')
+                     + (' (précision transmise : ' + _finish_label(observed['finish_detail']) + ')' if observed['finish_detail'] else '')
                      + ' · consommation transmise : ' + (', '.join(
                          _usage_label(key) + ' ' + ('inconnue' if amount is None else str(amount) if type(amount) in (int, str) else encode(amount))
                          for key, amount in _dotted_pairs(usage)) if usage else 'inconnue'))
@@ -1524,6 +1524,20 @@ USAGE_LABELS: dict[str, str] = {'prompt_tokens': 'entrée', 'input_tokens': 'ent
                 'total_tokens': 'total', 'reasoning_tokens': 'dont raisonnement', 'cached_tokens': 'dont lus en cache',
                 'cache_read_input_tokens': 'dont lus en cache', 'cache_creation_input_tokens': 'dont écrits en cache',
                 'cost': 'coût'}
+
+
+# Motifs natifs d'OpenRouter, d'Anthropic et de Responses, comme les lit `recovery.observation`
+FINISH_LABELS: dict[str, str] = {
+    'stop': 'fin normale', 'end_turn': 'fin normale', 'completed': 'fin normale',
+    'length': 'longueur maximale atteinte', 'max_tokens': 'longueur maximale atteinte',
+    'max_output_tokens': 'longueur maximale atteinte', 'incomplete': 'réponse incomplète',
+    'content_filter': 'filtre de contenu', 'refusal': 'refus du modèle', 'tool_calls': 'appel d’outil',
+    'error': 'erreur du fournisseur'}
+
+
+def _finish_label(reason: str) -> str:
+    """Motif de fin en mots ; un motif inconnu reste cité tel que transmis"""
+    return FINISH_LABELS.get(reason, '« ' + reason + ' »')
 
 
 def _usage_label(key: str) -> str:
