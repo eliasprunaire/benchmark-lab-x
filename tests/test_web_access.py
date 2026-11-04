@@ -272,6 +272,20 @@ class AccessServerTests(WebServerCase):
                 else:
                     self.assertNotIn(b'<script>', raw)
                 self.assertEqual(expected, headers['Content-Security-Policy'])
+        # Lancement préparé par l'opérateur : les réglages se lisent en français, jamais en clés ni en JSON brut
+        operator = dict(campaign_view({'status': 'connected'}), csrf_token='csrf')
+        operator['campaign']['panel'] = [{'id': 'x', 'model': 'mistralai/mistral-medium-3-5', 'effort': 'high', 'effort_requested': 'low',
+                                          'parameters': {'max_tokens': 4096, 'reasoning': {'effort': 'high'}},
+                                          'estimate': {'amount_usd': '0.25'}}]
+        self.executor.raw_response = json.dumps({'status': 200, 'value': operator,
+            'piece': False, 'cookie': None}).encode() + b'\n'
+        status, _, raw = self.request('GET', '/preparation/dossiers/d1/campaigns/c1/conditions')
+        self.assertEqual(200, status)
+        page = raw.decode()
+        for brut in ('amount_usd', 'amount usd', 'effort_requested', 'effort requested', 'max_tokens', '"panel"', '<pre>'):
+            self.assertNotIn(brut, page, brut)
+        for lisible in ('4096 jetons', '0,25 USD'):
+            self.assertIn(lisible, page, lisible)
 
     def test_cookie_persistant_non_renouvele_par_une_lecture(self):
         _, headers, _ = self.request('GET', '/preparation/access')

@@ -1449,6 +1449,17 @@ def validated(checks):
     return any(check['key'] == 'example_validated' and check['ok'] for check in checks)
 
 
+def reglages_lisibles(panel, names):
+    """Réglages de chaque modèle en mots : raisonnement, longueur de réponse et coût estimé, sans clé ni JSON"""
+    return ''.join(
+        '<h3>' + text(model_name(item, names)) + '</h3>' + cles([
+            ('Raisonnement', '<br>'.join(text(line) for line in lignes_raisonnement(item))),
+            ('Longueur de réponse', text(str(item['parameters']['max_tokens']) + ' jetons')
+             if 'max_tokens' in item.get('parameters', {}) else 'par défaut'),
+            ('Coût estimé', text(_cout_ligne((item.get('estimate') or {}).get('amount_usd'), 'non estimable')))])
+        for item in panel)
+
+
 def render_campaign_launch_operator(value, csrf):
     """Benchmark préparé et admis par l'opérateur, confirmé par le demandeur"""
     campaign = value['campaign']
@@ -1463,7 +1474,7 @@ def render_campaign_launch_operator(value, csrf):
     content += section('Ce qui sera vérifié', '<p>' + text(value['criteria']['result_expected']) + '</p>' + groups)
     content += section('Modèles et conditions', listing([candidate_label(item, value.get('model_names', {})) for item in campaign['panel']]) +
         cles([('Harnais', harnais()), ('Conditions fixées le', text(date_lisible_utc(campaign['conditions']['frozen_at'])))]) +
-        tiroir('Détail technique des réglages', '<pre>' + text(encode(dict(panel=campaign['panel'], conditions=campaign['conditions']))) + '</pre>'))
+        tiroir('Détail des réglages', reglages_lisibles(campaign['panel'], value.get('model_names', {}))))
     access = value.get('access', {'status': 'unavailable'})
     if access.get('status') == 'unavailable':
         access_content = '<p>Impossible d’enregistrer une clé pour le moment.</p>'
