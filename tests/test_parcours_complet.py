@@ -2,6 +2,7 @@
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from html import unescape
 from html.parser import HTMLParser
 from http.client import HTTPConnection
 from http.cookies import SimpleCookie
@@ -5191,7 +5192,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu). Ce modèle', html)
         # Issue #442 : un choix mal formé n'efface pas la consommation que le corps intact transmet
         self.assertIn('Essai d’origine · motif de fin transmis : inconnu · consommation transmise : '
-                      'completion_tokens 12, prompt_tokens 30', html)
+                      'sortie 12, entrée 30', html)
         _, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
         text = raw.decode()
         self.assertIn('0 exigence sur 2 respectée, 1 non respectée, 1 non vérifiable. 1 erreur éliminatoire relevée.', text)
@@ -5646,7 +5647,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Reprise après arrêt pour longueur : longueur de réponse de 8192 jetons', reprise)
         # Issue #442 : la reprise réussie garde consultables les observations de l'essai coupé
         self.assertIn('Essai d’origine · motif de fin transmis : length · consommation transmise : '
-                      'completion_tokens 4096, prompt_tokens 120', reprise)
+                      'sortie 4096, entrée 120', reprise)
         self.assertIn('Reprise 1 · motif de fin transmis : inconnu · consommation transmise : inconnue', reprise)
         self.assertNotIn('Aucune réponse exploitable pour Modèle B', html)
         self.assertEqual(1, html.count('Aucune réponse exploitable pour Modèle C'))
@@ -6694,13 +6695,13 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('longueur', ligne_b)
         self.assertNotIn('épuisé', html)
         # Clés dans l'ordre du corps conservé
-        self.assertIn('Essai d’origine · motif de fin transmis : inconnu · consommation transmise : completion_tokens 4096, '
-                      'completion_tokens_details.reasoning_tokens 4096, prompt_tokens 120', html)
+        self.assertIn('Essai d’origine · motif de fin transmis : inconnu · consommation transmise : sortie 4096, '
+                      'dont raisonnement 4096, entrée 120', html)
         self.assertIn('Aucune réponse exploitable pour Modèle C (arrêt pour longueur, plafond demandé : '
                       '16384 jetons de sortie ; 2 reprises).', html)
         for numero, (essai, limite) in enumerate((('Essai d’origine', 4096), ('Reprise 1', 8192), ('Reprise 2', 16384))):
-            self.assertIn(essai + ' · motif de fin transmis : length · consommation transmise : completion_tokens '
-                          + str(limite) + ', prompt_tokens 120', html, numero)
+            self.assertIn(essai + ' · motif de fin transmis : length · consommation transmise : sortie '
+                          + str(limite) + ', entrée 120', html, numero)
         # Lire les résultats et le dossier n'envoie rien à aucun modèle
         appels = list(self.calls)
         self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1')
@@ -6751,7 +6752,26 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('<span class="modele">Modèle C<small>', rows)
         self.assertIn('Aucune réponse exploitable pour Modèle C (cause non établie par le reçu). Ce modèle', html)
         self.assertIn('Essai d’origine · motif de fin transmis : stop · consommation transmise : '
-                      'completion_tokens 40, prompt_tokens 120', html)
+                      'sortie 40, entrée 120', html)
+        # Le registre du cas montre des libellés, jamais une clé technique ni un objet JSON
+        _, _, raw = self.request(dossier)
+        page = raw.decode()
+        debut = page.rindex('<details', 0, page.index('Historique détaillé des benchmarks'))
+        profondeur = 0
+        for balise in re.finditer(r'<(/?)details\b', page[debut:]):
+            profondeur += -1 if balise[1] else 1
+            if not profondeur:
+                registre = page[debut:debut + balise.end()]
+                break
+        # Les verdicts citent la requête exacte envoyée au juge : cette preuve reste verbatim
+        registre = re.sub(r'<h4>Verdicts et preuves</h4>.*?(?=<details><summary>Essai |<article>|\Z)', '', registre, flags=re.S)
+        texte = unescape(re.sub(r'<[^>]+>', ' ', registre))
+        self.assertNotRegex(texte, r'[{}"]')
+        self.assertNotRegex(texte, r'\b[a-z]+_[a-z_]+\b')
+        for libelle in re.findall(r'<dt>([^<]*)</dt>', registre):
+            self.assertTrue(libelle[0].isupper(), libelle)
+        for libelle in ('Collecte des données', 'Consigne système', 'Version de Node', 'Observations exigées : Révision, Canal'):
+            self.assertIn(libelle, texte)
 
     def test_reponse_sans_identite_ni_cout_arrete_et_garde_les_preuves(self):
         """Issue #525 : condition établie de N4 (#517), un corps d'erreur 502 reçu sous HTTP 200

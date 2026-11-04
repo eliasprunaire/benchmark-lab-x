@@ -18,7 +18,7 @@ from benchmark.preparation import INCIDENT_TEXT, NOT_SENT_TEXT, incident_text
 from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
 
-from .fragments import (VERDICT_BADGES, access_summary, badge, bilan, bilan_exemple, bouton, btn, cles, date_lisible_utc, disque, etat, form,
+from .fragments import (FIELD_LABELS, VERDICT_BADGES, access_summary, badge, bilan, bilan_exemple, bouton, btn, cles, date_lisible_utc, disque, etat, form,
                         harnais, hidden, ic, info_modele, jour_lisible, lien, ligne_modele, listing, montant_lisible, mot, personal_key_form,
                         puce, readable_fields, releves, ruban, section, signal, statut, table_cas, tampon, text, tiroir,
                         valeur_mesure)
@@ -1515,9 +1515,21 @@ def receipt_observations(item):
                      + ' · motif de fin transmis : ' + (observed['finish_reason'] or 'inconnu')
                      + (' (précision transmise : ' + observed['finish_detail'] + ')' if observed['finish_detail'] else '')
                      + ' · consommation transmise : ' + (', '.join(
-                         key + ' ' + ('inconnue' if amount is None else str(amount) if type(amount) in (int, str) else encode(amount))
+                         _usage_label(key) + ' ' + ('inconnue' if amount is None else str(amount) if type(amount) in (int, str) else encode(amount))
                          for key, amount in _dotted_pairs(usage)) if usage else 'inconnue'))
     return '<details><summary>Observations techniques du reçu</summary>' + listing(lines) + '</details>' if lines else ''
+
+
+USAGE_LABELS: dict[str, str] = {'prompt_tokens': 'entrée', 'input_tokens': 'entrée', 'completion_tokens': 'sortie', 'output_tokens': 'sortie',
+                'total_tokens': 'total', 'reasoning_tokens': 'dont raisonnement', 'cached_tokens': 'dont lus en cache',
+                'cache_read_input_tokens': 'dont lus en cache', 'cache_creation_input_tokens': 'dont écrits en cache',
+                'cost': 'coût'}
+
+
+def _usage_label(key: str) -> str:
+    """Libellé d'une consommation ; une clé inconnue reste citée telle que transmise"""
+    last = key.rsplit('.', 1)[-1]
+    return USAGE_LABELS.get(last, '« ' + key + ' »')
 
 
 def _dotted_pairs(value, prefix=''):
@@ -1791,15 +1803,16 @@ def render_campaign_records(campaigns, url):
         if 'evaluations' in campaign:
             content += '<p><a href="' + text(url) + '/campaigns/' + text(campaign['campaign_id']) + '">Voir les résultats de ce benchmark</a></p>'
         content += '<p>Exemple validé ' + text(task['version']) + ', version ' + text(task['revision']) + '.</p>'
-        content += '<h4>Modèles et réglages demandés</h4>' + listing(
-            f'{c["id"]} : {c["model"]}, révision {c["revision"]}, fournisseur {c["provider"]}, '
-            f'accès {c["access"]}, canal {c["channel_id"]}, route {c["route"]}, effort {c["effort"]}, '
-            f'paramètres {encode(c["parameters"])} ; observations exigées : {", ".join(c["required_observations"])}'
-            for c in campaign['panel'])
+        content += '<h4>Modèles et réglages demandés</h4><ul>' + ''.join(
+            '<li>' + text(f'{c["id"]} : {c["model"]}, révision {c["revision"]}, fournisseur {c["provider"]}, '
+                          f'accès {c["access"]}, canal {c["channel_id"]}, route {c["route"]}, effort {c["effort"]}.')
+            + readable_fields({'parameters': c['parameters']}) + '<p>' + text(
+                'Observations exigées : ' + ', '.join(FIELD_LABELS.get(str(k), str(k)) for k in c['required_observations'])) + '</p></li>'
+            for c in campaign['panel']) + '</ul>'
         conditions = campaign['conditions']
         content += '<h4>Harnais</h4><p>' + harnais(', fixée le ' + jour_lisible(conditions['frozen_at'])) + '</p>'
-        content += '<details><summary>Contexte et environnement communs</summary>' + listing(
-            f'{k} : {encode(conditions[k])}' for k in ('packages', 'tools', 'skills', 'defaults', 'environment')) + '</details>'
+        content += '<details><summary>Contexte et environnement communs</summary>' + readable_fields(
+            {k: conditions[k] for k in ('packages', 'tools', 'skills', 'defaults', 'environment')}) + '</details>'
         content += '<h4>Essais et budget</h4><p>' + (
             'Essais pouvant être lancés : ' + text(', '.join(campaign['allowed_cells'])) + '.' if campaign['admission_open'] else
             'Aucun nouvel essai ne peut être lancé pour ce benchmark.') + '</p>'
@@ -1818,8 +1831,9 @@ def render_campaign_records(campaigns, url):
         else:
             content += '<p>Budget pas encore fixé.</p>'
         content += '<p>Montant mis de côté par essai : ' + text(
-            encode(campaign['reserve_amounts']) if campaign['reserve_amounts'] else 'inconnu') + '.</p>'
-        content += '<p>Mode de calcul du coût : ' + text(encode(campaign['cost_basis'])) + '.</p>'
+            ', '.join(f'{cell} : {amount}' for cell, amount in campaign['reserve_amounts'].items())
+            if campaign['reserve_amounts'] else 'inconnu') + '.</p>'
+        content += '<p>Mode de calcul du coût :</p>' + readable_fields(campaign['cost_basis'])
         content += '<p>Le montant mis de côté ne garantit pas un plafond de facturation. La préparation et la vérification des réponses sont comptées séparément.</p>'
         content += '<h4>Essais prévus</h4>' + listing(
             f'{c["cell_id"]} : cas {c["case_id"]}, modèle {c["configuration_id"]}, {technical[c["state"]]}'
@@ -1830,8 +1844,8 @@ def render_campaign_records(campaigns, url):
             content += '<p>Lancement enregistré : ' + text(attempt['created_at']) + '. Appel envoyé : ' + text(attempt['emitted_at'] or 'pas envoyé')
             content += '. Réponse reçue : ' + text(attempt['received_at'] or 'inconnue') + '.</p>'
             content += '<p>Justificatif : ' + text(attempt['receipt_id'] or 'aucun') + '. Envoi de l’appel : ' + text(attempt['emission']) + '.</p>'
-            content += '<p>Réglages constatés : ' + text(encode(attempt['observed_configuration'])) + '.</p>'
-            content += '<p>D’où viennent ces constats : ' + text(encode(attempt['observation_sources'])) + '.</p>'
+            content += '<p>Réglages constatés :</p>' + readable_fields(attempt['observed_configuration'])
+            content += '<p>D’où viennent ces constats :</p>' + readable_fields(attempt['observation_sources'])
             cost = attempt['observed_cost']
             content += '<p>Coût observé : ' + text('INCONNU' if cost is None or cost['status'] == 'UNKNOWN' else cost['amount'] + ' ' + cost['currency'])
             content += '. Source : ' + text(cost['source'] if cost else 'INCONNU') + '.</p>'
