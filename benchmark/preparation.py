@@ -369,6 +369,8 @@ def session(store, token, *, create=False):
             return row[0], sha256(b'csrf:' + raw).hexdigest(), token
     if not create:
         raise Denied('Session requise')
+    from .privacy import require_ready
+    require_ready(connection)
     raw = secrets.token_bytes(32)
     session_id = secrets.token_hex(16)
     with _transaction(connection, write=True):

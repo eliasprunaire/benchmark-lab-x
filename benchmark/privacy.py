@@ -250,12 +250,18 @@ def register_dossier(connection, session_id, dossier_id, current=None, *, legacy
                             (current + DOSSIER_LIFETIME).isoformat()))
 
 
+def require_ready(connection):
+    """Refuse toute session pendant une migration : ni lecture d'une session existante, ni création d'une nouvelle"""
+    from .preparation import Denied
+    if available(connection) and connection.execute('SELECT phase FROM s7_control').fetchone() != ('READY',):
+        raise Denied('PRIVACY_MIGRATION_PENDING')
+
+
 def authorize_session(connection, session_id, current=None):
     from .preparation import Denied
     if not available(connection):
         return
-    if connection.execute('SELECT phase FROM s7_control').fetchone() != ('READY',):
-        raise Denied('PRIVACY_MIGRATION_PENDING')
+    require_ready(connection)
     row = connection.execute('SELECT expires_at FROM s7_sessions WHERE session_id=?', (session_id,)).fetchone()
     if row is None or date(row[0]) <= (current or now()):
         raise Denied('SESSION_EXPIRED')
