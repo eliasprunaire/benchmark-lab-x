@@ -458,7 +458,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                 return
             value = result['value']
             if result['status'] >= 400 or type(value) is not dict:
-                self.error_page(result['status'] if result['status'] >= 400 else 503, 'Votre action n’a pas abouti',
+                self.error_page(result['status'] if result['status'] >= 400 else 503,
+                                'Page introuvable' if result['status'] == 404 else 'Votre action n’a pas abouti',
                                 value.get('error', 'La confirmation ne peut pas s’afficher.') if type(value) is dict else 'La confirmation ne peut pas s’afficher.')
                 return
             dossier = next((item for item in value.get('dossiers', []) if item.get('dossier_id') == dossier_id), None)

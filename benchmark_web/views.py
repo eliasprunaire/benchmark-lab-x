@@ -1684,7 +1684,8 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
     if error:
         # Le serveur seul connaît le statut HTTP : la page d'erreur le montre
         decrit = dict(value, http_status=status) if status else value
-        title = value.get('title') or ('Service momentanément indisponible' if value.get('unavailable') else 'Votre action n’a pas abouti')
+        title = value.get('title') or ('Service momentanément indisponible' if value.get('unavailable')
+                                       else 'Page introuvable' if status == 404 else 'Votre action n’a pas abouti')
         submitted = value.get('form')
         attached = (value.get('error_field') if type(submitted) is dict
                     and value.get('error_field') in submitted else None)

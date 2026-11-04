@@ -472,6 +472,13 @@ class PrivacyHTTPTests(unittest.TestCase):
                 self.assertNotIn('evil', page)
         self.assertEqual(400, self.request('GET', path + '/delete?autre=1', cookies=cookies, native=True)[0])
         self.assertEqual(404, self.request('GET', '/preparation/dossiers/absent/delete', cookies=cookies, native=True)[0])
+        # Un 404 de l'exécuteur se nomme comme celui du serveur : la page n'existe pas, l'action n'a pas échoué
+        for route in ('/preparation/dossiers/absent', path + '/contribution'):
+            with self.subTest(route=route):
+                code, _, page = self.request('GET', route, cookies=cookies, native=True)
+                self.assertEqual(404, code)
+                self.assertIn('<h1>Page introuvable</h1>', page)
+                self.assertNotIn('n’a pas abouti', page)
         self.assertEqual(404, self.request('GET', path + '/delete', cookies=self.new_session()['cookies'], native=True)[0])
         code, headers, value = self.request('POST', path + '/delete', cookies=cookies, body={'csrf_token': owner['csrf']})
         self.assertEqual((202, 'delete_requested'), (code, value['status']))
