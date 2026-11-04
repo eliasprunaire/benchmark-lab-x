@@ -6775,7 +6775,10 @@ class ParcoursComplet(unittest.TestCase):
         for libelle in re.findall(r'<dt>([^<]*)</dt>', registre):
             self.assertTrue(libelle[0].isupper(), libelle)
         # Une valeur codée du moteur s'affiche en mots
-        self.assertNotRegex(texte, r'INCONNU|DEFAULT_MAX_OUTPUT_TOKENS|ACQUISITION_EVIDENCE_INCOMPLETE')
+        self.assertNotRegex(texte, r'INCONNU|ESTABLISHED|\b[A-Z]+_[A-Z_]+\b')
+        self.assertIn('Incident technique : identité du modèle non confirmée (absente ou différente de celle demandée).', texte)
+        self.assertIn('Envoi de l’appel : envoyé.', texte)
+        self.assertIn('vient du modèle demandé : Révision.', texte)
         self.assertIn('limite par défaut d’Evaly', texte)
         self.assertIn('Motif d’arrêt : preuves de l’appel incomplètes.', texte)
         for libelle in ('Collecte des données', 'Consigne système', 'Version de Node', 'Observations exigées : Révision, Canal'):

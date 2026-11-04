@@ -1813,6 +1813,20 @@ STOP_LABELS: dict[str, str] = {
     'PROCESS_STARTED_ADMISSION_BLOCKED': 'redémarrage du service'}
 
 
+# Incidents posés par les transports et l'acquisition ; un code inconnu reste cité
+INCIDENT_LABELS: dict[str, str] = {
+    'KEY_REJECTED': 'clé refusée par le fournisseur', 'CREDIT_EXHAUSTED': 'crédit épuisé',
+    'RATE_LIMITED': 'limite de débit atteinte', 'PROVIDER_ERROR': 'erreur du fournisseur',
+    'PROVIDER_RESPONSE_INCOMPLETE': 'réponse incomplète du fournisseur',
+    'PROVIDER_ROUTE_MISMATCH': 'route du fournisseur différente de celle demandée',
+    # Les transports posent ce code aussi quand la réponse ne nomme aucun modèle
+    'MODEL_IDENTITY_MISMATCH': 'identité du modèle non confirmée (absente ou différente de celle demandée)',
+    'CONTENT_REFUSAL': 'refus du modèle', 'EMPTY_OUTPUT': 'réponse terminée sans texte',
+    'ROUTE_ERROR': 'fournisseur indisponible ou limite de débit atteinte',
+    'CONNECTION_FAILED': 'connexion impossible', 'HARNESS_ERROR': 'erreur du harnais'}
+EMISSION_LABELS: dict[str, str] = {'ESTABLISHED': 'envoyé', 'NOT_SENT': 'pas envoyé', 'UNKNOWN': 'envoi incertain'}
+
+
 def render_campaign_records(campaigns, url):
     """Benchmarks enregistrés d'un cas d'usage, cellules et tentatives comprises"""
     content = '<p class="petit">Journal privé des benchmarks de ce cas, sur un exemple inventé. '
@@ -1868,16 +1882,16 @@ def render_campaign_records(campaigns, url):
             content += '<p>Exécution ' + text(attempt['execution_id']) + ', essai prévu ' + text(attempt['cell_id']) + '.</p>'
             content += '<p>Lancement enregistré : ' + text(attempt['created_at']) + '. Appel envoyé : ' + text(attempt['emitted_at'] or 'pas envoyé')
             content += '. Réponse reçue : ' + text(attempt['received_at'] or 'inconnue') + '.</p>'
-            content += '<p>Justificatif : ' + text(attempt['receipt_id'] or 'aucun') + '. Envoi de l’appel : ' + text(attempt['emission']) + '.</p>'
+            content += '<p>Justificatif : ' + text(attempt['receipt_id'] or 'aucun') + '. Envoi de l’appel : ' + text(EMISSION_LABELS.get(attempt['emission'], '« ' + str(attempt['emission']) + ' »')) + '.</p>'
             content += '<p>Réglages constatés :</p>' + readable_fields(attempt['observed_configuration'])
             content += '<p>D’où viennent ces constats :</p>' + readable_fields(attempt['observation_sources'])
             cost = attempt['observed_cost']
             content += '<p>Coût observé : ' + text('inconnu' if cost is None or cost['status'] == 'UNKNOWN' else cost['amount'] + ' ' + cost['currency'])
             content += '. Source : ' + text(cost['source'] if cost else 'inconnue') + '.</p>'
             if attempt['incident']:
-                content += '<p>Incident technique : ' + text(attempt['incident']) + '.</p>'
+                content += '<p>Incident technique : ' + text(INCIDENT_LABELS.get(attempt['incident'], '« ' + attempt['incident'] + ' »')) + '.</p>'
             if attempt['attribution_incident']:
-                content += '<p>Impossible de confirmer que cette réponse vient du modèle demandé : ' + text(', '.join(attempt['attribution_incident'])) + '.</p>'
+                content += '<p>Impossible de confirmer que cette réponse vient du modèle demandé : ' + text(', '.join(field_label(f) for f in attempt['attribution_incident'])) + '.</p>'
             evaluations = [e for e in campaign.get('evaluations', []) if e['attempt_id'] == attempt['operation_id']]
             if evaluations:
                 content += render_evaluations(evaluations, url)
