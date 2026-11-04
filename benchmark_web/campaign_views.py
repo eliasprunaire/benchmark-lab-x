@@ -1819,7 +1819,8 @@ INCIDENT_LABELS: dict[str, str] = {
     'RATE_LIMITED': 'limite de débit atteinte', 'PROVIDER_ERROR': 'erreur du fournisseur',
     'PROVIDER_RESPONSE_INCOMPLETE': 'réponse incomplète du fournisseur',
     'PROVIDER_ROUTE_MISMATCH': 'route du fournisseur différente de celle demandée',
-    'MODEL_IDENTITY_MISMATCH': 'réponse d’un autre modèle que celui demandé',
+    # Les transports posent ce code aussi quand la réponse ne nomme aucun modèle
+    'MODEL_IDENTITY_MISMATCH': 'identité du modèle non confirmée (absente ou différente de celle demandée)',
     'CONTENT_REFUSAL': 'refus du modèle', 'EMPTY_OUTPUT': 'réponse terminée sans texte',
     'ROUTE_ERROR': 'fournisseur indisponible ou limite de débit atteinte',
     'CONNECTION_FAILED': 'connexion impossible', 'HARNESS_ERROR': 'erreur du harnais'}
