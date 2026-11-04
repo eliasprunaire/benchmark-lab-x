@@ -91,7 +91,10 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
     if enabled and method == 'GET':
         try:
             p.session(store, token)
-        except p.Denied:
+        except p.Denied as error:
+            # Pendant une migration, la page explique l'attente : « Ouvrir mon espace » remplacerait le cookie
+            if error.code == 'PRIVACY_MIGRATION_PENDING':
+                raise
             if '/archive' in path:
                 raise p.Denied('NOT_FOUND') from None
             return 200, {'kind': 'session_bootstrap', 'return_path': urlsplit(path).path}, None, None

@@ -378,6 +378,40 @@ class PrivacyHTTPTests(unittest.TestCase):
                 cookies=cookies, body={'csrf_token': value['csrf_token']})
             self.assertEqual(200, code)
 
+    def test_migration_pending_keeps_the_session_cookie_and_explains_the_wait(self):
+        owner = self.new_session()
+        self.seed_case(owner)
+        _, cookies, _ = self.consent(owner)
+        path = '/preparation/dossiers/case-a'
+        sessions = lambda: [self.store._connection.execute('SELECT count(*) FROM ' + table).fetchone()[0]
+                            for table in ('s2_sessions', 's7_sessions')]
+        before = sessions()
+        with self.store._connection as connection:
+            connection.execute("UPDATE s7_control SET phase='MIGRATED'")
+        # Pendant la migration, les pages expliquent l'attente au lieu de proposer « Ouvrir mon espace »
+        for route in (path, '/preparation'):
+            with self.subTest(route=route):
+                code, headers, page = self.request('GET', route, cookies=cookies, native=True)
+                self.assertEqual(503, code)
+                self.assertIn('Evaly termine une mise à jour de ses données', page)
+                self.assertNotIn('Ouvrir mon espace', page)
+                self.assertFalse(headers.get_all('Set-Cookie'))
+        # « Ouvrir mon espace » ne crée aucune session et ne remplace pas le cookie, avec ou sans cookie existant
+        for candidate in (cookies, None):
+            with self.subTest(cookie=candidate is not None):
+                code, headers, page = self.request('POST', '/preparation/session/open', cookies=candidate, native=True,
+                                                   body={'return_path': path})
+                self.assertEqual(503, code)
+                self.assertIn('Evaly termine une mise à jour de ses données', page)
+                self.assertFalse(headers.get_all('Set-Cookie'))
+                self.assertEqual(before, sessions())
+        # Après la migration, le même cookie rouvre le cas
+        with self.store._connection as connection:
+            connection.execute("UPDATE s7_control SET phase='READY'")
+        code, _, page = self.request('GET', path, cookies=cookies, native=True)
+        self.assertEqual(200, code)
+        self.assertIn('Est-ce le travail à tester ?', page)
+
     def test_reads_do_not_extend_dates_or_cookies_but_activity_post_does(self):
         owner = self.new_session()
         self.seed_case(owner)
