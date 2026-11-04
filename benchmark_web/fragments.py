@@ -331,6 +331,11 @@ FIELD_LABELS: dict[str, str] = {'requested_configuration': 'Configuration demand
               'system_prompt': 'Consigne système', 'timeout_seconds': 'Délai maximal en secondes'}
 
 
+# Valeurs codées du moteur ; toute autre valeur reste affichée telle quelle
+VALUE_LABELS: dict[str, str] = {'INCONNU': 'inconnu', 'UNKNOWN': 'inconnu',
+                                'DEFAULT_MAX_OUTPUT_TOKENS': 'limite par défaut d’Evaly'}
+
+
 def field_label(key: str) -> str:
     """Libellé d'une clé ; une clé sans libellé reste citée telle quelle"""
     return FIELD_LABELS.get(key, '« ' + key + ' »')
@@ -348,6 +353,8 @@ def readable_fields(value):
         value = 'Non renseigné'
     elif type(value) is bool:
         value = 'Oui' if value else 'Non'
+    elif type(value) is str:
+        value = VALUE_LABELS.get(value, value)
     return '<span class="verbatim">' + escape(str(value), quote=True) + '</span>'
 
 

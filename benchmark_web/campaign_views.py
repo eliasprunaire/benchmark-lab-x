@@ -343,7 +343,7 @@ def render_evaluations(evaluations, dossier_url):
         content += '</ul><p>Ce résultat n’est pas combiné avec d’autres cas ou d’autres essais.</p>'
         for label, cost in (('Coût de la réponse du modèle', record['candidate_cost']), ('Coût de la vérification', record['judgment']['cost'])):
             content += '<p>' + label + ' : ' + text('inconnu' if cost is None or cost['status'] == 'UNKNOWN' else cost['amount'] + ' ' + cost['currency'])
-            content += ' (source : ' + text(cost['source'] if cost else 'INCONNU') + ').</p>'
+            content += ' (source : ' + text(cost['source'] if cost else 'inconnue') + ').</p>'
         content += '<h6>Étalonnage du juge</h6>' + render_calibration(record['calibration'])
         content += '<p>Limites : ' + text('; '.join(record['limits'])) + '</p>'
         for label, value in (('Méthode et contrôle de l’exemple', record['qualification']),
@@ -1802,6 +1802,17 @@ def render_attempt_detail(value):
         coverage['attempted_cells']) + ' sur ' + text(coverage['planned_cells']) + '.</p>'
 
 
+# Motifs d'arrêt posés par l'acquisition, le juge et l'exécuteur ; un motif passé à `runtime.stop` reste cité
+STOP_LABELS: dict[str, str] = {
+    'ACQUISITION_EVIDENCE_INCOMPLETE': 'preuves de l’appel incomplètes',
+    'ACQUISITION_NOT_SENT': 'appel non envoyé',
+    'ACQUISITION_RECEIPT_NOT_VERIFIED': 'reçu de l’appel non vérifié',
+    'ACQUISITION_STOPPED_BEFORE_EMISSION': 'arrêt avant l’envoi de l’appel',
+    'OPERATOR_STOP': 'arrêt par l’équipe Evaly',
+    'JUDGMENT_STOPPED': 'vérification des réponses arrêtée',
+    'PROCESS_STARTED_ADMISSION_BLOCKED': 'redémarrage du service'}
+
+
 def render_campaign_records(campaigns, url):
     """Benchmarks enregistrés d'un cas d'usage, cellules et tentatives comprises"""
     content = '<p class="petit">Journal privé des benchmarks de ce cas, sur un exemple inventé. '
@@ -1833,7 +1844,7 @@ def render_campaign_records(campaigns, url):
         if campaign['restore_pending']:
             content += '<p>Service momentanément indisponible, réessayez plus tard.</p>'
         if campaign['stop_reason']:
-            content += '<p>Motif d’arrêt : ' + text(campaign['stop_reason']) + '.</p>'
+            content += '<p>Motif d’arrêt : ' + text(STOP_LABELS.get(campaign['stop_reason'], '« ' + campaign['stop_reason'] + ' »')) + '.</p>'
         budget = campaign['budget']
         if budget:
             content += '<p>' + text(
@@ -1861,8 +1872,8 @@ def render_campaign_records(campaigns, url):
             content += '<p>Réglages constatés :</p>' + readable_fields(attempt['observed_configuration'])
             content += '<p>D’où viennent ces constats :</p>' + readable_fields(attempt['observation_sources'])
             cost = attempt['observed_cost']
-            content += '<p>Coût observé : ' + text('INCONNU' if cost is None or cost['status'] == 'UNKNOWN' else cost['amount'] + ' ' + cost['currency'])
-            content += '. Source : ' + text(cost['source'] if cost else 'INCONNU') + '.</p>'
+            content += '<p>Coût observé : ' + text('inconnu' if cost is None or cost['status'] == 'UNKNOWN' else cost['amount'] + ' ' + cost['currency'])
+            content += '. Source : ' + text(cost['source'] if cost else 'inconnue') + '.</p>'
             if attempt['incident']:
                 content += '<p>Incident technique : ' + text(attempt['incident']) + '.</p>'
             if attempt['attribution_incident']:

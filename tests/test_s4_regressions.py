@@ -323,7 +323,7 @@ class S4Regressions(unittest.TestCase):
         for piece in expected['pieces']:
             del piece['sha256']
         self.assertEqual(expected,view['package'])
-        self.assertIn('INCONNU',views.render(view,'csrf').decode())
+        self.assertIn('<span class="verbatim">inconnu</span>',views.render(view,'csrf').decode())
 
     def test_foreign_actor_extra_authority_fields_and_executable_tools_refused(self):
         authority,evidence=inputs(self.snapshot)
