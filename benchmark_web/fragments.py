@@ -311,9 +311,7 @@ def listing(values):
     return '<ul>' + ''.join(f'<li>{text(v)}</li>' for v in values) + '</ul>'
 
 
-def readable_fields(value):
-    """Present structured evidence as inert, labelled fields"""
-    labels = {'requested_configuration': 'Configuration demandée', 'observed_configuration': 'Configuration observée',
+FIELD_LABELS: dict[str, str] = {'requested_configuration': 'Configuration demandée', 'observed_configuration': 'Configuration observée',
               'observation_sources': 'Sources des observations', 'model': 'Modèle', 'provider': 'Fournisseur',
               'revision': 'Révision', 'access': 'Accès', 'channel_id': 'Canal', 'route': 'Route',
               'effort': 'Effort de raisonnement', 'parameters': 'Paramètres', 'max_tokens': 'Limite de tokens',
@@ -324,7 +322,18 @@ def readable_fields(value):
               'criteria': 'Critères', 'obligations': 'Obligations',
               'eliminatory_errors': 'Erreurs éliminatoires', 'result_expected': 'Résultat attendu',
               'panel': 'Modèles comparés', 'limits': 'Limites', 'pi': 'Harnais',
-              'conditions': 'Conditions'}
+              'conditions': 'Conditions', 'data_collection': 'Collecte des données', 'allow_fallbacks': 'Repli autorisé',
+              'only': 'Fournisseurs autorisés', 'order': 'Ordre des fournisseurs', 'require_parameters': 'Paramètres exigés',
+              'reasoning': 'Raisonnement', 'enabled': 'Activé', 'exclude': 'Exclu de la réponse',
+              'context_window': 'Fenêtre de contexte', 'defaults': 'Réglages par défaut',
+              'defaults_source': 'Origine des réglages par défaut', 'max_output_tokens': 'Limite de sortie',
+              'node_version': 'Version de Node', 'packages': 'Paquets', 'skills': 'Compétences', 'tools': 'Outils',
+              'system_prompt': 'Consigne système', 'timeout_seconds': 'Délai maximal en secondes'}
+
+
+def readable_fields(value):
+    """Present structured evidence as inert, labelled fields"""
+    labels = FIELD_LABELS
     if isinstance(value, dict):
         return ('<dl class="evidence-fields">' + ''.join(
             '<dt>' + text(labels.get(key, key.replace('_', ' '))) + '</dt><dd>' + readable_fields(item) + '</dd>'

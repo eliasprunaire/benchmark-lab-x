@@ -442,9 +442,9 @@ class OfficialTransportTests(unittest.TestCase):
                 input_tokens=12, output_tokens=64, output_tokens_details=dict(reasoning_tokens=64)))))
         expected = {
             'anthropic': 'Essai d’origine · motif de fin transmis : max_tokens · consommation transmise : '
-                         'input_tokens 11, output_tokens 64',
+                         'entrée 11, sortie 64',
             'openai': 'Essai d’origine · motif de fin transmis : incomplete (précision transmise : max_output_tokens) · '
-                      'consommation transmise : input_tokens 12, output_tokens 64, output_tokens_details.reasoning_tokens 64'}
+                      'consommation transmise : entrée 12, sortie 64, dont raisonnement 64'}
         for kind, body in cases:
             with self.subTest(kind=kind):
                 transport, cid, oid = self.prepare(kind)
