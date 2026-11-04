@@ -331,12 +331,16 @@ FIELD_LABELS: dict[str, str] = {'requested_configuration': 'Configuration demand
               'system_prompt': 'Consigne système', 'timeout_seconds': 'Délai maximal en secondes'}
 
 
+def field_label(key: str) -> str:
+    """Libellé d'une clé ; une clé sans libellé reste citée telle quelle"""
+    return FIELD_LABELS.get(key, '« ' + key + ' »')
+
+
 def readable_fields(value):
     """Present structured evidence as inert, labelled fields"""
-    labels = FIELD_LABELS
     if isinstance(value, dict):
         return ('<dl class="evidence-fields">' + ''.join(
-            '<dt>' + text(labels.get(key, key.replace('_', ' '))) + '</dt><dd>' + readable_fields(item) + '</dd>'
+            '<dt>' + text(field_label(key)) + '</dt><dd>' + readable_fields(item) + '</dd>'
             for key, item in value.items()) + '</dl>') if value else '<span>Non renseigné</span>'
     if isinstance(value, list):
         return ('<ul>' + ''.join('<li>' + readable_fields(item) + '</li>' for item in value) + '</ul>') if value else '<span>Aucun élément déclaré</span>'
