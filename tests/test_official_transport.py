@@ -432,7 +432,7 @@ class OfficialTransportTests(unittest.TestCase):
         1. le motif natif (`stop_reason`, `status`) est lu au format OpenRouter et s'affiche inconnu ;
         2. la précision Responses (`incomplete_details.reason`) est perdue ou prise pour le motif ;
         3. la consommation native (`input_tokens`, `output_tokens`) est perdue ou renommée ;
-        4. la normalisation interne (`length`) remplace la valeur transmise
+        4. le motif s'affiche en mots, jamais en code, et la précision Responses reste distincte du motif
         """
         from benchmark import restitution
         from benchmark_web import views
@@ -441,9 +441,9 @@ class OfficialTransportTests(unittest.TestCase):
             ('openai', dict(status='incomplete', incomplete_details=dict(reason='max_output_tokens'), usage=dict(
                 input_tokens=12, output_tokens=64, output_tokens_details=dict(reasoning_tokens=64)))))
         expected = {
-            'anthropic': 'Essai d’origine · motif de fin transmis : max_tokens · consommation transmise : '
+            'anthropic': 'Essai d’origine · motif de fin transmis : longueur maximale atteinte · consommation transmise : '
                          'entrée 11, sortie 64',
-            'openai': 'Essai d’origine · motif de fin transmis : incomplete (précision transmise : max_output_tokens) · '
+            'openai': 'Essai d’origine · motif de fin transmis : réponse incomplète (précision transmise : longueur maximale atteinte) · '
                       'consommation transmise : entrée 12, sortie 64, dont raisonnement 64'}
         for kind, body in cases:
             with self.subTest(kind=kind):
@@ -456,6 +456,7 @@ class OfficialTransportTests(unittest.TestCase):
                 page = views.render(value, 'csrf').decode()
                 self.assertIn(expected[kind], page)
                 self.assertNotIn('motif de fin transmis : length', page)
+                self.assertNotIn('max_output_tokens', page)
 
     def test_length_requires_proven_exhaustion_before_official_admission(self):
         with self.assertRaisesRegex(ValueError, 'à résoudre'):
