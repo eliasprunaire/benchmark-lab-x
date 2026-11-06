@@ -44,7 +44,7 @@ MENTIONS_LEGALES = (
 CGU = (
     '<p>Dernière mise à jour : 29 septembre 2026</p>'
     '<section><h2>1. Objet</h2><p>Les présentes conditions régissent l’utilisation d’Evaly, service gratuit '
-    'accessible à l’adresse bench.librenet.work. Utiliser le service vaut acceptation de ces conditions.</p></section>'
+    'accessible à l’adresse evaly.cybrel.fr. Utiliser le service vaut acceptation de ces conditions.</p></section>'
     '<section><h2>2. Ce que fait le service</h2><p>Evaly vous aide à décrire une tâche de votre travail, '
     'construit avec vous un exemple entièrement inventé qui la représente, puis compare plusieurs configurations '
     'de modèles d’intelligence artificielle sur cet exemple, dans des conditions communes.</p>'
