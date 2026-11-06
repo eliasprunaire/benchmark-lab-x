@@ -676,6 +676,10 @@ class ProbeTests(WebServerCase):
                     self.assertIsNone(headers.get('Set-Cookie'))
                     if method == 'GET':
                         self.assertIn('<html lang="fr">', raw.decode())
+                        if path == '/cgu':
+                            # Les conditions citent l'adresse publique du service, pas son ancien domaine
+                            self.assertIn('accessible à l’adresse evaly.cybrel.fr.', raw.decode())
+                            self.assertNotIn('bench.librenet.work', raw.decode())
         self.assertTrue(self.executor.requests.empty())
 
     def test_ancienne_notice_renvoie_vers_la_politique_publique(self):
