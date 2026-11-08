@@ -278,6 +278,10 @@ _OPERATION_COLUMNS = (
 )
 
 
+# Plafond d'une clé qui n'en reporte aucun : la ligne `budgets` existe pour les clés étrangères, `_money` rejette ce texte
+PROVIDER_MANAGED = 'PROVIDER_MANAGED'
+
+
 def _money(value):
     if type(value) is not str or re.fullmatch(
             r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?', value) is None:
@@ -887,8 +891,12 @@ class Store:
     def create_budget(self, budget_id: str, limit: str, currency: str) -> None:
         _text(budget_id, 'budget_id')
         _text(currency, 'currency')
-        _money(limit)
         connection = self._s1_connection()
+        if limit == PROVIDER_MANAGED:
+            if not self._provider_managed_budget(connection, budget_id):
+                raise ValueError('provider-managed marker requires a requester budget')
+        else:
+            _money(limit)
         try:
             connection.execute('INSERT INTO budgets VALUES (?, ?, ?)', (budget_id, limit, currency))
         except sqlite3.IntegrityError as error:
@@ -1101,6 +1109,12 @@ class Store:
         return bool(privacy.available(connection) and connection.execute(
             'SELECT 1 FROM s7_retired_operations WHERE budget_id=? AND provider_managed=1', (budget_id,)).fetchone())
 
+    def _operator_campaign(self, connection, budget_id):
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
+        row = 's4_campaigns' in tables and connection.execute(
+            'SELECT manifest_json FROM s4_campaigns WHERE campaign_id=?', (budget_id,)).fetchone()
+        return bool(row) and json.loads(row[0], object_pairs_hook=_unique_object).get('funding') != 'requester'
+
     def _budget(self, connection, budget_id, operations=None):
         if operations is None:
             snapshot = (connection is self._connection and connection.in_transaction
@@ -1115,8 +1129,15 @@ class Store:
         if row is None:
             raise KeyError(budget_id)
         limit, currency = row
+        provider_managed = self._provider_managed_budget(connection, budget_id)
         try:
-            ceiling = _money(limit)
+            # Seul interprète du marqueur ; orphelin de purge accepté, campagne opérateur refusée
+            if limit == PROVIDER_MANAGED:
+                if self._operator_campaign(connection, budget_id):
+                    raise ValueError('provider-managed marker on an operator campaign')
+                provider_managed, limit, ceiling = True, None, None
+            else:
+                ceiling = _money(limit)
             _text(currency, 'currency')
         except ValueError as error:
             raise IntegrityError('invalid stored budget') from error
@@ -1134,7 +1155,6 @@ class Store:
                 if cost is not None:
                     unknown.append(operation['operation_id'])
         reserved, spent = _sum_money(reserves), _sum_money(costs)
-        provider_managed = self._provider_managed_budget(connection, budget_id)
         available = None if provider_managed else str(_sum_money((ceiling, reserved.copy_negate(), spent.copy_negate())))
         return {'budget_id': budget_id, 'limit': limit, 'currency': currency,
                 'reserved': str(reserved), 'spent': str(spent), 'available': available,

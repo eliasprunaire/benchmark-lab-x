@@ -236,6 +236,9 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
             return 503, {'connected': False, 'status': 'unavailable',
                          'error_code': 'ACCESS_UNAVAILABLE'}, None, None
         value = provider_access.status_only(store, session_id)
+        # Ancien motif de plafond : la page revérifie la clé avant de l'afficher, jamais connectée sans réponse lisible
+        if value.get('reason') == 'ACCESS_CAP_REQUIRED' and access_secret is not None:
+            value = provider_access.view(store, session_id, access_secret, access_transport)
         if value['status'] == 'unavailable':
             value['error_code'] = 'ACCESS_UNAVAILABLE'
         return (200 if value['status'] != 'unavailable' else 503), value, None, None

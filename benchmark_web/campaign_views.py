@@ -1313,7 +1313,7 @@ def render_campaign_launch_requester(value, csrf):
                     btn(base + '/conditions', 'Réessayer', icone='actualiser'))
     elif failed['key'] == 'access_connected':
         head = {'invalid': etat('ko', 'Clé refusée', 'Cette clé ne peut pas être utilisée',
-                                'OpenRouter refuse cette clé, ou elle n’a pas de plafond de 50 USD maximum avec un solde disponible. Remplacez-la.'),
+                                'OpenRouter refuse cette clé. Remplacez-la.'),
                 'unavailable': etat('vig', 'Indisponible', 'Enregistrement de clé indisponible',
                                     'Vous ne pouvez pas enregistrer de clé pour le moment. Réessayez plus tard : aucun modèle n’a été appelé.',
                                     btn(base + '/conditions', 'Réessayer', icone='actualiser'))
@@ -1439,7 +1439,7 @@ def render_campaign_launch_requester(value, csrf):
     pupitre = ('<aside aria-label="Récapitulatif avant dépense">' + opening + '<span class="etiq">Récapitulatif avant dépense</span><p class="grand">'
                + str(len(panel)) + '<small>' + ('modèles comparés' if len(panel) > 1 else 'modèle comparé') + '</small></p><dl>'
                + ''.join('<div><dt>' + text(label) + '</dt><dd>' + text(amount) + '</dd></div>' for label, amount in total) + '</dl>' + lock + action
-               + '<p>Payé avec votre clé OpenRouter, dans la limite de son plafond. Ces montants sont estimés : '
+               + '<p>Payé avec votre clé OpenRouter. Ces montants sont estimés : '
                'seuls les appels réellement faits sont facturés.</p>' + closing + '</aside>')
     return cadre_haut(head) + '<div class="depart">' + left + pupitre + '</div>'
 
@@ -1488,7 +1488,7 @@ def render_campaign_launch_operator(value, csrf):
     if estimate:
         cost += '<p>' + text(estimate['assumptions']) + ' Source : ' + text(estimate['source']) + '.</p>'
     budget = campaign['budget']
-    if budget:
+    if budget and budget['limit'] is not None:
         cost += '<p>Budget autorisé : ' + text(budget['limit']) + ' ' + text(budget['currency']) + '.</p>'
     cost += '<p>Montant mis de côté par essai : ' + text(', '.join(key + ' : ' + amount for key, amount in campaign['reserve_amounts'].items()) if campaign['reserve_amounts'] else 'aucun') + '.</p>'
     cost += '<p class="petit">L’estimation, le montant mis de côté et le coût observé sont trois montants différents. Le montant mis de côté ne garantit pas un plafond de facturation.</p>'

@@ -351,6 +351,9 @@ class PrivacyTests(unittest.TestCase):
     def test_expired_access_releases_only_retired_technical_markers(self):
         session, _ = self.dossier()
         with patch.object(privacy, 'now', return_value=NOW):
+            # Une clé sans plafond a laissé une ligne marquée ; la purge ne la supprime pas
+            uncapped, _, _ = preparation.session(self.store, None, create=True)
+            self.store.create_budget(provider_access.preparation_budget_id(uncapped), storage.PROVIDER_MANAGED, 'USD')
             privacy.request_delete(self.store, session, 'private-case')
             privacy.purge(self.data)
             self.assertTrue(privacy.retired_operations(self.store._connection))
@@ -359,6 +362,9 @@ class PrivacyTests(unittest.TestCase):
         self.assertEqual([], privacy.retired_operations(self.store._connection))
         self.assertEqual([], self.store._connection.execute('SELECT * FROM s2_sessions').fetchall())
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
+        # Ligne marquée orpheline après la purge : lisible comme gérée par le fournisseur, sans montant
+        orphan = self.store.inspect_budget(provider_access.preparation_budget_id(uncapped))
+        self.assertEqual((None, True, None), (orphan['limit'], orphan['provider_managed'], orphan['available']))
 
     def test_nested_worker_lock_keeps_outer_exclusion(self):
         from benchmark.runtime import worker_lock

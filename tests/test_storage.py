@@ -1,7 +1,7 @@
 """S1 internal storage contract and independent, fictional acceptance tests
 
 Extends the canary Store API; no transport is implemented by storage
-create_budget(budget_id, limit: decimal string, currency: nonempty str)
+create_budget(budget_id, limit: decimal string | PROVIDER_MANAGED (requester budgets only), currency: nonempty str)
 inspect_budget(id) -> {budget_id, limit, currency, reserved, spent, available,
                       unknown_cost_operations: [operation_id]}
 reserve_intent(operation, budget_id, amount: decimal string) commits atomically
@@ -326,6 +326,7 @@ class StorageTests(unittest.TestCase):
                             ("engine_version",""),("resources",[1]),("revision",True)]:
             with self.subTest(field=field),self.assertRaises(ValueError):self.store.reserve_intent({**operation(),field:value},"b","1")
         with self.assertRaises(product.ConflictError):self.store.create_budget("b","999","TEST")
+        with self.assertRaises(ValueError):self.store.create_budget("pm",product.PROVIDER_MANAGED,"TEST")
         self.assertEqual(file_hashes(self.root),before)
 
     def test_invalid_receipt_or_transition_cannot_release_reservation(self):

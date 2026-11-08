@@ -359,7 +359,6 @@ def readable_fields(value):
 
 
 ACCESS_REASONS = {
-    'ACCESS_CAP_REQUIRED': 'elle doit avoir un plafond non renouvelable de 50 USD maximum et un solde disponible',
     'KEY_REJECTED': 'OpenRouter refuse cette clé',
     'SESSION_EXPIRED': 'votre session dans ce navigateur a expiré',
 }
@@ -370,7 +369,7 @@ def access_summary(access, *, page_cle=False):
     def montant(libelle, cle, note=''):
         valeur = access.get(cle)
         return (libelle, None if valeur is None else montant_lisible(valeur), 'USD', note)
-    solde = montant('Solde restant', 'limit_remaining_usd', 'selon OpenRouter') if page_cle else montant('Solde restant selon OpenRouter', 'limit_remaining_usd')
+    solde = montant('Solde restant', 'limit_remaining_usd') if page_cle else montant('Solde restant selon OpenRouter', 'limit_remaining_usd')
     return releves([solde, montant('Plafond de la clé', 'limit_usd')], compact=not page_cle, icone='cle')
 
 
@@ -387,20 +386,16 @@ CLE_STOCKAGE = ('La clé est chiffrée et conservée sur notre serveur. Un cooki
                 'jusqu’à 30 jours sans activité. Enregistrer ou retirer la clé ne lance aucun modèle.')
 CLE_REMPLACEMENT = ('Attendez la fin d’une préparation ou d’un contrôle de l’exemple en cours avant de changer de clé. '
                     'Retirer la clé n’annule pas un benchmark déjà lancé, et la clé reste active chez OpenRouter.')
-CLE_RETRAIT = ('Attendez la fin d’une préparation ou d’un contrôle de l’exemple en cours avant de changer de clé. '
-               'Une fois la clé retirée, Evaly ne lance plus aucun nouvel appel. La clé reste active chez OpenRouter, '
-               'et un benchmark déjà lancé n’est pas annulé.')
 
 
 def retrait_cle(csrf, back, *, page_cle=False):
-    """« Retirer la clé de ce navigateur » se confirme, même sans JavaScript : le bouton d'envoi est replié derrière la question ;
-    sur la page de la clé, sa mise en garde le suit"""
+    """« Retirer la clé de ce navigateur » se confirme, même sans JavaScript : le bouton d'envoi est replié derrière la question"""
     confirmation = ('<details class="confirmation-repliee"><summary class="btn btn-sec">' + (ic('poubelle') if not page_cle else '')
                     + 'Retirer la clé de ce navigateur</summary><div class="confirmation"><p>Retirer la clé de ce navigateur ? '
                     'Evaly ne lancera plus aucun appel tant que vous n’en enregistrez pas une autre.</p>'
                     + form(csrf, '/preparation/access/disconnect', {'return': back},
                            '<div class="actions"><button class="btn btn-danger btn-s" type="submit">Oui, retirer la clé</button></div>') + '</div></details>')
-    return confirmation + ('<p class="petit">' + text(CLE_RETRAIT) + '</p>' if page_cle else '')
+    return confirmation
 
 
 def personal_key_form(csrf, access, back, *, opened=False):
@@ -413,8 +408,8 @@ def personal_key_form(csrf, access, back, *, opened=False):
         return ('<div class="g-cle carte">' + access_summary(access)
                 + tiroir('Remplacer ou retirer la clé', envoi + '<hr class="sep">' + retrait_cle(csrf, back), ouvert=opened) + '</div>')
     envoi = form(csrf, '/preparation/access/key', {'return': back},
-                 champ_cle('Clé API OpenRouter', 'Clé réservée à Evaly, avec un plafond non renouvelable de 50 USD maximum. '
-                           'Ce plafond est la seule limite de dépense.') + '<p class="petit" id="key-storage">' + text(CLE_STOCKAGE) + '</p>'
+                 champ_cle('Clé API OpenRouter', 'Clé réservée à Evaly. Evaly n’ajoute aucune limite de dépense à celle que vous fixez, '
+                           'ou non, chez OpenRouter.') + '<p class="petit" id="key-storage">' + text(CLE_STOCKAGE) + '</p>'
                  '<div class="actions">' + bouton('Enregistrer la nouvelle clé' if status == 'invalid' else 'Enregistrer la clé', icone='cle') + '</div>',
                  classe='g-cle carte')
     return envoi + retrait_cle(csrf, back) if status == 'invalid' else envoi

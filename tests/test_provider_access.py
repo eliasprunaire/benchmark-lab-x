@@ -198,7 +198,7 @@ class ProviderAccessTests(unittest.TestCase):
         self.assertEqual([], self.transport.verifications)
         self.assertEqual(budget, self.store.inspect_budget(provider_access.preparation_budget_id(self.session)))
 
-    def test_provider_exhaustion_or_revocation_blocks_personal_access(self):
+    def test_provider_revocation_blocks_but_empty_balance_keeps_personal_access(self):
         for status, remaining in ((200, 0), (401, 20)):
             with self.subTest(status=status):
                 self.transport.verify_result = (200, json.dumps({'data': {
@@ -206,9 +206,15 @@ class ProviderAccessTests(unittest.TestCase):
                 provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
                 self.transport.verify_result = (status, json.dumps({'data': {
                     'limit': 50, 'limit_remaining': remaining, 'is_free_tier': False}}).encode())
-                with self.assertRaises(preparation.Denied):
-                    provider_access.key_for_session(self.store, self.session, SECRET,
-                        self.transport, now=provider_access._now() + timedelta(hours=1))
+                later = provider_access._now() + timedelta(hours=1)
+                if status == 401:
+                    with self.assertRaises(preparation.Denied):
+                        provider_access.key_for_session(self.store, self.session, SECRET, self.transport, now=later)
+                    continue
+                # Solde reporté à 0 : la clé reste connectée ; le refus de dépense se constate à l'appel (402)
+                self.assertEqual(KEY, provider_access.key_for_session(self.store, self.session, SECRET, self.transport, now=later))
+                state = provider_access.view(self.store, self.session, SECRET, self.transport, now=later)
+                self.assertEqual((True, '0'), (state['connected'], state['limit_remaining_usd']))
 
     def test_successful_verification_renews_personal_access(self):
         started = datetime(2026, 9, 17, 12, tzinfo=timezone.utc)
@@ -223,12 +229,13 @@ class ProviderAccessTests(unittest.TestCase):
             self.assertEqual(KEY, provider_access.key_for_session(
                 self.store, self.session, SECRET, self.transport, now=next_visit))
 
-    def test_manual_import_rejects_unbounded_or_renewing_keys_and_wrong_csrf(self):
-        for changes in ({'limit': None}, {'limit_reset': 'daily'}, {'limit': 51}):
-            self.transport.verify_result = (200, json.dumps({'data': {
-                'limit': 50, 'limit_remaining': 20, 'is_free_tier': False, **changes}}).encode())
-            with self.assertRaises(preparation.Denied):
-                provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
+    def test_manual_import_accepts_any_key_amounts_and_still_refuses_wrong_csrf(self):
+        for changes, limit in (({'limit': None}, None), ({'limit_reset': 'daily'}, '50'), ({'limit': 51}, '51')):
+            with self.subTest(changes=changes):
+                self.transport.verify_result = (200, json.dumps({'data': {
+                    'limit': 50, 'limit_remaining': 20, 'is_free_tier': False, **changes}}).encode())
+                value = provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
+                self.assertEqual((True, limit), (value['connected'], value['limit_usd']))
         session_id, csrf, token = preparation.session(self.store, None, create=True)
         self.transport.verifications.clear()
         with self.assertRaises(preparation.Denied):
@@ -240,24 +247,52 @@ class ProviderAccessTests(unittest.TestCase):
             provider_access.import_key(self.store, session_id, SECRET, 'sk-ant-wrong-provider', self.transport)
         self.assertEqual([], self.transport.verifications)
 
-    def test_key_replacement_cannot_remove_personal_spending_cap(self):
+    def test_key_replacement_accepts_uncapped_key(self):
         provider_access.import_key(self.store, self.session, SECRET, KEY, self.transport)
         self.transport.verify_result = (200, json.dumps({'data': {
             'limit': None, 'limit_remaining': None, 'is_free_tier': False}}).encode())
-        with self.assertRaisesRegex(preparation.Denied, '^ACCESS_CAP_REQUIRED$'):
-            provider_access.import_key(self.store, self.session, SECRET, 'sk-or-v1-sans-plafond', self.transport)
-        self.assertEqual(KEY, provider_access.key_for_session(self.store, self.session, SECRET, self.transport))
+        provider_access.import_key(self.store, self.session, SECRET, 'sk-or-v1-sans-plafond', self.transport)
+        self.assertEqual('sk-or-v1-sans-plafond', provider_access.key_for_session(self.store, self.session, SECRET, self.transport))
+        # L'enveloppe de la clé précédente reste, sans recharge
+        self.assertEqual('20', self.store.inspect_budget(provider_access.preparation_budget_id(self.session))['limit'])
+        # Dans l'autre sens, la ligne marquée de la première clé reste aussi
+        session_id, _, _ = preparation.session(self.store, None, create=True)
+        provider_access.import_key(self.store, session_id, SECRET, 'sk-or-v1-sans-plafond', self.transport)
+        self.transport.verify_result = (200, json.dumps({'data': {
+            'limit': 20, 'limit_remaining': 18.5, 'is_free_tier': False}}).encode())
+        provider_access.import_key(self.store, session_id, SECRET, KEY, self.transport)
+        self.assertEqual(KEY, provider_access.key_for_session(self.store, session_id, SECRET, self.transport))
+        self.assertIsNone(self.store.inspect_budget(provider_access.preparation_budget_id(session_id))['limit'])
 
-    def test_uncapped_key_is_refused_before_budget_creation(self):
-        for changes in ({'limit': None}, {'limit_reset': 'daily'}, {'limit_remaining': 0}):
-            with self.subTest(changes=changes):
-                self.transport.verify_result = (200, json.dumps({'data': {
-                    'limit': 50, 'limit_remaining': 20, 'is_free_tier': False, **changes}}).encode())
-                with self.assertRaisesRegex(preparation.Denied, '^ACCESS_CAP_REQUIRED$'):
-                    self.connect()
-                self.assertIsNone(self.store._connection.execute('SELECT 1 FROM budgets WHERE budget_id=?',
-                    (provider_access.preparation_budget_id(self.session),)).fetchone())
-                self.assertEqual('disconnected', provider_access.status_only(self.store, self.session)['status'])
+    def test_uncapped_key_connects_with_provider_managed_budget_row(self):
+        self.transport.verify_result = (200, json.dumps({'data': {
+            'limit': None, 'limit_remaining': None, 'limit_reset': None, 'is_free_tier': False}}).encode())
+        self.assertEqual('connected', self.connect()['status'])
+        budget_id = provider_access.preparation_budget_id(self.session)
+        # La ligne existe pour les clés étrangères, avec un marqueur que `_money` rejette : aucun montant fabriqué
+        self.assertEqual(('PROVIDER_MANAGED', 'USD'), self.store._connection.execute(
+            'SELECT limit_amount,currency FROM budgets WHERE budget_id=?', (budget_id,)).fetchone())
+        budget = self.store.inspect_budget(budget_id)
+        self.assertEqual((None, True, None), (budget['limit'], budget['provider_managed'], budget['available']))
+        # Retirer puis ré-enregistrer la même clé sans plafond : aucun refus
+        provider_access.disconnect(self.store, self.session, SECRET)
+        self.assertEqual('disconnected', provider_access.status_only(self.store, self.session)['status'])
+        self.assertEqual('connected', self.connect()['status'])
+        self.assertEqual([KEY, KEY], self.transport.verifications)
+        self.assertEqual('PROVIDER_MANAGED', self.store._connection.execute(
+            'SELECT limit_amount FROM budgets WHERE budget_id=?', (budget_id,)).fetchone()[0])
+        original = self.store.inspect_operations()[0]
+        operation = {key: original[key] for key in storage._OPERATION_KEYS}
+        operation['operation_id'] = 'personal-without-cap'
+        self.store.reserve_intent(operation, budget_id, '25')
+        self.assertEqual('25', self.store.inspect_budget(budget_id)['reserved'])
+        with self.assertRaises(KeyError):
+            self.store.inspect_budget('operator-absent')
+        # Le marqueur ne s'écrit que pour un budget géré par le fournisseur
+        with self.assertRaises(ValueError):
+            self.store.create_budget('operator-x', storage.PROVIDER_MANAGED, 'USD')
+        self.assertIsNone(self.store._connection.execute("SELECT 1 FROM budgets WHERE budget_id='operator-x'").fetchone())
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
     def test_manual_form_and_route_return_only_safe_state(self):
         from benchmark_web.views import render
@@ -282,9 +317,17 @@ class ProviderAccessTests(unittest.TestCase):
 
     def test_invalid_manual_key_preserves_existing_access(self):
         self.connect()
-        self.transport.verify_result = (401, b'{}')
-        with self.assertRaises(preparation.Denied):
-            provider_access.import_key(self.store, self.session, SECRET, 'sk-or-v1-invalid', self.transport)
+        # Refus, limite de débit, document sans palier : toujours ACCESS_KEY_REJECTED
+        for result in ((401, b'{}'), (429, b'{}'), (200, json.dumps({'data': {'limit': None}}).encode())):
+            with self.subTest(status=result[0]):
+                self.transport.verify_result = result
+                with self.assertRaisesRegex(preparation.Denied, '^ACCESS_KEY_REJECTED$'):
+                    provider_access.import_key(self.store, self.session, SECRET, 'sk-or-v1-invalid', self.transport)
+        # Clé collée avec un espace en tête : refusée sans appel réseau
+        count = len(self.transport.verifications)
+        with self.assertRaisesRegex(preparation.Denied, '^ACCESS_KEY_REJECTED$'):
+            provider_access.import_key(self.store, self.session, SECRET, ' ' + KEY, self.transport)
+        self.assertEqual(count, len(self.transport.verifications))
         self.assertEqual(KEY, provider_access.key_for_session(self.store, self.session, SECRET, self.transport))
 
     def connect(self):
@@ -356,6 +399,46 @@ class ProviderAccessTests(unittest.TestCase):
                 with self.assertRaisesRegex(preparation.Denied, 'ACCESS_REQUIRED'):
                     provider_access.key_for_session(self.store, self.session, SECRET, self.transport)
         self.assertNotEqual(verified_at, old)
+        # Ancien motif ACCESS_CAP_REQUIRED : revérifié au prochain affichage, jamais connecté sans réponse 200 lisible
+        from benchmark_web.views import render
+        recent = datetime.now(timezone.utc).isoformat()
+        uncapped = (200, json.dumps({'data': {'limit': None, 'limit_remaining': None, 'is_free_tier': False}}).encode())
+
+        def ancien_motif(session_id, reason='ACCESS_CAP_REQUIRED'):
+            self.store._connection.execute(
+                "UPDATE s2_provider_access SET status='invalid',status_reason=?,checked_at=? WHERE session_id=?",
+                (reason, recent, session_id))
+            self.store._connection.commit()
+
+        for result, expected in ((uncapped, ('connected', None)), ((401, b'{}'), ('invalid', 'KEY_REJECTED')),
+                                 (OSError('panne transitoire'), ('invalid', 'ACCESS_CAP_REQUIRED'))):
+            with self.subTest(result=str(result)[:20]):
+                ancien_motif(self.session)
+                self.transport.verify_result = result
+                count = len(self.transport.verifications)
+                state = provider_access.view(self.store, self.session, SECRET, self.transport)
+                self.assertEqual(count + 1, len(self.transport.verifications))
+                self.assertEqual(expected, (state['status'], state.get('reason')))
+        # Panne : la ligne garde l'ancien motif, checked_at avance, la page ne montre jamais le code brut
+        checked_at = self.store._connection.execute(
+            'SELECT checked_at FROM s2_provider_access WHERE session_id=?', (self.session,)).fetchone()[0]
+        self.assertGreater(checked_at, recent)
+        page = render(dict(state, kind='access'), 'csrf', '/preparation/access').decode()
+        self.assertNotIn('ACCESS_CAP_REQUIRED', page)
+        self.assertIn('sa vérification est à refaire', page)
+        # La route GET de la page déclenche la même revérification
+        session_id, _, token = preparation.session(self.store, None, create=True)
+        self.transport.verify_result = uncapped
+        provider_access.import_key(self.store, session_id, SECRET, KEY, self.transport)
+        ancien_motif(session_id)
+        code, value, _, _ = web_api.dispatch(self.store, 'GET', '/preparation/access', token, {}, 'a' * 40, None,
+                                             access_secret=SECRET, access_transport=self.transport)
+        self.assertEqual((200, True), (code, value['connected']))
+        # Un autre motif récent ne déclenche aucune vérification
+        ancien_motif(session_id, 'KEY_REJECTED')
+        count = len(self.transport.verifications)
+        self.assertEqual('invalid', provider_access.view(self.store, session_id, SECRET, self.transport)['status'])
+        self.assertEqual(count, len(self.transport.verifications))
 
     def test_secret_change_preserve_acces_et_evenements(self):
         self.connect()

@@ -423,12 +423,8 @@ def _key_details(raw):
     return document
 
 
-def _bounded_key_amounts(document):
-    limit, remaining = _money(document.get('limit')), _money(document.get('limit_remaining'))
-    if (limit is None or remaining is None or Decimal(limit) > 50
-            or not 0 < Decimal(remaining) <= Decimal(limit) or document.get('limit_reset') is not None):
-        raise ValueError('Plafond personnel requis')
-    return limit, remaining
+def _key_amounts(document):
+    return _money(document.get('limit')), _money(document.get('limit_remaining'))
 
 
 def import_key(store, session_id, secret, key, transport=None):
@@ -449,10 +445,7 @@ def import_key(store, session_id, secret, key, transport=None):
         if status != 200:
             raise ValueError('Clé refusée')
         document = _key_details(raw)
-        try:
-            limit, remaining = _bounded_key_amounts(document)
-        except ValueError:
-            raise Denied('ACCESS_CAP_REQUIRED') from None
+        limit, remaining = _key_amounts(document)
     except Exception as error:
         with _transaction(connection, write=True):
             _event_result(connection, event_id, 'FAILED', _now(), sensitive=(key,))
@@ -461,7 +454,7 @@ def import_key(store, session_id, secret, key, transport=None):
         raise Denied('ACCESS_KEY_REJECTED') from None
     budget_id = preparation_budget_id(session_id)
     if not connection.execute('SELECT 1 FROM budgets WHERE budget_id=?', (budget_id,)).fetchone():
-        store.create_budget(budget_id, limit, 'USD')
+        store.create_budget(budget_id, storage.PROVIDER_MANAGED if limit is None else limit, 'USD')
     with _transaction(connection, write=True):
         _no_preparation_in_progress(connection, session_id)
         _event_result(connection, event_id, 'RECEIVED', _now(), status, raw, (key,))
@@ -495,26 +488,22 @@ def _verify(store, session_id, transport, key, now):
         return
     state = 'RECEIVED'
     update = None
-    invalid_reason = None
     if status == 200:
+        # Réponse illisible : état inchangé, comme une panne transitoire ; un changement de format ne déconnecte personne
         try:
             document = _key_details(raw)
             if type(document['is_free_tier']) is not bool:
                 raise ValueError('Statut de palier invalide')
-            amounts = _bounded_key_amounts(document)
+            amounts = _key_amounts(document)
             update = (*amounts, int(document['is_free_tier']))
         except (ValueError, KeyError, TypeError):
             state = 'FAILED'
-            invalid_reason = 'ACCESS_CAP_REQUIRED'
     with _transaction(connection, write=True):
         observed = _now()
         _event_result(connection, event_id, state, observed, status, raw, (key,))
         if update is not None:
             connection.execute("UPDATE s2_provider_access SET verified_at=?,checked_at=?,limit_usd=?,limit_remaining_usd=?,is_free_tier=?,status='connected',status_reason=NULL WHERE session_id=?",
                                (observed.isoformat(), observed.isoformat(), *update, session_id))
-        elif invalid_reason is not None:
-            connection.execute("UPDATE s2_provider_access SET checked_at=?,status='invalid',status_reason=? WHERE session_id=?",
-                               (observed.isoformat(), invalid_reason, session_id))
         elif status in (401, 403):
             connection.execute("UPDATE s2_provider_access SET checked_at=?,status='invalid',status_reason='KEY_REJECTED' WHERE session_id=?",
                                (observed.isoformat(), session_id))
@@ -548,9 +537,6 @@ def _row_view(row, reason=None):
              'limit_remaining_usd': row[4], 'is_free_tier': bool(row[5]), 'status': row[0]}
     if row[0] == 'invalid':
         value['reason'] = row[7]
-    if row[0] == 'connected' and (row[3] is None or row[4] is None
-            or not 0 < Decimal(row[4]) <= Decimal(row[3]) <= 50):
-        value.update(connected=False, status='invalid', reason='ACCESS_CAP_REQUIRED')
     return value
 
 
@@ -596,7 +582,8 @@ def view(store, session_id, secret, transport=None, now=None, *, refresh=True):
     expire(store, now)
     row = connection.execute(query, (session_id,)).fetchone()
     if row and key is not None:
-        if refresh and (row[6] is None or now - _date(row[6]) > REFRESH_INTERVAL):
+        # Ancien motif de plafond, retiré du code : revérifier tout de suite plutôt qu'attendre l'intervalle
+        if refresh and (row[6] is None or now - _date(row[6]) > REFRESH_INTERVAL or row[7] == 'ACCESS_CAP_REQUIRED'):
             _verify(store, session_id, transport, key, now)
             row = connection.execute(query, (session_id,)).fetchone()
     return _row_view(row)
