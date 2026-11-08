@@ -1636,7 +1636,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
     if value.get('privacy') and not active_session(value['privacy']) and package:
         haut = '<div class="gb-cote">' + etat('vig', 'Accès fermé', 'Votre accès à ce cas est fermé',
                                             'Si vous en avez gardé une copie dans ce navigateur, vous pouvez encore la lire dans Mes données.',
-                                            lien('/preparation/data', 'Ouvrir Mes données')) + '</div>' + haut
+                                            lien('/preparation/data', 'Mes données')) + '</div>' + haut
     corps = (haut + '<div class="colonnes"><div class="pile-l">' + gauche + '</div><aside class="cote gb-cote' + avant + '"'
              # La décision porte déjà l'ancre `validation` de la piste ; sinon la colonne d'état la porte
              + ('' if avant_validation else ' id="validation"') + ' aria-label="'

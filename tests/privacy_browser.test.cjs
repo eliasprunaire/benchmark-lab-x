@@ -2622,6 +2622,9 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
       await page.goto(origin + '/render/consent-' + name);
       const box = page.locator('[data-privacy-post="contribution"] input[type="checkbox"]');
       assert.equal(await box.count(), Number(name !== 'prior'));
+      // Accès fermé seulement si la session a expiré : le lien vers les copies porte le nom de sa page
+      assert.deepEqual((await page.locator('.etat a.lien[href="/preparation/data"]').allTextContents()).map(t => t.trim()),
+        name === 'expired' ? ['Mes données'] : [], name);
       if (name === 'prior') continue;
       assert.equal(await box.isChecked(), false);
       assert.equal(await box.isDisabled(), name === 'expired');
