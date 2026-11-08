@@ -21,8 +21,8 @@ from .fragments import (ETAPES, bouton, btn, bulle_assistant, bulle_vous, cadre,
 from .projection import (projection_body)
 from .results_views import (contexte_apercu, contexte_publication, contexte_resultats, render_preview, render_results)
 from .legal_views import LEGAL_PAGES, legal_layout
-from .privacy_views import (PRIVACY_SCRIPT, actions_erreur, active_session, alerte_expiration, erreur_grande, gestion_cas,
-                            liens_donnees, marqueur_activite, render_access, render_bootstrap, render_contribution, render_contributions,
+from .privacy_views import (PRIVACY_SCRIPT, actions_erreur, active_session, erreur_grande,
+                            marqueur_activite, render_access, render_bootstrap, render_contribution, render_contributions,
                             render_delete_confirmation, render_deleted, render_privacy_controls, render_privacy_page)
 
 TEMPLATE_PATH = Path(__file__).with_name('templates') / 'preparation.html'
@@ -52,7 +52,6 @@ IDEES = ('Je reçois des notes de réunion en vrac. Je veux la liste des actions
          'Je réponds à des clients mécontents. Je veux un brouillon de réponse poli.',
          'Je compare des devis fournisseurs. Je veux un tableau des prix et délais.',
          'Je relis des contrats de prestation. Je veux la liste des clauses à risque.')
-COMPOSEUR_SUITE = 'L’assistant invente un exemple réaliste. Vous le relisez avant tout appel aux modèles comparés.'
 
 
 def composeur(csrf, action, fields, *, request='', useful='', context='', bloque=False, erreur=None,
@@ -64,7 +63,7 @@ def composeur(csrf, action, fields, *, request='', useful='', context='', bloque
     en_erreur, message = erreur or (None, '')
     desactive = ' disabled' if bloque else ''
     decrit = 'request-help' + (' request-error' if en_erreur == 'request' else '') + (' availability' if bloque else '')
-    raison = (bloque if isinstance(bloque, str) else 'Préparation indisponible pour le moment.') if bloque else COMPOSEUR_SUITE
+    raison = bloque if isinstance(bloque, str) else 'Préparation indisponible pour le moment.'
     idees = ''.join('<span>' + text(idee) + '</span>' for idee in IDEES + IDEES[:1])
     contenu = (
         '<' + titre_niveau + ' class="compo-titre"><label for="request">Décrivez votre cas d’usage</label></' + titre_niveau + '>'
@@ -73,10 +72,11 @@ def composeur(csrf, action, fields, *, request='', useful='', context='', bloque
         + '" maxlength="' + str(REQUEST_MAX) + '" placeholder=" " aria-describedby="' + decrit + '"'
         + (' aria-invalid="true"' if en_erreur == 'request' else '') + desactive + '>' + text(request) + '</textarea>'
         '<span class="compo-idees" aria-hidden="true"><span class="defile">' + idees + '</span></span>'
-        '<div class="compo-pied"><p class="aide" id="request-help">' + str(REQUEST_MIN) + ' caractères au moins · aucune donnée personnelle, '
-        'aucun document réel, même anonymisé</p><button class="btn compo-envoi" type="submit"' + desactive + '>' + text(envoi) + ic('fleche') + '</button></div></div>'
+        '<div class="compo-pied"><p class="aide" id="request-help">' + str(REQUEST_MIN) + ' caractères au minimum.<br>N’ajoutez aucune donnée personnelle, '
+        'ni aucun document réel, même anonymisé.</p><button class="btn compo-envoi" type="submit"' + desactive + '>' + text(envoi) + ic('fleche') + '</button></div></div>'
         + (erreur_champ('request', message) if en_erreur == 'request' else '')
-        + '<p class="compo-suite petit"' + (' id="availability"' if bloque else '') + '>' + text(raison) + '</p>'
+        # Sous le champ, seulement la raison d'un envoi refusé : `aria-describedby` du champ la désigne
+        + ('<p class="compo-suite petit" id="availability">' + text(raison) + '</p>' if bloque else '')
         + tiroir('Préciser le résultat attendu ou le contexte',
                  champ('Résultat attendu', 'useful', ident='useful', maxlength=USEFUL_MAX, valeur=useful, desactive=bool(bloque),
                        aide='Par exemple : un tableau, une liste d’actions, un brouillon de courriel.',
@@ -987,10 +987,10 @@ def render_home():
         '<h1><span class="ligne">Quel modèle d’IA</span><span class="ligne">pour <span class="colle">' + fente
         + '<span class="cache">votre travail</span>&nbsp;?</span></span></h1><div class="une-bas"><div>'
         '<p class="texte-l accroche">Le bon modèle d’IA dépend de votre cas d’usage. Evaly le soumet à plusieurs modèles, dans les mêmes conditions, '
-        'et vous montre lequel réussit vraiment.</p>'
+        'et vous montre lequel réussit vraiment.</p></div>'
         '<ul class="atouts" aria-label="Ce qu’Evaly vous apporte"><li>' + ic('cible') + '<span><b>Votre cas d’usage</b>, pas un classement générique</span></li>'
         '<li>' + ic('check') + '<span><b>Un verdict prouvé</b> pour chaque modèle</span></li>'
-        '<li>' + ic('horloge') + '<span><b>Le coût observé</b> de chaque réponse</span></li></ul></div>'
+        '<li>' + ic('horloge') + '<span><b>Le coût observé</b> de chaque réponse</span></li></ul>'
         '<div class="actions">' + btn('/preparation', 'Décrire mon cas d’usage', xl=True, avant='stylo')
         + lien('/preparation', 'Mes cas d’usage') + '</div></div>'
         '<figure class="banc" aria-labelledby="banc-legende"><div class="banc-tete"><span><b>●</b> Banc d’essai · démonstration</span>'
@@ -1034,35 +1034,18 @@ def disponibilite_cas(raison):
 
 
 def render_cases(value, csrf):
-    """Page Benchmark (/preparation) : état du service, champ unique de description, cas en cours, bande de la clé"""
+    """Page Benchmark (/preparation) : état du service, champ unique de description, renvoi vers Mes données, bande de la clé"""
     state = value.get('availability', {})
     carte, bloque = ('', False) if state.get('can_submit', False) else disponibilite_cas(state.get('reason'))
     if value.get('deleted'):
         carte = render_deleted() + carte
     creation = composeur(csrf, '/preparation/dossiers', {'dossier_id': secrets.token_hex(16), 'action_id': secrets.token_hex(16)}, bloque=bloque)
-    privacy = value.get('privacy')
-    if value['dossiers']:
-        corps = '<ul class="ge-liste">' + ''.join(
-            '<li class="ge-cas"><h3>' + text(d.get('need') or 'Cas d’usage sans description') + '</h3><div class="contexte">'
-            + puce('Version ' + str(d['revision'])) + ruban('Exemple inventé') + '</div>' + alerte_expiration(d) + '<div class="actions">'
-            + lien('/preparation/dossiers/' + d['dossier_id'], 'Reprendre ce cas') + '</div>' + gestion_cas(d, privacy) + '</li>'
-            for d in value['dossiers']) + '</ul>'
-        corps += ('<p class="petit">Supprimer efface la copie de ce navigateur et demande la suppression sur le serveur, contribution comprise. '
-                  'Des copies peuvent rester dans les sauvegardes du serveur.</p>')
-        corps += '<p>' + lien('/preparation/catalogue', 'Exemples validés et benchmarks') + '</p>'
-    else:
-        corps = ('<div class="ge-vide"><p><strong>Aucun cas en cours.</strong></p>'
-                 '<p class="petit">Décrivez un cas d’usage pour commencer, dès que la préparation est disponible.'
-                 + (' Les copies de vos anciens cas se lisent dans <a href="/preparation/data">Mes données</a>.' if privacy else '') + '</p></div>'
-                 + tiroir('Vous en aviez déjà un ?', '<p>Vos cas d’usage sont liés au navigateur où vous les avez créés. Ouvrez Evaly dans ce navigateur-là. '
-                          'Si ses cookies ont été effacés, les cas ne peuvent plus être retrouvés.</p>'))
     bande = ('<div class="ge-bande">' + ic('cle') + '<p>La clé OpenRouter paie les appels aux modèles.</p>'
              + lien('/preparation/access', 'Ma clé OpenRouter') + '</div>')
-    # Les copies gardées par le navigateur restent dans Mes données ; ici, seulement les liens
-    historique = liens_donnees() if privacy else ''
+    # Les cas et leurs copies se lisent dans Mes données ; `value['dossiers']` reste dans la charge utile sans être lu ici
     return ('<section class="compo-zone"><div class="cadre">' + carte + creation + '</div></section>'
-            '<div class="cadre ge-pile ge-mes-cas">' + marqueur_activite(privacy, csrf) + '<section class="ge-pile" aria-labelledby="t-liste"><h2 id="t-liste">Vos cas d’usage en cours</h2>'
-            + corps + '</section>' + bande + historique + '</div>')
+            '<div class="cadre ge-pile ge-mes-cas">' + marqueur_activite(value.get('privacy'), csrf)
+            + '<p class="petit">Retrouvez vos cas d’usage déjà décrits dans <a href="/preparation/data">Mes données</a>.</p>' + bande + '</div>')
 
 
 def render_task_index(task):

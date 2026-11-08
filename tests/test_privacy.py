@@ -267,8 +267,23 @@ class PrivacyTests(unittest.TestCase):
             self.assertEqual(value['csrf_token'], other[1]['csrf_token'])
 
     def test_historique_local_accessible_sans_session_et_activite_protegee(self):
+        sessions = lambda: self.store._connection.execute('SELECT count(*) FROM s2_sessions').fetchone()[0]
         status, value, cookie, _ = web_api.dispatch(self.store, 'GET', '/preparation/data', None, None, 'a' * 40, None)
-        self.assertEqual((200, 'privacy_data', None), (status, value['kind'], cookie))
+        self.assertEqual((200, 'privacy_data', None, []), (status, value['kind'], cookie, value['dossiers']))
+        self.assertNotIn('privacy', value)
+        self.assertEqual(0, sessions())
+        # Avec une session : les cas encore ouverts sur le serveur, sans cookie, sans nouvelle session ni renouvellement
+        self.dossier()
+        echeances = lambda: self.store._connection.execute(
+            'SELECT expires_at FROM s7_sessions UNION ALL SELECT expires_at FROM s7_dossiers').fetchall()
+        before = echeances()
+        with patch.object(privacy, 'now', return_value=NOW + timedelta(days=1)):
+            status, value, cookie, _ = web_api.dispatch(self.store, 'GET', '/preparation/data', self.token, None, 'a' * 40, None)
+        self.assertEqual((200, None), (status, cookie))
+        self.assertEqual([('private-case', 'Organiser des notes entièrement fictives')],
+                         [(d['dossier_id'], d['need']) for d in value['dossiers']])
+        self.assertTrue(value['privacy']['csrf_token'])
+        self.assertEqual((1, before), (sessions(), echeances()))
         with patch.object(privacy, 'now', return_value=NOW):
             session, csrf, token = preparation.session(self.store, None, create=True)
             with self.assertRaises(preparation.Denied):

@@ -52,7 +52,7 @@ function completed(transaction) {
     transaction.onerror = () => {}; // Abort reports the final transaction outcome
   });
 }
-// Without create, a missing database stays missing: opening it must not write before a choice
+// Sans création, une base absente reste absente : lire ne crée rien
 export async function openHistory({create = true} = {}) {
   const opening = indexedDB.open('bench-x-history', 1);
   opening.onupgradeneeded = event => {
@@ -89,7 +89,8 @@ export async function openHistory({create = true} = {}) {
       tx.onabort = () => reject(failure || tx.error || new Error('L’enregistrement dans ce navigateur a été interrompu. Vous pouvez réessayer.'));
       tx.onerror = () => {};
       controls.get('').onsuccess = globalEvent => {
-        const global = globalEvent.target.result || {id: '', generation: 0, enabled: false};
+        // Aucun arrêt enregistré : l'historique est actif ; un arrêt explicite (generation > 0) reste arrêté
+        const global = globalEvent.target.result || {id: '', generation: 0, enabled: true};
         controls.get(id).onsuccess = localEvent => {
           const local = localEvent.target.result || {id, generation: 0, enabled: true, version: -1};
           try {result = action(tx, global, local);}
@@ -338,8 +339,8 @@ async function post(url, body) {
     : 'Votre demande n’a pas été confirmée. Actualisez la page pour vérifier que votre espace est toujours ouvert.');
   return response;
 }
-// One consent decision with two derived effects; separating them changes this function only
-const consentEffects = checked => ({contribution: checked, localHistory: checked});
+// La case ne décide que la contribution : l'historique local se gère dans Mes données
+const consentEffects = checked => ({contribution: checked});
 const mounted = new WeakSet();
 const activityMounted = new WeakSet();
 // Toute suppression se confirme sur place, sans fenêtre du navigateur : la question s'affiche après le bouton,
@@ -399,14 +400,6 @@ function mountForms(root) {
       const localOutcome = localDeleted ? 'Copie de ce navigateur effacée. ' : 'Effacement de la copie de ce navigateur non confirmé. ';
       try {
         const response = await post(url.pathname, body);
-        if (effects?.localHistory) {
-          let history;
-          try {
-            history = await openHistory();
-            await history.enable();
-            await history.enable(decodeURIComponent(url.pathname.split('/')[3]));
-          } catch {} finally {history?.close();}
-        }
         if (action !== 'delete') location.reload();
         else {
           const result = await response.json();
@@ -526,7 +519,7 @@ export async function mountPrivacy(root = document) {
   if (channel) channel.onmessage = () => {void refresh();};
   const changed = async () => {channel?.postMessage('changed'); await refresh();};
   for (const element of historyRoots) mounted.add(element);
-  // A missing database means no choice yet; reconnect on refresh in case another tab made one
+  // A missing database means no copy and no stop yet; reconnect on refresh in case another tab created it
   let connecting;
   const connect = async () => {
     if (store) return store;
@@ -563,13 +556,12 @@ export async function mountPrivacy(root = document) {
         const serial = ++display;
         await connect();
         const records = store ? await store.list() : [];
-        const state = store ? await store.state() : {enabled: false, chosen: false};
+        const state = store ? await store.state() : {enabled: true, chosen: false};
         if (serial !== display) return;
         list.replaceChildren();
         status.textContent = state.enabled ? (records.length ? 'Cas gardés dans ce navigateur : ' + records.length + '.' : 'Aucun cas gardé dans ce navigateur pour l’instant.')
-          : !state.chosen && !records.length ? 'Historique local désactivé : rien n’est enregistré dans ce navigateur tant que vous ne l’activez pas.'
           : records.length ? 'Historique local en pause : aucune nouvelle copie n’est enregistrée. Cas encore gardés : ' + records.length + '.'
-          : 'Historique local effacé et en pause. Activez-le de nouveau pour garder de nouvelles copies.';
+          : 'Historique local effacé et en pause. Reprenez-le pour garder de nouvelles copies.';
         element.querySelector('[data-privacy-action="enable"]').hidden = state.enabled;
         element.querySelector('[data-privacy-action="clear"]').hidden = !store;
         list.classList.toggle('hist-liste', records.length > 0);
@@ -636,29 +628,34 @@ export async function mountPrivacy(root = document) {
       const active = element.hasAttribute('data-privacy-activity') || element.hasAttribute('data-privacy-manual');
       const update = async () => {
         await connect();
-        const state = store ? await store.state(id) : {enabled: false, chosen: false};
+        const state = store ? await store.state(id) : {enabled: true, chosen: false};
         archive.hidden = !active || !state.enabled;
-        enable.hidden = !active || !state.chosen || state.enabled;
-        // Carte de la liste : message seulement après une action (réussite ou erreur), jamais l'état par défaut sur chaque carte
+        // Un cas effacé seul reste hors de l'historique même sans arrêt global : son bouton le réactive
+        enable.hidden = !active || state.enabled;
+        // Ligne de Mes données : message seulement après une action (réussite ou erreur), jamais l'état par défaut sur chaque ligne
         if (element.hasAttribute('data-privacy-manual')) return;
-        if (!state.chosen) status.textContent = 'Historique local désactivé : ce cas n’est pas gardé dans ce navigateur. Pour l’activer, cochez la case de contribution ou passez par Mes données.';
-        else if (!state.enabled) status.textContent = 'Historique local en pause : ce cas n’est plus gardé dans ce navigateur. Réactivez-le dans Mes données, ou pour ce cas seulement avec le bouton ci-dessous.';
+        if (!state.enabled) status.textContent = 'Historique local en pause : ce cas n’est plus gardé dans ce navigateur. Réactivez-le dans Mes données, ou pour ce cas seulement avec le bouton ci-dessous.';
       };
       refreshers.push(update);
       const save = () => run(archive, async () => {
         status.textContent = 'Copie en cours dans ce navigateur…';
+        // Première copie : la base se crée ici, jamais au simple chargement d'une page
+        store ??= await openHistory();
         const saved = await store.archive(id, Number(element.dataset.contentVersion || 0));
-        status.textContent = saved ? 'Copie gardée dans ce navigateur.' : 'Ce navigateur a déjà la version la plus récente de ce cas.';
+        status.textContent = saved ? 'Copie gardée dans ce navigateur. Toute personne qui utilise ce profil de navigateur peut la lire.'
+          : 'Ce navigateur a déjà la version la plus récente de ce cas.';
         await changed();
       });
       archive.addEventListener('click', save);
       enable.addEventListener('click', () => run(enable, async () => {
         // A per-case action never silently lifts the global pause
+        store ??= await openHistory();
         await store.enable(id); await changed();
         if (!(await store.state()).enabled) status.textContent = 'L’historique est réactivé pour ce cas, mais il reste en pause pour tout ce navigateur. Réactivez-le aussi dans Mes données.';
       }));
       await update();
-      if (element.hasAttribute('data-privacy-activity') && element.hasAttribute('data-content-version') && store && (await store.state(id)).enabled) await save();
+      // Copie automatique de la page versionnée du cas ouvert, sauf arrêt global ou arrêt de ce cas
+      if (element.hasAttribute('data-privacy-activity') && element.hasAttribute('data-content-version') && (!store || (await store.state(id)).enabled)) await save();
     }
   }
   window.addEventListener('focus', () => {void refresh();});

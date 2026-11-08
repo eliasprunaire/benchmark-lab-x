@@ -255,6 +255,13 @@ class PrivacyHTTPTests(unittest.TestCase):
         code, _, _ = self.request('POST', '/preparation/session/open', native=True,
                                   body={'return_path': '/preparation?unsafe=1'})
         self.assertEqual(400, code)
+        # Mes données avec la session : la table des cas du serveur, sans nouveau cookie
+        self.seed_case(owner)
+        code, headers, page = self.request('GET', '/preparation/data', cookies=owner['cookies'], native=True)
+        self.assertEqual(200, code)
+        self.assertIn('<table class="table-cas"', page)
+        self.assertIn('>Organiser des notes entièrement fictives</a>', page)
+        self.assertFalse(headers.get_all('Set-Cookie'))
 
     def test_expired_archives_distinguish_owner_410_from_foreign_or_expired_session_404(self):
         owner = self.new_session()

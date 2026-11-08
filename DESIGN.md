@@ -72,7 +72,7 @@ Les pages publiées utilisent `benchmark_web/static/projection.css`. Cette feuil
 
 - **Papier** est le fond de page. **Carte** est le fond des cartes, des champs et des boutons secondaires. **Creux** est le fond appuyé (lignes d'état, cases, tableaux).
 - **Encre** sert au texte, aux filets de 2 px et à l'entrée de menu courante. **Encre-2** et **discret** servent au texte secondaire.
-- **Signal** (jaune) est le seul accent. Il marque l'action principale, la station courante, la pastille d'état et le Y de la marque. Le texte sur signal est toujours `sur-signal`.
+- **Signal** (jaune) est le seul accent. Il marque l'action principale, la station courante, la pastille d'état et le Y de la marque. Le texte sur signal est toujours `sur-signal`. `signal-pale` marque aussi un état vide, sans valeur d'action.
 - Cinq tons portent un verdict ou un état, chacun avec son fond : `ok`, `ko`, `att` (en attente, à reprendre), `vig` (vigilance), `inc` (inconnu). Un ton s'accompagne toujours d'un mot et d'une icône.
 - **Ruban** marque ce qui est inventé : pièces, consigne, exemple. Le texte sur ruban est `sur-ruban`.
 - **Nuit** fond les bandes sombres : banc d'essai de l'accueil, suivi en direct, pied de page. Le texte y est `sur-nuit` ou `nuit-2`.
@@ -121,7 +121,7 @@ pied de page : marque, Parcours, Informations légales, grand EVALY, bande basse
 - `.cadre` centre le contenu : 1240 px au plus, gouttière `clamp(16px, 4vw, 40px)`. Les bandes pleine largeur (`.zone`, `.une`, `.compo-zone`, `.pied`) portent leur propre `.cadre`.
 - Le gabarit `templates/preparation.html` écrit l'en-tête, le pied et le marqueur `{{tete}}`. `views.render` remplit `{{tete}}` (piste, titre, puces de contexte) et enveloppe le contenu dans un `.cadre`. Une vue qui écrit son propre h1 et ses propres bandes (accueil, Mes cas d'usage) passe `plein`.
 - Le menu est une liste. Sous 860 px, il devient un dépliant « Menu ». `aria-current="page"` marque seulement l'entrée qui est la page affichée, jamais une page descendante ni une page d'erreur.
-- Le pied de page a trois colonnes (deux sous 860 px, une sous 480 px), puis le mot EVALY en grand, puis une bande en trois zones : « Par Cybrel · né au Lab-X », la version et la source, le lien « Code source ».
+- Le pied de page a trois colonnes (deux sous 860 px, une sous 480 px) : la marque et sa tagline, sans note, puis « Parcours » et « Informations légales ». Viennent ensuite le mot EVALY en grand, puis une bande en trois zones : « Par Cybrel · né au Lab-X », la version et la source, le lien « Code source ».
 - Les cinq stations du cas (Besoin, Exemple, Validation, Modèles, Résultats) forment la piste. Les stations franchies sont des liens. Sous 700 px, seul le nom de la station courante reste visible.
 - Deux colonnes (`.colonnes`) : 360 px à droite pour l'état, la décision et le coût. Sous 1000 px, une seule colonne. `.cote-avant` remonte la colonne de droite avant le détail.
 - Chaque page se lit à 390 px sans défilement horizontal de la page. Seul un tableau défile dans son propre conteneur.
@@ -147,7 +147,8 @@ Chaque composant HTML a sa fonction dans `benchmark_web/fragments.py`. Les noms 
 - **Zone** (`zone`, `section`) : bande pleine largeur avec étiquette et titre, ou section d'une colonne.
 - **Colonnes** (`workbench`) : colonne principale (`.pile-l`) et colonne de synthèse collante (`.cote`).
 - **Harnais** (`harnais`) : valeur « pi.dev » avec lien et info-bulle sur le lancement à vide, sans numéro de version.
-- **Accueil** : accroche avec mot qui défile, banc d'essai de nuit avec trois couloirs de démonstration, cinq stations, règle du verdict.
+- **Table des cas** (`table-cas`) : cas d'usage, version, effacement prévu, actions ; une carte par ligne sous 700 px, libellé de date en mono. Le vide s'écrit « Aucun cas d’usage. » sur fond `signal-pale`.
+- **Accueil** : accroche, trois atouts et actions en trois colonnes dès 1100 px (accroche 1,2 fr, atouts 1 fr, actions auto, alignées par le haut) ; deux colonnes de 861 à 1099 px ; une seule sous 860 px ; puis banc d'essai de nuit avec trois couloirs de démonstration, cinq stations, règle du verdict.
 - **Suivi en direct** : couloirs de nuit, un disque qui avance par modèle, tampon d'état à droite.
 - **Pied de page** : voir « Mise en page ». Le lien « Code source » répond à l'offre de source de l'AGPL §13 et ne disparaît jamais.
 

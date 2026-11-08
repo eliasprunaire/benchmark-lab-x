@@ -429,10 +429,8 @@ class ParcoursComplet(unittest.TestCase):
                        and (n['tag'] == 'button' or n['tag'] == 'a' and {'button', 'btn'} & set(n['attrs'].get('class', '').split()))
                        and not {'sec', 'btn-sec'} & set(n['attrs'].get('class', '').split())]
             self.assertEqual([] if primary is None else [primary], [n['text'].strip() for n in actions])
-            # Une phrase d'état statique est un encadré `note` ou un bloc `etat` ; `role` reste réservé aux zones mises à jour (BX-22)
-            self.assertTrue(any((n['attrs'].get('role') in ('status', 'alert')
-                                 or {'note', 'etat'} & set((n['attrs'].get('class') or '').split())) and n['text'].strip()
-                                for n in page.nodes), 'Phrase d’état absente')
+            # Plus de contrôle global « Phrase d’état absente » : depuis la refonte Evaly, la note du pied le satisfaisait sur
+            # chaque page ; il disparaît avec cette note (unité 3), les états restent vérifiés par les assertions ciblées des parcours
             self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b|\b(?:configuration|cell|attempt|case)-\d+\b|\b(?:O1|E1)\b|python -m|package_sha256')
             self.assertIn('Révision : aaaaaaa', page.visible)
             self.assertNotIn('v0.1.0', page.visible)
@@ -3564,18 +3562,24 @@ class ParcoursComplet(unittest.TestCase):
             self.examine(lost, dossier, 'accès refusé', 'Revenir à mes cas d’usage')
             self.assertNotIn(b'Transformer des notes', raw)
             self.assertNotIn(b'Attendu fictif', raw)
-            empty, _, _ = self.request('/preparation', cookies=cookies)
-            # Pas de cas en cours : la phrase ne contredit pas l'historique local affiché plus bas
-            self.assertIn('Aucun cas en cours.', empty.visible)
-            self.assertIn('Vos cas d’usage en cours', empty.visible)
+            empty, _, raw = self.request('/preparation', cookies=cookies)
+            # Mes cas d'usage ne liste plus les cas : une phrase renvoie à Mes données
+            self.assertNotIn('Vos cas d’usage en cours', empty.visible)
+            self.assertNotIn('Aucun cas en cours.', empty.visible)
+            self.assertIn('Retrouvez vos cas d’usage déjà décrits dans <a href="/preparation/data">Mes données</a>.'.encode(), raw)
             self.assertNotIn('Aucun cas d’usage dans ce navigateur', empty.visible)
             self.assertFalse(any(n['tag'] == 'a' and n['attrs'].get('href') == dossier for n in empty.nodes))
         page, _, _ = self.request('/preparation')
-        self.assertIn(dossier, [n['attrs'].get('href') for n in page.nodes])
-        # Les copies gardées par le navigateur ne s'affichent que dans Mes cas d'usage, jamais à côté des cas en cours
+        self.assertNotIn(dossier, [n['attrs'].get('href') for n in page.nodes])
+        # Les copies gardées par le navigateur ne s'affichent que dans Mes données, jamais sur Mes cas d'usage
         self.assertFalse(any('data-privacy-history' in n['attrs'] for n in page.nodes))
-        self.assertIn('N’indiquez aucune donnée personnelle ni information confidentielle.',
-                      next(n['text'] for n in page.nodes if n['tag'] == 'footer'))
+        self.assertNotIn('N’indiquez aucune donnée personnelle', next(n['text'] for n in page.nodes if n['tag'] == 'footer'))
+        # Le cas se retrouve dans la table de Mes données, avec la même session
+        data, _, _ = self.request('/preparation/data')
+        ligne = next(n for n in data.nodes if n['tag'] == 'a' and n['attrs'].get('href') == dossier)
+        self.assertIn('Transformer des notes', ligne['text'])
+        self.assertTrue(any(n['tag'] == 'table' for n in data.nodes))
+        self.assertIn('Vos cas d’usage', data.visible)
         page, _, _ = self.request(configurations)
         self.submit(page, '/configurations', {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
