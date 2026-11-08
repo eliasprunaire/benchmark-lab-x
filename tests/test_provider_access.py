@@ -440,7 +440,12 @@ class ProviderAccessTests(unittest.TestCase):
         self.assertGreater(checked_at, recent)
         page = render(dict(state, kind='access'), 'csrf', '/preparation/access').decode()
         self.assertNotIn('ACCESS_CAP_REQUIRED', page)
-        self.assertIn('sa vérification est à refaire', page)
+        # Aucune réponse d'OpenRouter : la page attend une nouvelle vérification, elle ne dit jamais la clé refusée
+        for attendu in ('À revérifier', 'Vérification à refaire', 'solde non lu',
+                        'OpenRouter n’a pas répondu. Rechargez cette page pour relancer la vérification.'):
+            self.assertIn(attendu, page)
+        for refus in ('Clé refusée', 'Clé à remplacer', 'clé refusée'):
+            self.assertNotIn(refus, page)
         # La route GET de la page déclenche la même revérification
         session_id, _, token = preparation.session(self.store, None, create=True)
         self.transport.verify_result = uncapped

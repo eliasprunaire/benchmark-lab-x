@@ -7746,10 +7746,18 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Clé enregistrée', page.visible)
         self.assertNotIn('ACCESS_CAP_REQUIRED', page.visible)
         ancien_motif()
+        with patch.object(self.access, 'verify_result', OSError('panne transitoire')):
+            page, _, _ = self.request('/preparation/access')
+        self.assertIn('Vérification à refaire', page.visible)
+        self.assertIn('OpenRouter n’a pas répondu. Rechargez cette page pour relancer la vérification.', page.visible)
+        for refus in ('Clé refusée', 'Clé à remplacer', 'clé refusée', 'ACCESS_CAP_REQUIRED'):
+            self.assertNotIn(refus, page.visible)
+        ancien_motif()
         with patch.object(self.access, 'verify_result', (401, b'{}')):
             page, _, _ = self.request('/preparation/access')
         self.assertIn('Clé à remplacer', page.visible)
         self.assertIn('OpenRouter refuse cette clé', page.visible)
+        self.assertNotIn('Vérification à refaire', page.visible)
         self.assertEqual([], self.calls)
         self.assertEqual([], self.qualifier.calls)
 

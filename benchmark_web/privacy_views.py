@@ -280,9 +280,13 @@ def render_access(value, csrf):
     if status == 'connected':
         carte = etat('ok', 'Connectée', 'Clé enregistrée')
         solde = access_summary(value, page_cle=True)
+    elif status == 'invalid' and value.get('reason') not in ACCESS_REASONS:
+        # Ancien motif dont la revérification n'a pas abouti : OpenRouter n'a rien refusé
+        carte = etat('att', 'À revérifier', 'Vérification à refaire',
+                     'OpenRouter n’a pas répondu. Rechargez cette page pour relancer la vérification.')
+        solde = releves([('Solde restant', None, '', 'solde non lu')])
     elif status == 'invalid':
-        carte = etat('ko', 'Clé refusée', 'Clé à remplacer', 'Cette clé ne peut pas être utilisée : ' + ACCESS_REASONS.get(
-            value.get('reason'), 'sa vérification est à refaire') + '.')
+        carte = etat('ko', 'Clé refusée', 'Clé à remplacer', 'Cette clé ne peut pas être utilisée : ' + ACCESS_REASONS[value['reason']] + '.')
         solde = releves([('Solde restant', None, '', 'clé refusée, solde non lu')])
     elif status == 'disconnected':
         carte = etat('inc', 'Aucune clé', 'Aucune clé enregistrée', 'Ajoutez une clé réservée à Evaly. Elle paie les appels aux modèles : '
