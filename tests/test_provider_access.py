@@ -374,6 +374,21 @@ class ProviderAccessTests(unittest.TestCase):
         self.store._connection.execute('UPDATE s2_provider_access SET checked_at=? WHERE session_id=?',
                                        (old, self.session))
         self.store._connection.commit()
+        # Réponse 200 illisible : état conservé, checked_at avancé, événement FAILED
+        for raw in (b'<html>maintenance</html>', b'{"data":{"limit":"20"}}'):
+            with self.subTest(raw=raw):
+                self.transport.verify_result = (200, raw)
+                unreadable = provider_access.view(self.store, self.session, SECRET, self.transport)
+                self.assertEqual(('connected', old, '20', '18.5'), (unreadable['status'], unreadable['verified_at'],
+                                 unreadable['limit_usd'], unreadable['limit_remaining_usd']))
+                checked_at = self.store._connection.execute(
+                    'SELECT checked_at FROM s2_provider_access WHERE session_id=?', (self.session,)).fetchone()[0]
+                self.assertGreater(checked_at, old)
+                self.assertEqual(('verify', 'FAILED', 200), self.store._connection.execute(
+                    'SELECT kind,state,http_status FROM s6_access_events ORDER BY rowid DESC LIMIT 1').fetchone())
+                self.store._connection.execute('UPDATE s2_provider_access SET checked_at=? WHERE session_id=?',
+                                               (old, self.session))
+                self.store._connection.commit()
         for status in (401, 403):
             with self.subTest(status=status):
                 self.transport.verify_result = accepted

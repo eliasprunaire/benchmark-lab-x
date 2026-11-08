@@ -346,7 +346,7 @@ class RequesterCampaignLaunch(unittest.TestCase):
                 'frozen_at': snapshot['manifest']['conditions']['frozen_at'],
                 'confirm': 'yes'}
 
-    def test_uncapped_access_launches_without_budget_row(self):
+    def test_uncapped_access_launches_with_provider_managed_budget_row(self):
         self.connect()
         self.store._connection.execute(
             'UPDATE s2_provider_access SET limit_usd=NULL WHERE session_id=?', (self.sid,))
