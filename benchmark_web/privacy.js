@@ -639,7 +639,7 @@ export async function mountPrivacy(root = document) {
       refreshers.push(update);
       const save = () => run(archive, async () => {
         status.textContent = 'Copie en cours dans ce navigateur…';
-        // Première copie : la base se crée ici, jamais au simple chargement d'une page
+        // La base se crée ici, au clic sur « Garder une copie » ou à la copie automatique d'une page de cas avec data-privacy-activity et data-content-version ; sans data-content-version, le chargement ne crée rien
         store ??= await openHistory();
         const saved = await store.archive(id, Number(element.dataset.contentVersion || 0));
         status.textContent = saved ? 'Copie gardée dans ce navigateur. Toute personne qui utilise ce profil de navigateur peut la lire.'
