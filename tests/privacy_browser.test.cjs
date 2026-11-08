@@ -1794,10 +1794,10 @@ test('external references remain readable, searchable and safe without JavaScrip
         // Avec JavaScript : la recherche filtre dès 3 caractères, sans rechargement ; un filtre cliqué garde la position
         assert.equal(await page.locator('script').count(), 1);
         await page.evaluate(() => {window.sansRechargement = true;});
-        await page.getByLabel('Rechercher un benchmark').fill('co');
+        await page.getByLabel('Rechercher un benchmark public', {exact: true}).fill('co');
         await page.waitForTimeout(400);
         assert.equal(new URL(page.url()).searchParams.get('q'), null, 'filtrage sous 3 caractères');
-        await page.getByLabel('Rechercher un benchmark').fill('corriger');
+        await page.getByLabel('Rechercher un benchmark public', {exact: true}).fill('corriger');
         await page.waitForFunction(() => new URL(location.href).searchParams.get('q') === 'corriger');
         // Le contenu affiché est celui que le serveur rend pour cette recherche
         const attendu = (rendered.reference_search[JSON.stringify(['corriger', '', ''])].split('<main')[1].match(/<h3/g) || []).length;
@@ -1817,7 +1817,7 @@ test('external references remain readable, searchable and safe without JavaScrip
         assert.equal(await page.evaluate(() => window.sansRechargement), true, 'page rechargée');
       } else {
         // Sans JavaScript : recherche native, puis filtres-liens qui gardent le texte cherché dans l'adresse
-        await page.getByLabel('Rechercher un benchmark').fill('corriger');
+        await page.getByLabel('Rechercher un benchmark public', {exact: true}).fill('corriger');
         await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
         await page.getByRole('link', {name: 'Programmation', exact: true}).click();
         assert.equal(new URL(page.url()).searchParams.get('q'), 'corriger');
@@ -1833,9 +1833,9 @@ test('external references remain readable, searchable and safe without JavaScrip
       await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
       assert.equal(await page.locator('main h3').count(), 3);
       assert.equal(await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).count(), 0);
-      await page.getByLabel('Rechercher un benchmark').fill('introuvable');
+      await page.getByLabel('Rechercher un benchmark public', {exact: true}).fill('introuvable');
       await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
-      assert.match(await page.textContent('main'), /Aucun benchmark ne correspond/);
+      assert.match(await page.textContent('main'), /Aucun benchmark public ne correspond à cette recherche/);
       assert.equal(await page.locator('main').getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
       await page.goto(origin + '/evaluations-externes?q=' + encodeURIComponent('<script>alert(2)</script>'));
       assert.equal(await page.locator('#q').inputValue(), '<script>alert(2)</script>');

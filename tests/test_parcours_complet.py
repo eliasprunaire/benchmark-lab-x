@@ -500,8 +500,15 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual({'Programmation', 'Vérifiée'}, {n['text'] for n in filtered.nodes
                              if n['tag'] == 'a' and n['attrs'].get('aria-current')})
             self.assertEqual(raw, self.request(filtered.link('Effacer'))[2])
+            # Un tiers est toujours un benchmark public : champ, compteur singulier et pluriel, états vides
+            def compte(page):
+                return next(n for n in page.nodes if n['tag'] == 'p' and 'g-compte' in n['attrs'].get('class', '').split())
+            self.assertEqual('Rechercher un benchmark public', next(n['text'] for n in page.nodes if n['tag'] == 'label' and n['attrs'].get('for') == 'q'))
+            self.assertEqual('3 benchmarks publics', compte(page)['text'])
+            self.assertEqual('1 benchmark public sur 3', compte(filtered)['text'])
+            self.assertEqual(('benchmark public', 'benchmarks publics'), (compte(page)['attrs']['data-un'], compte(page)['attrs']['data-plusieurs']))
             empty, _, _ = self.request(target + '?q=introuvable')
-            self.assertIn('Aucun benchmark ne correspond', empty.visible)
+            self.assertIn('Aucun benchmark public ne correspond à cette recherche', empty.visible)
             self.assertEqual('/preparation', empty.link('Décrire mon cas'))
             unknown, _, _ = self.request(target + '/atelier-inconnu')
             self.assertIn('inconnu', unknown.visible)
@@ -572,7 +579,9 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn('Ayo', index.visible)
             selection = index.depliant('Comment cette sélection est tenue')
             self.assertIn('La dernière relecture date du 22 octobre 2026.', selection)
-            self.assertIn('qui publie le benchmark, ce qu’il mesure, et ce qu’il ne mesure pas', selection)
+            self.assertIn('qui publie le benchmark public, ce qu’il mesure, et ce qu’il ne mesure pas', selection)
+            self.assertIn('La page officielle du benchmark public est accessible depuis la fiche.', selection)
+            self.assertIn('Elle ne classe pas les benchmarks publics entre eux', selection)
             self.assertIn('Ce contrôle est fait à part de la relecture.', selection)
             self.assertEqual(
                 ['matharena', 'livecodebench', 'swe-bench', 'mteb', 'artificial-analysis-api'],
@@ -667,8 +676,8 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual(['LiveCodeBench', 'SWE-bench'], titles(self.request('/evaluations-externes?category=coding')[0]))
             self.assertEqual(['MathArena'], titles(self.request('/evaluations-externes?category=math')[0]))
             self.assertEqual(5, len(titles(self.request('/evaluations-externes?verification=verified')[0])))
-            self.assertIn('Aucun benchmark ne correspond', self.request('/evaluations-externes?verification=unverified')[0].visible)
-            self.assertIn('Aucun benchmark ne correspond', self.request('/evaluations-externes?' + urlencode({'q': 'HELM'}))[0].visible)
+            self.assertIn('Aucun benchmark public ne correspond à ces filtres', self.request('/evaluations-externes?verification=unverified')[0].visible)
+            self.assertIn('Aucun benchmark public ne correspond à cette recherche', self.request('/evaluations-externes?' + urlencode({'q': 'HELM'}))[0].visible)
             self.assertEqual(['MTEB'], titles(self.request('/evaluations-externes?' + urlencode({'q': 'vectorielles'}))[0]))
             self.assertEqual('/preparation', self.request('/evaluations-externes?q=HELM')[0].link('Décrire mon cas'))
             self.request('/evaluations-externes/helm', status=404)

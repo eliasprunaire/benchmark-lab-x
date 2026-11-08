@@ -615,11 +615,11 @@ def selection_tenue():
     return tiroir('Comment cette sélection est tenue',
                   '<p>Evaly choisit et tient à jour cette liste. Chaque fiche est relue avant d’être affichée.' + relecture + '</p>'
                   '<dl class="g-lire">'
-                  '<div><dt>Ce que la relecture vérifie</dt><dd>Trois points : qui publie le benchmark, ce qu’il mesure, et ce qu’il ne mesure pas.</dd></div>'
+                  '<div><dt>Ce que la relecture vérifie</dt><dd>Trois points : qui publie le benchmark public, ce qu’il mesure, et ce qu’il ne mesure pas.</dd></div>'
                   '<div><dt>Vérifiée</dt><dd>Les trois points sont établis.</dd></div>'
                   '<div><dt>Vérification insuffisante</dt><dd>Au moins un point reste inconnu. La fiche reste consultable, mais ce n’est pas une recommandation.</dd></div>'
-                  '<div><dt>Source disponible</dt><dd>La page officielle du benchmark est accessible depuis la fiche. Ce contrôle est fait à part de la relecture.</dd></div>'
-                  '<div><dt>Ce que la liste ne fait pas</dt><dd>Elle n’est pas complète. Elle ne classe pas les benchmarks entre eux et ne donne aucune note globale.</dd></div>'
+                  '<div><dt>Source disponible</dt><dd>La page officielle du benchmark public est accessible depuis la fiche. Ce contrôle est fait à part de la relecture.</dd></div>'
+                  '<div><dt>Ce que la liste ne fait pas</dt><dd>Elle n’est pas complète. Elle ne classe pas les benchmarks publics entre eux et ne donne aucune note globale.</dd></div>'
                   '</dl><p>Un bon résultat sur un benchmark public ne prouve pas qu’un modèle réussira votre cas d’usage. '
                   'Pour le savoir, comparez les modèles sur votre propre exemple.</p>')
 
@@ -676,7 +676,7 @@ def render_references(value):
                  + segments_liens('Vérification éditoriale', 'f-verif', [('', 'Toutes')] + list(REFERENCE_VERIFICATIONS.items()), verification,
                                   lambda choice: reference_adresse(q=query, category=category, verification=choice)))
     formulaire = ('<form class="g-recherche" method="get" action="/evaluations-externes" role="search"><div class="g-ligne">'
-                  + champ('Rechercher un benchmark', 'q', zone=False, type_='search', ident='q', valeur=query) + bouton('Rechercher', icone='loupe') + '</div>'
+                  + champ('Rechercher un benchmark public', 'q', zone=False, type_='search', ident='q', valeur=query) + bouton('Rechercher', icone='loupe') + '</div>'
                   '<input type="hidden" name="category" value="' + text(category) + '"><input type="hidden" name="verification" value="' + text(verification)
                   + '">' + selection + (('<div class="actions">' + lien('/evaluations-externes/aide', 'Demander une aide sémantique facultative', 'question') + '</div>')
                                         if SEMANTIC_HELP_ENABLED else '') + '</form>')
@@ -695,12 +695,12 @@ def render_references(value):
     if not available:
         corps = etat('inc', 'Répertoire vide', 'Aucun benchmark public disponible', 'Le répertoire ne contient encore aucune fiche.')
     elif not found:
-        corps = (etat('vig', 'Aucun résultat', 'Aucun benchmark ne correspond à cette recherche',
+        corps = (etat('vig', 'Aucun résultat', 'Aucun benchmark public ne correspond à cette recherche',
                       'Recherche : « ' + query + ' ». Modifiez la recherche ou les filtres.') if query else
-                 etat('vig', 'Aucun résultat', 'Aucun benchmark ne correspond à ces filtres', 'Changez un filtre, ou effacez-les.'))
+                 etat('vig', 'Aucun résultat', 'Aucun benchmark public ne correspond à ces filtres', 'Changez un filtre, ou effacez-les.'))
     else:
-        compte = str(len(found)) + (' benchmarks' if len(found) > 1 else ' benchmark') + (' sur ' + str(len(available)) if len(found) != len(available) else '')
-        corps = ('<h2 class="cache">Résultats</h2><p class="g-compte" role="status" data-un="benchmark" data-plusieurs="benchmarks">' + compte
+        compte = str(len(found)) + (' benchmarks publics' if len(found) > 1 else ' benchmark public') + (' sur ' + str(len(available)) if len(found) != len(available) else '')
+        corps = ('<h2 class="cache">Résultats</h2><p class="g-compte" role="status" data-un="benchmark public" data-plusieurs="benchmarks publics">' + compte
                  + '</p><ul class="g-grille g-liste-ext">' + ''.join(carte_reference(identity, reference) for identity, reference in found) + '</ul>')
     # Seuls une recherche sans résultat et un répertoire vide proposent de décrire un besoin
     suite = '<div class="actions">' + lien('/preparation', 'Décrire mon cas d’usage') + '</div>' if not found else ''
