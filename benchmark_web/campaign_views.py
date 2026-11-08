@@ -1197,7 +1197,7 @@ def render_campaign_followup(value, csrf):
     else:
         actions = []
         if judgment and judgment['status'] == 'BLOCKED':
-            actions.append(lien('/preparation/access', 'Gérer ma clé', 'cle'))
+            actions.append(lien('/preparation/access', 'Ma clé OpenRouter', 'cle'))
         # Aucune réponse arrivée : pas de lien vers des résultats vides, l'action principale change (B62)
         ambiguous = any(c['state'] == 'AMBIGUOUS' for c in cells) or campaign.get('state') == 'BLOCKED'
         empty = bool(cells) and received == 0 and all(c['state'] == 'RECEIVED' for c in cells)
@@ -1209,7 +1209,7 @@ def render_campaign_followup(value, csrf):
         elif results:
             actions += [refresh, btn(base, 'Voir les résultats')]
         elif empty and not ambiguous:
-            actions += [refresh, btn('/preparation', 'Retour à mes cas en cours')]
+            actions += [refresh, btn('/preparation', 'Revenir à mes cas d’usage')]
         else:
             actions.append('<a class="btn" href="' + text(base + '/conditions') + '">Actualiser le suivi' + ic('actualiser') + '</a>')
         foot = '<div class="direct-pied"><span></span><span class="actions">' + ''.join(actions) + '</span></div>'
@@ -1225,7 +1225,7 @@ def couloir(nom, lignes, statut_html, position=''):
 
 
 def example_label(case, number):
-    """« Exemple N » : le numéro de l'exemple dans la tâche, porté par l'identifiant `case-N` de son cas"""
+    """« Exemple N » : le numéro de l'exemple du cas d'usage, porté par l'identifiant `case-N` de son cas"""
     suffix = case['id'].removeprefix('case-')
     return 'Exemple ' + (suffix if suffix.isdigit() else str(number))
 

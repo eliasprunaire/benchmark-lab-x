@@ -25,12 +25,12 @@ Un jalon porte un nom, jamais un numéro. Les jalons se succèdent sous les noms
 | Historique et contributions : conservation, historique local, contribution facultative, « Mes données » | [§10](PRD.md#historique-et-contributions) | Alpha |
 | Saisie, interview, aperçus, corrections et accès aux preuves au clavier et sur petit écran | [§10](PRD.md#consulter-les-résultats) | Alpha |
 | Plusieurs campagnes, chacune liée à une version de tâche, à ses cas et à un panel figé | [§5.1](PRD.md#51-capacités) | Alpha |
+| Répertoire éditorial d’évaluations externes, recherche simple et filtres sans appel modèle | [§10](PRD.md#consulter-des-évaluations-externes) | Alpha |
 
 ## Sans jalon décidé
 
 Les exigences suivantes du PRD n’ont pas encore de jalon. Les dater demande une décision d’Ayo, reportée dans la matrice.
 
-- répertoire éditorial d’évaluations externes, recherche simple et filtres sans appel modèle ([§10](PRD.md#consulter-des-évaluations-externes))
 - navigation catalogue, tâche, campagne et comparaison des configurations ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
 - consultation publique des seules restitutions approuvées, sans classement universel ; autorisation distincte, paquet autonome et retrait des résultats ([§10](PRD.md#publier-les-résultats-dune-épreuve)) ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
 - catalogue de tâches versionnées, avec contrat et cas d'essai identifiés ; aucune demande n’y est publiée automatiquement ([§5.1](PRD.md#51-capacités)) ; publication, consultation et retrait des épreuves éditoriales ([§10](PRD.md#publier-et-consulter-une-épreuve-éditoriale))

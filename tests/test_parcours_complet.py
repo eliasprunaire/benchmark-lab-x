@@ -268,7 +268,7 @@ class ParcoursComplet(unittest.TestCase):
                     except service.Gone:
                         result = {'status': 410, 'value': {
                             'error': 'Ce cas d’usage n’est plus disponible sur le serveur. '
-                                     'Vos copies gardées dans ce navigateur restent dans Mes cas d’usage.',
+                                     'Vos copies gardées dans ce navigateur restent dans Mes données.',
                             'error_code': 'DOSSIER_EXPIRED'}}
                     except (storage.ConflictError, storage.BudgetError):
                         result = {'status': 409, 'value': {'error': 'Action refusée : consultez le dossier courant.'}}
@@ -439,16 +439,21 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(KEY, page.visible)
             # Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page ne compte sur elle
             self.assertNotIn('équipe Bench-X', ' '.join(n['text'] for n in page.nodes))
-            # Menu puis pied de page : Benchmark pour la saisie et les cas en cours, Mes cas d'usage pour les copies gardées
+            # Menu puis pied de page : Mes cas d'usage pour la saisie et les cas en cours, Mes données pour les copies gardées
             dehors = [n['text'].strip() for n in page.nodes if n['tag'] == 'a' and not n['main'] and not n['hidden'] and not n['details']]
-            self.assertEqual(['Accueil', 'Benchmark', 'Mes cas d’usage', 'Épreuves'], dehors[2:6])
-            self.assertEqual(['Décrire un cas d’usage', 'Mes cas d’usage', 'Épreuves', 'Benchmarks publics'], dehors[7:11])
+            self.assertEqual(['Accueil', 'Mes cas d’usage', 'Mes données', 'Épreuves'], dehors[2:6])
+            self.assertEqual(['Décrire mon cas d’usage', 'Mes données', 'Épreuves', 'Benchmarks publics'], dehors[7:11])
+            # Le pied présente le produit par sa tagline, une seule fois par page
+            intro = [n['text'] for n in page.nodes if n['tag'] == 'p' and not n['main'] and 'intro' in n['attrs'].get('class', '').split()]
+            self.assertTrue(intro[0].startswith('Evaly, le benchmark personnalisé : '))
+            self.assertEqual(1, page.visible.count('Evaly, le benchmark personnalisé'))
             self.assertTrue(any(n['tag'] == 'img' and n['attrs'].get('src') == '/evaly.svg' and not n['main'] for n in page.nodes))
             # Vocabulaire du produit : le travail de l'utilisateur est un cas d'usage, un lancement est un benchmark
             self.assertNotRegex(page.visible, r'[Dd]ossier privé|\b[Cc]ampagnes?\b|Bench-X')
-            # Un lien vers la page Benchmark nomme les cas en cours, jamais « mes cas d'usage », réservé aux copies gardées
-            self.assertEqual([], [n['text'].strip() for n in page.nodes if n['tag'] == 'a' and n['attrs'].get('href') == '/preparation'
-                                  and 'mes cas d’usage' in n['text'].lower()])
+            # Un lien vers Mes données ne dit jamais « mes cas d'usage », réservé à la page des cas ; plus aucun lien ne dit « cas en cours »
+            self.assertEqual([], [n['text'].strip() for n in page.nodes if n['tag'] == 'a' and (
+                n['attrs'].get('href') == '/preparation/data' and 'mes cas d’usage' in n['text'].lower() or 'cas en cours' in n['text'])])
+            self.assertNotIn('page Benchmark', page.visible)
             focus = [n for n in page.nodes if not n['hidden'] and not n['details']
                      and 'disabled' not in n['attrs'] and n['attrs'].get('type') != 'hidden'
                      and n['attrs'].get('tabindex') != '-1'
@@ -468,6 +473,7 @@ class ParcoursComplet(unittest.TestCase):
             target = home.link('Benchmarks publics')
             page, headers, raw = self.request(target)
             self.assertEqual('/evaluations-externes', target)
+            self.assertEqual('Benchmarks publics · Evaly', next(n['text'] for n in page.nodes if n['tag'] == 'title'))
             self.assertIsNone(headers.get('Set-Cookie'))
             self.assertEqual('no-referrer', headers['Referrer-Policy'])
             self.assertEqual(raw, self.request(target, cookies=SimpleCookie('benchmark_session=invalid'))[2])
@@ -2244,6 +2250,7 @@ class ParcoursComplet(unittest.TestCase):
                  (current - timedelta(days=8)).isoformat(), dossier_id))
         expired, _, expired_raw = self.request(dossier, status=410)
         self.assertIn('n’est plus disponible sur le serveur', expired.visible)
+        self.assertIn('restent dans Mes données.', expired.visible)
         self.assertNotIn('Relève les opérations inventées'.encode(), expired_raw)
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(1, store._connection.execute(
@@ -3203,6 +3210,9 @@ class ParcoursComplet(unittest.TestCase):
     def test_parcours_complet(self):
         page, _, _ = self.request('/')
         self.examine(page, '/', 'accueil', 'Décrire mon cas d’usage')
+        # Le lien secondaire de l'accueil porte le nom de sa page
+        self.assertEqual(['Décrire mon cas d’usage', 'Mes cas d’usage'],
+                         [n['text'].strip() for n in page.nodes if n['main'] and n['tag'] == 'a' and n['attrs'].get('href') == '/preparation'])
         target = page.link('Décrire mon cas')
         page, _, _ = self.request(target)
         # Sans clé, la page propose d'abord de l'enregistrer : rien d'autre ne ferme la préparation
@@ -3212,6 +3222,9 @@ class ParcoursComplet(unittest.TestCase):
         self.request(key_form['action'], key_form['fields'] | {'key': KEY}, status=303)
         page, _, _ = self.request(target)
         self.examine(page, '/preparation', 'besoin', 'Préparer mon exemple')
+        # La page des cas s'appelle Mes cas d'usage : titre et entrée de menu courante
+        self.assertEqual('Mes cas d’usage · Evaly', next(n['text'] for n in page.nodes if n['tag'] == 'title'))
+        self.assertEqual({'Mes cas d’usage'}, {n['text'] for n in page.nodes if n['tag'] == 'a' and n['attrs'].get('aria-current') == 'page'})
         self.assertIn('La clé OpenRouter paie les appels aux modèles.', page.visible)
         self.assertFalse(any(n['attrs'].get('id') == 'availability' for n in page.nodes))
         fields = [n['attrs'].get('name') for n in page.form('/dossiers')['nodes'] if n['tag'] == 'textarea']
@@ -3373,7 +3386,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(recap, stale.link('Voir la dernière sélection'))
         # Le serveur refuse aussi un envoi direct vers l'ancienne sélection
         refused, _, _ = self.request(older_recap.removesuffix('/conditions') + '/start', start_form['fields'], status=403)
-        self.examine(refused, older_recap, 'sélection remplacée', 'Retrouver mes cas en cours')
+        self.examine(refused, older_recap, 'sélection remplacée', 'Revenir à mes cas d’usage')
         self.assertIn('Cette sélection a été remplacée par une plus récente', refused.visible)
         self.assertEqual(recap, refused.link('Voir la dernière sélection'))
         self.assertTrue(self.starts.empty())
@@ -3539,7 +3552,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(self.starts.empty())
         for cookies in (SimpleCookie(), SimpleCookie('benchmark_session=' + 'f' * 64), foreign):
             lost, _, raw = self.request(dossier, cookies=cookies, status=403)
-            self.examine(lost, dossier, 'accès refusé', 'Retrouver mes cas en cours')
+            self.examine(lost, dossier, 'accès refusé', 'Revenir à mes cas d’usage')
             self.assertNotIn(b'Transformer des notes', raw)
             self.assertNotIn(b'Attendu fictif', raw)
             empty, _, _ = self.request('/preparation', cookies=cookies)
@@ -4888,7 +4901,7 @@ class ParcoursComplet(unittest.TestCase):
                              (start['action'], start['fields'])):
             with self.subTest(route=path):
                 page, _, raw = self.request(path, fields, status=403)
-                self.examine(page, path, 'exemple bloqué par le contrat opérateur', 'Retrouver mes cas en cours')
+                self.examine(page, path, 'exemple bloqué par le contrat opérateur', 'Revenir à mes cas d’usage')
                 self.assertIn('Terminez l’étape précédente avant de poursuivre.', page.visible)
                 self.assertIn('Ce que le contrôle de l’exemple a relevé', page.visible)
                 self.assertIn(affiche, page.visible)
@@ -7664,6 +7677,10 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request('/preparation/access')
         self.examine(page, '/preparation/access', 'aucune clé', 'Enregistrer la clé')
         self.assertIn('Aucune clé enregistrée', page.visible)
+        # Une page « Ma clé OpenRouter », un verbe par action
+        self.assertEqual('Ma clé OpenRouter · Evaly', next(n['text'] for n in page.nodes if n['tag'] == 'title'))
+        self.assertIn('Ajouter ma clé', page.visible)
+        self.assertNotRegex(page.visible, r'Gérer ma clé|Ajouter ma clé OpenRouter')
         # Un seul mécanisme : la clé saisie ; plus aucune autorisation déléguée
         self.assertFalse(any(f['action'].endswith(('/access/start', '/access/callback')) for f in page.forms))
         self.request('/preparation/access/callback?code=code-factice', status=403)
@@ -7671,7 +7688,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual('/preparation/access', form['fields']['return'])
         with patch.object(self.access, 'verify_result', (401, b'{}')):
             refused, _, raw = self.request(form['action'], form['fields'] | {'key': KEY}, status=403)
-        self.examine(refused, '/preparation/access/key', 'clé refusée', 'Retrouver mes cas en cours')
+        self.examine(refused, '/preparation/access/key', 'clé refusée', 'Revenir à mes cas d’usage')
         self.assertIn('OpenRouter n’a pas pu vérifier cette clé. Votre clé précédente reste en place.', refused.visible)
         self.assertNotIn(KEY.encode(), raw)
         _, headers, raw = self.request(form['action'], form['fields'] | {'key': KEY}, status=303)
@@ -7679,6 +7696,8 @@ class ParcoursComplet(unittest.TestCase):
         page, _, raw = self.request(headers['Location'])
         self.examine(page, '/preparation/access', 'clé enregistrée', 'Enregistrer la clé')
         self.assertRegex(page.visible, r'Solde restant\s+18,5\s*USD\s+selon OpenRouter\s+Plafond de la clé\s+20\s*USD')
+        self.assertIn('Remplacer ma clé', page.visible)
+        self.assertTrue(any(n['tag'] == 'summary' and 'Retirer la clé de ce navigateur' in n['text'] for n in page.nodes))
         self.assertNotIn(KEY.encode(), raw)
         form = page.form('/disconnect')
         _, headers, _ = self.request(form['action'], form['fields'], status=303)

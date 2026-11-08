@@ -171,6 +171,9 @@ class ComparisonPageTests(unittest.TestCase):
         # Pas de barres de coût : le montant se lit en chiffres
         self.assertNotIn('costbar', page)
         self.assertIn('<nav aria-label="Informations légales"><h2>Informations légales</h2>', page)
+        # Pied commun : tagline, puis le parcours avec un seul appel à l'action
+        self.assertIn('<p class="intro">Evaly, le benchmark personnalisé : ', page)
+        self.assertIn('<li><a href="/preparation">Décrire mon cas d’usage</a></li><li class="pied-sep"><a href="/preparation/data">Mes données</a></li>', page)
         self.assertNotIn('SHA-256', page)
 
     def test_libelles_du_filtre_correspondent_aux_titres_des_cas(self):

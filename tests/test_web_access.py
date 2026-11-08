@@ -726,6 +726,10 @@ class IndexationTests(WebServerCase):
                 self.assertGreaterEqual(len(descriptions[0]), 50)
                 # La description sert aux moteurs et aux aperçus de lien : elle nomme le produit actuel
                 self.assertNotIn('Bench-X', descriptions[0])
+                if path == '/':
+                    # L'accueil se présente par la tagline et ne dit jamais « tâche » pour le travail de l'utilisateur
+                    self.assertTrue(descriptions[0].startswith('Evaly, le benchmark personnalisé. '))
+                    self.assertNotRegex(raw.decode(), r'tâche|Bench-X')
                 self.assertEqual(['https://benchmark.example' + path],
                                  [attrs['href'] for tag, attrs in tags if tag == 'link' and attrs.get('rel') == 'canonical'])
 

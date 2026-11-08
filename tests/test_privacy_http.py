@@ -274,6 +274,8 @@ class PrivacyHTTPTests(unittest.TestCase):
         for route in (path, item):
             code, headers, value = self.request('GET', route, cookies=owner['cookies'])
             self.assertEqual((410, 'DOSSIER_EXPIRED'), (code, value['error_code']))
+            # Les copies locales se lisent dans Mes données, pas dans la page des cas
+            self.assertTrue(value['error'].endswith('restent dans Mes données.'))
             self.assertFalse(headers.get_all('Set-Cookie'))
             self.assertEqual(404, self.request('GET', route, cookies=stranger['cookies'])[0])
         self.advance(30)

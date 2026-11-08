@@ -191,7 +191,7 @@ CONFIDENTIALITE = (
         ('<code>bench-x-session-opening</code> (sessionStorage)',
          'Éviter une boucle d’ouverture si les cookies sont bloqués')))
     + '<p>L’historique local est <strong>désactivé par défaut</strong> : aucune copie de vos cas n’est enregistrée '
-    'dans ce navigateur tant que vous ne l’activez pas, depuis <a href="/preparation/data">Mes cas d’usage</a> ou avec la case de '
+    'dans ce navigateur tant que vous ne l’activez pas, depuis <a href="/preparation/data">Mes données</a> ou avec la case de '
     'contribution proposée sous un exemple. Cocher cette case a deux effets : elle active la contribution pour cet '
     'exemple <strong>et</strong> l’historique local. L’historique local nécessite JavaScript : sans JavaScript, '
     'seule la contribution est enregistrée.</p>'
@@ -204,7 +204,7 @@ CONFIDENTIALITE = (
     '<p>L’historique local n’est pas une sauvegarde garantie : votre navigateur peut l’effacer, notamment en '
     'navigation privée ou par manque de place. Toute personne utilisant ce profil de navigateur peut le consulter. '
     'Il ne contient ni votre clé d’accès ni la référence privée de jugement. Vous pouvez le suspendre ou l’effacer à '
-    'tout moment depuis <a href="/preparation/data">Mes cas d’usage</a>.</p></section>'
+    'tout moment depuis <a href="/preparation/data">Mes données</a>.</p></section>'
     '<section><h2>7. Sécurité</h2><p>Votre clé d’accès fournisseur est chiffrée sur le serveur (AES-256-GCM) et '
     'n’est jamais réaffichée. Les identifiants de session sont opaques et sans lien avec votre identité. Les '
     'journaux d’exploitation ne contiennent ni votre saisie, ni les réponses des modèles, ni votre clé.</p></section>'
@@ -219,7 +219,7 @@ CONFIDENTIALITE = (
     '<li><strong>retirer une contribution</strong> : page <a href="/preparation/contributions">Mes '
     'contributions</a> ;</li>'
     '<li><strong>exporter ou effacer votre historique local</strong> : page <a href="/preparation/data">Mes '
-    'cas d’usage</a>.</li></ul>'
+    'données</a>.</li></ul>'
     '<p>Pour toute autre demande : <strong>' + CONTACT + '</strong>.</p>'
     '<p><strong>Limite importante que nous devons vous signaler.</strong> Le service ne vous identifie pas. Nous ne '
     'pouvons rattacher une demande à vos données que si elle provient du navigateur porteur du cookie '

@@ -110,7 +110,7 @@ Les polices sont sous licence SIL Open Font License 1.1. Elles sont servies en l
 ## Mise en page
 
 ```
-en-tête fixe : marque EVAL + Y, menu (Accueil, Benchmark, Mes cas d'usage, Épreuves)
+en-tête fixe : marque EVAL + Y, menu (Accueil, Mes cas d'usage, Mes données, Épreuves)
 ────────────────────────────────────────────────────────────────────────────────
 tête d'écran : piste des cinq stations, titre h1, puces de contexte
 contenu : colonne principale  │  colonne de synthèse collante (.cote)
@@ -183,5 +183,6 @@ Ces règles viennent du produit. Le style peut changer, elles restent. Le script
 - Ne pas signaler un statut par la couleur seule.
 - Ne pas afficher les alias internes de configuration.
 - Ne pas écrire « Bench-X » ni « tâche » pour le travail de l'utilisateur : le produit s'appelle Evaly et le travail s'appelle un cas d'usage. Les pages légales et les descriptions de benchmarks publics gardent leur texte.
+- Ne pas écrire « benchmark » seul pour un tiers : « benchmark » seul désigne celui de l'utilisateur ; les tiers sont « benchmarks publics », « publiés par d'autres » ou nommés (SWE-bench, MTEB…).
 - Ne pas écrire de numéro de version de Pi dans un texte affiché.
 - Ne pas copier la feuille ni les composants hors de leurs deux emplacements.

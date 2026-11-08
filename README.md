@@ -2,7 +2,7 @@
   <img src="benchmark_web/static/evaly.svg" width="96" height="96" alt="Logo Evaly : un Y dans un carré jaune">
   <h1 id="evaly">Evaly</h1>
   <p><strong>par Cybrel · né au Lab-X</strong></p>
-  <p>Choisir une configuration de modèle d’IA à partir d’une tâche précise, de résultats observés, de preuves consultables et de leur coût.</p>
+  <p>Evaly, le benchmark personnalisé : choisir une configuration de modèle d’IA à partir d’un cas d’usage précis, de résultats observés, de preuves consultables et de leur coût.</p>
   <p>
     <a href="https://github.com/eliasprunaire/benchmark-lab-x/actions/workflows/ci.yml"><img alt="CI Python" src="https://github.com/eliasprunaire/benchmark-lab-x/actions/workflows/ci.yml/badge.svg"></a>
     <a href="LICENSE"><img alt="Licence AGPL-3.0" src="https://img.shields.io/badge/licence-AGPL--3.0-blue.svg"></a>

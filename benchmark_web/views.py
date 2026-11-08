@@ -38,12 +38,12 @@ REPOSITORY_URL = 'https://github.com/eliasprunaire/benchmark-lab-x'
 PUBLIC_URL = None
 # Pages indexables et leur description ; une page légale y entre par `LEGAL_PAGES` (BX-21)
 PUBLIC_PAGES = {
-    '/': 'Décrivez un cas d’usage de votre travail : Evaly prépare avec vous un exemple entièrement inventé, puis '
+    '/': 'Evaly, le benchmark personnalisé. Décrivez un cas d’usage de votre travail : Evaly prépare avec vous un exemple entièrement inventé, puis '
          'compare les modèles dans les mêmes conditions, coût observé compris.',
     **{path: description for path, (_, description, _) in LEGAL_PAGES.items()},
 }
-# Menu principal (A14) : Benchmark = saisie et cas en cours, Mes cas d'usage = copies gardées par le navigateur ; Benchmarks publics reste au pied (A12)
-MENU = (('/', 'Accueil'), ('/preparation', 'Benchmark'), ('/preparation/data', 'Mes cas d’usage'), ('/epreuves', 'Épreuves'))
+# Menu principal (A14) : Mes cas d'usage = saisie et cas en cours, Mes données = copies gardées par le navigateur ; Benchmarks publics au pied puis dans l'en-tête (unité suivante)
+MENU = (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données'), ('/epreuves', 'Épreuves'))
 # Piège à robots : `hidden` le retire du rendu et de l'arbre d'accessibilité même sans feuille de style
 HONEYPOT = ('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>'
             '<input id="website" name="website" autocomplete="off" tabindex="-1"></div>')
@@ -992,7 +992,7 @@ def render_home():
         '<li>' + ic('check') + '<span><b>Un verdict prouvé</b> pour chaque modèle</span></li>'
         '<li>' + ic('horloge') + '<span><b>Le coût observé</b> de chaque réponse</span></li></ul></div>'
         '<div class="actions">' + btn('/preparation', 'Décrire mon cas d’usage', xl=True, avant='stylo')
-        + lien('/preparation', 'Retrouver mes cas en cours') + '</div></div>'
+        + lien('/preparation', 'Mes cas d’usage') + '</div></div>'
         '<figure class="banc" aria-labelledby="banc-legende"><div class="banc-tete"><span><b>●</b> Banc d’essai · démonstration</span>'
         '<span class="exemple">' + ic('doc') + 'Exemple : notes de réunion inventées</span></div><ol class="couloirs course">' + couloirs + '</ol>'
         '<figcaption class="banc-pied" id="banc-legende"><span><strong>Même consigne, mêmes pièces, mêmes conditions.</strong> Un verdict par modèle.</span>'
@@ -1019,7 +1019,7 @@ def disponibilite_cas(raison):
     actualiser = btn('/preparation', 'Actualiser', sec=True, icone=None, avant='actualiser')
     return {
         'access': (etat('vig', 'Clé requise', 'Ajoutez votre clé OpenRouter', 'Sans clé, l’assistant ne peut pas préparer d’exemple.',
-                        btn('/preparation/access', 'Ajouter ma clé OpenRouter', sec=True, avant='cle')),
+                        btn('/preparation/access', 'Ajouter ma clé', sec=True, avant='cle')),
                    'Ajoutez d’abord votre clé OpenRouter.'),
         'restore': (etat('ko', 'Indisponible', 'Service momentanément indisponible', 'Réessayez plus tard. Vos cas restent en place.', actualiser), True),
         'interrupted': (etat('inc', 'Résultat inconnu', 'Une préparation a été interrompue',
@@ -1053,12 +1053,12 @@ def render_cases(value, csrf):
     else:
         corps = ('<div class="ge-vide"><p><strong>Aucun cas en cours.</strong></p>'
                  '<p class="petit">Décrivez un cas d’usage pour commencer, dès que la préparation est disponible.'
-                 + (' Les copies de vos anciens cas se lisent dans <a href="/preparation/data">Mes cas d’usage</a>.' if privacy else '') + '</p></div>'
+                 + (' Les copies de vos anciens cas se lisent dans <a href="/preparation/data">Mes données</a>.' if privacy else '') + '</p></div>'
                  + tiroir('Vous en aviez déjà un ?', '<p>Vos cas d’usage sont liés au navigateur où vous les avez créés. Ouvrez Evaly dans ce navigateur-là. '
                           'Si ses cookies ont été effacés, les cas ne peuvent plus être retrouvés.</p>'))
     bande = ('<div class="ge-bande">' + ic('cle') + '<p>La clé OpenRouter paie les appels aux modèles.</p>'
              + lien('/preparation/access', 'Ma clé OpenRouter') + '</div>')
-    # Les copies gardées par le navigateur restent dans Mes cas d'usage ; ici, seulement les liens
+    # Les copies gardées par le navigateur restent dans Mes données ; ici, seulement les liens
     historique = liens_donnees() if privacy else ''
     return ('<section class="compo-zone"><div class="cadre">' + carte + creation + '</div></section>'
             '<div class="cadre ge-pile ge-mes-cas">' + marqueur_activite(privacy, csrf) + '<section class="ge-pile" aria-labelledby="t-liste"><h2 id="t-liste">Vos cas d’usage en cours</h2>'
@@ -1089,7 +1089,7 @@ def render_catalogue(value):
                     for task in value['tasks'])
     if not value['tasks']:
         corps = '<p>Aucun cas d’usage validé pour l’instant. Validez un exemple pour le retrouver ici.</p>'
-    corps = '<div class="ge-pile">' + corps + '<p>' + lien('/preparation', 'Revenir à mes cas en cours', 'retour') + '</p></div>'
+    corps = '<div class="ge-pile">' + corps + '<p>' + lien('/preparation', 'Revenir à mes cas d’usage', 'retour') + '</p></div>'
     return 'Exemples validés et benchmarks', corps, dict(sous_titre_html=(
         '<p class="texte-l">Visible par vous seul, dans ce navigateur. Pour chaque cas validé, retrouvez ses exemples et ses benchmarks.</p>'))
 
@@ -1635,8 +1635,8 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         avant = ' cote-avant'
     if value.get('privacy') and not active_session(value['privacy']) and package:
         haut = '<div class="gb-cote">' + etat('vig', 'Accès fermé', 'Votre accès à ce cas est fermé',
-                                            'Si vous en avez gardé une copie dans ce navigateur, vous pouvez encore la lire dans Mes cas d’usage.',
-                                            lien('/preparation/data', 'Ouvrir Mes cas d’usage')) + '</div>' + haut
+                                            'Si vous en avez gardé une copie dans ce navigateur, vous pouvez encore la lire dans Mes données.',
+                                            lien('/preparation/data', 'Ouvrir Mes données')) + '</div>' + haut
     corps = (haut + '<div class="colonnes"><div class="pile-l">' + gauche + '</div><aside class="cote gb-cote' + avant + '"'
              # La décision porte déjà l'ancre `validation` de la piste ; sinon la colonne d'état la porte
              + ('' if avant_validation else ' id="validation"') + ' aria-label="'
@@ -1711,22 +1711,22 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
                 '<textarea id="message" name="message" required maxlength="1000" rows="4"' + field_attributes('message')
                 + (' aria-invalid="true"' if attached else '') + '>' + text(submitted['message']) + '</textarea>'
                 + field_error('message') + '</div>' + HONEYPOT + '<div class="actions">' + bouton('Corriger et renvoyer')
-                + lien('/preparation', 'Retrouver mes cas en cours') + '</div>', classe='g-err-form')
+                + lien('/preparation', 'Revenir à mes cas d’usage') + '</div>', classe='g-err-form')
         latest = value.get('step') if value.get('error_code') == 'SELECTION_SUPERSEDED' else None
         if latest and '/campaigns/' in path and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', str(latest)):
             autres += (lien(path.split('/campaigns/', 1)[0] + '/campaigns/' + latest + '/conditions', 'Voir la dernière sélection'),)
         if value.get('error_code') == 'OUTPUT_LIMIT_ABOVE_BOUND' and path.endswith('/configurations'):
-            principal, autres = btn(path, 'Revenir au choix des modèles'), (lien('/preparation', 'Retrouver mes cas en cours'),) + autres
+            principal, autres = btn(path, 'Revenir au choix des modèles'), (lien('/preparation', 'Revenir à mes cas d’usage'),) + autres
         # Attente expirée d'un lancement : l'état enregistré se lit sur son suivi, sans rien renvoyer
         followup = (re.fullmatch(r'(/preparation/dossiers/[A-Za-z0-9_-]{1,128}/campaigns/[A-Za-z0-9_-]{1,128})/(?:start|evaluate)', path)
                     if value.get('error_code') == 'RESPONSE_TIMEOUT' else None)
         if followup:
-            principal, autres = btn(followup[1] + '/conditions', 'Consulter l’état du lancement'), (lien('/preparation', 'Retrouver mes cas en cours'),) + autres
+            principal, autres = btn(followup[1] + '/conditions', 'Consulter l’état du lancement'), (lien('/preparation', 'Revenir à mes cas d’usage'),) + autres
         # Un formulaire corrigeable est la suite de la page : le retour aux cas passe en lien discret
         if corrigeable:
             principal, autres = '', ()
             if type(submitted) is dict and 'request' in submitted:
-                content += '<p>' + lien('/preparation', 'Retrouver mes cas en cours') + '</p>'
+                content += '<p>' + lien('/preparation', 'Revenir à mes cas d’usage') + '</p>'
         content = erreur_grande(decrit, phrase or message, principal, autres, mot_texte='Texte à corriger' if phrase else None,
                                 alerte=not attached) + content
     elif value.get('kind') == 'case_delete':
@@ -1802,7 +1802,7 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         content += section('Renseignements de la sortie construite', '<dl class="kv">' + rows + '</dl>')
         content += '<p><a href="' + text(value['dossier_href']) + '">Revenir au cas d’usage</a></p>'
     elif 'dossiers' in value:
-        title = 'Benchmark'
+        title = 'Mes cas d’usage'
         content, plein = render_cases(value, csrf), True
     elif value.get('kind') == 'honeypot_ack' or 'operation_id' in value:
         title, content, entete = render_attente(value)

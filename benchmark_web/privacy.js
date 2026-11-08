@@ -464,7 +464,7 @@ function mountBootstrap(root) {
     target = new URL(path, location.origin);
     if (target.origin !== location.origin || target.pathname === '/preparation/session/open') throw new Error();
   } catch {
-    status.textContent = 'Ce lien de retour n’est pas valide. Revenez à la page Benchmark.';
+    status.textContent = 'Ce lien de retour n’est pas valide. Revenez à la page Mes cas d’usage.';
     button.disabled = true;
     return;
   }
@@ -641,8 +641,8 @@ export async function mountPrivacy(root = document) {
         enable.hidden = !active || !state.chosen || state.enabled;
         // Carte de la liste : message seulement après une action (réussite ou erreur), jamais l'état par défaut sur chaque carte
         if (element.hasAttribute('data-privacy-manual')) return;
-        if (!state.chosen) status.textContent = 'Historique local désactivé : ce cas n’est pas gardé dans ce navigateur. Pour l’activer, cochez la case de contribution ou passez par Mes cas d’usage.';
-        else if (!state.enabled) status.textContent = 'Historique local en pause : ce cas n’est plus gardé dans ce navigateur. Réactivez-le dans Mes cas d’usage, ou pour ce cas seulement avec le bouton ci-dessous.';
+        if (!state.chosen) status.textContent = 'Historique local désactivé : ce cas n’est pas gardé dans ce navigateur. Pour l’activer, cochez la case de contribution ou passez par Mes données.';
+        else if (!state.enabled) status.textContent = 'Historique local en pause : ce cas n’est plus gardé dans ce navigateur. Réactivez-le dans Mes données, ou pour ce cas seulement avec le bouton ci-dessous.';
       };
       refreshers.push(update);
       const save = () => run(archive, async () => {
@@ -655,7 +655,7 @@ export async function mountPrivacy(root = document) {
       enable.addEventListener('click', () => run(enable, async () => {
         // A per-case action never silently lifts the global pause
         await store.enable(id); await changed();
-        if (!(await store.state()).enabled) status.textContent = 'L’historique est réactivé pour ce cas, mais il reste en pause pour tout ce navigateur. Réactivez-le aussi dans Mes cas d’usage.';
+        if (!(await store.state()).enabled) status.textContent = 'L’historique est réactivé pour ce cas, mais il reste en pause pour tout ce navigateur. Réactivez-le aussi dans Mes données.';
       }));
       await update();
       if (element.hasAttribute('data-privacy-activity') && element.hasAttribute('data-content-version') && store && (await store.state(id)).enabled) await save();

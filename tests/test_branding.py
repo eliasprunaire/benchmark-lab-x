@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from benchmark import outgoing, publications, storage
 from benchmark.transports import openrouter
-from benchmark_web import projection
+from benchmark_web import projection, views
 from benchmark_web.server import serve_web
 
 
@@ -64,6 +64,10 @@ class BrandingTests(unittest.TestCase):
                 self.assertNotIn('Benchmark Lab-X', surface)
         self.assertIn('Evaly', readme)
         self.assertNotIn('Bench-X', readme)
+        # Une seule tagline : README, pied de page et description publique de l'accueil
+        self.assertIn('Evaly, le benchmark personnalisé : choisir une configuration de modèle d’IA à partir d’un cas d’usage précis', readme)
+        self.assertIn('<p class="intro">Evaly, le benchmark personnalisé : comparez les modèles d’IA', template)
+        self.assertTrue(views.PUBLIC_PAGES['/'].startswith('Evaly, le benchmark personnalisé. Décrivez un cas d’usage'))
         self.assertIn('par Cybrel · né au Lab-X', readme)
         self.assertNotIn('by Le Lab-X', readme)
         # Le prompt de l'assistant garde Bench-X : un changement de prompt touche la mesure
