@@ -22,7 +22,8 @@ Un jalon porte un nom, jamais un numéro. Les jalons se succèdent sous les noms
 |---|---|---|
 | Parcours public de description, clarification et préparation assistée d’un dossier fictif consultable et modifiable, jusqu’au lancement autorisé, aux résultats privés et à leur comparaison | [§3.1](PRD.md#31-audience-et-accès), [§10](PRD.md#préparer-et-valider-lexemple) | Alpha |
 | Accès API via OpenRouter sous Pi constant, financé par la clé personnelle du demandeur : clé chiffrée liée à la session, retrait, expiration | [§5.1](PRD.md#51-capacités), [§10](PRD.md#accès-openrouter-personnel) | Alpha |
-| Historique et contributions : conservation, historique local, contribution facultative, « Mes données » | [§10](PRD.md#historique-et-contributions) | Alpha |
+| Historique : conservation, historique local, « Mes données » | [§10](PRD.md#historique-et-contributions) | Alpha |
+| Contribution facultative | [§10](PRD.md#historique-et-contributions) | Retirée ; retrait des contributions antérieures jusqu’à échéance |
 | Saisie, interview, aperçus, corrections et accès aux preuves au clavier et sur petit écran | [§10](PRD.md#consulter-les-résultats) | Alpha |
 | Plusieurs campagnes, chacune liée à une version de tâche, à ses cas et à un panel figé | [§5.1](PRD.md#51-capacités) | Alpha |
 | Répertoire éditorial d’évaluations externes, recherche simple et filtres sans appel modèle | [§10](PRD.md#consulter-des-évaluations-externes) | Alpha |
@@ -30,6 +31,8 @@ Un jalon porte un nom, jamais un numéro. Les jalons se succèdent sous les noms
 ## Sans jalon décidé
 
 Les exigences suivantes du PRD n’ont pas encore de jalon. Les dater demande une décision d’Ayo, reportée dans la matrice.
+
+Les routes publiques des épreuves éditoriales sont retirées de la construction alpha ; paquets, autorités et invariants restent en place.
 
 - navigation catalogue, tâche, campagne et comparaison des configurations ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))
 - consultation publique des seules restitutions approuvées, sans classement universel ; autorisation distincte, paquet autonome et retrait des résultats ([§10](PRD.md#publier-les-résultats-dune-épreuve)) ([§5.1](PRD.md#51-capacités), [§10](PRD.md#consulter-les-résultats))

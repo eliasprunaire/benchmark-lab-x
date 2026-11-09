@@ -204,8 +204,9 @@ Cette section relie chaque terme affiché à l’écran à son terme du domaine 
 | Mes cas d’usage | aucun | `/preparation` | La page qui décrit un cas et porte la clé OpenRouter. |
 | Mes données | « Mes données » | `/preparation/data`, kind `privacy_data` | Cas d’usage ouverts, historique local et conservation automatique. |
 | Ma clé OpenRouter | Accès OpenRouter personnel | `/preparation/access`, kind `access` | Nom de la page. Actions : « Ajouter ma clé », « Remplacer ma clé », « Retirer la clé de ce navigateur ». |
-| épreuve | Épreuve éditoriale publiée ; qualification de l’épreuve | editorial, `/epreuves` | Deux sens : voir l’entrée Épreuve. |
-| contribution | Contribution facultative | contributions, `benchmark_contributions` | Copie privée autorisée par l’utilisateur ; voir l’entrée Contribution. |
+| épreuve | Qualification de l’épreuve ; épreuve éditoriale publiée | editorial | Sens des règles §4. Le sens public est hors alpha ; les copies existantes affichent « Exemple source ». Voir l’entrée Épreuve. |
+| exemple source | Copie d’un exemple publié | `source`, `checks_json.source` | Dossier créé avant l’alpha depuis une épreuve éditoriale. |
+| contribution | Contribution facultative | contributions, `benchmark_contributions` | Fermée. Retrait seul, jusqu’à la dernière échéance. Aucune nouvelle utilisation. |
 | historique local | Historique personnel | IndexedDB, `privacy.js` | Copies gardées par le navigateur. |
 
 Un lien porte le nom de sa page de destination ; un lien de retour s’écrit « Revenir à » suivi du nom de la page, par exemple « Revenir à mes cas d’usage ». Mots interdits à l’écran : « tâche » pour le travail de l’utilisateur, « Bench-X », « meilleur modèle », « classement », « benchmark » nu pour un tiers. Les pages légales gardent leur texte ; seuls leurs liens suivent le nom des pages.
@@ -223,10 +224,10 @@ Terme affiché de la Campagne : le lancement de l’utilisateur sur son exemple.
 Terme affiché du répertoire d’évaluations externes : les références publiées par des tiers, comme SWE-bench ou MTEB. Les benchmarks publics mesurent surtout des tâches génériques. Ils ne prouvent pas la réussite sur le cas d’usage précis d’un utilisateur ; Evaly rapproche le benchmark de ce cas d’usage. Aucun texte affiché ne dit que les benchmarks publics sont déconnectés de la vraie vie, et aucun ne promet une réussite générale.
 
 ### Épreuve
-Le terme a deux sens. Dans le parcours public, une épreuve est une épreuve éditoriale publiée et consultable dans « Épreuves ». Dans les [règles](docs/RULES.md#4-contrat-avant-exécution), la qualification de l’épreuve vérifie la cohérence entre besoin, consigne, cas, référence et contrôles avant l’approbation du contrat.
+Le terme a deux sens. Dans le parcours public, une épreuve est une épreuve éditoriale publiée ; ce sens est hors alpha. Dans les [règles](docs/RULES.md#4-contrat-avant-exécution), la qualification de l’épreuve vérifie la cohérence entre besoin, consigne, cas, référence et contrôles avant l’approbation du contrat.
 
 ### Contribution
-Copie privée et distincte d’un exemple et de ses résultats, que l’utilisateur autorise Evaly à conserver pour améliorer le service, sans publication. Le consentement porte sur une version de l’exemple et échoit après six mois calendaires.
+Copie privée et distincte d’un exemple et de ses résultats, que l’utilisateur autorisait Evaly à conserver pour améliorer le service, sans publication. Fermée : aucune nouvelle contribution n’est enregistrée. Retrait seul, jusqu’à la dernière échéance : le consentement portait sur une version de l’exemple et échoit après six mois calendaires. Aucune nouvelle utilisation.
 
 ### Historique local
 Copies complètes des cas gardées par le navigateur, pour relecture et export. Le navigateur peut les effacer ; ce n’est pas une sauvegarde garantie. Toute personne qui utilise le même profil de navigateur peut les lire. Actif par défaut ; l’utilisateur peut l’arrêter ou l’effacer.

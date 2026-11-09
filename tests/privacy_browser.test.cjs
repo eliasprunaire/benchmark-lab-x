@@ -33,7 +33,7 @@ import json
 from benchmark import restitution
 from benchmark_web import projection, views
 from benchmark_web.server import RESPONSE_TIMEOUT
-from tests.test_privacy_views import example_view, browser_views, results_view
+from tests.test_privacy_views import example_view, browser_views
 from tests.test_s10_regressions import S10ProofTests as proof
 proof.setUpClass()
 try:
@@ -88,13 +88,8 @@ def launch(state=None):
             'checks': [{'key': 'example_validated', 'ok': True, 'detail': 'Exemple validé'}],
             'launchable': state is None, 'judgment_estimate_usd': '0.30', 'estimate_total_usd': None,
             'access': {'status': 'connected', 'limit_remaining_usd': '18.5', 'limit_usd': '20'}}
-# Cas lancé : le consentement est replié dans « Vos données pour ce cas », comme le fait views.render
-from benchmark_web.privacy_views import render_contribution, render_privacy_controls
-case = example_view()
-example_page = views.render(case, 'csrf').decode()
-consent, controls = render_contribution(case, 'csrf'), render_privacy_controls(case, 'csrf')
-assert consent in example_page and controls in example_page
-launched = example_page.replace(consent, '').replace(controls, render_privacy_controls(case, 'csrf', consent))
+# Cas lancé : la page du cas et ses contrôles de confidentialité, sans choix de contribution, comme le fait views.render
+launched = views.render(example_view(), 'csrf').decode()
 # Les notices inventées restent dans les fixtures de test
 from pathlib import Path
 from unittest.mock import patch
@@ -134,118 +129,8 @@ approved = {'approved-index': views.render(dict(kind='references'), '').decode()
             'approved-api': views.render(dict(kind='references', category='api', q='API'), '').decode()}
 for identity in approved_ids:
     approved['approved-' + identity] = views.render(dict(kind='references', reference_id=identity), '').decode()
-from hashlib import sha256
-from benchmark import editorial, storage
-import tempfile
-def editorial_bundle(version, title, body, *, characteristics=None, schema=None):
-    raw_piece = body.encode()
-    filename = 'piece-consigne.txt'
-    manifest = {'schema_version': schema or editorial.SCHEMA, 'task_id': 'tache-fictive', 'version_id': version,
-                'title': title, 'work': 'Préparer un tableau fictif', 'cases': ['Cinq débits inventés'],
-                'limits': ['Ne certifie aucune comptabilité'], 'qualification_status': 'ABSENT', 'results_published': False,
-                'pieces': {'consigne': {'file': filename, 'sha256': sha256(raw_piece).hexdigest(), 'label': 'Consigne'}}}
-    if characteristics is not None:
-        manifest.update(characteristics)
-    encoded = storage._strict_json(manifest).encode()
-    identity = sha256(encoded).hexdigest()
-    return {'manifest': encoded, 'package_sha256': identity, 'files': {filename: raw_piece}}, editorial.fixture_approval(identity)
-editorial_title = 'Tableau <script>alert(1)</script>'
-editorial_piece = 'Pièce <script>alert(1)</script>'
-editorial_long_tool = 'Tableur ' + 'de contrôle ' * 16 + 'o'
-assert len(editorial_long_tool) == 201
-editorial_search_fields = ('q', 'entree', 'langue', 'outil', 'difficulte', 'qualification')
-with tempfile.TemporaryDirectory() as editorial_dir:
-    editorial_dir = str(Path(editorial_dir).resolve())
-    packed, packed_approval = editorial_bundle('version-1', editorial_title, editorial_piece)
-    editorial.fixture_publish(editorial_dir, packed, packed_approval)
-    editorial.fixture_report(editorial_dir, 'tache-fictive', 'version-1', dict(
-        actor='approbateur-fictif-epreuve', authority_id='FIXTURE_EDITORIAL_TRIAL', scope='editorial-report',
-        package_sha256=packed['package_sha256'], task_id='tache-fictive', version_id='version-1',
-        summary='Erreur de fixture <script>alert(3)</script>', reported_at='2026-10-23T10:00:00+00:00'))
-    packed_two, packed_two_approval = editorial_bundle(
-        'version-2', 'Note <script>alert(4)</script>', 'Pièce de la note',
-        characteristics={'expected_result': 'Note de synthèse', 'inputs': ['Textes fournis'],
-                         'language': 'Français', 'tools': ['Tableur'], 'difficulty': 'Facile'})
-    editorial.fixture_publish(editorial_dir, packed_two, packed_two_approval)
-    packed_long, packed_long_approval = editorial_bundle(
-        'version-longue', 'Version longue', 'Pièce de la version longue',
-        characteristics={'expected_result': 'Note longue', 'inputs': ['Textes fournis'],
-                         'language': 'Français', 'tools': [editorial_long_tool], 'difficulty': 'Facile'})
-    editorial.fixture_publish(editorial_dir, packed_long, packed_long_approval)
-    editorial_queries = ({}, {'q': 'note'}, {'q': 'note', 'langue': 'Français'}, {'q': 'note', 'langue': 'Français', 'outil': 'Tableur'},
-                         {'q': 'introuvable'}, {'outil': editorial_long_tool})
-    editorial_search = {
-        json.dumps([query.get(key, '') for key in editorial_search_fields], ensure_ascii=False, separators=(',', ':')):
-            views.render(editorial.fixture_search(editorial_dir, query), '').decode()
-        for query in editorial_queries}
-    editorial_pages = {
-        '/epreuves': views.render(editorial.fixture_catalog(editorial_dir), '').decode(),
-        '/epreuves/tache-fictive/version-1': views.render(
-            editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode(),
-        '/epreuves/tache-fictive/version-2': views.render(
-            editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-2'), '').decode()}
-    editorial_help_versions = editorial.fixture_catalog(editorial_dir)['versions']
-    editorial_help_form = views.render({'kind': 'editorial_help', 'stage': 'form',
-                                        'submission_id': 'a' * 32}, '').decode()
-    editorial_help_value = {
-        'status': 'suggestions',
-        'suggestions': [{'notice_id': packed['package_sha256'], 'label': 'correspond'},
-                        {'notice_id': packed_two['package_sha256'], 'label': 'partiel'}],
-        'receipt': {'usage': 'epreuves', 'questions_version': 'epreuves-v1',
-                    'model_requested': 'jev-1.13.0', 'model_observed': 'jev-1.13.0',
-                    'notices': [packed['package_sha256'], packed_two['package_sha256']],
-                    'input_tokens': 120,
-                    'cost': {'status': 'KNOWN', 'amount': '0.000005', 'currency': 'USD',
-                             'source': 'Calcul local : jetons d’entrée reçus × tarif daté ; hors facture'}}}
-    editorial_help_result = views.render(
-        views.editorial_help_view(editorial_help_value, editorial_help_versions), '').decode()
-    editorial_version_search = {
-        '/epreuves/tache-fictive/version-2|' + json.dumps(['note', '', '', '', '', ''], ensure_ascii=False, separators=(',', ':')):
-            views.render(dict(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-2'),
-                              criteria={'q': 'note'}), '').decode(),
-        '/epreuves/tache-fictive/version-2|' + json.dumps(['note', '', 'Français', 'Tableur', '', ''], ensure_ascii=False, separators=(',', ':')):
-            views.render(dict(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-2'),
-                              criteria={'q': 'note', 'langue': 'Français', 'outil': 'Tableur'}), '').decode()}
-    editorial.fixture_withdraw(editorial_dir, 'tache-fictive', 'version-1',
-                               editorial.fixture_withdrawal(packed['package_sha256'], 'tache-fictive', 'version-1'))
-    editorial_withdrawn = views.render(editorial.fixture_version(editorial_dir, 'tache-fictive', 'version-1'), '').decode()
-    editorial_help_withdrawn = views.render(
-        views.editorial_help_view(editorial_help_value,
-                                  editorial.fixture_catalog(editorial_dir)['versions']), '').decode()
-with tempfile.TemporaryDirectory() as unavailable_dir:
-    unavailable_dir = str(Path(unavailable_dir).resolve())
-    packed_retired, packed_retired_approval = editorial_bundle(
-        'version-tableur-retire', 'Version au tableur retiré', 'Pièce du tableur retiré',
-        characteristics={'language': 'Français', 'tools': ['Tableur retiré']})
-    editorial.fixture_publish(unavailable_dir, packed_retired, packed_retired_approval)
-    packed_available, packed_available_approval = editorial_bundle(
-        'version-disponible', 'Note disponible', 'Pièce de la note disponible',
-        characteristics={'expected_result': 'Note disponible', 'language': 'Français', 'tools': ['Tableur']})
-    editorial.fixture_publish(unavailable_dir, packed_available, packed_available_approval)
-    editorial.fixture_withdraw(unavailable_dir, 'tache-fictive', 'version-tableur-retire',
-                               editorial.fixture_withdrawal(packed_retired['package_sha256'],
-                                                            'tache-fictive', 'version-tableur-retire'))
-    editorial_unavailable = views.render(
-        editorial.fixture_search(unavailable_dir, {'outil': 'Tableur retiré'}), '').decode()
-    editorial_search[json.dumps(['note', '', '', 'Tableur retiré', '', ''], ensure_ascii=False,
-                                separators=(',', ':'))] = views.render(
-        editorial.fixture_search(unavailable_dir, {'q': 'note', 'outil': 'Tableur retiré'}), '').decode()
-with tempfile.TemporaryDirectory() as empty_dir:
-    editorial_empty = views.render(editorial.catalog_view(str(Path(empty_dir).resolve())), '').decode()
-print(json.dumps({**browser_views(), 'published-results': views.render(results_view(), '').decode(),
-                  'published-results-filtered': views.render(results_view(filtered=True), '').decode(),
-                  'published-results-repeated': views.render(results_view(repeated=True), '').decode(),
-                  'published-results-withdrawn': views.render(results_view(withdrawn=True), '').decode(),
-                  'published-results-trial-withdrawn': views.render(results_view(unavailable='trial-withdrawn'), '').decode(),
+print(json.dumps({**browser_views(),
                   'reference_search': reference_search, 'reference_notices': reference_notices,
-                  'editorial_pages': editorial_pages, 'editorial-search': editorial_search,
-                  'editorial-version-search': editorial_version_search,
-                  'editorial-help': editorial_help_form,
-                  'editorial-help-result': editorial_help_result,
-                  'editorial-help-withdrawn': editorial_help_withdrawn,
-                  'editorial-empty': editorial_empty,
-                  'editorial-withdrawn': editorial_withdrawn, 'editorial_piece': editorial_piece,
-                  'editorial-unavailable': editorial_unavailable, 'editorial-long-tool': editorial_long_tool,
                   'reference-referral': reference_referral, 'reference-empty': reference_empty,
                   'reference_help': reference_help, 'reference_help_result': reference_help_result,
                   'reference_help_unavailable': reference_help_unavailable, **approved, 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
@@ -284,33 +169,6 @@ print(json.dumps({**browser_views(), 'published-results': views.render(results_v
       const reply = followupReplies.shift() ?? 'followup';
       if (typeof reply === 'number') {res.writeHead(reply).end(); return;}
       res.setHeader('Content-Type', 'text/html'); res.end(rendered[reply]);
-    } else if (url.pathname === '/epreuves' || url.pathname.startsWith('/epreuves/')) {
-      // HTML de la fixture isolée : la preuve HTTP du lecteur de production reste dans le serveur Python
-      if (url.pathname.endsWith('/pieces/output-a')) {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.end('Réponse publique de la fixture');
-        return;
-      }
-      if (url.pathname.endsWith('/pieces/consigne')) {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('Content-Security-Policy', "default-src 'none'; base-uri 'none'; form-action 'self'");
-        res.end(rendered.editorial_piece);
-        return;
-      }
-      const fields = ['q', 'entree', 'langue', 'outil', 'difficulte', 'qualification']
-        .map(key => url.searchParams.get(key) || '');
-      const searchKey = JSON.stringify(fields);
-      const html = url.pathname === '/epreuves' && url.search
-        ? rendered['editorial-search'][searchKey]
-        : (rendered['editorial-version-search'][url.pathname + '|' + searchKey]
-           ?? rendered.editorial_pages[url.pathname]);
-      if (!html) {res.writeHead(404).end('introuvable'); return;}
-      res.setHeader('Content-Type', 'text/html');
-      // Comme le serveur Python : le script des filtres, autorisé par son empreinte, relit ces pages
-      res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'sha256-${createHash('sha256').update(rendered.filtres_script).digest('base64')}'; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
-      res.end(html);
     } else if (url.pathname === '/evaluations-externes/aide') {
       if (req.method === 'POST') {
         req.on('data', () => {});
@@ -533,22 +391,6 @@ test('activity requires a trusted visible interaction and never transmits entere
   } finally {await context.close();}
 });
 
-test('consent POST sends booleans and CAS revisions; conflict never claims success', async () => {
-  posts = []; postStatus = 409;
-  const context = await browser.newContext();
-  try {
-    const page = await pageFor(context);
-    await page.setContent('<form data-privacy-post="contribution" action="/preparation/dossiers/d1/contribution" method="post"><input name="csrf_token" type="hidden" value="purpose"><input name="revision" type="hidden" value="5"><input name="example_revision" type="hidden" value="3"><label><input type="checkbox" name="enabled">Contribuer</label><button>Enregistrer</button><p data-privacy-status role="status"></p></form>');
-    await page.evaluate(() => privacy.mountPrivacy());
-    await page.getByRole('checkbox').check();
-    await page.getByRole('button', {name: 'Enregistrer'}).click();
-    await page.waitForFunction(() => document.querySelector('[data-privacy-status]').textContent.includes('Actualisez la page'));
-    assert.deepEqual(posts, [{path: '/preparation/dossiers/d1/contribution', body: {
-      csrf_token: 'purpose', enabled: true, revision: 5, example_revision: 3}}]);
-  } finally {postStatus = 200; await context.close();}
-});
-
-
 test('bootstrap detects blocked cookies without navigating in a loop and keeps explicit Continue', async () => {
   posts = [];
   const context = await browser.newContext();
@@ -618,22 +460,9 @@ test('an opened case is kept in local history by default under CSP, a list write
     assert.equal(posts.length, 0);
     assert.deepEqual(await databases(), ['bench-x-history']);
     assert.equal(await page.locator('[data-privacy-action="enable-case"]').evaluate(button => button.hidden), true);
-    // Replié par défaut : le statut « Facultatif · non partagé » se lit sans l'ouvrir
-    assert.match(await page.locator('.privacy-consent summary').first().textContent(), /Partager cet exemple\s*Facultatif · non partagé/);
-    await openConsent(page);
-    assert.equal(await page.getByRole('checkbox').isChecked(), false);
-    assert.equal(await page.getByRole('checkbox').isEnabled(), true);
+    // Contribution retirée : la page d'un cas ne propose plus aucune case de partage
+    assert.equal(await page.locator('.privacy-consent, [data-privacy-post="contribution"], input[type="checkbox"]').count(), 0);
     mkdirSync('reports/privacy-browser', {recursive: true});
-    await page.locator('.privacy-consent').screenshot({path: 'reports/privacy-browser/consent-desktop.png'});
-    // La case ne décide que la contribution : décochée puis cochée, l'historique reste actif
-    await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
-    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('version la plus récente'));
-    await openConsent(page);
-    await page.getByRole('checkbox').check();
-    await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
-    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('version la plus récente'));
-    assert.deepEqual(posts.filter(post => post.path.endsWith('/contribution')).map(post => [post.path, post.body.enabled]), [
-      ['/preparation/dossiers/d1/contribution', false], ['/preparation/dossiers/d1/contribution', true]]);
     await page.goto(origin + '/render/data');
     await page.waitForFunction(() => document.querySelector('[data-privacy-list] > details'));
     // Copies gardées : « Tout effacer » et la liste restent affichés
@@ -725,7 +554,7 @@ test('an opened case is kept in local history by default under CSP, a list write
   } finally {await avantCopie.close();}
 });
 
-test('the box state sent to the server decides only the contribution and never lifts a paused local history', async () => {
+test('a case erased from Mes données can be re-enabled, and only Resume lifts a paused local history', async () => {
   fixture(); posts = [];
   const context = await browser.newContext();
   try {
@@ -734,15 +563,6 @@ test('the box state sent to the server decides only the contribution and never l
     const historique = texte => page.waitForFunction(attendu => document.querySelector('[data-privacy-history] > [data-privacy-status]').textContent.startsWith(attendu), texte);
     await page.goto(origin + '/render/example');
     await statutCas('Copie gardée');
-    let held;
-    await page.route('**/preparation/dossiers/d1/contribution', route => {held = route;});
-    await openConsent(page);
-    await page.getByRole('button', {name: 'Enregistrer mon choix'}).click();
-    await page.waitForFunction(() => document.querySelector('.privacy-consent form').dataset.busy);
-    await page.getByRole('checkbox').check();
-    assert.equal(held.request().postDataJSON().enabled, false);
-    await Promise.all([page.waitForEvent('load'), held.fulfill({status: 200, contentType: 'application/json', body: '{}'})]);
-    await page.unroute('**/preparation/dossiers/d1/contribution');
     // Un cas effacé de Mes données reste hors de l'historique ; son bouton le réactive pour lui seul
     await page.goto(origin + '/render/data');
     await page.waitForFunction(() => document.querySelector('[data-privacy-list] > details'));
@@ -758,7 +578,7 @@ test('the box state sent to the server decides only the contribution and never l
     await reactiver.click();
     await page.waitForFunction(() => document.querySelector('[data-privacy-action="enable-case"]').hidden
       && !document.querySelector('[data-privacy-controls] [data-privacy-action="archive"]').hidden);
-    // Arrêt explicite de tout l'historique : il reste arrêté, même quand la case de contribution est cochée
+    // Arrêt explicite de tout l'historique : il reste arrêté, même après le retour sur la page d'un cas
     await page.goto(origin + '/render/data');
     await page.getByRole('button', {name: 'Tout effacer et arrêter l’historique'}).click();
     await page.getByRole('button', {name: 'Oui, tout effacer'}).click();
@@ -767,15 +587,10 @@ test('the box state sent to the server decides only the contribution and never l
     assert.deepEqual(await affichage(page), ['flex', 'none'], 'pause : actions visibles, liste vide masquée');
     await page.goto(origin + '/render/example');
     await statutCas('Historique local en pause');
-    await openConsent(page);
-    await page.getByRole('checkbox').check();
-    await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
-    await statutCas('Historique local en pause');
     assert.deepEqual(await page.evaluate(async () => {
       const store = await (await import('/preparation/privacy.js')).openHistory({create: false});
       try {return {state: await store.state(), list: await store.list()};} finally {store.close();}
     }), {state: {enabled: false, chosen: true}, list: []});
-    assert.deepEqual(posts.filter(post => post.path.endsWith('/contribution')).map(post => post.body.enabled), [true]);
     // Seul « Reprendre l’historique local » lève la pause ; le bouton disparaît ensuite
     await page.goto(origin + '/render/data');
     await page.getByRole('button', {name: 'Reprendre l’historique local'}).click();
@@ -851,22 +666,6 @@ test('bootstrap success navigates once to the validated same-origin target', asy
   } finally {await context.close();}
 });
 
-test('native consent form remains usable without JavaScript, with no preselected agreement', async () => {
-  posts = [];
-  const context = await browser.newContext({javaScriptEnabled: false});
-  try {
-    const page = await context.newPage();
-    await page.goto(origin + '/render/example');
-    await openConsent(page);
-    assert.equal(await page.getByRole('checkbox').isChecked(), false);
-    assert.match(await page.locator('.privacy-consent').textContent(), /L’historique local de ce navigateur ne dépend pas de ce choix/);
-    await page.getByRole('checkbox').check();
-    await page.getByRole('button', {name: 'Enregistrer mon choix'}).click();
-    assert.deepEqual(posts, [{path: '/preparation/dossiers/d1/contribution', body: {
-      csrf_token: 'privacy-token', revision: '0', example_revision: '1', enabled: 'true'}}]);
-  } finally {await context.close();}
-});
-
 test('structured costs and nullable answers stay readable and retain unknown values in JSON', async () => {
   fixture(1, undefined, {campaigns: [{id: 'c1', models: [
     {name: 'Connu', verdict: 'SATISFAIT', cost: {amount: '0.02', currency: 'USD'}, answer: 'Réponse', evidence: []},
@@ -937,7 +736,7 @@ test('case deletion tombstones locally before POST and retains explicit failure 
     await page.waitForFunction(() => document.querySelector('form[data-privacy-post="delete"] [data-privacy-status]')?.textContent.includes('n’est pas confirmée'));
     const status = await page.locator('form[data-privacy-post="delete"] [data-privacy-status]').textContent();
     assert.match(status, /Copie de ce navigateur effacée/);
-    assert.match(status, /La suppression sur le serveur, contribution comprise, n’est pas confirmée/);
+    assert.match(status, /La suppression sur le serveur n’est pas confirmée/);
     assert.equal(page.url(), origin + '/render/case-delete');
     // L'échec du serveur laisse le formulaire actif : annuler comme réessayer restent possibles
     assert.equal(await page.locator('.annuler').isVisible(), true);
@@ -963,15 +762,13 @@ test('case deletion still requests server purge when IndexedDB is unavailable an
       assert.deepEqual(posts, [{path: '/preparation/dossiers/d1/delete', body: {csrf_token: 'purpose'}}]);
       assert.equal(page.url(), origin + '/');
       const status = await page.locator('[data-privacy-status]').textContent();
-      assert.match(status, statusCode === 200 ? /lors du prochain nettoyage planifié/ : /La suppression sur le serveur, contribution comprise, n’est pas confirmée/);
+      assert.match(status, statusCode === 200 ? /lors du prochain nettoyage planifié/ : /La suppression sur le serveur n’est pas confirmée/);
     } finally {postStatus = 200; await context.close();}
   }
 });
 
 
 const LEGAL = ['mentions-legales', 'cgu', 'confidentialite'];
-// Le choix de partage est replié dans son tiroir : sa case et son bouton ne se lisent qu'ouvert
-const openConsent = page => page.locator('.privacy-consent summary').first().click();
 // WCAG 2.x : 4.5:1, 3:1 pour le grand texte ; fond pris au premier ancêtre opaque
 function contrastFailures() {
   const channels = color => color.match(/[\d.]+/g).map(Number);
@@ -1358,13 +1155,12 @@ test('results and publication preview stay readable at 390 px: whole words, stac
     }
     await page.setViewportSize({width: 390, height: 844});
     await page.screenshot({path: 'reports/privacy-browser/preview-mobile.png', fullPage: true});
-    // Le consentement suit la décision principale
+    // Contribution retirée : la décision principale reste, sans choix de partage
     await page.goto(origin + '/render/example');
     assert.equal(await page.evaluate(() => {
       const validate = [...document.querySelectorAll('#validation button')].find(button => /Oui, c’est le travail à tester/.test(button.textContent));
-      const consent = document.querySelector('[data-privacy-post="contribution"]');
-      return Boolean(validate && consent && validate.compareDocumentPosition(consent) & Node.DOCUMENT_POSITION_FOLLOWING);
-    }), true, 'consentement avant la validation');
+      return Boolean(validate) && !document.querySelector('[data-privacy-post="contribution"]');
+    }), true, 'décision principale sans choix de partage');
   } finally {await context.close();}
   const off = await browser.newContext({javaScriptEnabled: false});
   try {
@@ -1606,8 +1402,8 @@ test('after launch, archive errors reach the case archive status, visible at 390
     const archiveStatus = page.locator('[data-privacy-controls] > [data-privacy-status]');
     await page.waitForFunction(() => document.querySelector('[data-privacy-controls] > [data-privacy-status]')
       .textContent.includes('Le serveur n’a pas pu envoyer ce cas'));
-    // Le statut du consentement replié garde son propre message
-    assert.equal(await page.locator('.privacy-consent [data-privacy-status]').textContent(), 'Vous ne partagez pas cet exemple.');
+    // Contribution retirée : aucun autre statut de partage sur la page
+    assert.equal(await page.locator('.privacy-consent').count(), 0);
     assert.equal(await archiveStatus.isVisible(), true);
     assert.equal(await page.evaluate(() => document.activeElement === document.body), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -1642,7 +1438,7 @@ test('without JavaScript the case archive status keeps its static text', async (
     await page.goto(origin + '/render/launched');
     assert.equal(await page.locator('[data-privacy-controls] > [data-privacy-status]').textContent(),
       'Vos copies s’affichent ici quand JavaScript est activé.');
-    assert.equal(await page.locator('.privacy-consent [data-privacy-status]').textContent(), 'Vous ne partagez pas cet exemple.');
+    assert.equal(await page.locator('.privacy-consent').count(), 0);
   } finally {await context.close();}
 });
 
@@ -2095,7 +1891,7 @@ test('external references remain readable, searchable and safe without JavaScrip
   }
 });
 
-test('an editorial trial stays readable without JavaScript, by keyboard at 390 px', async () => {
+test('an existing copied example stays readable without JavaScript, by keyboard at 390 px', async () => {
   for (const javaScriptEnabled of [false, true]) {
     const context = await browser.newContext({javaScriptEnabled, viewport: {width: 390, height: 844}});
     try {
@@ -2104,183 +1900,18 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       const dialogs = [], errors = [];
       page.on('dialog', dialog => {dialogs.push(dialog.message()); dialog.dismiss();});
       page.on('pageerror', error => errors.push(error.message));
-      await page.goto(origin + '/render/home');
-      // À 390 px, le menu est le dépliant natif « Menu »
-      await page.locator('.nav-mobile > summary').click();
-      await page.locator('.nav-mobile').getByRole('link', {name: 'Épreuves', exact: true}).click();
-      assert.match(await page.textContent('main'), /Tableau <script>alert\(1\)<\/script>/);
-      // La recherche se lit avant la liste ; sur la fiche, la copie reste en synthèse à droite ou sous les pièces
-      const zones = () => page.evaluate(() => {
-        const side = document.querySelector('main .cote'), main = document.querySelector('main .pile-l');
-        if (!side || !main) return null;
-        const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-        return {right: a.left >= b.right, below: a.top >= b.bottom, side: side.innerText, main: main.innerText,
-                overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
-      });
-      for (const width of [390, 1440]) {
-        await page.setViewportSize({width, height: 844});
-        await page.goto(origin + '/epreuves');
-        const found = await page.evaluate(() => {
-          const form = document.querySelector('main form[role="search"]'), list = document.querySelector('main .g-grille');
-          return {above: form.getBoundingClientRect().bottom <= list.getBoundingClientRect().top, field: Boolean(form.querySelector('#q')),
-                  text: list.innerText, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth};
-        });
-        assert.ok(found.field && found.above, `${width} recherche des épreuves avant la liste`);
-        assert.match(found.text, /Tableau <script>alert\(1\)<\/script>/, `${width} épreuves dans la liste`);
-        assert.equal(found.overflow, 0, `${width} débordement de la liste des épreuves`);
-        await page.goto(origin + '/epreuves/tache-fictive/version-1');
-        const layout = await zones();
-        assert.ok(layout, `${width} fiche d'épreuve sans composition`);
-        assert.match(layout.main, /Pièces/, `${width} pièces hors zone principale`);
-        assert.match(layout.side, /Créer mon cas d’usage privé/, `${width} copie hors synthèse`);
-        assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la copie`);
-        assert.equal(layout.overflow, 0, `${width} débordement de la fiche d'épreuve`);
-      }
-      await page.setViewportSize({width: 390, height: 844});
-      await page.goto(origin + '/epreuves');
-      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
-      assert.equal(await scriptsEtrangers(page), 0);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      // Recherche native, puis filtres appliqués au clic qui gardent le texte cherché ; critères visibles et effaçables, sans JavaScript
-      const searchField = page.getByLabel('Rechercher une épreuve');
-      await searchField.focus();
-      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      await searchField.fill('note');
-      await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
-      assert.match(page.url(), /q=note/);
-      await page.getByRole('link', {name: 'Français', exact: true}).click();
-      await page.waitForFunction(() => new URL(location.href).searchParams.get('langue') === 'Français');
-      await page.getByRole('link', {name: 'Tableur', exact: true}).click();
-      await page.waitForFunction(() => new URL(location.href).searchParams.get('outil') === 'Tableur');
-      assert.equal(new URL(page.url()).searchParams.get('q'), 'note');
-      assert.equal(new URL(page.url()).searchParams.get('langue'), 'Français');
-      assert.equal(new URL(page.url()).searchParams.get('outil'), 'Tableur');
-      assert.equal(await page.locator('main [aria-label="Critères actifs"]').count(), 1);
-      const filtered = await page.textContent('main');
-      assert.match(filtered, /Français/);
-      assert.match(filtered, /Tableur/);
-      assert.equal(filtered.includes('Tableau <script>alert(1)</script>'), false);
-      assert.equal(filtered.includes('Note <script>alert(4)</script>'), true);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.getByRole('link', {name: 'Note <script>alert(4)</script>'}).click();
-      assert.equal(await page.locator('h1').textContent(), 'Note <script>alert(4)</script>');
-      assert.match(await page.textContent('main'), /Retour aux résultats/);
-      await page.getByRole('link', {name: 'Retour aux résultats'}).click();
-      assert.equal(await page.locator('main [aria-label="Critères actifs"]').count(), 1);
-      await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
-      assert.equal(new URL(page.url()).search, '');
-      assert.equal(await page.getByLabel('Rechercher une épreuve').inputValue(), '');
-      assert.match(await page.textContent('main'), /Tableau <script>alert\(1\)<\/script>/);
-      await page.getByLabel('Rechercher une épreuve').fill('introuvable');
-      await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
-      const withoutResult = await page.textContent('main');
-      assert.match(withoutResult, /Aucune épreuve ne correspond à cette recherche/);
-      // Seul un catalogue vide propose de décrire un besoin
-      assert.equal(await page.locator('main').getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).count(), 0);
-      mkdirSync('reports/464', {recursive: true});
-      await page.screenshot({path: 'reports/464/recherche-mobile-'
-        + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
-      // Une valeur longue proposée reste utilisable : son lien porte la valeur entière
-      await page.goto(origin + '/epreuves');
-      await page.locator('main .segments-liens a[href*="outil="]').filter({hasText: 'Tableur de contrôle'}).click();
-      await page.waitForFunction(() => new URL(location.href).searchParams.has('outil'));
-      const longResult = await page.textContent('main');
-      assert.match(longResult, /Version longue/);
-      assert.equal(await page.locator('main [aria-label="Critères actifs"]').count(), 1);
-      assert.equal(new URL(page.url()).searchParams.get('outil'), rendered['editorial-long-tool']);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      // Un filtre devenu indisponible reste actif lors d'une nouvelle soumission
-      await page.goto(origin + '/render/editorial-unavailable');
-      assert.equal(await page.locator('input[name="outil"]').inputValue(), 'Tableur retiré');
-      assert.match(await page.locator('main .segments-liens a[aria-current]').filter({hasText: 'Tableur retiré'}).textContent(), /indisponible/);
-      await page.getByLabel('Rechercher une épreuve').fill('note');
-      await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
-      const retained = await page.textContent('main');
-      assert.equal(await page.locator('main [aria-label="Critères actifs"]').count(), 1);
-      assert.match(retained, /Tableur retiré \(indisponible\)/);
-      assert.match(retained, /Aucune épreuve ne correspond à cette recherche/);
-      assert.equal(retained.includes('Version au tableur retiré'), false);
-      assert.equal(new URL(page.url()).searchParams.get('outil'), 'Tableur retiré');
-      assert.equal(await page.locator('input[name="outil"]').inputValue(), 'Tableur retiré');
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.screenshot({path: 'reports/464/filtre-indisponible-mobile-'
-        + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
-      await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
-      assert.equal(await page.locator('input[name="outil"]').count(), 0);
-      const cleared = await page.textContent('main');
-      assert.match(cleared, /Note <script>alert\(4\)<\/script>/);
-      assert.equal(cleared.includes('Version au tableur retiré'), false);
-      await page.goto(origin + '/epreuves');
-      await page.getByRole('link', {name: 'Tableau <script>alert(1)</script>'}).click();
-      assert.equal(await page.locator('h1').textContent(), 'Tableau <script>alert(1)</script>');
-      const text = await page.textContent('main');
-      assert.match(text, /Qualification absente/);
-      assert.match(text, /Aucune preuve de qualification/);
-      assert.match(text, /Aucun résultat publié/);
-      assert.match(text, /Cinq débits inventés/);
-      assert.match(text, /Ne certifie aucune comptabilité/);
-      assert.match(text, /Pièce <script>alert\(1\)<\/script>/);
-      assert.match(text, /Erreur de fixture <script>alert\(3\)<\/script>/);
-      assert.match(text, /Signalement éditorial/);
-      assert.equal(text.includes('Qualification réussie'), false);
-      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      // La pièce se lit dans sa feuille : on l'atteint au clavier, on l'ouvre sans JavaScript
-      let focused = false;
-      for (let press = 0; press < 40 && !focused; press++) {
-        await page.keyboard.press('Tab');
-        focused = await page.evaluate(() => document.activeElement?.matches('.feuille summary'));
-      }
-      assert.ok(focused, 'feuille de pièce non atteinte au clavier');
-      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      mkdirSync('reports/463', {recursive: true});
-      await page.screenshot({path: 'reports/463/epreuve-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
-      await page.keyboard.press('Enter');
-      assert.match(await page.locator('.feuille details[open] pre').innerText(), /Pièce <script>alert\(1\)<\/script>/);
-      await page.goto(origin + '/epreuves/tache-fictive/version-1');
-      const copyLink = page.getByRole('link', {name: 'Créer mon cas d’usage privé'});
-      await copyLink.focus();
-      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.goto(origin + '/render/copy-confirmation');
-      const confirmation = await page.textContent('main');
-      assert.match(confirmation, /Épreuve source/);
-      assert.match(confirmation, /Tableau <script>alert\(1\)<\/script>/);
-      assert.match(confirmation, /Erreur signalée <script>alert\(2\)<\/script>/);
-      assert.match(confirmation, /pièces copiées/);
-      assert.match(confirmation, /Créer mon cas d’usage privé/);
-      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      const copyButton = page.getByRole('button', {name: 'Créer mon cas d’usage privé'});
-      await copyButton.focus();
-      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      await page.screenshot({path: 'reports/465/confirmation-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
-      for (const width of [390, 1440]) {
-        await page.setViewportSize({width, height: 844});
-        const layout = await page.evaluate(`((root = document) => {
-      const side = root.querySelector('.cote'), main = root.querySelector('.pile-l');
-      if (!side || !main) return null;
-      const a = side.getBoundingClientRect(), b = main.getBoundingClientRect();
-      return {right: a.left >= b.right, above: a.bottom <= b.top, below: a.top >= b.bottom, side: side.innerText, main: main.innerText};
-    })()`);
-        assert.ok(layout, `${width} copie sans composition`);
-        assert.match(layout.main, /Épreuve source/, `${width} épreuve hors zone principale`);
-        assert.match(await page.locator('header.tete').innerText(), /Aucune clé ni aucun appel aux modèles/, `${width} conditions sous le titre`);
-        assert.match(layout.side, /Créer mon cas d’usage privé/, `${width} bouton hors zone principale`);
-        assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la décision de la copie`);
-      }
-      await page.setViewportSize({width: 390, height: 844});
+      // Copie créée avant l'alpha : « Exemple source » et son ruban, la préparation reste possible
       await page.goto(origin + '/render/copy-dossier');
       const copied = await page.textContent('main');
-      assert.match(copied, /Épreuve source/);
+      assert.match(copied, /Exemple source/);
       assert.match(copied, /Tableau <script>alert\(1\)<\/script>/);
       assert.match(copied, /Pièce source <script>alert\(1\)<\/script>/);
       assert.match(copied, /Erreur signalée <script>alert\(2\)<\/script>/);
-      assert.match(copied, /Aucune qualification n’est publiée pour cette épreuve/);
+      assert.match(copied, /Aucune qualification n’est publiée pour cet exemple source/);
       assert.match(copied, /la copie reste consultable sans elle/);
       // Copie sans exemple préparé : son état et la consultation sans clé sont dits au premier écran
-      assert.match(copied, /Copie d’épreuve/);
+      assert.match(copied, /Copie d’un exemple publié/);
+      assert.equal(/Épreuve source|Copie d’épreuve/.test(copied), false);
       assert.match(copied, /Version 1/);
       assert.equal(copied.includes('Exemple inventé'), false);
       assert.match(copied, /Votre copie est enregistrée\./);
@@ -2290,8 +1921,8 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.match(copied, /aucun appel modèle effectué/);
       await page.reload();
       const reloadedCopy = await page.textContent('main');
-      assert.match(reloadedCopy, /Copie d’épreuve/);
-      assert.match(reloadedCopy, /Épreuve source/);
+      assert.match(reloadedCopy, /Copie d’un exemple publié/);
+      assert.match(reloadedCopy, /Exemple source/);
       assert.match(reloadedCopy, /Pièce source <script>alert\(1\)<\/script>/);
       assert.match(reloadedCopy, /Qualification absente/);
       assert.match(reloadedCopy, /aucun appel modèle effectué/);
@@ -2308,172 +1939,6 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
       mkdirSync('reports/465', {recursive: true});
       await page.screenshot({path: 'reports/465/copie-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
-      await page.goto(origin + '/render/editorial-help');
-      const helpForm = await page.textContent('main');
-      assert.match(helpForm, /TypeSafe/);
-      assert.match(helpForm, /Données transmises/);
-      assert.match(helpForm, /Recherche simple/);
-      const formulation = page.getByLabel('Formulation à comparer');
-      await formulation.focus();
-      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.goto(origin + '/render/editorial-help-result');
-      const helpResult = await page.textContent('main');
-      assert.match(helpResult, /Correspondance forte/);
-      assert.match(helpResult, /Correspondance partielle/);
-      assert.match(helpResult, /ne prouve ni adéquation ni qualification/);
-      assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-1"]').count(), 1);
-      assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-2"]').count(), 1);
-      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
-      // La suggestion s'atteint au clavier ; son cadre porte l'anneau de focus
-      let suggestionReached = false;
-      for (let press = 0; press < 80 && !suggestionReached; press++) {
-        await page.keyboard.press('Tab');
-        suggestionReached = await page.evaluate(() => document.activeElement?.getAttribute('href') === '/epreuves/tache-fictive/version-2');
-      }
-      assert.ok(suggestionReached, 'suggestion non atteinte au clavier');
-      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement.closest('.g-fiche')).outlineStyle), 'none');
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      mkdirSync('reports/467', {recursive: true});
-      await page.screenshot({path: 'reports/467/aide-catalogue-mobile-'
-        + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
-      await page.goto(origin + '/render/editorial-help-withdrawn');
-      const withdrawnHelp = await page.textContent('main');
-      assert.match(withdrawnHelp, /Une suggestion a été retirée/);
-      assert.equal(withdrawnHelp.includes('Tableau <script>alert(1)</script>'), false);
-      assert.match(withdrawnHelp, /Note <script>alert\(4\)<\/script>/);
-      assert.equal(await page.locator('main a[href="/epreuves/tache-fictive/version-1"]').count(), 0);
-      assert.equal(await scriptsEtrangers(page, 'main script'), 0);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.goto(origin + '/render/editorial-empty');
-      assert.match(await page.textContent('main'), /Aucune épreuve publiée/);
-      assert.equal(await page.locator('main').getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.goto(origin + '/render/editorial-withdrawn');
-      const withdrawn = await page.textContent('main');
-      assert.match(withdrawn, /Cette version est retirée/);
-      assert.match(withdrawn, /Aucune nouvelle reprise/);
-      assert.match(withdrawn, /Erreur de fixture <script>alert\(3\)<\/script>/);
-      assert.equal(withdrawn.includes('Pièce <script>'), false);
-      assert.equal(withdrawn.includes('Tableau'), false);
-      assert.equal(await page.locator('main a[href*="/pieces/"]').count(), 0);
-      assert.equal(await scriptsEtrangers(page), 0);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      assert.deepEqual(dialogs, []);
-      assert.deepEqual(errors, []);
-    } finally {await context.close();}
-  }
-});
-
-test('published results stay readable without JavaScript, by keyboard at 390 px', async () => {
-  for (const javaScriptEnabled of [false, true]) {
-    const context = await browser.newContext({javaScriptEnabled, viewport: {width: 390, height: 844}});
-    try {
-      const page = await context.newPage();
-      page.setDefaultTimeout(3000);
-      const dialogs = [], errors = [];
-      page.on('dialog', dialog => {dialogs.push(dialog.message()); dialog.dismiss();});
-      page.on('pageerror', error => errors.push(error.message));
-      // Deux essais du même modèle sur le même exemple : chaque lien « Preuves » mène au détail de son essai
-      await page.goto(origin + '/render/published-results-repeated');
-      const cibles = await page.locator('main a.lien[href^="#"]').filter({hasText: 'Preuves'}).evaluateAll(links => links.map(link => link.getAttribute('href')));
-      assert.equal(cibles.length, 2);
-      assert.equal(new Set(cibles).size, 2, 'ancre de preuve partagée entre deux essais');
-      for (const cible of cibles) assert.equal(await page.locator(cible).count(), 1, cible);
-      await page.goto(origin + '/render/published-results');
-      const main = await page.textContent('main');
-      assert.match(main, /Tableau <script>alert\(1\)<\/script>/);
-      assert.match(main, /Modèle <script>alert\(1\)<\/script>/);
-      assert.match(main, /Préparer un tableau par opération/);
-      assert.match(main, /Satisfait/);
-      assert.match(main, /Ne satisfait pas/);
-      assert.match(main, /Coût observé inconnu pour 1 réponse/);
-      assert.match(main, /pièce non publiée/i);
-      assert.match(main, /un filtre ne change ni les verdicts ni la population/i);
-      assert.match(main, /2 essais lancés sur 2/);
-      assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
-      assert.equal(await scriptsEtrangers(page), 0);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      // Une seule colonne : bilan, comparaison, conditions communes, lecture, puis ce que la publication permet de vérifier
-      for (const width of [1440, 390]) {
-        await page.setViewportSize({width, height: 844});
-        const layout = await page.evaluate(() => {
-          const main = document.querySelector('main');
-          const at = selector => main.querySelector(selector)?.getBoundingClientRect().top ?? null;
-          return {table: Boolean(main.querySelector('table.comparatif')), text: main.innerText,
-                  order: [at('section[aria-labelledby="t-bilan"]'), at('section[aria-labelledby="t-comp"]'), at('section[aria-labelledby="t-cond"]'),
-                          at('#method'), at('.g-pied-pub')],
-                  overflow: document.documentElement.scrollWidth - innerWidth};
-        });
-        assert.ok(layout.table, `${width} résultats publiés sans tableau`);
-        for (const heading of [/Conditions communes/, /Ce que cette publication permet de vérifier/, /Comment lire ces résultats/, /Harnais/i])
-          assert.match(layout.text, heading, `${width} ${heading} absent`);
-        assert.ok(layout.order.every((top, index) => top !== null && (index === 0 || top > layout.order[index - 1])), `${width} ordre des blocs publiés : ` + layout.order);
-        assert.equal(layout.overflow, 0, `${width} débordement des résultats publiés`);
-      }
-      // Filtres natifs visibles, un seul tableau à une ligne sur la vue filtrée
-      assert.equal(await page.locator('#filter-configuration').count(), 1);
-      await page.goto(origin + '/render/published-results-filtered');
-      const filtered = await page.textContent('main');
-      assert.match(filtered, /1 réponse affichée sur 2/);
-      assert.equal(await page.locator('table.comparatif tbody tr').count(), 1);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.goto(origin + '/render/published-results');
-      // Un dépliant puis la preuve publiée restent utilisables au clavier, sans JavaScript
-      let focused = false;
-      for (let press = 0; press < 60 && !focused; press++) {
-        await page.keyboard.press('Tab');
-        focused = await page.evaluate(() => document.activeElement?.tagName === 'SUMMARY');
-      }
-      assert.ok(focused, 'dépliant non atteint au clavier');
-      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      await page.locator('section[aria-labelledby="t-det"] summary').first().click();
-      // Détail ouvert : le nom du modèle garde des mots entiers, jamais une lettre par ligne ; aucun tableau ne défile à 390 px
-      const column = await page.evaluate(() => {
-        const splitWords = node => {
-          const range = document.createRange(), lines = [];
-          for (let index = 0; index < node.length; index++) {
-            range.setStart(node, index);
-            range.setEnd(node, index + 1);
-            const top = Math.round(range.getBoundingClientRect().top);
-            const line = lines.find(item => Math.abs(item.top - top) < 2);
-            if (line) line.last = index;
-            else lines.push({top, first: index, last: index});
-          }
-          return lines.slice(1).filter(line => /\p{L}/u.test(node.data[line.first - 1] ?? '')
-            && /\p{L}/u.test(node.data[line.first] ?? ''))
-            .map(line => node.data.slice(line.first, line.last + 1));
-        };
-        const name = document.querySelector('table.comparatif tbody .modele');
-        return {name: splitWords(name.firstChild), characters: name.firstChild.length,
-                scroll: [...document.querySelectorAll('.table-defile:has(table.comparatif)')].every(region => region.scrollWidth <= region.clientWidth)};
-      });
-      assert.deepEqual(column.name, [], 'nom du modèle coupé entre deux lettres : ' + JSON.stringify(column));
-      assert.ok(column.scroll, 'un tableau défile horizontalement à 390 px : ' + JSON.stringify(column));
-      let proofFocused = false;
-      for (let press = 0; press < 40 && !proofFocused; press++) {
-        await page.keyboard.press('Tab');
-        proofFocused = await page.evaluate(() => document.activeElement?.getAttribute('href')?.endsWith('/pieces/output-a'));
-      }
-      assert.ok(proofFocused, 'preuve publiée non atteinte au clavier');
-      assert.notEqual(await page.evaluate(() => getComputedStyle(document.activeElement).outlineStyle), 'none');
-      const proof = page.getByRole('link', {name: /Réponse de Modèle/});
-      mkdirSync('reports/466', {recursive: true});
-      await page.screenshot({path: 'reports/466/resultats-mobile-' + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
-      await proof.click();
-      assert.match(await page.locator('body').innerText(), /Réponse publique de la fixture/);
-      // États de retrait : aucun contenu retiré, retour vers l’épreuve et le catalogue
-      await page.goto(origin + '/render/published-results-withdrawn');
-      const withdrawn = await page.textContent('main');
-      assert.match(withdrawn, /Cette restitution est retirée/);
-      assert.equal(withdrawn.includes('Modèle <script>'), false);
-      assert.match(withdrawn, /Retour à l’épreuve/);
-      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-      await page.goto(origin + '/render/published-results-trial-withdrawn');
-      const trialWithdrawn = await page.textContent('main');
-      assert.match(trialWithdrawn, /Cette épreuve est retirée/);
-      assert.equal(trialWithdrawn.includes('Tableau'), false);
       assert.deepEqual(dialogs, []);
       assert.deepEqual(errors, []);
     } finally {await context.close();}
@@ -2591,7 +2056,7 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
         assert.equal(await page.locator('#preparation-progress button').isHidden(), true);
       }
     }
-    // Composition S18 : zone principale et colonne de synthèse, l'état reste en tête et le consentement suit la validation
+    // Composition S18 : zone principale et colonne de synthèse, l'état reste en tête, sans bloc de partage
     const zones = () => page.evaluate(() => {
       const box = node => node.getBoundingClientRect(), side = box(document.querySelector('.cote')), main = box(document.querySelector('.pile-l, .entretien'));
       const inside = (selector, zone) => Boolean(document.querySelector(selector)?.closest(zone));
@@ -2600,9 +2065,8 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
               overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
               reply: inside('textarea#message', '.entretien'), validation: inside('#validation', '.cote'),
               example: inside('#exemple', '.pile-l'), correction: inside('details#corriger', '.pile-l'),
-              consent: inside('.privacy-consent, .contribution', '.pile-bas'), side: document.querySelector('.cote').innerText,
-              state: Boolean(document.querySelector('.cote .etat')),
-              consentAfter: document.querySelector('.privacy-consent, .contribution') ? follows('#validation', '.privacy-consent, .contribution') : null};
+              consent: Boolean(document.querySelector('.privacy-consent, .contribution')), side: document.querySelector('.cote').innerText,
+              state: Boolean(document.querySelector('.cote .etat'))};
     });
     for (const width of [1440, 390]) {
       await page.setViewportSize({width, height: 900});
@@ -2624,12 +2088,12 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       assert.ok(layout.reply && layout.state, `${width} réponse dans la conversation, état en synthèse`);
       assert.match(layout.side, /Coût de la préparation/, `${width} coût en synthèse`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de préparation`);
-      await page.goto(origin + '/render/consent-current');
+      await page.goto(origin + '/render/case-current');
       layout = await zones();
       assert.equal(layout.overflow, 0, `${width} validation sans débordement`);
       assert.ok(layout.example && layout.correction && layout.validation, `${width} exemple et correction en zone principale, validation en synthèse`);
       assert.match(layout.side, /Oui, c’est le travail à tester/, `${width} bouton de validation en synthèse`);
-      assert.ok(layout.consent && layout.consentAfter, `${width} partage dans les blocs du bas, après la validation`);
+      assert.equal(layout.consent, false, `${width} aucun bloc de partage`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de validation`);
     }
     // Parcours clavier de la préparation à 390 px, sans souris ni JavaScript : saisie, question de l'assistant, aperçu,
@@ -2692,21 +2156,21 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
   } finally {await context.close();}
 });
 
-test('privacy forms preserve consent scope, purpose tokens and expired states', async () => {
+test('privacy forms preserve purpose tokens and expired states', async () => {
   const context = await browser.newContext({javaScriptEnabled: false});
   try {
     const page = await context.newPage();
     await page.goto(origin + '/render/example');
     const text = await page.textContent('main');
     assert.ok(text.indexOf('Les pièces') < text.indexOf('Oui, c’est le travail à tester'));
-    assert.ok(text.indexOf('Oui, c’est le travail à tester') < text.indexOf('conserver cet exemple pendant 6 mois'));
-    for (const phrase of ['historique local', 'ne dépend pas de ce choix', 'Cybrel', 'sans le publier',
-      'Efface la copie de ce navigateur et demande la suppression sur le serveur'])
-      assert.ok(text.includes(phrase), phrase);
+    assert.ok(text.includes('Efface la copie de ce navigateur et demande la suppression sur le serveur'));
+    // Contribution retirée : ni case, ni texte de partage sur la page d'un cas
+    assert.equal(await page.locator('.privacy-consent, [data-privacy-post="contribution"]').count(), 0);
+    for (const phrase of ['conserver cet exemple pendant 6 mois', 'Je partage cet exemple avec Evaly', 'ne dépend pas de ce choix'])
+      assert.equal(text.includes(phrase), false, phrase);
     for (const phrase of ['copie complète de chaque cas ouvert', 'a besoin de JavaScript', 'sans lui, seule la contribution',
       'active aussi', 'j’active l’historique'])
       assert.equal(text.includes(phrase), false, phrase);
-    assert.equal((await page.locator('.privacy-consent label.case').textContent()).trim(), 'Je partage cet exemple avec Evaly');
     // La conservation 7 jours / 30 jours s'explique dans Mes données, plus sur la page du cas
     assert.equal(/effacé après 7 jours|effacée après 30 jours/.test(text), false);
     assert.equal(/Clé retirée après|11 jours|conserve votre copie locale/.test(text), false);
@@ -2766,17 +2230,15 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     assert.equal(await page.locator('.apres-suppression a').isVisible(), true);
     assert.equal((await page.content()).includes('//evil.test'), false);
     for (const name of ['current', 'expired', 'prior']) {
-      await page.goto(origin + '/render/consent-' + name);
-      const box = page.locator('[data-privacy-post="contribution"] input[type="checkbox"]');
-      assert.equal(await box.count(), Number(name !== 'prior'));
+      await page.goto(origin + '/render/case-' + name);
+      assert.equal(await page.locator('[data-privacy-post="contribution"]').count(), 0, name);
+      // Version prête à valider : la carte invite seulement à relire, sans aucune phrase de partage
+      const carte = await page.textContent('main');
+      assert.equal(/partage/i.test(carte), false, name);
+      if (name === 'current') assert.match(carte, /Version 3 prête à valider\s*Relisez l’exemple, puis validez-le\./);
       // Accès fermé seulement si la session a expiré : le lien vers les copies porte le nom de sa page
       assert.deepEqual((await page.locator('.etat a.lien[href="/preparation/data"]').allTextContents()).map(t => t.trim()),
         name === 'expired' ? ['Mes données'] : [], name);
-      if (name === 'prior') continue;
-      assert.equal(await box.isChecked(), false);
-      assert.equal(await box.isDisabled(), name === 'expired');
-      assert.equal(await page.locator('[data-privacy-post="contribution"] input[name="revision"]').inputValue(), '5');
-      assert.equal(await page.locator('[data-privacy-post="contribution"] input[name="example_revision"]').inputValue(), '3');
     }
     for (const [state, year, label, disabled] of [['active', '2099', 'Active', false], ['withdrawn', '2099', 'Retirée', true],
       ['expired', '2000', 'Expirée', true], ['active', '2000', 'Expirée', true], ['UNKNOWN_STATE', '2099', 'État inconnu', true]]) {
@@ -2853,7 +2315,8 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
       const contributions = await page.locator('main').textContent();
       assert.ok(contributions.includes('Contribution du 18 septembre 2026'), `${width} contribution`);
       assert.ok(contributions.includes('arrête seulement la contribution concernée'), `${width} explication du retrait`);
-      assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes données', `${width} entrée de menu des contributions`);
+      // Page de retrait sans entrée de navigation : aucun lien du menu ne la marque comme courante
+      assert.equal(await page.locator('[aria-current="page"]').count(), 0, `${width} aucune entrée de menu des contributions`);
       assert.equal(await overflow(), 0, `${width} débordement des contributions`);
     }
   } finally {await context.close();}
@@ -2871,9 +2334,9 @@ test('public and private pages retain legal information and exact release identi
       // Même menu, même pied et même tagline sur chaque page ; plus aucun lien vers les « cas en cours »
       // La page publique d'une publication garde son propre pied légal, hors de cette règle
       if (name !== 'publication-footer') {
-        assert.deepEqual(await page.locator('.nav li').allTextContents(), ['Accueil', 'Mes cas d’usage', 'Mes données', 'Épreuves'], name);
+        assert.deepEqual(await page.locator('.nav li').allTextContents(), ['Accueil', 'Mes cas d’usage', 'Mes données'], name);
         assert.deepEqual(await page.locator('nav[aria-label="Parcours"] a').allTextContents(),
-          ['Décrire mon cas d’usage', 'Mes données', 'Épreuves', 'Benchmarks publics'], name);
+          ['Décrire mon cas d’usage', 'Mes données', 'Benchmarks publics'], name);
         assert.ok((await page.locator('footer .intro').first().textContent()).startsWith('Evaly, le benchmark personnalisé : '), name);
         assert.equal(await page.locator('footer .intro.note').count(), 0, name);
       }
@@ -2893,7 +2356,11 @@ test('public and private pages retain legal information and exact release identi
       'portabilité', 'CNIL', '3 place de Fontenoy', 'benchmark_session', 'activé par défaut', 'arrêter, le reprendre ou l’effacer',
       'chaque cas que vous ouvrez', 'votre besoin, vos messages et les révisions', 'que la contribution exclut',
       'retire la copie de contribution conservée sur le serveur', 'ne concerne que la contribution',
-      'n’arrête pas l’historique local', 'restent dans ce navigateur']) assert.ok(privacy.includes(term), term);
+      'n’arrête pas l’historique local', 'restent dans ce navigateur', 'N’est plus déposé',
+      'Le second n’est plus déposé : il reste lu pour les contributions antérieures']) assert.ok(privacy.includes(term), term);
+    assert.equal(/si vous activez/.test(privacy), false);
+    // Une contribution déjà enregistrée n'est plus mise à jour par les tâches : le retrait n'a plus de mise à jour à arrêter
+    assert.equal(/ses mises à jour/.test(privacy), false, 'mise à jour de contribution annoncée');
     const ligneHistorique = await page.getByRole('row').filter({hasText: 'Historique local dans votre navigateur'}).textContent();
     assert.ok(ligneHistorique.includes('Voir §6 : enregistrement dans votre navigateur, activé par défaut, que vous pouvez arrêter ou effacer'));
     assert.equal(ligneHistorique.includes('6.1.a'), false);
@@ -2904,7 +2371,7 @@ test('public and private pages retain legal information and exact release identi
     assert.equal(/Mes\s+cas d’usage/.test(privacy), false);
     assert.equal(await page.locator('a[href="/preparation/data"]').count() > 0, true);
     await page.goto(origin + '/render/cgu');
-    assert.ok((await page.textContent('main')).includes('Dernière mise à jour : 29 septembre 2026'));
+    assert.ok((await page.textContent('main')).includes('Dernière mise à jour : 9 novembre 2026'));
     await page.goto(origin + '/render/mentions-legales');
     assert.ok((await page.textContent('main')).includes('AGPL-3.0-only'));
     for (const [name, label, target] of [['checkout', 'Révision : abcdef0', ''],

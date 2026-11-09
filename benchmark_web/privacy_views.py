@@ -148,10 +148,10 @@ def render_delete_confirmation(value, csrf):
     contexte = puce(dossier.get('need') or 'Cas d’usage sans description', plein=True) + puce('Toutes les versions') + ruban('Exemple inventé')
     corps = ('<p class="texte-l">Vous allez supprimer <strong>« ' + text(dossier.get('need') or 'Cas d’usage sans description') + ' »</strong>.</p>'
              '<ul class="liste-faits"><li>La copie gardée dans ce navigateur est effacée.</li>'
-             '<li>Evaly demande la suppression de ce cas sur le serveur, contribution comprise si vous en avez fait une.</li>'
+             '<li>Evaly demande la suppression de ce cas sur le serveur.</li>'
              '<li>Des copies peuvent rester dans les sauvegardes du serveur.</li>'
              '<li>Vous ne pourrez pas retrouver ce cas d’usage.</li></ul>'
-             '<noscript><p class="petit">Sans JavaScript, seule la suppression sur le serveur est demandée, contribution comprise. '
+             '<noscript><p class="petit">Sans JavaScript, seule la suppression sur le serveur est demandée. '
              'Pour effacer aussi la copie gardée dans ce navigateur, activez JavaScript puis passez par Mes données.</p></noscript>'
              '<p class="petit" role="status" data-privacy-status></p>'
              '<div class="actions"><button class="btn btn-danger" type="submit">' + ic('croix') + 'Oui, supprimer définitivement</button>'
@@ -168,8 +168,8 @@ def render_deleted():
                 'La suppression sur le serveur est demandée. Les copies gardées dans ce navigateur restent : effacez-les dans Mes données.')
 
 
-def render_privacy_controls(value, csrf, contribution='', path='/preparation'):
-    """Pied des pages d'un cas : choix de partage replié, suppression, puis copie de ce cas dans ce navigateur"""
+def render_privacy_controls(value, csrf, path='/preparation'):
+    """Pied des pages d'un cas : suppression, puis copie de ce cas dans ce navigateur"""
     privacy = value.get('privacy')
     if not privacy or 'dossiers' in value:
         # Mes cas d'usage écrit son propre repère d'activité ; Mes données n'en écrit aucun
@@ -186,7 +186,7 @@ def render_privacy_controls(value, csrf, contribution='', path='/preparation'):
         attrs += ' data-campaign-id="' + text(privacy['campaign_id']) + '"'
     if type(privacy.get('content_version')) is int:
         attrs += ' data-content-version="' + str(privacy['content_version']) + '"'
-    content = contribution
+    content = ''
     if 'stage' in value and (value.get('package') or value.get('source') or value.get('checks', {}).get('out_of_scope')):
         content += zone_suppression(dossier, urlsplit(path).path, active)
     # Le statut et les boutons sont des enfants directs : `privacy.js` les cherche ainsi et ouvre ce dépliant en cas d'échec
@@ -197,38 +197,6 @@ def render_privacy_controls(value, csrf, contribution='', path='/preparation'):
                 'Garder une copie dans ce navigateur</button><button type="button" class="btn btn-sec btn-s" data-privacy-action="enable-case" hidden>'
                 'Réactiver l’historique de ce cas</button></div></div></details>')
     return content
-
-
-# ——— Partage d'un exemple ———
-def render_contribution(value, csrf):
-    privacy = value.get('privacy', {})
-    contribution = privacy.get('contribution', {})
-    if (not value.get('package') or not privacy.get('dossier_id') or not contribution
-            or value.get('revision') != value.get('current_revision', value.get('revision'))
-            or contribution.get('example_revision') != value.get('revision')):
-        return ''
-    enabled = contribution.get('enabled') is True
-    inactif = not active_session(privacy)
-    arret = ' disabled' if inactif else ''
-    plus = tiroir('Ce que ce choix change',
-                  '<p>Cocher la case autorise Evaly à conserver cet exemple pendant 6 mois pour améliorer le service. '
-                  'Cette autorisation ne permet pas de le publier. Le responsable de ce traitement est Cybrel, la société qui édite Evaly.</p>'
-                  '<p>Décocher arrête la contribution. L’historique local de ce navigateur ne dépend pas de ce choix : gérez-le dans '
-                  '<a href="/preparation/data">Mes données</a>. Votre choix ne change rien à votre accès. '
-                  '<a href="/confidentialite">Politique de confidentialité</a>.</p>')
-    corps = ('<fieldset' + arret + '><legend class="cache">Votre choix de partage</legend>'
-             '<p class="petit">Evaly le conserve 6 mois pour améliorer le service, sans le publier.</p>'
-             '<label class="case"><input type="checkbox" name="enabled" value="true"' + (' checked' if enabled else '') + '>'
-             '<span>Je partage cet exemple avec Evaly</span></label></fieldset>'
-             '<div class="actions">' + bouton('Enregistrer mon choix', sec=True, icone=None).replace('<button ', '<button' + arret + ' ', 1) + '</div>'
-             '<p class="petit" role="status" data-privacy-status>' + ('Vous partagez cet exemple avec Evaly.' if enabled else 'Vous ne partagez pas cet exemple.') + '</p>'
-             + plus)
-    formulaire = privacy_form('contribution', privacy.get('csrf_token', csrf),
-                              '/preparation/dossiers/' + quote(privacy['dossier_id'], safe='') + '/contribution',
-                              {key: contribution[key] for key in ('revision', 'example_revision')},
-                              tiroir('Partager cet exemple', corps, resume='Facultatif · ' + ('partagé' if enabled else 'non partagé')),
-                              classe='contribution', enveloppe=False)
-    return '<div class="privacy-consent">' + formulaire + '</div>'
 
 
 def render_contributions(value):
@@ -346,14 +314,10 @@ def code_erreur(value):
     return code if code in ERREURS else 503 if value.get('unavailable') else 400
 
 
-def actions_erreur(value, path='/preparation'):
+def actions_erreur(value):
     """(action principale, autres actions) d'une page d'erreur selon son statut et son titre"""
     code, titre = code_erreur(value), value.get('title')
     accueil = lien('/', 'Retour à l’accueil', 'retour')
-    if titre == 'Session requise':
-        return btn(path, 'Ouvrir la confirmation de copie'), ()
-    if titre in ('Copie impossible', 'Épreuve introuvable', 'Copie refusée'):
-        return btn('/epreuves', 'Voir les épreuves'), ()
     if titre == 'Adresse invalide' or code == 405:
         return btn('/', 'Retour à l’accueil', icone='retour'), ()
     if code == 404:

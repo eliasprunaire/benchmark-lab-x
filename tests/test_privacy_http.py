@@ -7,7 +7,6 @@ ceci ne prétend pas vérifier leur politique dans un navigateur HTTPS.
 """
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
 from http.client import HTTPConnection
 from http.cookies import SimpleCookie
 import json
@@ -22,7 +21,7 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import quote, urlencode
 
-from benchmark import preparation, privacy, provider_access, service, storage
+from benchmark import preparation, privacy, privacy_archive, provider_access, service, storage
 from benchmark_web.server import serve_web
 from tests.test_privacy import initialize, NOW, SECRET
 from tests.test_s2_review_regressions import Authorized, response_for
@@ -204,13 +203,12 @@ class PrivacyHTTPTests(unittest.TestCase):
         return view
 
     def consent(self, owner, dossier='case-a'):
+        """Semence d'une contribution antérieure au retrait de l'option : `change_contribution` hors de toute route"""
         view = preparation.view(self.store, owner['id'], dossier)
-        code, headers, value = self.request('POST', '/preparation/dossiers/' + dossier + '/contribution',
-            cookies=owner['cookies'], native=True, body={'csrf_token': owner['csrf'], 'enabled': 'true',
-                'revision': '0', 'example_revision': str(view['revision'])})
-        self.assertEqual(303, code, value)
-        cookies = {**owner['cookies'], **self.cookie_values(headers)}
-        code, _, manager = self.request('GET', '/preparation/contributions', cookies=cookies)
+        _, token = privacy_archive.change_contribution(self.store, owner['cookies']['benchmark_session'], dossier,
+            {'enabled': True, 'revision': 0, 'example_revision': view['revision']})
+        cookies = {**owner['cookies'], 'benchmark_contributions': token}
+        code, headers, manager = self.request('GET', '/preparation/contributions', cookies=cookies)
         self.assertEqual(200, code, manager)
         self.assertEqual(1, len(manager['contributions']))
         return headers, cookies, manager
@@ -294,40 +292,6 @@ class PrivacyHTTPTests(unittest.TestCase):
         self.assertEqual((200, 'session_bootstrap'), (code, value['kind']))
         self.assertFalse(headers.get_all('Set-Cookie'))
 
-    def test_native_consent_revision_zero_emits_two_distinct_cookies_and_unchecked_means_false(self):
-        owner = self.new_session()
-        view = self.seed_case(owner)
-        headers, cookies, manager = self.consent(owner)
-        cookie_headers = headers.get_all('Set-Cookie')
-        self.assertEqual(2, len(cookie_headers))
-        names = []
-        for header in cookie_headers:
-            parsed = SimpleCookie(header)
-            self.assertEqual(1, len(parsed))
-            name, value = next(iter(parsed.items()))
-            names.append(name)
-            self.assertTrue(value['secure'])
-            self.assertTrue(value['httponly'])
-            self.assertEqual('Strict', value['samesite'])
-            self.assertEqual('/preparation', value['path'])
-            if name == 'benchmark_session':
-                self.assertEqual('2592000', value['max-age'])
-            else:
-                self.assertEqual(datetime(2027, 3, 18, 12, tzinfo=timezone.utc), parsedate_to_datetime(value['expires']))
-        self.assertEqual({'benchmark_session', 'benchmark_contributions'}, set(names))
-        code, _, value = self.request('GET', '/preparation/dossiers/case-a', cookies=cookies)
-        self.assertEqual(200, code, value)
-        consent = value['privacy']['contribution']
-        self.assertIs(consent['enabled'], True)
-        self.assertEqual(1, consent['revision'])
-        code, headers, value = self.request('POST', '/preparation/dossiers/case-a/contribution',
-            cookies=cookies, native=True, body={'csrf_token': owner['csrf'],
-                'revision': str(consent['revision']), 'example_revision': str(view['revision'])})
-        self.assertEqual(303, code, value)
-        self.assertNotIn('benchmark_contributions', self.cookie_values(headers))
-        code, _, value = self.request('GET', '/preparation/contributions', cookies=cookies)
-        self.assertEqual((200, 'withdrawn'), (code, value['contributions'][0]['status']))
-
     def test_management_csrf_stays_scoped_and_works_after_main_session_expiry(self):
         owner = self.new_session()
         self.seed_case(owner)
@@ -364,28 +328,26 @@ class PrivacyHTTPTests(unittest.TestCase):
         self.assertFalse(headers.get_all('Set-Cookie'))
         self.assertEqual('withdrawn', self.request('GET', '/preparation/contributions', cookies=management_only)[2]['contributions'][0]['status'])
         self.assertEqual('active', self.request('GET', '/preparation/contributions', cookies=other_cookies)[2]['contributions'][0]['status'])
-
-    def test_concurrent_first_consents_and_stale_management_cookie_keep_one_access(self):
-        owner = self.new_session()
-        views = {name: self.seed_case(owner, name) for name in ('case-a', 'case-b')}
-        issued = []
-        for name, view in views.items():
-            code, headers, value = self.request('POST', '/preparation/dossiers/' + name + '/contribution',
-                cookies={**owner['cookies'], 'benchmark_contributions': '1' * 64},
-                body={'csrf_token': owner['csrf'], 'enabled': True, 'revision': 0,
-                      'example_revision': view['revision']})
-            self.assertEqual(200, code, value)
-            issued.append(self.cookie_values(headers)['benchmark_contributions'])
-        self.assertEqual(issued[0], issued[1])
-        cookies = {'benchmark_contributions': issued[-1]}
-        self.advance(31)
-        code, _, value = self.request('GET', '/preparation/contributions', cookies=cookies)
-        self.assertEqual(200, code)
-        self.assertEqual(2, len(value['contributions']))
-        for contribution in value['contributions']:
-            code, _, _ = self.request('POST', '/preparation/contributions/' + contribution['id'] + '/withdraw',
-                cookies=cookies, body={'csrf_token': value['csrf_token']})
-            self.assertEqual(200, code)
+        # Option retirée : aucune nouvelle contribution, même avec une session valide et son CSRF ; aucun cookie émis
+        fresh = self.new_session()
+        view = self.seed_case(fresh, 'case-c')
+        counts = lambda: [self.store._connection.execute('SELECT count(*) FROM ' + table).fetchone()[0]
+                          for table in ('s7_contributions', 's7_contribution_managers', 's2_sessions')]
+        before = counts()
+        # Route retirée : toute méthode et toute forme, dont l'ancien formulaire natif de premier choix (`revision=0`), reçoivent 404
+        for method, sent_cookies, native, revision in (('POST', fresh['cookies'], False, 0), ('POST', fresh['cookies'], True, 1),
+                                                       ('POST', fresh['cookies'], True, 0), ('POST', None, False, 0),
+                                                       ('GET', fresh['cookies'], True, None), ('HEAD', fresh['cookies'], True, None)):
+            with self.subTest(method=method, session=sent_cookies is not None, html=native, revision=revision):
+                body = None if revision is None else {
+                    'csrf_token': fresh['csrf'], 'enabled': 'true' if native else True, 'revision': str(revision) if native else revision,
+                    'example_revision': str(view['revision']) if native else view['revision']}
+                code, headers, _ = self.request(method, '/preparation/dossiers/case-c/contribution',
+                                                cookies=sent_cookies, native=native, body=body)
+                self.assertEqual(404, code)
+                self.assertNotIn('benchmark_contributions', self.cookie_values(headers))
+                self.assertFalse(headers.get_all('Set-Cookie'))
+                self.assertEqual(before, counts())
 
     def test_migration_pending_keeps_the_session_cookie_and_explains_the_wait(self):
         owner = self.new_session()

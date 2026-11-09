@@ -397,6 +397,7 @@ def _active(row, revision, now, *, reconsent=False):
         raise ConflictError('Révision de contribution modifiée')
 
 
+# shortcut: semence des tests du retrait, retiré avec les routes de retrait à la dernière échéance
 def change_contribution(store, session_token, dossier_id, body, manager_token=None, now=None):
     """Return (metadata, new token or None); enabled opt-in uses the latest revision CAS"""
     if (type(body) is not dict or set(body) != {'example_revision', 'revision', 'enabled'}
@@ -503,39 +504,6 @@ def withdraw(store, token, contribution_id, csrf, now=None):
     return manager_view(store, token, now=now)
 
 
-def refresh_contributions(store, dossier_id):
-    """Refresh only the currently consented example after a job, never extend expiry"""
-    from . import privacy
-    now = _now()
-    connection = store._connection_checked()
-    with _transaction(connection):
-        row = connection.execute('SELECT session_id FROM s7_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()
-        if row is None:
-            return
-        session_id = row[0]
-        try:
-            version = _authorize(connection, session_id, dossier_id)
-        except privacy.Gone:
-            return
-        current = p.owner(connection, session_id, dossier_id)
-        contribution = _contribution(connection, dossier_id, current)
-        if (contribution is None or contribution['status'] != 'active'
-                or datetime.fromisoformat(contribution['expires_at']) <= now
-                or contribution['content_version'] == version):
-            return
-        _active(contribution, contribution['revision'], now)
-    payload = _contribution_payload(store, session_id, dossier_id, current)
-    with _transaction(connection, write=True):
-        now = _now()
-        if _authorize(connection, session_id, dossier_id) != version or p.owner(connection, session_id, dossier_id) != current:
-            raise ConflictError('Contenu modifié pendant la contribution')
-        existing = _contribution(connection, dossier_id, current)
-        _active(existing, contribution['revision'], now)
-        connection.execute('UPDATE s7_contributions SET payload_json=?,content_version=?,revision=revision+1 '
-                           'WHERE contribution_id=? AND revision=?',
-                           (payload, version, contribution['contribution_id'], contribution['revision']))
-
-
 def expire_contributions(connection, now=None):
     """Clear expired copies inside the caller's maintenance transaction"""
     connection.execute("UPDATE s7_contributions SET status='expired',payload_json=NULL,revision=revision+1 "
@@ -548,6 +516,7 @@ def remove_for_dossier(connection, dossier_id):
     connection.execute('DELETE FROM s7_contributions WHERE dossier_id=?', (dossier_id,))
 
 
+# shortcut: semence des tests du retrait, retiré avec les routes de retrait à la dernière échéance
 def contribution_view(store, session_id, dossier_id, now=None):
     """Owner metadata for the current example, without inferring legacy consent"""
     now = _now(now)

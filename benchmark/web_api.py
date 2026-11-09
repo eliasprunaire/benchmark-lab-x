@@ -5,7 +5,6 @@ import logging
 import re
 import sqlite3
 import threading
-from typing import cast
 from urllib.parse import urlsplit, parse_qsl
 
 from . import preparation as p
@@ -51,6 +50,9 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
         except semantic_help.InvalidRequest:
             raise p.Denied('NOT_FOUND') from None
         return code, value, None, None
+    # Contribution facultative retirée de l'alpha : 404 avant toute lecture de session ou écriture, quel que soit `enabled`
+    if re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/contribution', urlsplit(path).path):
+        raise p.Denied('NOT_FOUND')
     from . import privacy
     enabled = privacy.available(store._connection_checked())
     if method == 'GET' and path == '/preparation/data':
@@ -113,7 +115,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
     if enabled:
         from . import privacy_archive as archives
         parsed = urlsplit(path)
-        route = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/(archive(?:/items/record)?|contribution|delete)', parsed.path)
+        route = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/(archive(?:/items/record)?|delete)', parsed.path)
         if route:
             session_id, csrf, _ = p.session(store, token)
             dossier_id, action = route.groups()
@@ -125,25 +127,12 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
                 if len(pairs) != 2 or set(query) != {'snapshot', 'part'} or not re.fullmatch(r'0|[1-9][0-9]*', query['part']):
                     raise ValueError('Bloc d’archive invalide')
                 return 200, archives.archive_item(store, session_id, dossier_id, query['snapshot'], int(query['part'])), None, None
-            if method == 'POST' and action in ('contribution', 'delete') and not parsed.query:
+            if method == 'POST' and action == 'delete' and not parsed.query:
                 if type(body) is not dict or type(body.get('csrf_token')) is not str or not hmac.compare_digest(body['csrf_token'].encode(), csrf.encode()):
                     raise p.Denied('Protection CSRF requise')
                 payload = {key: value for key, value in body.items() if key != 'csrf_token'}
-                if action == 'delete':
-                    _fields(payload, (), 'suppression')
-                    return 202, privacy.request_delete(store, session_id, dossier_id), None, None
-                with _activity_with_effect(store, session_id, dossier_id) as joined:
-                    value, new_token = archives.change_contribution(store, token, dossier_id, payload, management_token)
-                value = cast(dict, value)
-                if not joined:
-                    privacy.activity(store, session_id, dossier_id)
-                if payload['enabled'] and (new_token or management_token):
-                    manager = new_token or management_token
-                    if manager is None:
-                        raise p.Denied('Accès de gestion absent')
-                    state = cast(dict, archives.manager_view(store, manager))
-                    value['_management_cookie'] = {'token': manager, 'expires_at': max(c['expires_at'] for c in state['contributions'])}
-                return 200, value, token, None
+                _fields(payload, (), 'suppression')
+                return 202, privacy.request_delete(store, session_id, dossier_id), None, None
             raise p.Denied('NOT_FOUND')
     if enabled and method == 'POST' and path != '/preparation/activity':
         dossier = re.match(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})(?:/|$)', path)
@@ -177,13 +166,6 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
                     # Une page de la comparaison la nomme : l'activité y renouvelle aussi ses autres exemples
                     if _campaign_of(path):
                         privacy_state['campaign_id'] = _campaign_of(path)
-                    from . import privacy_archive as archives
-                    current = p.owner(store._connection, session_id, dossier_id)
-                    contribution = archives.contribution_view(store, session_id, dossier_id)['contribution']
-                    contribution = contribution if isinstance(contribution, dict) else None
-                    privacy_state['contribution'] = dict(contribution or {},
-                        enabled=bool(contribution and contribution['status'] == 'active'),
-                        revision=contribution['revision'] if contribution else 0, example_revision=current)
         except (sqlite3.Error, storage.SchemaError) as error:
             if not joined:
                 raise
@@ -330,9 +312,6 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
                 raise ValueError('Activité invalide')
             return 200, privacy.activity(store, session_id, body.get('dossier_id'),
                                          campaign_id=body.get('campaign_id')), token, None
-    if method == 'POST' and path == '/preparation/copies':
-        dossier_id, created = p.copy_from_publication(store, session_id, body)
-        return (201 if created else 200), {'dossier_id': dossier_id, 'created': created}, None, None
     if method == 'POST' and (path == '/preparation/dossiers' or
             re.fullmatch(r'/preparation/dossiers/[A-Za-z0-9_-]{1,128}/(messages|validation)', path)):
         if transport is None or (path.endswith('/validation') and qualification_transport is None):
