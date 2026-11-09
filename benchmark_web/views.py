@@ -42,8 +42,9 @@ PUBLIC_PAGES = {
          'compare les modèles dans les mêmes conditions, coût observé compris.',
     **{path: description for path, (_, description, _) in LEGAL_PAGES.items()},
 }
-# Menu principal (A14) : Mes cas d'usage = saisie et cas en cours, Mes données = copies gardées par le navigateur ; Benchmarks publics au pied puis dans l'en-tête (unité suivante)
-MENU = (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données'))
+# Menu principal (A14) : Mes cas d'usage = saisie et cas en cours, Mes données = copies gardées par le navigateur ; Benchmarks publics au pied et dans l'en-tête
+MENU = (('/', 'Accueil'), ('/preparation', 'Mes cas d’usage'), ('/preparation/data', 'Mes données'),
+        ('/evaluations-externes', 'Benchmarks publics'))
 # Piège à robots : `hidden` le retire du rendu et de l'arbre d'accessibilité même sans feuille de style
 HONEYPOT = ('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>'
             '<input id="website" name="website" autocomplete="off" tabindex="-1"></div>')
@@ -291,8 +292,10 @@ def page_script(value):
 
 
 BENCHMARK_REFERENCES = {
-    # Notices approuvées : MathArena, LiveCodeBench, SWE-bench, MTEB, Artificial Analysis API
-    # Maintenance : Ayo ; HELM reste hors du répertoire ; vérification documentaire : 2026-10-22
+    # Notices approuvées : MathArena, LiveCodeBench, SWE-bench, MTEB, Artificial Analysis API, MMLU-Pro, GPQA, HLE, ARC-AGI,
+    # MATH, FrontierMath, GAIA, τ-bench, OSWorld
+    # Maintenance : Ayo ; HELM reste hors du répertoire ; vérification documentaire : 2026-10-22 pour les cinq premières,
+    # 2026-11-09 pour les neuf suivantes, relues sur leur source primaire
     'matharena': {
         'name': 'MathArena', 'url': 'https://matharena.ai/', 'category': 'math',
         'work': 'Résoudre des problèmes mathématiques, notamment issus de compétitions',
@@ -343,10 +346,111 @@ BENCHMARK_REFERENCES = {
                   'Les résultats évoluent séparément.',
         'version': '2.2.0', 'published_at': '2026-03-02',
         'checked_at': '2026-10-22', 'availability': 'available', 'verification': 'verified'},
+    'mmlu-pro': {
+        'name': 'MMLU-Pro', 'url': 'https://github.com/TIGER-AI-Lab/MMLU-Pro', 'category': 'knowledge',
+        'work': 'Répondre à des questions de connaissances et de raisonnement dans quatorze domaines',
+        'scope': 'Questions à choix multiples à dix options, 12 032 au total. Prolonge MMLU, dont les questions triviales '
+                 'ou bruitées ont été retirées. Publié par Wang et al. (TIGER-AI-Lab)',
+        'limits': 'Les auteurs déclarent que le choix multiple saisit moins bien la compréhension qu’une réponse ouverte. '
+                  'Ils n’évaluent que des modèles de langage, sans image. '
+                  'La source ne déclare aucune protection contre la contamination. '
+                  'Des questions d’examen ne décrivent aucun travail précis.',
+        'version': 'Article arXiv 2406.01574, révisé le 6 novembre 2024', 'published_at': '2024-06-03',
+        'checked_at': '2026-11-09', 'availability': 'available', 'verification': 'verified'},
+    'gpqa': {
+        'name': 'GPQA', 'url': 'https://github.com/idavidrein/gpqa', 'category': 'knowledge',
+        'work': 'Répondre à des questions scientifiques de niveau universitaire avancé en biologie, physique et chimie',
+        'scope': 'Questions à choix multiples écrites par des experts et conçues pour résister à une recherche web : '
+                 '448 dans le jeu principal, 198 dans le sous-ensemble Diamond. Publié par Rein et al.',
+        'limits': 'Les auteurs déclarent un jeu petit, peu adapté à l’entraînement et à la puissance statistique limitée : '
+                  'de petits écarts entre deux résultats se détectent quand l’exactitude est élevée ou avec des tests appariés. '
+                  'Ils ne le présentent pas comme représentatif des questions de la pratique scientifique. '
+                  'Des questions d’examen ne décrivent aucun travail précis.',
+        'version': 'Article arXiv 2311.12022 ; préciser le sous-ensemble : principal, Diamond ou Extended', 'published_at': '2023-11-20',
+        'checked_at': '2026-11-09', 'availability': 'available', 'verification': 'verified'},
+    'hle': {
+        'name': 'Humanity\'s Last Exam', 'url': 'https://lastexam.ai/', 'category': 'knowledge',
+        'work': 'Répondre à des questions académiques fermées de très haut niveau, dans des dizaines de disciplines',
+        'scope': 'HLE : 2 500 questions, environ un quart à choix multiples, les autres à réponse exacte ; une partie exige '
+                 'de lire une image. Publié par le Center for AI Safety et Scale AI, avec un jeu privé gardé à part',
+        'limits': 'Les auteurs déclarent des problèmes académiques structurés, pas de la recherche ouverte : un bon résultat '
+                  'ne montre pas une capacité de recherche autonome. La correction automatique utilise un modèle de langage comme juge. '
+                  'Les variantes HLE-Rolling et HLE-Diamond ne sont pas décrites ici.',
+        'version': 'Article arXiv 2501.14249, révisé le 19 octobre 2026 ; préciser la variante consultée', 'published_at': '2025-01-24',
+        'checked_at': '2026-11-09', 'availability': 'available', 'verification': 'verified'},
+    'arc-agi': {
+        'name': 'ARC-AGI', 'url': 'https://arcprize.org/arc-agi', 'category': 'knowledge',
+        'work': 'Déduire la règle qui transforme des grilles à partir de quelques exemples, sans connaissance spécialisée',
+        'scope': 'ARC-AGI-1 (2019) puis ARC-AGI-2 (2025, Chollet et al.), tenus par ARC Prize : grilles d’entrée et de sortie, '
+                 'réponse exacte ; jeux public, semi-privé et privé ; concours associé. La série compte aussi ARC-AGI-3, interactif, non décrit ici',
+        'limits': 'ARC Prize déclare qu’une recherche par force brute pourrait résoudre ces tâches sans représenter une intelligence réelle, '
+                  'et que les tâches semi-privées ont pu être exposées à des tiers. '
+                  'Des grilles abstraites ne décrivent aucun travail de bureau. Les règles du concours ne sont pas reprises.',
+        'version': 'ARC-AGI-2, article arXiv 2505.11831 révisé le 15 janvier 2026 ; préciser la version et le jeu : public, semi-privé ou privé',
+        'published_at': '2025-05-17',
+        'checked_at': '2026-11-09', 'availability': 'available', 'verification': 'verified'},
+    'math': {
+        'name': 'MATH', 'url': 'https://github.com/hendrycks/math', 'category': 'math',
+        'work': 'Résoudre des problèmes de mathématiques issus de compétitions de lycée',
+        'scope': '12 500 problèmes en sept matières et cinq niveaux de difficulté, chacun avec une solution détaillée. '
+                 'Publié par Hendrycks et al. (NeurIPS 2021)',
+        'limits': 'La correction compare seulement la réponse finale, à l’identique. '
+                  'La source ne déclare aucune protection contre la contamination. '
+                  'Des problèmes de compétition ne représentent pas les besoins mathématiques d’un métier.',
+        'version': 'Article arXiv 2103.03874, révisé le 8 novembre 2021 ; préciser le niveau ou le sous-ensemble consulté',
+        'published_at': '2021-03-05',
+        'checked_at': '2026-11-09', 'availability': 'available', 'verification': 'verified'},
+    'frontiermath': {
+        'name': 'FrontierMath', 'url': 'https://epoch.ai/frontiermath', 'category': 'math',
+        'work': 'Résoudre des problèmes de mathématiques avancés et inédits, dont la réponse se vérifie par calcul',
+        'scope': 'Plusieurs centaines de problèmes écrits par des mathématiciens, en quatre niveaux, du premier cycle universitaire '
+                 'à la recherche. Publié par Epoch AI ; seuls des échantillons sont publics. Le programme compte aussi '
+                 'Open Problems et FrontierMath Erdős, non décrits ici',
+        'limits': 'Le jeu complet n’est pas public : un tiers ne peut pas reproduire un résultat. '
+                  'La vérification porte sur la réponse, sans démonstration. '
+                  'Epoch AI déclare qu’une seconde relecture a trouvé des erreurs à corriger dans une partie des problèmes. '
+                  'Selon Epoch AI, OpenAI a commandé 300 problèmes et les possède ; OpenAI a accès aux énoncés et aux solutions '
+                  'jusqu’à une version donnée, sauf 50 solutions gardées pour une évaluation à part.',
+        'version': 'Article arXiv 2411.04872, révisé le 23 décembre 2025 ; préciser le niveau (Tiers 1 à 4) et la date du résultat',
+        'published_at': '2024-11-07',
+        'checked_at': '2026-11-09', 'availability': 'available', 'verification': 'verified'},
+    'gaia': {
+        'name': 'GAIA', 'url': 'https://huggingface.co/gaia-benchmark', 'category': 'agents',
+        'work': 'Répondre à des questions concrètes qui demandent du raisonnement, une navigation web, la lecture de fichiers ou d’images '
+                'et l’usage d’outils',
+        'scope': '466 questions à réponse courte et unique, en trois niveaux de difficulté ; les réponses de 300 questions restent privées '
+                 'pour le classement. Publié par Mialon, Fourrier et al. (2023), hébergé par Hugging Face',
+        'limits': 'Les auteurs déclarent n’évaluer que la réponse finale, pas la démarche, et signalent des ambiguïtés possibles '
+                  'malgré la relecture. Les questions sont en anglais seulement. '
+                  'Des questions d’assistant ne décrivent pas un flux de travail métier.',
+        'version': 'Article arXiv 2311.12983 ; préciser le niveau consulté', 'published_at': '2023-11-21',
+        'checked_at': '2026-11-09', 'availability': 'available', 'verification': 'verified'},
+    'tau-bench': {
+        'name': 'τ-bench', 'url': 'https://github.com/sierra-research/tau2-bench', 'category': 'agents',
+        'work': 'Mener un dialogue avec un utilisateur simulé, utiliser des outils de domaine et respecter des règles métier',
+        'scope': 'Aussi écrit tau-bench. Domaines simulés : compagnie aérienne et commerce, puis télécom avec τ²-bench (2025) '
+                 'et banque avec τ³-bench. L’évaluation compare l’état final des données à l’état attendu, sur plusieurs essais. '
+                 'Publié par Yao et al. (2024), dépôt sierra-research',
+        'limits': 'Les auteurs déclarent un utilisateur simulé limité : instructions parfois ambiguës, raisonnement et mémoire limités. '
+                  'Les règles des domaines restent plus simples que la réalité. '
+                  'Le dépôt indique que les résultats 2.0 ne se comparent pas au classement 1.x.',
+        'version': 'Articles arXiv 2406.12045 et 2506.07982 ; préciser la version (1.x ou 2.0) et le domaine', 'published_at': '2024-06-17',
+        'checked_at': '2026-11-09', 'availability': 'available', 'verification': 'verified'},
+    'osworld': {
+        'name': 'OSWorld', 'url': 'https://github.com/xlang-ai/OSWorld', 'category': 'agents',
+        'work': 'Accomplir des tâches dans un vrai système d’exploitation, avec des applications web et de bureau',
+        'scope': '369 tâches tirées d’usages réels, dont des enchaînements sur plusieurs applications ; chaque tâche a un état initial '
+                 'et un script d’évaluation par exécution. Publié par Xie et al. (2024) ; variante OSWorld-Verified (2025)',
+        'limits': 'Le dépôt signale des tâches qui exigent un compte Google ou un proxy, et une image système parfois plus ancienne que le code. '
+                  'Le classement vérifié exige une séance avec les mainteneurs. '
+                  'Des tâches bureautiques génériques ne décrivent aucun métier précis.',
+        'version': 'Article arXiv 2404.07972, révisé le 30 mai 2024 ; préciser la variante : origine ou Verified', 'published_at': '2024-04-11',
+        'checked_at': '2026-11-09', 'availability': 'available', 'verification': 'verified'},
 }
 REFERENCE_CATEGORIES = {
     'math': 'Mathématiques', 'coding': 'Programmation',
-    'retrieval': 'Recherche documentaire', 'api': 'Performances des services'}
+    'retrieval': 'Recherche documentaire', 'api': 'Performances des services',
+    'knowledge': 'Connaissances et raisonnement', 'agents': 'Agents'}
 REFERENCE_VERIFICATIONS = {'verified': 'Vérifiée', 'unverified': 'Vérification insuffisante'}
 
 
@@ -376,8 +480,8 @@ EDITORIAL_STATUS = {'ABSENT': 'Qualification absente', 'QUALIFIED': 'Qualificati
 # `serve_web` ne l'a pas activé, comme la désactivation par défaut du PRD
 SEMANTIC_HELP_ENABLED = False
 INCONNU = '<span class="g-inconnu">inconnu</span>'
-CAUTION = ('Des benchmarks reconnus, publiés par d’autres. Utiles pour un travail générique, comme les mathématiques ou le code. '
-           'Ils ne prouvent pas la réussite sur votre cas d’usage.')
+CAUTION = ('Des benchmarks publics reconnus, publiés par d’autres. Ils donnent un repère quand leurs tâches se rapprochent '
+           'de votre cas d’usage. Ils ne prouvent pas la réussite sur votre cas d’usage.')
 
 
 def version_lisible(version_id):
@@ -425,7 +529,10 @@ def selection_tenue():
                   '<div><dt>Vérifiée</dt><dd>Les trois points sont établis.</dd></div>'
                   '<div><dt>Vérification insuffisante</dt><dd>Au moins un point reste inconnu. La fiche reste consultable, mais ce n’est pas une recommandation.</dd></div>'
                   '<div><dt>Source disponible</dt><dd>La page officielle du benchmark public est accessible depuis la fiche. Ce contrôle est fait à part de la relecture.</dd></div>'
-                  '<div><dt>Ce que la liste ne fait pas</dt><dd>Elle n’est pas complète. Elle ne classe pas les benchmarks publics entre eux et ne donne aucune note globale.</dd></div>'
+                  '<div><dt>Ce que la liste ne fait pas</dt><dd>Elle n’est pas complète. Elle ne classe pas les benchmarks publics entre eux et ne donne aucune note globale. '
+                  'Elle ne contient ni les indices composites ni les classements, comme l’indice d’Artificial Analysis ou Arena (anciennement LMArena) : '
+                  'ils compilent des résultats, ils ne mesurent pas un travail. '
+                  'La mesure des performances API d’Artificial Analysis reste : elle mesure un service, pas un modèle.</dd></div>'
                   '</dl><p>Un bon résultat sur un benchmark public ne prouve pas qu’un modèle réussira votre cas d’usage. '
                   'Pour le savoir, comparez les modèles sur votre propre exemple.</p>')
 
@@ -1393,7 +1500,7 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
     entete = {}
     # `aria-current` seulement sur l'entrée qui est la page affichée, jamais sur une page descendante ni d'erreur
     current = None if error else {'home': '/', 'privacy_data': '/preparation/data',
-                                 'references': None,
+                                 'references': None if value.get('reference_id') else '/evaluations-externes',
                                  'references_help': None}.get(
         value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)
     menu = ''.join('<li><a href="' + href + '"' + (' aria-current="page"' if href == current else '') + '>' + label + '</a></li>'

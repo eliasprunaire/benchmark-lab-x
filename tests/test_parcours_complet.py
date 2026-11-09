@@ -425,10 +425,11 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(KEY, page.visible)
             # Décision du propriétaire : l’équipe Bench-X n’intervient jamais, aucune page ne compte sur elle
             self.assertNotIn('équipe Bench-X', ' '.join(n['text'] for n in page.nodes))
-            # Menu puis pied de page : Mes cas d'usage pour la saisie et les cas en cours, Mes données pour les copies gardées
+            # Menu puis pied de page : Mes cas d'usage pour la saisie et les cas en cours, Mes données pour les copies gardées,
+            # Benchmarks publics pour le répertoire
             dehors = [n['text'].strip() for n in page.nodes if n['tag'] == 'a' and not n['main'] and not n['hidden'] and not n['details']]
-            self.assertEqual(['Accueil', 'Mes cas d’usage', 'Mes données'], dehors[2:5])
-            self.assertEqual(['Décrire mon cas d’usage', 'Mes données', 'Benchmarks publics'], dehors[6:9])
+            self.assertEqual(['Accueil', 'Mes cas d’usage', 'Mes données', 'Benchmarks publics'], dehors[2:6])
+            self.assertEqual(['Décrire mon cas d’usage', 'Mes données', 'Benchmarks publics'], dehors[7:10])
             # Le pied présente le produit par sa tagline, une seule fois par page
             intro = [n['text'] for n in page.nodes if n['tag'] == 'p' and not n['main'] and 'intro' in n['attrs'].get('class', '').split()]
             self.assertTrue(intro[0].startswith('Evaly, le benchmark personnalisé : '))
@@ -460,6 +461,10 @@ class ParcoursComplet(unittest.TestCase):
             page, headers, raw = self.request(target)
             self.assertEqual('/evaluations-externes', target)
             self.assertEqual('Benchmarks publics · Evaly', next(n['text'] for n in page.nodes if n['tag'] == 'title'))
+            # L'en-tête marque Benchmarks publics sur la racine du répertoire seulement, dans le menu de grand écran et le menu mobile
+            def menu_courant(page):
+                return [n['text'] for n in page.nodes if not n['main'] and n['attrs'].get('aria-current') == 'page']
+            self.assertEqual(['Benchmarks publics', 'Benchmarks publics'], menu_courant(page))
             self.assertIsNone(headers.get('Set-Cookie'))
             self.assertEqual('no-referrer', headers['Referrer-Policy'])
             self.assertEqual(raw, self.request(target, cookies=SimpleCookie('benchmark_session=invalid'))[2])
@@ -467,6 +472,7 @@ class ParcoursComplet(unittest.TestCase):
             self.assertFalse(any(n['tag'] == 'a' and n['attrs'].get('href') == '/preparation' and 'Décrire' in n['text'] for n in page.nodes if n['main']))
             self.assertEqual(3, len([n for n in page.nodes if n['tag'] == 'h3' and n['main']]))
             notice, _, _ = self.request(page.link('Atelier Code'))
+            self.assertEqual([], menu_courant(notice))
             for value in ('Petits programmes inventés', 'Ne mesure pas la maintenance', 'fixture-1',
                           '10 janvier 2026', '3 février 2026', 'Corriger un programme fictif'):
                 self.assertIn(value, notice.visible)
@@ -478,13 +484,15 @@ class ParcoursComplet(unittest.TestCase):
             self.assertIn('noreferrer', external['attrs']['rel'].split())
             form = page.form('/evaluations-externes')
             # Sans critère, seules les options « Tous » et « Toutes » sont courantes
-            self.assertEqual(['Tous', 'Toutes'], [n['text'] for n in page.nodes if n['tag'] == 'a' and n['attrs'].get('aria-current')])
+            self.assertEqual(['Tous', 'Toutes'], [n['text'] for n in page.nodes if n['tag'] == 'a' and n['attrs'].get('aria-current') == 'true'])
             filtered, _, _ = self.request(form['action'] + '?' + urlencode(
                 {'q': 'CORRIGER', 'category': 'coding', 'verification': 'verified'}))
             self.assertEqual(['Atelier Code fictif <script>alert(1)</script>'],
                              [n['text'] for n in filtered.nodes if n['tag'] == 'h3' and n['main']])
             self.assertEqual({'Programmation', 'Vérifiée'}, {n['text'] for n in filtered.nodes
-                             if n['tag'] == 'a' and n['attrs'].get('aria-current')})
+                             if n['tag'] == 'a' and n['attrs'].get('aria-current') == 'true'})
+            # Une recherche filtrée reste la racine du répertoire
+            self.assertEqual(['Benchmarks publics', 'Benchmarks publics'], menu_courant(filtered))
             self.assertEqual(raw, self.request(filtered.link('Effacer'))[2])
             # Un tiers est toujours un benchmark public : champ, compteur singulier et pluriel, états vides
             def compte(page):
@@ -502,7 +510,7 @@ class ParcoursComplet(unittest.TestCase):
             retired, _, _ = self.request(target + '/atelier-retire')
             self.assertIn('Source retirée', retired.visible)
             self.assertNotIn('https://retire.example/', [n['attrs'].get('href') for n in retired.nodes])
-            self.request(target + '/absente', status=404)
+            self.assertEqual([], menu_courant(self.request(target + '/absente', status=404)[0]))
             for query in ('category=absente', 'verification=best', 'q=a&q=b', 'need=prive', 'q=%FF'):
                 self.request(target + '?' + query, status=400)
             injection = '<script>alert(2)</script>'
@@ -526,6 +534,7 @@ class ParcoursComplet(unittest.TestCase):
                 self.assertEqual('/preparation', unavailable.link('Décrire mon cas'))
             # L'aide annonce TypeSafe et les données transmises avant tout envoi ; la lecture ne relaie rien
             help_page, help_headers, help_raw = self.request('/evaluations-externes/aide')
+            self.assertEqual([], menu_courant(help_page))
             self.assertIsNone(help_headers.get('Set-Cookie'))
             self.assertEqual('no-referrer', help_headers['Referrer-Policy'])
             for value in ('TypeSafe', 'Jev', 'formulation', 'Aucun cas d’usage privé',
@@ -562,27 +571,40 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn('HELM', index.visible)
             self.assertNotIn('helm', raw.decode().casefold())
             self.assertIn('ne prouvent pas la réussite sur votre cas d’usage', index.visible)
+            # Une seule introduction, servie sur le répertoire et sur chaque fiche
+            self.assertEqual('Des benchmarks publics reconnus, publiés par d’autres. Ils donnent un repère quand leurs tâches se rapprochent '
+                             'de votre cas d’usage. Ils ne prouvent pas la réussite sur votre cas d’usage.', views.CAUTION)
+            self.assertIn('Ils donnent un repère quand leurs tâches se rapprochent de votre cas d’usage.', index.visible)
             self.assertNotIn('Ayo', index.visible)
             selection = index.depliant('Comment cette sélection est tenue')
-            self.assertIn('La dernière relecture date du 22 octobre 2026.', selection)
+            self.assertIn('La dernière relecture date du 9 novembre 2026.', selection)
+            # Les indices composites et les classements compilent des résultats : ils n'ont pas de fiche
+            self.assertIn('Elle ne contient ni les indices composites ni les classements, comme l’indice d’Artificial Analysis '
+                          'ou Arena (anciennement LMArena) : ils compilent des résultats, ils ne mesurent pas un travail.', selection)
+            self.assertIn('La mesure des performances API d’Artificial Analysis reste : elle mesure un service, pas un modèle.', selection)
             self.assertIn('qui publie le benchmark public, ce qu’il mesure, et ce qu’il ne mesure pas', selection)
             self.assertIn('La page officielle du benchmark public est accessible depuis la fiche.', selection)
             self.assertIn('Elle ne classe pas les benchmarks publics entre eux', selection)
             self.assertIn('Ce contrôle est fait à part de la relecture.', selection)
             self.assertEqual(
-                ['matharena', 'livecodebench', 'swe-bench', 'mteb', 'artificial-analysis-api'],
+                ['matharena', 'livecodebench', 'swe-bench', 'mteb', 'artificial-analysis-api', 'mmlu-pro', 'gpqa', 'hle',
+                 'arc-agi', 'math', 'frontiermath', 'gaia', 'tau-bench', 'osworld'],
                 list(views.BENCHMARK_REFERENCES))
             self.assertEqual(
                 {'math': 'Mathématiques', 'coding': 'Programmation',
-                 'retrieval': 'Recherche documentaire', 'api': 'Performances des services'},
+                 'retrieval': 'Recherche documentaire', 'api': 'Performances des services',
+                 'knowledge': 'Connaissances et raisonnement', 'agents': 'Agents'},
                 views.REFERENCE_CATEGORIES)
             self.assertEqual(
-                ['MathArena', 'LiveCodeBench', 'SWE-bench', 'MTEB', 'Artificial Analysis, performances API'],
+                ['MathArena', 'LiveCodeBench', 'SWE-bench', 'MTEB', 'Artificial Analysis, performances API', 'MMLU-Pro', 'GPQA',
+                 'Humanity\'s Last Exam', 'ARC-AGI', 'MATH', 'FrontierMath', 'GAIA', 'τ-bench', 'OSWorld'],
                 [n['text'] for n in index.nodes if n['tag'] == 'h3' and n['main']])
             options = {parse_qs(urlsplit(n['attrs']['href']).query).get('category', [''])[0]: n['text']
                        for n in index.nodes if n['tag'] == 'a' and 'category=' in n['attrs'].get('href', '')}
             self.assertEqual('Recherche documentaire', options['retrieval'])
             self.assertEqual('Performances des services', options['api'])
+            self.assertEqual('Connaissances et raisonnement', options['knowledge'])
+            self.assertEqual('Agents', options['agents'])
             self.assertNotIn('helm', {key.casefold() for key in options if key})
             notices = {
                 'matharena': (
@@ -636,6 +658,106 @@ class ParcoursComplet(unittest.TestCase):
                     'Les résultats évoluent séparément',
                     '22 octobre 2026',
                 ),
+                'mmlu-pro': (
+                    'https://github.com/TIGER-AI-Lab/MMLU-Pro',
+                    'Répondre à des questions de connaissances et de raisonnement dans quatorze domaines',
+                    'à dix options, 12 032 au total',
+                    'Prolonge MMLU',
+                    'Ils n’évaluent que des modèles de langage, sans image',
+                    'aucune protection contre la contamination',
+                    'Article arXiv 2406.01574, révisé le 6 novembre 2024',
+                    '3 juin 2024',
+                    '9 novembre 2026',
+                ),
+                'gpqa': (
+                    'https://github.com/idavidrein/gpqa',
+                    'Répondre à des questions scientifiques de niveau universitaire avancé en biologie, physique et chimie',
+                    '448 dans le jeu principal, 198 dans le sous-ensemble Diamond',
+                    'à la puissance statistique limitée : de petits écarts entre deux résultats se détectent quand l’exactitude est élevée ou avec des tests appariés',
+                    'représentatif des questions de la pratique scientifique',
+                    'principal, Diamond ou Extended',
+                    '20 novembre 2023',
+                    '9 novembre 2026',
+                ),
+                'hle': (
+                    'https://lastexam.ai/',
+                    'Répondre à des questions académiques fermées de très haut niveau, dans des dizaines de disciplines',
+                    'HLE : 2 500 questions, environ un quart à choix multiples',
+                    'Center for AI Safety et Scale AI, avec un jeu privé gardé à part',
+                    'ne montre pas une capacité de recherche autonome',
+                    'un modèle de langage comme juge',
+                    'HLE-Rolling et HLE-Diamond ne sont pas décrites ici',
+                    'Article arXiv 2501.14249, révisé le 19 octobre 2026',
+                    '24 janvier 2025',
+                    '9 novembre 2026',
+                ),
+                'arc-agi': (
+                    'https://arcprize.org/arc-agi',
+                    'Déduire la règle qui transforme des grilles à partir de quelques exemples, sans connaissance spécialisée',
+                    'jeux public, semi-privé et privé',
+                    'ARC-AGI-3, interactif, non décrit ici',
+                    'force brute',
+                    'ont pu être exposées à des tiers',
+                    'Les règles du concours ne sont pas reprises',
+                    'arXiv 2505.11831 révisé le 15 janvier 2026',
+                    '17 mai 2025',
+                    '9 novembre 2026',
+                ),
+                'math': (
+                    'https://github.com/hendrycks/math',
+                    'Résoudre des problèmes de mathématiques issus de compétitions de lycée',
+                    '12 500 problèmes en sept matières et cinq niveaux de difficulté',
+                    'Hendrycks et al. (NeurIPS 2021)',
+                    'compare seulement la réponse finale',
+                    'aucune protection contre la contamination',
+                    'Article arXiv 2103.03874, révisé le 8 novembre 2021',
+                    '5 mars 2021',
+                    '9 novembre 2026',
+                ),
+                'frontiermath': (
+                    'https://epoch.ai/frontiermath',
+                    'Résoudre des problèmes de mathématiques avancés et inédits, dont la réponse se vérifie par calcul',
+                    'seuls des échantillons sont publics',
+                    'Open Problems et FrontierMath Erdős, non décrits ici',
+                    'un tiers ne peut pas reproduire un résultat',
+                    'OpenAI a commandé 300 problèmes et les possède',
+                    'sauf 50 solutions gardées pour une évaluation à part',
+                    'Tiers 1 à 4',
+                    '7 novembre 2024',
+                    '9 novembre 2026',
+                ),
+                'gaia': (
+                    'https://huggingface.co/gaia-benchmark',
+                    'Répondre à des questions concrètes qui demandent du raisonnement, une navigation web',
+                    '466 questions à réponse courte et unique, en trois niveaux de difficulté',
+                    'les réponses de 300 questions restent privées',
+                    'n’évaluer que la réponse finale, pas la démarche',
+                    'en anglais seulement',
+                    '21 novembre 2023',
+                    '9 novembre 2026',
+                ),
+                'tau-bench': (
+                    'https://github.com/sierra-research/tau2-bench',
+                    'Mener un dialogue avec un utilisateur simulé, utiliser des outils de domaine et respecter des règles métier',
+                    'Aussi écrit tau-bench',
+                    'compare l’état final des données à l’état attendu, sur plusieurs essais',
+                    'un utilisateur simulé limité',
+                    'les résultats 2.0 ne se comparent pas au classement 1.x',
+                    'préciser la version (1.x ou 2.0) et le domaine',
+                    '17 juin 2024',
+                    '9 novembre 2026',
+                ),
+                'osworld': (
+                    'https://github.com/xlang-ai/OSWorld',
+                    'Accomplir des tâches dans un vrai système d’exploitation, avec des applications web et de bureau',
+                    '369 tâches tirées d’usages réels',
+                    'variante OSWorld-Verified (2025)',
+                    'un compte Google ou un proxy',
+                    'Le classement vérifié exige une séance avec les mainteneurs',
+                    'origine ou Verified',
+                    '11 avril 2024',
+                    '9 novembre 2026',
+                ),
             }
             for identity, phrases in notices.items():
                 notice, notice_headers, notice_raw = self.request('/evaluations-externes/' + identity)
@@ -648,7 +770,8 @@ class ParcoursComplet(unittest.TestCase):
                 self.assertIn('Vérification éditoriale effectuée', notice.visible)
                 self.assertNotIn('Vérification insuffisante', notice.visible)
                 self.assertIn('Source disponible', notice.visible)
-                self.assertIn('ne prouvent pas la réussite sur votre cas d’usage', notice.visible)
+                self.assertIn(views.CAUTION, notice.visible)
+                self.assertEqual([], menu_courant(notice))
                 for phrase in phrases:
                     self.assertIn(phrase, notice.visible, identity)
                 official = next(n for n in notice.nodes if n['tag'] == 'a' and n['attrs'].get('href') == phrases[0])
@@ -660,8 +783,13 @@ class ParcoursComplet(unittest.TestCase):
             api_page, _, _ = self.request('/evaluations-externes?' + urlencode({'category': 'api', 'q': 'délai'}))
             self.assertEqual(['Artificial Analysis, performances API'], titles(api_page))
             self.assertEqual(['LiveCodeBench', 'SWE-bench'], titles(self.request('/evaluations-externes?category=coding')[0]))
-            self.assertEqual(['MathArena'], titles(self.request('/evaluations-externes?category=math')[0]))
-            self.assertEqual(5, len(titles(self.request('/evaluations-externes?verification=verified')[0])))
+            self.assertEqual(['MathArena', 'MATH', 'FrontierMath'], titles(self.request('/evaluations-externes?category=math')[0]))
+            self.assertEqual(['MMLU-Pro', 'GPQA', 'Humanity\'s Last Exam', 'ARC-AGI'],
+                             titles(self.request('/evaluations-externes?category=knowledge')[0]))
+            self.assertEqual(['GAIA', 'τ-bench', 'OSWorld'], titles(self.request('/evaluations-externes?category=agents')[0]))
+            # MMLU n'a pas de fiche propre : la recherche trouve MMLU-Pro
+            self.assertEqual(['MMLU-Pro'], titles(self.request('/evaluations-externes?q=MMLU')[0]))
+            self.assertEqual(14, len(titles(self.request('/evaluations-externes?verification=verified')[0])))
             self.assertIn('Aucun benchmark public ne correspond à ces filtres', self.request('/evaluations-externes?verification=unverified')[0].visible)
             self.assertIn('Aucun benchmark public ne correspond à cette recherche', self.request('/evaluations-externes?' + urlencode({'q': 'HELM'}))[0].visible)
             self.assertEqual(['MTEB'], titles(self.request('/evaluations-externes?' + urlencode({'q': 'vectorielles'}))[0]))

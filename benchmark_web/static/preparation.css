@@ -855,7 +855,7 @@ table.comparatif td:last-child a, table.comparatif td:last-child .lien { white-s
 .g-liste-ext .g-fiche { min-height: 0; }
 .g-liste-ext .g-fiche-haut { padding-right: 0; }
 .g-liste-ext .g-fiche { grid-template-columns: 220px minmax(0, 1fr) auto 44px; }
-.g-liste-ext .g-fiche-haut .puce { white-space: nowrap; }
+.g-liste-ext .g-fiche-haut .puce { white-space: normal; }
 .tiroir-corps > p + .g-lire, .tiroir-corps > .g-lire + p { margin-top: 14px; }
 /* Hors champ : la réponse d’abord, les benchmarks utiles en lignes */
 .gb-hc { max-width: 900px; display: grid; gap: 26px; }
