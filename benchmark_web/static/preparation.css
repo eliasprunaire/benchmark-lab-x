@@ -238,6 +238,8 @@ legend { padding: 0; margin-bottom: 10px; }
 .une h1 { font-size: clamp(2rem, 7vw, 6.4rem); font-weight: 900; font-stretch: 125%; letter-spacing: -.05em; line-height: .9; }
 .une h1 .ligne { display: block; }
 .fente { display: inline-grid; vertical-align: bottom; height: 1.04em; overflow: hidden; padding: 0 .14em; background: var(--signal); color: var(--sur-signal); border-radius: .12em; transform: rotate(-1.5deg); }
+/* Haut du jaune abaissé : les jambages du mot précédent (les « p » de « rapports ») restent cachés ; les mots ne bougent pas */
+.fente { clip-path: inset(.07em 0 0 round .12em); }
 .fente > * { grid-area: 1 / 1; }
 .fente .mesure { visibility: hidden; height: 1.04em; line-height: 1.04; white-space: nowrap; }
 .fente .defile { width: 0; min-width: 100%; display: grid; animation: defiler 10s cubic-bezier(.7, 0, .2, 1) 1.2s infinite; }
@@ -1407,7 +1409,8 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
 .confirmation-repliee > summary::-webkit-details-marker { display: none; }
 .confirmation-repliee[open] > summary { margin-bottom: 12px; }
 
-/* Accueil : accroche, atouts, actions. Trois colonnes dès 1100 px, deux de 861 à 1099 px, une sous 860 px */
+/* Accueil : accroche, atouts, actions. Dès 1100 px, accroche (70 %) et atouts (30 %) sur une ligne, puis les actions à part ;
+   deux colonnes de 861 à 1099 px, une sous 860 px */
 .une-bas { row-gap: 24px; }
 .une-bas .atouts { margin-top: 0; }
 .accroche { text-wrap: pretty; }
@@ -1416,7 +1419,8 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
   .une-bas .actions { grid-column: 2; grid-row: 1 / span 2; }
 }
 @media (min-width: 1100px) {
-  .une-bas { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto; align-items: start; }
+  .une-bas { grid-template-columns: minmax(0, 7fr) minmax(0, 3fr); align-items: start; }
+  .une-bas .actions { grid-column: 1 / -1; margin-top: 24px; }
 }
 
 /* Mes cas d'usage : la liste partie, le renvoi suit le champ sans second espace de section */

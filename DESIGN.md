@@ -148,7 +148,7 @@ Chaque composant HTML a sa fonction dans `benchmark_web/fragments.py`. Les noms 
 - **Colonnes** (`workbench`) : colonne principale (`.pile-l`) et colonne de synthèse collante (`.cote`).
 - **Harnais** (`harnais`) : valeur « pi.dev » avec lien et info-bulle sur le lancement à vide, sans numéro de version.
 - **Table des cas** (`table-cas`) : cas d'usage, version, effacement prévu, actions ; une carte par ligne sous 900 px, libellé de date en mono. Le vide s'écrit « Aucun cas d’usage. » sur fond `signal-pale`.
-- **Accueil** : accroche, trois atouts et actions en trois colonnes dès 1100 px (accroche 1,2 fr, atouts 1 fr, actions auto, alignées par le haut) ; deux colonnes de 861 à 1099 px ; une seule sous 860 px ; puis banc d'essai de nuit avec trois couloirs de démonstration, cinq stations, règle du verdict.
+- **Accueil** : dès 1100 px, l'accroche (70 %) et les trois atouts (30 %) sur une ligne, alignés par le haut, puis les actions dans un bloc à part, plus aéré ; deux colonnes de 861 à 1099 px ; une seule sous 860 px ; puis banc d'essai de nuit avec trois couloirs de démonstration, cinq stations, règle du verdict.
 - **Suivi en direct** : couloirs de nuit, un disque qui avance par modèle, tampon d'état à droite.
 - **Pied de page** : voir « Mise en page ». Le lien « Code source » répond à l'offre de source de l'AGPL §13 et ne disparaît jamais.
 
