@@ -13,7 +13,6 @@ from benchmark import preparation as p, privacy, provider_access, storage
 from benchmark.acquisition import campaigns as c, execution
 from tests.test_s4_regressions import inputs, response
 from tests.test_s2_review_regressions import Authorized, response_for
-from tests.test_s3_regressions import granted
 from benchmark import privacy_archive as archive
 from tests.test_s6_regressions import build
 
@@ -213,8 +212,6 @@ class PrivacyArchiveTests(unittest.TestCase):
         self.assertEqual(result, archive.withdraw(self.store, token, identity, csrf, now=self.now))
         with self.assertRaises(storage.ConflictError):
             archive.change_contribution(self.store, self.session_token, 'fixture', dict(body, revision=1), now=self.now)
-        archive.refresh_contributions(self.store, 'fixture')
-        self.assertIsNone(self.connection.execute('SELECT payload_json FROM s7_contributions').fetchone()[0])
 
 
     def test_expiration_clears_payload_and_user_deletion_purges_copies(self):
@@ -229,23 +226,24 @@ class PrivacyArchiveTests(unittest.TestCase):
         self.assertEqual('delete_requested', privacy.request_delete(self.store, self.sid, 'fixture')['status'])
         self.assertEqual(0, self.connection.execute('SELECT count(*) FROM s7_contributions').fetchone()[0])
 
-    def test_refresh_never_infers_consent_and_stops_on_changed_example(self):
-        archive.refresh_contributions(self.store, 'fixture')
+    def test_a_job_never_creates_nor_rewrites_a_contribution(self):
+        from benchmark import service
+        # Une tâche après un cas sans contribution n'en crée aucune
+        service._retention_worker(self.data, 'fixture', lambda: None)
         self.assertEqual(0, self.connection.execute('SELECT count(*) FROM s7_contributions').fetchone()[0])
         value, token = archive.change_contribution(self.store, self.session_token, 'fixture', self.consent(), now=self.now)
-        self.connection.execute('UPDATE s7_dossiers SET content_version=2')
-        archive.refresh_contributions(self.store, 'fixture')
-        row = self.connection.execute('SELECT revision,content_version,expires_at,payload_json FROM s7_contributions').fetchone()
-        self.assertEqual((2, 2, value['contribution']['expires_at']), row[:3])
-        archive.refresh_contributions(self.store, 'fixture')
-        self.assertEqual(row, self.connection.execute('SELECT revision,content_version,expires_at,payload_json FROM s7_contributions').fetchone())
-        view = p.view(self.store, self.sid, 'fixture')
-        operation, _ = p.submit(self.store, self.sid, 'fixture', dict(action_id='new-example',
-            revision=view['revision'], kind='correct', message='Préciser la consigne'), 'a' * 40, granted())
-        p.execute(self.data, operation, granted(lambda op, request: response_for(op)))
-        self.assertEqual(view['revision'] + 1, p.view(self.store, self.sid, 'fixture')['revision'])
-        archive.refresh_contributions(self.store, 'fixture')
-        self.assertEqual(row, self.connection.execute('SELECT revision,content_version,expires_at,payload_json FROM s7_contributions').fetchone())
+        columns = 'SELECT status,revision,content_version,expires_at,payload_json FROM s7_contributions'
+        before = self.connection.execute(columns).fetchone()
+        # Une nouvelle version de l'exemple puis une tâche : la copie déjà enregistrée reste celle du consentement
+        self.connection.execute('UPDATE s7_dossiers SET content_version=content_version+1')
+        service._retention_worker(self.data, 'fixture', lambda: None)
+        self.assertEqual(before, self.connection.execute(columns).fetchone())
+        self.assertEqual(1, self.connection.execute('SELECT count(*) FROM s7_contributions').fetchone()[0])
+        # Le retrait reste possible après la tâche
+        csrf = archive.manager_view(self.store, token, now=self.now)['csrf_token']
+        result = archive.withdraw(self.store, token, value['contribution']['id'], csrf, now=self.now)
+        self.assertEqual('withdrawn', result['contributions'][0]['status'])
+        self.assertIsNone(self.connection.execute('SELECT payload_json FROM s7_contributions').fetchone()[0])
 
     def test_owner_can_remove_consent_and_missing_consent_never_creates_a_copy(self):
         body = self.consent(enabled=False)
@@ -355,18 +353,6 @@ class PrivacyArchiveTests(unittest.TestCase):
         with patch.object(p, 'view', side_effect=change_version), self.assertRaises(storage.ConflictError):
             archive.archive_manifest(self.store, self.sid, 'fixture')
         self.assertEqual(0, self.connection.execute('SELECT count(*) FROM s7_archives').fetchone()[0])
-        value, token = archive.change_contribution(self.store, self.session_token, 'fixture', self.consent(), now=self.now)
-        csrf = archive.manager_view(self.store, token, now=self.now)['csrf_token']
-        self.connection.execute('UPDATE s7_dossiers SET content_version=content_version+1')
-
-        def retire(*args, **kwargs):
-            value_for_owner = original(*args, **kwargs)
-            archive.withdraw(self.store, token, value['contribution']['id'], csrf, now=self.now)
-            return value_for_owner
-
-        with patch.object(p, 'view', side_effect=retire), self.assertRaises(p.Denied):
-            archive.refresh_contributions(self.store, 'fixture')
-        self.assertEqual(('withdrawn', None), self.connection.execute('SELECT status,payload_json FROM s7_contributions').fetchone())
 
 
     def test_expiry_during_projection_refuses_a_late_payload_update(self):
@@ -525,31 +511,6 @@ class PrivacyArchiveTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             self.connection.execute('INSERT INTO s7_contributions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', active)
         archive.verify(self.store, self.connection)
-
-    def test_refresh_started_before_withdrawal_cannot_write_into_a_new_consent(self):
-        first, token = archive.change_contribution(self.store, self.session_token, 'fixture', self.consent(), now=self.now)
-        old = first['contribution']
-        csrf = archive.manager_view(self.store, token, now=self.now)['csrf_token']
-        self.connection.execute('UPDATE s7_dossiers SET content_version=2')
-        original = p.view
-
-        def replace_consent(*args, **kwargs):
-            value = original(*args, **kwargs)
-            with patch.object(p, 'view', original):
-                archive.withdraw(self.store, token, old['id'], csrf, now=self.now)
-                archive.change_contribution(self.store, self.session_token, 'fixture', self.consent(revision=2),
-                                            manager_token=token, now=self.now)
-            value['package']['instruction'] = 'STALE_REFRESH'
-            return value
-
-        with patch.object(p, 'view', side_effect=replace_consent), self.assertRaises(storage.ConflictError):
-            archive.refresh_contributions(self.store, 'fixture')
-        rows = self.connection.execute('SELECT contribution_id,revision,status,payload_json FROM s7_contributions ORDER BY revision').fetchall()
-        self.assertEqual((old['id'], 2, 'withdrawn', None), rows[0])
-        self.assertEqual((3, 'active'), rows[1][1:3])
-        self.assertNotIn('STALE_REFRESH', rows[1][3])
-        archive.verify(self.store, self.connection)
-
 
     def test_both_withdrawals_roll_back_payload_and_marker_together_and_allow_journal_replay(self):
         import benchmark.privacy as privacy

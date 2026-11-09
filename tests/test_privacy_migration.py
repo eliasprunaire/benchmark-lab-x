@@ -201,7 +201,6 @@ class PrivacyMigrationTests(unittest.TestCase):
             self.assertEqual({event['event_id'] for event in events},
                 {row[0] for row in restored._connection.execute('SELECT event_id FROM s7_revocations')})
             privacy.replay_revocations(restored)
-            archive.refresh_contributions(restored, 'fixture')
             self.assertEqual(expected, restored._connection.execute(
                 'SELECT status,revision,payload_json FROM s7_contributions WHERE contribution_id=?', (identity,)).fetchone())
             self.assert_quarantined(target, restored)

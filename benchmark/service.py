@@ -834,20 +834,12 @@ def _retry(kind, data, dossier_id, session_id, operation_id, retry):
 
 
 def _retention_worker(data, dossier_id, function, *args):
-    from . import privacy, privacy_archive
     from .runtime import maintenance_gate, worker_lock
     # Porte tenue jusqu'à la fin : une purge attend la tâche, la tâche attend une purge commencée
     # Attente libre : la purge ne garde la porte que le temps de vider et purger, et un flock meurt avec son processus
     with closing(Store(data)) as store, maintenance_gate(store, wait=None), \
             worker_lock(store, shared=True):
-        try:
-            function(*args)
-        finally:
-            if dossier_id and privacy.available(store._connection):
-                try:
-                    privacy_archive.refresh_contributions(store, dossier_id)
-                except Exception as error:
-                    logging.getLogger(__name__).warning('CONTRIBUTION_UPDATE_PENDING error=%s', type(error).__name__)
+        function(*args)
 
 
 def serve_executor(data, socket_path, source, *, version=None, transport=None, qualification_transport=None,

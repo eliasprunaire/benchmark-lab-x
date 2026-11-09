@@ -225,14 +225,13 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertTrue(all(row['answer'] == '  fictional raw output\n' for row in models))
         self.assertTrue(all(row['verdict'] == 'NE SATISFAIT PAS' for row in models))
         self.assertEqual([dict(amount='0.002', currency='USD')] * 2, [row['cost'] for row in models])
-        # La copie du propriétaire date chaque benchmark ; la contribution consentie n'en reçoit pas la date
+        # La copie du propriétaire date chaque benchmark ; la contribution déjà enregistrée n'est plus réécrite par la tâche
         frozen = record['campaigns'][0].pop('frozen_at')
         self.assertEqual(timezone.utc, datetime.fromisoformat(frozen.replace('Z', '+00:00')).tzinfo)
-        self.assertNotIn('frozen_at', self.corpus('erase')['campaigns'][0])
-        self.assertEqual(record['campaigns'], self.corpus('erase')['campaigns'])
+        self.assertEqual([], self.corpus('erase')['campaigns'])
         archive.verify(self.store, self.store._connection)
         metadata = archive.contribution_view(self.store, self.sid, 'erase')['contribution']
-        self.assertGreater(metadata['revision'], consent['contribution']['revision'])
+        self.assertEqual(consent['contribution']['revision'], metadata['revision'])
         self.assertEqual(consent['contribution']['expires_at'], metadata['expires_at'])
         self.assertNotIn(REFERENCE, storage._strict_json(record))
         self.assertNotIn(KEY, storage._strict_json(record))
@@ -307,16 +306,14 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertEqual(2, len(models))
         self.assertTrue(all(row['verdict'] is None for row in models))
         self.assertTrue(all(row['answer'] == '  fictional raw output\n' for row in models))
-        self.assertEqual([{k: v for k, v in c.items() if k != 'frozen_at'} for c in pending['campaigns']], self.corpus('pending')['campaigns'])
+        self.assertEqual([], self.corpus('pending')['campaigns'])
         self.stage = 'judgment'
         ids = auto.reserve_campaign(self.store, self.sid, 'pending', cid, self.judge)
         service._retention_worker(self.data, 'pending', auto.execute_campaign, self.data, ids, self.judge)
         self.assertEqual(2, len(restitution.comparison(self.store, self.sid, 'pending', cid)['rows']))
         completed = self.record('pending', archive.archive_manifest(self.store, self.sid, 'pending'))
-        for destination, value in (('archive', completed), ('corpus', self.corpus('pending'))):
-            with self.subTest(destination=destination):
-                self.assertEqual(['NE SATISFAIT PAS'] * 2,
-                                 [row['verdict'] for row in value['campaigns'][0]['models']])
+        self.assertEqual(['NE SATISFAIT PAS'] * 2, [row['verdict'] for row in completed['campaigns'][0]['models']])
+        self.assertEqual([], self.corpus('pending')['campaigns'])
         self.assertEqual(pending, self.record('pending', manifest))
         metadata = archive.contribution_view(self.store, self.sid, 'pending')['contribution']
         self.assertEqual(consent['contribution']['expires_at'], metadata['expires_at'])
@@ -357,7 +354,7 @@ class PrivacyCampaignFlow(unittest.TestCase):
                     body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest())
                 value['receipt']['result'].update(output=None, incident='PROVIDER_RESPONSE_INCOMPLETE')
             return value
-        # Comme en production : la contribution se rafraîchit à la fin du travail d'acquisition
+        # Comme en production : le travail d'acquisition passe par le même lanceur, qui ne réécrit plus la contribution
         service._retention_worker(self.data, 'recovery', lambda launched: execution.execute_launch(
             self.data, launched, candidate, access_secret=SECRET, access_transport=self.access), attempts)
         self.assertEqual([('openai/gpt-5.6-sol', 4096), ('deepseek/deepseek-v4.1-flash', 4096),
@@ -379,7 +376,7 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertEqual(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], [row['name'] for row in models])
         self.assertTrue(all(row['verdict'] is None and row['answer'] == '  fictional raw output\n' for row in models))
         self.assertIn('"max_tokens":8192', models[1]['evidence'][0]['text'])
-        self.assertEqual([{k: v for k, v in c.items() if k != 'frozen_at'} for c in pending['campaigns']], self.corpus('recovery')['campaigns'])
+        self.assertEqual([], self.corpus('recovery')['campaigns'])
 
     def test_dossier_view_checks_the_database_once_then_only_after_a_change(self):
         self.prepare('vue')

@@ -2359,6 +2359,8 @@ test('public and private pages retain legal information and exact release identi
       'n’arrête pas l’historique local', 'restent dans ce navigateur', 'N’est plus déposé',
       'Le second n’est plus déposé : il reste lu pour les contributions antérieures']) assert.ok(privacy.includes(term), term);
     assert.equal(/si vous activez/.test(privacy), false);
+    // Une contribution déjà enregistrée n'est plus mise à jour par les tâches : le retrait n'a plus de mise à jour à arrêter
+    assert.equal(/ses mises à jour/.test(privacy), false, 'mise à jour de contribution annoncée');
     const ligneHistorique = await page.getByRole('row').filter({hasText: 'Historique local dans votre navigateur'}).textContent();
     assert.ok(ligneHistorique.includes('Voir §6 : enregistrement dans votre navigateur, activé par défaut, que vous pouvez arrêter ou effacer'));
     assert.equal(ligneHistorique.includes('6.1.a'), false);
