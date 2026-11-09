@@ -130,7 +130,7 @@ Les révisions retirées appartiennent à Git. Elles ne définissent ni le péri
 
 L’invite d’accueil est :
 
-> Décrivez une tâche de votre travail, sans donnée personnelle ni information confidentielle. Nous préparerons avec vous un exemple fictif pour comparer les modèles sur des critères vérifiables et leur coût observé. Les résultats du test vous aideront à faire votre choix.
+> Décrivez un cas d’usage de votre travail, sans donnée personnelle ni information confidentielle. Nous préparerons avec vous un exemple fictif pour comparer les modèles sur des critères vérifiables et leur coût observé. Les résultats du test vous aideront à faire votre choix.
 
 Le parcours suit : demande → clarification → reformulation → construction du dossier → aperçu et validation du besoin → qualification de la référence → présentation des conditions de campagne → lancement autorisé → acquisition et évaluation automatiques → résultats privés et comparaison. Le lancement couvre l’évaluation automatique annoncée, sans validation humaine supplémentaire. Les appels d’interview, de génération, de correction ou de jugement ont leur propre autorité et leur enveloppe avant consommation, selon les [règles de coût](RULES.md#8-coût-et-bénéfices).
 
@@ -191,7 +191,7 @@ Cette illustration de conception n’est ni un contrat gelé ni une campagne. Le
 
 ### Consulter des évaluations externes
 
-Le répertoire d’évaluations externes aide à trouver des sources officielles pertinentes pour un travail recherché. Il reste distinct du catalogue des tâches Evaly et des comparaisons privées. Une évaluation externe ne prouve pas la réussite sur le besoin particulier du visiteur.
+Le répertoire d’évaluations externes aide à trouver des sources officielles pertinentes pour un travail recherché. Il reste distinct du catalogue des tâches Evaly et des comparaisons privées. Une évaluation externe ne prouve pas la réussite sur le besoin particulier du visiteur. À l’écran, ce répertoire s’affiche sous le libellé « Benchmarks publics ».
 
 Le visiteur accède au même répertoire depuis l’accueil, un lien direct ou une préparation suspendue. Il consulte les notices, recherche des termes et applique des filtres explicites, sans session, clé, JavaScript ni création de dossier. Aucun filtre de préférence n’est précoché. Aucun score global ni classement préférentiel des sources n’est produit. La recherche simple ne dépend ni de Jev ni d’un appel modèle.
 

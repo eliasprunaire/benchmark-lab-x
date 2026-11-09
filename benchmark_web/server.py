@@ -599,7 +599,7 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
                         body = dict(body)
                         body.pop('website', None)
                         body['source_sha256'] = _source_fingerprint(self.headers, self.client_address, source_salt, trusted_proxies)
-                # Après une suppression sans JavaScript, la page Benchmark l'annonce ; l'exécuteur ne voit pas ce repère
+                # Après une suppression sans JavaScript, la page Mes cas d'usage l'annonce ; l'exécuteur ne voit pas ce repère
                 deleted = self.command in ('GET', 'HEAD') and self.path == '/preparation?supprime=1'
                 relay_path = '/preparation' if deleted else self.path
                 result = preparation_request(socket_path, 'GET' if self.command == 'HEAD' else self.command,

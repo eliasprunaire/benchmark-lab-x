@@ -1528,6 +1528,11 @@ test('access and launch screens preserve available actions, estimates and refusa
       ['invalid', 'Clé à remplacer'], ['unavailable', 'Enregistrement de clé indisponible']]) {
       await page.goto(origin + '/render/access-' + state);
       assert.ok((await page.textContent('main')).includes(label), state);
+      // Une page « Ma clé OpenRouter », un verbe par action
+      assert.equal(await page.title(), 'Ma clé OpenRouter · Evaly', state);
+      assert.equal(/Gérer ma clé|Ajouter ma clé OpenRouter/.test(await page.textContent('body')), false, state);
+      if (state !== 'unavailable')
+        assert.equal(await page.locator('aside.cote h2').textContent(), state === 'disconnected' ? 'Ajouter ma clé' : 'Remplacer ma clé', state);
       assert.equal(await page.locator('form[action="/preparation/access/key"]').count(), state === 'unavailable' ? 0 : 1);
       if (state === 'disconnected') assert.equal(await page.locator('input[name="return"]').inputValue(), '/preparation/access');
       if (state === 'connected') {
@@ -1695,7 +1700,12 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
         assert.equal(await page.locator('input[name="confirm"]').inputValue(), 'yes');
         assert.equal(await page.locator('input[name="csrf_token"]').inputValue(), 'csrf');
       }
-      if (status === 'BLOCKED') assert.ok(text.includes('Budget insuffisant'));
+      if (status === 'BLOCKED') {
+        assert.ok(text.includes('Budget insuffisant'));
+        // Le lien vers la clé porte le nom de sa page
+        assert.equal(await page.locator('main a[href="/preparation/access"]', {hasText: 'Ma clé OpenRouter'}).count(), 1);
+        assert.equal(text.includes('Gérer ma clé'), false);
+      }
     }
     for (const [state, judgment, active] of [['EMISSION_POSSIBLE', 'None', true], ['INTENT_RECORDED', 'None', true],
       ['EMISSION_POSSIBLE', 'WAITING', true], ['RECEIVED', 'None', false], ['RECEIVED', 'BLOCKED', false]]) {
@@ -1779,15 +1789,15 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.equal(await scriptsEtrangers(page), 0);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       // Le lien « Décrire mon cas d’usage » n'existe que dans les états vides
-      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).count(), 0);
+      assert.equal(await page.locator('main').getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).count(), 0);
       if (javaScriptEnabled) {
         // Avec JavaScript : la recherche filtre dès 3 caractères, sans rechargement ; un filtre cliqué garde la position
         assert.equal(await page.locator('script').count(), 1);
         await page.evaluate(() => {window.sansRechargement = true;});
-        await page.getByLabel('Rechercher un benchmark').fill('co');
+        await page.getByLabel('Rechercher un benchmark public', {exact: true}).fill('co');
         await page.waitForTimeout(400);
         assert.equal(new URL(page.url()).searchParams.get('q'), null, 'filtrage sous 3 caractères');
-        await page.getByLabel('Rechercher un benchmark').fill('corriger');
+        await page.getByLabel('Rechercher un benchmark public', {exact: true}).fill('corriger');
         await page.waitForFunction(() => new URL(location.href).searchParams.get('q') === 'corriger');
         // Le contenu affiché est celui que le serveur rend pour cette recherche
         const attendu = (rendered.reference_search[JSON.stringify(['corriger', '', ''])].split('<main')[1].match(/<h3/g) || []).length;
@@ -1807,7 +1817,7 @@ test('external references remain readable, searchable and safe without JavaScrip
         assert.equal(await page.evaluate(() => window.sansRechargement), true, 'page rechargée');
       } else {
         // Sans JavaScript : recherche native, puis filtres-liens qui gardent le texte cherché dans l'adresse
-        await page.getByLabel('Rechercher un benchmark').fill('corriger');
+        await page.getByLabel('Rechercher un benchmark public', {exact: true}).fill('corriger');
         await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
         await page.getByRole('link', {name: 'Programmation', exact: true}).click();
         assert.equal(new URL(page.url()).searchParams.get('q'), 'corriger');
@@ -1823,10 +1833,10 @@ test('external references remain readable, searchable and safe without JavaScrip
       await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).click();
       assert.equal(await page.locator('main h3').count(), 3);
       assert.equal(await page.getByRole('link', {name: 'Effacer la recherche et les filtres'}).count(), 0);
-      await page.getByLabel('Rechercher un benchmark').fill('introuvable');
+      await page.getByLabel('Rechercher un benchmark public', {exact: true}).fill('introuvable');
       await Promise.all([page.waitForNavigation(), page.keyboard.press('Enter')]);
-      assert.match(await page.textContent('main'), /Aucun benchmark ne correspond/);
-      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
+      assert.match(await page.textContent('main'), /Aucun benchmark public ne correspond à cette recherche/);
+      assert.equal(await page.locator('main').getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
       await page.goto(origin + '/evaluations-externes?q=' + encodeURIComponent('<script>alert(2)</script>'));
       assert.equal(await page.locator('#q').inputValue(), '<script>alert(2)</script>');
       assert.equal(await scriptsEtrangers(page, 'main script'), 0);
@@ -2040,7 +2050,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       const withoutResult = await page.textContent('main');
       assert.match(withoutResult, /Aucune épreuve ne correspond à cette recherche/);
       // Seul un catalogue vide propose de décrire un besoin
-      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).count(), 0);
+      assert.equal(await page.locator('main').getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).count(), 0);
       mkdirSync('reports/464', {recursive: true});
       await page.screenshot({path: 'reports/464/recherche-mobile-'
         + (javaScriptEnabled ? 'js' : 'nojs') + '.png', fullPage: true});
@@ -2212,7 +2222,7 @@ test('an editorial trial stays readable without JavaScript, by keyboard at 390 p
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/editorial-empty');
       assert.match(await page.textContent('main'), /Aucune épreuve publiée/);
-      assert.equal(await page.getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
+      assert.equal(await page.locator('main').getByRole('link', {name: 'Décrire mon cas d’usage', exact: true}).getAttribute('href'), '/preparation');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/editorial-withdrawn');
       const withdrawn = await page.textContent('main');
@@ -2365,6 +2375,9 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
     assert.ok(ordering.indexOf('Ajoutez votre clé OpenRouter') < ordering.indexOf('Décrivez votre cas d’usage'));
     assert.equal(await page.locator('#openrouter-key').count(), 0);
     assert.equal(await page.locator('main a[href="/preparation/access"]').count() >= 2, true);
+    // Un verbe : la page de destination porte déjà « OpenRouter »
+    assert.equal(await page.locator('main a[href="/preparation/access"]', {hasText: /^\s*Ajouter ma clé\s*$/}).count(), 1);
+    assert.equal(ordering.includes('Ajouter ma clé OpenRouter'), false);
     assert.deepEqual(await page.evaluate(() => {
       const nodes = [...document.querySelectorAll('[id]')], ids = nodes.map(n => n.id);
       return [ids.length === new Set(ids).size,
@@ -2609,6 +2622,9 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
       await page.goto(origin + '/render/consent-' + name);
       const box = page.locator('[data-privacy-post="contribution"] input[type="checkbox"]');
       assert.equal(await box.count(), Number(name !== 'prior'));
+      // Accès fermé seulement si la session a expiré : le lien vers les copies porte le nom de sa page
+      assert.deepEqual((await page.locator('.etat a.lien[href="/preparation/data"]').allTextContents()).map(t => t.trim()),
+        name === 'expired' ? ['Mes données'] : [], name);
       if (name === 'prior') continue;
       assert.equal(await box.isChecked(), false);
       assert.equal(await box.isDisabled(), name === 'expired');
@@ -2666,17 +2682,19 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
       await page.goto(origin + '/render/data');
       const main = await page.locator('main').innerText();
       for (const phrase of ['Conservation automatique', 'Un cas d’usage est effacé après 7 jours sans activité', 'Votre clé OpenRouter est effacée après 30 jours sans activité',
-        'Historique local de vos cas', 'Mes cas en cours et ma clé', 'Mes contributions', 'Confidentialité']) assert.ok(main.includes(phrase), `${width} ${phrase}`);
+        'Historique local de vos cas', 'Mes cas d’usage', 'Mes contributions', 'Confidentialité']) assert.ok(main.includes(phrase), `${width} ${phrase}`);
       assert.ok(main.indexOf('Historique local de vos cas') < main.indexOf('Conservation automatique'), `${width} copies avant la conservation`);
-      assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes cas d’usage', `${width} entrée de menu des copies`);
+      assert.equal(await page.title(), 'Mes données · Evaly', `${width} titre de Mes données`);
+      assert.ok(main.includes('la page Mes cas d’usage affiche « Bientôt effacé »'), `${width} nom de la page des cas`);
+      assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes données', `${width} entrée de menu des copies`);
       assert.equal(await overflow(), 0, `${width} débordement de Mes données`);
       await page.goto(origin + '/render/contribution-none');
-      assert.equal(await page.locator('main a[href="/preparation"]', {hasText: 'Revenir à mes cas en cours'}).count(), 1, `${width} retour aux cas en cours`);
+      assert.equal(await page.locator('main a[href="/preparation"]', {hasText: 'Revenir à mes cas d’usage'}).count(), 1, `${width} retour aux cas d’usage`);
       await page.goto(origin + '/render/contribution-active-2099');
       const contributions = await page.locator('main').textContent();
       assert.ok(contributions.includes('Contribution du 18 septembre 2026'), `${width} contribution`);
       assert.ok(contributions.includes('arrête seulement la contribution concernée'), `${width} explication du retrait`);
-      assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes cas d’usage', `${width} entrée de menu des contributions`);
+      assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes données', `${width} entrée de menu des contributions`);
       assert.equal(await overflow(), 0, `${width} débordement des contributions`);
     }
   } finally {await context.close();}
@@ -2691,6 +2709,16 @@ test('public and private pages retain legal information and exact release identi
       for (const href of ['/mentions-legales', '/cgu', '/confidentialite'])
         assert.equal(await page.locator(`footer a[href="${href}"]`).count() > 0, true, name + href);
       assert.equal(await page.locator('a[href="/preparation/privacy"]').count(), 0);
+      // Même menu, même pied et même tagline sur chaque page ; plus aucun lien vers les « cas en cours »
+      // La page publique d'une publication garde son propre pied légal, hors de cette règle
+      if (name !== 'publication-footer') {
+        assert.deepEqual(await page.locator('.nav li').allTextContents(), ['Accueil', 'Mes cas d’usage', 'Mes données', 'Épreuves'], name);
+        assert.deepEqual(await page.locator('nav[aria-label="Parcours"] a').allTextContents(),
+          ['Décrire mon cas d’usage', 'Mes données', 'Épreuves', 'Benchmarks publics'], name);
+        assert.ok((await page.locator('footer .intro').first().textContent()).startsWith('Evaly, le benchmark personnalisé : '), name);
+      }
+      assert.equal(await page.locator('a', {hasText: 'cas en cours'}).count(), 0, name);
+      assert.equal((await page.textContent('body')).includes('page Benchmark'), false, name);
       if (LEGAL.includes(name)) {
         assert.equal(await page.locator('script, [data-privacy-activity], [aria-current], blockquote').count(), 0);
         assert.equal(await page.locator('h1').count(), 1);
@@ -2708,9 +2736,9 @@ test('public and private pages retain legal information and exact release identi
       'n’arrête pas l’historique local', 'restent dans ce navigateur']) assert.ok(privacy.includes(term), term);
     assert.ok((await page.getByRole('row').filter({hasText: 'Historique local dans votre navigateur'}).textContent()).includes('Votre consentement (art. 6.1.a)'));
     assert.equal(/N’ÉCRIRE QU’APRÈS|N'ÉCRIRE QU'APRÈS/.test(privacy), false);
-    // La page des copies s'appelle Mes cas d'usage depuis v0.39.4 : aucun lien ne nomme encore l'ancienne entrée
-    assert.ok(privacy.includes('page Mes cas d’usage'));
-    assert.equal(/Mes\s+données/.test(privacy), false);
+    // La page des copies s'appelle Mes données (PRD §10) : le texte légal ne change pas, seuls ses liens suivent le nouveau nom
+    assert.ok(privacy.includes('page Mes données'));
+    assert.equal(/Mes\s+cas d’usage/.test(privacy), false);
     assert.equal(await page.locator('a[href="/preparation/data"]').count() > 0, true);
     await page.goto(origin + '/render/cgu');
     assert.ok((await page.textContent('main')).includes('Dernière mise à jour : 29 septembre 2026'));
@@ -2728,12 +2756,14 @@ test('public and private pages retain legal information and exact release identi
       // Accueil : le lien de retour aux cas se place sous le bouton principal
       const [cta, retour] = await Promise.all(['.une-bas .actions .btn', '.une-bas .actions .lien'].map(s => page.locator(s).boundingBox()));
       assert.ok(retour.y >= cta.y + cta.height, 'actions de l’accueil l’une sous l’autre');
+      assert.equal((await page.locator('.une-bas .actions .lien').textContent()).trim(), 'Mes cas d’usage');
       assert.equal(await page.locator('a[href="/index.html"]').count(), 0);
       assert.ok(text.includes('Un seul manquement suffit'));
       assert.equal(text.includes('Comparaisons publiées'), false);
     }
     await page.goto(origin + '/render/listing');
-    assert.equal(await page.locator('.nav a[aria-current="page"]').textContent(), 'Benchmark');
+    assert.equal(await page.locator('.nav a[aria-current="page"]').textContent(), 'Mes cas d’usage');
+    assert.equal(await page.title(), 'Mes cas d’usage · Evaly');
     assert.equal(await page.locator('ul.ge-liste a[href="/preparation/dossiers/d1"]').count(), 1);
     for (const name of ['waiting', 'honeypot']) {
       await page.goto(origin + '/render/' + name);

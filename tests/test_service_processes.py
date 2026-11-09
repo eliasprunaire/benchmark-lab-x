@@ -345,7 +345,7 @@ class ServiceProcessesTests(unittest.TestCase):
 
     def test_refus_inconnu_reste_generique(self):
         generic = ('Vous ne pouvez pas faire cette action depuis ce navigateur. Rouvrez votre cas d’usage '
-                   'depuis la page Benchmark.')
+                   'depuis la page Mes cas d’usage.')
         with patch('socket.socket.connect', side_effect=AssertionError('No network')):
             responses = [denied_response(preparation.Denied(reason))
                          for reason in ('Motif', 'FUTUR')]
@@ -357,6 +357,9 @@ class ServiceProcessesTests(unittest.TestCase):
         self.assertIn('Réessayez dans quelques minutes.', unavailable)
         restore = denied_response(preparation.Denied('RESTORE_PENDING'))['value']['error']
         self.assertEqual('Service momentanément indisponible, réessayez plus tard.', restore)
+        # Les copies locales se lisent dans Mes données, pas dans la page des cas
+        expired = denied_response(preparation.Denied('SESSION_EXPIRED'))['value']['error']
+        self.assertTrue(expired.endswith('restent consultables dans Mes données.'))
         for error in (unavailable, restore, *[r['value']['error'] for r in responses]):
             self.assertNotIn('équipe', error)
 
