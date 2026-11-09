@@ -913,7 +913,7 @@ test('pages expose no decorative SVG, keep status roles for live zones and hide 
         if (name === 'home') {
           assert.equal(await page.locator('.accroche').evaluate(lead => getComputedStyle(lead).borderLeftStyle), 'none',
             `${where} l’accroche est un paragraphe, sans filet latéral (DESIGN.md)`);
-          // Accroche, atouts, actions : enfants directs, empilés sous 860 px, deux colonnes de 861 à 1099 px, trois dès 1100 px
+          // Accroche, atouts, actions : enfants directs, empilés sous 860 px, deux colonnes de 861 à 1099 px, dès 1100 px accroche et atouts sur une ligne puis actions dessous
           const blocs = () => page.evaluate(() => ['.une-bas .accroche', '.une-bas > .atouts', '.une-bas > .actions'].map(selector => {
             const box = document.querySelector(selector).getBoundingClientRect();
             return {gauche: box.left, droite: box.right, haut: box.top, bas: box.bottom};
