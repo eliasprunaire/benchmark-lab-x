@@ -1856,6 +1856,23 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.ok(categories.includes('Agents'));
       assert.equal(categories.some(name => /helm/i.test(name)), false);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // La catégorie la plus longue passe à la ligne : sa puce ne chevauche ni le titre, ni la description, ni la flèche
+      for (const width of [390, 768, 861, 1024, 1280, 1440]) {
+        await page.setViewportSize({width, height: 844});
+        const mesures = await page.evaluate(names => [...document.querySelectorAll('main .g-liste-ext .g-fiche')]
+          .filter(card => names.includes(card.querySelector('h3').textContent.trim()))
+          .map(card => {
+            const r = el => el.getBoundingClientRect();
+            const croise = (a, b) => Math.min(a.right, b.right) > Math.max(a.left, b.left) && Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
+            const puce = r(card.querySelector('.g-fiche-haut .puce'));
+            return {nom: card.querySelector('h3').textContent.trim(),
+                    chevauche: ['h3', '.g-mesure', '.g-ouvrir'].filter(s => croise(puce, r(card.querySelector(s))))};
+          }), ['MMLU-Pro', 'GPQA', 'Humanity\'s Last Exam', 'ARC-AGI']);
+        assert.equal(mesures.length, 4, `${width} cartes de la catégorie`);
+        assert.deepEqual(mesures.filter(m => m.chevauche.length), [], `${width} puce de catégorie`);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0, `${width} débordement de page`);
+      }
+      await page.setViewportSize({width: 390, height: 844});
       await page.goto(origin + '/render/approved-retrieval');
       assert.equal(await page.locator('main h3').count(), 1);
       assert.match(await page.textContent('main'), /MTEB/);
