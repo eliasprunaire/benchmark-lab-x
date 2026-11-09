@@ -278,11 +278,15 @@ def render_access(value, csrf):
     retour = '/preparation/access'
     solde = ''
     if status == 'connected':
-        carte = etat('ok', 'Connectée', 'Clé enregistrée', 'Le solde vient d’OpenRouter.')
+        carte = etat('ok', 'Connectée', 'Clé enregistrée')
         solde = access_summary(value, page_cle=True)
+    elif status == 'invalid' and value.get('reason') not in ACCESS_REASONS:
+        # Ancien motif dont la revérification n'a pas abouti : OpenRouter n'a rien refusé
+        carte = etat('att', 'À revérifier', 'Vérification à refaire',
+                     'OpenRouter n’a pas répondu. Rechargez cette page pour relancer la vérification.')
+        solde = releves([('Solde restant', None, '', 'solde non lu')])
     elif status == 'invalid':
-        carte = etat('ko', 'Clé refusée', 'Clé à remplacer', 'Cette clé ne peut pas être utilisée : ' + ACCESS_REASONS.get(
-            value.get('reason'), value.get('reason') or 'raison inconnue') + '.')
+        carte = etat('ko', 'Clé refusée', 'Clé à remplacer', 'Cette clé ne peut pas être utilisée : ' + ACCESS_REASONS[value['reason']] + '.')
         solde = releves([('Solde restant', None, '', 'clé refusée, solde non lu')])
     elif status == 'disconnected':
         carte = etat('inc', 'Aucune clé', 'Aucune clé enregistrée', 'Ajoutez une clé réservée à Evaly. Elle paie les appels aux modèles : '
@@ -292,15 +296,15 @@ def render_access(value, csrf):
                      'Réessayez plus tard ; aucun modèle n’a été appelé.', lien(retour, 'Actualiser', 'actualiser'))
     fin = (tiroir('Où va ma clé ?', '<p>Votre clé est chiffrée et conservée sur notre serveur. Un cookie garde votre accès dans ce navigateur '
                   'd’une visite à l’autre. Il est supprimé au plus tard après 30 jours sans activité.</p><p>Vous pouvez retirer la clé ici à tout moment. '
-                  'Enregistrer ou retirer la clé ne lance aucun modèle.</p>')
-           + '<p class="petit">Tous les appels passent par votre clé OpenRouter. Son plafond est la seule limite de dépense.</p>'
+                  'Enregistrer ou retirer la clé ne lance aucun modèle. Retirer la clé ici ne la révoque pas chez OpenRouter.</p>')
+           + '<p class="petit">Tous les appels passent par votre clé OpenRouter. Evaly n’ajoute aucune limite de dépense.</p>'
            + '<p>' + lien('/preparation', 'Revenir à mes cas d’usage', 'retour') + '</p>')
     if status == 'unavailable':
         return '<div class="colonnes"><div class="ge-pile">' + carte + fin + '</div></div>'
     retrait = retrait_cle(csrf, retour, page_cle=True) if status in ('connected', 'invalid') else ''
     decision = ('<aside class="cote" aria-label="Clé">' + form(csrf, '/preparation/access/key', {'return': retour},
         '<span class="etiq">Clé OpenRouter</span><h2>' + ('Remplacer ma clé' if status in ('connected', 'invalid') else 'Ajouter ma clé') + '</h2>'
-        '<p>Créez sur OpenRouter une clé réservée à Evaly, avec un plafond non renouvelable de 50 USD maximum. Ce plafond est la seule limite de dépense.</p>'
+        '<p>Créez sur OpenRouter une clé réservée à Evaly. Vous choisissez chez OpenRouter son plafond de dépense, ou son absence.</p>'
         + champ_cle('Clé API OpenRouter', 'La saisie est masquée.', stockage=False)
         + '<button class="btn btn-xl" type="submit">Enregistrer la clé' + ic('fleche') + '</button>', classe='decision') + '</aside>')
     # Clé absente ou refusée : le formulaire est l'action principale et suit l'état ; clé connectée : il suit la clé et ses relevés

@@ -1616,9 +1616,11 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
             if snapshot['admissions'] or snapshot['attempts']:
                 raise ConflictError('Lancement déjà enregistré')
             cap = access['limit_usd']
+            if cap is None and not store._provider_managed_budget(connection, campaign_id):
+                raise IntegrityError('Enveloppe demandeur attendue')
             try:
                 connection.execute('INSERT INTO budgets VALUES (?,?,?)',
-                                   (campaign_id, cap, 'USD'))
+                                   (campaign_id, storage.PROVIDER_MANAGED if cap is None else cap, 'USD'))
             except sqlite3.IntegrityError as error:
                 raise ConflictError('Enveloppe demandeur déjà créée') from error
             reserve_amounts = {

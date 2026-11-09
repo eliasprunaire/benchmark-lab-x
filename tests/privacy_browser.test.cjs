@@ -1537,7 +1537,7 @@ test('access and launch screens preserve available actions, estimates and refusa
       if (state === 'disconnected') assert.equal(await page.locator('input[name="return"]').inputValue(), '/preparation/access');
       if (state === 'connected') {
         const text = await page.textContent('main');
-        assert.ok(text.includes('Solde restant') && text.includes('12,50') && text.includes('selon OpenRouter'));
+        assert.ok(text.includes('Solde restant') && text.includes('12,50') && !text.includes('selon OpenRouter'));
         assert.ok(text.includes('Plafond de la clé') && text.includes('25'));
         assert.ok(text.includes('Retirer la clé de ce navigateur'));
         // Retirer la clé se confirme, même sans JavaScript : le bouton d'envoi reste replié derrière la question
@@ -1626,9 +1626,9 @@ test('access and launch screens preserve available actions, estimates and refusa
       await page.setViewportSize({width, height: 900});
       await page.goto(origin + '/render/access-connected');
       let layout = await zones();
-      assert.match((await page.locator('.releves').innerText()).replace(/\s+/g, ' '), /SOLDE RESTANT 12,50\s*USD selon OpenRouter PLAFOND DE LA CLÉ 25\s*USD/i, `${width} relevés du solde`);
+      assert.match((await page.locator('.releves').innerText()).replace(/\s+/g, ' '), /SOLDE RESTANT 12,50\s*USD PLAFOND DE LA CLÉ 25\s*USD/i, `${width} relevés du solde`);
       assert.equal(await page.locator('.pile-l > .etat').count(), 1, `${width} état avant le formulaire`);
-      assert.ok(layout.side.includes('Ce plafond est la seule limite de dépense.'), `${width} colonne de la clé`);
+      assert.ok(layout.side.includes('Vous choisissez chez OpenRouter son plafond de dépense, ou son absence.'), `${width} colonne de la clé`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} colonne de la clé`);
       assert.equal(layout.overflow, 0, `${width} débordement de la clé`);
       await page.goto(origin + '/render/configurations-selected');

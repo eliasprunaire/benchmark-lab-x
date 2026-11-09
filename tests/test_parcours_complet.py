@@ -7698,13 +7698,16 @@ class ParcoursComplet(unittest.TestCase):
         with patch.object(self.access, 'verify_result', (401, b'{}')):
             refused, _, raw = self.request(form['action'], form['fields'] | {'key': KEY}, status=403)
         self.examine(refused, '/preparation/access/key', 'clé refusée', 'Revenir à mes cas d’usage')
-        self.assertIn('OpenRouter n’a pas pu vérifier cette clé. Votre clé précédente reste en place.', refused.visible)
+        self.assertIn('OpenRouter n’a pas pu vérifier cette clé. Aucune clé n’a été modifiée.', refused.visible)
         self.assertNotIn(KEY.encode(), raw)
         _, headers, raw = self.request(form['action'], form['fields'] | {'key': KEY}, status=303)
         self.assertEqual('/preparation/access', headers['Location'])
         page, _, raw = self.request(headers['Location'])
         self.examine(page, '/preparation/access', 'clé enregistrée', 'Enregistrer la clé')
-        self.assertRegex(page.visible, r'Solde restant\s+18,5\s*USD\s+selon OpenRouter\s+Plafond de la clé\s+20\s*USD')
+        self.assertRegex(page.visible, r'Solde restant\s+18,5\s*USD\s+Plafond de la clé\s+20\s*USD')
+        for ancien in ('selon OpenRouter', 'Le solde vient', 'Une fois la clé retirée', 'plafond non renouvelable', 'seule limite'):
+            self.assertNotIn(ancien, page.visible)
+        self.assertIn('Revenir à mes cas d’usage', page.visible)
         self.assertIn('Remplacer ma clé', page.visible)
         self.assertTrue(any(n['tag'] == 'summary' and 'Retirer la clé de ce navigateur' in n['text'] for n in page.nodes))
         self.assertNotIn(KEY.encode(), raw)
@@ -7714,6 +7717,47 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request('/preparation/access')
         self.examine(page, '/preparation/access', 'clé retirée', 'Enregistrer la clé')
         self.assertIn('Aucune clé enregistrée', page.visible)
+        # Clé sans plafond (limit: null) : enregistrée, retirée puis ré-enregistrée, sans aucun refus
+        sans_plafond = (200, json.dumps({'data': {'limit': None, 'limit_remaining': None, 'limit_reset': None,
+                                                  'is_free_tier': False}}).encode())
+        with patch.object(self.access, 'verify_result', sans_plafond):
+            for tour in ('enregistrement', 'ré-enregistrement'):
+                with self.subTest(tour=tour):
+                    form = page.form('/access/key')
+                    _, headers, _ = self.request(form['action'], form['fields'] | {'key': KEY}, status=303)
+                    self.assertEqual('/preparation/access', headers['Location'])
+                    page, _, _ = self.request(headers['Location'])
+                    self.assertIn('Clé enregistrée', page.visible)
+                    self.assertRegex(page.visible, r'Solde restant\s+inconnu\s+Plafond de la clé\s+inconnu')
+                    if tour == 'enregistrement':
+                        form = page.form('/disconnect')
+                        _, headers, _ = self.request(form['action'], form['fields'], status=303)
+                        page, _, _ = self.request(headers['Location'])
+                        self.assertIn('Aucune clé enregistrée', page.visible)
+
+        # Ancien motif ACCESS_CAP_REQUIRED : la page revérifie la clé avant de l'afficher
+        def ancien_motif():
+            with closing(storage.Store(self.data)) as store:
+                store._connection.execute("UPDATE s2_provider_access SET status='invalid',status_reason='ACCESS_CAP_REQUIRED'")
+                store._connection.commit()
+        ancien_motif()
+        with patch.object(self.access, 'verify_result', sans_plafond):
+            page, _, _ = self.request('/preparation/access')
+        self.assertIn('Clé enregistrée', page.visible)
+        self.assertNotIn('ACCESS_CAP_REQUIRED', page.visible)
+        ancien_motif()
+        with patch.object(self.access, 'verify_result', OSError('panne transitoire')):
+            page, _, _ = self.request('/preparation/access')
+        self.assertIn('Vérification à refaire', page.visible)
+        self.assertIn('OpenRouter n’a pas répondu. Rechargez cette page pour relancer la vérification.', page.visible)
+        for refus in ('Clé refusée', 'Clé à remplacer', 'clé refusée', 'ACCESS_CAP_REQUIRED'):
+            self.assertNotIn(refus, page.visible)
+        ancien_motif()
+        with patch.object(self.access, 'verify_result', (401, b'{}')):
+            page, _, _ = self.request('/preparation/access')
+        self.assertIn('Clé à remplacer', page.visible)
+        self.assertIn('OpenRouter refuse cette clé', page.visible)
+        self.assertNotIn('Vérification à refaire', page.visible)
         self.assertEqual([], self.calls)
         self.assertEqual([], self.qualifier.calls)
 

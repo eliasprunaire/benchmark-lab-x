@@ -125,6 +125,11 @@ class CampaignLaunch(unittest.TestCase):
             self.launch(body)
         self.assertEqual([], c.inspect(self.store, 'local-comparison')['attempts'])
         self.assertEqual('0', self.store.inspect_budget('local-comparison')['reserved'])
+        # Le marqueur du fournisseur sur une campagne opérateur est une corruption
+        self.store._connection.execute('UPDATE budgets SET limit_amount=? WHERE budget_id=?',
+                                       (storage.PROVIDER_MANAGED, 'local-comparison'))
+        with self.assertRaisesRegex(storage.IntegrityError, 'invalid stored budget'):
+            self.store.inspect_budget('local-comparison')
 
     def test_stop_before_emission_and_unknown_cost_stop_next_cell(self):
         body = self.admit()
@@ -341,16 +346,19 @@ class RequesterCampaignLaunch(unittest.TestCase):
                 'frozen_at': snapshot['manifest']['conditions']['frozen_at'],
                 'confirm': 'yes'}
 
-    def test_old_oauth_access_without_cap_is_refused_before_budget_creation(self):
+    def test_uncapped_access_launches_with_provider_managed_budget_row(self):
         self.connect()
         self.store._connection.execute(
             'UPDATE s2_provider_access SET limit_usd=NULL WHERE session_id=?', (self.sid,))
-        with self.assertRaises(p.Denied) as error:
-            c.launch(self.store, self.sid, 'fixture', self.campaign_id, self.body(),
-                     access_secret=SECRET, access_transport=self.access)
-        self.assertEqual('access_connected', error.exception.code)
-        self.assertIsNone(self.store._connection.execute(
-            'SELECT 1 FROM budgets WHERE budget_id=?', (self.campaign_id,)).fetchone())
+        attempts = c.launch(self.store, self.sid, 'fixture', self.campaign_id, self.body(),
+                            access_secret=SECRET, access_transport=self.access)
+        self.assertTrue(attempts)
+        # Aucun montant fabriqué : la ligne porte le marqueur, l'enveloppe du benchmark est gérée par le fournisseur
+        self.assertEqual('PROVIDER_MANAGED', self.store._connection.execute(
+            'SELECT limit_amount FROM budgets WHERE budget_id=?', (self.campaign_id,)).fetchone()[0])
+        budget = c.inspect(self.store, self.campaign_id)['budget']
+        self.assertEqual((None, True, None), (budget['limit'], budget['provider_managed'], budget['available']))
+        self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
     def test_removed_cap_endpoint_cannot_mutate_a_campaign(self):
         before = c.inspect(self.store, self.campaign_id)
