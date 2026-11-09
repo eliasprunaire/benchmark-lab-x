@@ -334,15 +334,17 @@ class PrivacyHTTPTests(unittest.TestCase):
         counts = lambda: [self.store._connection.execute('SELECT count(*) FROM ' + table).fetchone()[0]
                           for table in ('s7_contributions', 's7_contribution_managers', 's2_sessions')]
         before = counts()
-        # Un ancien formulaire natif de premier choix envoie `revision=0` : le web le refuse avant tout relais
-        for sent_cookies, native, revision, expected in ((fresh['cookies'], False, 0, 404), (fresh['cookies'], True, 1, 404),
-                                                         (fresh['cookies'], True, 0, 400), (None, False, 0, 404)):
-            with self.subTest(session=sent_cookies is not None, html=native, revision=revision):
-                body = {'csrf_token': fresh['csrf'], 'enabled': 'true' if native else True, 'revision': str(revision) if native else revision,
-                        'example_revision': str(view['revision']) if native else view['revision']}
-                code, headers, _ = self.request('POST', '/preparation/dossiers/case-c/contribution',
+        # Route retirée : toute méthode et toute forme, dont l'ancien formulaire natif de premier choix (`revision=0`), reçoivent 404
+        for method, sent_cookies, native, revision in (('POST', fresh['cookies'], False, 0), ('POST', fresh['cookies'], True, 1),
+                                                       ('POST', fresh['cookies'], True, 0), ('POST', None, False, 0),
+                                                       ('GET', fresh['cookies'], True, None), ('HEAD', fresh['cookies'], True, None)):
+            with self.subTest(method=method, session=sent_cookies is not None, html=native, revision=revision):
+                body = None if revision is None else {
+                    'csrf_token': fresh['csrf'], 'enabled': 'true' if native else True, 'revision': str(revision) if native else revision,
+                    'example_revision': str(view['revision']) if native else view['revision']}
+                code, headers, _ = self.request(method, '/preparation/dossiers/case-c/contribution',
                                                 cookies=sent_cookies, native=native, body=body)
-                self.assertEqual(expected, code)
+                self.assertEqual(404, code)
                 self.assertNotIn('benchmark_contributions', self.cookie_values(headers))
                 self.assertFalse(headers.get_all('Set-Cookie'))
                 self.assertEqual(before, counts())

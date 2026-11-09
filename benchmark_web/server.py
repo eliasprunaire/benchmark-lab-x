@@ -665,8 +665,8 @@ def serve_web(address, port, public, socket_path, source, public_url=None, *, ve
             path = self.path.split('?', 1)[0]
             if path == '/evaluations-externes/aide':
                 self.evaluations_help()
-            elif path.startswith('/preparation/copies'):
-                # Copies d'exemples publiés retirées de l'alpha : 404 côté web, sans relais ni cookie
+            elif path.startswith('/preparation/copies') or re.fullmatch(r'/preparation/dossiers/[^/]+/contribution', path):
+                # Copies d'exemples publiés et contribution retirées de l'alpha : 404 côté web avant lecture du corps, sans relais ni cookie
                 self.not_found()
             elif self.path == '/preparation' or self.path.startswith('/preparation/'):
                 self.preparation()

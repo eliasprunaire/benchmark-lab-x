@@ -42,7 +42,7 @@ MENTIONS_LEGALES = (
     '<section><h2>Droit applicable</h2><p>Le présent site est soumis au droit français.</p></section>')
 
 CGU = (
-    '<p>Dernière mise à jour : 29 septembre 2026</p>'
+    '<p>Dernière mise à jour : 9 novembre 2026</p>'
     '<section><h2>1. Objet</h2><p>Les présentes conditions régissent l’utilisation d’Evaly, service gratuit '
     'accessible à l’adresse evaly.cybrel.fr. Utiliser le service vaut acceptation de ces conditions.</p></section>'
     '<section><h2>2. Ce que fait le service</h2><p>Evaly vous aide à décrire une tâche de votre travail, '

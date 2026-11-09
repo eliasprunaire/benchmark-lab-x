@@ -335,7 +335,7 @@ async function post(url, body) {
     redirect: 'error', keepalive: true, headers: {'Content-Type': 'application/json', Accept: 'application/json'},
     body: JSON.stringify(body)});
   if (!response.ok) throw new Error(response.status === 409
-    ? 'Cet exemple ou ce choix a changé entre-temps. Actualisez la page, puis recommencez.'
+    ? 'Les données de cette page ont changé entre-temps. Actualisez la page, puis recommencez.'
     : 'Votre demande n’a pas été confirmée. Actualisez la page pour vérifier que votre espace est toujours ouvert.');
   return response;
 }

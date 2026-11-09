@@ -2364,7 +2364,7 @@ test('public and private pages retain legal information and exact release identi
     assert.equal(/Mes\s+cas d’usage/.test(privacy), false);
     assert.equal(await page.locator('a[href="/preparation/data"]').count() > 0, true);
     await page.goto(origin + '/render/cgu');
-    assert.ok((await page.textContent('main')).includes('Dernière mise à jour : 29 septembre 2026'));
+    assert.ok((await page.textContent('main')).includes('Dernière mise à jour : 9 novembre 2026'));
     await page.goto(origin + '/render/mentions-legales');
     assert.ok((await page.textContent('main')).includes('AGPL-3.0-only'));
     for (const [name, label, target] of [['checkout', 'Révision : abcdef0', ''],
