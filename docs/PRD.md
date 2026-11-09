@@ -154,7 +154,7 @@ Un cookie protégé conserve l’accès dans le même navigateur après sa ferme
 
 ### Historique et contributions
 
-Le responsable du traitement est **Cybrel RSSI**, joignable à **contact@cybrel.fr**. La notice explique les finalités, emplacements, durées et retraits avant le choix de contribution. Les textes sont potentiellement sensibles malgré la consigne de données fictives ; aucun anonymat parfait n’est annoncé.
+Le responsable du traitement est **Cybrel RSSI**, joignable à **contact@cybrel.fr**. La notice explique les finalités, emplacements, durées et retraits. Les textes sont potentiellement sensibles malgré la consigne de données fictives ; aucun anonymat parfait n’est annoncé.
 
 | Données | Emplacement et durée |
 |---|---|
@@ -162,7 +162,7 @@ Le responsable du traitement est **Cybrel RSSI**, joignable à **contact@cybrel.
 | Accès privé | Cookie protégé sans clé ; même échéance contrôlée côté serveur |
 | Cas et résultats nécessaires au traitement | Serveur privé ; accès fermé après 7 jours d’inactivité de chaque dossier |
 | Historique personnel | IndexedDB du navigateur, jusqu’à son effacement par l’utilisateur ou le navigateur |
-| Contribution facultative | Copie privée distincte ; consentement échu 6 mois calendaires après son enregistrement, copie fermée à l’échéance |
+| Contribution facultative, retirée | Copie privée distincte enregistrée avant le retrait ; le consentement échoit 6 mois calendaires après son enregistrement, copie fermée à l’échéance |
 | Sauvegardes | Jusqu’à 7 points quotidiens ; des copies restaurables subsistent après la fermeture de l’accès, sans durée publique tant que l’inventaire n’est pas vérifié |
 
 L’activité sur un dossier renouvelle seulement ce dossier et l’accès principal. Par décision d’Ayo, une comparaison de plusieurs exemples est liée à chacun d’eux : l’activité sur les pages de la comparaison renouvelle aussi les autres exemples qu’elle utilise, et l’expiration ou la suppression de l’un d’eux supprime la comparaison, y compris ses résultats sur les autres exemples ; ces autres exemples restent conservés. L’activité sur l’accueil renouvelle seulement l’accès. Un accès expiré ne se réactive pas par une requête d’activité.
@@ -171,13 +171,13 @@ La durée des sauvegardes reste distincte de la durée active des données. Une 
 
 L’historique local permet de lire les copies complètes et d’exporter chaque cas après expiration de l’accès serveur. Il ne contient ni secret ni référence privée du juge. Une copie incomplète ne remplace jamais la précédente. Le navigateur peut refuser une écriture ou supprimer ses données ; cet historique ne constitue pas une sauvegarde garantie. Toute personne utilisant le même profil de navigateur peut le consulter. Il est activé par défaut dans le navigateur ; l’utilisateur peut l’arrêter, le reprendre ou l’effacer depuis « Mes données ».
 
-Après présentation de l’exemple, une case décochée propose d’autoriser son utilisation et celle de ses résultats pour améliorer Evaly. Le consentement porte sur cette version : toute nouvelle version nécessite un nouveau choix. La copie comprend l’exemple généré, ses pièces, sa qualification, les configurations, réponses, verdicts et coûts autorisés. Elle exclut le besoin initial, les corrections et messages libres, les clés, cookies, adresses réseau et journaux bruts. Un contrôle déterministe exclut les contenus manifestement sensibles sans garantir une anonymisation. Aucun entraînement, transfert tiers ou publication n’est déclenché.
+La contribution facultative est retirée de la construction alpha : aucune case ne la propose et aucune nouvelle contribution n’est enregistrée. Les contributions enregistrées avant ce retrait restent retirables jusqu’à leur dernière échéance depuis la page de retrait, sans lien de navigation ; elles ne font l’objet d’aucune nouvelle utilisation. Le consentement portait sur une version de l’exemple. La copie comprend l’exemple généré, ses pièces, sa qualification, les configurations, réponses, verdicts et coûts autorisés. Elle exclut le besoin initial, les corrections et messages libres, les clés, cookies, adresses réseau et journaux bruts. Un contrôle déterministe exclut les contenus manifestement sensibles sans garantir une anonymisation. Aucun entraînement, transfert tiers ou publication n’est déclenché.
 
-Refuser ou retirer une contribution ne dégrade pas le benchmark. Le stockage temporaire et les échanges nécessaires avec Openrouter et les fournisseurs continuent selon leurs conditions propres. Les ajouts ultérieurs de résultats ne prolongent pas les six mois. Les dérivés identifiables restent rattachés à leur contribution et sont retirés avec elle.
+Retirer une contribution ne dégrade pas le benchmark. Le stockage temporaire et les échanges nécessaires avec Openrouter et les fournisseurs continuent selon leurs conditions propres. Les ajouts ultérieurs de résultats ne prolongent pas les six mois. Les dérivés identifiables restent rattachés à leur contribution et sont retirés avec elle.
 
-« Mes données » distingue retirer la clé, effacer l’historique local, retirer une contribution et supprimer un cas d’usage. Cette dernière action efface la copie locale, demande la purge du dossier serveur et retire sa contribution associée. L’interface distingue un effacement local réussi d’une suppression serveur non confirmée. Un onglet ancien ne recrée pas automatiquement une archive effacée.
+« Mes données » distingue retirer la clé, effacer l’historique local et supprimer un cas d’usage. Cette dernière action efface la copie locale, demande la purge du dossier serveur et retire sa contribution associée. L’interface distingue un effacement local réussi d’une suppression serveur non confirmée. Un onglet ancien ne recrée pas automatiquement une archive effacée.
 
-Un cookie protégé distinct permet de retirer les contributions jusqu’à leur dernière échéance, même après expiration de l’accès principal. Il ne permet ni de lire les dossiers temporaires ni d’utiliser la clé. La perte de ce cookie ne permet pas de récupérer automatiquement l’identité ; la notice indique le contact et cette limite.
+Un cookie protégé distinct, déposé avant le retrait de l’option et désormais seulement lu, permet de retirer les contributions jusqu’à leur dernière échéance, même après expiration de l’accès principal. Il ne permet ni de lire les dossiers temporaires ni d’utiliser la clé. La perte de ce cookie ne permet pas de récupérer automatiquement l’identité ; la notice indique le contact et cette limite.
 
 ### Exemple pédagogique : Orme & Signal
 

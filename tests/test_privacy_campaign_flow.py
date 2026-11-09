@@ -206,12 +206,13 @@ class PrivacyCampaignFlow(unittest.TestCase):
             self.data, start, self.candidate, None, SECRET, self.access, self.judge)
         compared = restitution.comparison(self.store, self.sid, 'erase', cid)
         self.assertEqual(2, len(compared['rows']))
-        # Comparaison lancée : le choix de contribution quitte le fil du cas et se range au pied de la page, replié dans son tiroir
+        # Option retirée : même avec une contribution active, la page n'offre plus aucun choix de contribution
         _, dossier_view, _, _ = web_api.dispatch(self.store, 'GET', '/preparation/dossiers/erase', self.token,
                                                  None, 'a' * 40, None)
         page = views.render(dossier_view, 'csrf', '/preparation/dossiers/erase').decode()
-        self.assertEqual(1, page.count('data-privacy-post="contribution"'))
-        self.assertGreater(page.index('data-privacy-post="contribution"'), page.index('id="comparaison"'))
+        self.assertIn('id="comparaison"', page)
+        self.assertNotIn('data-privacy-post="contribution"', page)
+        self.assertNotIn('privacy-consent', page)
         self.assertIn('<details class="tiroir privacy-controls"', page)
         self.assertEqual({'NE SATISFAIT PAS'}, {row['verdict'] for row in compared['rows']})
         self.assertEqual('COMPLETE', auto.status(self.store, self.store._connection, cid)['status'])

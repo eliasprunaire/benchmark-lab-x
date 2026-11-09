@@ -249,6 +249,7 @@ def _copy(store, connection, session_id, dossier_id, body):
         return dossier_id, True
 
 
+# shortcut: semence des tests, aucune copie nouvelle en production
 def copy_from_publication(store, session_id, body):
     """Créer le dossier privé d’une copie publiée, sans transport ni opération"""
     connection = connection_for(store)

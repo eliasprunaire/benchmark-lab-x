@@ -326,7 +326,6 @@ def denied_response(error):
     messages = {
         'SESSION_EXPIRED': 'Votre session a expiré. Les copies gardées dans ce navigateur restent consultables dans Mes données.',
         'RESTORE_PENDING': 'Service momentanément indisponible, réessayez plus tard.',
-        'CONTRIBUTION_SENSITIVE_DATA': 'Cette contribution n’a pas été envoyée : elle contient peut-être une donnée sensible. Votre cas d’usage et ses résultats restent accessibles.',
         'TEXT_TOO_SHORT': 'Ce texte est trop court.',
         'TEXT_TOO_LONG': 'Ce texte est trop long. Raccourcissez-le, puis renvoyez-le.',
         'PREPARATION_IN_PROGRESS': 'Une préparation est déjà en cours. Attendez qu’elle se termine avant un nouvel envoi.',
@@ -992,12 +991,8 @@ def serve_executor(data, socket_path, source, *, version=None, transport=None, q
                         value['probe_request'] = {key: job[key] for key in ('request_id', 'slug')}
                         value['probe_request'].update(job['future'].result() if job['future'].done()
                                                       else {'pending': True})
-                management_cookie = value.pop('_management_cookie', None) if isinstance(value, dict) else None
-                result = {'status': code, 'value': value.hex() if isinstance(value, bytes) else value,
-                          'piece': isinstance(value, bytes), 'cookie': cookie}
-                if management_cookie:
-                    result['management_cookie'] = management_cookie
-                return result
+                return {'status': code, 'value': value.hex() if isinstance(value, bytes) else value,
+                        'piece': isinstance(value, bytes), 'cookie': cookie}
 
             class Handler(socketserver.StreamRequestHandler):
                 def handle(self):
@@ -1060,11 +1055,6 @@ def _relayed_result(result):
     if type(result.get('piece', False)) is not bool:
         return False
     if type(result.get('cookie')) not in (str, type(None)):
-        return False
-    manager = result.get('management_cookie')
-    if manager is not None and (type(manager) is not dict or set(manager) != {'token', 'expires_at'}
-            or type(manager['token']) is not str or re.fullmatch('[0-9a-f]{64}', manager['token']) is None
-            or type(manager['expires_at']) is not str):
         return False
     if result.get('piece'):
         return (type(result['value']) is str

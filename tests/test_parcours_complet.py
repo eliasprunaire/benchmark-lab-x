@@ -408,18 +408,6 @@ class ParcoursComplet(unittest.TestCase):
             return self.request(headers['Location'])[0], headers['Location']
         return result, None
 
-    def editorial_help_submit(self, formulation, *, status=303, submission_id=None):
-        page, _, _ = self.request('/epreuves/aide')
-        form = page.form('/epreuves/aide')
-        fields = dict(form['fields'])
-        if submission_id is not None:
-            fields['submission_id'] = submission_id
-        result, headers, _ = self.request(form['action'], fields | {'formulation': formulation},
-                                          status=status)
-        if status == 303:
-            return self.request(headers['Location'])[0], headers['Location']
-        return result, None
-
     def examine(self, page, route, state, primary):
         with self.subTest(route=route, état=state):
             headings = [n for n in page.nodes if n['tag'] == 'h1']
@@ -439,8 +427,8 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn('équipe Bench-X', ' '.join(n['text'] for n in page.nodes))
             # Menu puis pied de page : Mes cas d'usage pour la saisie et les cas en cours, Mes données pour les copies gardées
             dehors = [n['text'].strip() for n in page.nodes if n['tag'] == 'a' and not n['main'] and not n['hidden'] and not n['details']]
-            self.assertEqual(['Accueil', 'Mes cas d’usage', 'Mes données', 'Épreuves'], dehors[2:6])
-            self.assertEqual(['Décrire mon cas d’usage', 'Mes données', 'Épreuves', 'Benchmarks publics'], dehors[7:11])
+            self.assertEqual(['Accueil', 'Mes cas d’usage', 'Mes données'], dehors[2:5])
+            self.assertEqual(['Décrire mon cas d’usage', 'Mes données', 'Benchmarks publics'], dehors[6:9])
             # Le pied présente le produit par sa tagline, une seule fois par page
             intro = [n['text'] for n in page.nodes if n['tag'] == 'p' and not n['main'] and 'intro' in n['attrs'].get('class', '').split()]
             self.assertTrue(intro[0].startswith('Evaly, le benchmark personnalisé : '))
@@ -726,26 +714,12 @@ class ParcoursComplet(unittest.TestCase):
 
         with patch.object(server, 'preparation_request', side_effect=AssertionError('Relais privé interdit')):
             before = {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()}
-            home, _, _ = self.request('/')
-            self.assertEqual('/epreuves', home.link('Épreuves'))
-            empty, headers, raw = self.request('/epreuves')
-            self.assertIsNone(headers.get('Set-Cookie'))
-            self.assertEqual('no-referrer', headers['Referrer-Policy'])
-            self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
-            self.assertIn('Aucune épreuve publiée', empty.visible)
-            self.assertEqual('/preparation', empty.link('Décrire mon cas d’usage'))
-            empty_search, _, _ = self.request('/epreuves?q=tableau')
-            self.assertIn('Aucune épreuve publiée', empty_search.visible)
-            self.assertTrue(any(n['attrs'].get('aria-label') == 'Critères actifs' for n in empty_search.nodes))
-            self.assertEqual('/epreuves', empty_search.link('Effacer la recherche et les filtres'))
-            self.assertEqual('/preparation', empty_search.link('Décrire mon cas d’usage'))
-            # Un groupe dont la seule valeur est « Tous » ne filtre rien : il n'est pas affiché
-            self.assertFalse(any(n['attrs'].get('id', '').startswith('fe-') for n in empty_search.nodes))
-            self.assertEqual(['/epreuves'], sorted({n['attrs']['href'] for n in empty.nodes if n['attrs'].get('aria-current') == 'page'}))
-            self.assertEqual(raw, self.request('/epreuves', cookies=SimpleCookie('benchmark_session=invalid'))[2])
-            leaked, _, leaked_raw = self.request('/epreuves?besoin=prive', status=400)
-            self.assertNotIn('prive', leaked.visible)
-            self.assertNotIn(b'prive', leaked_raw)
+            # Routes retirées de l'alpha : le catalogue public répond 404, sans cookie ni écho de la requête
+            for path in ('/epreuves', '/epreuves?q=tableau', '/epreuves?besoin=prive'):
+                empty, empty_headers, empty_raw = self.request(path, status=404)
+                self.assertIsNone(empty_headers.get('Set-Cookie'))
+                self.assertNotIn(b'prive', empty_raw)
+                self.assertNotIn('Aucune épreuve publiée', empty.visible)
             trial, approval = bundle(version)
             refused(trial, approval, 'Autorité éditoriale refusée')
             self.assertFalse((self.public / 'editorial-trials').exists())
@@ -790,23 +764,6 @@ class ParcoursComplet(unittest.TestCase):
             self.assertFalse(Path(source).exists())
             self.assertFalse((self.public / 'editorial-trials').exists())
             piece_url = '/epreuves/' + task + '/' + version + '/pieces/consigne'
-            catalog, headers, raw = self.request('/epreuves')
-            hidden, piece_headers, hidden_raw = self.request(piece_url, status=404)
-            absent, absent_headers, absent_raw = self.request('/epreuves/' + task + '/' + version, status=404)
-            self.assertIsNone(headers.get('Set-Cookie'))
-            self.assertIsNone(piece_headers.get('Set-Cookie'))
-            self.assertIsNone(absent_headers.get('Set-Cookie'))
-            self.assertEqual('no-referrer', headers['Referrer-Policy'])
-            self.assertEqual(raw, self.request('/epreuves', cookies=SimpleCookie('benchmark_session=invalid'))[2])
-            self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
-            self.assertNotIn(title.encode(), raw)
-            self.assertNotIn(piece.encode(), hidden_raw)
-            self.assertNotIn(piece.encode(), absent_raw)
-            self.assertNotIn(title, catalog.visible)
-            self.assertNotIn(piece, hidden.visible)
-            self.assertNotIn(title, absent.visible)
-            self.assertIn('Aucune épreuve publiée', catalog.visible)
-            self.assertNotIn(KEY, catalog.visible)
             self.assertEqual([], editorial.catalog_view(self.public)['versions'])
             with self.assertRaises(ValueError) as raised:
                 editorial.reprise_admission(self.public, task, version)
@@ -830,15 +787,6 @@ class ParcoursComplet(unittest.TestCase):
             for item in stored.iterdir():
                 (deposited / item.name).write_bytes(item.read_bytes())
             self.assertEqual([], editorial.catalog_view(self.public)['versions'])
-            deposited_page, deposited_headers, deposited_raw = self.request('/epreuves/' + task + '/' + version, status=404)
-            _, deposited_piece_headers, deposited_piece = self.request(piece_url, status=404)
-            self.assertIsNone(deposited_headers.get('Set-Cookie'))
-            self.assertIsNone(deposited_piece_headers.get('Set-Cookie'))
-            self.assertNotIn(piece.encode(), deposited_raw)
-            self.assertNotIn(piece.encode(), deposited_piece)
-            self.assertNotIn(title, deposited_page.visible)
-            self.assertNotIn(work, deposited_page.visible)
-            self.assertIn('Aucune épreuve publiée', self.request('/epreuves')[0].visible)
             with self.assertRaises(ValueError) as raised:
                 editorial.reprise_admission(self.public, task, version)
             self.assertEqual('Autorité éditoriale refusée', str(raised.exception))
@@ -851,7 +799,6 @@ class ParcoursComplet(unittest.TestCase):
             for child in sorted(placed.rglob('*'), key=lambda path: len(path.parts), reverse=True):
                 child.rmdir() if child.is_dir() else child.unlink()
             placed.rmdir()
-            self.assertIn('Aucune épreuve publiée', self.request('/epreuves')[0].visible)
             with tempfile.TemporaryDirectory(prefix='epreuve-source-') as source:
                 source_piece = Path(source) / 'piece-consigne.txt'
                 source_piece.write_bytes(piece.encode())
@@ -859,31 +806,18 @@ class ParcoursComplet(unittest.TestCase):
                              'files': {'piece-consigne.txt': source_piece.read_bytes()}}
                 editorial.publish(self.public, published, designated(published['package_sha256']))
             self.assertFalse(Path(source).exists())
-            page, headers, raw = self.request('/epreuves/' + task + '/' + version)
-            _, piece_headers, piece_raw = self.request(piece_url)
-            self.assertIsNone(headers.get('Set-Cookie'))
-            self.assertIsNone(piece_headers.get('Set-Cookie'))
-            self.assertEqual('no-referrer', headers['Referrer-Policy'])
-            self.assertEqual('text/plain; charset=utf-8', piece_headers['Content-Type'])
-            self.assertEqual(piece.encode(), piece_raw)
-            self.assertEqual(raw, self.request('/epreuves/' + task + '/' + version,
-                                               cookies=SimpleCookie('benchmark_session=invalid'))[2])
-            self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
-            self.assertNotIn(title.encode(), raw)
-            for value in (title, work, case, limit, views.version_lisible(version),
-                          'Qualification absente', 'Aucune preuve de qualification n’est publiée',
-                          'Aucun résultat publié', 'n’autorise aucune exécution'):
-                self.assertIn(value, page.visible)
-            # La pièce se lit dans sa feuille repliée
-            self.assertIn(piece, page.depliant(label))
-            self.assertNotIn('Qualification réussie', page.visible)
-            self.assertNotIn(KEY, page.visible)
-            self.assertEqual([], [n['attrs']['href'] for n in page.nodes if n['attrs'].get('aria-current') == 'page'])
-            self.assertEqual('/preparation', page.link('Décrire mon cas d’usage'))
-            self.assertEqual('/epreuves', page.link('Toutes les épreuves'))
-            catalog, _, _ = self.request('/epreuves')
-            self.assertIn(title, catalog.visible)
-            self.assertNotIn('Aucune épreuve publiée', catalog.visible)
+            # Même publiée, la version et sa pièce ne sont plus servies : 404 sans cookie ni octet de la version
+            for path in ('/epreuves', '/epreuves/' + task + '/' + version, piece_url):
+                gone, gone_headers, gone_raw = self.request(path, status=404)
+                self.assertIsNone(gone_headers.get('Set-Cookie'))
+                self.assertNotIn(piece.encode(), gone_raw)
+                self.assertNotIn(work, gone.visible)
+            # Le paquet publié reste lisible par le module, pour l'outillage opérateur et les copies existantes
+            published_view = editorial.version_view(self.public, task, version)
+            self.assertEqual((title, work, [case], [limit], 'ABSENT'), (published_view['title'], published_view['work'],
+                             published_view['cases'], published_view['limits'], published_view['qualification_status']))
+            self.assertEqual(piece.encode(), editorial.piece_bytes(self.public, task, version, 'consigne'))
+            self.assertEqual([title], [entry['title'] for entry in editorial.catalog_view(self.public)['versions']])
             stored = self.public / 'editorial-trials' / task / version
             manifest_bytes = (stored / 'manifest.json').read_bytes()
             piece_bytes = (stored / 'piece-consigne.txt').read_bytes()
@@ -891,20 +825,15 @@ class ParcoursComplet(unittest.TestCase):
             blocked, _ = bundle('version-interdite', extra={'journal': 'journal brut'})
             refused(blocked, designated(blocked['package_sha256']), 'Sélection publique fermée')
             self.assertFalse((self.public / 'editorial-trials' / task / 'version-interdite').exists())
-            self.assertEqual(raw, self.request('/epreuves/' + task + '/' + version)[2])
             self.assertEqual(manifest_bytes, (stored / 'manifest.json').read_bytes())
             replacement, _ = bundle(version, title='Tableau remplacé')
             refused(replacement, designated(replacement['package_sha256']), 'Version existante divergente')
             self.assertEqual(manifest_bytes, (stored / 'manifest.json').read_bytes())
             revised, _ = bundle(other, title='Tableau révisé', piece='Deuxième version des opérations')
             editorial.publish(self.public, revised, designated(revised['package_sha256']))
-            self.assertEqual(raw, self.request('/epreuves/' + task + '/' + version)[2])
-            self.assertEqual(piece.encode(), self.request(piece_url)[2])
-            both, _, _ = self.request('/epreuves')
-            self.assertIn(title, both.visible)
-            self.assertIn('Tableau révisé', both.visible)
-            self.assertIn(views.version_lisible(version), both.visible)
-            self.assertIn(views.version_lisible(other), both.visible)
+            self.assertEqual(piece.encode(), editorial.piece_bytes(self.public, task, version, 'consigne'))
+            self.assertEqual({(version, title), (other, 'Tableau révisé')},
+                             {(entry['version_id'], entry['title']) for entry in editorial.catalog_view(self.public)['versions']})
             self.assertEqual(trial['package_sha256'], editorial.reprise_admission(self.public, task, version)['package_sha256'])
             self.assertEqual(before, {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()})
             refused_withdrawal = dict(actor='approbateur-fictif-S6', authority_id='TEST_ONLY_PUBLICATION_S6',
@@ -917,41 +846,24 @@ class ParcoursComplet(unittest.TestCase):
                 editorial.withdraw(self.public, task, version, dict(
                     designated_withdrawal(trial['package_sha256'], version), package_sha256='a' * 64))
             self.assertEqual('Approbation visant d’autres octets', str(raised.exception))
-            self.assertEqual(raw, self.request('/epreuves/' + task + '/' + version)[2])
-            second_raw = self.request('/epreuves/' + task + '/' + other)[2]
             editorial.withdraw(self.public, task, version, designated_withdrawal(trial['package_sha256'], version))
             self.assertEqual(manifest_bytes, (stored / 'manifest.json').read_bytes())
             self.assertEqual(piece_bytes, (stored / 'piece-consigne.txt').read_bytes())
-            withdrawn, withdrawn_headers, withdrawn_raw = self.request('/epreuves/' + task + '/' + version)
-            self.assertIsNone(withdrawn_headers.get('Set-Cookie'))
-            self.assertIn('Cette version est retirée', withdrawn.visible)
-            self.assertIn('ne sont plus disponibles', withdrawn.visible)
-            self.assertIn('Aucune nouvelle reprise de cette version n’est admise', withdrawn.visible)
-            self.assertNotIn(title, withdrawn.visible)
-            self.assertNotIn(piece, withdrawn.visible)
-            self.assertNotIn(work, withdrawn.visible)
-            self.assertNotIn(b'<script', withdrawn_raw.replace(FILTRES, b''))
-            hidden, _, hidden_raw = self.request(piece_url, status=404)
-            self.assertNotIn(piece.encode(), hidden_raw)
-            self.assertNotIn(piece, hidden.visible)
-            self.assertEqual(second_raw, self.request('/epreuves/' + task + '/' + other)[2])
-            self.assertEqual('Deuxième version des opérations'.encode(),
-                             self.request('/epreuves/' + task + '/' + other + '/pieces/consigne')[2])
-            self.assertEqual('text/plain; charset=utf-8',
-                             self.request('/epreuves/' + task + '/' + other + '/pieces/consigne')[1]['Content-Type'])
-            remaining, _, _ = self.request('/epreuves')
-            self.assertNotIn(title, remaining.visible)
-            self.assertNotIn(piece, remaining.visible)
-            self.assertIn('Tableau révisé', remaining.visible)
-            self.assertNotIn('Version ' + version, remaining.visible)
+            # Version retirée : sa notice ne garde aucun contenu, sa pièce n'est plus lisible, l'autre version reste
+            withdrawn_view = editorial.version_view(self.public, task, version)
+            self.assertTrue(withdrawn_view['withdrawn'])
+            self.assertNotIn('title', withdrawn_view)
+            with self.assertRaises(editorial.NotFound):
+                editorial.piece_bytes(self.public, task, version, 'consigne')
+            self.assertEqual('Deuxième version des opérations'.encode(), editorial.piece_bytes(self.public, task, other, 'consigne'))
+            self.assertEqual([other], [entry['version_id'] for entry in editorial.catalog_view(self.public)['versions']])
             with self.assertRaises(ValueError) as raised:
                 editorial.reprise_admission(self.public, task, version)
             self.assertEqual('Nouvelle reprise refusée', str(raised.exception))
             self.assertEqual(revised['package_sha256'], editorial.reprise_admission(self.public, task, other)['package_sha256'])
             reactivated, _ = bundle(version, title='Tableau réactivé')
             refused(reactivated, designated(reactivated['package_sha256']), 'Version retirée')
-            self.assertIn('Cette version est retirée', self.request('/epreuves/' + task + '/' + version)[0].visible)
-            self.assertEqual(second_raw, self.request('/epreuves/' + task + '/' + other)[2])
+            self.assertTrue(editorial.version_view(self.public, task, version)['withdrawn'])
             self.assertNotIn(piece.encode(), self.request(piece_url, status=404)[2])
             self.request('/publications/' + 'a' * 64 + '/index.html', status=404)
             self.assertFalse((self.public / 'active.json').exists())
@@ -959,318 +871,6 @@ class ParcoursComplet(unittest.TestCase):
             self.assertTrue(self.starts.empty())
             self.assertEqual({}, dict(self.cookies))
             self.assertEqual(before, {str(p.relative_to(self.data)): p.read_bytes() for p in self.data.rglob('*') if p.is_file()})
-
-    def test_recherche_epreuves_editoriales(self):
-        """#464 : recherche déterministe, filtres déclarés, versions exactes et critères conservés"""
-        task = 'tache-fictive'
-        calc_characteristics = {'expected_result': 'Tableau des débits', 'inputs': ['Textes fournis'],
-                                'language': 'Français', 'tools': ['Tableur'], 'difficulty': 'Facile'}
-        redac_characteristics = {'expected_result': 'Note de synthèse', 'inputs': ['Bibliothèque figée'],
-                                 'language': 'Anglais', 'tools': [], 'difficulty': 'Difficile'}
-        calc = self.publier_epreuve('version-calcul', title='Tableau des débits',
-                                    work='Préparer un tableau par opération',
-                                    characteristics=calc_characteristics)
-        redac = self.publier_epreuve('version-redaction', title='Note de synthèse',
-                                     work='Rédiger une note de synthèse', qualification='QUALIFIED',
-                                     characteristics=redac_characteristics)
-        old = self.publier_epreuve('version-ancienne', title='Ancienne épreuve', schema=editorial.SCHEMA_V1)
-        enriched = self.publier_epreuve('version-enrichie', title='Ancienne épreuve enrichie',
-                                        characteristics={'language': 'Français'})
-        retired = self.publier_epreuve('version-retiree', title='Épreuve retirée',
-                                       characteristics={'language': 'Langue retirée', 'tools': ['Outil retiré']})
-        editorial.withdraw(self.public, task, 'version-retiree', dict(
-            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=retired['package_sha256'],
-            scope='editorial-withdrawal', task_id=task, version_id='version-retiree'))
-        # Autorité fictive et paquet déposé hors de son répertoire : jamais candidats publics
-        fixture = self.construire_epreuve('version-fictive', title='Épreuve fictive',
-                                          characteristics={'language': 'Langue fictive', 'tools': ['Outil fictif']})
-        editorial.fixture_publish(self.public, fixture, editorial.fixture_approval(fixture['package_sha256']))
-        deposited = self.public / 'editorial-trials' / task / 'version-fictive'
-        deposited.mkdir(parents=True)
-        for item in (self.public / 'editorial-fixture' / task / 'version-fictive').iterdir():
-            (deposited / item.name).write_bytes(item.read_bytes())
-        # Paquet malformé dans le répertoire public : illisible, donc jamais candidat
-        invalid = self.public / 'editorial-trials' / task / 'version-invalide'
-        invalid.mkdir()
-        (invalid / 'manifest.json').write_text('{"language":"Langue invalide"}')
-        # Dossiers privés et contributions voisins : aucune lecture pour servir la recherche
-        private_bundle = self.construire_epreuve('version-privee', title='Épreuve privée',
-                                                 characteristics={'language': 'Langue privée'})
-        editorial.publish(self.data, private_bundle, dict(
-            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=private_bundle['package_sha256'],
-            scope='editorial-trial'))
-        contributed = self.construire_epreuve('version-contribuee', title='Contribution voisine',
-                                              characteristics={'language': 'Langue contribuée'})
-        contribution = self.public / 'contributions' / task / 'version-contribuee'
-        contribution.mkdir(parents=True)
-        (contribution / 'manifest.json').write_bytes(contributed['manifest'])
-        for name, raw in contributed['files'].items():
-            (contribution / name).write_bytes(raw)
-        # Enrichir une version existante exige une nouvelle version approuvée
-        attempt = self.construire_epreuve('version-ancienne', title='Ancienne épreuve',
-                                          characteristics={'language': 'Français'})
-        with self.assertRaises(ValueError) as raised:
-            editorial.publish(self.public, attempt, dict(
-                actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=attempt['package_sha256'],
-                scope='editorial-trial'))
-        self.assertEqual('Version existante divergente', str(raised.exception))
-        old_folder = self.public / 'editorial-trials' / task / 'version-ancienne'
-        old_manifest = (old_folder / 'manifest.json').read_bytes()
-        old_piece = (old_folder / 'piece-consigne.txt').read_bytes()
-        self.assertEqual(old['package_sha256'], sha256(old_manifest).hexdigest())
-
-        def query_path(fields):
-            return '/epreuves?' + urlencode([(key, fields[key]) for key in editorial.SEARCH_PARAMETERS
-                                             if fields.get(key)])
-
-        def search(fields):
-            return self.request(query_path(fields))[0]
-
-        with patch.object(server, 'preparation_request', side_effect=AssertionError('Relais privé interdit')):
-            before_public = {str(path.relative_to(self.public)): path.read_bytes()
-                             for path in self.public.rglob('*') if path.is_file()}
-            before_private = {str(path.relative_to(self.data)): path.read_bytes()
-                              for path in self.data.rglob('*') if path.is_file()}
-            with closing(storage.Store(self.data)) as store:
-                before_operations = store._connection.execute('SELECT count(*) FROM operations').fetchone()[0]
-
-            catalog, catalog_headers, catalog_raw = self.request('/epreuves')
-            self.assertIsNone(catalog_headers.get('Set-Cookie'))
-            self.assertEqual('no-referrer', catalog_headers['Referrer-Policy'])
-            self.assertNotIn(b'<script', catalog_raw.replace(FILTRES, b''))
-            for value in ('Tableau des débits', 'Note de synthèse', 'Ancienne épreuve', 'Ancienne épreuve enrichie',
-                          'Version calcul', 'Version redaction', 'Version ancienne',
-                          'Version enrichie', 'Entrées', 'Langue', 'Outils',
-                          'Difficulté', 'Qualification', 'Aucun résultat publié',
-                          'Textes fournis', 'Bibliothèque figée', 'Français', 'Anglais', 'Tableur',
-                          'Aucun outil déclaré'):
-                self.assertIn(value, catalog.visible)
-            self.assertNotIn('Épreuve retirée', catalog.visible)
-            self.assertNotIn('Épreuve fictive', catalog.visible)
-            self.assertNotIn('Épreuve privée', catalog.visible)
-            self.assertNotIn('Contribution voisine', catalog.visible)
-            self.assertNotIn('Langue invalide', catalog.visible)
-            self.assertNotIn('Langue privée', catalog.visible)
-            self.assertNotIn('Langue contribuée', catalog.visible)
-            self.assertEqual(['', 'Anglais', 'Français'], catalog.segments('langue'))
-            self.assertEqual(['', 'Tableur'], catalog.segments('outil'))
-            self.assertEqual(['', 'Bibliothèque figée', 'Textes fournis'], catalog.segments('entree'))
-            self.assertEqual(['', 'Difficile', 'Facile'], catalog.segments('difficulte'))
-            self.assertEqual(['', 'ABSENT', 'QUALIFIED'], catalog.segments('qualification'))
-            self.assertNotIn('Langue fictive', catalog.segments('langue'))
-            self.assertNotIn('Outil fictif', catalog.segments('outil'))
-            self.assertNotIn('Langue retirée', catalog.segments('langue'))
-            self.assertNotIn('Outil retiré', catalog.segments('outil'))
-            for absent in ('Langue invalide', 'Langue privée', 'Langue contribuée'):
-                self.assertNotIn(absent, catalog.segments('langue'))
-
-            # L’aide facultative part du catalogue sans relais privé ni texte dans l’adresse
-            self.assertNotIn('/epreuves/aide', [node['attrs'].get('href') for node in catalog.nodes])
-            with patch.object(views, 'SEMANTIC_HELP_ENABLED', True):
-                help_link = self.request('/epreuves')[0].link('Demander une aide sémantique facultative')
-            self.assertEqual('/epreuves/aide', help_link)
-            help_page, help_headers, help_raw = self.request(help_link)
-            self.assertIsNone(help_headers.get('Set-Cookie'))
-            self.assertNotIn(b'<script', help_raw.replace(FILTRES, b''))
-            self.assertEqual('/epreuves/aide', help_page.form('/epreuves/aide')['action'])
-            self.assertIn('TypeSafe', help_page.visible)
-            self.request('/epreuves/aide?q=formule-privee', status=400)
-
-            # Chaque caractéristique reste distincte sur la notice exacte
-            calc_page = self.request('/epreuves/' + task + '/version-calcul')[0]
-            self.assertEqual('Tableau des débits', calc_page.field('Résultat attendu'))
-            self.assertEqual('Textes fournis', calc_page.field('Entrées'))
-            self.assertEqual('Français', calc_page.field('Langue'))
-            self.assertEqual('Tableur', calc_page.field('Outils'))
-            self.assertEqual('Facile', calc_page.field('Difficulté'))
-            self.assertEqual('Version calcul', calc_page.field('Version'))
-            self.assertEqual('Qualification absente', calc_page.field('Qualification'))
-            self.assertEqual('Aucun résultat publié', calc_page.field('Résultats publiés'))
-            redac_page = self.request('/epreuves/' + task + '/version-redaction')[0]
-            self.assertEqual('Aucun outil déclaré', redac_page.field('Outils'))
-            self.assertEqual('Qualification réussie', redac_page.field('Qualification'))
-            self.assertEqual('Aucun résultat publié', redac_page.field('Résultats publiés'))
-            old_page = self.request('/epreuves/' + task + '/version-ancienne')[0]
-            self.assertEqual('Inconnu', old_page.field('Résultat attendu'))
-            self.assertEqual('Inconnues', old_page.field('Entrées'))
-            self.assertEqual('Inconnue', old_page.field('Langue'))
-            self.assertEqual('Inconnus', old_page.field('Outils'))
-            self.assertEqual('Inconnue', old_page.field('Difficulté'))
-            self.assertEqual('Version ancienne', old_page.field('Version'))
-            self.assertEqual('Qualification absente', old_page.field('Qualification'))
-            self.assertEqual('Aucun résultat publié', old_page.field('Résultats publiés'))
-            enriched_page = self.request('/epreuves/' + task + '/version-enrichie')[0]
-            self.assertEqual('Français', enriched_page.field('Langue'))
-            self.assertEqual('Inconnu', enriched_page.field('Résultat attendu'))
-            self.assertEqual('Inconnus', enriched_page.field('Outils'))
-            self.assertEqual('Version enrichie', enriched_page.field('Version'))
-
-            # Recherche seule : tous les termes, aucun classement, critères visibles et effaçables
-            found = search({'q': 'textes fournis'})
-            self.assertTrue(any(n['attrs'].get('aria-label') == 'Critères actifs' for n in found.nodes))
-            self.assertIn('textes fournis', found.visible)
-            self.assertIn('Tableau des débits', found.visible)
-            self.assertNotIn('Note de synthèse', found.visible)
-            # Chaque lien de filtre garde le texte cherché et un filtre appliqué se lit comme courant (A6, A7)
-            francais = next(n['attrs']['href'] for n in found.nodes if n['tag'] == 'a' and n['text'] == 'Français')
-            self.assertEqual({'q': ['textes fournis'], 'langue': ['Français']}, parse_qs(urlsplit(francais).query))
-            self.assertIn('Tous', [n['text'] for n in found.nodes if n['tag'] == 'a' and n['attrs'].get('aria-current')])
-            # Recherche envoyée sans critère : l'envoi vide est dit, sans critère actif (C3)
-            sent = self.request('/epreuves?q=')[0]
-            self.assertIn('recherche envoyée sans critère', sent.visible)
-            self.assertFalse(any(n['attrs'].get('aria-label') == 'Critères actifs' for n in sent.nodes))
-            self.assertNotIn('recherche envoyée sans critère', self.request('/epreuves')[0].visible)
-            self.assertNotIn('Ancienne épreuve', found.visible)
-            self.assertEqual('/epreuves', found.link('Effacer la recherche et les filtres'))
-            self.assertEqual(['', 'Anglais', 'Français'], found.segments('langue'))
-            and_terms = search({'q': 'tableau textes'})
-            self.assertIn('Tableau des débits', and_terms.visible)
-            self.assertNotIn('Note de synthèse', and_terms.visible)
-            # Le texte des pièces n'alimente ni la recherche ni les caractéristiques
-            piece_only = search({'q': 'relève'})
-            self.assertIn('Aucune épreuve ne correspond à cette recherche', piece_only.visible)
-            missing_terms = search({'q': 'textes synthèse'})
-            self.assertIn('Aucune épreuve ne correspond à cette recherche', missing_terms.visible)
-            self.assertNotIn('Aucune épreuve publiée', missing_terms.visible)
-            self.assertEqual('/epreuves', missing_terms.link('Effacer la recherche et les filtres'))
-            # Seul un catalogue vide propose de décrire un besoin
-            self.assertFalse(any(n['tag'] == 'a' and 'Décrire' in n['text'] for n in missing_terms.nodes if n['main']))
-
-            # Filtres explicites, combinés et valeurs déclarées uniquement
-            for fields, present, absent in (
-                    ({'entree': 'Bibliothèque figée'}, 'Note de synthèse', 'Tableau des débits'),
-                    ({'langue': 'Anglais'}, 'Note de synthèse', 'Tableau des débits'),
-                    ({'outil': 'Tableur'}, 'Tableau des débits', 'Note de synthèse'),
-                    ({'difficulte': 'Difficile'}, 'Note de synthèse', 'Tableau des débits'),
-                    ({'qualification': 'QUALIFIED'}, 'Note de synthèse', 'Tableau des débits'),
-                    ({'qualification': 'ABSENT'}, 'Tableau des débits', 'Note de synthèse')):
-                filtered = search(fields)
-                self.assertIn(present, filtered.visible, fields)
-                self.assertNotIn(absent, filtered.visible, fields)
-                self.assertTrue(any(n['attrs'].get('aria-label') == 'Critères actifs' for n in filtered.nodes), fields)
-            combined_fields = {'q': 'tableau textes', 'entree': 'Textes fournis', 'langue': 'Français',
-                               'outil': 'Tableur', 'difficulte': 'Facile'}
-            combined = search(combined_fields)
-            self.assertIn('Tableau des débits', combined.visible)
-            self.assertNotIn('Note de synthèse', combined.visible)
-            mismatch = search({'langue': 'Français', 'qualification': 'QUALIFIED'})
-            self.assertIn('Aucune épreuve ne correspond à ces filtres', mismatch.visible)
-            unknown_value = search({'langue': 'Klingon'})
-            self.assertIn('Aucune épreuve ne correspond à cette recherche', unknown_value.visible)
-            self.assertIn('Klingon (indisponible)', [n['text'] for n in unknown_value.nodes if n['tag'] == 'a' and n['attrs'].get('aria-current')])
-
-            # Ouverture exacte, critères conservés, copie toujours filiation de la version choisie
-            result_link = combined.link('Tableau des débits')
-            self.assertEqual('/epreuves/' + task + '/version-calcul?' + urlencode(
-                [(key, combined_fields[key]) for key in editorial.SEARCH_PARAMETERS if combined_fields.get(key)]),
-                result_link)
-            notice = self.request(result_link)[0]
-            self.assertEqual(query_path(combined_fields), notice.link('Retour aux résultats'))
-            self.assertEqual('/epreuves', notice.link('Toutes les épreuves'))
-            self.assertEqual('/preparation/copies/' + task + '/version-calcul', notice.link('Créer mon cas d’usage privé'))
-            self.assertEqual('Textes fournis', notice.field('Entrées'))
-            source = editorial.copy_bundle(self.public, task, 'version-calcul')
-            self.assertEqual(calc['package_sha256'], source['package_sha256'])
-            copied = json.loads(source['manifest'])
-            self.assertEqual('Tableau des débits', copied['expected_result'])
-            self.assertEqual(['Tableur'], copied['tools'])
-
-            # Paramètres et contenus hostiles : refus ou échappement, jamais d'exécution
-            for path in ('/epreuves?besoin=prive', '/epreuves?q=a&q=b', '/epreuves?q=' + 'a' * 201,
-                         '/epreuves?qualification=INVALIDE', '/epreuves?q=%ff', '/epreuves?q=%00',
-                         '/epreuves/' + task + '/version-calcul?x=1',
-                         '/epreuves/' + task + '/version-calcul?q=a&q=b'):
-                rejected, _, rejected_raw = self.request(path, status=400)
-                self.assertNotIn(b'<script', rejected_raw, path)
-                self.assertNotIn('prive', rejected.visible, path)
-            hostile_path = query_path({'q': '<script>alert(9)</script>'})
-            hostile, _, hostile_raw = self.request(hostile_path)
-            self.assertNotIn(b'<script', hostile_raw.replace(FILTRES, b''))
-            self.assertIn('<script>alert(9)</script>', hostile.visible)
-
-            # Retrait : absent des résultats et des valeurs proposées
-            after_withdrawal, _, _ = self.request('/epreuves')
-            self.assertNotIn('Épreuve retirée', after_withdrawal.visible)
-            self.assertNotIn('Langue retirée', after_withdrawal.segments('langue'))
-            self.assertNotIn('Outil retiré', after_withdrawal.segments('outil'))
-            retired_search = search({'langue': 'Langue retirée'})
-            self.assertIn('Aucune épreuve ne correspond à cette recherche', retired_search.visible)
-            self.assertNotIn('Épreuve retirée', retired_search.visible)
-            self.request('/epreuves/' + task + '/version-retiree', status=200)
-
-            # Aucune clé, session, écriture ni appel : les octets publiés restent identiques
-            self.assertEqual([], self.calls)
-            self.assertTrue(self.starts.empty())
-            self.assertEqual({}, dict(self.cookies))
-            with closing(storage.Store(self.data)) as store:
-                self.assertEqual(before_operations,
-                                 store._connection.execute('SELECT count(*) FROM operations').fetchone()[0])
-            self.assertEqual(old_manifest, (old_folder / 'manifest.json').read_bytes())
-            self.assertEqual(old_piece, (old_folder / 'piece-consigne.txt').read_bytes())
-            self.assertEqual(old['package_sha256'], sha256((old_folder / 'manifest.json').read_bytes()).hexdigest())
-            self.assertEqual(enriched['package_sha256'], sha256(
-                (self.public / 'editorial-trials' / task / 'version-enrichie' / 'manifest.json').read_bytes()).hexdigest())
-            self.assertEqual(before_public, {str(path.relative_to(self.public)): path.read_bytes()
-                                             for path in self.public.rglob('*') if path.is_file()})
-            self.assertEqual(before_private, {str(path.relative_to(self.data)): path.read_bytes()
-                                              for path in self.data.rglob('*') if path.is_file()})
-
-    def test_recherche_conserve_un_filtre_indisponible(self):
-        """#464 : un filtre actif reste soumis jusqu'à sa modification ou son effacement volontaire"""
-        task = 'tache-fictive'
-        tableur = self.publier_epreuve('version-tableur', title='Tableau au tableur',
-                                       characteristics={'tools': ['Tableur'], 'language': 'Français'})
-        self.publier_epreuve('version-autre', title='Note sans tableur',
-                             characteristics={'tools': [], 'language': 'Anglais'})
-        path = '/epreuves?' + urlencode({'outil': 'Tableur'})
-        filtered, _, _ = self.request(path)
-        self.assertIn('Tableau au tableur', filtered.visible)
-        self.assertNotIn('Note sans tableur', filtered.visible)
-        self.assertEqual('Tableur', filtered.form_values('/epreuves')['outil'])
-        editorial.withdraw(self.public, task, 'version-tableur', dict(
-            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=tableur['package_sha256'],
-            scope='editorial-withdrawal', task_id=task, version_id='version-tableur'))
-        retained, _, _ = self.request(path)
-        self.assertIn('Aucune épreuve ne correspond à cette recherche', retained.visible)
-        self.assertNotIn('Tableau au tableur', retained.visible)
-        self.assertIn('Tableur (indisponible)', retained.visible)
-        # La valeur indisponible reste active : un lien courant la nomme, et le formulaire la soumet encore
-        self.assertIn('Tableur (indisponible)', [n['text'] for n in retained.nodes if n['tag'] == 'a' and n['attrs'].get('aria-current')])
-        fields = retained.form_values('/epreuves')
-        self.assertEqual('Tableur', fields['outil'])
-        self.assertNotIn('Tableur', self.request('/epreuves')[0].segments('outil'))
-        # Modifier le texte recherché soumet réellement le filtre conservé
-        fields['q'] = 'note'
-        changed, _, _ = self.request('/epreuves?' + urlencode(fields))
-        self.assertTrue(any(n['attrs'].get('aria-label') == 'Critères actifs' for n in changed.nodes))
-        self.assertIn('Tableur (indisponible)', changed.visible)
-        self.assertIn('Aucune épreuve ne correspond à cette recherche', changed.visible)
-        self.assertNotIn('Note sans tableur', changed.visible)
-        self.assertEqual('Tableur', changed.form_values('/epreuves')['outil'])
-        # Effacement volontaire : le filtre et la recherche disparaissent ensemble
-        cleared, _, _ = self.request(changed.link('Effacer la recherche et les filtres'))
-        self.assertFalse(any(n['attrs'].get('aria-label') == 'Critères actifs' for n in cleared.nodes))
-        self.assertNotIn('outil', cleared.form_values('/epreuves'))
-        self.assertIn('Note sans tableur', cleared.visible)
-        self.assertNotIn('Tableau au tableur', cleared.visible)
-
-    def test_recherche_caracteristique_longue_utilisable(self):
-        """#464 : toute valeur proposée par le formulaire reste utilisable par la recherche"""
-        long_tool = 'Tableur ' + 'de contrôle ' * 16 + 'o'
-        self.assertEqual(201, len(long_tool))
-        self.publier_epreuve('version-longue', title='Version longue',
-                             characteristics={'tools': [long_tool], 'language': 'Français'})
-        page, _, _ = self.request('/epreuves')
-        self.assertIn(long_tool, page.segments('outil'))
-        self.assertIn(long_tool, page.visible)
-        self.assertEqual({'q': ''}, page.form_values('/epreuves'))
-        result, _, _ = self.request('/epreuves?' + urlencode({'outil': long_tool}))
-        self.assertIn('Version longue', result.visible)
-        self.assertTrue(any(n['attrs'].get('aria-label') == 'Critères actifs' for n in result.nodes))
-        self.assertIn(long_tool, result.visible)
-        self.assertIn(long_tool, result.segments('outil'))
-        self.assertEqual(long_tool, result.form_values('/epreuves')['outil'])
-        self.request('/epreuves?q=' + 'a' * 201, status=400)
 
     def construire_epreuve(self, version='version-1', *, qualification='ABSENT', title='Tableau des opérations',
                            work='Préparer un tableau par opération', cases=('Cinq débits de janvier 2027',),
@@ -1316,20 +916,23 @@ class ParcoursComplet(unittest.TestCase):
         form = self.formulaire_cle(page)
         self.request(form['action'], form['fields'] | {'key': KEY}, status=303)
 
-    def copie_epreuve(self, version='version-1', *, status=303, task='tache-fictive'):
-        page, _, _ = self.request('/epreuves/' + task + '/' + version)
-        confirmation, _, _ = self.request(page.link('Créer mon cas d’usage privé'))
-        form = next(item for item in confirmation.forms if '/copies/' in item['action'])
-        result, headers, raw = self.request(form['action'], form['fields'], status=status)
-        return result, headers, raw
+    def copie_epreuve(self, version='version-1', *, task='tache-fictive'):
+        """Semence d'une copie antérieure à l'alpha : `copy_from_publication` hors de toute route, sans clé ni appel"""
+        if 'benchmark_session' not in self.cookies:
+            self.request('/preparation')
+        with closing(storage.Store(self.data)) as store:
+            session_id = prep.session(store, self.cookies['benchmark_session'].value)[0]
+            dossier_id, _ = prep.copy_from_publication(store, session_id, {
+                'dossier_id': os.urandom(16).hex(), 'action_id': os.urandom(16).hex(),
+                'source': editorial.copy_bundle(self.public, task, version)})
+        return '/preparation/dossiers/' + dossier_id
 
     def copie_preparee(self, *, qualification='ABSENT', version='version-1',
                        title='Tableau des opérations', work='Préparer un tableau par opération'):
         """Copie sans clé, puis accès personnel et première préparation du besoin personnel"""
         task = 'tache-fictive'
         bundle = self.publier_epreuve(version, qualification=qualification, title=title, work=work)
-        _, headers, _ = self.copie_epreuve(version, task=task)
-        dossier = headers['Location']
+        dossier = self.copie_epreuve(version, task=task)
         self.ajouter_cle()
         page, _, _ = self.request(dossier)
         self.preparation_stage = 'exemple'
@@ -1340,35 +943,14 @@ class ParcoursComplet(unittest.TestCase):
         return dossier, page, bundle
 
     def test_copie_epreuve_sans_cle_et_filiation(self):
-        """#465 : copie exacte sans clé, filiation conservée et accès personnel avant tout appel"""
+        """#465 : une copie existante garde sa filiation exacte et reste consultable sans clé ni appel"""
         task, version = 'tache-fictive', 'version-1'
         bundle = self.publier_epreuve(version, qualification='QUALIFIED')
-        public, public_headers, public_raw = self.request('/epreuves/' + task + '/' + version)
-        self.assertIsNone(public_headers.get('Set-Cookie'))
-        self.assertEqual('no-referrer', public_headers['Referrer-Policy'])
-        self.assertIn("form-action 'self'", public_headers['Content-Security-Policy'])
-        self.assertIn('Créer mon cas d’usage privé', public.visible)
-        self.assertIn('Qualification réussie', public.visible)
-        link = public.link('Créer mon cas d’usage privé')
-        self.assertEqual('/preparation/copies/' + task + '/' + version, link)
-        # Le cookie privé n’est pas envoyé à la page publique, mais l’est au chemin de confirmation
-        self.assertNotIn('benchmark_session', self.cookie_header(self.cookies, '/epreuves/' + task + '/' + version))
-        confirmation, confirm_headers, _ = self.request(link)
-        self.assertTrue(confirm_headers.get('Set-Cookie'))
-        self.assertIn('benchmark_session', self.cookie_header(self.cookies, link))
-        session = self.cookies['benchmark_session'].value
-        self.assertIn('Épreuve source', confirmation.visible)
-        form = next(item for item in confirmation.forms if '/copies/' in item['action'])
-        self.assertIn('csrf_token', form['fields'])
-        self.assertEqual('1', form['fields']['copy'])
-        self.assertEqual([], self.calls)
-        self.assertTrue(self.starts.empty())
+        self.request('/preparation')
         with closing(storage.Store(self.data)) as store:
             before = store._connection.execute('SELECT count(*) FROM operations').fetchone()[0]
-        page, headers, raw = self.request(form['action'], form['fields'], status=303)
-        self.assertEqual(session, self.cookies['benchmark_session'].value)
-        self.assertEqual('no-store', headers['Cache-Control'])
-        dossier = headers['Location']
+        dossier = self.copie_epreuve(version)
+        session = self.cookies['benchmark_session'].value
         self.assertRegex(dossier, r'^/preparation/dossiers/[A-Za-z0-9_-]{1,128}$')
         # Aucun appel, coût, campagne ni qualification importée
         self.assertEqual([], self.calls)
@@ -1385,15 +967,16 @@ class ParcoursComplet(unittest.TestCase):
             self.assertEqual('Relève les opérations inventées', source['pieces'][0]['text'])
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM s2_validations').fetchone()[0])
         page, _, _ = self.request(dossier)
-        for value in ('Épreuve source', 'Tableau des opérations', 'Préparer un tableau par opération',
+        for value in ('Exemple source', 'Tableau des opérations', 'Préparer un tableau par opération',
                       'Version source', views.version_lisible(version), 'Qualification réussie',
                       'Votre besoin personnel n’est pas encore décrit', 'la copie reste consultable sans elle'):
             self.assertIn(value, page.visible)
-        # Les cas et les limites de l'épreuve source sont dans leur dépliant
+        # Les cas et les limites de l'exemple source sont dans leur dépliant
         self.assertIn('Cinq débits de janvier 2027', page.depliant('Cas, limites et pièces conservées'))
         self.assertIn('Ne certifie aucune comptabilité', page.depliant('Cas, limites et pièces conservées'))
         # Avant préparation, la page dit son état de copie et non un exemple déjà préparé
-        self.assertIn('Copie d’épreuve', page.visible)
+        self.assertIn('Copie d’un exemple publié', page.visible)
+        self.assertNotRegex(page.visible, 'Épreuve source|Copie d’épreuve')
         self.assertIn('Version 1', page.visible)
         self.assertNotIn('Exemple inventé', page.visible)
         self.assertIn('Votre copie est enregistrée.', page.visible)
@@ -1420,8 +1003,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('aucun appel modèle effectué', reloaded.visible)
         self.assertNotIn('justificatif', reloaded.visible)
         # Le rechargement garde la source, la qualification publiée et les pièces copiées
-        self.assertIn('Épreuve source', reloaded.visible)
-        self.assertIn('Copie d’épreuve', reloaded.visible)
+        self.assertIn('Exemple source', reloaded.visible)
+        self.assertIn('Copie d’un exemple publié', reloaded.visible)
         self.assertIn('Version 1', reloaded.visible)
         self.assertIn('Qualification réussie', reloaded.visible)
         self.assertTrue(any('Relève les opérations inventées' in n['text'] for n in reloaded.nodes
@@ -1431,9 +1014,13 @@ class ParcoursComplet(unittest.TestCase):
                 'SELECT count(*) FROM operations WHERE dossier_id=?', (dossier_id,)).fetchone()[0])
         self.assertEqual([], self.calls)
         self.assertTrue(self.starts.empty())
-        # Renvoi de la même demande : même dossier, aucune révision ni opération de plus
-        again, again_headers, _ = self.request(form['action'], form['fields'], status=303)
-        self.assertEqual(dossier, again_headers['Location'])
+        # Plus aucune nouvelle copie : confirmation et création répondent 404, sans cookie ni dossier de plus
+        copy_path = '/preparation/copies/' + task + '/' + version
+        for fields in (None, {'copy': '1'}):
+            _, refused_headers, refused_raw = self.request(copy_path, fields, status=404)
+            self.assertIsNone(refused_headers.get('Set-Cookie'))
+            self.assertNotIn(b'Tableau des op', refused_raw)
+        self.assertEqual(session, self.cookies['benchmark_session'].value)
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
             self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_revisions').fetchone()[0])
@@ -1444,40 +1031,24 @@ class ParcoursComplet(unittest.TestCase):
         denied, _, denied_raw = self.request(dossier, cookies=foreign, status=403)
         self.assertNotIn(b'Tableau des op', denied_raw)
         self.assertIn('Rouvrez votre cas d’usage', denied.visible)
-        # La page publique n’a pas de session et reste identique pour un cookie invalide
-        self.assertEqual(public_raw, self.request('/epreuves/' + task + '/' + version,
-                                                  cookies=SimpleCookie('benchmark_session=invalid'))[2])
         self.assertEqual([], self.calls)
         self.assertTrue(self.starts.empty())
 
     def test_copie_conserve_la_session_existante(self):
-        """#465 : la copie depuis le chemin privé ne remplace pas la session qui portait les anciens dossiers"""
+        """#465 : une copie existante vit dans la session qui porte les anciens dossiers"""
         old_dossier, old_page = self.exemple()
         self.assertIn('Transformer des notes de réunion', old_page.visible)
         session = self.cookies['benchmark_session'].value
         calls = list(self.calls)
-        task, version = 'tache-fictive', 'version-1'
-        self.publier_epreuve(version)
-        public, _, _ = self.request('/epreuves/' + task + '/' + version)
-        self.assertNotIn('benchmark_session', self.cookie_header(
-            self.cookies, '/epreuves/' + task + '/' + version))
-        link = public.link('Créer mon cas d’usage privé')
-        self.assertIn('benchmark_session', self.cookie_header(self.cookies, link))
-        confirmation, _, _ = self.request(link)
-        self.assertEqual(session, self.cookies['benchmark_session'].value)
-        self.assertIn('Épreuve source', confirmation.visible)
-        form = next(item for item in confirmation.forms if '/copies/' in item['action'])
-        _, headers, _ = self.request(form['action'], form['fields'], status=303)
-        dossier = headers['Location']
+        self.publier_epreuve('version-1')
+        dossier = self.copie_epreuve('version-1')
         self.assertEqual(session, self.cookies['benchmark_session'].value)
         self.assertEqual(calls, self.calls)
         self.assertTrue(self.starts.empty())
-        # L’ancien dossier reste accessible avec la même session
+        # L’ancien dossier reste accessible avec la même session, à côté de la copie
         previous, _, _ = self.request(old_dossier)
         self.assertIn('Transformer des notes de réunion', previous.visible)
-        # Renvoi de la confirmation : même dossier, aucune copie de plus
-        again, again_headers, _ = self.request(form['action'], form['fields'], status=303)
-        self.assertEqual(dossier, again_headers['Location'])
+        self.assertIn('Exemple source', self.request(dossier)[0].visible)
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(2, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
         # Une autre session ne voit ni l’ancien dossier ni la copie
@@ -1488,31 +1059,21 @@ class ParcoursComplet(unittest.TestCase):
             self.assertNotIn(b'Transformer des notes', denied_raw)
             self.assertNotIn(b'Tableau des op', denied_raw)
         self.assertEqual(session, self.cookies['benchmark_session'].value)
-        self.request(old_dossier)
-        self.request(dossier)
 
     def test_copie_session_privacy_bootstrap(self):
-        """#465 : sous confidentialité S7, la confirmation ouvre la session par le mécanisme existant"""
+        """#465 : sous confidentialité S7, une copie existante s'ouvre après le mécanisme de session existant"""
         from benchmark import privacy
-        task, version = 'tache-fictive', 'version-1'
-        self.publier_epreuve(version)
+        self.publier_epreuve('version-1')
         privacy.migrate(self.data, SECRET, 'test-465-bootstrap')
-        public, _, _ = self.request('/epreuves/' + task + '/' + version)
-        link = public.link('Créer mon cas d’usage privé')
-        bootstrap, _, _ = self.request(link)
+        bootstrap, _, _ = self.request('/preparation')
         self.assertIn('Ouvrir mon espace', bootstrap.visible)
         form = bootstrap.form('/session/open')
-        self.assertEqual(link, form['fields']['return_path'])
-        _, headers, _ = self.request(form['action'], form['fields'], status=303, extra_headers={
+        self.request(form['action'], form['fields'], status=303, extra_headers={
             'Origin': 'https://fixture.example', 'Sec-Fetch-Site': 'same-origin'})
-        self.assertEqual(link, headers['Location'])
-        confirmation, _, _ = self.request(link)
-        self.assertIn('Épreuve source', confirmation.visible)
-        form = next(item for item in confirmation.forms if '/copies/' in item['action'])
-        _, headers, _ = self.request(form['action'], form['fields'], status=303)
-        dossier = headers['Location']
-        page, _, _ = self.request(dossier)
-        self.assertIn('Épreuve source', page.visible)
+        self.assertIn('benchmark_session', self.cookies)
+        page, _, _ = self.request(self.copie_epreuve('version-1'))
+        self.assertIn('Exemple source', page.visible)
+        self.assertIn('Copie d’un exemple publié', page.visible)
         self.assertEqual([], self.calls)
         self.assertTrue(self.starts.empty())
 
@@ -1520,39 +1081,24 @@ class ParcoursComplet(unittest.TestCase):
         """#465 : source retirée, altérée, incomplète ou substituée ; aucune copie partielle"""
         task, version = 'tache-fictive', 'version-1'
         bundle = self.publier_epreuve(version)
-        _, headers, _ = self.copie_epreuve(version)
-        dossier = headers['Location']
-        with closing(storage.Store(self.data)) as store:
-            self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
-        # Session et jeton d’une version encore disponible, sans créer sa copie
+        dossier = self.copie_epreuve(version)
+        def dossiers():
+            with closing(storage.Store(self.data)) as store:
+                return store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0]
+        self.assertEqual(1, dossiers())
         self.publier_epreuve('version-6')
-        confirmation, _, _ = self.request('/preparation/copies/' + task + '/version-6')
-        form = next(item for item in confirmation.forms if '/copies/' in item['action'])
-        csrf = form['fields']['csrf_token']
-        # Anciennes routes de copie directe : aucune ne relaie une source fournie par le client
-        self.request('/epreuves/' + task + '/' + version + '/copie', {'copy': '1'}, status=404)
+        # La copie n'admet que l'identifiant, l'action et la source lue sur disque : aucun champ fourni par un client
         source = editorial.copy_bundle(self.public, task, version)
-        for extra in ({}, {'csrf_token': csrf}):
-            self.request('/preparation/copies', {
-                'dossier_id': 'a' * 32, 'action_id': 'b' * 32, 'source': source} | extra, status=404)
         with closing(storage.Store(self.data)) as store:
-            self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
-        # Contrôle commun : jeton absent ou invalide, origine étrangère
-        copy_path = '/preparation/copies/' + task + '/version-6'
-        self.request(copy_path, {'copy': '1'}, status=400)
-        self.request(copy_path, {'csrf_token': 'a' * 64, 'copy': '1'}, status=403)
-        for fields in ({'csrf_token': csrf, 'copy': '1', 'task_id': 'autre'},
-                       {'csrf_token': csrf, 'copy': '1', 'source': source},
-                       {'csrf_token': csrf, 'copy': '0'}):
-            self.request(copy_path, fields, status=400)
-        self.request(copy_path + '?x=1', form['fields'], status=400)
-        self.request(copy_path, form['fields'], status=403, extra_headers={'Origin': 'https://evil.example'})
-        self.request(copy_path, form['fields'], status=403,
-                     extra_headers={'Sec-Fetch-Site': 'cross-site'})
-        with closing(storage.Store(self.data)) as store:
-            self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
+            session_id = prep.session(store, self.cookies['benchmark_session'].value)[0]
+            for extra in ({'csrf_token': 'a' * 64}, {'task_id': 'autre'}):
+                with self.assertRaisesRegex(ValueError, 'Formulaire invalide'):
+                    prep.copy_from_publication(store, session_id, {
+                        'dossier_id': 'a' * 32, 'action_id': 'b' * 32, 'source': source} | extra)
+        self.assertEqual(1, dossiers())
         # Version non publiée et autorité de fixture : introuvables pour le lecteur de production
-        self.request('/preparation/copies/' + task + '/absente', form['fields'], status=404)
+        with self.assertRaises(editorial.NotFound):
+            editorial.copy_bundle(self.public, task, 'absente')
         raw_piece = b'Version de fixture'
         manifest = {'schema_version': editorial.SCHEMA, 'task_id': task, 'version_id': 'fixture-1',
                     'title': 'Fixture', 'work': 'Fixture', 'cases': ['Fixture'], 'limits': ['Fixture'],
@@ -1564,19 +1110,17 @@ class ParcoursComplet(unittest.TestCase):
         fixture = {'manifest': raw, 'package_sha256': sha256(raw).hexdigest(),
                    'files': {'piece-consigne.txt': raw_piece}}
         editorial.fixture_publish(self.public, fixture, fixture_approval)
-        self.request('/preparation/copies/' + task + '/fixture-1', form['fields'], status=404)
+        with self.assertRaises(editorial.NotFound):
+            editorial.copy_bundle(self.public, task, 'fixture-1')
         # Retrait avant admission : refus explicite, aucune copie
         self.publier_epreuve('version-2')
         editorial.withdraw(self.public, task, 'version-2', dict(
             actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=editorial.reprise_admission(
                 self.public, task, 'version-2')['package_sha256'],
             scope='editorial-withdrawal', task_id=task, version_id='version-2'))
-        refused, _, refused_raw = self.request(
-            '/preparation/copies/' + task + '/version-2', form['fields'], status=409)
-        self.assertIn('Cette version est retirée', refused.visible)
-        self.assertNotIn('Relève les op'.encode(), refused_raw)
-        with closing(storage.Store(self.data)) as store:
-            self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
+        with self.assertRaisesRegex(ValueError, '^Nouvelle reprise refusée$'):
+            editorial.copy_bundle(self.public, task, 'version-2')
+        self.assertEqual(1, dossiers())
         # Paquet altéré, incomplet ou d’une autre autorité : refus avant écriture
         for other, mutate in (('version-3', 'bytes'), ('version-4', 'missing'), ('version-5', 'authority')):
             self.publier_epreuve(other)
@@ -1590,34 +1134,27 @@ class ParcoursComplet(unittest.TestCase):
                 approval = json.loads((folder / 'approval.json').read_text())
                 approval['actor'] = 'approbateur-fictif-S6'
                 (folder / 'approval.json').write_text(storage._strict_json(approval))
-            refused, _, _ = self.request('/preparation/copies/' + task + '/' + other,
-                                         form['fields'], status=409)
-            self.assertIn('Aucun cas d’usage n’a été créé', refused.visible)
-            with closing(storage.Store(self.data)) as store:
-                self.assertEqual(1, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
-        # Parcours autorisé : même session, même jeton, aucun appel ni coût
-        _, success_headers, _ = self.request(copy_path, form['fields'], status=303)
-        copied = success_headers['Location']
+            with self.assertRaises(ValueError):
+                editorial.copy_bundle(self.public, task, other)
+            self.assertEqual(1, dossiers())
+        # Parcours autorisé : même session, aucun appel ni coût ; une seconde copie de la même version rend le même dossier
+        copied = self.copie_epreuve('version-6')
         self.assertEqual([], self.calls)
         self.assertTrue(self.starts.empty())
         with closing(storage.Store(self.data)) as store:
             self.assertEqual(2, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
             self.assertEqual(0, store._connection.execute('SELECT count(*) FROM operations').fetchone()[0])
-        again, again_headers, _ = self.request(copy_path, form['fields'], status=303)
-        self.assertEqual(copied, again_headers['Location'])
-        with closing(storage.Store(self.data)) as store:
-            self.assertEqual(2, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
-        # Retrait de la première version : sa copie antérieure reste consultable
+        self.assertEqual(copied, self.copie_epreuve('version-6'))
+        self.assertEqual(2, dossiers())
+        # Retrait de la première version : plus aucune copie, sa copie antérieure reste consultable
         editorial.withdraw(self.public, task, version, dict(
             actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=bundle['package_sha256'],
             scope='editorial-withdrawal', task_id=task, version_id=version))
-        self.request('/preparation/copies', {
-            'csrf_token': csrf, 'dossier_id': 'c' * 32, 'action_id': 'd' * 32, 'source': source}, status=404)
-        self.request('/preparation/copies/' + task + '/' + version, form['fields'], status=409)
-        with closing(storage.Store(self.data)) as store:
-            self.assertEqual(2, store._connection.execute('SELECT count(*) FROM s2_dossiers').fetchone()[0])
+        with self.assertRaisesRegex(ValueError, '^Nouvelle reprise refusée$'):
+            editorial.copy_bundle(self.public, task, version)
+        self.assertEqual(2, dossiers())
         private, _, private_raw = self.request(dossier)
-        self.assertIn('Épreuve source', private.visible)
+        self.assertIn('Exemple source', private.visible)
         self.assertIn('n’est plus disponible au catalogue', private.visible)
         self.assertTrue(any('Relève les opérations inventées' in n['text'] for n in private.nodes
                             if n['tag'] == 'pre' and 'example-text' in n['attrs'].get('class', '')))
@@ -1711,11 +1248,11 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Modèle C', resultats.visible)
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
         page, _, _ = self.request(dossier)
-        self.assertIn('Épreuve source', page.visible)
+        self.assertIn('Exemple source', page.visible)
         self.assertIn('Qualification réussie', page.visible)
         # Un dossier préparé garde sa marque d’exemple inventé, pas celle d’une simple copie
         self.assertIn('Exemple inventé', page.visible)
-        self.assertNotIn('Copie d’épreuve', page.visible)
+        self.assertNotIn('Copie d’un exemple publié', page.visible)
         # Le coût observé d’une opération reçue reste affiché tel quel, jamais remplacé par un zéro
         self.assertRegex(page.visible, r'Coût observé de la préparation\s*0,10\s*USD')
         self.assertNotIn('Aucun appel modèle effectué pour ce dossier.', page.visible)
@@ -1866,7 +1403,6 @@ class ParcoursComplet(unittest.TestCase):
         self.submit(page, '/configurations', {
             'models': ['deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'], 'tier': 'low'})
         third_id = dossier_id + '-c4'
-        third = '/epreuves/' + task + '/' + version + '/benchmarks/' + third_id
         self.assertTrue(self.starts.empty())
 
         with closing(storage.Store(self.data)) as store:
@@ -1974,121 +1510,58 @@ class ParcoursComplet(unittest.TestCase):
         piece_path = stored / first_id / ('piece-' + selected[0] + '.txt')
         original_piece = piece_path.read_bytes()
         piece_path.write_bytes(b'octets alteres')
-        self.request(first, status=404)
-        self.request(first + '/pieces/' + selected[0], status=404)
+        with self.assertRaises(ValueError):
+            public_results.view(self.public, task, version, first_id)
+        with self.assertRaises(ValueError):
+            public_results.piece_bytes(self.public, task, version, first_id, selected[0])
         piece_path.write_bytes(original_piece)
         manifest_path = stored / first_id / 'manifest.json'
         original_manifest = manifest_path.read_bytes()
         manifest_path.write_bytes(original_manifest + b' ')
-        self.request(first, status=404)
+        with self.assertRaises(ValueError):
+            public_results.view(self.public, task, version, first_id)
         manifest_path.write_bytes(original_manifest)
-        self.request(first)
-        # Un résultat publié se lit sous /benchmarks/ ; l'ancienne adresse /campagnes/ n'existe plus, sans redirection
-        self.request(first.replace('/benchmarks/', '/campagnes/'), status=404)
         self.assertEqual({first_id, second_id, partial_id},
                          {campaign['campaign_id'] for campaign in
                           public_results.published(self.public, task, version)})
 
-        page, _, raw = self.request('/epreuves/' + task + '/' + version)
-        self.assertIn('Résultats publiés', page.visible)
-        links = [node['attrs']['href'] for node in page.nodes
-                 if node['tag'] == 'a' and 'Benchmark du' in node['text']]
-        self.assertEqual([first, second, partial], links)
-        self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
-        self.assertNotIn(need.encode(), raw)
-        self.assertNotIn(KEY.encode(), raw)
-        catalog, _, _ = self.request('/epreuves')
-        self.assertIn(title, catalog.visible)
-        self.assertIn('Résultats publiés', catalog.visible)
-        self.assertNotIn('Aucun résultat publié', catalog.visible)
-
-        page, headers, raw = self.request(first, cookies=SimpleCookie())
-        self.assertIsNone(headers.get('Set-Cookie'))
-        self.assertEqual('no-referrer', headers['Referrer-Policy'])
-        self.assertIn("default-src 'none'", headers['Content-Security-Policy'])
-        self.assertIn("form-action 'self'", headers['Content-Security-Policy'])
-        self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
-        main = next(node for node in page.nodes if node['tag'] == 'main')['text']
-        for value in (title, work, 'Modèle A', 'Modèle C', 'Satisfait', 'Ne satisfait pas',
-                      'Une action annoncée par la consigne manque au tableau.',
-                      '2 réponses vérifiées', '2 essais lancés sur 2',
-                      'Comparaison des coûts incomplète', 'Coût observé inconnu pour 1 réponse',
-                      'Conditions communes', 'Benchmark du', 'Toutes les épreuves'):
-            self.assertIn(value, page.visible)
-        for private_value in (need, reformulation or '', KEY, judge_text, 'operation_id', 'body_base64',
-                             'receipt', '/preparation/dossiers/'):
-            if private_value:
-                self.assertNotIn(private_value, main)
-        self.assertIn('un filtre ne change ni les verdicts ni la population', page.depliant('Tri et filtres').lower())
-        self.assertIn('pièce non publiée', main.lower())
-        # Configuration demandée, observée et sources : différence et inconnue explicites
-        page_raw = raw.decode()
-        self.assertIn('fournisseur-observe', page_raw)
-        self.assertRegex(page_raw, r'Fournisseur</th><td>OpenRouter</td><td>fournisseur-observe</td>')
-        self.assertRegex(page_raw, r'Observations inconnues :[^<]*Raisonnement')
-
+        # Routes retirées de l'alpha : même publiés, l'épreuve, ses résultats et leurs pièces répondent 404,
+        # sans cookie ni octet publié ; l'ancienne adresse /campagnes/ reste inconnue
         piece_url = first + '/pieces/' + selected[0]
-        _, piece_headers, piece_raw = self.request(piece_url, cookies=SimpleCookie())
-        self.assertEqual('text/plain; charset=utf-8', piece_headers['Content-Type'])
-        self.assertEqual(selected_text, piece_raw)
-        with self.assertRaises(public_results.NotFound):
-            public_results.piece_bytes(self.public, task, version, first_id, unselected[0])
+        for path in ('/epreuves/' + task + '/' + version, first, piece_url, second, partial,
+                     first.replace('/benchmarks/', '/campagnes/'), first + '?besoin=prive'):
+            gone, gone_headers, gone_raw = self.request(path, status=404, cookies=SimpleCookie())
+            self.assertIsNone(gone_headers.get('Set-Cookie'))
+            self.assertNotIn(selected_text, gone_raw)
+            self.assertNotIn(b'prive', gone_raw)
+            self.assertNotIn('Modèle A', gone.visible)
+        # Le paquet publié reste lisible par le module : les pièces choisies seulement, rien de privé
+        published_view = public_results.view(self.public, task, version, first_id)
+        self.assertEqual((title, work, 2), (published_view['title'], published_view['work'], len(published_view['rows'])))
+        for private_value in (need, reformulation or '', KEY, judge_text, 'operation_id', 'body_base64',
+                              'receipt', '/preparation/dossiers/'):
+            if private_value:
+                self.assertNotIn(private_value, one['manifest'].decode())
+        self.assertEqual(selected_text, public_results.piece_bytes(self.public, task, version, first_id, selected[0]))
         for pid in unselected + judge:
-            self.request(first + '/pieces/' + pid, status=404)
+            with self.assertRaises(public_results.NotFound):
+                public_results.piece_bytes(self.public, task, version, first_id, pid)
         # Aucune autre campagne privée n’est exposée
-        self.request(third, status=404)
-        self.assertNotIn(third_id, raw.decode())
+        with self.assertRaises(public_results.NotFound):
+            public_results.view(self.public, task, version, third_id)
+        self.assertEqual(2, len(public_results.view(self.public, task, version, second_id)['rows']))
+        self.assertEqual(1, len(public_results.view(self.public, task, version, partial_id)['rows']))
 
-        self.assertEqual(2, raw.count(b'<tr id="reponse-'))
-        self.assertEqual(1, self.request(first + '?configuration=1')[2].count(b'<tr id="reponse-'))
-        # Le bilan porte sur toute la population : le filtre ne change que le tableau
-        for filtre in ('?configuration=1', '?verdict=SATISFAIT'):
-            bilan = self.request(first + filtre)[0].visible
-            self.assertIn('1 satisfait', bilan, filtre)
-            self.assertIn('1 ne satisfait pas', bilan, filtre)
-        self.assertEqual(1, self.request(first + '?verdict=SATISFAIT')[2].count(b'<tr id="reponse-'))
-        self.assertEqual(1, self.request(first + '?verdict=NE%20SATISFAIT%20PAS')[2].count(b'<tr id="reponse-'))
-        self.assertIn('Aucune réponse ne correspond à ces filtres',
-                      self.request(first + '?verdict=A_REPRENDRE')[0].visible)
-        self.request(first + '?sort=cost')
-        self.request(first + '?sort=cost&direction=desc')
-        obligation = json.loads(one['manifest'])['obligations'][0]
-        self.request(first + '?obligation=' + obligation['id'] + ':PASS')
-        self.request(first + '?sort=inconnu', status=400)
-        self.request(first + '?sort=cost&sort=cost', status=400)
-        rejected, _, rejected_raw = self.request(first + '?besoin=prive', status=400)
-        self.assertNotIn(b'prive', rejected_raw)
-        self.assertNotIn('prive', rejected.visible)
-
-        page, _, second_raw = self.request(second)
-        self.assertIn('Benchmark du', page.visible)
-        self.assertEqual({first, partial}, {node['attrs']['href'] for node in page.nodes
-                                           if node['tag'] == 'a' and 'Benchmark du' in node['text']})
-        self.assertEqual(2, second_raw.count(b'<tr id="reponse-'))
-        self.assertIn('coûts complets', page.visible.lower())
-        page, _, partial_raw = self.request(partial)
-        self.assertIn('1 réponse vérifiée', page.visible)
-        self.assertIn('3 essais lancés sur 3', page.visible)
-        self.assertIn('Réponses en attente ou incidents', page.visible)
-        self.assertIn('Aucune réponse exploitable', page.visible)
-        self.assertIn('Coût observé : 0,10 USD', page.visible)
-        self.assertIn('Coût observé : Inconnu', page.visible)
-        self.assertIn('Comparaison des coûts incomplète', page.visible)
-        self.assertEqual(1, partial_raw.count(b'<tr id="reponse-'))
-        self.assertEqual({first, second}, {node['attrs']['href'] for node in page.nodes
-                                           if node['tag'] == 'a' and 'Benchmark du' in node['text']})
-
-        # Lecture autonome : le stockage privé source a disparu et le relais privé est interdit
+        # Lecture autonome : le stockage privé source a disparu
         moved = self.data.with_name(self.data.name + '-absent')
         try:
-            with patch.object(server, 'preparation_request', side_effect=AssertionError('Relais privé interdit')):
-                self.data.rename(moved)
-                try:
-                    self.request(first)
-                    self.request(piece_url)
-                    self.request('/epreuves/' + task + '/' + version)
-                finally:
-                    moved.rename(self.data)
+            self.data.rename(moved)
+            try:
+                public_results.view(self.public, task, version, first_id)
+                public_results.piece_bytes(self.public, task, version, first_id, selected[0])
+                editorial.version_view(self.public, task, version)
+            finally:
+                moved.rename(self.data)
         finally:
             if moved.exists() and not self.data.exists():
                 moved.rename(self.data)
@@ -2113,16 +1586,13 @@ class ParcoursComplet(unittest.TestCase):
         decision = public_results.withdrawal(one['projection_sha256'], task, version, first_id)
         public_results.withdraw(self.public, task, version, first_id, decision)
         public_results.withdraw(self.public, task, version, first_id, decision)
-        withdrawn, _, withdrawn_raw = self.request(first)
-        self.assertIn('Cette restitution est retirée', withdrawn.visible)
-        self.assertNotIn('Modèle A', withdrawn.visible)
-        self.assertNotIn(b'<script', withdrawn_raw.replace(FILTRES, b''))
-        self.request(piece_url, status=404)
-        self.request(first + '/pieces/' + 'a' * 32, status=404)
-        self.assertIn('Benchmark du', self.request(second)[0].visible)
-        trial_page = self.request('/epreuves/' + task + '/' + version)[0]
-        self.assertIn(title, trial_page.visible)
-        self.assertNotIn(first, [node['attrs']['href'] for node in trial_page.nodes if node['tag'] == 'a'])
+        withdrawn_view = public_results.view(self.public, task, version, first_id)
+        self.assertTrue(withdrawn_view['withdrawn'])
+        self.assertNotIn('rows', withdrawn_view)
+        with self.assertRaises(public_results.NotFound):
+            public_results.piece_bytes(self.public, task, version, first_id, selected[0])
+        self.assertFalse(public_results.view(self.public, task, version, second_id)['withdrawn'])
+        self.assertFalse(editorial.version_view(self.public, task, version)['withdrawn'])
         self.assertEqual(manifest_bytes, (stored / first_id / 'manifest.json').read_bytes())
         self.assertEqual(piece_bytes, (stored / first_id / ('piece-' + selected[0] + '.txt')).read_bytes())
         self.assertEqual({second_id, partial_id}, {campaign['campaign_id']
@@ -2132,15 +1602,12 @@ class ParcoursComplet(unittest.TestCase):
         editorial.withdraw(self.public, task, version, dict(
             actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=trial['package_sha256'],
             scope='editorial-withdrawal', task_id=task, version_id=version))
-        self.assertIn('Cette version est retirée',
-                      self.request('/epreuves/' + task + '/' + version)[0].visible)
-        for campaign in (first, second, partial):
-            page, _, raw = self.request(campaign)
-            self.assertIn('Cette épreuve est retirée', page.visible)
-            self.assertNotIn('Modèle A', page.visible)
-            self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
+        self.assertTrue(editorial.version_view(self.public, task, version)['withdrawn'])
+        for campaign_id in (first_id, second_id, partial_id):
+            self.assertEqual('trial-withdrawn', public_results.view(self.public, task, version, campaign_id)['unavailable'])
             for pid in (selected[0], second_outputs[0], partial_outputs[0]):
-                self.request(campaign + '/pieces/' + pid, status=404)
+                with self.assertRaises(public_results.NotFound):
+                    public_results.piece_bytes(self.public, task, version, campaign_id, pid)
         self.assertEqual([], public_results.published(self.public, task, version))
         with self.assertRaises(ValueError) as raised:
             public_results.publish(self.public, two, public_results.approval(two['projection_sha256']))
@@ -2148,103 +1615,12 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(manifest_bytes, (stored / first_id / 'manifest.json').read_bytes())
         self.assertEqual(second_manifest, (stored / second_id / 'manifest.json').read_bytes())
 
-    def test_tri_numerique_resultats_publics(self):
-        """#466 : le tri public suit le sens annoncé, les égalités et les inconnues"""
-        from benchmark import restitution
-        task, version = 'tache-fictive', 'version-1'
-        dossier, page, _ = self.copie_preparee()
-        dossier_id = dossier.rsplit('/', 1)[1]
-        self.submit(page, '/validation', {})
-        with closing(storage.Store(self.data)) as store:
-            revision = store._connection.execute(
-                'SELECT current_revision FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
-            reference = store._connection.execute(
-                "SELECT piece_id FROM pieces WHERE dossier_id=? AND revision=? AND role='judge'",
-                (dossier_id, revision)).fetchone()[0]
-            spec = specification(reference)
-            spec['secondary_criteria'] = [
-                {'id': 'C1', 'measure': 'Nombre d’actions', 'unit': 'actions',
-                 'proof': 'Chaque action du tableau, recomptée', 'favorable': 'higher',
-                 'aggregation': None},
-                {'id': 'C2', 'measure': 'Points vérifiés', 'unit': 'points',
-                 'proof': 'Passages vérifiés dans le tableau', 'favorable': 'higher',
-                 'aggregation': None}]
-            contract = qualification.draft(store, dossier_id, revision, spec)
-            receipt = qualification.qualify(store, contract['contract_sha256'], reviewer=ACTOR, check=check)
-            qualification.approve(store, contract['contract_sha256'], receipt['qualification_id'],
-                                  actor=ACTOR, authority=AUTHORITY)
-            campaign = manifest(contract, 'numeric')
-            campaign['panel'] = [dict(campaign['panel'][0], id=ident, channel_id='fixture-channel-' + ident,
-                                      model='fictional-' + ident)
-                                 for ident in ('x', 'y', 'z')]
-            campaign['plan'] = [dict(cell_id=ident, case_id='notes', configuration_id=ident)
-                                for ident in ('x', 'y', 'z')]
-            campaign['attempt_policy'] = dict(retries=False, order=['x', 'y', 'z'], reason='Declared local order')
-            campaign = campaigns.create(store, campaign)
-            store.create_budget('local-comparison', '40', 'TEST')
-            authority, evidence = inputs(campaign, cells=['x', 'y', 'z'])
-            authority['reserve_amounts']['z'] = '7'
-            campaigns.admit(store, 'numeric', authority, evidence)
-            values = {'x': (2, 1), 'y': (2, 1), 'z': (10, 'INCONNU')}
-
-            def report(ctx, resources):
-                value = findings(ctx, resources)
-                output = ctx['attempt']['output_piece_id']
-                proof = [dict(piece_id=output, sha256=sha256(resources[output]).hexdigest(),
-                              passage=resources[output].decode())]
-                first, second = values[resources[output].decode().removeprefix('Sortie ')]
-                value['measures'] = [dict(criterion_id='C1', value=first, unit='actions', evidence=proof),
-                                     dict(criterion_id='C2', value=second, unit='points', evidence=proof)]
-                return value
-
-            def transport(operation, request):
-                value = response(operation, request)
-                value['receipt']['result']['output'] = 'Sortie ' + request['requested_configuration']['channel_id'].removeprefix('fixture-channel-')
-                value['cost'].update(status='KNOWN', amount='2', currency='TEST')
-                return value
-
-            for ident in ('x', 'y', 'z'):
-                attempts = campaigns.reserve(store, 'numeric', ident, 'attempt-' + ident)
-                execution.execute(self.data, attempts['operation_id'], transport)
-                evaluation.evaluate(store, 'numeric', attempts['operation_id'], responsible=RESPONSIBLE,
-                                    authority=EVALUATION_AUTHORITY, check=report)
-            campaigns.stop(store, 'numeric')
-        campaign_id = 'numeric'
-        url = '/epreuves/' + task + '/' + version + '/benchmarks/' + campaign_id
-        with closing(storage.Store(self.data)) as store:
-            session = store._connection.execute(
-                'SELECT session_id FROM s2_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()[0]
-            comparison = restitution.comparison(store, session, dossier_id, campaign_id)
-            self.assertEqual(3, len(comparison['rows']))
-            outputs = sorted({row['output_piece_id'] for row in comparison['rows'] if row['output_piece_id']})
-            self.assertEqual(3, len(outputs))
-            bundle = restitution.results_bundle(store, dossier_id, campaign_id, piece_ids=outputs,
-                                                task_id=task, version_id=version)
-        public_results.publish(self.public, bundle, public_results.approval(bundle['projection_sha256']))
-        manifest_doc = json.loads(bundle['manifest'])
-        numeric = next(column['id'] for column in manifest_doc['columns'] if column['label'] == 'Nombre d’actions')
-        precision = next(column['id'] for column in manifest_doc['columns'] if column['label'] == 'Points vérifiés')
-
-        def order(extra):
-            raw = self.request(url + extra)[2]
-            return [int(number) for number in re.findall(rb'<tr id="reponse-(\d+)-1"', raw)]
-
-        # Valeurs 2, 2 et 10 : croissant suit les valeurs, décroissant les inverse, l'égalité reste stable
-        self.assertEqual([1, 2, 3], order('?sort=' + numeric))
-        self.assertEqual([3, 1, 2], order('?sort=' + numeric + '&direction=desc'))
-        # Valeurs 1, 1 et inconnue : l'inconnue reste sans rang, dans les deux sens
-        self.assertEqual([1, 2, 3], order('?sort=' + precision))
-        self.assertEqual([1, 2, 3], order('?sort=' + precision + '&direction=desc'))
-        page = self.request(url + '?sort=' + precision)[0]
-        self.assertIn('non comparable : Mesure non relevée ou sans preuve', page.visible)
-
     def test_copie_epreuve_expiration_et_purge(self):
         """#465 : la copie et sa source suivent les règles privées de conservation, sans réactivation"""
         from benchmark import privacy
         task, version = 'tache-fictive', 'version-1'
         self.publier_epreuve(version)
-        _, headers, _ = self.copie_epreuve(version)
-        dossier = headers['Location']
+        dossier = self.copie_epreuve(version)
         dossier_id = dossier.rsplit('/', 1)[1]
         token = self.cookies['benchmark_session'].value
         privacy.migrate(self.data, SECRET, 'test-465')
@@ -2274,9 +1650,8 @@ class ParcoursComplet(unittest.TestCase):
                 row[0] for row in store._connection.execute('SELECT checks_json FROM s2_revisions').fetchall()))
         late, _, late_raw = self.request(dossier, status=410)
         self.assertNotIn('Relève les opérations inventées'.encode(), late_raw)
-        # La source publique reste indépendante : sa suppression privée ne réécrit pas le catalogue
-        public, _, _ = self.request('/epreuves/' + task + '/' + version)
-        self.assertIn('Tableau des opérations', public.visible)
+        # La source publiée reste indépendante : sa suppression privée ne réécrit pas le paquet
+        self.assertEqual('Tableau des opérations', editorial.version_view(self.public, task, version)['title'])
 
     def test_repertoire_renvoi_preparation(self):
         references = json.loads((Path(__file__).parent / 'fixtures/external-references.json').read_text())
@@ -2839,381 +2214,6 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual((200, 'suggestions'), (fresh[0], fresh[1]['status']))
         self.assertEqual(2, len(semantic_help.inspect(restart_store)['requests']))
 
-    def test_aide_semantique_epreuves_desactivee(self):
-        """#467 : service désactivé, la recherche, les filtres, l’ouverture et la copie restent disponibles"""
-        task = 'tache-fictive'
-        self.publier_epreuve('version-calcul', title='Tableau des débits',
-                             characteristics={'language': 'Français', 'tools': ['Tableur']})
-        transport = TypeSafeFixture()
-        # L’exécuteur reçoit un transport fictif mais aucune configuration : aucune émission ne peut partir
-        self.semantic = (None, transport)
-
-        found, _, _ = self.request('/epreuves?' + urlencode({'q': 'tableau', 'langue': 'Français'}))
-        self.assertIn('Tableau des débits', found.visible)
-        self.assertTrue(any(n['attrs'].get('aria-label') == 'Critères actifs' for n in found.nodes))
-        opened = self.request('/epreuves/' + task + '/version-calcul')[0]
-        self.assertIn('Tableau des débits', opened.visible)
-        self.assertIn('Créer mon cas d’usage privé', opened.visible)
-
-        disabled, _ = self.editorial_help_submit('Lister les mouvements mensuels d’un compte fictif',
-                                                  status=200)
-        self.assertIn('Aide indisponible', disabled.visible)
-        self.assertIn('désactivé', disabled.visible)
-        self.assertIn('Recherche simple', disabled.visible)
-        self.assertEqual([], transport.wires)
-        self.assertEqual([], self.access.verifications)
-        self.assertEqual([], self.calls)
-        with closing(storage.Store(self.data)) as store:
-            self.assertEqual([], semantic_help.inspect(store)['requests'])
-
-        # La recherche et la copie restent disponibles après le refus de l’aide
-        again = self.request('/epreuves?' + urlencode({'q': 'tableau'}))[0]
-        self.assertIn('Tableau des débits', again.visible)
-        result, headers, _ = self.copie_epreuve('version-calcul')
-        self.assertRegex(headers['Location'], r'^/preparation/dossiers/[A-Za-z0-9_-]{1,128}$')
-        self.assertEqual([], transport.wires)
-        self.assertEqual([], self.access.verifications)
-        self.assertEqual([], self.calls)
-        self.assertTrue(self.starts.empty())
-
-    def test_aide_semantique_epreuves(self):
-        """#467 : formulation différente, suggestions publiques exactes, retrait et copie"""
-        task = 'tache-fictive'
-        formulation = 'Lister les mouvements mensuels d’un compte fictif'
-        calcul = self.publier_epreuve(
-            'version-calcul', title='Tableau des débits', work='Préparer un tableau par opération',
-            characteristics={'expected_result': 'Tableau des débits', 'inputs': ['Textes fournis'],
-                             'language': 'Français', 'tools': ['Tableur'], 'difficulty': 'Facile'})
-        redaction = self.publier_epreuve(
-            'version-redaction', title='Note de synthèse', work='Rédiger une note de synthèse',
-            qualification='QUALIFIED',
-            characteristics={'expected_result': 'Note de synthèse', 'inputs': ['Bibliothèque figée'],
-                             'language': 'Anglais', 'tools': [], 'difficulty': 'Difficile'})
-        old = self.publier_epreuve('version-ancienne', title='Ancienne épreuve', schema=editorial.SCHEMA_V1)
-        retired = self.publier_epreuve('version-retiree', title='Épreuve retirée',
-                                       characteristics={'language': 'Langue retirée'})
-        editorial.withdraw(self.public, task, 'version-retiree', dict(
-            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=retired['package_sha256'],
-            scope='editorial-withdrawal', task_id=task, version_id='version-retiree'))
-        # Autorité fictive déposée hors de son répertoire : jamais candidate
-        fixture = self.construire_epreuve('version-fictive', title='Épreuve fictive',
-                                          characteristics={'language': 'Langue fictive'})
-        editorial.fixture_publish(self.public, fixture, editorial.fixture_approval(fixture['package_sha256']))
-        deposited = self.public / 'editorial-trials' / task / 'version-fictive'
-        deposited.mkdir(parents=True)
-        for item in (self.public / 'editorial-fixture' / task / 'version-fictive').iterdir():
-            (deposited / item.name).write_bytes(item.read_bytes())
-        # Paquet malformé et paquet altéré : illisibles ou divergents, donc jamais candidats
-        invalid = self.public / 'editorial-trials' / task / 'version-invalide'
-        invalid.mkdir()
-        (invalid / 'manifest.json').write_text('{"language":"Langue invalide"}')
-        altered = self.publier_epreuve('version-alteree', title='Épreuve altérée',
-                                       characteristics={'language': 'Langue altérée'})
-        altered_piece = self.public / 'editorial-trials' / task / 'version-alteree' / 'piece-consigne.txt'
-        altered_piece.write_text('Octets altérés')
-        # Dossier privé et contribution voisine : jamais lus pour servir l’aide
-        private_bundle = self.construire_epreuve('version-privee', title='Épreuve privée',
-                                                 characteristics={'language': 'Langue privée'})
-        editorial.publish(self.data, private_bundle, dict(
-            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=private_bundle['package_sha256'],
-            scope='editorial-trial'))
-        contributed = self.construire_epreuve('version-contribuee', title='Contribution voisine',
-                                              characteristics={'language': 'Langue contribuée'})
-        contribution = self.public / 'contributions' / task / 'version-contribuee'
-        contribution.mkdir(parents=True)
-        (contribution / 'manifest.json').write_bytes(contributed['manifest'])
-        for name, raw in contributed['files'].items():
-            (contribution / name).write_bytes(raw)
-
-        before_public = {str(path.relative_to(self.public / 'editorial-trials')): path.read_bytes()
-                         for path in (self.public / 'editorial-trials').rglob('*') if path.is_file()}
-
-        def suggest(wire):
-            document = json.loads(wire)
-            labels = [{'Préparer un tableau par opération': 'correspond',
-                       'Rédiger une note de synthèse': 'partiel'}.get(
-                           notice['work'], 'sans_correspondance')
-                      for notice in document['state']['notices']]
-            return {'status': 200, 'body': typesafe_document(wire, labels), 'complete': True}
-
-        transport = self.enable_semantic(TypeSafeFixture(suggest), enabled=('epreuves',))
-        page, path = self.editorial_help_submit(formulation)
-        self.assertRegex(path, r'^/epreuves/aide/resultat/[0-9a-f]{32}$')
-        self.assertNotIn(formulation, path)
-        self.assertIn('Tableau des débits', page.visible)
-        self.assertIn('Correspondance forte', page.visible)
-        self.assertIn('Note de synthèse', page.visible)
-        self.assertIn('Correspondance partielle', page.visible)
-        self.assertIn('ne prouve ni adéquation ni qualification', page.visible)
-        self.assertIn('Tableau des débits', page.visible)
-        self.assertNotIn('Aide indisponible', page.visible)
-        self.assertNotIn('0.9', page.visible)
-        self.assertNotIn('0.6', page.visible)
-        self.assertNotRegex(page.visible, r'\b[0-9a-f]{32,64}\b')
-        for absent in ('Épreuve retirée', 'Épreuve fictive', 'Épreuve altérée', 'Épreuve privée',
-                       'Contribution voisine', 'Langue retirée', 'Langue fictive', 'Langue altérée',
-                       'Langue privée', 'Langue contribuée', 'Langue invalide'):
-            self.assertNotIn(absent, page.visible)
-        self.assertEqual('/epreuves', page.link('Recherche simple'))
-        self.assertEqual('/preparation', page.link('Décrire mon cas d’usage'))
-        self.assertEqual([], page.forms)
-        self.assertEqual('/epreuves/tache-fictive/version-calcul', page.link('Tableau des débits'))
-        rendered = ' '.join(node['text'] for node in page.nodes if not node['hidden'])
-        self.assertIn('epreuves', rendered)
-        self.assertIn('epreuves-v1', rendered)
-        self.assertIn('tache-fictive / version-calcul', rendered)
-
-        self.assertEqual(1, len(transport.wires))
-        document = json.loads(transport.wires[0])
-        self.assertEqual({'model', 'state', 'questions'}, set(document))
-        self.assertEqual('jev-1.13.0', document['model'])
-        self.assertEqual(formulation, document['state']['formulation'])
-        notices = document['state']['notices']
-        self.assertEqual(3, len(notices))
-        self.assertEqual({'Tableau des débits', 'Note de synthèse', 'Ancienne épreuve'},
-                         {notice['name'] for notice in notices})
-        for notice in notices:
-            self.assertNotIn('id', notice)
-            self.assertLessEqual(set(notice),
-                                 {'ref', 'name', 'work', 'scope', 'limits', 'version'})
-            for absent in ('category', 'expected_result', 'inputs', 'language', 'tools',
-                           'difficulty', 'task_id', 'version_id', 'package_sha256',
-                           'qualification_status', 'results_published', 'cases'):
-                self.assertNotIn(absent, notice)
-        calcul_notice = next(notice for notice in notices if notice['name'] == 'Tableau des débits')
-        self.assertEqual('Tableau des débits', calcul_notice['scope'])
-        self.assertEqual('Préparer un tableau par opération', calcul_notice['work'])
-        self.assertEqual('Ne certifie aucune comptabilité', calcul_notice['limits'])
-        self.assertEqual('version-calcul', calcul_notice['version'])
-        wire = transport.wires[0]
-        for absent in ('Épreuve retirée', 'Langue retirée', 'Épreuve fictive', 'Langue fictive',
-                       'Épreuve altérée', 'Langue altérée', 'Épreuve privée', 'Langue privée',
-                       'Contribution voisine', 'Langue contribuée', 'Langue invalide',
-                       'version-invalide', 'version-fictive', 'version-privee', 'version-retiree',
-                       'version-alteree', KEY, SECRET.hex(), 'benchmark_session',
-                       AUTHORITY['authority_id'], ACTOR, 'Référence de jugement'):
-            self.assertNotIn(absent, wire)
-
-        request_id = path.rsplit('/', 1)[1]
-        with closing(storage.Store(self.data)) as store:
-            code, value = semantic_help.receipt(store, request_id)
-        self.assertEqual(200, code)
-        self.assertEqual(('epreuves', 'epreuves-v1'),
-                         (value['receipt']['usage'], value['receipt']['questions_version']))
-        self.assertNotIn(formulation, json.dumps(value))
-        for stored in list(self.data.rglob('*')) + list(self.public.rglob('*')):
-            if stored.is_file():
-                self.assertNotIn(formulation.encode(), stored.read_bytes(), stored)
-        # Aucune correspondance reste distincte d’une aide indisponible et ne force aucun choix
-        none_transport = self.enable_semantic(TypeSafeFixture(), enabled=('epreuves',))
-        none_page, none_path = self.editorial_help_submit('Un besoin sans rapport avec les épreuves')
-        self.assertIn('Aucune épreuve ne correspond', none_page.visible)
-        self.assertNotIn('Aide indisponible', none_page.visible)
-        self.assertEqual('/epreuves', none_page.link('Recherche simple'))
-        self.assertEqual('/preparation', none_page.link('Décrire mon cas d’usage'))
-        self.assertEqual(1, len(none_transport.wires))
-        self.assertRegex(none_path, r'^/epreuves/aide/resultat/[0-9a-f]{32}$')
-
-        # La copie part de la suggestion exacte et conserve version et empreinte
-        version_page = self.request(page.link('Tableau des débits'))[0]
-        self.assertEqual('/preparation/copies/tache-fictive/version-calcul',
-                         version_page.link('Créer mon cas d’usage privé'))
-        confirmation = self.request(version_page.link('Créer mon cas d’usage privé'))[0]
-        copy_form = next(item for item in confirmation.forms if '/copies/' in item['action'])
-        with closing(storage.Store(self.data)) as store:
-            before_operations = store._connection.execute(
-                'SELECT count(*) FROM operations').fetchone()[0]
-        _, copy_headers, _ = self.request(copy_form['action'], copy_form['fields'], status=303)
-        dossier = copy_headers['Location']
-        with closing(storage.Store(self.data)) as store:
-            source = json.loads(store._connection.execute(
-                'SELECT checks_json FROM s2_revisions WHERE dossier_id=? AND revision=1',
-                (dossier.rsplit('/', 1)[1],)).fetchone()[0])['source']
-            self.assertEqual(('tache-fictive', 'version-calcul'),
-                             (source['task_id'], source['version_id']))
-            self.assertEqual(calcul['package_sha256'],
-                             sha256(source['manifest'].encode()).hexdigest())
-            self.assertEqual(0, store._connection.execute(
-                'SELECT count(*) FROM s2_validations').fetchone()[0])
-            self.assertEqual(before_operations, store._connection.execute(
-                'SELECT count(*) FROM operations').fetchone()[0])
-        copied_page = self.request(dossier)[0]
-        self.assertIn('Qualification absente', copied_page.visible)
-        self.assertIn('Aucune qualification n’est publiée pour cette épreuve', copied_page.visible)
-        self.assertIn('Version calcul', copied_page.visible)
-        need = copied_page.form('/messages')
-        self.request(dossier + '/messages',
-                     need['fields'] | {'message': 'Un besoin assez long pour être préparé'},
-                     status=403)
-        self.assertEqual([], self.calls)
-        self.assertEqual([], self.access.verifications)
-
-        # Retrait après soumission : affichage, ouverture et copie revérifient l’état
-        calc_folder = self.public / 'editorial-trials' / task / 'version-calcul'
-        calc_manifest = (calc_folder / 'manifest.json').read_bytes()
-        calc_piece = (calc_folder / 'piece-consigne.txt').read_bytes()
-        editorial.withdraw(self.public, task, 'version-calcul', dict(
-            actor='Ayo', authority_id='EDITORIAL_TRIAL', package_sha256=calcul['package_sha256'],
-            scope='editorial-withdrawal', task_id=task, version_id='version-calcul'))
-        removed = self.request(path)[0]
-        self.assertIn('Une suggestion a été retirée', removed.visible)
-        self.assertNotIn('Tableau des débits', removed.visible)
-        self.assertIn('Note de synthèse', removed.visible)
-        self.assertNotIn('version-calcul', removed.visible)
-        self.assertNotIn('/epreuves/tache-fictive/version-calcul',
-                         [node['attrs'].get('href') for node in removed.nodes])
-        opened = self.request('/epreuves/' + task + '/version-calcul')[0]
-        self.assertIn('Cette version est retirée', opened.visible)
-        self.assertNotIn('Tableau des débits', opened.visible)
-        self.assertNotIn('Relève les opérations inventées', opened.visible)
-        refused_copy = self.request('/preparation/copies/' + task + '/version-calcul', status=409)[0]
-        self.assertIn('Cette version est retirée', refused_copy.visible)
-        refused_post = self.request(
-            '/preparation/copies/' + task + '/version-calcul',
-            {'csrf_token': 'a' * 64, 'copy': '1'}, status=409)[0]
-        self.assertIn('Cette version est retirée', refused_post.visible)
-        with closing(storage.Store(self.data)) as store:
-            self.assertEqual(1, store._connection.execute(
-                'SELECT count(*) FROM s2_dossiers').fetchone()[0])
-        self.assertEqual(calc_manifest, (calc_folder / 'manifest.json').read_bytes())
-        self.assertEqual(calc_piece, (calc_folder / 'piece-consigne.txt').read_bytes())
-        after_public = {str(path.relative_to(self.public / 'editorial-trials')): path.read_bytes()
-                        for path in (self.public / 'editorial-trials').rglob('*') if path.is_file()}
-        self.assertEqual({key: raw for key, raw in before_public.items()
-                          if not key.endswith('withdrawal.json')},
-                         {key: raw for key, raw in after_public.items()
-                          if not key.endswith('withdrawal.json')})
-        self.assertIn('Cette version n’est plus disponible au catalogue',
-                      self.request(dossier)[0].visible)
-        self.assertEqual([], self.calls)
-
-        # Protections HTTP et absence de texte recherché dans l’adresse et les pages
-        form_page, headers, raw = self.request('/epreuves/aide')
-        self.assertEqual('no-store', headers['Cache-Control'])
-        self.assertEqual('nosniff', headers['X-Content-Type-Options'])
-        self.assertEqual('no-referrer', headers['Referrer-Policy'])
-        self.assertIn("default-src 'none'", headers['Content-Security-Policy'])
-        self.assertIn("form-action 'self'", headers['Content-Security-Policy'])
-        self.assertNotIn(b'<script', raw.replace(FILTRES, b''))
-        self.assertIsNone(headers.get('Set-Cookie'))
-        self.assertEqual('/epreuves/aide', form_page.form('/epreuves/aide')['action'])
-        self.request('/epreuves/aide?q=prive', status=400)
-        cross = self.request('/epreuves/aide',
-                             {'submission_id': 'a' * 32, 'formulation': 'Formulation fictive'},
-                             status=400,
-                             extra_headers={'Origin': 'https://evil.example',
-                                            'Sec-Fetch-Site': 'cross-site'})
-        self.assertIn('incomplète', cross[0].visible)
-        self.request('/epreuves/aide',
-                     {'submission_id': 'a' * 32, 'formulation': 'Formulation fictive',
-                      'inconnu': '1'}, status=400)
-        wires = len(none_transport.wires)
-        honeypot = self.request('/epreuves/aide',
-                                {'submission_id': 'a' * 32, 'formulation': 'Formulation fictive',
-                                 'website': 'robot'})[0]
-        self.assertIn('Aucune épreuve ne correspond', honeypot.visible)
-        self.assertEqual(wires, len(none_transport.wires))
-        injection = '<script>alert(9)</script>'
-        escaped_transport = self.enable_semantic(tariff=None, enabled=('epreuves',))
-        escaped, _, escaped_raw = self.request(
-            '/epreuves/aide',
-            {'submission_id': 'b' * 32, 'formulation': injection}, status=200)
-        self.assertIn(injection, escaped.visible)
-        self.assertNotIn(injection.encode(), escaped_raw)
-        self.assertIn(b'&lt;script&gt;', escaped_raw)
-        self.assertEqual([], escaped_transport.wires)
-
-    def test_aide_semantique_epreuves_budget_partage(self):
-        """#467 : le catalogue utilise l’enveloppe commune et ses limites, sans budget séparé"""
-        self.publier_epreuve('version-calcul', title='Tableau des débits',
-                             work='Préparer un tableau par opération')
-
-        def success(wire):
-            return {'status': 200, 'body': typesafe_document(wire, ['correspond'],
-                                                              input_tokens=2000),
-                    'complete': True}
-
-        transport = self.enable_semantic(TypeSafeFixture(success),
-                                         enabled=('repertoire', 'epreuves'), tariff='450')
-        page, path = self.editorial_help_submit('Lister les mouvements mensuels d’un compte fictif')
-        self.assertIn('Correspondance forte', page.visible)
-        self.assertEqual(1, len(transport.wires))
-        with closing(storage.Store(self.data)) as store:
-            state = semantic_help.inspect(store)
-            self.assertEqual('epreuves', state['requests'][0]['usage'])
-            self.assertEqual('0.9', state['budget']['spent'])
-            self.assertEqual(1, len(state['requests']))
-        references = json.loads((Path(__file__).parent / 'fixtures/external-references.json').read_text())
-        with patch.object(views, 'BENCHMARK_REFERENCES', references):
-            blocked, _ = self.help_submit('Corriger un programme fictif', status=200)
-        self.assertIn('Aide indisponible', blocked.visible)
-        self.assertIn('enveloppe commune', blocked.visible)
-        self.assertEqual(1, len(transport.wires))
-        with closing(storage.Store(self.data)) as store:
-            self.assertEqual(1, len(semantic_help.inspect(store)['requests']))
-
-    def test_aide_semantique_epreuves_refus_sans_rejeu(self):
-        """#467 : réponse invalide, panne et délai suivent les refus communs, sans suggestion tardive"""
-        self.publier_epreuve('version-calcul', title='Tableau des débits',
-                             work='Préparer un tableau par opération')
-        formulation = 'Lister les mouvements mensuels d’un compte fictif'
-
-        def mutated(change, *, status=200, complete=True):
-            def handler(wire):
-                document = json.loads(typesafe_document(wire))
-                change(document)
-                return {'status': status, 'body': json.dumps(document).encode(),
-                        'complete': complete}
-            return handler
-
-        def failure(handler, expected, reason):
-            transport = self.enable_semantic(TypeSafeFixture(handler), enabled=('epreuves',))
-            page, path = self.editorial_help_submit(formulation)
-            self.assertIn('Aide indisponible', page.visible)
-            self.assertIn(expected, page.visible)
-            self.assertNotIn('Correspondance forte', page.visible)
-            request_id = path.rsplit('/', 1)[1]
-            with closing(storage.Store(self.data)) as store:
-                code, value = semantic_help.receipt(store, request_id)
-            self.assertEqual((200, 'unavailable', reason),
-                             (code, value['status'], value['reason']))
-            self.assertEqual(1, len(transport.wires))
-            again, again_path = self.editorial_help_submit(
-                formulation, submission_id=request_id)
-            self.assertEqual(path, again_path)
-            self.assertEqual(1, len(transport.wires))
-            self.assertIn('Aide indisponible', again.visible)
-
-        failure(mutated(lambda value: value.update(model='jev-1.14.0')),
-                'inexploitable', 'INVALID_RESPONSE')
-        failure(lambda _: {'status': 529, 'body': b'', 'complete': True},
-                'surchargé', 'OVERLOADED')
-
-        def late(wire):
-            time.sleep(0.4)
-            return {'status': 200, 'body': typesafe_document(wire, ['correspond']),
-                    'complete': True}
-
-        transport = self.enable_semantic(TypeSafeFixture(late), enabled=('epreuves',))
-        with patch.object(semantic_help, 'TIMEOUT_SECONDS', 0.2):
-            page, path = self.editorial_help_submit(formulation)
-            self.assertIn('Aide indisponible', page.visible)
-            self.assertIn('délai de dix secondes', page.visible)
-            self.assertNotIn('Correspondance forte', page.visible)
-            self.assertEqual(1, len(transport.wires))
-            time.sleep(0.5)
-            late_page = self.request(path)[0]
-            self.assertIn('délai de dix secondes', late_page.visible)
-            self.assertNotIn('Correspondance forte', late_page.visible)
-            request_id = path.rsplit('/', 1)[1]
-            again, again_path = self.editorial_help_submit(
-                formulation, submission_id=request_id)
-            self.assertEqual(path, again_path)
-            self.assertEqual(1, len(transport.wires))
-        with closing(storage.Store(self.data)) as store:
-            final = semantic_help.receipt(store, request_id)[1]
-        self.assertEqual(('unavailable', 'TIMEOUT'), (final['status'], final['reason']))
-
     def test_parcours_complet(self):
         page, _, _ = self.request('/')
         self.examine(page, '/', 'accueil', 'Décrire mon cas d’usage')
@@ -3634,7 +2634,7 @@ class ParcoursComplet(unittest.TestCase):
     # relié depuis une comparaison évaluée dans tests/test_s10_regressions.py) ; les contributions exigent la migration
     # de confidentialité, absente de cette fixture (leur page est couverte par tests/test_privacy_http.py)
     ATTEIGNABLES = frozenset((
-        '/', '/epreuves', '/mentions-legales', '/cgu', '/confidentialite',
+        '/', '/mentions-legales', '/cgu', '/confidentialite',
         '/preparation', '/preparation/data', '/preparation/catalogue',
         '/preparation/access', '/preparation/dossiers/<id>', '/preparation/dossiers/<id>/revisions/<n>',
         '/preparation/dossiers/<id>/configurations', '/preparation/dossiers/<id>/delete',

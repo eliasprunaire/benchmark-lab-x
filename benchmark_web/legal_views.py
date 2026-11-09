@@ -36,7 +36,7 @@ MENTIONS_LEGALES = (
     'site sont protégés. Les polices de caractères utilisées sont distribuées sous licence SIL Open Font License '
     'version 1.1 : Mona Sans, Hubot Sans, Host Grotesk, Geist Mono et Silkscreen.</p>'
     '<p>Les exemples, pièces et résultats produits dans votre parcours restent privés et vous appartiennent, sous '
-    'réserve des droits que vous accordez explicitement en activant la contribution facultative.</p></section>'
+    'réserve des droits accordés pour une contribution enregistrée avant le retrait de cette option.</p></section>'
     '<section><h2>Signalement</h2><p>Pour signaler un contenu illicite, une faille de sécurité ou une difficulté '
     'd’accès : ' + CONTACT + '.</p></section>'
     '<section><h2>Droit applicable</h2><p>Le présent site est soumis au droit français.</p></section>')
@@ -78,9 +78,9 @@ CGU = (
     '<p>Enregistrer une clé ne lance aucun appel. Retirer la clé interdit les nouveaux appels avec celle-ci, sans '
     'la révoquer chez OpenRouter et sans annuler un appel déjà émis. Nous ne remboursons aucune dépense engagée chez '
     'un fournisseur tiers.</p></section>'
-    '<section><h2>7. Contribution facultative</h2><p>Après examen d’un exemple, vous pouvez autoriser sa '
-    'conservation pour améliorer Evaly. Ce choix est facultatif, sans effet sur votre accès au service, et '
-    'révocable à tout moment. Il n’autorise aucune publication. Les modalités figurent dans la '
+    '<section><h2>7. Contribution facultative</h2><p>La contribution facultative n’est plus proposée. Les '
+    'contributions enregistrées avant son retrait restent conservées jusqu’à leur échéance, au plus six mois après '
+    'leur enregistrement, sans nouvelle utilisation. Vous pouvez les retirer à tout moment depuis la '
     '<a href="/confidentialite">politique de confidentialité</a>.</p></section>'
     '<section><h2>8. Publication des résultats</h2><p>Vos cas d’usage et leurs résultats sont privés par défaut. '
     'Aucune publication n’a lieu sans une autorisation explicite et distincte. Si des comparaisons sont '
@@ -104,8 +104,8 @@ CGU = (
     'AGPL-3.0-only. Le code source de la version exécutée est accessible depuis les '
     '<a href="/mentions-legales">mentions légales</a>.</p>'
     '<p>Vous conservez vos droits sur les descriptions que vous saisissez. Vous accordez à l’éditeur le droit de les '
-    'traiter pour vous fournir le service, et rien de plus, sauf contribution que vous auriez explicitement '
-    'activée.</p></section>'
+    'traiter pour vous fournir le service, et rien de plus, sauf contribution enregistrée avant le retrait de '
+    'cette option.</p></section>'
     '<section><h2>13. Modification des conditions</h2><p>Ces conditions peuvent être modifiées. La version '
     'applicable est celle publiée sur cette page à la date de votre utilisation. La date de dernière mise à jour '
     'figure en tête.</p></section>'
@@ -146,7 +146,8 @@ CONFIDENTIALITE = (
         ('Empreinte de votre adresse IP, hachée avec un secret renouvelé à chaque démarrage du service',
          'Limiter les abus et la saturation du service', 'Intérêt légitime à protéger le service (art. 6.1.f)',
          '1 heure glissante, en mémoire uniquement'),
-        ('Copie de l’exemple, de sa qualification et de ses résultats, si vous activez la contribution',
+        ('Copie de l’exemple, de sa qualification et de ses résultats, pour les contributions enregistrées avant '
+         'le retrait de l’option',
          'Améliorer Evaly', 'Votre consentement (art. 6.1.a)', '6 mois à compter du consentement'),
         ('Historique local dans votre navigateur (IndexedDB)',
          'Vous permettre de relire et d’exporter vos cas après expiration de l’accès serveur',
@@ -177,14 +178,15 @@ CONFIDENTIALITE = (
     + table('Cookies déposés', ('Nom', 'Déposé quand', 'Rôle', 'Durée'), (
         ('<code>benchmark_session</code>', 'À l’ouverture de votre espace', 'Accès à vos cas d’usage sans compte',
          '30 jours sans interaction réelle'),
-        ('<code>benchmark_contributions</code>', 'Seulement si vous activez une contribution',
+        ('<code>benchmark_contributions</code>', 'N’est plus déposé. Un cookie déposé avant le retrait de l’option '
+         'reste lu pour permettre le retrait',
          'Vous permettre de la retirer même après expiration de l’accès principal',
          'Jusqu’à la dernière échéance de vos contributions')))
     + '<p>Ces cookies sont protégés (<code>HttpOnly</code>, <code>Secure</code>) et limités au parcours privé. Ils '
     'ne servent à aucun suivi.</p>'
     '<p>Le premier est exempté de consentement car strictement nécessaire au service que vous demandez. '
-    'Le second n’est déposé que si vous activez la contribution facultative : il accompagne votre consentement '
-    'et disparaît avec lui.</p><p>Autres éléments enregistrés dans votre navigateur :</p>'
+    'Le second n’est plus déposé : il reste lu pour les contributions antérieures.</p>'
+    '<p>Autres éléments enregistrés dans votre navigateur :</p>'
     + table('Stockage local complémentaire', ('Élément', 'Rôle'), (
         ('<code>bench-x-history</code> (IndexedDB)',
          'Copies complètes de vos cas d’usage, pour relecture et export depuis ce navigateur'),
@@ -210,7 +212,8 @@ CONFIDENTIALITE = (
     '<section><h2>8. Vos droits</h2><p>Vous disposez des droits d’<strong>accès</strong>, de '
     '<strong>rectification</strong>, d’<strong>effacement</strong>, de <strong>limitation</strong>, '
     'd’<strong>opposition</strong> et de <strong>portabilité</strong> sur les données vous concernant, ainsi que du '
-    'droit de <strong>retirer votre consentement</strong> à tout moment pour la contribution facultative, et '
+    'droit de <strong>retirer votre consentement</strong> à tout moment pour une contribution enregistrée avant '
+    'le retrait de l’option, et '
     'd’arrêter ou d’effacer l’historique local.</p>'
     '<p>Vous pouvez agir vous-même, sans nous écrire :</p><ul>'
     '<li><strong>supprimer un cas d’usage</strong> : bouton « Supprimer ce cas d’usage » sur la page du cas ;</li>'

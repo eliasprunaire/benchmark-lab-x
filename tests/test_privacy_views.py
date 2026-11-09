@@ -15,8 +15,7 @@ def example_view():
             'criteria': {'eliminatory': [], 'obligations': ['Conserver les décisions'], 'quality': []},
             'criteria_rule': 'Chaque obligation compte', 'package_sha256': 'a' * 64,
             'privacy': {'csrf_token': 'privacy-token', 'session_expires_at': '2099-01-01T00:00:00Z',
-                        'dossier_id': 'd1', 'content_version': 1,
-                        'contribution': {'enabled': False, 'revision': 0, 'example_revision': 1}}}
+                        'dossier_id': 'd1', 'content_version': 1}}
 
 
 def browser_views():
@@ -190,7 +189,7 @@ def browser_views():
     history['campaigns'] = [stopped]
     examples['stopped-history'] = history
     metadata = deepcopy(example_view()['privacy'])
-    metadata.update(content_version=4, contribution=dict(enabled=False, revision=2, example_revision=1))
+    metadata.update(content_version=4)
     # Mes données avec ses contrôles de confidentialité : chaque ligne de la table porte ses boutons de gestion
     liste = {key: metadata[key] for key in ('csrf_token', 'session_expires_at')}
     examples['privacy-listing'] = dict(kind='privacy_data', dossiers=[dict(dossier_id='d1', need='Trier des notes de réunion', revision=2),
@@ -219,13 +218,13 @@ def browser_views():
                                    (403, 'Votre action n’a pas abouti', 'Votre session a expiré.'),
                                    (409, 'Copie impossible', 'Cette version est retirée.')):
         examples['error-' + str(status)] = dict(error=message, title=title, http_status=status)
+    # Page d'un cas : version courante, accès expiré ou version antérieure ; aucune ne propose de contribution
     for name, expired, prior in (('current', False, False), ('expired', True, False), ('prior', False, True)):
         value = example_view()
         value.update(revision=3, current_revision=4 if prior else 3)
-        value['privacy']['contribution'].update(revision=5, example_revision=3)
         if expired:
             value['privacy']['session_expires_at'] = '2000-01-01T00:00:00Z'
-        examples['consent-' + name] = value
+        examples['case-' + name] = value
     for status, expiry in (('active', '2099-03-18'), ('withdrawn', '2099-03-18'),
                            ('expired', '2000-03-18'), ('active', '2000-03-18'), ('UNKNOWN_STATE', '2099-03-18')):
         examples['contribution-' + status + '-' + expiry[:4]] = dict(kind='contributions', csrf_token='purpose-only',
@@ -235,7 +234,7 @@ def browser_views():
     examples['contribution-none'] = dict(kind='contributions', csrf_token='purpose-only', contributions=[])
     for name, path in (('safe', '/preparation?view=1'), ('unsafe', '//evil.test')):
         examples['bootstrap-' + name] = dict(kind='session_bootstrap', return_path=path)
-    # #465 : copie privée d’une épreuve publiée, sans package ni qualification importée
+    # #465 : copie existante d’un exemple publié, sans package ni qualification importée
     copy = deepcopy(example_view())
     copy.update(stage='draft', package=None, validation=None, qualified=False, operations=0,
                 availability=dict(assistant_configured=True, admission_open=False, can_submit=False, reason='access'),
@@ -250,8 +249,6 @@ def browser_views():
     copy['source_notice'] = dict(withdrawn=False, reports=[dict(
         summary='Erreur signalée <script>alert(2)</script>', reported_at='2026-10-23T10:00:00+00:00')])
     examples['copy-dossier'] = copy
-    examples['copy-confirmation'] = {'kind': 'copy_source', 'source': copy['source'],
-                                     'source_notice': copy['source_notice']}
     rendered = {name: views.render(value, 'csrf', error=bool(value.get('error')),
                                    status=value.get('http_status', 400) if value.get('error') else None).decode()
                 for name, value in examples.items()}
@@ -266,102 +263,3 @@ def browser_views():
     rendered['availability-reasons'] = sorted(reasons)
     return rendered
 
-
-def results_view(*, withdrawn=False, unavailable=None, filtered=False, repeated=False):
-    """Restitution publique fermée, sans accès privé : fixture du harnais Chromium"""
-    cases = [{'position': 1}]
-    panel = [
-        {'position': 1, 'provider': 'openai', 'model': 'openai/gpt-5.6-sol', 'name': 'Modèle <script>alert(1)</script>',
-         'revision': 'rev-a', 'access': 'API', 'channel_id': 'openrouter', 'route': '/chat/completions',
-         'parameters': {'max_tokens': 4096}, 'effort': 'high'},
-        {'position': 2, 'provider': 'mistralai', 'model': 'mistralai/mistral-small-2603', 'name': 'Modèle B',
-         'revision': 'rev-b', 'access': 'API', 'channel_id': 'openrouter', 'route': '/chat/completions',
-         'parameters': {'max_tokens': 4096}, 'effort': 'low'},
-    ]
-    columns = [
-        {'id': 'cost', 'label': 'Coût observé', 'unit': 'USD', 'favorable': 'lower',
-         'proof': 'Coût observé et source du reçu candidat', 'cost': True},
-        {'id': 'criterion-2', 'label': 'Clarté du tableau', 'unit': 'descriptif', 'favorable': 'higher',
-         'proof': 'Passages de la sortie cités exactement', 'cost': False},
-    ]
-    configuration = {
-        'requested': {'provider': 'openrouter', 'model': 'openai/gpt-5.6-sol', 'revision': 'rev-a',
-                      'access': 'API', 'channel_id': 'openrouter', 'route': '/chat/completions',
-                      'parameters': {'max_tokens': 4096}, 'effort': 'high'},
-        'observed': {'provider': 'fournisseur-observé', 'model': 'INCONNU', 'revision': 'rev-a',
-                     'access': 'INCONNU', 'channel_id': 'openrouter', 'route': 'INCONNU',
-                     'parameters': 'INCONNU', 'effort': 'INCONNU'},
-        'sources': {'provider': 'HTTP response JSON', 'model': 'INCONNU', 'revision': 'HTTP response JSON',
-                    'access': 'INCONNU', 'channel_id': 'request parameter', 'route': 'INCONNU',
-                    'parameters': 'INCONNU', 'effort': 'INCONNU'}}
-    rows = [
-        {'panel_position': 1, 'case_position': 1, 'verdict': 'SATISFAIT', 'reason': 'Toutes les exigences sont respectées.',
-         'configuration': configuration,
-         'next_action': None,
-         'findings': [{'label': 'Toutes les actions présentes', 'status': 'PASS',
-                       'finding': 'Les actions et leur responsable figurent dans le tableau <script>alert(2)</script>.'}],
-         'measures': [{'label': 'Clarté du tableau', 'value': 'excellent', 'unit': 'descriptif',
-                       'status': 'KNOWN', 'reason': None}],
-         'metrics': {'cost': {'value': '0.10', 'unit': 'USD', 'rank': 1, 'reason': None},
-                     'criterion-2': {'value': 'excellent', 'unit': 'descriptif', 'rank': 1, 'reason': None}},
-         'states': {'O1': 'PASS'}, 'created_at': '2026-10-23T10:00:00+00:00', 'responsible': 'Ayo',
-         'judgment': {'mode': 'assisted', 'professional_review': None,
-                      'cost': {'value': '0.02', 'unit': 'USD', 'status': 'KNOWN'}},
-         'limits': ['Un exemple inventé ne prouve pas une fiabilité générale.'],
-         'proofs': [{'name': 'Réponse de Modèle <script>alert(1)</script>', 'piece_id': 'output-a'},
-                    {'name': 'Pièce réservée à la vérification des réponses', 'piece_id': None}]},
-        {'panel_position': 2, 'case_position': 1, 'verdict': 'NE SATISFAIT PAS',
-         'reason': 'Une exigence n’est pas respectée : les actions sont omises.', 'next_action': None,
-         'configuration': configuration,
-         'findings': [{'label': 'Toutes les actions présentes', 'status': 'FAIL',
-                       'finding': 'Une action annoncée par la consigne manque au tableau.'}],
-         'measures': [{'label': 'Clarté du tableau', 'value': 'faible', 'unit': 'descriptif',
-                       'status': 'KNOWN', 'reason': None}],
-         'metrics': {'cost': {'value': None, 'unit': 'USD', 'rank': None, 'reason': 'Coût INCONNU : reçu ou mesure absent'},
-                     'criterion-2': {'value': 'faible', 'unit': 'descriptif', 'rank': 2, 'reason': None}},
-         'states': {'O1': 'FAIL'}, 'created_at': '2026-10-23T10:01:00+00:00', 'responsible': 'Ayo',
-         'judgment': {'mode': 'local', 'professional_review': {'author': 'Camille', 'phase': 'après jugement',
-                                                               'scope': 'tableau'},
-                      'cost': {'value': None, 'unit': 'INCONNU', 'status': 'UNKNOWN'}},
-         'limits': ['Sortie non admissible, quel que soit son coût.'],
-         'proofs': [{'name': 'Réponse de Modèle B', 'piece_id': None}]},
-    ]
-    if repeated:
-        # Deux essais du même modèle sur le même exemple, aux verdicts différents
-        rows = [dict(rows[0], repetition=1), dict(rows[1], panel_position=1, repetition=2)]
-    shown = [row for row in rows if row['panel_position'] == 1] if filtered else rows
-    return {
-        'kind': 'results', 'task_id': 'tache-fictive', 'version_id': 'version-resultats',
-        'campaign_id': 'campagne-1', 'contract_sha256': 'b' * 64,
-        'withdrawn': withdrawn, 'unavailable': unavailable,
-        'title': 'Tableau <script>alert(1)</script>', 'work': 'Préparer un tableau par opération',
-        'conclusion': {'text': 'Comparaison des réponses enregistrées, cas par cas.',
-                       'attribution': 'Le verdict porte sur la configuration observée sous les conditions communes déclarées.',
-                       'limits': ['Ces résultats portent sur un exemple inventé.',
-                                  'Une preuve réservée au juge reste privée.']},
-        'coverage': {'planned_cells': 2, 'attempted_cells': 2, 'evaluated_attempts': 2,
-                     'decided_attempts': 2, 'not_started': 0},
-        'economic_status': 'INCOMPLETE',
-        'conditions': {'pi': {'package': 'pi', 'version': '0.85.1', 'status': 'active'},
-                       'environment': {'node_version': 'v24.0.0'}, 'tools': [], 'packages': [], 'skills': [],
-                       'frozen_at': '2026-10-23T09:00:00+00:00'},
-        'cost_basis': {'scope': 'Une tentative par cellule', 'attempts': 'Sans reprise', 'unit': 'USD',
-                       'conversion': None},
-        'cases': cases, 'panel': panel, 'columns': columns,
-        'obligations': [{'id': 'O1', 'label': 'Toutes les actions présentes', 'states': ['PASS', 'FAIL']}],
-        'rows': shown, 'population': len(rows), 'population_rows': rows, 'filter_scope': {'configuration': '1'} if filtered else {},
-        'pending': [], 'acquisition_dates': ['2026-10-23T10:00:00+00:00', '2026-10-23T10:01:00+00:00'],
-        'unknowns': ['Coût observé inconnu pour 1 réponse : aucun rang de coût.',
-                     'Comparaison des coûts incomplète : certains coûts observés manquent ou ne sont pas comparables.'],
-        'restrictions': ['Vérification limitée pour le lecteur : les pièces non retenues restent privées.'],
-        'pieces': {'output-a': {'file': 'piece-output-a.txt', 'sha256': 'a' * 64,
-                                'label': 'Réponse de Modèle A'}},
-        'campaigns': [{'campaign_id': 'campagne-1', 'title': 'Tableau <script>alert(1)</script>',
-                       'work': 'Préparer un tableau par opération', 'frozen_at': '2026-10-23T09:00:00+00:00',
-                       'pi': {'package': 'pi', 'version': '0.85.1', 'status': 'active'},
-                       'environment': {'node_version': 'v24.0.0'}, 'cases': 1,
-                       'contract_sha256': 'b' * 64, 'unit': 'USD',
-                       'coverage': {'planned_cells': 2, 'attempted_cells': 2, 'evaluated_attempts': 2,
-                                    'decided_attempts': 2, 'not_started': 0},
-                       'economic_status': 'INCOMPLETE'}],
-    }

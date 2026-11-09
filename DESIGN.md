@@ -110,7 +110,7 @@ Les polices sont sous licence SIL Open Font License 1.1. Elles sont servies en l
 ## Mise en page
 
 ```
-en-tête fixe : marque EVAL + Y, menu (Accueil, Mes cas d'usage, Mes données, Épreuves)
+en-tête fixe : marque EVAL + Y, menu (Accueil, Mes cas d'usage, Mes données)
 ────────────────────────────────────────────────────────────────────────────────
 tête d'écran : piste des cinq stations, titre h1, puces de contexte
 contenu : colonne principale  │  colonne de synthèse collante (.cote)

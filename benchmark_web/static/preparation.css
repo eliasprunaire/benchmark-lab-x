@@ -662,10 +662,6 @@ table.comparatif td { overflow-wrap: anywhere; }
 .atouts li { display: flex; align-items: center; gap: 10px; color: var(--encre-2); }
 .atouts .ic { color: var(--encre); background: var(--signal); border-radius: 50%; padding: 4px; width: 28px; height: 28px; }
 .atouts b { color: var(--encre); font-weight: 750; }
-/* Bloc de partage : chaque élément respire */
-.contribution fieldset > * + * { margin-top: 12px; }
-.contribution > .actions { margin-top: 18px; }
-.contribution > .tiroir { margin-top: 18px; border-bottom: 0; }
 .alerte-exp { margin-bottom: 18px; }
 .alerte-exp .lien { margin-left: auto; }
 
@@ -767,8 +763,6 @@ table.comparatif td:last-child a, table.comparatif td:last-child .lien { white-s
 .zone-suppr h2 { font-size: 1.05rem; }
 .zone-suppr .petit { margin: 4px 0 0; max-width: 52ch; }
 .btn-danger:disabled { --bg: var(--creux); --fg: var(--discret); border-color: var(--filet-doux); cursor: not-allowed; box-shadow: none; transform: none; }
-.contribution fieldset:disabled { opacity: .55; }
-.contribution button:disabled { cursor: not-allowed; opacity: .55; }
 
 /* ——— Champ unique de description (Mes cas d’usage) ——— */
 @property --compo-a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
@@ -836,7 +830,7 @@ table.comparatif td:last-child a, table.comparatif td:last-child .lien { white-s
 /* Halo du champ unique : discret en thème sombre (sinon tache brune) */
 :root[data-theme="dark"] .compo-zone { background: radial-gradient(60% 70% at 50% 0%, color-mix(in srgb, var(--signal) 9%, transparent), transparent 70%); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .compo-zone { background: radial-gradient(60% 70% at 50% 0%, color-mix(in srgb, var(--signal) 9%, transparent), transparent 70%); } }
-/* Épreuves : sous-titre en deux temps, fiche de lecture */
+/* Benchmarks publics : sous-titre en deux temps, fiche de lecture */
 .g-sous + .g-sous { margin-top: 10px; }
 .g-lire { display: grid; gap: 0; margin: 0; }
 .g-lire > div { display: grid; grid-template-columns: 200px 1fr; gap: 6px 24px; padding: 14px 0; border-bottom: 1px dashed var(--filet-doux); }
@@ -882,20 +876,10 @@ table.comparatif td:last-child a, table.comparatif td:last-child .lien { white-s
 .segments-liens a:hover { background: var(--creux); }
 .segments-liens a[aria-current] { background: var(--encre); color: var(--papier); }
 .segments-liens a:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-/* Filtres d’Épreuves en liens : une ligne par critère */
-.filtres-liens { display: grid; gap: 18px; }
-.filtres-liens .segments-liens { flex-wrap: wrap; max-width: 100%; }
-.filtres-liens .segments-liens a { max-width: 100%; overflow-wrap: anywhere; line-height: 1.25; padding-block: 8px; }
-.filtres-liens > * { min-width: 0; }
-.filtres-liens .segments-liens a { display: inline-block; max-width: min(34ch, 62vw); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 44px; padding-block: 0; overflow-wrap: normal; }
 /* Le tampon arrive agrandi (animation « frappe ») : il ne doit pas élargir la page pendant ce temps */
 .verdict-tete { overflow-x: clip; overflow-clip-margin: 12px; }
-.g-vide-js { margin: 0; padding: 16px 18px; border: 2px dashed var(--filet-doux); border-radius: 14px; color: var(--encre-2); }
 /* Une carte écartée par la recherche reste masquée malgré le display des cartes */
 .g-grille > li[hidden] { display: none; }
-/* Filtres d’Épreuves : deux colonnes sur grand écran */
-.filtres-liens { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; }
-@media (max-width: 760px) { .filtres-liens { grid-template-columns: 1fr; } }
 
 /* Validation : tiroir de correction ouvert, le bloc jaune envoie la correction */
 .decision .mode-corriger { display: none; }
@@ -916,11 +900,6 @@ table.comparatif td:last-child a, table.comparatif td:last-child .lien { white-s
   .colonnes > .pile-bas { grid-column: 1; grid-row: 2; }
   .colonnes:has(> .pile-bas) > .cote { grid-column: 2; grid-row: 1 / span 2; }
 }
-/* Partage replié dans un tiroir */
-.contribution > .tiroir .tiroir { border-bottom: 0; }
-.contribution fieldset { border: 0; padding: 0; margin: 0; }
-.contribution fieldset > * + * { margin-top: 12px; }
-.contribution .tiroir-corps > .actions { margin-top: 16px; }
 .colonnes > .pile-bas > :first-child { margin-top: 0; }
 /* Relevé compact (colonne de droite) : libellé et valeur sur une ligne, note dessous */
 .releves.compact { grid-template-columns: 1fr; }
@@ -1187,7 +1166,7 @@ textarea:disabled { background: var(--creux); color: var(--discret); cursor: not
 @media (max-width: 900px) { .g-legal { row-gap: 36px; } }
 
 /* —— g_espace.css —— */
-/* Groupe G : espace, cas d'usage, clé, données, contributions */
+/* Groupe G : espace, cas d'usage, clé, données */
 .ge-grille { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(20px, 3vw, 40px); align-items: start; }
 @media (max-width: 900px) { .ge-grille { grid-template-columns: minmax(0, 1fr); } }
 .decision .aide, .decision .petit { color: var(--sur-signal); }

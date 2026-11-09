@@ -627,18 +627,25 @@ class AccessServerTests(WebServerCase):
             self.assertNotIn(b'<html', response, attendu)
 
     def test_resultats_publics_absents_sans_relais_ni_cookie(self):
-        """#466 : une adresse de restitution sans paquet reste un 404 public, sans session ni exécuteur"""
-        for path in ('/epreuves/tache-fictive/version-1/benchmarks/campagne-1',
-                     '/epreuves/tache-fictive/version-1/benchmarks/campagne-1/pieces/output-a'):
-            for method in ('GET', 'HEAD'):
+        """Épreuves et copies retirées de l'alpha : famille non servie, 404 public sans cookie ni relais"""
+        for path in ('/epreuves', '/epreuves?q=tableau', '/epreuves/aide', '/epreuves/aide/resultat/' + 'a' * 32,
+                     '/epreuves/tache-fictive/version-1', '/epreuves/tache-fictive/version-1/pieces/consigne',
+                     '/epreuves/tache-fictive/version-1/benchmarks/campagne-1',
+                     '/epreuves/tache-fictive/version-1/benchmarks/campagne-1/pieces/output-a',
+                     '/preparation/copies', '/preparation/copies/a/b'):
+            for method in ('GET', 'HEAD', 'POST'):
                 with self.subTest(path=path, method=method):
-                    status, headers, raw = self.request(method, path, headers={'Accept': 'text/html'})
+                    body = 'csrf_token=' + 'a' * 64 + '&copy=1' if method == 'POST' else None
+                    status, headers, raw = self.request(method, path, body, headers={
+                        'Accept': 'text/html', 'Content-Type': 'application/x-www-form-urlencoded',
+                        'Cookie': 'benchmark_session=' + 'b' * 64})
                     self.assertEqual(404, status)
                     self.assertIsNone(headers.get('Set-Cookie'))
                     self.assertEqual('no-referrer', headers['Referrer-Policy'])
                     self.assertEqual('nosniff', headers['X-Content-Type-Options'])
-                    if method == 'GET':
+                    if method != 'HEAD':
                         self.assertIn('<html lang="fr">', raw.decode())
+                        self.assertIn('Page introuvable', raw.decode())
         self.assertTrue(self.executor.requests.empty())
 
 class ProbeTests(WebServerCase):
@@ -858,20 +865,20 @@ class RouteCanonicalizationTests(unittest.TestCase):
                 ('/evaluations-externes/aide/' + 'a' * 32, '/evaluations-externes/aide/<id>'),
                 ('/mentions-legales', '/mentions-legales'), ('/cgu', '/cgu'),
                 ('/confidentialite', '/confidentialite'),
-                ('/epreuves', '/epreuves'),
-                ('/epreuves/aide', '/epreuves/aide'),
-                ('/epreuves/aide?q=formulation-privee', '/epreuves/aide'),
-                ('/epreuves/aide/resultat/' + 'a' * 32, '/epreuves/aide/resultat/<id>'),
-                ('/epreuves?q=tableau&langue=Fran%C3%A7ais&outil=Tableur', '/epreuves'),
-                ('/epreuves/tache-fictive/version-1', '/epreuves/<id>/<id>'),
-                ('/epreuves/tache-fictive/version-1?q=tableau', '/epreuves/<id>/<id>'),
-                ('/epreuves/tache-fictive/version-1/pieces/consigne', '/epreuves/<id>/<id>/pieces/<id>'),
+                ('/epreuves', '<inconnu>'),
+                ('/epreuves/aide', '<inconnu>'),
+                ('/epreuves/aide?q=formulation-privee', '<inconnu>'),
+                ('/epreuves/aide/resultat/' + 'a' * 32, '<inconnu>'),
+                ('/epreuves?q=tableau&langue=Fran%C3%A7ais&outil=Tableur', '<inconnu>'),
+                ('/epreuves/tache-fictive/version-1', '<inconnu>'),
+                ('/epreuves/tache-fictive/version-1?q=tableau', '<inconnu>'),
+                ('/epreuves/tache-fictive/version-1/pieces/consigne', '<inconnu>'),
                 ('/epreuves/tache-fictive/version-1/benchmarks/campagne-1',
-                 '/epreuves/<id>/<id>/benchmarks/<id>'),
+                 '<inconnu>'),
                 ('/epreuves/tache-fictive/version-1/benchmarks/campagne-1?sort=cost&direction=desc',
-                 '/epreuves/<id>/<id>/benchmarks/<id>'),
+                 '<inconnu>'),
                 ('/epreuves/tache-fictive/version-1/benchmarks/campagne-1/pieces/output-a',
-                 '/epreuves/<id>/<id>/benchmarks/<id>/pieces/<id>')):
+                 '<inconnu>')):
             self.assertEqual(expected, canonical_route(path), path)
 
     def test_un_chemin_non_servi_ne_ressort_jamais(self):
@@ -881,7 +888,9 @@ class RouteCanonicalizationTests(unittest.TestCase):
                      '/publications/' + 'a' * 64 + '/index.html', '/index.html', '/apercu.png',
                      # Test de proxy ouvert : la forme absolue n'est servie par aucune route
                      'http://cible-externe.example/preparation',
-                     '/preparation#fragment'):
+                     '/preparation#fragment',
+                     # Retraits de l'alpha : copies d'épreuve et création de contribution
+                     '/preparation/copies', '/preparation/copies/a/b', '/preparation/dossiers/d1/contribution'):
             self.assertEqual('<inconnu>', canonical_route(path), path)
 
     def test_le_runtime_active_le_journal_du_service_web(self):
@@ -1055,9 +1064,10 @@ class AccessJournalTests(WebServerCase):
         self.assertEqual(503, status)
         self.executor.raw_response = None
 
+        # Routes retirées : 404, journalisées sans leur forme ni leur requête
         status, _, _ = self.request('GET', '/epreuves/aide?q=formulation-privee',
                                     headers={'Accept': 'application/json'})
-        self.assertEqual(400, status)
+        self.assertEqual(404, status)
         status, _, _ = self.request('GET', '/epreuves/aide/resultat/' + 'a' * 32,
                                     headers={'Accept': 'application/json'})
         self.assertEqual(404, status)
@@ -1068,7 +1078,7 @@ class AccessJournalTests(WebServerCase):
             [('GET', '/preparation/access', '200'), ('PUT', '/preparation', '405'),
              ('GET', '<inconnu>', '404'), ('POST', '/preparation/dossiers', '400'),
              ('GET', '/preparation/dossiers/<id>', '403'), ('GET', '/preparation', '503'),
-             ('GET', '/epreuves/aide', '400'), ('GET', '/epreuves/aide/resultat/<id>', '404')],
+             ('GET', '<inconnu>', '404'), ('GET', '<inconnu>', '404')],
             [self.parsed(line) for line in lines])
         for line in lines:
             self.assertNotIn(dossier, line)

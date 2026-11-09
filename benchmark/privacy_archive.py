@@ -397,6 +397,7 @@ def _active(row, revision, now, *, reconsent=False):
         raise ConflictError('Révision de contribution modifiée')
 
 
+# shortcut: semence des tests du retrait, retiré avec les routes de retrait à la dernière échéance
 def change_contribution(store, session_token, dossier_id, body, manager_token=None, now=None):
     """Return (metadata, new token or None); enabled opt-in uses the latest revision CAS"""
     if (type(body) is not dict or set(body) != {'example_revision', 'revision', 'enabled'}
@@ -548,6 +549,7 @@ def remove_for_dossier(connection, dossier_id):
     connection.execute('DELETE FROM s7_contributions WHERE dossier_id=?', (dossier_id,))
 
 
+# shortcut: semence des tests du retrait, retiré avec les routes de retrait à la dernière échéance
 def contribution_view(store, session_id, dossier_id, now=None):
     """Owner metadata for the current example, without inferring legacy consent"""
     now = _now(now)

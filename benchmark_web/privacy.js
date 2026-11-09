@@ -339,8 +339,6 @@ async function post(url, body) {
     : 'Votre demande n’a pas été confirmée. Actualisez la page pour vérifier que votre espace est toujours ouvert.');
   return response;
 }
-// La case ne décide que la contribution : l'historique local se gère dans Mes données
-const consentEffects = checked => ({contribution: checked});
 const mounted = new WeakSet();
 const activityMounted = new WeakSet();
 // Toute suppression se confirme sur place, sans fenêtre du navigateur : la question s'affiche après le bouton,
@@ -367,17 +365,9 @@ function mountForms(root) {
       if (form.dataset.busy) return;
       const action = form.dataset.privacyPost;
       const url = new URL(form.action, location.href);
-      if (url.origin !== location.origin || !/^\/preparation\/(dossiers\/[^/]+\/(delete|contribution)|contributions\/[^/]+\/withdraw)$/.test(url.pathname)) return;
+      if (url.origin !== location.origin || !/^\/preparation\/(dossiers\/[^/]+\/delete|contributions\/[^/]+\/withdraw)$/.test(url.pathname)) return;
       const fields = new FormData(form);
       const body = {csrf_token: fields.get('csrf_token')};
-      let effects;
-      if (action === 'contribution') {
-        effects = consentEffects(form.elements.enabled.checked);
-        body.enabled = effects.contribution;
-        body.revision = Number(fields.get('revision'));
-        body.example_revision = Number(fields.get('example_revision'));
-        if (!integer(body.revision) || !integer(body.example_revision)) return;
-      }
       const status = form.querySelector('[data-privacy-status]') || form.parentElement.querySelector('[data-privacy-status]');
       form.dataset.busy = 'true';
       const button = event.submitter;
@@ -405,13 +395,13 @@ function mountForms(root) {
           const result = await response.json();
           if (status) status.textContent = localOutcome + (result.status === 'purged'
             ? 'Ce cas est supprimé du serveur. Des copies peuvent rester dans ses sauvegardes.'
-            : 'Suppression demandée au serveur : l’effacement sera fait lors du prochain nettoyage planifié. La contribution liée à ce cas est retirée.');
+            : 'Suppression demandée au serveur : l’effacement sera fait lors du prochain nettoyage planifié.');
           const fields = form.querySelector('fieldset');
           if (localDeleted && fields) fields.disabled = true;
         }
       } catch (error) {
         if (status) status.textContent = action === 'delete'
-          ? localOutcome + 'La suppression sur le serveur, contribution comprise, n’est pas confirmée. Vous pouvez réessayer.'
+          ? localOutcome + 'La suppression sur le serveur n’est pas confirmée. Vous pouvez réessayer.'
           : error.message || 'Votre demande n’a pas été confirmée. Actualisez la page, puis recommencez.';
       } finally {
         delete form.dataset.busy;
