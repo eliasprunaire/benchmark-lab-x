@@ -1409,7 +1409,7 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
 .confirmation-repliee > summary::-webkit-details-marker { display: none; }
 .confirmation-repliee[open] > summary { margin-bottom: 12px; }
 
-/* Accueil : accroche, atouts, actions. Dès 1100 px, accroche (70 %) et atouts (30 %) sur une ligne, puis les actions à part ;
+/* Accueil : accroche, atouts, actions. Dès 1100 px, accroche et atouts à parts égales sur une ligne, puis les actions centrées à part ;
    deux colonnes de 861 à 1099 px, une sous 860 px */
 .une-bas { row-gap: 24px; }
 .une-bas .atouts { margin-top: 0; }
@@ -1419,8 +1419,8 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
   .une-bas .actions { grid-column: 2; grid-row: 1 / span 2; }
 }
 @media (min-width: 1100px) {
-  .une-bas { grid-template-columns: minmax(0, 7fr) minmax(0, 3fr); align-items: start; }
-  .une-bas .actions { grid-column: 1 / -1; margin-top: 24px; }
+  .une-bas { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  .une-bas .actions { grid-column: 1 / -1; margin-top: 24px; align-items: center; }
 }
 
 /* Mes cas d'usage : la liste partie, le renvoi suit le champ sans second espace de section */
