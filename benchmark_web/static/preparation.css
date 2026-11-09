@@ -1455,7 +1455,9 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
 .table-cas .ge-gerer .btn { white-space: nowrap; }
 .table-cas .alerte-exp { margin: 10px 0 0; flex-wrap: wrap; row-gap: 8px; }
 .ge-vide-cas { margin: 0; background: var(--signal-pale); color: var(--encre); font-weight: 650; }
-@media (max-width: 699px) {
+/* Historique local : ni actions toutes masquées ni liste vide sous le statut */
+[data-privacy-history] > .actions:not(:has(> :not([hidden]))), [data-privacy-list]:empty { display: none; }
+@media (max-width: 899px) {
   .table-cas thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .table-cas tbody, .table-cas tr, .table-cas td { display: block; }
   .table-cas tr { padding: 16px 18px; border-bottom: 1px dashed var(--filet-doux); }

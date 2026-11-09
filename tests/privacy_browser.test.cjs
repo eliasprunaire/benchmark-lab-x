@@ -599,6 +599,9 @@ test('a browser quota failure cannot publish a partial new version', async () =>
   } finally {await context.close();}
 });
 
+// Carte « Historique local » : ses actions et sa liste ne laissent aucun vide quand elles n'ont rien de visible
+const affichage = page => page.evaluate(() => ['[data-privacy-history] > .actions', '[data-privacy-list]']
+  .map(selector => getComputedStyle(document.querySelector(selector)).display));
 test('an opened case is kept in local history by default under CSP, a list writes nothing before a click, and fits mobile', async () => {
   fixture(); posts = [];
   const copie = 'Copie gardée dans ce navigateur. Toute personne qui utilise ce profil de navigateur peut la lire.';
@@ -633,6 +636,9 @@ test('an opened case is kept in local history by default under CSP, a list write
       ['/preparation/dossiers/d1/contribution', false], ['/preparation/dossiers/d1/contribution', true]]);
     await page.goto(origin + '/render/data');
     await page.waitForFunction(() => document.querySelector('[data-privacy-list] > details'));
+    // Copies gardées : « Tout effacer » et la liste restent affichés
+    assert.equal((await affichage(page)).includes('none'), false, 'actions et copies visibles');
+    assert.equal(await page.getByRole('button', {name: 'Tout effacer et arrêter l’historique'}).isVisible(), true);
     await page.locator('[data-privacy-list] > details > summary').click();
     await page.setViewportSize({width: 390, height: 844});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -649,6 +655,23 @@ test('an opened case is kept in local history by default under CSP, a list write
     await carte('d1').locator('[data-privacy-action="archive"]').waitFor();
     assert.deepEqual(await page.locator('.table-cas [data-privacy-status]').allTextContents(), ['', '']);
     assert.deepEqual(await databases(), []);
+    // Historique par défaut, sans copie : aucune action ni liste vide sous le statut
+    await page.waitForFunction(() => document.querySelector('[data-privacy-history] > [data-privacy-status]').textContent === 'Aucun cas gardé dans ce navigateur pour l’instant.');
+    assert.deepEqual(await affichage(page), ['none', 'none'], 'état par défaut sans vide');
+    // Tablettes : cartes jusqu'à 899 px, table dès 900 px ; ni défilement de la table ni bouton coupé
+    for (const width of [700, 768, 899, 900]) {
+      await page.setViewportSize({width, height: 900});
+      const mesure = await page.evaluate(() => {
+        const cadre = document.querySelector('.table-defile');
+        const bord = cadre.getBoundingClientRect();
+        const coupes = [...cadre.querySelectorAll('a, button')].filter(cible => cible.getClientRects().length).map(cible => cible.getBoundingClientRect())
+          .filter(box => box.left < bord.left - 0.5 || box.right > bord.right + 0.5).length;
+        return {page: document.documentElement.scrollWidth - innerWidth, table: cadre.scrollWidth - cadre.clientWidth, coupes,
+                ligne: getComputedStyle(document.querySelector('.table-cas tbody tr')).display};
+      });
+      assert.deepEqual(mesure, {page: 0, table: 0, coupes: 0, ligne: width < 900 ? 'block' : 'table-row'}, `${width} px`);
+    }
+    await page.setViewportSize({width: 1200, height: 900});
     await carte('d1').locator('[data-privacy-action="archive"]').click();
     const statut1 = carte('d1').locator('[data-privacy-status]');
     await page.waitForFunction(() => document.querySelector('[data-privacy-controls][data-dossier-id="d1"] [data-privacy-status]').textContent !== ''
@@ -707,6 +730,7 @@ test('the box state sent to the server decides only the contribution and never l
     await page.getByRole('button', {name: 'Oui, tout effacer'}).click();
     await historique('Historique local effacé et en pause. Reprenez-le pour garder de nouvelles copies.');
     assert.equal(await page.getByRole('button', {name: 'Reprendre l’historique local'}).isVisible(), true);
+    assert.deepEqual(await affichage(page), ['flex', 'none'], 'pause : actions visibles, liste vide masquée');
     await page.goto(origin + '/render/example');
     await statutCas('Historique local en pause');
     await openConsent(page);
