@@ -221,7 +221,7 @@ Terme affiché du dossier fictif qui représente le cas d’usage. « Exemple 1,
 Terme affiché de la Campagne : le lancement de l’utilisateur sur son exemple. Le benchmark se lance, se suit et se termine. Il ne désigne aucun gagnant : les verdicts et le coût observé restent par modèle et par exemple.
 
 ### Benchmarks publics
-Terme affiché du répertoire d’évaluations externes : les références publiées par des tiers, comme SWE-bench ou MTEB. Les benchmarks publics mesurent surtout des tâches génériques. Ils ne prouvent pas la réussite sur le cas d’usage précis d’un utilisateur ; Evaly rapproche le benchmark de ce cas d’usage. Aucun texte affiché ne dit que les benchmarks publics sont déconnectés de la vraie vie, et aucun ne promet une réussite générale.
+Terme affiché du répertoire d’évaluations externes : les références publiées par des tiers, comme SWE-bench ou MTEB. Les benchmarks publics mesurent surtout des tâches génériques. Ils ne prouvent pas la réussite sur le cas d’usage précis d’un utilisateur ; Evaly rapproche le benchmark de ce cas d’usage. Aucun texte affiché ne dit que les benchmarks publics sont déconnectés de la vraie vie, et aucun ne promet une réussite générale. Les indices composites et les classements, comme l’indice d’Artificial Analysis ou Arena (anciennement LMArena), ne sont pas des benchmarks publics au sens du répertoire : ils compilent des résultats, ils ne mesurent pas un travail.
 
 ### Épreuve
 Le terme a deux sens. Dans le parcours public, une épreuve est une épreuve éditoriale publiée ; ce sens est hors alpha. Dans les [règles](docs/RULES.md#4-contrat-avant-exécution), la qualification de l’épreuve vérifie la cohérence entre besoin, consigne, cas, référence et contrôles avant l’approbation du contrat.

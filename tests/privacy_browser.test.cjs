@@ -1693,7 +1693,12 @@ test('external references remain readable, searchable and safe without JavaScrip
         const found = await search();
         assert.ok(found.field && found.above, `${width} recherche des benchmarks avant la liste`);
         assert.equal(found.overflow, 0, `${width} débordement de la liste des benchmarks`);
+        // L'en-tête marque Benchmarks publics sur la racine du répertoire : menu mobile ouvert à 390 px, menu de grand écran à 1440 px
+        if (width === 390) await page.locator('.nav-mobile summary').click();
+        assert.deepEqual(await page.locator((width === 390 ? '.nav-mobile' : '.nav') + ' a[aria-current="page"]:visible').allTextContents(),
+          ['Benchmarks publics'], `${width} entrée de menu du répertoire`);
         await page.goto(origin + '/render/approved-mteb');
+        assert.equal(await page.locator('[aria-current="page"]').count(), 0, `${width} aucune entrée de menu sur une fiche`);
         const layout = await zones();
         assert.ok(layout, `${width} fiche sans composition`);
         assert.match(layout.main, /elle mesure/i, `${width} notice hors zone principale`);
@@ -1835,17 +1840,20 @@ test('external references remain readable, searchable and safe without JavaScrip
       assert.ok(await page.locator('main a[href="/evaluations-externes"]').count() >= 1);
       await page.goto(origin + '/render/approved-index');
       const approved = await page.textContent('main');
-      for (const name of ['MathArena', 'LiveCodeBench', 'SWE-bench', 'MTEB', 'Artificial Analysis, performances API'])
+      for (const name of ['MathArena', 'LiveCodeBench', 'SWE-bench', 'MTEB', 'Artificial Analysis, performances API', 'MMLU-Pro', 'GPQA',
+                          'Humanity\'s Last Exam', 'ARC-AGI', 'MATH', 'FrontierMath', 'GAIA', 'τ-bench', 'OSWorld'])
         assert.ok(approved.includes(name), name);
       assert.equal(/HELM/i.test(approved), false);
       assert.equal(approved.includes('Ayo'), false);
-      assert.ok(approved.includes('22 octobre 2026'));
+      assert.ok(approved.includes('La dernière relecture date du 9 novembre 2026.'));
       assert.ok(approved.includes('Ce contrôle est fait à part de la relecture.'));
       assert.equal(await page.locator('main img').count() + await scriptsEtrangers(page, 'main script'), 0);
       assert.equal(await scriptsEtrangers(page), 0);
       const categories = await page.locator('main .segments-liens a[href*="category="]').allTextContents();
       assert.ok(categories.includes('Recherche documentaire'));
       assert.ok(categories.includes('Performances des services'));
+      assert.ok(categories.includes('Connaissances et raisonnement'));
+      assert.ok(categories.includes('Agents'));
       assert.equal(categories.some(name => /helm/i.test(name)), false);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
       await page.goto(origin + '/render/approved-retrieval');
@@ -2334,7 +2342,7 @@ test('public and private pages retain legal information and exact release identi
       // Même menu, même pied et même tagline sur chaque page ; plus aucun lien vers les « cas en cours »
       // La page publique d'une publication garde son propre pied légal, hors de cette règle
       if (name !== 'publication-footer') {
-        assert.deepEqual(await page.locator('.nav li').allTextContents(), ['Accueil', 'Mes cas d’usage', 'Mes données'], name);
+        assert.deepEqual(await page.locator('.nav li').allTextContents(), ['Accueil', 'Mes cas d’usage', 'Mes données', 'Benchmarks publics'], name);
         assert.deepEqual(await page.locator('nav[aria-label="Parcours"] a').allTextContents(),
           ['Décrire mon cas d’usage', 'Mes données', 'Benchmarks publics'], name);
         assert.ok((await page.locator('footer .intro').first().textContent()).startsWith('Evaly, le benchmark personnalisé : '), name);
