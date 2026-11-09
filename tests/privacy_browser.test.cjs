@@ -655,9 +655,9 @@ test('an opened case is kept in local history by default under CSP, a list write
     await carte('d1').locator('[data-privacy-action="archive"]').waitFor();
     assert.deepEqual(await page.locator('.table-cas [data-privacy-status]').allTextContents(), ['', '']);
     assert.deepEqual(await databases(), []);
-    // Historique par défaut, sans copie : aucune action ni liste vide sous le statut
+    // Historique par défaut, sans copie : seule l'action d'arrêt est visible, aucune liste vide sous le statut
     await page.waitForFunction(() => document.querySelector('[data-privacy-history] > [data-privacy-status]').textContent === 'Aucun cas gardé dans ce navigateur pour l’instant.');
-    assert.deepEqual(await affichage(page), ['none', 'none'], 'état par défaut sans vide');
+    assert.deepEqual(await affichage(page), ['flex', 'none'], 'état par défaut : arrêt proposé, liste vide masquée');
     // Tablettes : cartes jusqu'à 899 px, table dès 900 px ; ni défilement de la table ni bouton coupé
     for (const width of [700, 768, 899, 900]) {
       await page.setViewportSize({width, height: 900});
@@ -689,6 +689,40 @@ test('an opened case is kept in local history by default under CSP, a list write
     assert.doesNotMatch(await statut2.textContent(), /Copie gardée/);
     assert.equal(await statut2.isVisible(), true, 'échec visible à l’écran');
   } finally {await vierge.close();}
+  // Mes données sans base locale : l'historique s'arrête avant la première copie, sans écrire de cas, puis se reprend
+  const avantCopie = await browser.newContext({viewport: {width: 1200, height: 900}});
+  try {
+    const page = await avantCopie.newPage(); page.setDefaultTimeout(3000);
+    const databases = () => page.evaluate(async () => (await indexedDB.databases()).map(db => db.name));
+    const statut = texte => page.waitForFunction(attendu => document.querySelector('[data-privacy-history] > [data-privacy-status]').textContent.startsWith(attendu), texte);
+    const envois = posts.length;
+    await page.goto(origin + '/render/data');
+    await statut('Aucun cas gardé dans ce navigateur pour l’instant.');
+    assert.deepEqual(await databases(), []);
+    const arreter = page.getByRole('button', {name: 'Tout effacer et arrêter l’historique'});
+    const reprendre = page.getByRole('button', {name: 'Reprendre l’historique local'});
+    assert.equal(await arreter.isVisible(), true, 'arrêt proposé avant la première copie');
+    assert.equal(await reprendre.isVisible(), false);
+    await arreter.click();
+    await page.getByRole('button', {name: 'Oui, tout effacer'}).click();
+    await statut('Historique local effacé et en pause. Reprenez-le pour garder de nouvelles copies.');
+    // L'arrêt crée seulement l'état désactivé : la base existe, aucun cas n'y est écrit
+    assert.deepEqual(await databases(), ['bench-x-history']);
+    assert.equal(await page.evaluate(() => new Promise((resolve, reject) => {
+      const opening = indexedDB.open('bench-x-history');
+      opening.onerror = () => reject(opening.error);
+      opening.onsuccess = () => {
+        const tx = opening.result.transaction(['archives', 'staging']);
+        const counts = ['archives', 'staging'].map(name => new Promise(done => {tx.objectStore(name).count().onsuccess = event => done(event.target.result);}));
+        Promise.all(counts).then(([archives, staging]) => {opening.result.close(); resolve(archives + staging);});
+      };
+    })), 0, 'aucun cas écrit');
+    assert.equal(posts.length, envois, 'aucun envoi');
+    assert.equal(await reprendre.isVisible(), true, 'reprise disponible après l’arrêt');
+    await reprendre.click();
+    await statut('Aucun cas gardé dans ce navigateur pour l’instant.');
+    assert.equal(await reprendre.isVisible(), false);
+  } finally {await avantCopie.close();}
 });
 
 test('the box state sent to the server decides only the contribution and never lifts a paused local history', async () => {

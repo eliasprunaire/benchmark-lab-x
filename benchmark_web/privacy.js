@@ -563,7 +563,8 @@ export async function mountPrivacy(root = document) {
           : records.length ? 'Historique local en pause : aucune nouvelle copie n’est enregistrée. Cas encore gardés : ' + records.length + '.'
           : 'Historique local effacé et en pause. Reprenez-le pour garder de nouvelles copies.';
         element.querySelector('[data-privacy-action="enable"]').hidden = state.enabled;
-        element.querySelector('[data-privacy-action="clear"]').hidden = !store;
+        // L'arrêt reste proposé avant la première copie : sans base, il la crée avec le seul état désactivé
+        element.querySelector('[data-privacy-action="clear"]').hidden = false;
         list.classList.toggle('hist-liste', records.length > 0);
         let filtre, tout;
         if (records.length > PREMIERES) {
@@ -612,7 +613,7 @@ export async function mountPrivacy(root = document) {
         montrer();
       };
       refreshers.push(update);
-      for (const [action, operation] of [['clear', () => store?.clear()],
+      for (const [action, operation] of [['clear', async () => {if (!await connect()) store = await openHistory(); await store.clear();}],
         ['enable', async () => {if (!await connect()) store = await openHistory(); await store.enable();}]]) {
         const button = element.querySelector('[data-privacy-action="' + action + '"]');
         const lancer = () => run(button, async () => {await operation(); await changed();});
