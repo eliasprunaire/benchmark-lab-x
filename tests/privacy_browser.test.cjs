@@ -926,12 +926,34 @@ test('pages expose no decorative SVG, keep status roles for live zones and hide 
           [accroche, atouts, actions] = await blocs();
           assert.ok(atouts.haut >= accroche.bas && Math.abs(atouts.gauche - accroche.gauche) <= 1 && actions.gauche >= atouts.droite,
             `${where} 1000 px : accroche puis atouts à gauche, actions à droite`);
-          await page.setViewportSize({width: 1440, height: 900});
-          [accroche, atouts, actions] = await blocs();
-          assert.ok(atouts.gauche - accroche.droite >= 24 && actions.gauche - atouts.droite >= 24, `${where} 1440 px : atouts au centre`);
-          assert.ok(Math.max(accroche.haut, atouts.haut, actions.haut) - Math.min(accroche.haut, atouts.haut, actions.haut) <= 1,
-            `${where} 1440 px : bords hauts alignés`);
-          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} 1440 px débordement`);
+          // Dès 1100 px : accroche (70 %) et atouts (30 %) sur une ligne, puis les actions dans un bloc à part, plus aéré
+          for (const width of [1100, 1440]) {
+            await page.setViewportSize({width, height: 900});
+            [accroche, atouts, actions] = await blocs();
+            const ligne = await page.evaluate(() => {
+              const [a, b] = ['.une-bas > div', '.une-bas > .atouts'].map(s => document.querySelector(s).getBoundingClientRect().width);
+              return a / (a + b);
+            });
+            assert.ok(Math.abs(ligne - 0.7) <= 0.02, `${where} ${width} px : accroche ${ligne.toFixed(3)} de la ligne`);
+            assert.ok(atouts.gauche - accroche.droite >= 24 && Math.abs(accroche.haut - atouts.haut) <= 1, `${where} ${width} px : accroche puis atouts`);
+            assert.ok(actions.haut - Math.max(accroche.bas, atouts.bas) >= 40 && Math.abs(actions.gauche - accroche.gauche) <= 1,
+              `${where} ${width} px : actions dessous, à gauche, détachées`);
+            assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} ${width} px débordement`);
+          }
+          // Le haut du jaune cache les jambages du mot précédent (les « p » de « rapports » sur « tableaux ») sans rogner les lettres hautes
+          const fente = await page.evaluate(() => {
+            const cadre = document.querySelector('.fente'), mots = [...cadre.querySelectorAll('.defile > span')];
+            const style = getComputedStyle(mots[0]), rang = mots[0].getBoundingClientRect().height / Math.cos(1.5 * Math.PI / 180);
+            const ctx = document.createElement('canvas').getContext('2d');
+            ctx.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+            ctx.fontStretch = 'expanded';
+            const ref = ctx.measureText('x'), base = (parseFloat(style.lineHeight) - ref.fontBoundingBoxAscent - ref.fontBoundingBoxDescent) / 2 + ref.fontBoundingBoxAscent;
+            const mesure = mots.map(m => ctx.measureText(m.textContent));
+            const coupe = getComputedStyle(cadre).clipPath.match(/inset\(([\d.]+)px/);
+            return {intrusion: base + Math.max(...mesure.map(m => m.actualBoundingBoxDescent)) - parseFloat(style.lineHeight),
+                    lettres: base - Math.max(...mesure.map(m => m.actualBoundingBoxAscent)), coupe: coupe ? parseFloat(coupe[1]) : 0, rang};
+          });
+          assert.ok(fente.coupe > fente.intrusion && fente.coupe < fente.lettres, `${where} jaune : ${JSON.stringify(fente)}`);
           mkdirSync('reports/privacy-browser', {recursive: true});
           await page.screenshot({path: `reports/privacy-browser/home-1440-${colorScheme}.png`});
           await page.setViewportSize({width: 390, height: 844});
