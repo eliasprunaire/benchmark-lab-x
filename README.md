@@ -8,9 +8,7 @@
     <a href="LICENSE"><img alt="Licence AGPL-3.0" src="https://img.shields.io/badge/licence-AGPL--3.0-blue.svg"></a>
   </p>
   <p>
-    <a href="#ce-que-fait-evaly">Fonctionnalités</a> ·
-    <a href="#démarrage-local">Démarrage</a> ·
-    <a href="#architecture-du-dépôt">Architecture</a> ·
+    <a href="https://evaly.cybrel.fr/">Ouvrir Evaly</a> ·
     <a href="#documentation">Documentation</a> ·
     <a href="CONTRIBUTING.md">Contribuer</a>
   </p>
@@ -18,99 +16,33 @@
 
 ## Pourquoi Evaly
 
-Un modèle n’est jamais « le meilleur » dans l’absolu. Evaly compare des configurations dans des conditions communes, sur une tâche définie avant l’exécution. Chaque conclusion reste liée à son contrat, à ses cas d’essai, à la configuration réellement observée, aux preuves conservées et à la date de la campagne.
-
-Le projet sépare clairement la préparation, l’acquisition, l’évaluation et la restitution. Une simulation teste le logiciel ; elle ne devient jamais un résultat de benchmark réel.
+Un modèle n’est jamais « le meilleur » dans l’absolu. Evaly compare des modèles dans les mêmes conditions, sur votre propre cas d’usage. Chaque verdict reste lié à l’exemple que vous avez validé, à la configuration réellement observée, aux preuves conservées et à la date du benchmark.
 
 ## Ce que fait Evaly
 
-- prépare un dossier entièrement fictif à partir d’un besoin général ;
-- qualifie un contrat de réussite avant les appels candidats ;
-- fige le panel, les conditions communes, les autorités et le budget d’une campagne ;
-- exécute les candidats sous Pi, normalement via OpenRouter ;
-- conserve les sorties, incidents, coûts et configurations observées ;
-- produit des évaluations explicables et une restitution reliée aux preuves ;
-- publie uniquement une projection explicitement approuvée.
+1. Vous décrivez votre cas d’usage en quelques phrases. L’assistant vous pose une question si besoin.
+2. L’assistant crée un exemple réaliste : une consigne et des documents inventés.
+3. Vous corrigez l’exemple si besoin, puis vous le validez.
+4. Vous choisissez les modèles à comparer et voyez le coût estimé avant de lancer.
+5. Pour chaque modèle, Evaly donne son verdict, ses preuves et son coût observé.
 
-## Démarrage local
+Evaly ne donne ni note globale ni classement universel.
 
-### Prérequis
+## Utiliser Evaly
 
-- la version de Python définie dans [`.python-version`](.python-version) ;
-- [uv](https://docs.astral.sh/uv/) ;
-- Node.js et Pi uniquement pour les parcours candidats qui les utilisent.
+L’instance du Lab-X est en ligne : [evaly.cybrel.fr](https://evaly.cybrel.fr/). Evaly est en alpha.
 
-Depuis la racine du dépôt :
-
-```bash
-git clone https://github.com/eliasprunaire/benchmark-lab-x.git
-cd benchmark-lab-x
-uv run python -m benchmark --help
-```
-
-Pour préparer un environnement privé, copiez le fichier d’exemple et ne gardez dans `.env` que les URL non secrètes. Les clés du bench viennent de Vault, dans le seul processus lancé :
-
-```bash
-cp .env.example .env
-uv run python -m benchmark.vault_env -- python -m benchmark --help
-```
-
-Le fichier `.env` reste local et ne doit jamais être versionné. Le lanceur retire les noms de clés hérités du shell, puis écrit les champs de `secret/saas/labx-benchmark/benchmark-lab-x/api`. Lire ces champs ne lance aucun modèle.
-
-`python -m benchmark`, `python -m benchmark.runtime` et `benchmark/benchmark-runtime` appellent le même moteur.
-
-Dans le parcours web, **Ajouter ma clé OpenRouter** permet de fournir votre clé depuis le navigateur, sans modifier le `.env` du serveur. C’est le seul moyen de fournir un accès OpenRouter ; la page **Ma clé OpenRouter** permet de la remplacer ou de la retirer. Elle finance vos préparations, qualifications et comparaisons ; Evaly n’ajoute aucune limite de dépense à celle que vous fixez, ou non, chez OpenRouter. Enregistrer la clé ne lance aucun modèle.
-
-Pour les commandes opérateur, utilisez `python -m benchmark --help`. Le PRD, l’ARD et les règles en définissent la portée et les conditions.
-
-## Vérification
-
-La suite locale et la CI utilisent la même commande principale :
-
-```bash
-uv run --with-requirements benchmark/requirements.lock \
-  python -m unittest discover -s tests
-```
-
-Les transports sont simulés dans les tests. Un résultat vert prouve les comportements couverts sur l’environnement observé ; il ne prouve pas un accès fournisseur, une campagne réelle, un déploiement ou une publication.
-
-Le lanceur `benchmark.vault_env` appelle `vault` résolu par le `PATH`. Définir `VAULT_BIN` remplace ce binaire par un chemin précis.
-
-## Architecture du dépôt
-
-```text
-benchmark/
-├── acquisition/       campagnes, émissions et reprises préautorisées
-├── transports/        OpenRouter, Pi, secours officiels et profils
-├── preparation.py     dossier fictif et validation du besoin
-├── qualification.py   qualification du contrat
-├── evaluation.py      constats, mesures et verdicts
-├── restitution.py     comparaison privée et preuves
-├── storage.py         stockage privé et contrôles d’intégrité
-└── runtime.py         commandes opérateur
-
-benchmark_web/         interface web et projections publiques
-docs/                  sources canoniques du produit
-tests/                 régressions hors ligne et parcours locaux
-tools/                 construction reproductible du runtime
-```
-
-Les identifiants techniques du produit conservent le préfixe `benchmark-lab-x`. Ils appartiennent aux formats de données et restent stables malgré le nom public Evaly.
+Evaly appelle les modèles par OpenRouter, avec votre propre clé. Vous l’ajoutez sur la page **Ma clé OpenRouter**, avec le bouton **Ajouter ma clé**. La même page permet de la remplacer ou de la retirer. Evaly n’ajoute aucune limite de dépense à celle que vous fixez, ou non, chez OpenRouter. Enregistrer la clé ne lance aucun modèle.
 
 ## Documentation
 
-- [PRD](docs/PRD.md) : besoin, utilisateurs, parcours et périmètre ;
-- [ARD](docs/ARD.md) : objets, responsabilités, frontières et flux ;
-- [Règles](docs/RULES.md) : contrats, preuves, coûts, autorités et versions ;
-- [Gabarit de tâche](docs/task-template.md) : contenu minimal d’une future tâche ;
-- [Guide de contribution](CONTRIBUTING.md) : branches, commits, CI, revue, fusion et livraison automatique ;
-- [Release et livraison](docs/release.md) : versionnement, artefacts, runner et reprise opérateur.
-
-Les [Issues GitHub](https://github.com/eliasprunaire/benchmark-lab-x/issues) et le [Project](https://github.com/users/eliasprunaire/projects/5) portent le travail de livraison et son avancement.
+- [Guide de contribution](CONTRIBUTING.md) : branches, commits, CI, revue et fusion ;
+- [Release et livraison](docs/release.md) : versionnement, artefacts et déploiement ;
+- [Sécurité](SECURITY.md) : signaler une vulnérabilité en privé.
 
 ## Contribuer
 
-Consultez [CONTRIBUTING.md](CONTRIBUTING.md) avant de créer une branche ou une pull request. Après revue et fusion dans `main`, la version, la release et le déploiement sont traités automatiquement lorsque le changement est éligible.
+Consultez [CONTRIBUTING.md](CONTRIBUTING.md) avant de créer une branche ou une pull request.
 
 ## Sécurité
 
@@ -124,6 +56,6 @@ Evaly est distribué sous licence [AGPL-3.0-only](LICENSE).
 
 <div align="center">
   <p><strong>Evaly</strong> par Cybrel · né au Lab-X</p>
-  <p>Des choix de modèles fondés sur des tâches précises et des preuves lisibles.</p>
+  <p>Des choix de modèles fondés sur des cas d’usage précis et des preuves lisibles.</p>
   <p><a href="#evaly">Retour en haut</a></p>
 </div>

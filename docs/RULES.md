@@ -2,7 +2,7 @@
 style_gate: pass
 ---
 
-# Règles de Bench-X
+# Règles d’Evaly
 
 Ces règles préservent les contrats déjà scellés et n'autorisent aucune exécution. Elles ne portent aucun statut de livraison des versions.
 
@@ -28,7 +28,7 @@ Ces règles préservent les contrats déjà scellés et n'autorisent aucune exé
 
 **Canal API et secours officiel.** OpenRouter reste le canal normal des appels modèles du produit. Après diagnostic et épuisement des routes de secours utilisables du même modèle, l’API officielle peut servir de dernier recours sous configuration et admission distinctes, selon l’[ARD](ARD.md#3-pi-comme-frontière-constante). L’admission propriétaire initiale peut préautoriser exactement cette dérivation, sa preuve de canal et sa réserve ; le moteur l’enchaîne alors sans nouvelle interaction. L’identité exacte disponible, les paramètres, l’accès, le budget et les preuves doivent être établis. Un alias redirigé vers une autre version ne constitue pas un secours. Les contrats déjà scellés restent inchangés.
 
-**Exception de recherche sémantique.** L’aide facultative du répertoire et du catalogue utilise une intégration TypeSafe commune, financée par Bench-X. Elle est distincte du parcours personnel OpenRouter. Son autorité, son enveloppe et ses limites suivent l’[ARD](ARD.md#49-aide-sémantique-commune). Une configuration ou un contrat approuvé ne vaut pas activation, émission ou dépense. Le service reste désactivé sans autorisation distincte.
+**Exception de recherche sémantique.** L’aide facultative du répertoire et du catalogue utilise une intégration TypeSafe commune, financée par Evaly. Elle est distincte du parcours personnel OpenRouter. Son autorité, son enveloppe et ses limites suivent l’[ARD](ARD.md#49-aide-sémantique-commune). Une configuration ou un contrat approuvé ne vaut pas activation, émission ou dépense. Le service reste désactivé sans autorisation distincte.
 
 **Pi obligatoire.** Pi est le harnais commun de chaque comparaison candidate. Son choix n'est pas rouvert par une revue de configuration. Cette contrainte ne choisit pas le transport de l’assistance de préparation ou de jugement.
 
@@ -231,7 +231,7 @@ Les révisions retirées appartiennent à Git et ne définissent jamais le compo
 
 ## 14. Versionnement du produit
 
-**Version unique.** Bench-X adopte [Semantic Versioning 2.0.0](https://semver.org/lang/fr/) sous la forme `MAJOR.MINOR.PATCH`. Une version identifie le produit du monorepo, frontend et backend ensemble. Les versions de Pi, de Graph Engineering Tool, de l’infrastructure, des modèles, des tâches et des schémas de données restent distinctes.
+**Version unique.** Evaly adopte [Semantic Versioning 2.0.0](https://semver.org/lang/fr/) sous la forme `MAJOR.MINOR.PATCH`. Une version identifie le produit du monorepo, frontend et backend ensemble. Les versions de Pi, de Graph Engineering Tool, de l’infrastructure, des modèles, des tâches et des schémas de données restent distinctes.
 
 **Jalons.** Un jalon porte un nom, jamais un numéro de version : alpha, bêta, puis release candidate 1, 2, 3. Il ne se confond pas avec un suffixe de préversion SemVer comme `alpha.N`. La [feuille de route](roadmap.md) relie chaque exigence du PRD à son jalon ; le numéro de chaque version reste calculé à la release. Un jalon ne requalifie aucun résultat déjà scellé et ne prouve aucune livraison.
 

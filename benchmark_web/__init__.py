@@ -1,1 +1,1 @@
-"""Présentation web de Bench-X ; dépend du moteur, jamais l'inverse."""
+"""Présentation web d’Evaly ; dépend du moteur, jamais l'inverse."""

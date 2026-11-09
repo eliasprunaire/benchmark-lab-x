@@ -6,7 +6,7 @@ style_gate: pass
 
 ## Mission
 
-Bench-X aide à choisir un modèle pour une tâche précise à partir de preuves lisibles. Le verdict porte sur la configuration observée sous des conditions communes, jamais sur le nom du modèle seul.
+Evaly aide à choisir un modèle pour une tâche précise à partir de preuves lisibles. Le verdict porte sur la configuration observée sous des conditions communes, jamais sur le nom du modèle seul.
 
 Le périmètre, l'architecture, le backlog et les campagnes suivent les décisions explicites d'Ayo. Les canons ne portent aucun statut de livraison des versions ; README, GitHub et les reçus portent les faits opérationnels.
 
@@ -54,7 +54,7 @@ Aucune Story de tâche, campagne ou candidat tant que son contenu, son panel et 
 ## Écrire des tests
 
 Cette politique s’applique à Codex, Claude Code, Grok et aux autres agents intervenant dans ce dépôt.
-`CLAUDE.md` importe ce fichier. Les adaptateurs d’autres agents doivent lire ce fichier avant toute implémentation.
+Ces agents, Claude Code compris, lisent ce fichier avant toute implémentation.
 
 - Étendre d’abord un parcours E2E existant pour vérifier le comportement demandé depuis une entrée publique.
 - Rechercher les scénarios et assertions existants avant d’ajouter un test. Compléter le scénario responsable du comportement.
