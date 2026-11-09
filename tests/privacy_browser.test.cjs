@@ -599,8 +599,12 @@ test('a browser quota failure cannot publish a partial new version', async () =>
   } finally {await context.close();}
 });
 
-test('rendered pages write nothing before the single choice, then checking it stores the copy under CSP and fits mobile', async () => {
+// Carte « Historique local » : ses actions et sa liste ne laissent aucun vide quand elles n'ont rien de visible
+const affichage = page => page.evaluate(() => ['[data-privacy-history] > .actions', '[data-privacy-list]']
+  .map(selector => getComputedStyle(document.querySelector(selector)).display));
+test('an opened case is kept in local history by default under CSP, a list writes nothing before a click, and fits mobile', async () => {
   fixture(); posts = [];
+  const copie = 'Copie gardée dans ce navigateur. Toute personne qui utilise ce profil de navigateur peut la lire.';
   const context = await browser.newContext({viewport: {width: 1200, height: 900}});
   try {
     const page = await context.newPage(); page.setDefaultTimeout(3000);
@@ -608,12 +612,12 @@ test('rendered pages write nothing before the single choice, then checking it st
     page.on('pageerror', error => failures.push(error.message));
     page.on('console', message => {if (/Content Security Policy/.test(message.text())) failures.push(message.text());});
     const databases = () => page.evaluate(async () => (await indexedDB.databases()).map(db => db.name));
+    // Historique actif par défaut : la page versionnée d'un cas ouvert en garde une copie, sans action ni envoi
     await page.goto(origin + '/render/example');
-    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
+    await page.waitForFunction(texte => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent === texte, copie);
     assert.equal(posts.length, 0);
-    assert.deepEqual(await databases(), []);
-    assert.equal(await page.locator('[data-privacy-action="archive"]').isHidden(), true);
-    assert.equal(await page.locator('[data-privacy-action="enable-case"]').isHidden(), true);
+    assert.deepEqual(await databases(), ['bench-x-history']);
+    assert.equal(await page.locator('[data-privacy-action="enable-case"]').evaluate(button => button.hidden), true);
     // Replié par défaut : le statut « Facultatif · non partagé » se lit sans l'ouvrir
     assert.match(await page.locator('.privacy-consent summary').first().textContent(), /Partager cet exemple\s*Facultatif · non partagé/);
     await openConsent(page);
@@ -621,53 +625,115 @@ test('rendered pages write nothing before the single choice, then checking it st
     assert.equal(await page.getByRole('checkbox').isEnabled(), true);
     mkdirSync('reports/privacy-browser', {recursive: true});
     await page.locator('.privacy-consent').screenshot({path: 'reports/privacy-browser/consent-desktop.png'});
-    // Saving the unchecked box is a choice against both effects
+    // La case ne décide que la contribution : décochée puis cochée, l'historique reste actif
     await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
-    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
-    assert.deepEqual(await databases(), []);
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('version la plus récente'));
     await openConsent(page);
     await page.getByRole('checkbox').check();
     await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
-    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('Copie gardée dans ce navigateur.'));
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('version la plus récente'));
     assert.deepEqual(posts.filter(post => post.path.endsWith('/contribution')).map(post => [post.path, post.body.enabled]), [
       ['/preparation/dossiers/d1/contribution', false], ['/preparation/dossiers/d1/contribution', true]]);
-    assert.deepEqual(await databases(), ['bench-x-history']);
-    // Cartes de Mes cas d'usage : aucun message par défaut, puis un message visible après la copie, réussie ou non
-    await page.goto(origin + '/render/privacy-listing');
-    const carte = id => page.locator('.ge-cas [data-dossier-id="' + id + '"]');
-    await carte('d1').locator('[data-privacy-action="archive"]').waitFor();
-    assert.deepEqual(await page.locator('.ge-cas [data-privacy-status]').allTextContents(), ['', '']);
-    await carte('d1').locator('[data-privacy-action="archive"]').click();
-    const statut1 = carte('d1').locator('[data-privacy-status]');
-    await page.waitForFunction(() => document.querySelector('.ge-cas [data-dossier-id="d1"] [data-privacy-status]').textContent !== ''
-      && !document.querySelector('.ge-cas [data-dossier-id="d1"] [data-privacy-action="archive"]').disabled);
-    assert.match(await statut1.textContent(), /Copie gardée dans ce navigateur|déjà la version la plus récente/);
-    assert.equal(await statut1.isVisible(), true, 'réussite visible à l’écran');
-    // d2 n'a pas de copie servie par la fixture : l'échec se lit à l'écran, pas seulement par un lecteur d'écran
-    await carte('d2').locator('[data-privacy-action="archive"]').click();
-    const statut2 = carte('d2').locator('[data-privacy-status]');
-    await page.waitForFunction(() => {
-      const texte = document.querySelector('.ge-cas [data-dossier-id="d2"] [data-privacy-status]').textContent;
-      return texte !== '' && texte !== 'Copie en cours dans ce navigateur…';
-    });
-    assert.doesNotMatch(await statut2.textContent(), /Copie gardée/);
-    assert.equal(await statut2.isVisible(), true, 'échec visible à l’écran');
     await page.goto(origin + '/render/data');
     await page.waitForFunction(() => document.querySelector('[data-privacy-list] > details'));
+    // Copies gardées : « Tout effacer » et la liste restent affichés
+    assert.equal((await affichage(page)).includes('none'), false, 'actions et copies visibles');
+    assert.equal(await page.getByRole('button', {name: 'Tout effacer et arrêter l’historique'}).isVisible(), true);
     await page.locator('[data-privacy-list] > details > summary').click();
     await page.setViewportSize({width: 390, height: 844});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({path: 'reports/privacy-browser/data-mobile.png', fullPage: true});
     assert.deepEqual(failures, []);
   } finally {await context.close();}
+  // Lignes de Mes données dans un navigateur sans historique : aucune base avant un clic, puis un message visible, réussite ou échec
+  const vierge = await browser.newContext({viewport: {width: 1200, height: 900}});
+  try {
+    const page = await vierge.newPage(); page.setDefaultTimeout(3000);
+    const databases = () => page.evaluate(async () => (await indexedDB.databases()).map(db => db.name));
+    await page.goto(origin + '/render/privacy-listing');
+    const carte = id => page.locator('[data-privacy-controls][data-dossier-id="' + id + '"]');
+    await carte('d1').locator('[data-privacy-action="archive"]').waitFor();
+    assert.deepEqual(await page.locator('.table-cas [data-privacy-status]').allTextContents(), ['', '']);
+    assert.deepEqual(await databases(), []);
+    // Historique par défaut, sans copie : seule l'action d'arrêt est visible, aucune liste vide sous le statut
+    await page.waitForFunction(() => document.querySelector('[data-privacy-history] > [data-privacy-status]').textContent === 'Aucun cas gardé dans ce navigateur pour l’instant.');
+    assert.deepEqual(await affichage(page), ['flex', 'none'], 'état par défaut : arrêt proposé, liste vide masquée');
+    // Tablettes : cartes jusqu'à 899 px, table dès 900 px ; ni défilement de la table ni bouton coupé
+    for (const width of [700, 768, 899, 900]) {
+      await page.setViewportSize({width, height: 900});
+      const mesure = await page.evaluate(() => {
+        const cadre = document.querySelector('.table-defile');
+        const bord = cadre.getBoundingClientRect();
+        const coupes = [...cadre.querySelectorAll('a, button')].filter(cible => cible.getClientRects().length).map(cible => cible.getBoundingClientRect())
+          .filter(box => box.left < bord.left - 0.5 || box.right > bord.right + 0.5).length;
+        return {page: document.documentElement.scrollWidth - innerWidth, table: cadre.scrollWidth - cadre.clientWidth, coupes,
+                ligne: getComputedStyle(document.querySelector('.table-cas tbody tr')).display};
+      });
+      assert.deepEqual(mesure, {page: 0, table: 0, coupes: 0, ligne: width < 900 ? 'block' : 'table-row'}, `${width} px`);
+    }
+    await page.setViewportSize({width: 1200, height: 900});
+    await carte('d1').locator('[data-privacy-action="archive"]').click();
+    const statut1 = carte('d1').locator('[data-privacy-status]');
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls][data-dossier-id="d1"] [data-privacy-status]').textContent !== ''
+      && !document.querySelector('[data-privacy-controls][data-dossier-id="d1"] [data-privacy-action="archive"]').disabled);
+    assert.equal(await statut1.textContent(), copie);
+    assert.equal(await statut1.isVisible(), true, 'réussite visible à l’écran');
+    assert.deepEqual(await databases(), ['bench-x-history']);
+    // d2 n'a pas de copie servie par la fixture : l'échec se lit à l'écran, pas seulement par un lecteur d'écran
+    await carte('d2').locator('[data-privacy-action="archive"]').click();
+    const statut2 = carte('d2').locator('[data-privacy-status]');
+    await page.waitForFunction(() => {
+      const texte = document.querySelector('[data-privacy-controls][data-dossier-id="d2"] [data-privacy-status]').textContent;
+      return texte !== '' && texte !== 'Copie en cours dans ce navigateur…';
+    });
+    assert.doesNotMatch(await statut2.textContent(), /Copie gardée/);
+    assert.equal(await statut2.isVisible(), true, 'échec visible à l’écran');
+  } finally {await vierge.close();}
+  // Mes données sans base locale : l'historique s'arrête avant la première copie, sans écrire de cas, puis se reprend
+  const avantCopie = await browser.newContext({viewport: {width: 1200, height: 900}});
+  try {
+    const page = await avantCopie.newPage(); page.setDefaultTimeout(3000);
+    const databases = () => page.evaluate(async () => (await indexedDB.databases()).map(db => db.name));
+    const statut = texte => page.waitForFunction(attendu => document.querySelector('[data-privacy-history] > [data-privacy-status]').textContent.startsWith(attendu), texte);
+    const envois = posts.length;
+    await page.goto(origin + '/render/data');
+    await statut('Aucun cas gardé dans ce navigateur pour l’instant.');
+    assert.deepEqual(await databases(), []);
+    const arreter = page.getByRole('button', {name: 'Tout effacer et arrêter l’historique'});
+    const reprendre = page.getByRole('button', {name: 'Reprendre l’historique local'});
+    assert.equal(await arreter.isVisible(), true, 'arrêt proposé avant la première copie');
+    assert.equal(await reprendre.isVisible(), false);
+    await arreter.click();
+    await page.getByRole('button', {name: 'Oui, tout effacer'}).click();
+    await statut('Historique local effacé et en pause. Reprenez-le pour garder de nouvelles copies.');
+    // L'arrêt crée seulement l'état désactivé : la base existe, aucun cas n'y est écrit
+    assert.deepEqual(await databases(), ['bench-x-history']);
+    assert.equal(await page.evaluate(() => new Promise((resolve, reject) => {
+      const opening = indexedDB.open('bench-x-history');
+      opening.onerror = () => reject(opening.error);
+      opening.onsuccess = () => {
+        const tx = opening.result.transaction(['archives', 'staging']);
+        const counts = ['archives', 'staging'].map(name => new Promise(done => {tx.objectStore(name).count().onsuccess = event => done(event.target.result);}));
+        Promise.all(counts).then(([archives, staging]) => {opening.result.close(); resolve(archives + staging);});
+      };
+    })), 0, 'aucun cas écrit');
+    assert.equal(posts.length, envois, 'aucun envoi');
+    assert.equal(await reprendre.isVisible(), true, 'reprise disponible après l’arrêt');
+    await reprendre.click();
+    await statut('Aucun cas gardé dans ce navigateur pour l’instant.');
+    assert.equal(await reprendre.isVisible(), false);
+  } finally {await avantCopie.close();}
 });
 
-test('the box state sent to the server is the one that decides local history', async () => {
+test('the box state sent to the server decides only the contribution and never lifts a paused local history', async () => {
+  fixture(); posts = [];
   const context = await browser.newContext();
   try {
     const page = await context.newPage(); page.setDefaultTimeout(3000);
+    const statutCas = texte => page.waitForFunction(debut => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.startsWith(debut), texte);
+    const historique = texte => page.waitForFunction(attendu => document.querySelector('[data-privacy-history] > [data-privacy-status]').textContent.startsWith(attendu), texte);
     await page.goto(origin + '/render/example');
-    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
+    await statutCas('Copie gardée');
     let held;
     await page.route('**/preparation/dossiers/d1/contribution', route => {held = route;});
     await openConsent(page);
@@ -676,8 +742,45 @@ test('the box state sent to the server is the one that decides local history', a
     await page.getByRole('checkbox').check();
     assert.equal(held.request().postDataJSON().enabled, false);
     await Promise.all([page.waitForEvent('load'), held.fulfill({status: 200, contentType: 'application/json', body: '{}'})]);
-    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent.includes('désactivé'));
-    assert.deepEqual(await page.evaluate(async () => (await indexedDB.databases()).map(db => db.name)), []);
+    await page.unroute('**/preparation/dossiers/d1/contribution');
+    // Un cas effacé de Mes données reste hors de l'historique ; son bouton le réactive pour lui seul
+    await page.goto(origin + '/render/data');
+    await page.waitForFunction(() => document.querySelector('[data-privacy-list] > details'));
+    await page.locator('[data-privacy-list] > details > summary').click();
+    await page.getByRole('button', {name: 'Effacer et ne plus garder ce cas'}).click();
+    await page.getByRole('button', {name: 'Oui, effacer ce cas'}).click();
+    await page.waitForFunction(() => !document.querySelector('[data-privacy-list]').textContent);
+    await page.goto(origin + '/render/example');
+    await statutCas('Historique local en pause : ce cas n’est plus gardé dans ce navigateur.');
+    const reactiver = page.locator('[data-privacy-action="enable-case"]');
+    assert.equal(await reactiver.evaluate(button => button.hidden), false);
+    await page.locator('details.privacy-controls > summary').click();
+    await reactiver.click();
+    await page.waitForFunction(() => document.querySelector('[data-privacy-action="enable-case"]').hidden
+      && !document.querySelector('[data-privacy-controls] [data-privacy-action="archive"]').hidden);
+    // Arrêt explicite de tout l'historique : il reste arrêté, même quand la case de contribution est cochée
+    await page.goto(origin + '/render/data');
+    await page.getByRole('button', {name: 'Tout effacer et arrêter l’historique'}).click();
+    await page.getByRole('button', {name: 'Oui, tout effacer'}).click();
+    await historique('Historique local effacé et en pause. Reprenez-le pour garder de nouvelles copies.');
+    assert.equal(await page.getByRole('button', {name: 'Reprendre l’historique local'}).isVisible(), true);
+    assert.deepEqual(await affichage(page), ['flex', 'none'], 'pause : actions visibles, liste vide masquée');
+    await page.goto(origin + '/render/example');
+    await statutCas('Historique local en pause');
+    await openConsent(page);
+    await page.getByRole('checkbox').check();
+    await Promise.all([page.waitForEvent('load'), page.getByRole('button', {name: 'Enregistrer mon choix'}).click()]);
+    await statutCas('Historique local en pause');
+    assert.deepEqual(await page.evaluate(async () => {
+      const store = await (await import('/preparation/privacy.js')).openHistory({create: false});
+      try {return {state: await store.state(), list: await store.list()};} finally {store.close();}
+    }), {state: {enabled: false, chosen: true}, list: []});
+    assert.deepEqual(posts.filter(post => post.path.endsWith('/contribution')).map(post => post.body.enabled), [true]);
+    // Seul « Reprendre l’historique local » lève la pause ; le bouton disparaît ensuite
+    await page.goto(origin + '/render/data');
+    await page.getByRole('button', {name: 'Reprendre l’historique local'}).click();
+    await historique('Aucun cas gardé dans ce navigateur pour l’instant.');
+    assert.equal(await page.getByRole('button', {name: 'Reprendre l’historique local'}).isVisible(), false);
   } finally {await context.close();}
 });
 
@@ -756,7 +859,7 @@ test('native consent form remains usable without JavaScript, with no preselected
     await page.goto(origin + '/render/example');
     await openConsent(page);
     assert.equal(await page.getByRole('checkbox').isChecked(), false);
-    assert.match(await page.locator('.privacy-consent').textContent(), /besoin de JavaScript ; sans lui, seule la contribution/i);
+    assert.match(await page.locator('.privacy-consent').textContent(), /L’historique local de ce navigateur ne dépend pas de ce choix/);
     await page.getByRole('checkbox').check();
     await page.getByRole('button', {name: 'Enregistrer mon choix'}).click();
     assert.deepEqual(posts, [{path: '/preparation/dossiers/d1/contribution', body: {
@@ -1010,9 +1113,32 @@ test('pages expose no decorative SVG, keep status roles for live zones and hide 
           .map(zone => zone.textContent.trim().slice(0, 60)), LIVE_STATUS), [], `${where} role="status" statique`);
         assert.deepEqual(await page.evaluate(contrastFailures), [], where);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} débordement`);
-        if (name === 'home')
+        if (name === 'home') {
           assert.equal(await page.locator('.accroche').evaluate(lead => getComputedStyle(lead).borderLeftStyle), 'none',
             `${where} l’accroche est un paragraphe, sans filet latéral (DESIGN.md)`);
+          // Accroche, atouts, actions : enfants directs, empilés sous 860 px, deux colonnes de 861 à 1099 px, trois dès 1100 px
+          const blocs = () => page.evaluate(() => ['.une-bas .accroche', '.une-bas > .atouts', '.une-bas > .actions'].map(selector => {
+            const box = document.querySelector(selector).getBoundingClientRect();
+            return {gauche: box.left, droite: box.right, haut: box.top, bas: box.bottom};
+          }));
+          assert.deepEqual(await page.locator('.une-bas > *').evaluateAll(blocks => blocks.map(block => block.className || block.firstElementChild.className)),
+            ['texte-l accroche', 'atouts', 'actions'], `${where} ordre du DOM`);
+          let [accroche, atouts, actions] = await blocs();
+          assert.ok(accroche.bas <= atouts.haut && atouts.bas <= actions.haut, `${where} empilés à 390 px`);
+          await page.setViewportSize({width: 1000, height: 900});
+          [accroche, atouts, actions] = await blocs();
+          assert.ok(atouts.haut >= accroche.bas && Math.abs(atouts.gauche - accroche.gauche) <= 1 && actions.gauche >= atouts.droite,
+            `${where} 1000 px : accroche puis atouts à gauche, actions à droite`);
+          await page.setViewportSize({width: 1440, height: 900});
+          [accroche, atouts, actions] = await blocs();
+          assert.ok(atouts.gauche - accroche.droite >= 24 && actions.gauche - atouts.droite >= 24, `${where} 1440 px : atouts au centre`);
+          assert.ok(Math.max(accroche.haut, atouts.haut, actions.haut) - Math.min(accroche.haut, atouts.haut, actions.haut) <= 1,
+            `${where} 1440 px : bords hauts alignés`);
+          assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} 1440 px débordement`);
+          mkdirSync('reports/privacy-browser', {recursive: true});
+          await page.screenshot({path: `reports/privacy-browser/home-1440-${colorScheme}.png`});
+          await page.setViewportSize({width: 390, height: 844});
+        }
       }
       await page.route('**/preparation/style.css', route => route.abort());
       for (const name of ['dossiers', 'example']) {
@@ -2394,7 +2520,9 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
         assert.equal(await page.locator('#request').getAttribute('minlength'), '40');
         assert.equal(await page.locator('#request').getAttribute('maxlength'), '1500');
         assert.equal(await page.locator('#request').getAttribute('required'), '');
-        assert.ok((await page.textContent('main')).includes('40 caractères au moins'));
+        assert.equal(await page.locator('#request-help').innerHTML(),
+          '40 caractères au minimum.<br>N’ajoutez aucune donnée personnelle, ni aucun document réel, même anonymisé.');
+        assert.equal(await page.locator('.compo-suite').count(), 0);
       }
     }
     await page.goto(origin + '/render/prior-example');
@@ -2572,37 +2700,56 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     const text = await page.textContent('main');
     assert.ok(text.indexOf('Les pièces') < text.indexOf('Oui, c’est le travail à tester'));
     assert.ok(text.indexOf('Oui, c’est le travail à tester') < text.indexOf('conserver cet exemple pendant 6 mois'));
-    for (const phrase of ['historique local', 'besoin, messages et versions compris', 'copie complète de chaque cas ouvert',
-      'a besoin de JavaScript', 'sans lui, seule la contribution', 'Cybrel', 'sans le publier',
+    for (const phrase of ['historique local', 'ne dépend pas de ce choix', 'Cybrel', 'sans le publier',
       'Efface la copie de ce navigateur et demande la suppression sur le serveur'])
       assert.ok(text.includes(phrase), phrase);
+    for (const phrase of ['copie complète de chaque cas ouvert', 'a besoin de JavaScript', 'sans lui, seule la contribution',
+      'active aussi', 'j’active l’historique'])
+      assert.equal(text.includes(phrase), false, phrase);
+    assert.equal((await page.locator('.privacy-consent label.case').textContent()).trim(), 'Je partage cet exemple avec Evaly');
     // La conservation 7 jours / 30 jours s'explique dans Mes données, plus sur la page du cas
     assert.equal(/effacé après 7 jours|effacée après 30 jours/.test(text), false);
     assert.equal(/Clé retirée après|11 jours|conserve votre copie locale/.test(text), false);
     assert.equal(await page.locator('script[src="/preparation/privacy.js"]').count(), 1);
     assert.ok(await page.locator('script:not([src])').count() > 0);
-    await page.goto(origin + '/render/privacy-listing');
-    // Les copies gardées ne s'affichent que dans Mes cas d'usage, pas à côté des cas en cours
-    assert.equal(await page.locator('[data-privacy-history]').count(), 0);
-    // Le repère de session précède les cartes : `privacy.js` lit le premier, qui ne désigne aucun cas
+    // Mes cas d'usage avec une session : le repère d'activité, ni liste ni copie des cas
+    await page.goto(origin + '/render/listing-privacy');
+    assert.equal(await page.locator('[data-privacy-history], [data-privacy-controls], ul.ge-liste').count(), 0);
     const activity = page.locator('[data-privacy-activity]').first();
     assert.equal(await activity.getAttribute('data-dossier-id'), null);
     assert.equal(await activity.getAttribute('data-csrf-token'), 'privacy-token');
     assert.equal(await page.locator('form#nouveau input[name="csrf_token"]').inputValue(), 'csrf');
+    // Mes données : la table des cas du serveur, puis les copies du navigateur ; lire la table ne renouvelle rien
+    await page.goto(origin + '/render/privacy-listing');
+    assert.equal(await page.locator('[data-privacy-history]').count(), 1);
+    assert.equal(await page.locator('[data-privacy-activity]').count(), 0);
     assert.equal(await page.locator('[data-privacy-post="contribution"]').count(), 0);
-    // Chaque carte garde sa copie (privacy.js) et mène à la confirmation de suppression, avec son adresse de retour
-    assert.deepEqual(await page.locator('.ge-cas [data-privacy-controls]').evaluateAll(cards => cards.map(card => card.dataset.dossierId)), ['d1', 'd2']);
-    assert.deepEqual(await page.locator('.ge-cas a.btn-danger').evaluateAll(links => links.map(link => link.getAttribute('href'))),
+    assert.deepEqual(await page.locator('.table-cas th').evaluateAll(cells => cells.map(cell => [cell.getAttribute('scope'), cell.textContent])),
+      [['col', 'Cas d’usage'], ['col', 'Version'], ['col', 'Effacement prévu'], ['col', 'Actions']]);
+    assert.deepEqual(await page.locator('.table-cas tbody td:first-child a').evaluateAll(links => links.map(link => [link.getAttribute('href'), link.textContent])),
+      [['/preparation/dossiers/d1', 'Trier des notes de réunion'], ['/preparation/dossiers/d2', 'Rédiger des réponses aux clients']]);
+    assert.deepEqual(await page.locator('.table-cas tbody td:nth-child(2)').allTextContents(), ['Version 2', 'Version 1']);
+    assert.deepEqual(await page.locator('.table-cas tbody td:nth-child(3)').allTextContents(), ['inconnu', 'inconnu']);
+    // Chaque ligne garde sa copie (privacy.js) et mène à la confirmation de suppression, avec son adresse de retour
+    assert.deepEqual(await page.locator('.table-cas [data-privacy-controls]').evaluateAll(cards => cards.map(card => card.dataset.dossierId)), ['d1', 'd2']);
+    assert.deepEqual(await page.locator('.table-cas a.btn-danger').evaluateAll(links => links.map(link => link.getAttribute('href'))),
       ['/preparation/dossiers/d1/delete?retour=/preparation', '/preparation/dossiers/d2/delete?retour=/preparation']);
     assert.equal(await page.locator('[data-privacy-post="delete"]').count(), 0);
-    // Le consentement couvre le cas ouvert : une carte de la liste montre le bouton de copie sans copier au chargement
-    assert.equal(await page.locator('.ge-cas [data-privacy-activity], .ge-cas [data-content-version]').count(), 0);
-    assert.equal(await page.locator('.ge-cas [data-privacy-manual]').count(), 2);
+    // Sans JavaScript, les boutons de copie restent cachés ; une ligne ne copie jamais au chargement
+    assert.equal(await page.locator('.table-cas [data-privacy-action]:visible').count(), 0);
+    assert.equal(await page.locator('.table-cas [data-privacy-activity], .table-cas [data-content-version]').count(), 0);
+    assert.equal(await page.locator('.table-cas [data-privacy-manual]').count(), 2);
+    assert.equal(await page.locator('.ge-vide-cas').count(), 0);
+    assert.equal(await page.locator('main a[href="/preparation/catalogue"]').count(), 1);
     assert.equal(await page.locator('.alerte-exp').count(), 0, 'sans échéance connue, aucune alerte');
     await page.goto(origin + '/render/listing-expiring');
     assert.equal(await page.locator('.alerte-exp').count(), 1);
     assert.match(await page.locator('.alerte-exp').textContent(), /Bientôt effacé.*ce cas sera effacé le (lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) \d{1,2} \p{L}+/u);
-    assert.equal(await page.locator('.ge-cas:has(.alerte-exp) h3').textContent(), 'Trier des notes de réunion');
+    // Tri par échéance décroissante, cas sans échéance en dernier
+    assert.deepEqual(await page.locator('.table-cas tbody td:first-child a').allTextContents(), ['Trier des notes de réunion', 'Rédiger des réponses aux clients']);
+    assert.equal(await page.locator('.table-cas tr:has(.alerte-exp) td:first-child a').textContent(), 'Trier des notes de réunion');
+    assert.match(await page.locator('.table-cas tr:has(.alerte-exp) td[data-label="Effacement prévu"]').textContent(),
+      /^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) \d{1,2} \p{L}+Bientôt effacé/u);
     await page.goto(origin + '/render/listing-deleted');
     assert.match(await page.locator('.etat').first().textContent(), /Le cas d’usage a été supprimé/);
     await page.goto(origin + '/render/case-delete');
@@ -2663,6 +2810,14 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
     await page.goto(origin + '/render/data');
     assert.equal(await page.locator('[data-privacy-history]').count(), 1);
     assert.equal(await page.locator('[data-privacy-activity]').count(), 0);
+    // Sans session ni cas : une seule phrase à la place de la table
+    assert.equal(await page.locator('.ge-vide-cas').textContent(), 'Aucun cas d’usage.');
+    assert.equal(await page.locator('main table').count(), 0);
+    // L'avertissement du navigateur partagé se lit sans rien ouvrir
+    const avertissement = page.locator('[data-privacy-history] .ge-avert');
+    assert.equal(await avertissement.isVisible(), true);
+    assert.equal(await avertissement.evaluate(element => Boolean(element.closest('details'))), false);
+    assert.match(await avertissement.textContent(), /Toute personne qui utilise ce profil de navigateur peut aussi les lire/);
     // Sans JavaScript, l'historique local n'est pas lisible : aucune action d'effacement local n'est proposée
     assert.equal(await page.getByRole('button', {name: 'Tout effacer et arrêter l’historique'}).count(), 0);
     assert.equal(await page.getByRole('button', {name: 'Effacer et ne plus garder ce cas'}).count(), 0);
@@ -2681,11 +2836,15 @@ test('privacy forms preserve consent scope, purpose tokens and expired states', 
       await page.setViewportSize({width, height: 844});
       await page.goto(origin + '/render/data');
       const main = await page.locator('main').innerText();
-      for (const phrase of ['Conservation automatique', 'Un cas d’usage est effacé après 7 jours sans activité', 'Votre clé OpenRouter est effacée après 30 jours sans activité',
-        'Historique local de vos cas', 'Mes cas d’usage', 'Mes contributions', 'Confidentialité']) assert.ok(main.includes(phrase), `${width} ${phrase}`);
+      for (const phrase of ['Vos cas d’usage', 'Aucun cas d’usage.', 'Conservation automatique', 'Un cas d’usage est effacé après 7 jours sans activité',
+        'Votre clé OpenRouter est effacée après 30 jours sans activité', 'Historique local de vos cas']) assert.ok(main.includes(phrase), `${width} ${phrase}`);
+      assert.ok(main.indexOf('Vos cas d’usage') < main.indexOf('Historique local de vos cas'), `${width} cas avant les copies`);
       assert.ok(main.indexOf('Historique local de vos cas') < main.indexOf('Conservation automatique'), `${width} copies avant la conservation`);
       assert.equal(await page.title(), 'Mes données · Evaly', `${width} titre de Mes données`);
-      assert.ok(main.includes('la page Mes cas d’usage affiche « Bientôt effacé »'), `${width} nom de la page des cas`);
+      assert.ok(main.includes('cette page affiche « Bientôt effacé » sur sa ligne'), `${width} échéance lue sur Mes données`);
+      assert.equal(/Pour supprimer un cas d’usage avant ce délai/.test(main), false, `${width} conservation sans renvoi`);
+      assert.equal(await page.locator('main a[href="/preparation"], main a[href="/preparation/contributions"], main a[href="/confidentialite"]').count(), 0,
+        `${width} aucun lien de bas de contenu`);
       assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes données', `${width} entrée de menu des copies`);
       assert.equal(await overflow(), 0, `${width} débordement de Mes données`);
       await page.goto(origin + '/render/contribution-none');
@@ -2716,6 +2875,7 @@ test('public and private pages retain legal information and exact release identi
         assert.deepEqual(await page.locator('nav[aria-label="Parcours"] a').allTextContents(),
           ['Décrire mon cas d’usage', 'Mes données', 'Épreuves', 'Benchmarks publics'], name);
         assert.ok((await page.locator('footer .intro').first().textContent()).startsWith('Evaly, le benchmark personnalisé : '), name);
+        assert.equal(await page.locator('footer .intro.note').count(), 0, name);
       }
       assert.equal(await page.locator('a', {hasText: 'cas en cours'}).count(), 0, name);
       assert.equal((await page.textContent('body')).includes('page Benchmark'), false, name);
@@ -2728,13 +2888,16 @@ test('public and private pages retain legal information and exact release identi
     }
     await page.goto(origin + '/render/confidentialite');
     const privacy = await page.textContent('main');
-    for (const term of ['Dernière mise à jour : 29 septembre 2026', 'OpenRouter, Inc., établi aux États-Unis',
+    for (const term of ['Dernière mise à jour : 9 novembre 2026', 'OpenRouter, Inc., établi aux États-Unis',
       'article 45 du RGPD', 'article 46 du RGPD', 'Nous ne pouvons pas garantir', 'art. 6.1.b', 'art. 6.1.f',
-      'portabilité', 'CNIL', '3 place de Fontenoy', 'benchmark_session', 'désactivé par défaut', 'deux effets',
-      'contribution pour cet exemple', 'votre besoin, vos messages et les révisions', 'que la contribution exclut',
+      'portabilité', 'CNIL', '3 place de Fontenoy', 'benchmark_session', 'activé par défaut', 'arrêter, le reprendre ou l’effacer',
+      'chaque cas que vous ouvrez', 'votre besoin, vos messages et les révisions', 'que la contribution exclut',
       'retire la copie de contribution conservée sur le serveur', 'ne concerne que la contribution',
       'n’arrête pas l’historique local', 'restent dans ce navigateur']) assert.ok(privacy.includes(term), term);
-    assert.ok((await page.getByRole('row').filter({hasText: 'Historique local dans votre navigateur'}).textContent()).includes('Votre consentement (art. 6.1.a)'));
+    const ligneHistorique = await page.getByRole('row').filter({hasText: 'Historique local dans votre navigateur'}).textContent();
+    assert.ok(ligneHistorique.includes('Voir §6 : enregistrement dans votre navigateur, activé par défaut, que vous pouvez arrêter ou effacer'));
+    assert.equal(ligneHistorique.includes('6.1.a'), false);
+    assert.equal(/désactivé par défaut|deux effets/.test(privacy), false);
     assert.equal(/N’ÉCRIRE QU’APRÈS|N'ÉCRIRE QU'APRÈS/.test(privacy), false);
     // La page des copies s'appelle Mes données (PRD §10) : le texte légal ne change pas, seuls ses liens suivent le nouveau nom
     assert.ok(privacy.includes('page Mes données'));
@@ -2764,7 +2927,11 @@ test('public and private pages retain legal information and exact release identi
     await page.goto(origin + '/render/listing');
     assert.equal(await page.locator('.nav a[aria-current="page"]').textContent(), 'Mes cas d’usage');
     assert.equal(await page.title(), 'Mes cas d’usage · Evaly');
-    assert.equal(await page.locator('ul.ge-liste a[href="/preparation/dossiers/d1"]').count(), 1);
+    // Mes cas d'usage renvoie aux cas décrits ; la table de Mes données porte leurs liens
+    assert.equal(await page.locator('ul.ge-liste, #t-liste').count(), 0);
+    assert.equal(await page.locator('.ge-mes-cas p.petit a[href="/preparation/data"]').textContent(), 'Mes données');
+    await page.goto(origin + '/render/privacy-listing');
+    assert.equal(await page.locator('table a[href="/preparation/dossiers/d1"]').count(), 1);
     for (const name of ['waiting', 'honeypot']) {
       await page.goto(origin + '/render/' + name);
       assert.ok((await page.title()).startsWith('Demande enregistrée'));

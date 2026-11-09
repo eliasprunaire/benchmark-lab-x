@@ -589,7 +589,6 @@ html { scroll-padding-top: 96px; }
 .pied .cols { grid-template-columns: 1.5fr 1fr 1fr; }
 .pied ul { gap: 0; }
 .pied a { min-height: 44px; display: inline-flex; align-items: center; }
-.pied .note { font-size: .85rem; margin-top: 10px; }
 /* Logo du pied : le fichier de l'icône, incliné comme la marque de l'en-tête, ombre claire sur fond nuit */
 .pied-logo { width: 64px; transform: rotate(-6deg); transition: transform .2s var(--ressort); }
 .pied-logo:hover { transform: rotate(4deg) scale(1.05); }
@@ -1428,3 +1427,44 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
 .confirmation-repliee > summary { list-style: none; cursor: pointer; }
 .confirmation-repliee > summary::-webkit-details-marker { display: none; }
 .confirmation-repliee[open] > summary { margin-bottom: 12px; }
+
+/* Accueil : accroche, atouts, actions. Trois colonnes dès 1100 px, deux de 861 à 1099 px, une sous 860 px */
+.une-bas { row-gap: 24px; }
+.une-bas .atouts { margin-top: 0; }
+.accroche { text-wrap: pretty; }
+.atouts li span { text-wrap: balance; }
+@media (min-width: 861px) and (max-width: 1099px) {
+  .une-bas .actions { grid-column: 2; grid-row: 1 / span 2; }
+}
+@media (min-width: 1100px) {
+  .une-bas { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto; align-items: start; }
+}
+
+/* Mes cas d'usage : la liste partie, le renvoi suit le champ sans second espace de section */
+.ge-mes-cas { padding-top: 0; }
+
+/* Aide du champ : deux lignes, la seconde tient sur une ligne dès 768 px */
+.compo-pied .aide { max-width: 64ch; }
+
+/* Mes données : table des cas */
+.table-cas td { vertical-align: middle; }
+.table-cas td:first-child a { display: inline-flex; align-items: center; min-height: 44px; font-weight: 750; }
+.table-cas td:nth-child(2) { white-space: nowrap; }
+.table-cas td:last-child { width: 1%; }
+.table-cas .ge-gerer { margin: 0; padding: 0; border: 0; flex-direction: column; align-items: stretch; gap: 8px; }
+.table-cas .ge-gerer .btn { white-space: nowrap; }
+.table-cas .alerte-exp { margin: 10px 0 0; flex-wrap: wrap; row-gap: 8px; }
+.ge-vide-cas { margin: 0; background: var(--signal-pale); color: var(--encre); font-weight: 650; }
+/* Historique local : ni actions toutes masquées ni liste vide sous le statut */
+[data-privacy-history] > .actions:not(:has(> :not([hidden]))), [data-privacy-list]:empty { display: none; }
+@media (max-width: 899px) {
+  .table-cas thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .table-cas tbody, .table-cas tr, .table-cas td { display: block; }
+  .table-cas tr { padding: 16px 18px; border-bottom: 1px dashed var(--filet-doux); }
+  .table-cas tr:last-child { border-bottom: 0; }
+  .table-cas td { padding: 0; border: 0; }
+  .table-cas td + td { margin-top: 10px; }
+  .table-cas td:last-child { width: auto; }
+  .table-cas .ge-gerer .btn { white-space: normal; }
+  .table-cas td[data-label]::before { content: attr(data-label); display: block; font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--discret); }
+}

@@ -191,19 +191,21 @@ def browser_views():
     examples['stopped-history'] = history
     metadata = deepcopy(example_view()['privacy'])
     metadata.update(content_version=4, contribution=dict(enabled=False, revision=2, example_revision=1))
-    # Mes cas d'usage avec ses contrôles de confidentialité : chaque carte porte ses boutons de gestion
+    # Mes données avec ses contrôles de confidentialité : chaque ligne de la table porte ses boutons de gestion
     liste = {key: metadata[key] for key in ('csrf_token', 'session_expires_at')}
-    examples['privacy-listing'] = dict(dossiers=[dict(dossier_id='d1', need='Trier des notes de réunion', revision=2),
-                                                 dict(dossier_id='d2', need='Rédiger des réponses aux clients', revision=1)],
-                                       availability=available, privacy=liste)
+    examples['privacy-listing'] = dict(kind='privacy_data', dossiers=[dict(dossier_id='d1', need='Trier des notes de réunion', revision=2),
+                                                                      dict(dossier_id='d2', need='Rédiger des réponses aux clients', revision=1)],
+                                       privacy=liste)
     # Confirmation de « Supprimer ce cas d'usage » : une page du serveur, utilisable sans JavaScript
     examples['case-delete'] = dict(kind='case_delete', dossier=dict(dossier_id='d1', need='Trier des notes de réunion'),
                                    privacy=liste, return_path='/preparation')
     # L'échéance d'effacement n'est connue de la vue que si l'exécuteur la fournit : sans elle, aucune alerte
     soon = (datetime.now(timezone.utc) + timedelta(hours=30)).isoformat()
-    examples['listing-expiring'] = dict(dossiers=[dict(dossier_id='d1', need='Trier des notes de réunion', revision=2, expires_at=soon),
-                                                  dict(dossier_id='d2', need='Rédiger des réponses aux clients', revision=1)],
-                                        availability=available, privacy=liste)
+    examples['listing-expiring'] = dict(kind='privacy_data', dossiers=[dict(dossier_id='d2', need='Rédiger des réponses aux clients', revision=1),
+                                                                       dict(dossier_id='d1', need='Trier des notes de réunion', revision=2, expires_at=soon)],
+                                        privacy=liste)
+    # Mes cas d'usage avec une session ouverte : le repère d'activité, sans liste des cas
+    examples['listing-privacy'] = dict(dossiers=[dict(dossier_id='d1', need='Trier des notes', revision=2)], availability=available, privacy=liste)
     examples['listing-deleted'] = dict(dossiers=[], availability=available, deleted=True)
     examples['case-delete'] = dict(kind='case_delete', dossier=dict(dossier_id='d1', need='Trier des notes de réunion <b>', revision=2),
                                    return_path='/preparation/dossiers/d1', privacy=dict(metadata, dossier_id='d1', content_version=1))

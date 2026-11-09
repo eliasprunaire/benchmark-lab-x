@@ -115,7 +115,7 @@ CGU = (
     '<section><h2>15. Contact</h2><p>' + CONTACT + '</p></section>')
 
 CONFIDENTIALITE = (
-    '<p>Dernière mise à jour : 29 septembre 2026</p>'
+    '<p>Dernière mise à jour : 9 novembre 2026</p>'
     '<section><h2>1. Responsable du traitement</h2><p><strong>CYBREL</strong><br>Contact pour toute question ou '
     'demande relative à vos données : <strong>' + CONTACT + '</strong></p></section>'
     '<section><h2>2. Principe</h2><p>Evaly est conçu pour fonctionner <strong>sans que vous ayez à fournir de '
@@ -150,7 +150,8 @@ CONFIDENTIALITE = (
          'Améliorer Evaly', 'Votre consentement (art. 6.1.a)', '6 mois à compter du consentement'),
         ('Historique local dans votre navigateur (IndexedDB)',
          'Vous permettre de relire et d’exporter vos cas après expiration de l’accès serveur',
-         'Votre consentement (art. 6.1.a)', 'Jusqu’à effacement par vous ou par votre navigateur')))
+         'Voir §6 : enregistrement dans votre navigateur, activé par défaut, que vous pouvez arrêter ou effacer',
+         'Jusqu’à effacement par vous ou par votre navigateur')))
     + '<p>Nous ne réalisons <strong>aucun profilage</strong>, aucune publicité, aucune revente, et aucune décision '
     'automatisée produisant des effets juridiques à votre égard.</p></section>'
     '<section><h2>4. Destinataires</h2><p>Pour produire une comparaison, le contenu nécessaire aux appels est '
@@ -189,11 +190,10 @@ CONFIDENTIALITE = (
          'Copies complètes de vos cas d’usage, pour relecture et export depuis ce navigateur'),
         ('<code>bench-x-session-opening</code> (sessionStorage)',
          'Éviter une boucle d’ouverture si les cookies sont bloqués')))
-    + '<p>L’historique local est <strong>désactivé par défaut</strong> : aucune copie de vos cas n’est enregistrée '
-    'dans ce navigateur tant que vous ne l’activez pas, depuis <a href="/preparation/data">Mes données</a> ou avec la case de '
-    'contribution proposée sous un exemple. Cocher cette case a deux effets : elle active la contribution pour cet '
-    'exemple <strong>et</strong> l’historique local. L’historique local nécessite JavaScript : sans JavaScript, '
-    'seule la contribution est enregistrée.</p>'
+    + '<p>L’historique local est <strong>activé par défaut</strong> : ce navigateur garde une copie complète de chaque '
+    'cas que vous ouvrez, besoin, messages et versions compris. Vous pouvez l’arrêter, le reprendre ou l’effacer à tout '
+    'moment depuis <a href="/preparation/data">Mes données</a>. Il nécessite JavaScript : sans JavaScript, aucune copie '
+    'locale n’est écrite.</p>'
     '<p>La copie locale contient <strong>plus</strong> que la copie de contribution : elle comprend aussi votre '
     'besoin, vos messages et les révisions, que la contribution exclut.</p>'
     '<p>Retirer une contribution retire la copie de contribution conservée sur le serveur et arrête ses mises à '
@@ -210,8 +210,8 @@ CONFIDENTIALITE = (
     '<section><h2>8. Vos droits</h2><p>Vous disposez des droits d’<strong>accès</strong>, de '
     '<strong>rectification</strong>, d’<strong>effacement</strong>, de <strong>limitation</strong>, '
     'd’<strong>opposition</strong> et de <strong>portabilité</strong> sur les données vous concernant, ainsi que du '
-    'droit de <strong>retirer votre consentement</strong> à tout moment pour la contribution facultative et pour '
-    'l’historique local.</p>'
+    'droit de <strong>retirer votre consentement</strong> à tout moment pour la contribution facultative, et '
+    'd’arrêter ou d’effacer l’historique local.</p>'
     '<p>Vous pouvez agir vous-même, sans nous écrire :</p><ul>'
     '<li><strong>supprimer un cas d’usage</strong> : bouton « Supprimer ce cas d’usage » sur la page du cas ;</li>'
     '<li><strong>retirer votre clé d’accès</strong> : page <a href="/preparation/access">Ma clé OpenRouter</a> ;</li>'

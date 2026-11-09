@@ -201,8 +201,8 @@ Cette section relie chaque terme affiché à l’écran à son terme du domaine 
 | Résultats | Restitution, vue de décision | kind `comparison` | Page des verdicts, qualité observée et coût observé d’un benchmark. Le tableau garde son titre « Comparaison des modèles ». |
 | modèle | Configuration demandée et observée | panel, model, slug | Nom commercial à l’écran. |
 | verdict | Verdict d’admissibilité | `SATISFAIT`, `NE SATISFAIT PAS` | Tampons « Satisfait », « Ne satisfait pas », « À reprendre », « Non vérifié », « Inconnu ». |
-| Mes cas d’usage | aucun | `/preparation` | La page qui décrit un cas et liste les cas en cours. |
-| Mes données | « Mes données » | `/preparation/data`, kind `privacy_data` | Historique local, conservation, retraits. |
+| Mes cas d’usage | aucun | `/preparation` | La page qui décrit un cas et porte la clé OpenRouter. |
+| Mes données | « Mes données » | `/preparation/data`, kind `privacy_data` | Cas d’usage ouverts, historique local et conservation automatique. |
 | Ma clé OpenRouter | Accès OpenRouter personnel | `/preparation/access`, kind `access` | Nom de la page. Actions : « Ajouter ma clé », « Remplacer ma clé », « Retirer la clé de ce navigateur ». |
 | épreuve | Épreuve éditoriale publiée ; qualification de l’épreuve | editorial, `/epreuves` | Deux sens : voir l’entrée Épreuve. |
 | contribution | Contribution facultative | contributions, `benchmark_contributions` | Copie privée autorisée par l’utilisateur ; voir l’entrée Contribution. |
@@ -229,7 +229,7 @@ Le terme a deux sens. Dans le parcours public, une épreuve est une épreuve éd
 Copie privée et distincte d’un exemple et de ses résultats, que l’utilisateur autorise Evaly à conserver pour améliorer le service, sans publication. Le consentement porte sur une version de l’exemple et échoit après six mois calendaires.
 
 ### Historique local
-Copies complètes des cas gardées par le navigateur, pour relecture et export. Le navigateur peut les effacer ; ce n’est pas une sauvegarde garantie. Toute personne qui utilise le même profil de navigateur peut les lire.
+Copies complètes des cas gardées par le navigateur, pour relecture et export. Le navigateur peut les effacer ; ce n’est pas une sauvegarde garantie. Toute personne qui utilise le même profil de navigateur peut les lire. Actif par défaut ; l’utilisateur peut l’arrêter ou l’effacer.
 
 ### Mes données
-Page `/preparation/data` : historique local, conservation automatique et liens vers les contributions et la confidentialité. Elle se distingue de « Mes cas d’usage », la page `/preparation` qui décrit un cas et liste les cas en cours.
+Page `/preparation/data` : cas d’usage ouverts, historique local et conservation automatique. Elle se distingue de « Mes cas d’usage », la page `/preparation` qui décrit un cas.

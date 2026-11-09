@@ -45,15 +45,29 @@ def historique_local():
             'Exportez les cas que vous voulez garder.</p>'
             '<p class="petit ge-avert">' + ic('alerte') + '<span>Toute personne qui utilise ce profil de navigateur peut aussi les lire.</span></p>'
             '<p class="petit" role="status" data-privacy-status>Vos copies s’affichent ici quand JavaScript est activé.</p>'
-            '<div class="actions"><button type="button" class="btn btn-sec" data-privacy-action="enable" hidden>Activer l’historique local</button>'
+            '<div class="actions"><button type="button" class="btn btn-sec" data-privacy-action="enable" hidden>Reprendre l’historique local</button>'
             '<button type="button" class="btn btn-sec" data-privacy-action="clear" hidden>Tout effacer et arrêter l’historique</button></div>'
             '<div data-privacy-list></div><noscript><p>Activez JavaScript pour voir et exporter '
             'les cas gardés dans ce navigateur.</p></noscript></section>')
 
 
-def liens_donnees(*, cas=False):
-    return ('<div class="actions">' + (lien('/preparation', 'Mes cas d’usage') if cas else '')
-            + lien('/preparation/contributions', 'Mes contributions') + lien('/confidentialite', 'Confidentialité') + '</div>')
+def table_cas(value):
+    """Section « Vos cas d’usage » : les cas encore ouverts sur le serveur, l'échéance la plus lointaine d'abord"""
+    privacy = value.get('privacy')
+    # Tri stable en deux passes : identifiant, puis échéance décroissante ; un cas sans échéance passe en dernier
+    cas = sorted(sorted(value.get('dossiers') or [], key=lambda d: d['dossier_id']), key=lambda d: d.get('expires_at') or '', reverse=True)
+    if not cas:
+        corps = '<p class="ge-vide ge-vide-cas">Aucun cas d’usage.</p>'
+    else:
+        lignes = ''.join(
+            '<tr><td><a href="/preparation/dossiers/' + quote(d['dossier_id'], safe='') + '">' + text(d.get('need') or 'Cas d’usage sans description')
+            + '</a></td><td>Version ' + str(d['revision']) + '</td><td data-label="Effacement prévu">'
+            + (text(date_echeance(echeance(d))) if echeance(d) else 'inconnu') + alerte_expiration(d) + '</td><td>' + gestion_cas(d, privacy) + '</td></tr>'
+            for d in cas)
+        corps = ('<div class="table-defile"><table class="table-cas" aria-labelledby="t-cas"><thead><tr><th scope="col">Cas d’usage</th>'
+                 '<th scope="col">Version</th><th scope="col">Effacement prévu</th><th scope="col">Actions</th></tr></thead><tbody>' + lignes
+                 + '</tbody></table></div><p>' + lien('/preparation/catalogue', 'Exemples validés et benchmarks') + '</p>')
+    return '<section class="ge-pile" aria-labelledby="t-cas"><h2 id="t-cas">Vos cas d’usage</h2>' + corps + '</section>'
 
 
 def render_privacy_page(value, csrf=''):
@@ -61,14 +75,12 @@ def render_privacy_page(value, csrf=''):
                     '<p>Evaly efface seul ce qui ne sert plus. Vous n’avez rien à faire.</p>'
                     '<ul class="liste-faits"><li><b>Un cas d’usage</b> est effacé après 7 jours sans activité.</li>'
                     '<li><b>Votre clé OpenRouter</b> est effacée après 30 jours sans activité.</li></ul>'
-                    '<p>Deux jours avant l’effacement d’un cas, la page Mes cas d’usage affiche « Bientôt effacé » sur sa carte.</p>'
-                    '<p class="petit">Pour supprimer un cas d’usage avant ce délai : bouton rouge « Supprimer ce cas d’usage » dans '
-                    '<a href="/preparation">Mes cas d’usage</a>. Des copies peuvent rester dans les sauvegardes du serveur.</p></section>')
-    # Page nommée d'après les copies : elles passent avant les règles de conservation
-    return 'Mes données', '<div class="ge-pile">' + historique_local() + conservation + liens_donnees(cas=True) + '</div>'
+                    '<p>Deux jours avant l’effacement d’un cas, cette page affiche « Bientôt effacé » sur sa ligne.</p></section>')
+    # Les cas ouverts d'abord, puis les copies du navigateur, puis les règles de conservation
+    return 'Mes données', '<div class="ge-pile">' + table_cas(value) + historique_local() + conservation + '</div>'
 
 
-# ——— Page Mes cas d'usage : activité, cartes des cas en cours, alerte d'effacement ———
+# ——— Repère d'activité de Mes cas d'usage, lignes des cas de Mes données, alerte d'effacement ———
 def marqueur_activite(privacy, csrf):
     """Repère que `privacy.js` lit pour prolonger l'accès de la session ; absent quand l'accès est fermé"""
     if not privacy or not active_session(privacy):
@@ -76,18 +88,26 @@ def marqueur_activite(privacy, csrf):
     return '<span data-privacy-activity data-csrf-token="' + text(privacy.get('csrf_token', csrf)) + '" hidden></span>'
 
 
+def echeance(dossier):
+    """Échéance d'effacement d'un cas en UTC, ou None si la vue ne la connaît pas"""
+    try:
+        return datetime.fromisoformat(dossier['expires_at'].replace('Z', '+00:00')).astimezone(timezone.utc)
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def date_echeance(moment):
+    return JOURS[moment.weekday()] + ' ' + str(moment.day) + ' ' + MOIS[moment.month - 1]
+
+
 def alerte_expiration(dossier, maintenant=None):
     """« Bientôt effacé » : seulement si la vue connaît l'échéance (`expires_at`) et qu'elle tombe dans les deux jours"""
-    try:
-        echeance = datetime.fromisoformat(dossier['expires_at'].replace('Z', '+00:00')).astimezone(timezone.utc)
-    except (KeyError, ValueError, TypeError, AttributeError):
-        return ''
+    moment = echeance(dossier)
     maintenant = maintenant or datetime.now(timezone.utc)
-    if not maintenant < echeance <= maintenant + PREAVIS:
+    if moment is None or not maintenant < moment <= maintenant + PREAVIS:
         return ''
-    date = JOURS[echeance.weekday()] + ' ' + str(echeance.day) + ' ' + MOIS[echeance.month - 1]
     return ('<p class="etat-ligne alerte-exp">' + mot('Bientôt effacé', 'vig') + '<span>Sans nouvelle activité, ce cas sera effacé le '
-            + text(date) + '.</span>' + lien('/preparation/dossiers/' + quote(dossier['dossier_id'], safe=''), 'Le garder') + '</p>')
+            + text(date_echeance(moment)) + '.</span>' + lien('/preparation/dossiers/' + quote(dossier['dossier_id'], safe=''), 'Le garder') + '</p>')
 
 
 def adresse_suppression(dossier_id, retour):
@@ -95,11 +115,11 @@ def adresse_suppression(dossier_id, retour):
 
 
 def gestion_cas(dossier, privacy):
-    """Boutons de gestion d'une carte : garder une copie (`privacy.js`) et supprimer (page de confirmation)"""
+    """Boutons de gestion d'une ligne de Mes données : garder une copie (`privacy.js`) et supprimer (page de confirmation)"""
     identifiant = dossier['dossier_id']
     attributs = ' data-privacy-controls data-dossier-id="' + text(identifiant) + '"'
     if active_session(privacy or {}):
-        # Bouton de copie seulement : aucune copie automatique au chargement, le consentement ne couvre que le cas ouvert
+        # Bouton de copie seulement : aucune copie automatique au chargement, seule la page du cas ouvert copie d'elle-même
         attributs += ' data-privacy-manual'
     titre = dossier.get('need') or 'Cas d’usage sans description'
     # Statut visible, vide par défaut : `privacy.js` n'y écrit que la réussite ou l'échec d'une copie
@@ -152,7 +172,7 @@ def render_privacy_controls(value, csrf, contribution='', path='/preparation'):
     """Pied des pages d'un cas : choix de partage replié, suppression, puis copie de ce cas dans ce navigateur"""
     privacy = value.get('privacy')
     if not privacy or 'dossiers' in value:
-        # La liste des cas en cours écrit son propre repère, avant ses cartes
+        # Mes cas d'usage écrit son propre repère d'activité ; Mes données n'en écrit aucun
         return ''
     dossier = privacy.get('dossier_id')
     if not dossier:
@@ -193,15 +213,13 @@ def render_contribution(value, csrf):
     plus = tiroir('Ce que ce choix change',
                   '<p>Cocher la case autorise Evaly à conserver cet exemple pendant 6 mois pour améliorer le service. '
                   'Cette autorisation ne permet pas de le publier. Le responsable de ce traitement est Cybrel, la société qui édite Evaly.</p>'
-                  '<p>Elle active aussi l’historique local : ce navigateur garde une copie complète de chaque cas ouvert, '
-                  'besoin, messages et versions compris. L’historique local a besoin de JavaScript ; sans lui, seule la contribution est enregistrée.</p>'
-                  '<p>Décocher arrête la contribution. L’historique continue : mettez-le en pause ou effacez-le dans '
+                  '<p>Décocher arrête la contribution. L’historique local de ce navigateur ne dépend pas de ce choix : gérez-le dans '
                   '<a href="/preparation/data">Mes données</a>. Votre choix ne change rien à votre accès. '
                   '<a href="/confidentialite">Politique de confidentialité</a>.</p>')
     corps = ('<fieldset' + arret + '><legend class="cache">Votre choix de partage</legend>'
-             '<p class="petit">Evaly le conserve 6 mois pour améliorer le service, sans le publier. Ce navigateur active aussi son historique local.</p>'
+             '<p class="petit">Evaly le conserve 6 mois pour améliorer le service, sans le publier.</p>'
              '<label class="case"><input type="checkbox" name="enabled" value="true"' + (' checked' if enabled else '') + '>'
-             '<span>Je partage cet exemple avec Evaly et j’active l’historique local</span></label></fieldset>'
+             '<span>Je partage cet exemple avec Evaly</span></label></fieldset>'
              '<div class="actions">' + bouton('Enregistrer mon choix', sec=True, icone=None).replace('<button ', '<button' + arret + ' ', 1) + '</div>'
              '<p class="petit" role="status" data-privacy-status>' + ('Vous partagez cet exemple avec Evaly.' if enabled else 'Vous ne partagez pas cet exemple.') + '</p>'
              + plus)

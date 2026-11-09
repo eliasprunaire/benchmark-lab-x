@@ -54,7 +54,19 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
     from . import privacy
     enabled = privacy.available(store._connection_checked())
     if method == 'GET' and path == '/preparation/data':
-        return 200, {'kind': 'privacy_data'}, None, None
+        # Page lisible sans session et pendant la quarantaine : aucune session créée, aucun cookie, aucune activité
+        value = {'kind': 'privacy_data', 'dossiers': []}
+        if not (enabled and privacy.quarantined(store)):
+            try:
+                session_id, csrf, _ = p.session(store, token)
+            except p.Denied:
+                pass
+            else:
+                value['dossiers'] = _dossiers(store, session_id)
+                if enabled:
+                    state = store._connection.execute('SELECT expires_at FROM s7_sessions WHERE session_id=?', (session_id,)).fetchone()
+                    value['privacy'] = {'csrf_token': csrf, 'session_expires_at': state[0]}
+        return 200, value, None, None
     if enabled and privacy.quarantined(store):
         return 503, {'error': 'Données en attente de vérification après restauration.', 'error_code': 'RESTORE_PENDING'}, None, None
     if method == 'POST':
@@ -187,6 +199,17 @@ def _campaign_of(path):
     return route.group(1) if route else None
 
 
+def _dossiers(store, session_id):
+    """Cas encore ouverts de la session, avec leur échéance d'effacement quand le stockage s7 la connaît"""
+    from . import privacy
+    rows = p.connection_for(store).execute('SELECT dossier_id,current_revision FROM s2_dossiers WHERE session_id=? ORDER BY dossier_id',
+                                           (session_id,)).fetchall()
+    expiry = dict(store._connection.execute('SELECT dossier_id,expires_at FROM s7_dossiers WHERE session_id=?',
+                                            (session_id,)).fetchall()) if privacy.available(store._connection) else {}
+    return [{'dossier_id': d, 'revision': r, 'expires_at': expiry.get(d), 'need': store.get_dossier(d, r)['request']}
+            for d, r in rows if privacy.visible(store._connection, session_id, d)]
+
+
 @contextmanager
 def _activity_with_effect(store, session_id, dossier_id, campaign_id=None):
     """Écrit l'activité dans chaque transaction d'écriture de l'effet, avant son COMMIT
@@ -216,17 +239,9 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
              access_secret=None, access_transport=None, presentation=None):
     """Executor-side authorization: HTTP fields can never claim an operator role."""
     if method == 'GET' and path == '/preparation':
-        from . import privacy
         session_id, csrf, current_token = p.session(store, token, create=True)
-        rows = p.connection_for(store).execute('SELECT dossier_id,current_revision FROM s2_dossiers WHERE session_id=? ORDER BY dossier_id',
-                                               (session_id,)).fetchall()
-        # Échéance d'effacement de chaque cas : la liste prévient deux jours avant
-        expiry = dict(store._connection.execute('SELECT dossier_id,expires_at FROM s7_dossiers WHERE session_id=?',
-                                                (session_id,)).fetchall()) if privacy.available(store._connection) else {}
         return 200, {'csrf_token': csrf, 'availability': p.availability(store, transport, session_id),
-                     'dossiers': [{'dossier_id': d, 'revision': r, 'expires_at': expiry.get(d),
-                                   'need': store.get_dossier(d, r)['request']} for d, r in rows
-                                  if privacy.visible(store._connection, session_id, d)]}, (None if token == current_token else current_token), None
+                     'dossiers': _dossiers(store, session_id)}, (None if token == current_token else current_token), None
     session_id, csrf, _ = p.session(store, token)
     campaign_reference = None
     access_paths = ('/preparation/access', '/preparation/access/disconnect', '/preparation/access/key')
