@@ -1344,7 +1344,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         # Une version déjà remplacée ou un accès fermé s'annonce au-dessus des colonnes
         if revision > 1:
             haut = '<div class="gb-cote">' + etat('att', 'À valider', 'Version ' + str(revision) + ' prête à valider',
-                                                'Votre choix de partage vaut pour cette version. Relisez l’exemple, puis validez-le.') + '</div>'
+                                                'Relisez l’exemple, puis validez-le.') + '</div>'
         droite = decision + cout + liens
         avant = ''
     elif prior_revision and not value['validation'] and stage == 'preview':
@@ -1392,7 +1392,7 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
     # En-tête propre à la vue (fil de retour, puces, sous-titre) ; `cadre_propre` : la vue écrit déjà ses colonnes centrées
     entete = {}
     # `aria-current` seulement sur l'entrée qui est la page affichée, jamais sur une page descendante ni d'erreur
-    current = None if error else {'home': '/', 'privacy_data': '/preparation/data', 'contributions': '/preparation/data',
+    current = None if error else {'home': '/', 'privacy_data': '/preparation/data',
                                  'references': None,
                                  'references_help': None}.get(
         value.get('kind'), '/preparation' if 'dossiers' in value and path == '/preparation' else None)

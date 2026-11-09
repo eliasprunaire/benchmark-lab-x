@@ -2232,6 +2232,10 @@ test('privacy forms preserve purpose tokens and expired states', async () => {
     for (const name of ['current', 'expired', 'prior']) {
       await page.goto(origin + '/render/case-' + name);
       assert.equal(await page.locator('[data-privacy-post="contribution"]').count(), 0, name);
+      // Version prête à valider : la carte invite seulement à relire, sans aucune phrase de partage
+      const carte = await page.textContent('main');
+      assert.equal(/partage/i.test(carte), false, name);
+      if (name === 'current') assert.match(carte, /Version 3 prête à valider\s*Relisez l’exemple, puis validez-le\./);
       // Accès fermé seulement si la session a expiré : le lien vers les copies porte le nom de sa page
       assert.deepEqual((await page.locator('.etat a.lien[href="/preparation/data"]').allTextContents()).map(t => t.trim()),
         name === 'expired' ? ['Mes données'] : [], name);
@@ -2311,7 +2315,8 @@ test('privacy forms preserve purpose tokens and expired states', async () => {
       const contributions = await page.locator('main').textContent();
       assert.ok(contributions.includes('Contribution du 18 septembre 2026'), `${width} contribution`);
       assert.ok(contributions.includes('arrête seulement la contribution concernée'), `${width} explication du retrait`);
-      assert.equal(await page.locator('.nav [aria-current="page"]').textContent(), 'Mes données', `${width} entrée de menu des contributions`);
+      // Page de retrait sans entrée de navigation : aucun lien du menu ne la marque comme courante
+      assert.equal(await page.locator('[aria-current="page"]').count(), 0, `${width} aucune entrée de menu des contributions`);
       assert.equal(await overflow(), 0, `${width} débordement des contributions`);
     }
   } finally {await context.close();}
