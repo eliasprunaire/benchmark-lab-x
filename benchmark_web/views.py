@@ -362,7 +362,8 @@ BENCHMARK_REFERENCES = {
         'work': 'Répondre à des questions scientifiques de niveau universitaire avancé en biologie, physique et chimie',
         'scope': 'Questions à choix multiples écrites par des experts et conçues pour résister à une recherche web : '
                  '448 dans le jeu principal, 198 dans le sous-ensemble Diamond. Publié par Rein et al.',
-        'limits': 'Les auteurs déclarent un jeu petit, peu adapté à l’entraînement : seul un grand écart entre deux résultats se détecte. '
+        'limits': 'Les auteurs déclarent un jeu petit, peu adapté à l’entraînement et à la puissance statistique limitée : '
+                  'de petits écarts entre deux résultats se détectent quand l’exactitude est élevée ou avec des tests appariés. '
                   'Ils ne le présentent pas comme représentatif des questions de la pratique scientifique. '
                   'Des questions d’examen ne décrivent aucun travail précis.',
         'version': 'Article arXiv 2311.12022 ; préciser le sous-ensemble : principal, Diamond ou Extended', 'published_at': '2023-11-20',

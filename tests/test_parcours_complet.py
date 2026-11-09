@@ -673,7 +673,7 @@ class ParcoursComplet(unittest.TestCase):
                     'https://github.com/idavidrein/gpqa',
                     'Répondre à des questions scientifiques de niveau universitaire avancé en biologie, physique et chimie',
                     '448 dans le jeu principal, 198 dans le sous-ensemble Diamond',
-                    'seul un grand écart entre deux résultats se détecte',
+                    'à la puissance statistique limitée : de petits écarts entre deux résultats se détectent quand l’exactitude est élevée ou avec des tests appariés',
                     'représentatif des questions de la pratique scientifique',
                     'principal, Diamond ou Extended',
                     '20 novembre 2023',
