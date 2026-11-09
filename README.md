@@ -32,7 +32,7 @@ Evaly ne donne ni note globale ni classement universel.
 
 L’instance du Lab-X est en ligne : [evaly.cybrel.fr](https://evaly.cybrel.fr/). Evaly est en alpha.
 
-Evaly appelle les modèles par OpenRouter, avec votre propre clé. Vous l’ajoutez sur la page **Ma clé OpenRouter**, avec le bouton **Ajouter ma clé**. La même page permet de la remplacer ou de la retirer. Evaly n’ajoute aucune limite de dépense à celle que vous fixez, ou non, chez OpenRouter. Enregistrer la clé ne lance aucun modèle.
+Evaly appelle les modèles par OpenRouter, avec votre propre clé. Le bouton **Ajouter ma clé**, sur vos cas d’usage, ouvre la page **Ma clé OpenRouter**. Sur cette page, le bouton **Enregistrer la clé** la garde ; la même page permet aussi de la remplacer ou de la retirer. Evaly n’ajoute aucune limite de dépense à celle que vous fixez, ou non, chez OpenRouter. Enregistrer la clé ne lance aucun modèle.
 
 ## Documentation
 
