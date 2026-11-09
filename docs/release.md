@@ -1,4 +1,4 @@
-# Release et livraison Bench-X
+# Release et livraison d’Evaly
 
 ## Règle de version
 

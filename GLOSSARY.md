@@ -2,7 +2,7 @@
 style_gate: pass
 ---
 
-# Glossaire Bench-X
+# Glossaire Evaly
 
 Ce glossaire fixe les termes du domaine. Il ne porte ni statut de livraison des versions, ni backlog, ni inventaire d'environnement.
 

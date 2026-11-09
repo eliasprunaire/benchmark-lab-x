@@ -2,7 +2,7 @@
 style_gate: pass
 ---
 
-# ARD : contrat d'architecture de Bench-X
+# ARD : contrat d'architecture d'Evaly
 
 ## 1. Portée
 

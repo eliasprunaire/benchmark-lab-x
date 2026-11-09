@@ -6,18 +6,6 @@ style_gate: pass
 
 Une contribution doit préserver les preuves, les frontières d’autorité et la distinction entre simulation, campagne réelle, release et déploiement. La CI vérifie le changement proposé. Après revue et fusion dans `main`, la chaîne de release et de déploiement prend le relais sans intervention humaine lorsque le commit est éligible.
 
-## Lire avant de modifier
-
-Les sources canoniques ont des responsabilités distinctes :
-
-- [PRD](docs/PRD.md) : besoin, utilisateurs et périmètre produit ;
-- [ARD](docs/ARD.md) : objets, frontières et flux ;
-- [Règles](docs/RULES.md) : décisions, preuves, coûts, autorités et versionnement ;
-- [Glossaire](GLOSSARY.md) : vocabulaire du projet ;
-- [Release et livraison](docs/release.md) : automatisation de la publication et du déploiement.
-
-Une Issue ou une pull request ne remplace pas ces documents. Signalez une contradiction au lieu d’inventer une synthèse.
-
 ## Préparer l’environnement
 
 Le dépôt utilise la version de Python définie dans [`.python-version`](.python-version) et des dépendances verrouillées avec `uv`.
@@ -82,7 +70,7 @@ Un commit sans effet produit ne doit pas déclencher une nouvelle version.
 ## Vérifier localement
 
 Avant toute modification de tests, appliquer [la politique commune aux agents](AGENTS.md#écrire-des-tests).
-Codex et Grok lisent `AGENTS.md`. Claude Code charge la même politique par l’import dans `CLAUDE.md`.
+Claude Code, Codex et Grok lisent `AGENTS.md`.
 
 Les quatre étapes de test restent définies dans [le workflow CI](.github/workflows/ci.yml).
 Leur répartition est décrite dans [AGENTS.md](AGENTS.md#validation).
@@ -127,7 +115,7 @@ Ne créez pas manuellement un tag ou une release pour une contribution ordinaire
 
 ## Après la fusion
 
-Le push dans `main` déclenche automatiquement la chaîne de release :
+Le push dans `main` déclenche automatiquement la chaîne de release, détaillée dans [Release et livraison](docs/release.md) :
 
 1. refus d’un SHA qui n’est plus le `main` courant ;
 2. calcul de la prochaine version depuis les commits éligibles ;
