@@ -913,20 +913,29 @@ test('pages expose no decorative SVG, keep status roles for live zones and hide 
         if (name === 'home') {
           assert.equal(await page.locator('.accroche').evaluate(lead => getComputedStyle(lead).borderLeftStyle), 'none',
             `${where} l’accroche est un paragraphe, sans filet latéral (DESIGN.md)`);
-          // Accroche, atouts, actions : enfants directs, empilés sous 860 px, deux colonnes de 861 à 1099 px, dès 1100 px accroche et atouts sur une ligne puis actions dessous
+          // Accroche, atouts, actions : enfants directs, empilés sous 860 px, deux colonnes de 861 à 1099 px, dès 1100 px accroche et atouts à parts égales sur une ligne puis actions centrées dessous
           const blocs = () => page.evaluate(() => ['.une-bas .accroche', '.une-bas > .atouts', '.une-bas > .actions'].map(selector => {
             const box = document.querySelector(selector).getBoundingClientRect();
             return {gauche: box.left, droite: box.right, haut: box.top, bas: box.bottom};
           }));
           assert.deepEqual(await page.locator('.une-bas > *').evaluateAll(blocks => blocks.map(block => block.className || block.firstElementChild.className)),
             ['texte-l accroche', 'atouts', 'actions'], `${where} ordre du DOM`);
+          // Centres horizontaux du bouton principal et du lien de retour, bord gauche du bouton
+          const boutons = () => page.evaluate(() => ['.une-bas .actions .btn', '.une-bas .actions .lien'].map(selector => {
+            const box = document.querySelector(selector).getBoundingClientRect();
+            return {centre: box.left + box.width / 2, gauche: box.left, haut: box.top, bas: box.bottom};
+          }));
           let [accroche, atouts, actions] = await blocs();
           assert.ok(accroche.bas <= atouts.haut && atouts.bas <= actions.haut, `${where} empilés à 390 px`);
+          let [bouton, retour] = await boutons();
+          assert.ok(Math.abs(bouton.gauche - actions.gauche) <= 1 && retour.haut >= bouton.bas, `${where} 390 px : bouton à gauche, lien dessous`);
           await page.setViewportSize({width: 1000, height: 900});
           [accroche, atouts, actions] = await blocs();
           assert.ok(atouts.haut >= accroche.bas && Math.abs(atouts.gauche - accroche.gauche) <= 1 && actions.gauche >= atouts.droite,
             `${where} 1000 px : accroche puis atouts à gauche, actions à droite`);
-          // Dès 1100 px : accroche (70 %) et atouts (30 %) sur une ligne, puis les actions dans un bloc à part, plus aéré
+          [bouton, retour] = await boutons();
+          assert.ok(Math.abs(bouton.gauche - actions.gauche) <= 1 && retour.haut >= bouton.bas, `${where} 1000 px : bouton à gauche, lien dessous`);
+          // Dès 1100 px : accroche et atouts à parts égales sur une ligne, puis le bouton et le lien centrés dans un bloc à part, plus aéré
           for (const width of [1100, 1440]) {
             await page.setViewportSize({width, height: 900});
             [accroche, atouts, actions] = await blocs();
@@ -934,10 +943,13 @@ test('pages expose no decorative SVG, keep status roles for live zones and hide 
               const [a, b] = ['.une-bas > div', '.une-bas > .atouts'].map(s => document.querySelector(s).getBoundingClientRect().width);
               return a / (a + b);
             });
-            assert.ok(Math.abs(ligne - 0.7) <= 0.02, `${where} ${width} px : accroche ${ligne.toFixed(3)} de la ligne`);
+            assert.ok(Math.abs(ligne - 0.5) <= 0.02, `${where} ${width} px : accroche ${ligne.toFixed(3)} de la ligne`);
             assert.ok(atouts.gauche - accroche.droite >= 24 && Math.abs(accroche.haut - atouts.haut) <= 1, `${where} ${width} px : accroche puis atouts`);
-            assert.ok(actions.haut - Math.max(accroche.bas, atouts.bas) >= 40 && Math.abs(actions.gauche - accroche.gauche) <= 1,
-              `${where} ${width} px : actions dessous, à gauche, détachées`);
+            assert.ok(actions.haut - Math.max(accroche.bas, atouts.bas) >= 40, `${where} ${width} px : actions dessous, détachées`);
+            [bouton, retour] = await boutons();
+            const milieu = (accroche.gauche + atouts.droite) / 2;
+            assert.ok(Math.abs(bouton.centre - milieu) <= 1 && Math.abs(retour.centre - milieu) <= 1 && retour.haut >= bouton.bas,
+              `${where} ${width} px : bouton (${bouton.centre.toFixed(1)}) et lien (${retour.centre.toFixed(1)}) centrés sur ${milieu.toFixed(1)}, l'un sous l'autre`);
             assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${where} ${width} px débordement`);
           }
           // Le haut du jaune cache les jambages du mot précédent (les « p » de « rapports » sur « tableaux ») sans rogner les lettres hautes
