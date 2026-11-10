@@ -18,6 +18,8 @@
 
 Un modèle n’est jamais « le meilleur » dans l’absolu. Evaly compare des modèles dans les mêmes conditions, sur votre propre cas d’usage. Chaque verdict reste lié à l’exemple que vous avez validé, à la configuration réellement observée, aux preuves conservées et à la date du benchmark.
 
+Evaly est en version alpha. Quelques erreurs peuvent encore subsister.
+
 ## Ce que fait Evaly
 
 1. Vous décrivez votre cas d’usage en quelques phrases. L’assistant vous pose une question si besoin.
@@ -30,15 +32,48 @@ Evaly ne donne ni note globale ni classement universel.
 
 ## Utiliser Evaly
 
-L’instance du Lab-X est en ligne : [evaly.cybrel.fr](https://evaly.cybrel.fr/). Evaly est en alpha.
+L’outil est en ligne : [evaly.cybrel.fr](https://evaly.cybrel.fr/).
 
-Evaly appelle les modèles par OpenRouter, avec votre propre clé. Le bouton **Ajouter ma clé**, sur vos cas d’usage, ouvre la page **Ma clé OpenRouter**. Sur cette page, le bouton **Enregistrer la clé** la garde ; la même page permet aussi de la remplacer ou de la retirer. Evaly n’ajoute aucune limite de dépense à celle que vous fixez, ou non, chez OpenRouter. Enregistrer la clé ne lance aucun modèle.
+Evaly envoie chaque appel de modèle à OpenRouter. Vous fournissez votre propre clé. Créez-en une réservée à Evaly.
+
+Sur vos cas d’usage, **Ajouter ma clé** ouvre la page **Ma clé OpenRouter**.
+
+Sur cette page, **Enregistrer la clé** vérifie la clé auprès d’OpenRouter et la conserve. Vous pouvez ensuite la remplacer, ou choisir **Retirer la clé de ce navigateur**.
+
+Evaly n’ajoute aucun plafond de dépense. Le plafond, s’il existe, est celui de votre clé chez OpenRouter.
+
+Evaly recommande d’en fixer un chez OpenRouter. Vous choisissez le montant. Une clé sans plafond reste acceptée.
+
+Enregistrer la clé ne lance aucun modèle.
+
+**Retirer la clé de ce navigateur** arrête les appels suivants depuis ce navigateur. La clé reste active chez OpenRouter. Un appel déjà envoyé n’est pas annulé.
+
+## Le harnais
+
+Dans un benchmark, tous les modèles passent par le même harnais, [pi.dev](https://pi.dev), dans la même version.
+
+Evaly le démarre à vide : aucun outil, aucune extension, aucune skill et aucune configuration personnelle.
+
+Chaque modèle reçoit seulement la consigne et l’exemple, dans les mêmes conditions.
+
+## Lire un verdict
+
+- **Satisfait** : toutes les exigences sont respectées, et aucune erreur éliminatoire n’est relevée.
+- **Ne satisfait pas** : une exigence n’est pas respectée, ou une erreur éliminatoire est relevée. La réponse n’est pas utilisable, quel que soit son coût.
+- **À reprendre** : la preuve ne permet pas encore de conclure. Ce n’est pas un échec du modèle.
+
+Le coût observé départage seulement des réponses qui satisfont l’exemple avec la même qualité. Un coût inconnu ne change pas le verdict.
+
+## Recommandations
+
+N’envoyez pas de dossier réel, même anonymisé. L’exemple et ses documents sont inventés.
+
+Vos cas d’usage et vos résultats restent privés. Evaly ne les publie pas sans votre autorisation.
 
 ## Documentation
 
 - [Guide de contribution](CONTRIBUTING.md) : branches, commits, CI, revue et fusion ;
-- [Release et livraison](docs/release.md) : versionnement, artefacts et déploiement ;
-- [Sécurité](SECURITY.md) : signaler une vulnérabilité en privé.
+- [Release et livraison](docs/release.md) : versionnement, artefacts et déploiement.
 
 ## Contribuer
 
