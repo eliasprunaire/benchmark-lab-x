@@ -75,7 +75,7 @@ jobs:
           pre_release="$INPUT_PRE_RELEASE"
           if [ -z "$pre_release" ]; then pre_release="$DEFAULT_PRE_RELEASE"; fi
           bootstrap=()
-          if [ -n "$INPUT_PRE_RELEASE" ]; then bootstrap+=(--bootstrap-pre-release); fi
+          if [ -n "$INPUT_PRE_RELEASE" ] || [ -n "$DEFAULT_PRE_RELEASE" ]; then bootstrap+=(--bootstrap-pre-release); fi
           uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python tools/release.py \
             --head "$SOURCE_SHA" --base "$base" --pre-release "$pre_release" "${bootstrap[@]}" > release-decision.json
           version="$(uv run --with-requirements benchmark/requirements.lock --python 3.14.7 python -c \
