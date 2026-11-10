@@ -8,23 +8,20 @@ style_gate: pass
 
 Evaly aide à choisir un modèle pour une tâche précise à partir de preuves lisibles. Le verdict porte sur la configuration observée sous des conditions communes, jamais sur le nom du modèle seul.
 
-Le périmètre, l'architecture, le backlog et les campagnes suivent les décisions explicites d'Ayo. Les canons ne portent aucun statut de livraison des versions ; README, GitHub et les reçus portent les faits opérationnels.
+Le périmètre, l'architecture, le backlog et les campagnes suivent les décisions explicites d'Ayo. Les documents de la section Sources ne portent aucun statut de livraison. Le README, les releases GitHub et les artefacts de release portent les faits opérationnels.
 
 ## Sources faisant autorité
 
 Lire les documents utiles avant de modifier leur domaine :
 
-- `docs/PRD.md` pour le besoin et le périmètre produit
-- `docs/ARD.md` pour les objets, frontières et flux
-- `docs/RULES.md` pour les invariants de décision et de preuve, ainsi que le versionnement SemVer
 - `GLOSSARY.md` pour le vocabulaire
-- `docs/roadmap.md` pour le jalon nommé de chaque exigence du PRD
+- `docs/roadmap.md` pour les jalons nommés
 - `docs/task-template.md` pour le contrat minimal d'une future tâche
 - `DESIGN.md` pour le langage visuel du parcours web : lis DESIGN.md avant tout travail UI
 
 Ces chemins sont uniques. Ne jamais créer de copie, variante datée ou dossier d'archives. Git porte l'historique. Une Issue, une PR, un ancien résultat ou une branche ne remplace pas la spécification courante.
 
-La demande actuelle d'Ayo prévaut sur ce fichier. PRD, ARD et règles gouvernent des domaines distincts ; aucun ne corrige silencieusement les autres. Signaler un conflit au lieu d'inventer une synthèse.
+La demande actuelle d'Ayo prévaut sur ce fichier. Signaler un conflit au lieu d'inventer une synthèse.
 
 ## Manière de travailler
 
@@ -35,33 +32,36 @@ La demande actuelle d'Ayo prévaut sur ce fichier. PRD, ARD et règles gouvernen
 - ne pas transformer une découverte adjacente en nouvelle tâche
 - ne pas fabriquer de mesure, de preuve, d'état ou d'autorité absente
 - séparer clairement fait établi, déduction et hypothèse lorsque cette distinction change une décision
-- ne jamais requalifier les campagnes et prototypes historiques à partir de la spécification courante
+- ne jamais requalifier les campagnes et prototypes historiques à partir de la spécification courante. Requalifier veut dire réécrire le verdict, le nom ou le statut d'une campagne ou d'un prototype déjà enregistré pour le faire coller à la spécification courante.
 
 ## Autorité et sécurité
 
-Une approbation documentaire n'autorise ni appel candidat, ni retry, ni dépense, ni campagne, ni publication, ni déploiement. Intégration Git, exécution produit, appels candidats et budget, provisionnement et publication gardent des autorités distinctes.
+Une approbation documentaire n'autorise ni appel modèle, ni retry, ni dépense, ni campagne, ni publication, ni déploiement. Intégration Git, exécution produit, appels modèle et budget, provisionnement et publication gardent des autorités distinctes. Lancer le serveur ou les tests en local n'est pas une action sur un système externe.
 
-Demander une autorisation explicite avant toute opération Git destructive, fusion, suppression de branche, fermeture de PR ou d'Issue, release, appel payant ou action sur un système externe. Ne jamais exposer de secret. Les données et sorties réelles restent privées tant qu'une publication n'est pas autorisée.
+Demander une autorisation explicite avant toute opération Git destructive, fusion, suppression de branche, fermeture de PR ou d'Issue, release, appel modèle ou action sur un système externe. Un appel modèle exige cette autorisation, qu'il soit facturé ou non. Ne jamais exposer de secret. Les données et sorties réelles restent privées tant qu'une publication n'est pas autorisée.
+
+### Flux Git
+
+Travailler sur une branche typée, feat, fix, docs, chore ou refactor, jamais sur main ni master. Un commit local sur cette branche ne demande pas d'autorisation. Push, PR et fusion en demandent une, une fois, pour l'action nommée.
 
 ## GitHub
 
 GitHub Issues porte les tâches, dépendances, décisions et preuves. Le champ `Status` du [Project #5](https://github.com/users/eliasprunaire/projects/5) porte l'état de travail. Aucun backlog local ne le duplique.
 
-Créer ou redécouper les Issues seulement après décision explicite d’Ayo. Vérifier le parent courant avant toute création ; ne pas rattacher une nouvelle livraison à une initiative historique par défaut. Ne pas redécouper les anciennes cartes pour fabriquer le nouveau backlog. Utiliser les relations natives `Parent issue` et `Sub-issues progress` pour Initiative, Epic et Story ; réserver « graphe » à l’exécution agentique. Le nombre d’Epics et de Stories découle des résultats décidés.
+Le compte rendu de livraison dit la commande et le résultat. L'artefact sous reports/ est local et ignoré par Git. La preuve qui ferme une Issue est celle écrite dans l'Issue.
 
-Aucune Story de tâche, campagne ou candidat tant que son contenu, son panel et son budget ne sont pas décidés. Une Issue se ferme avec sa preuve de résultat ou une décision explicite de remplacement. Distinguer l’état ouvert ou fermé de l’Issue, le champ `Status` du Project et le progrès de ses sous-Issues. Aucun ne prouve l’état d’exécution d’une campagne. `docs/task-template.md` décrit une tâche de benchmark, pas une Story de livraison.
+Créer ou redécouper les Issues seulement après décision explicite d’Ayo. Vérifier le parent courant avant toute création ; ne pas rattacher une nouvelle livraison à une initiative historique par défaut. Ne pas redécouper les anciennes cartes pour fabriquer le nouveau backlog. Utiliser les relations natives `Parent issue` et `Sub-issues progress` pour Initiative, Epic et Story.
+
+Une Issue se ferme avec sa preuve de résultat ou une décision explicite de remplacement. Distinguer l’état ouvert ou fermé de l’Issue, le champ `Status` du Project et le progrès de ses sous-Issues. Aucun ne prouve l’état d’exécution d’une campagne. `docs/task-template.md` décrit une tâche de benchmark, pas une Story de livraison.
 
 ## Écrire des tests
-
-Cette politique s’applique à Codex, Claude Code, Grok et aux autres agents intervenant dans ce dépôt.
-Ces agents, Claude Code compris, lisent ce fichier avant toute implémentation.
 
 - Étendre d’abord un parcours E2E existant pour vérifier le comportement demandé depuis une entrée publique.
 - Rechercher les scénarios et assertions existants avant d’ajouter un test. Compléter le scénario responsable du comportement.
 - Ne créer aucun TU isolé ni doublon d’un comportement déjà vérifié, sauf exception explicitement demandée par Ayo.
 - Ne pas renommer un TU, entourer son appel d’un serveur ou recopier ses mocks pour le présenter comme E2E.
 - Ne créer aucun nouveau harnais. Réutiliser les fixtures, le serveur et les transports fictifs existants.
-- Préserver les contrôles existants de sécurité, d’intégrité, de cryptographie et d’architecture. Leur présence n’autorise pas de nouveaux TU isolés.
+- Préserver les contrôles existants de sécurité, d’intégrité, de cryptographie et d’architecture.
 - Avant une suppression, relier chaque comportement et cas limite à son scénario de remplacement. Exécuter ce scénario avant de supprimer.
 - Pour une correction, ajouter l’assertion manquante au parcours existant avant de modifier le code produit.
 - Conserver un résultat reproductible : commande, scénario, résultat et artefact dans `reports/`. Ne jamais remplacer une preuve par une déclaration.
@@ -84,26 +84,23 @@ Ne remplacer aucun de ces contrôles par une inspection manuelle.
 
 Exécuter d’abord les tests pertinents existants.
 Avant de livrer un changement de comportement ou de répartition des tests, exécuter les quatre étapes de `.github/workflows/ci.yml`.
+Une étape « Vérifier statiquement Python et JavaScript » précède ces quatre étapes. La liste de ce fichier n'est pas exhaustive : `.github/workflows/ci.yml` fait foi.
 Ce workflow porte les commandes et versions de référence. `CONTRIBUTING.md` décrit l’installation locale de Pi.
-
-```text
-Pi et comparaison privée -> découverte Python restante -> cryptographie et confidentialité -> Chromium
-```
 
 | Étape | Répartition |
 |---|---|
-| Harnais Pi sans appel modèle | Inspection Pi et `tests.test_private_comparison` |
-| Suite Python générale | `unittest discover -s tests` avec `BENCHMARK_TEST_CI_SPLIT=1` |
+| Harnais Pi sans appel modèle | `tests.test_private_comparison` |
+| Suite Python générale | Découverte Python hors des trois modules dédiés |
 | Runtime cryptographique | `tests.test_provider_crypto` et `tests.test_privacy` |
 | Navigateur | `tests/privacy_browser.test.cjs` |
 
-Les trois modules dédiés utilisent le protocole standard `load_tests` pour sortir uniquement de la découverte répartie en CI.
+Les trois modules dédiés, `tests.test_private_comparison`, `tests.test_provider_crypto` et `tests.test_privacy`, utilisent le protocole standard `load_tests` pour sortir uniquement de la découverte répartie en CI.
 Sans `BENCHMARK_TEST_CI_SPLIT=1`, la découverte locale inclut tous les tests Python.
 Le chargement explicite d’un module reste complet, même avec cette variable.
 Ne désactiver aucun test avec `skip` pour réduire la durée ou le nombre d’exécutions.
 
 La CI construit aussi deux fois le runtime du commit vérifié et contrôle sa reproductibilité.
-Conserver ce contrôle en CI. Distinguer les résultats macOS, Linux et navigateur dans le compte rendu.
+Conserver ce contrôle en CI. Distinguer le résultat Linux de la CI et le résultat navigateur. Ne pas présenter un résultat local macOS comme un résultat de CI.
 Ne lancer aucun appel modèle pour compenser une preuve absente.
 
 Pour un changement documentaire, vérifier les liens, les chemins canoniques et l’absence de source concurrente.
@@ -117,8 +114,8 @@ Avant de conclure, fournir :
 - les validations exécutées et leur résultat
 - les limites ou décisions encore ouvertes
 
-S'arrêter dès que le résultat autorisé est prouvé. Si une information ou une autorité indispensable manque, rester en `HOLD` sans fallback implicite.
+S'arrêter dès que le résultat autorisé est prouvé. Si une information ou une autorité indispensable manque, rester en `HOLD` sans fallback implicite. S'arrêter, écrire ce qui manque, et ne pas continuer par un autre chemin.
 
 ## Règles de revue
 
-Signaler comme bloquant toute nouvelle autorité documentaire concurrente, requalification de campagnes ou prototypes historiques, architecture présentée comme construite sans preuve ou choix d'architecture sans autorité, secret versionné ou contournement d'une preuve requise. Laisser le formatage automatique aux outils du dépôt.
+Signaler comme bloquant toute nouvelle autorité documentaire concurrente, requalification de campagnes ou prototypes historiques, architecture présentée comme construite sans preuve ou choix d'architecture sans autorité, secret versionné ou contournement d'une preuve requise. Ne pas reformater une ligne hors du changement demandé.
