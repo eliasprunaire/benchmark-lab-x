@@ -69,6 +69,44 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('main_sha="$(git rev-parse origin/main^{commit})"', workflow)
         self.assertNotIn('cp "$receipt" "$RUNNER_TEMP/build-receipt.json"', workflow)
 
+    def test_env_example_matches_the_variables_read_by_the_code(self):
+        import os
+        import re
+        from benchmark import service
+        text = Path('.env.example').read_text()
+        # Blocs séparés par une ligne vide : (commentaire, noms affectés)
+        blocks = []
+        for block in text.split('\n\n'):
+            lines = block.strip().splitlines()
+            comment = ' '.join(line.lstrip('# ') for line in lines if line.startswith('#'))
+            names = [line.split('=', 1)[0] for line in lines if not line.startswith('#') and '=' in line]
+            blocks.append((comment, names))
+        def block(name):
+            return next(comment for comment, names in blocks if name in names)
+        # Aucune valeur de clé, aucun chemin Vault
+        self.assertEqual([], [line for line in text.splitlines() if not line.startswith('#') and '=' in line and line.split('=', 1)[1]])
+        self.assertNotIn('secret/', text)
+        self.assertRegex(block('TYPESAFE_API_KEY'), r'vault_env injecte JEV_API_KEY.*le runtime ne lit pas ce nom')
+        grok = next(names for _, names in blocks if 'GROK_API_KEY' in names)
+        self.assertEqual(['GROK_API_KEY', 'MINIMAX_API_KEY', 'MISTRAL_API_KEY'], grok)
+        self.assertRegex(block('GROK_API_KEY'), r'[Ii]njectés par benchmark\.vault_env.*non lus par le runtime')
+        self.assertEqual(['MIMO_API_KEY'], next(names for _, names in blocks if 'MIMO_API_KEY' in names))
+        self.assertRegex(block('MIMO_API_KEY'), r'[Nn]i injecté par benchmark\.vault_env ni lu par le runtime')
+        # Variables d'exploitation citées en commentaire : une valeur vide copiée dans .env bloquerait l'exécuteur
+        for name in ('BENCHMARK_PRIVACY_JOURNAL', 'BENCHMARK_EXECUTOR_WORKERS', 'VAULT_BIN', 'BENCHMARK_ENV_FILE'):
+            with self.subTest(name=name):
+                self.assertRegex(text, r'(?m)^# ' + name + '=$')
+                self.assertNotRegex(text, r'(?m)^' + name + '=')
+        with patch.dict(os.environ, {'BENCHMARK_EXECUTOR_WORKERS': ''}), self.assertRaises(ValueError):
+            service.executor_workers()
+        for name, default in (('BENCHMARK_PRIVACY_JOURNAL', 'privacy-revocations/revocations.jsonl'),
+                              ('BENCHMARK_EXECUTOR_WORKERS', '64'), ('VAULT_BIN', 'vault'), ('BENCHMARK_ENV_FILE', './.env')):
+            with self.subTest(default=name):
+                comment = re.search(r'(?m)^# (?!' + name + '=)(.*)\n# ' + name + '=$', text)
+                self.assertIsNotNone(comment)
+                self.assertIn(default, comment.group(1))
+
+
     def test_release_notes_use_real_newlines(self):
         import re
         import subprocess
