@@ -107,5 +107,21 @@ class ReleaseTests(unittest.TestCase):
                 self.assertIn(default, comment.group(1))
 
 
+    def test_release_notes_use_real_newlines(self):
+        import re
+        import subprocess
+        workflow = Path('.github/workflows/release.yml').read_text()
+        # Bash laisse « \n » en deux caractères entre guillemets doubles : gh publierait ces caractères
+        self.assertEqual([], [notes for notes in re.findall(r'--notes "([^"]*)"', workflow) if '\\n' in notes])
+        lines = [line.strip() for line in workflow.splitlines() if line.strip().startswith('notes="$(printf ')]
+        self.assertEqual(1, len(lines))
+        self.assertIn('--notes "$notes"', workflow)
+        body = subprocess.run(['bash', '-c', lines[0] + '\nprintf %s "$notes"'], capture_output=True, text=True, check=True,
+                              env={'VERSION': '0.0.0-test', 'SOURCE_SHA': 'a' * 40}).stdout
+        self.assertEqual(['Evaly 0.0.0-test', '', 'Commit source: ' + 'a' * 40,
+                          'La provenance est vérifiée par le constructeur et le contrôleur.'], body.splitlines())
+        self.assertNotIn('\\n', body)
+
+
 if __name__ == '__main__':
     unittest.main()
