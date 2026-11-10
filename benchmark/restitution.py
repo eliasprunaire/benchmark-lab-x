@@ -283,7 +283,7 @@ def _expense_state(operation):
 
 
 def _expenses(store, connection, dossier_id, revision, family, compared, held, probes, awaiting, unit):
-    """Chaque opération de la comparaison une seule fois, rangée dans sa phase (RULES.md §8, dépense visible)
+    """Chaque opération de la comparaison une seule fois, rangée dans sa phase (dépense visible).
 
     Seul `compared` porte le coût observé du tableau et du conseil ; les autres groupes informent du coût
     complet. La préparation compte jusqu'à la version du contrat ; une vérification de modèle compte si le
@@ -385,7 +385,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
     _queries(query, campaign, spec, columns)
     records = e.projection(store, connection, dossier_id, campaign_id)
     from . import automatic_judgment as auto
-    # Reprises techniques (RULES.md §9) : chaque reprise vise une tentative ; seule la dernière d'une chaîne compte
+    # Reprises techniques : chaque reprise vise une tentative ; seule la dernière d'une chaîne compte
     descendants = auto.family(connection, campaign_id)[1:]
     snapshots = [c._inspect(store, connection, cid) for cid in descendants]
     # Une reprise arrêtée avant tout envoi n'a pas eu lieu : la tentative source reste la dernière
@@ -487,7 +487,7 @@ def _comparison(store, connection, session_id, dossier_id, campaign_id, query):
             record['repetition'] = cell['repetition']
         row = deepcopy(record)
         row['verdict'] = row['decision']['verdict']
-        # Une reprise est une configuration distincte, dite sur sa ligne (RULES.md §5)
+        # Une reprise est une configuration distincte, dite sur sa ligne
         row['recovery_limit'] = (record['requested_configuration']['parameters']['max_tokens']
                                  if record['attempt_id'] in parents and record['attempt_id'] not in relaunched else None)
         row['relaunch'] = len(chain(record['attempt_id'])) if record['attempt_id'] in relaunched else None

@@ -123,7 +123,7 @@ _OBSERVED = ('provider', 'model', 'revision', 'access', 'channel_id', 'route', '
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
 # Décision d'Ayo du 2026-10-17 : le demandeur choisit 1 à 3 essais par modèle et par exemple
 MAX_REPETITIONS = 3
-# Paliers des reprises après un arrêt pour longueur, dans le parcours public (RULES.md §9)
+# Paliers des reprises après un arrêt pour longueur, dans le parcours public
 LENGTH_RECOVERY_LIMITS = (DEFAULT_MAX_OUTPUT_TOKENS * 2, DEFAULT_MAX_OUTPUT_TOKENS * 4)
 COMPARISON_COST_BASIS = {'scope': 'Une tentative par cellule', 'attempts': 'Sans reprise',
                          'unit': 'USD', 'conversion': None}
@@ -1305,7 +1305,7 @@ def _recovery_plan(store, snapshot):
     """Limites de reprise par modèle et coût estimé si chaque modèle était repris jusqu'à sa dernière limite
 
     Tarifs majorants que le lancement fige. L'entrée reste une estimation : ce n'est pas un maximum garanti.
-    Un modèle sans reprise possible ne compte pas. Distinct de la prévision des réponses (RULES.md §8)
+    Un modèle sans reprise possible ne compte pas. Distinct de la prévision des réponses.
     """
     grant = _requester_recovery(store, snapshot['manifest']['panel'])
     if grant is None:
@@ -1641,7 +1641,7 @@ def launch(store, session_id, dossier_id, campaign_id, body, *, access_secret=No
                 config, _ = auto.preflight(store, session_id, dossier_id, campaign_id, judgment_transport)
                 authority['automatic_judgment'] = dict(
                     budget_id=provider_access.preparation_budget_id(session_id), configuration=config)
-            # Décision d'Ayo (RULES.md §9) : le lancement préautorise deux reprises pour longueur au plus
+            # Décision d'Ayo : le lancement préautorise deux reprises pour longueur au plus
             grant = _requester_recovery(store, snapshot['manifest']['panel'])
             if grant is not None:
                 authority['technical_recovery'] = grant

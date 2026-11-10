@@ -12,7 +12,7 @@ Ce glossaire fixe les termes du domaine. Il ne porte ni statut de livraison des 
 Objet produit mis en avant. Un verdict sur un modèle reste borné à la configuration dans laquelle il a été observé.
 
 ### Accès direct ou API
-Mode d’accès déclaré au modèle. Les appels courants du produit utilisent normalement l’API OpenRouter ; le secours par API officielle exige les conditions et autorités distinctes, selon l’ARD. Un produit agentique sous abonnement n’est pas pour autant l’objet comparé.
+Mode d’accès déclaré au modèle. Les appels courants du produit utilisent normalement l’API OpenRouter ; le secours par API officielle exige les conditions et autorités distinctes. Un produit agentique sous abonnement n’est pas pour autant l’objet comparé.
 
 ### Configuration demandée
 Cible figée du panel de campagne : modèle, fournisseur, accès, route, paramètres et effort requis, avec les identités exactes attendues. Sa présence dans un manifeste ne prouve ni disponibilité ni exécution.
@@ -21,7 +21,7 @@ Cible figée du panel de campagne : modèle, fournisseur, accès, route, paramè
 Configuration OpenRouter explicite chargée au démarrage pour l’assistance de préparation et de correction. Elle fige l’identité, les paramètres, les routes, le système et les limites, et lie leur empreinte à la configuration demandée. Un alias de compatibilité ou un chemin JSON local désigne un profil déjà approuvé ; leurs valeurs courantes relèvent de la configuration. Ce n’est ni un panel candidat, ni une base de modèles, ni un choix de production.
 
 ### Configuration observée
-Valeurs établies pour une tentative, avec leurs sources, reliées à la configuration demandée et aux [conditions de test communes](#conditions-de-test-communes). Une valeur absente reste `INCONNU`. Les champs et relations sont définis dans l’ARD.
+Valeurs établies pour une tentative, avec leurs sources, reliées à la configuration demandée et aux [conditions de test communes](#conditions-de-test-communes). Une valeur absente reste `INCONNU`.
 _À éviter_ : modèle seul, solution complète.
 
 ### Conditions de test communes
@@ -43,10 +43,10 @@ Expression initiale du besoin et précisions de l’utilisateur, puis descriptio
 Ensemble de pièces inventées pour un cas, avec consigne et livrables attendus. L’aperçu résume les informations utiles et ouvre les pièces réellement construites du paquet prévu pour les candidats ; il expose critères, incertitudes acceptables et limites. La référence réservée au jugement reste distincte, sauf exposition décidée et déclarée.
 
 ### Version de tâche
-Identité immuable reliant un contrat approuvé, ses cas, sa référence de jugement et sa méthode d’évaluation. Son évolution suit les règles de gel.
+Identité immuable reliant un contrat approuvé, ses cas, sa référence de jugement et sa méthode d’évaluation. Un contrat, des cas, une référence ou une méthode différents ouvrent une autre version.
 
 ### Métier ou domaine et famille de tâche
-Le métier ou domaine situe l’usage ; la famille décrit le travail demandé. Ces repères de navigation peuvent se croiser. Ils ne prouvent ni représentativité ni comparabilité ; leur rôle produit est défini dans le PRD.
+Le métier ou domaine situe l’usage ; la famille décrit le travail demandé. Ces repères de navigation peuvent se croiser. Ils ne prouvent ni représentativité ni comparabilité.
 
 ### Corpus
 Ensemble identifié de tâches, de cas ou de ressources, dont le périmètre est précisé : corpus de tâches du catalogue ou corpus documentaire d’un cas. Un corpus fictif décrit la nature des entrées ; une campagne réelle décrit l’acquisition effective des réponses. Les deux sont compatibles.
@@ -64,7 +64,7 @@ Le volume décrit la quantité d’information ; la difficulté, les contraintes
 Ensemble navigable des tâches, de leurs versions et des campagnes associées.
 
 ### Panel
-Liste des configurations demandées pour une campagne, figée avec leurs révisions et conditions avant admission. La sélection courante relève de la configuration opérationnelle ; le PRD définit les exigences de sélection et de preuve sans fixer de modèles. La liste de modèles à essayer pour l’accueil et la préparation est distincte de ces panels ; elle ne constitue ni un panel candidat de campagne ni une sélection d’assistants déjà qualifiés.
+Liste des configurations demandées pour une campagne, figée avec leurs révisions et conditions avant admission. La sélection courante relève de la configuration opérationnelle. La sélection et la preuve ne fixent aucun modèle. La liste de modèles à essayer pour l’accueil et la préparation est distincte de ces panels ; elle ne constitue ni un panel candidat de campagne ni une sélection d’assistants déjà qualifiés.
 
 ### Campagne
 Ensemble organisé sur une version de tâche, des cas, un panel, des conditions communes et des autorisations identifiés. Elle relie plusieurs opérations et leurs preuves. Son état reste distinct de celui d’une Issue, des verdicts et de sa publication.
@@ -89,7 +89,7 @@ Rôle qui prépare et approuve le contrat de réussite avant les appels candidat
 La validation confirme que le dossier présenté représente le besoin de l’utilisateur. La qualification vérifie la consigne, les cas, la référence et les contrôles. L’approbation du responsable lie le contrat exact aux preuves de qualification. Ces actes ne se remplacent pas et n’accordent ni autorisation d’appel ou de dépense ni publication.
 
 ### Contrat de réussite
-Contrat préparé et approuvé avant les appels candidats, reliant le besoin aux critères vérifiables, aux cas, à l’évaluation et à la base de coût. Son contenu normatif est défini dans les règles et renseigné dans le [gabarit](docs/task-template.md). La préparation assistée préalable exige son autorité et son budget propres.
+Contrat préparé et approuvé avant les appels candidats, reliant le besoin aux critères vérifiables, aux cas, à l’évaluation et à la base de coût. Son contenu est renseigné dans le [gabarit](docs/task-template.md). La préparation assistée préalable exige son autorité et son budget propres.
 
 ### Résultat attendu
 Artefact ou état précis que la tâche doit produire pour servir le besoin déclaré.
@@ -104,7 +104,7 @@ Condition que la sortie doit respecter et dont la preuve est prévue avant l'ex�
 Défaut défini avant l'exécution qui interdit le verdict `SATISFAIT`, indépendamment du coût ou d'un autre bénéfice.
 
 ### Critère secondaire
-Propriété complémentaire aux obligations et au coût, prévue au contrat pour comparer les résultats. Une mesure valide peut porter sur une sortie non admissible sans modifier son verdict. Les conditions de mesure, de classement et le plafond des critères secondaires appartiennent aux règles.
+Propriété complémentaire aux obligations et au coût, prévue au contrat pour comparer les résultats. Une mesure valide peut porter sur une sortie non admissible sans modifier son verdict. Les conditions de mesure, de classement et le plafond des critères secondaires sont fixés avant l’exécution.
 
 ### Verdict d'admissibilité
 Conclusion d'une configuration selon le contrat de réussite : `SATISFAIT` ou `NE SATISFAIT PAS`. Une évaluation à reprendre n’a pas encore de verdict métier. Un verdict publiable porte sa valeur, un motif court intelligible, les critères ou constats concernés, les références de preuve et son responsable.
@@ -127,7 +127,7 @@ Déroulement identifié d’une opération du produit, avec version du moteur, e
 Intention d’appel identifiée pour un cas et une configuration demandée. Elle peut aboutir à une sortie, un incident ou des effets inconnus. Une tentative locale ne prouve pas un appel reçu par le fournisseur ; une cellule jamais lancée n’est pas une tentative.
 
 ### Acquisition
-Opération autorisée visant à obtenir et conserver une sortie. Elle relie les tentatives à leurs observations et reçus, sans prononcer leur verdict. Le cycle de vie est défini dans l’ARD.
+Opération autorisée visant à obtenir et conserver une sortie. Elle relie les tentatives à leurs observations et reçus, sans prononcer leur verdict.
 
 ### Observation, évaluation et conclusion
 L’observation rapporte ce qui a été obtenu, avec sa provenance. L’évaluation applique le contrat à ces observations. La conclusion relie les évaluations compatibles à la décision permise ; aucune de ces étapes ne remplace sa source.
@@ -145,7 +145,7 @@ Enregistrement d’une opération ou tentative, avec identité, chronologie, eff
 Incident du dispositif de benchmark qui empêche une observation attribuable. Une erreur du harnais n'est pas un échec de la configuration.
 
 ### Coût observé
-Dépense établie par une source pour les tentatives imputables selon la base de coût du contrat. Elle est distincte du prix affiché, de la prévision, de la réservation et du plafond. Les règles économiques gouvernent les inconnues et la comparaison.
+Dépense établie par une source pour les tentatives imputables selon la base de coût du contrat. Elle est distincte du prix affiché, de la prévision, de la réservation et du plafond. Une valeur inconnue ou incompatible reste visible dans la comparaison.
 
 ### Bénéfice prévu
 Avantage observé sur un critère secondaire défini avant exécution, lorsque les mesures sont comparables. Il ne compense pas une obligation non satisfaite. Tant que la méthode du score pondéré n’est pas décidée, il n’est pas fusionné avec le coût en note unique ; la vision du score personnalisé reste différée.
@@ -157,7 +157,7 @@ Un classement ordonne les valeurs connues et comparables d’un critère prévu,
 État de complétude de la comparaison des coûts sur un périmètre identifié : valeurs connues, inconnues et incompatibilités. `INCOMPLETE` indique que cette comparaison est incomplète, sans constituer un verdict ni désigner un gagnant.
 
 ### Score pondéré personnalisé
-Capacité future de combinaison de critères selon des poids explicites. Sa méthode reste à décider selon le PRD ; elle conserve mesures, verdicts et erreurs et ne rend pas une sortie non admissible acceptable grâce au coût. Elle n’établit aucun classement universel.
+Capacité future de combinaison de critères selon des poids explicites. Sa méthode reste à décider ; elle conserve mesures, verdicts et erreurs et ne rend pas une sortie non admissible acceptable grâce au coût. Elle n’établit aucun classement universel.
 
 ### Restitution
 Présentation reliant tâche et campagne à la conclusion, à la comparaison et aux preuves. Elle peut être locale et privée ; son exposition publique passe par une publication approuvée.
@@ -196,7 +196,7 @@ Cette section relie chaque terme affiché à l’écran à son terme du domaine 
 |---|---|---|---|
 | cas d’usage | Tâche | dossier, `dossier_id`, `s2_dossiers` | Le travail de l’utilisateur. Jamais « tâche » ni « dossier » à l’écran. |
 | exemple | Cas d’essai, Dossier fictif et aperçu | package, revision, `case_of` | Le dossier inventé qui représente le cas. « Exemple 1, 2 » pour plusieurs cas d’essai ; « Version N » pour une révision. |
-| benchmark | Campagne ; les canons disent aussi « comparaison » | campaign, `campaign_id`, `s4_campaigns` | Le lancement de l’utilisateur sur son exemple. Employé seul, « benchmark » désigne toujours celui de l’utilisateur. |
+| benchmark | Campagne, comparaison | campaign, `campaign_id`, `s4_campaigns` | Le lancement de l’utilisateur sur son exemple. Employé seul, « benchmark » désigne toujours celui de l’utilisateur. |
 | benchmarks publics | Répertoire d’évaluations externes | references, `BENCHMARK_REFERENCES`, `/evaluations-externes` | Les références publiées par des tiers. Toujours qualifié : « publics », « publiés par d’autres », ou le nom propre. « Évaluation externe » reste un terme descriptif du domaine, jamais un libellé. |
 | Résultats | Restitution, vue de décision | kind `comparison` | Page des verdicts, qualité observée et coût observé d’un benchmark. Le tableau garde son titre « Comparaison des modèles ». |
 | modèle | Configuration demandée et observée | panel, model, slug | Nom commercial à l’écran. |
@@ -204,7 +204,7 @@ Cette section relie chaque terme affiché à l’écran à son terme du domaine 
 | Mes cas d’usage | aucun | `/preparation` | La page qui décrit un cas et porte la clé OpenRouter. |
 | Mes données | « Mes données » | `/preparation/data`, kind `privacy_data` | Cas d’usage ouverts, historique local et conservation automatique. |
 | Ma clé OpenRouter | Accès OpenRouter personnel | `/preparation/access`, kind `access` | Nom de la page. Actions : « Ajouter ma clé », « Remplacer ma clé », « Retirer la clé de ce navigateur ». |
-| épreuve | Qualification de l’épreuve ; épreuve éditoriale publiée | editorial | Sens des règles §4. Le sens public est hors alpha ; les copies existantes affichent « Exemple source ». Voir l’entrée Épreuve. |
+| épreuve | Qualification de l’épreuve ; épreuve éditoriale publiée | editorial | Le sens public est hors alpha ; les copies existantes affichent « Exemple source ». Voir l’entrée Épreuve. |
 | exemple source | Copie d’un exemple publié | `source`, `checks_json.source` | Dossier créé avant l’alpha depuis une épreuve éditoriale. |
 | contribution | Contribution facultative | contributions, `benchmark_contributions` | Fermée. Retrait seul, jusqu’à la dernière échéance. Aucune nouvelle utilisation. |
 | historique local | Historique personnel | IndexedDB, `privacy.js` | Copies gardées par le navigateur. |
@@ -224,7 +224,7 @@ Terme affiché de la Campagne : le lancement de l’utilisateur sur son exemple.
 Terme affiché du répertoire d’évaluations externes : les références publiées par des tiers, comme SWE-bench ou MTEB. Les benchmarks publics mesurent surtout des tâches génériques. Ils ne prouvent pas la réussite sur le cas d’usage précis d’un utilisateur ; Evaly rapproche le benchmark de ce cas d’usage. Aucun texte affiché ne dit que les benchmarks publics sont déconnectés de la vraie vie, et aucun ne promet une réussite générale. Les indices composites et les classements, comme l’indice d’Artificial Analysis ou Arena (anciennement LMArena), ne sont pas des benchmarks publics au sens du répertoire : ils compilent des résultats, ils ne mesurent pas un travail.
 
 ### Épreuve
-Le terme a deux sens. Dans le parcours public, une épreuve est une épreuve éditoriale publiée ; ce sens est hors alpha. Dans les règles, la qualification de l’épreuve vérifie la cohérence entre besoin, consigne, cas, référence et contrôles avant l’approbation du contrat.
+Le terme a deux sens. Dans le parcours public, une épreuve est une épreuve éditoriale publiée ; ce sens est hors alpha. La qualification de l’épreuve vérifie la cohérence entre besoin, consigne, cas, référence et contrôles avant l’approbation du contrat.
 
 ### Contribution
 Copie privée et distincte d’un exemple et de ses résultats, que l’utilisateur autorisait Evaly à conserver pour améliorer le service, sans publication. Fermée : aucune nouvelle contribution n’est enregistrée. Retrait seul, jusqu’à la dernière échéance : le consentement portait sur une version de l’exemple et échoit après six mois calendaires. Aucune nouvelle utilisation.

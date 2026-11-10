@@ -1259,7 +1259,7 @@ def render_campaign_launch_requester(value, csrf):
     remaining = _cout_ligne(access.get('limit_remaining_usd'), 'inconnu')
     revision = campaign.get('task', {}).get('revision')
     frozen = campaign['conditions']['frozen_at']
-    # Prévision des réponses et réservation de la vérification restent deux montants distincts (RULES.md, contrôle de dépense)
+    # Prévision des réponses et réservation de la vérification restent deux montants distincts
     rows = ''
     for check in checks:
         key, detail = check['key'], check['detail']
@@ -1365,7 +1365,7 @@ def render_campaign_launch_requester(value, csrf):
               '<div class="table-defile"><table class="empile"><thead><tr><th scope="col">Modèle</th><th scope="col">Raisonnement</th>'
               '<th scope="col">Longueur de réponse</th><th scope="col">Coût estimé</th></tr></thead><tbody>' + lines + '</tbody></table></div>')
     if any(recoveries.values()):
-        # Reprises préautorisées par ce lancement (RULES.md §9) : leur coût reste distinct de la prévision
+        # Reprises préautorisées par ce lancement : leur coût reste distinct de la prévision
         models += ('<p class="petit">' + text(
             'Un modèle arrêté par la limite de longueur est relancé au plus deux fois, sa longueur de réponse doublée '
             'à chaque fois dans la limite de sa route, comme l’indique le tableau ; chaque reprise apparaît sur sa '

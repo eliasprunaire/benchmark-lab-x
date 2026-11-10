@@ -670,7 +670,7 @@ def projection(store, connection, dossier_id, campaign_id):
 def _projection(store, connection, dossier_id, campaign_id):
     from . import automatic_judgment as auto, calibration
     records = []
-    # Les reprises techniques d'une campagne se lisent avec elle (RULES.md §9)
+    # Les reprises techniques d'une campagne se lisent avec elle
     family = set(auto.family(connection, campaign_id))
     for record in _records(store, connection, campaign_id=campaign_id) + auto.records(store, connection, campaign_id):
         if record['campaign_id'] not in family:
