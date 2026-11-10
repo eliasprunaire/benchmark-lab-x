@@ -5709,7 +5709,7 @@ class ParcoursComplet(unittest.TestCase):
     def test_pas_de_conseil_avec_plusieurs_essais(self):
         """Issue #455 : les conditions du conseil départagé par le coût, avec deux essais par modèle
 
-        Mode d'échec : le conseil est donné alors que chaque modèle compte plusieurs tentatives (RULES.md §8)
+        Mode d'échec : le conseil est donné alors que chaque modèle compte plusieurs tentatives.
         """
         def comportement(value, model):
             if model == 'openai/gpt-5.6-sol':
