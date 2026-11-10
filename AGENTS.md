@@ -14,17 +14,14 @@ Le périmètre, l'architecture, le backlog et les campagnes suivent les décisio
 
 Lire les documents utiles avant de modifier leur domaine :
 
-- `docs/PRD.md` pour le besoin et le périmètre produit
-- `docs/ARD.md` pour les objets, frontières et flux
-- `docs/RULES.md` pour les invariants de décision et de preuve, ainsi que le versionnement SemVer
 - `GLOSSARY.md` pour le vocabulaire
-- `docs/roadmap.md` pour le jalon nommé de chaque exigence du PRD
+- `docs/roadmap.md` pour les jalons nommés
 - `docs/task-template.md` pour le contrat minimal d'une future tâche
 - `DESIGN.md` pour le langage visuel du parcours web : lis DESIGN.md avant tout travail UI
 
 Ces chemins sont uniques. Ne jamais créer de copie, variante datée ou dossier d'archives. Git porte l'historique. Une Issue, une PR, un ancien résultat ou une branche ne remplace pas la spécification courante.
 
-La demande actuelle d'Ayo prévaut sur ce fichier. PRD, ARD et règles gouvernent des domaines distincts ; aucun ne corrige silencieusement les autres. Signaler un conflit au lieu d'inventer une synthèse.
+La demande actuelle d'Ayo prévaut sur ce fichier. Signaler un conflit au lieu d'inventer une synthèse.
 
 ## Manière de travailler
 
