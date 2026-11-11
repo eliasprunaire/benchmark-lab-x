@@ -902,6 +902,24 @@ test('per-model reasoning tuning opens without JavaScript, stays in the form and
         await box('mistralai/mistral-medium-3-5').check(); await box('deepseek/deepseek-v4.1-flash').check();
         assert.equal(await tuning.isVisible(), true, `${where} tiroir de nouveau visible`);
       }
+      // Bandeau : sous deux modèles cochés, le message remplace la synthèse et, avec script, désactive le bouton
+      const bandeau = () => page.evaluate(() => {
+        const bar = document.querySelector('.barre-choix'), bouton = bar.querySelector('button');
+        return [!bar.querySelector('[data-choix-synthese]').hidden, !bar.querySelector('[data-choix-minimum]').hidden,
+                bouton.disabled, bouton.getAttribute('aria-describedby'), bar.querySelector('.resume').innerText];
+      });
+      let bande = await bandeau();
+      assert.deepEqual(bande.slice(0, 4), [true, false, false, null], `${where} deux modèles cochés`);
+      assert.match(bande[4], /^2 modèles/, where);
+      if (javaScriptEnabled) {
+        await box('mistralai/mistral-medium-3-5').uncheck();
+        bande = await bandeau();
+        assert.deepEqual(bande.slice(0, 4), [false, true, true, 'choix-minimum'], `${where} un modèle coché`);
+        assert.equal(bande[4], 'Choisissez au moins deux modèles', where);
+        await box('mistralai/mistral-medium-3-5').check();
+        bande = await bandeau();
+        assert.deepEqual(bande.slice(0, 4), [true, false, false, null], `${where} deux modèles de nouveau`);
+      }
       await select.focus();
       assert.notEqual(await select.evaluate(element => getComputedStyle(element).outlineStyle), 'none', `${colorScheme} focus invisible`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${colorScheme} débordement`);
@@ -1581,6 +1599,13 @@ test('access and launch screens preserve available actions, estimates and refusa
     assert.equal(/Votre sélection|Coût total estimé|Plafond :/.test(selection), false);
     assert.equal(await page.locator('a[href$="/campaigns/d1-c1/conditions"]').count(), 0);
     assert.equal(await page.getByRole('button', {name: 'Continuer', exact: true}).count(), 1);
+    // Un seul modèle coché, sans script : le message s'affiche, le bouton reste actif et le moteur refusera l'envoi
+    await page.goto(origin + '/render/configurations-one');
+    assert.deepEqual(await page.evaluate(() => {
+      const bar = document.querySelector('.barre-choix');
+      return [bar.querySelector('[data-choix-synthese]').hidden, bar.querySelector('[data-choix-minimum]').hidden,
+              bar.querySelector('button').disabled, bar.hasAttribute('disabled')];
+    }), [true, false, false, false]);
     for (const [name, text] of [['16-01', '16 septembre 2026 à 12:00:01 UTC'],
       ['16-02', '16 septembre 2026 à 12:00:02 UTC'], ['15-00', '15 septembre 2026 à 12:00:00 UTC']]) {
       await page.goto(origin + '/render/date-' + name);

@@ -126,6 +126,8 @@ def browser_views():
                  'selected': True},
                 {'id': 'modele-b', 'name': 'Modèle B', 'not_adjustable': True, 'selected': True}],
      'superseded': []}
+    examples['configurations-one'] = deepcopy(examples['configurations-selected'])
+    examples['configurations-one']['models'][1]['selected'] = False
     for stamp in ('2026-09-16T12:00:01+00:00', '2026-09-16T12:00:02+00:00', '2026-09-15T12:00:00+00:00'):
         value = campaign_view(dict(status='connected'))
         value['campaign']['conditions']['frozen_at'] = stamp

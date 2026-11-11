@@ -224,6 +224,14 @@ CUSTOM_MODELS_SCRIPT = """(() => {
       const checked = new Set(Array.from(choices.querySelectorAll('input[name=models]:checked'), input => input.value));
       lines.forEach(line => { line.hidden = !checked.has(line.dataset.modele); });
       if (tuning) tuning.hidden = lines.every(line => line.hidden);
+      // Bandeau : nombre de modèles cochés, ou le message et le bouton désactivé sous deux modèles
+      const n = checked.size, minimum = n < 2, bouton = bar.querySelector('[data-choix-continuer]');
+      bar.querySelector('[data-choix-nombre]').textContent = n;
+      bar.querySelector('[data-choix-modeles]').textContent = n > 1 ? 'modèles' : 'modèle';
+      bar.querySelector('[data-choix-synthese]').hidden = minimum;
+      bar.querySelector('[data-choix-minimum]').hidden = !minimum;
+      bouton.disabled = minimum;
+      if (minimum) bouton.setAttribute('aria-describedby', 'choix-minimum'); else bouton.removeAttribute('aria-describedby');
     };
     choices.addEventListener('change', sync);
     sync();
@@ -1008,11 +1016,15 @@ def render_configurations(value, csrf):
               + tiroir('Fixer une limite pour un modèle', '<ul class="par-modele">' + limits + '</ul><p class="petit">Le coût estimé compte une '
                        'réponse qui atteint cette limite. Une limite au-delà de la borne publiée pour le modèle est refusée, jamais réduite.</p>',
                        resume=_plural(limited, 'modèle limité') if limited else '', ouvert=bool(limited)) + '</div></div>')
-    summary = ('<b>' + str(len(chosen)) + '</b> ' + ('modèles' if len(chosen) > 1 else 'modèle')
+    # Les deux textes sont rendus : le script les échange selon les cases cochées, le serveur montre le message sous deux modèles
+    minimum = len(chosen) < 2
+    summary = ('<span data-choix-synthese' + (' hidden' if minimum else '') + '><b data-choix-nombre>' + str(len(chosen))
+               + '</b> <span data-choix-modeles>' + ('modèles' if len(chosen) > 1 else 'modèle') + '</span>'
                + '<span class="hors-mobile"> · raisonnement ' + text(niveau_court(current).lower()) + '</span> · <b>'
-               + str(repetitions) + '</b> ' + ('essais' if repetitions > 1 else 'essai')) if chosen else 'Choisissez au moins deux modèles'
-    bar = ('<div class="barre-choix"><span class="resume">' + summary + '</span><button class="btn" type="submit" form="configurations-form">'
-           'Continuer' + ic('fleche') + '</button></div>')
+               + str(repetitions) + '</b> ' + ('essais' if repetitions > 1 else 'essai') + '</span>'
+               + '<span id="choix-minimum" data-choix-minimum' + ('' if minimum else ' hidden') + '>Choisissez au moins deux modèles</span>')
+    bar = ('<div class="barre-choix"><span class="resume">' + summary + '</span><button class="btn" type="submit" form="configurations-form" '
+           'data-choix-continuer>Continuer' + ic('fleche') + '</button></div>')
     return (cadre_haut(head) + choices + '<div class="reglages carte">' + reasoning + attempts + length
             + render_custom_models(value, csrf, dossier_url) + '</div>' + bar)
 

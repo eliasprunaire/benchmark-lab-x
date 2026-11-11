@@ -2432,6 +2432,7 @@ class ParcoursComplet(unittest.TestCase):
         configurations = page.link('Choisir les modèles')
         page, _, _ = self.request(configurations)
         self.examine(page, configurations, 'choix des configurations', 'Continuer')
+        self.assertIn('Choisissez au moins deux modèles', page.visible)
         self.assertNotIn('Gammes généralistes retenues', page.visible)
         self.assertNotIn('date d’ajout au catalogue', page.visible)
         self.assertNotIn('Relevé des modèles du', page.visible)
