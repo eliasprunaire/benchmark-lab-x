@@ -213,6 +213,21 @@ CUSTOM_MODELS_SCRIPT = """(() => {
       await follow(target.dataset.probeRequest, target, await response.json());
     } catch { target.textContent = 'Suivi interrompu. Actualisez pour consulter l’état enregistré.'; }
   });
+  // Niveau par modèle : seules les lignes des modèles cochés restent, le tiroir sans ligne se masque
+  // Ce script précède le bandeau dans la page : il attend la fin de son analyse
+  document.addEventListener('DOMContentLoaded', () => {
+    const choices = document.getElementById('model-choices'), bar = document.querySelector('.barre-choix');
+    if (!choices || !bar) return;
+    const lines = Array.from(document.querySelectorAll('li[data-modele]'));
+    const tuning = lines[0]?.closest('details');
+    const sync = () => {
+      const checked = new Set(Array.from(choices.querySelectorAll('input[name=models]:checked'), input => input.value));
+      lines.forEach(line => { line.hidden = !checked.has(line.dataset.modele); });
+      if (tuning) tuning.hidden = lines.every(line => line.hidden);
+    };
+    choices.addEventListener('change', sync);
+    sync();
+  });
 })();"""
 
 
@@ -955,13 +970,13 @@ def render_configurations(value, csrf):
     fixed = [model for model in chosen if model['not_adjustable']]
     modified = sum(bool(model.get('chosen')) for model in tunable)
     per_model = ''.join(
-        '<li><label for="effort-' + str(index) + '">' + text(model['name']) + '</label><select id="effort-' + str(index)
+        '<li data-modele="' + text(model['id']) + '"><label for="effort-' + str(index) + '">' + text(model['name']) + '</label><select id="effort-' + str(index)
         + '" form="configurations-form" name="' + text('effort:' + model['id']) + '"><option value="">Comme ci-dessus ('
         + text(niveau_court(current)) + ')</option>' + ''.join(
             '<option value="' + text(level) + '"' + (' selected' if model.get('chosen') == level else '') + '>'
             + text(EFFORT_LABELS.get(level, level)) + '</option>' for level in model['levels']) + '</select></li>'
         for index, model in enumerate(tunable, 1))
-    per_model += ''.join('<li><span>' + text(model['name']) + '</span>' + puce('Non réglable : comparé tel quel') + '</li>' for model in fixed)
+    per_model += ''.join('<li data-modele="' + text(model['id']) + '"><span>' + text(model['name']) + '</span>' + puce('Non réglable : comparé tel quel') + '</li>' for model in fixed)
     reasoning = ('<div class="reglage"><div><span class="lbl" id="l-tier"><b>Raisonnement</b></span>'
                  '<p class="petit">Le temps de réflexion accordé au modèle avant qu’il réponde.</p></div><div>'
                  + _segments('l-tier', 'tier', [(tier, niveau_court(tier), tier) for tier in tiers], current)

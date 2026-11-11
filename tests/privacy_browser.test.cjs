@@ -144,11 +144,13 @@ print(json.dumps({**browser_views(),
                       'models': [{'id': 'mistralai/mistral-medium-3-5', 'name': 'Mistral Medium 3.5', 'selected': True,
                                   'not_adjustable': False, 'levels': ['none', 'high'], 'chosen': ''},
                                  {'id': 'deepseek/deepseek-v4.1-flash', 'name': 'DeepSeek V4.1 Flash', 'selected': True,
-                                  'not_adjustable': True, 'levels': [], 'chosen': ''}],
+                                  'not_adjustable': True, 'levels': [], 'chosen': ''},
+                                 {'id': 'openai/gpt-5.6-sol', 'name': 'GPT 5.6 Sol', 'selected': False,
+                                  'not_adjustable': False, 'levels': ['low', 'high'], 'chosen': ''}],
                       'current_tier': 'low', 'available_tiers': ['low', 'high'], 'configurations': [],
                       'current_campaign_id': None, 'estimate_total_usd': None, 'superseded': [],
                       'estimate_available': False, 'assumptions': None, 'custom_models': []}, 'csrf').decode(),
-                  'comparison_script': views.COMPARISON_FOCUS_SCRIPT, **attempt,
+                  'comparison_script': views.COMPARISON_FOCUS_SCRIPT, 'custom_models_script': views.CUSTOM_MODELS_SCRIPT, **attempt,
                   'launch': views.render(launch(), 'csrf').decode(),
                   'followup': views.render(launch('EMISSION_POSSIBLE'), 'csrf').decode(),
                   'followup_done': views.render(launch('RECEIVED'), 'csrf').decode(),
@@ -192,7 +194,7 @@ print(json.dumps({**browser_views(),
       res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'sha256-${createHash('sha256').update(rendered.filtres_script).digest('base64')}'; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
       res.end(html);
     } else if (url.pathname.startsWith('/render/') || url.pathname === rendered.detail_href) {
-      const hashes = [rendered.script, rendered.comparison_script, rendered.progress_script]
+      const hashes = [rendered.script, rendered.comparison_script, rendered.progress_script, rendered.custom_models_script]
         .map(script => `'sha256-${createHash('sha256').update(script).digest('base64')}'`).join(' ');
       res.setHeader('Content-Type', 'text/html');
       res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' ${hashes}; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
@@ -868,10 +870,11 @@ test('legal pages keep CSP, French headings, visible focus, AA contrast and fit 
 });
 
 test('per-model reasoning tuning opens without JavaScript, stays in the form and fits 390 px', async () => {
-  for (const colorScheme of ['light', 'dark']) {
-    const context = await browser.newContext({viewport: {width: 390, height: 844}, colorScheme, javaScriptEnabled: false});
+  for (const [colorScheme, javaScriptEnabled] of [['light', false], ['dark', false], ['light', true], ['dark', true]]) {
+    const context = await browser.newContext({viewport: {width: 390, height: 844}, colorScheme, javaScriptEnabled});
     try {
       const page = await context.newPage(); page.setDefaultTimeout(3000);
+      const where = `${colorScheme} ${javaScriptEnabled ? 'avec' : 'sans'} script`;
       await page.goto(origin + '/render/configurations');
       const tuning = page.locator('details', {hasText: 'Choisir un niveau différent pour un modèle'});
       assert.equal(await tuning.count(), 1, colorScheme);
@@ -883,12 +886,28 @@ test('per-model reasoning tuning opens without JavaScript, stays in the form and
       assert.deepEqual(await select.locator('option').evaluateAll(options => options.map(option => option.value)), ['', 'none', 'high']);
       assert.equal(await page.locator('label[for="' + await select.getAttribute('id') + '"]').textContent(), 'Mistral Medium 3.5');
       assert.equal(await page.locator('select[name="effort:deepseek/deepseek-v4.1-flash"]').count(), 0, `${colorScheme} niveau fixe sans réglage`);
+      // Sans script, chaque modèle réglable garde sa ligne ; avec script, seules les lignes des modèles cochés restent
+      const box = id => page.locator(`input[name="models"][value="${id}"]`), line = id => page.locator(`li[data-modele="${id}"]`);
+      assert.equal(await page.locator('select[name="effort:openai/gpt-5.6-sol"]').getAttribute('form'), 'configurations-form', where);
+      assert.equal(await page.locator('li[data-modele]').count(), 3, where);
+      assert.equal(await line('openai/gpt-5.6-sol').isVisible(), !javaScriptEnabled, `${where} modèle non coché`);
+      assert.equal(await line('mistralai/mistral-medium-3-5').isVisible(), true, `${where} modèle coché`);
+      if (javaScriptEnabled) {
+        await box('mistralai/mistral-medium-3-5').uncheck();
+        assert.equal(await line('mistralai/mistral-medium-3-5').isVisible(), false, `${where} modèle décoché`);
+        await box('openai/gpt-5.6-sol').check();
+        assert.equal(await line('openai/gpt-5.6-sol').isVisible(), true, `${where} modèle coché ensuite`);
+        await box('openai/gpt-5.6-sol').uncheck(); await box('deepseek/deepseek-v4.1-flash').uncheck();
+        assert.equal(await tuning.isVisible(), false, `${where} tiroir sans ligne masqué`);
+        await box('mistralai/mistral-medium-3-5').check(); await box('deepseek/deepseek-v4.1-flash').check();
+        assert.equal(await tuning.isVisible(), true, `${where} tiroir de nouveau visible`);
+      }
       await select.focus();
       assert.notEqual(await select.evaluate(element => getComputedStyle(element).outlineStyle), 'none', `${colorScheme} focus invisible`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${colorScheme} débordement`);
       assert.deepEqual(await page.evaluate(contrastFailures), [], colorScheme);
       mkdirSync('reports/privacy-browser', {recursive: true});
-      await page.screenshot({path: `reports/privacy-browser/configurations-tuning-${colorScheme}-mobile.png`, fullPage: true});
+      await page.screenshot({path: `reports/privacy-browser/configurations-tuning-${colorScheme}${javaScriptEnabled ? '-script' : ''}-mobile.png`, fullPage: true});
     } finally {await context.close();}
   }
 });
