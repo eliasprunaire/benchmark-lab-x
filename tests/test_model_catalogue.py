@@ -89,7 +89,7 @@ class ModelCatalogueTests(unittest.TestCase):
                                 if model['excluded'] != 'malformed'))
             self.assertFalse(result['stale'])
 
-    def test_recent_generalist_ranges_without_specialists_or_variant_duplicates(self):
+    def test_three_most_recent_per_maker_free_variant_not_counted(self):
         rows = [dict(id=model_id, name=model_id, created=int((NOW - timedelta(days=days)).timestamp()),
                      architecture={'output_modalities': ['text']}) for model_id, days in (
             ('google/gemini-3.8-flash', 1), ('google/gemini-3.8-flash:free', 0),
@@ -112,11 +112,12 @@ class ModelCatalogueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store, \
                 patch.object(catalogue, '_now', return_value=NOW):
             result = catalogue.refresh(store, fetch)
-        self.assertEqual({'google/gemini-3.8-flash', 'google/gemini-3.5-flash-lite',
-                          'google/gemini-3.1-pro-preview', 'nvidia/nemotron-3.5-lightning',
-                          'nvidia/nemotron-3-ultra-550b-a55b', 'nvidia/nemotron-3-super-120b-a12b',
-                          'minimax/minimax-m3', 'minimax/minimax-m2.7', 'minimax/minimax-m2.5',
-                          'moonshotai/kimi-k3'},
+        # Trois plus récents par éditeur, variantes spécialisées comprises ; la variante gratuite ne compte pas
+        self.assertEqual({'google/gemini-3.1-pro-preview-customtools', 'google/gemma-4-31b-it',
+                          'google/gemini-3.8-flash', 'nvidia/nemotron-3.5-content-safety',
+                          'nvidia/nemotron-3.5-lightning', 'nvidia/nemotron-3-ultra-550b-a55b',
+                          'minimax/minimax-m2-her', 'minimax/minimax-m3', 'minimax/minimax-m2.7',
+                          'moonshotai/kimi-k2.7-code', 'moonshotai/kimi-k3'},
                          {m['id'] for m in result['models'] if m['excluded'] is None})
 
     def test_configuration_active_livree_avec_le_paquet(self):
@@ -131,7 +132,7 @@ class ModelCatalogueTests(unittest.TestCase):
         # Aucun registre d'alias concurrent ne subsiste à la racine
         self.assertFalse((Path(__file__).resolve().parents[1] / 'models.toml').exists())
 
-    def test_flagship_priorities_and_meta_namespaces_share_one_maker_quota(self):
+    def test_recency_per_maker_and_meta_namespaces_share_one_quota(self):
         rows = [dict(id=model_id, name=model_id, created=int((NOW - timedelta(days=days)).timestamp()),
                      architecture={'output_modalities': ['text']}) for model_id, days in (
             ('openai/gpt-6-astra', 1), ('openai/gpt-6-astra-pro', 1),
@@ -148,8 +149,8 @@ class ModelCatalogueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store, \
                 patch.object(catalogue, '_now', return_value=NOW):
             result = catalogue.refresh(store, fetch)
-        self.assertEqual({'openai/gpt-6-astra', 'openai/gpt-5.6-sol', 'openai/gpt-5.6-terra',
-                          'meta/muse-spark-1.3', 'meta/muse-glimmer-30b', 'meta-llama/llama-4-maverick'},
+        self.assertEqual({'openai/gpt-6-astra', 'openai/gpt-6-astra-pro', 'openai/gpt-5.6-luna',
+                          'meta/muse-spark-1.3-contributor', 'meta/muse-spark-1.3', 'meta/muse-glimmer-30b'},
                          {m['id'] for m in result['models']})
         self.assertEqual(3, sum(m['maker'] == 'meta' for m in result['models']))
 
