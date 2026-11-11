@@ -1667,6 +1667,7 @@ test('access and launch screens preserve available actions, estimates and refusa
       await page.goto(origin + '/render/followup-received-privacy');
       assert.ok(await marge() >= 32, `${width} marge sous le suivi`);
       await page.goto(origin + '/render/launch-ready');
+      await lectureCourante(page, `${width} lancement`, ['.consigne blockquote'], 'Ce qui sera testé');
       // Le récapitulatif porte les montants et le seul bouton ; le tableau reste dans la colonne de lecture
       const pupitre = await page.locator('form.pupitre').innerText();
       for (const phrase of [/RÉPONSES, ESTIMATION\s+3,50 USD/i, /Lancer le benchmark/])
@@ -2229,7 +2230,7 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       assert.match(layout.side, /Oui, c’est le cas\u00a0d’usage à tester/, `${width} bouton de validation en synthèse`);
       assert.equal(layout.consent, false, `${width} aucun bloc de partage`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de validation`);
-      await lectureCourante(page, `${width} exemple à valider`, ['.bulle-question .bulle-texte']);
+      await lectureCourante(page, `${width} exemple à valider`, ['.bulle-question .bulle-texte', '.consigne blockquote'], 'Consigne donnée aux modèles');
     }
     // Parcours clavier de la préparation à 390 px, sans souris ni JavaScript : saisie, question de l'assistant, aperçu,
     // correction. Chaque arrêt du focus est visible dans l'écran, entier en largeur, non masqué par l'en-tête fixe

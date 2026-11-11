@@ -336,7 +336,7 @@ legend { padding: 0; margin-bottom: 10px; }
 /* ——— Dossier : consigne, pièces, critères ——— */
 .consigne { position: relative; padding: clamp(22px, 3vw, 34px); background: var(--carte); border: 2px solid var(--filet); border-radius: var(--r); }
 .consigne > .ruban { position: absolute; top: -12px; left: 22px; }
-.consigne blockquote { margin: 8px 0 0; font-size: clamp(1.3rem, 2.4vw, 1.9rem); font-weight: 700; font-stretch: 110%; line-height: 1.2; letter-spacing: -.01em; }
+.consigne blockquote { margin: 8px 0 0; font-size: 1.12rem; }
 .pieces { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 22px; list-style: none; padding-top: 10px; }
 .feuille { position: relative; }
 .feuille > details > summary { list-style: none; cursor: pointer; display: grid; gap: 8px; min-height: 210px; padding: 30px 20px 18px; background: var(--carte); border: 2px solid var(--filet); border-radius: 6px; transition: transform .18s ease; }
