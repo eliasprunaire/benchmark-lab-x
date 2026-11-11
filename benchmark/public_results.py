@@ -21,7 +21,7 @@ import re
 import secrets
 
 from . import editorial
-from .publications import _decode, _directory, _listdir, _read, _write
+from .publications import _bytes, _decode, _directory, _ensure_dir, _is_id, _listdir, _open_child, _read, _write
 from .storage import _strict_json as encode, _text
 from .validation import identifier, _hash, _texts
 
@@ -472,20 +472,6 @@ def _bundle(bundle, approved, actor):
     return manifest
 
 
-def _open_child(parent, name):
-    return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
-
-
-def _ensure_dir(parent, name):
-    if name not in (_ROOT, _FIXTURE_ROOT):
-        identifier(name)
-    try:
-        return _open_child(parent, name)
-    except FileNotFoundError:
-        os.mkdir(name, 0o700, dir_fd=parent)
-        return _open_child(parent, name)
-
-
 def _open_campaign(root, task_id, version_id, campaign_id, root_name):
     try:
         tasks = _open_child(root, root_name)
@@ -531,13 +517,6 @@ def _withdrawal(fd, publication, identity, task_id, version_id, campaign_id):
     if _decode(raw) != _withdrawal_document(publication, identity, task_id, version_id, campaign_id):
         raise ValueError('Retrait divergent')
     return True
-
-
-def _bytes(fd, name):
-    raw = _read(fd, name)
-    if type(raw) is not bytes:
-        raise ValueError('Octets divergents')
-    return raw
 
 
 def _read_record(fd, task_id, version_id, campaign_id, actor):
@@ -650,11 +629,11 @@ def _publish(destination, bundle, approved, actor, root_name):
         raise ValueError('Rattachement divergent')
     root = _directory(destination)
     try:
-        results_root = _ensure_dir(root, root_name)
+        results_root = _ensure_dir(root, root_name, (_ROOT, _FIXTURE_ROOT))
         try:
-            task_folder = _ensure_dir(results_root, task['task_id'])
+            task_folder = _ensure_dir(results_root, task['task_id'], (_ROOT, _FIXTURE_ROOT))
             try:
-                version_folder = _ensure_dir(task_folder, task['version_id'])
+                version_folder = _ensure_dir(task_folder, task['version_id'], (_ROOT, _FIXTURE_ROOT))
                 try:
                     _activate(version_folder, manifest, bundle, approved, actor)
                 finally:
@@ -737,14 +716,6 @@ def withdraw(destination, task_id, version_id, campaign_id, approved):
 def fixture_withdraw(destination, task_id, version_id, campaign_id, approved):
     """Retire une restitution de fixture sans modifier ses octets ni l’épreuve"""
     _withdraw(destination, task_id, version_id, campaign_id, approved, _FIXTURE, _FIXTURE_ROOT)
-
-
-def _is_id(name):
-    try:
-        identifier(name)
-    except ValueError:
-        return False
-    return True
 
 
 def _summary(record):

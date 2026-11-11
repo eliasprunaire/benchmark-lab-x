@@ -267,6 +267,19 @@ def authorize_session(connection, session_id, current=None):
         raise Denied('SESSION_EXPIRED')
 
 
+def session_expiry(connection, session_id):
+    return connection.execute('SELECT expires_at FROM s7_sessions WHERE session_id=?', (session_id,)).fetchone()
+
+
+def dossier_content(connection, dossier_id):
+    return connection.execute('SELECT content_version FROM s7_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()
+
+
+def dossier_expiries(connection, session_id):
+    return dict(connection.execute('SELECT dossier_id,expires_at FROM s7_dossiers WHERE session_id=?',
+                                   (session_id,)).fetchall())
+
+
 class Gone(LookupError):
     """Un propriétaire authentifié demande un dossier expiré"""
 

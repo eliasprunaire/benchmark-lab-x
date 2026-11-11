@@ -221,12 +221,9 @@ def harnais(suite=''):
             'Chaque modèle reçoit seulement la consigne et l’exemple, dans les mêmes conditions.</p></div></details></span></span>')
 
 
-ETATS_ANCIENS = {'action': 'att', 'wait': 'att', 'warn': 'vig', 'err': 'ko', 'done': 'ok', 'unk': 'inc'}
-
-
 def state_block(tone, eyebrow, heading, body, actions=''):
-    """Bloc « Où j'en suis » (ton action, wait, warn, err, done, unk) rendu par `etat` ; `body` est du HTML"""
-    return etat(ETATS_ANCIENS[tone], eyebrow, heading, actions_html=actions, corps_html=body)
+    """Bloc « Où j'en suis » rendu par `etat` ; `body` est du HTML"""
+    return etat(tone, eyebrow, heading, actions_html=actions, corps_html=body)
 
 
 def jour_lisible(value):

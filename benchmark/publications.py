@@ -91,13 +91,42 @@ def _bundle(bundle, approval):
     return m
 
 
+def _open_child(parent, name):
+    return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+
+
+def _ensure_dir(parent, name, reserved):
+    if name not in reserved:
+        identifier(name)
+    try:
+        return _open_child(parent, name)
+    except FileNotFoundError:
+        os.mkdir(name, 0o700, dir_fd=parent)
+        return _open_child(parent, name)
+
+
+def _bytes(fd, name):
+    raw = _read(fd, name)
+    if type(raw) is not bytes:
+        raise ValueError('Octets divergents')
+    return raw
+
+
+def _is_id(name):
+    try:
+        identifier(name)
+    except ValueError:
+        return False
+    return True
+
+
 def _directory(path):
     """Open each directory without following a symbolic link, including ancestors"""
     path = Path(os.path.abspath(path))
     fd = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for component in path.parts[1:]:
-            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            child = _open_child(fd, component)
             os.close(fd)
             fd = child
         return fd
@@ -137,7 +166,7 @@ def public_bytes(destination, identity, name):
         raise ValueError('Chemin public invalide')
     root = _directory(destination)
     try:
-        folder = os.open(identity, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+        folder = _open_child(root, identity)
         try:
             bundle = _read_bundle(folder, identity, selected=name)
             if name not in bundle['files']:
@@ -170,14 +199,14 @@ def materialize(bundle, approval, destination):
     try:
         os.mkdir(stage, mode=0o700, dir_fd=root)
         staged = True
-        folder = os.open(stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+        folder = _open_child(root, stage)
         for name, raw in dict(bundle['files'], **{'publication.json': bundle['manifest'],
                                                 'approval.json': encode(approval).encode('utf-8')}).items():
             _write(folder, name, raw)
         _read_bundle(folder, identity)
         os.fsync(folder)
         try:
-            existing = os.open(identity, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root)
+            existing = _open_child(root, identity)
         except FileNotFoundError:
             os.rename(stage, identity, src_dir_fd=root, dst_dir_fd=root)
             staged = False
