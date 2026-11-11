@@ -1058,26 +1058,13 @@ MODE_CORRIGER = ('<div class="mode-corriger"><div class="mc-correct"><h2>Corrige
                  + bouton('Envoyer ma réponse', xl=True).replace('type="submit"', 'type="submit" form="form-corriger"') + '</div></div>')
 
 
-def decision_validation(csrf, url, value, disabled, estimation_html):
+def decision_validation(csrf, url, value, disabled):
     """Bloc jaune de la validation : valider l'exemple, ou (tiroir de correction ouvert) envoyer la correction"""
     return form(csrf, url + '/validation', binding(value['dossier_id'], value['revision'], value['package_sha256']),
                 '<span class="etiq">Étape 3 sur 5</span><div class="mode-valider" id="validation"><h2>Valider l’exemple</h2>'
                 '<p>Vous confirmez que cet exemple représente bien votre besoin.</p>'
-                + bouton('Oui, c’est le cas d’usage à tester', xl=True).replace('type="submit"', 'type="submit"' + disabled) + estimation_html + '</div>'
+                + bouton('Oui, c’est le cas d’usage à tester', xl=True).replace('type="submit"', 'type="submit"' + disabled) + '</div>'
                 + MODE_CORRIGER, classe='decision')
-
-
-def estimation_controle(value):
-    """Annonce de dépense avant validation : deux réserves distinctes, jamais additionnées (DESIGN.md)"""
-    estimate = value.get('qualification_estimate')
-    if not estimate:
-        return ''
-    return ('<p class="petit">Estimation avant consommation : une réserve est bloquée sur votre crédit avant chaque appel. '
-            'Pour le contrôle de l’exemple : au plus ' + text(montant_lisible(estimate['check_usd']))
-            + ' USD réservé. Puis, pour le contrôle de chaque témoin, ' + text(str(estimate['witness_limit']))
-            + ' au plus : au plus ' + text(montant_lisible(estimate['witness_usd']))
-            + ' USD réservé par témoin. Un témoin est une réponse inventée, recevable ou fautive, soumise au '
-            'contrôle qui jugera les modèles. Le coût observé est relevé ensuite sur le justificatif de chaque appel.</p>')
 
 
 def critere_obligation(item):
@@ -1443,7 +1430,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         gauche = render_source_copy(source, source_notice) + gauche
     haut = ''
     if avant_validation:
-        decision = decision_validation(csrf, url, value, disabled, estimation_controle(value))
+        decision = decision_validation(csrf, url, value, disabled)
         # Une version déjà remplacée ou un accès fermé s'annonce au-dessus des colonnes
         if revision > 1:
             haut = '<div class="gb-cote">' + etat('att', 'À valider', 'Version ' + str(revision) + ' prête à valider',

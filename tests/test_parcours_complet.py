@@ -3083,10 +3083,10 @@ class ParcoursComplet(unittest.TestCase):
         dossier_id = dossier.rsplit('/', 1)[1]
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
-        # 1. Avant toute consommation : la vérification et chaque témoin annoncent leur réserve, séparément
+        # 1. Avant toute consommation : la page de validation n'annonce plus les réserves du contrôle et des témoins
         validation = next(n['text'] for n in page.nodes if n['attrs'].get('id') == 'validation')
-        self.assertIn('contrôle de l’exemple : au plus 1 USD réservé', validation)
-        self.assertIn('contrôle de chaque témoin, 4 au plus : au plus 0,5 USD réservé par témoin', validation)
+        self.assertNotIn('Estimation avant consommation', validation)
+        self.assertNotIn('réservé', validation)
         self.assertEqual([], juge.calls)
         versions = []
 
