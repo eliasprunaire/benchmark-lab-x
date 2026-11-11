@@ -146,6 +146,7 @@ class DossierPageTests(unittest.TestCase):
         # Avant validation, le bloc jaune porte la décision ; le tiroir de correction est celui que ce bloc commande
         self.assertIn('<form class="decision" method="post"', page)
         self.assertIn('<details class="tiroir" id="corriger">', page)
+        self.assertIn('<details class="tiroir" open><summary><span class="titre">Limites et travail restant</span>', page)
         self.assertIn('<form id="form-corriger" method="post"', page)
         self.assertIn('aria-current="step"', page)
         self.assertIn('<span class="n">03</span><span class="l">Validation</span>', page)

@@ -1115,7 +1115,7 @@ def bloc_dossier(value):
         limites += '<h3>Ambiguïtés acceptées</h3>' + listing(package['acceptable_ambiguities'])
     if package['limits']:
         limites += '<h3>Limites de l’exemple</h3>' + listing(package['limits'])
-    contenu += tiroir('Limites et travail restant', limites)
+    contenu += tiroir('Limites et travail restant', limites, ouvert=True)
     labels = {'instruction': 'Consigne', 'deliverables': 'Livrables', 'criteria': 'Critères',
               'acceptable_ambiguities': 'Ambiguïtés acceptées', 'pieces': 'Pièces'}
     if value['changes']:
