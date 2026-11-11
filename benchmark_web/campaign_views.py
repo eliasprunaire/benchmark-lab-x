@@ -1380,7 +1380,7 @@ def render_campaign_launch_requester(value, csrf):
         # Plusieurs essais : le paragraphe qui suit dit combien de fois chaque modèle répond
         models += ('<section id="exemples"><div class="zone-titre"><h2>Exemples comparés</h2></div><p class="petit">'
                    + ('Chaque modèle répond une fois à chacun. ' if repetitions == 1 else '')
-                   + 'Plusieurs exemples ne prouvent pas qu’ils représentent votre travail.</p>' + listing(items) + '</section>')
+                   + 'Plusieurs exemples ne prouvent pas qu’ils représentent votre cas d’usage.</p>' + listing(items) + '</section>')
     if repetitions > 1:
         models += '<p class="petit">' + text('Chaque modèle répond ' + str(repetitions) + ' fois à '
                                              + ('chaque exemple' if len(cases) > 1 else 'l’exemple') + '. Chaque essai est une réponse '

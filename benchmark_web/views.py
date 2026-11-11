@@ -1042,7 +1042,7 @@ def tiroir_correction(csrf, url, revision, disabled, *, ouvert=False):
                  '<p class="petit">Ce qui est convenu reste acquis. Si l’exemple change, vous le validerez de nouveau. '
                  'Les versions précédentes restent consultables.</p>'
                  '<div class="champ"><label for="kind">Votre message sert à</label><select id="kind" name="kind"' + disabled + '>'
-                 '<option value="clarify">Répondre à l’assistant ou confirmer le travail</option>'
+                 '<option value="clarify">Répondre à l’assistant ou confirmer le cas d’usage</option>'
                  '<option value="correct" selected>Modifier cet exemple</option></select></div>'
                  + champ('Votre précision ou correction', 'message', ident='message', maxlength=1000, desactive=bool(disabled), aide='')
                  + HONEYPOT + '<div class="actions envoi">' + bouton('Envoyer ce message', sec=True).replace(
@@ -1052,7 +1052,7 @@ def tiroir_correction(csrf, url, revision, disabled, *, ouvert=False):
 
 MODE_CORRIGER = ('<div class="mode-corriger"><div class="mc-correct"><h2>Corriger l’exemple</h2>'
                  '<p>L’assistant lit votre message et prépare une nouvelle version. Vous la relirez avant de la valider.</p>'
-                 + bouton('Corriger ce travail', xl=True).replace('type="submit"', 'type="submit" form="form-corriger"') + '</div>'
+                 + bouton('Corriger cet exemple', xl=True).replace('type="submit"', 'type="submit" form="form-corriger"') + '</div>'
                  '<div class="mc-clarify"><h2>Répondre à l’assistant</h2>'
                  '<p>L’assistant lit votre réponse et reprend la préparation de l’exemple.</p>'
                  + bouton('Envoyer ma réponse', xl=True).replace('type="submit"', 'type="submit" form="form-corriger"') + '</div></div>')
@@ -1063,7 +1063,7 @@ def decision_validation(csrf, url, value, disabled, estimation_html):
     return form(csrf, url + '/validation', binding(value['dossier_id'], value['revision'], value['package_sha256']),
                 '<span class="etiq">Étape 3 sur 5</span><div class="mode-valider" id="validation"><h2>Valider l’exemple</h2>'
                 '<p>Vous confirmez que cet exemple représente bien votre besoin.</p>'
-                + bouton('Oui, c’est le travail à tester', xl=True).replace('type="submit"', 'type="submit"' + disabled) + estimation_html + '</div>'
+                + bouton('Oui, c’est le cas d’usage à tester', xl=True).replace('type="submit"', 'type="submit"' + disabled) + estimation_html + '</div>'
                 + MODE_CORRIGER, classe='decision')
 
 
@@ -1188,7 +1188,7 @@ def ligne_exemples(value, stages, cases):
         + ('<p class="petit">Le contrat de l’exemple 1 a changé depuis la création de certains exemples : '
            'ces exemples ne suivent plus la même consigne. Ajoutez-les de nouveau depuis l’exemple 1.' if drifted else
            '<p class="petit">Tous les exemples suivent la même consigne, les mêmes livrables et les mêmes critères.')
-        + ' Plusieurs exemples ne prouvent pas qu’ils représentent votre travail : chacun reste inventé, validé et '
+        + ' Plusieurs exemples ne prouvent pas qu’ils représentent votre cas d’usage : chacun reste inventé, validé et '
         'contrôlé séparément.</p>')
     return section('Exemples de ce cas d’usage', corps, 'cas')
 
@@ -1269,7 +1269,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
               'clarification': ('att', 'Question', 'L’assistant a une question',
                                 'Répondez : l’exemple sera préparé ensuite. Vous pouvez quitter la page et revenir.'),
               'preview': ('att', 'À relire', 'Votre exemple est prêt', 'Lisez la consigne et les pièces, corrigez si besoin, puis validez.'),
-              'scope_confirmation': ('att', 'Question', 'Précisez le travail à comparer',
+              'scope_confirmation': ('att', 'Question', 'Précisez le cas d’usage à comparer',
                                      'Evaly compare des modèles sur un travail concret, avec un résultat attendu et des critères vérifiables. '
                                      'Aucun benchmark ne se lance à cette étape.'),
               # La cause vient de l'explication ; l'envoi reste ouvert sauf motif de disponibilité affiché à part
@@ -1314,7 +1314,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         action = btn(cible, libelle)
     elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
         action = btn(url + '/configurations', 'Choisir les modèles')
-    h1 = ('Votre cas d’usage' if value['validation'] else 'Est-ce le travail à tester ?' if package else 'Votre cas d’usage privé' if source
+    h1 = ('Votre cas d’usage' if value['validation'] else 'Est-ce le cas d’usage à tester ?' if package else 'Votre cas d’usage privé' if source
           else 'Précisons votre besoin')
     if launched and not snapshot and package:
         h1 = 'Exemple validé, benchmark lancé'
