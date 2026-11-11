@@ -2385,7 +2385,7 @@ class ParcoursComplet(unittest.TestCase):
         self.submit(page, '/messages', {'message': 'Une liste des actions, sans date inventée'})
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
-        self.examine(page, dossier, 'exemple', 'Oui, c’est le cas d’usage à tester')
+        self.examine(page, dossier, 'exemple', 'Oui, c’est le cas\xa0d’usage à tester')
         # Premier exemple, révision technique 3 : « Version 1 »
         self.assertIn('Version 1 prête à valider', page.visible)
         self.assertEqual(['Version 1'], [n['text'] for n in page.nodes if n['tag'] == 'span' and 'puce' in n['attrs'].get('class', '').split() and n['text'].startswith('Version')])
@@ -2412,7 +2412,7 @@ class ParcoursComplet(unittest.TestCase):
         self.submit(page, '/messages', {'kind': 'correct', 'message': 'Présenter un tableau avec le responsable de chaque action'})
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
-        self.examine(page, dossier, 'exemple corrigé', 'Oui, c’est le cas d’usage à tester')
+        self.examine(page, dossier, 'exemple corrigé', 'Oui, c’est le cas\xa0d’usage à tester')
         self.assertIn('Version 2 prête à valider', page.visible)
         self.assertEqual(['Version 2'], [n['text'] for n in page.nodes if n['tag'] == 'span' and 'puce' in n['attrs'].get('class', '').split() and n['text'].startswith('Version')])
         self.assertEqual(dossier + '/revisions/3', page.link('Version précédente'))
@@ -2980,7 +2980,7 @@ class ParcoursComplet(unittest.TestCase):
                                         'message': 'Dire dans la consigne qu’un sujet reporté n’est ni une décision ni une action'})
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
-        self.examine(page, dossier, 'exemple corrigé à valider', 'Oui, c’est le cas d’usage à tester')
+        self.examine(page, dossier, 'exemple corrigé à valider', 'Oui, c’est le cas\xa0d’usage à tester')
         self.assertIn('Valider l’exemple', page.visible)
         self.assertIn(convention, page.visible)
         # Le préparateur reçoit la version validée et la correction, pas la référence
@@ -3193,7 +3193,7 @@ class ParcoursComplet(unittest.TestCase):
         # 3 et 4. Correction après qualification : nouvelle version non qualifiée, contrôles refaits sur ses octets
         corriger('Écrire le responsable avant l’action.')
         page, _, _ = self.request(dossier)
-        self.examine(page, dossier, 'version corrigée à valider', 'Oui, c’est le cas d’usage à tester')
+        self.examine(page, dossier, 'version corrigée à valider', 'Oui, c’est le cas\xa0d’usage à tester')
         self.assertFalse(any(n['tag'] == 'a' and n['text'] == 'Choisir les modèles' for n in page.nodes))
         qualifiee, _, _ = self.request(dossier + '/revisions/' + versions[-1])
         self.assertEqual(2, detail(qualifiee).count('Décision conforme à l’attendu'))
@@ -3350,7 +3350,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(premier)
         second = ajouter(page, 'Une action sans responsable, pour vérifier qu’elle est signalée')
         page, _, raw = self.request(second)
-        self.examine(page, second, 'second cas prêt', 'Oui, c’est le cas d’usage à tester')
+        self.examine(page, second, 'second cas prêt', 'Oui, c’est le cas\xa0d’usage à tester')
         self.assertIn(consigne, page.visible)
         # Pièces repliées dans leur dépliant : le contenu se lit dans la page servie
         self.assertIn('sans responsable désigné', raw.decode())
@@ -3384,7 +3384,7 @@ class ParcoursComplet(unittest.TestCase):
         # 7. La correction rappelle au préparateur le contrat hérité
         self.assertIn(consigne, messages[-1])
         page, _, _ = self.request(second)
-        self.examine(page, second, 'second cas corrigé', 'Oui, c’est le cas d’usage à tester')
+        self.examine(page, second, 'second cas corrigé', 'Oui, c’est le cas\xa0d’usage à tester')
         self.assertIn(consigne, page.visible)
         page, _, _ = self.request(premier)
         self.examine(page, premier, 'premier cas inchangé', 'Choisir les modèles')

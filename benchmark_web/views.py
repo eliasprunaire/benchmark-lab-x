@@ -1041,7 +1041,7 @@ def decision_validation(csrf, url, value, disabled):
     return form(csrf, url + '/validation', binding(value['dossier_id'], value['revision'], value['package_sha256']),
                 '<span class="etiq">Étape 3 sur 5</span><div class="mode-valider" id="validation"><h2>Valider l’exemple</h2>'
                 '<p>Vous confirmez que cet exemple représente bien votre besoin.</p>'
-                + bouton('Oui, c’est le cas d’usage à tester', xl=True).replace('type="submit"', 'type="submit"' + disabled) + '</div>'
+                + bouton('Oui, c’est le cas\xa0d’usage à tester', xl=True).replace('type="submit"', 'type="submit"' + disabled) + '</div>'
                 + MODE_CORRIGER, classe='decision')
 
 
@@ -1280,7 +1280,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         action = btn(cible, libelle)
     elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
         action = btn(url + '/configurations', 'Choisir les modèles')
-    h1 = ('Votre cas d’usage' if value['validation'] else 'Est-ce le cas d’usage à tester ?' if package else 'Votre cas d’usage privé' if source
+    h1 = ('Votre cas d’usage' if value['validation'] else 'Est-ce le cas\xa0d’usage à tester ?' if package else 'Votre cas d’usage privé' if source
           else 'Précisons votre besoin')
     if launched and not snapshot and package:
         h1 = 'Exemple validé, benchmark lancé'

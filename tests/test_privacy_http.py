@@ -381,7 +381,7 @@ class PrivacyHTTPTests(unittest.TestCase):
             connection.execute("UPDATE s7_control SET phase='READY'")
         code, _, page = self.request('GET', path, cookies=cookies, native=True)
         self.assertEqual(200, code)
-        self.assertIn('Est-ce le cas d’usage à tester ?', page)
+        self.assertIn('Est-ce le cas\xa0d’usage à tester ?', page)
 
     def test_reads_do_not_extend_dates_or_cookies_but_activity_post_does(self):
         owner = self.new_session()

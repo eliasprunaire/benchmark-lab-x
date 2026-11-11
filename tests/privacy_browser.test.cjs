@@ -1233,7 +1233,7 @@ test('results and publication preview stay readable at 390 px: whole words, stac
     // Contribution retirée : la décision principale reste, sans choix de partage
     await page.goto(origin + '/render/example');
     assert.equal(await page.evaluate(() => {
-      const validate = [...document.querySelectorAll('#validation button')].find(button => /Oui, c’est le cas d’usage à tester/.test(button.textContent));
+      const validate = [...document.querySelectorAll('#validation button')].find(button => /Oui, c’est le cas\u00a0d’usage à tester/.test(button.textContent));
       return Boolean(validate) && !document.querySelector('[data-privacy-post="contribution"]');
     }), true, 'décision principale sans choix de partage');
   } finally {await context.close();}
@@ -2204,7 +2204,7 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       layout = await zones();
       assert.equal(layout.overflow, 0, `${width} validation sans débordement`);
       assert.ok(layout.example && layout.correction && layout.validation, `${width} exemple et correction en zone principale, validation en synthèse`);
-      assert.match(layout.side, /Oui, c’est le cas d’usage à tester/, `${width} bouton de validation en synthèse`);
+      assert.match(layout.side, /Oui, c’est le cas\u00a0d’usage à tester/, `${width} bouton de validation en synthèse`);
       assert.equal(layout.consent, false, `${width} aucun bloc de partage`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de validation`);
     }
@@ -2274,7 +2274,7 @@ test('privacy forms preserve purpose tokens and expired states', async () => {
     const page = await context.newPage();
     await page.goto(origin + '/render/example');
     const text = await page.textContent('main');
-    assert.ok(text.indexOf('Les pièces') < text.indexOf('Oui, c’est le cas d’usage à tester'));
+    assert.ok(text.indexOf('Les pièces') < text.indexOf('Oui, c’est le cas\u00a0d’usage à tester'));
     assert.ok(text.includes('Efface la copie de ce navigateur et demande la suppression sur le serveur'));
     // Contribution retirée : ni case, ni texte de partage sur la page d'un cas
     assert.equal(await page.locator('.privacy-consent, [data-privacy-post="contribution"]').count(), 0);
