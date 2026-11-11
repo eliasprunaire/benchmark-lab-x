@@ -17,7 +17,7 @@ import os
 import secrets
 from typing import Any
 
-from .publications import _decode, _directory, _listdir, _read, _write
+from .publications import _bytes, _decode, _directory, _ensure_dir, _is_id, _listdir, _open_child, _read, _write
 from .storage import _strict_json as encode, _text
 from .validation import identifier, _hash, _texts
 
@@ -270,13 +270,6 @@ def _read_report(fd, publication, identity, task_id, version_id):
     return dict(summary=found['summary'], reported_at=found['reported_at'])
 
 
-def _bytes(fd, name):
-    raw = _read(fd, name)
-    if type(raw) is not bytes:
-        raise ValueError('Octets divergents')
-    return raw
-
-
 def _read_record(fd, task_id, version_id, actor):
     manifest_raw = _bytes(fd, 'manifest.json')
     identity = sha256(manifest_raw).hexdigest()
@@ -296,20 +289,6 @@ def _read_record(fd, task_id, version_id, actor):
     report = _read_report(fd, publication, identity, task_id, version_id)
     return dict(identity=identity, manifest_raw=manifest_raw, approval=publication, manifest=manifest,
                 pieces=pieces, withdrawn=withdrawn, report=report)
-
-
-def _open_child(parent, name):
-    return os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
-
-
-def _ensure_dir(parent, name):
-    if name not in (_ROOT, _FIXTURE_ROOT):
-        identifier(name)
-    try:
-        return _open_child(parent, name)
-    except FileNotFoundError:
-        os.mkdir(name, 0o700, dir_fd=parent)
-        return _open_child(parent, name)
 
 
 def _open_version(root, task_id, version_id, root_name):
@@ -442,9 +421,9 @@ def _publish(destination, bundle, approval, actor, root_name):
     manifest = _validated(bundle, approval, actor)
     root = _directory(destination)
     try:
-        trials = _ensure_dir(root, root_name)
+        trials = _ensure_dir(root, root_name, (_ROOT, _FIXTURE_ROOT))
         try:
-            task = _ensure_dir(trials, manifest['task_id'])
+            task = _ensure_dir(trials, manifest['task_id'], (_ROOT, _FIXTURE_ROOT))
             try:
                 _activate(task, manifest, bundle, approval, actor)
             finally:
@@ -646,14 +625,6 @@ def report(destination, task_id, version_id, approval):
 def fixture_report(destination, task_id, version_id, approval):
     """Signalement éditorial de fixture, hors du lecteur de production"""
     _report(destination, task_id, version_id, approval, _FIXTURE, _FIXTURE_ROOT)
-
-
-def _is_id(name):
-    try:
-        identifier(name)
-    except ValueError:
-        return False
-    return True
 
 
 def _entry(record):
