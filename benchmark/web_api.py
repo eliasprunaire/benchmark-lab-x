@@ -66,7 +66,7 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
             else:
                 value['dossiers'] = _dossiers(store, session_id)
                 if enabled:
-                    state = store._connection.execute('SELECT expires_at FROM s7_sessions WHERE session_id=?', (session_id,)).fetchone()
+                    state = privacy.session_expiry(store._connection, session_id)
                     value['privacy'] = {'csrf_token': csrf, 'session_expires_at': state[0]}
         return 200, value, None, None
     if enabled and privacy.quarantined(store):
@@ -156,11 +156,11 @@ def dispatch(store, method, path, token, body, source, transport, *, qualificati
             session_id, csrf, _ = p.session(store, cookie or token)
             if method == 'POST' and path != '/preparation/activity' and not joined:
                 privacy.activity(store, session_id, dossier_id, campaign_id=_campaign_of(path))
-            state = store._connection.execute('SELECT expires_at FROM s7_sessions WHERE session_id=?', (session_id,)).fetchone()
+            state = privacy.session_expiry(store._connection, session_id)
             privacy_state: dict = {'csrf_token': csrf, 'session_expires_at': state[0]}
             value['privacy'] = privacy_state
             if dossier_id:
-                row = store._connection.execute('SELECT content_version FROM s7_dossiers WHERE dossier_id=?', (dossier_id,)).fetchone()
+                row = privacy.dossier_content(store._connection, dossier_id)
                 if row:
                     privacy_state.update(dossier_id=dossier_id, content_version=row[0])
                     # Une page de la comparaison la nomme : l'activité y renouvelle aussi ses autres exemples
@@ -186,8 +186,7 @@ def _dossiers(store, session_id):
     from . import privacy
     rows = p.connection_for(store).execute('SELECT dossier_id,current_revision FROM s2_dossiers WHERE session_id=? ORDER BY dossier_id',
                                            (session_id,)).fetchall()
-    expiry = dict(store._connection.execute('SELECT dossier_id,expires_at FROM s7_dossiers WHERE session_id=?',
-                                            (session_id,)).fetchall()) if privacy.available(store._connection) else {}
+    expiry = privacy.dossier_expiries(store._connection, session_id) if privacy.available(store._connection) else {}
     return [{'dossier_id': d, 'revision': r, 'expires_at': expiry.get(d), 'need': store.get_dossier(d, r)['request']}
             for d, r in rows if privacy.visible(store._connection, session_id, d)]
 
