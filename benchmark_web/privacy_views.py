@@ -61,7 +61,7 @@ def table_cas(value):
     else:
         lignes = ''.join(
             '<tr><td><a href="/preparation/dossiers/' + quote(d['dossier_id'], safe='') + '">' + text(d.get('need') or 'Cas d’usage sans description')
-            + '</a></td><td>Version ' + str(d['revision']) + '</td><td data-label="Effacement prévu">'
+            + '</a></td><td>' + ('Version ' + str(d['example_count']) if d.get('example_count') else 'Aucun exemple') + '</td><td data-label="Effacement prévu">'
             + (text(date_echeance(echeance(d))) if echeance(d) else 'inconnu') + alerte_expiration(d) + '</td><td>' + gestion_cas(d, privacy) + '</td></tr>'
             for d in cas)
         corps = ('<div class="table-defile"><table class="table-cas" aria-labelledby="t-cas"><thead><tr><th scope="col">Cas d’usage</th>'

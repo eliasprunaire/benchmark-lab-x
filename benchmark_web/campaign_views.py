@@ -19,7 +19,7 @@ from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
 
 from .fragments import (FIELD_LABELS, VERDICT_BADGES, field_label, access_summary, badge, bilan, bilan_exemple, bouton, btn, cles, date_lisible_utc, disque, etat, form,
-                        harnais, hidden, ic, info_modele, jour_lisible, lien, ligne_modele, listing, montant_lisible, mot, personal_key_form,
+                        harnais, hidden, ic, info_modele, jour_lisible, lien, ligne_modele, listing, montant_lisible, mot, numero_version, personal_key_form,
                         puce, readable_fields, releves, ruban, section, signal, statut, table_cas, tampon, text, tiroir,
                         valeur_mesure)
 
@@ -888,12 +888,12 @@ def contexte_vue(value):
     if kind == 'configurations':
         return contexte_campagne(retour=('Revenir au cas d’usage', dossier_url))
     campaign = value['campaign']
-    revision = campaign.get('task', {}).get('revision')
+    numero = numero_version(value, campaign.get('task', {}).get('revision'))
     if campaign['attempts']:
-        return contexte_campagne(retour=None, revision=revision)
+        return contexte_campagne(retour=None, revision=numero)
     if 'checks' in value:
-        return contexte_campagne(retour=('Modifier la sélection', dossier_url + '/configurations'), revision=revision)
-    return contexte_campagne(retour=('Revenir au cas d’usage', dossier_url), revision=revision)
+        return contexte_campagne(retour=('Modifier la sélection', dossier_url + '/configurations'), revision=numero)
+    return contexte_campagne(retour=('Revenir au cas d’usage', dossier_url), revision=numero)
 
 
 def titre_vue(value):
@@ -1284,7 +1284,7 @@ def render_campaign_launch_requester(value, csrf):
     failures = [check for check in checks if not check['ok']]
     failed = failures[0] if failures else None
     remaining = _cout_ligne(access.get('limit_remaining_usd'), 'inconnu')
-    revision = campaign.get('task', {}).get('revision')
+    numero = numero_version(value, campaign.get('task', {}).get('revision'))
     frozen = campaign['conditions']['frozen_at']
     # Prévision des réponses et réservation de la vérification restent deux montants distincts
     rows = ''
@@ -1294,7 +1294,7 @@ def render_campaign_launch_requester(value, csrf):
         if check['ok']:
             rows += _coche('ok', *{
                 'selection_current': ('Sélection la plus récente', ''),
-                'example_validated': ('Exemple validé', 'version ' + str(revision) if revision else ''),
+                'example_validated': ('Exemple validé', 'version ' + str(numero) if numero else ''),
                 'example_qualified': ('Contrôle de l’exemple', 'réussi'),
                 'configurations_available': (_plural(len(panel), 'modèle choisi'),
                                              str(repetitions) + (' essais chacun' if repetitions > 1 else ' essai chacun')),
@@ -1854,7 +1854,7 @@ INCIDENT_LABELS: dict[str, str] = {
 EMISSION_LABELS: dict[str, str] = {'ESTABLISHED': 'envoyé', 'NOT_SENT': 'pas envoyé', 'UNKNOWN': 'envoi incertain'}
 
 
-def render_campaign_records(campaigns, url):
+def render_campaign_records(campaigns, url, value):
     """Benchmarks enregistrés d'un cas d'usage, cellules et tentatives comprises"""
     content = '<p class="petit">Journal privé des benchmarks de ce cas, sur un exemple inventé. '
     content += 'Il enregistre ce que chaque appel a produit et coûté. Il ne juge pas les réponses : les verdicts figurent dans les vérifications des réponses.</p>'
@@ -1868,7 +1868,8 @@ def render_campaign_records(campaigns, url):
             content += '<p>Reprise de l’essai ' + text(campaign['recovery_of']) + ' après un problème technique. Les réponses et coûts déjà enregistrés sont conservés.</p>'
         if 'evaluations' in campaign:
             content += '<p><a href="' + text(url) + '/campaigns/' + text(campaign['campaign_id']) + '">Voir les résultats de ce benchmark</a></p>'
-        content += '<p>Exemple validé ' + text(task['version']) + ', version ' + text(task['revision']) + '.</p>'
+        numero = numero_version(value, task['revision'])
+        content += '<p>Exemple validé ' + text(task['version']) + (', version ' + str(numero) if numero else '') + '.</p>'
         content += '<h4>Modèles et réglages demandés</h4><ul>' + ''.join(
             '<li>' + text(f'{c["id"]} : {c["model"]}, révision {c["revision"]}, fournisseur {c["provider"]}, '
                           f'accès {c["access"]}, canal {c["channel_id"]}, route {c["route"]}, effort {c["effort"]}.')

@@ -333,7 +333,10 @@ test('public local history renders inert text and exports a complete case after 
     // Au-delà de six fiches : les six premières, un filtre sans accents et un bouton pour tout afficher
     for (let i = 2; i <= 7; i++) {
       // Copies anciennes : benchmark sans date, aucun message ; la fiche n'affiche pas de section vide
-      fixture(1, 'Cas numéro ' + i, {dossier_id: 'd' + i, messages: [], campaigns: [{...fresh().campaigns[0], frozen_at: undefined}]});
+      // Cas numéro 2 : une question avant l'exemple ; seule la révision à exemple compte, au rang 1
+      const question = {number: 1, instruction: '', deliverables: [], criteria: [], pieces: [], qualification: ''};
+      fixture(1, 'Cas numéro ' + i, {dossier_id: 'd' + i, messages: [], campaigns: [{...fresh().campaigns[0], frozen_at: undefined}],
+        ...(i === 2 ? {revisions: [question, {...fresh().revisions[0], number: 2}]} : {})});
       manifest.dossier_id = 'd' + i;
       await page.evaluate(id => historyStore.archive(id, 1), 'd' + i);
     }
@@ -349,6 +352,7 @@ test('public local history renders inert text and exports a complete case after 
     await page.getByRole('button', {name: 'Afficher toutes les fiches (7)'}).click();
     assert.equal(await visibles(), 7);
     const ancienne = page.locator('[data-privacy-list] > details', {hasText: 'Cas numéro 2'});
+    assert.match(await ancienne.locator(':scope > summary .hist-meta').textContent(), /^Version 1 · 1 benchmark/);
     assert.deepEqual((await ancienne.locator('.hist-corps > details > summary').allTextContents()).map(text => text.trim()),
       ['Version 1 de l’exempleRéussi', 'Benchmark 1']);
     // Toute suppression se confirme sur place : Annuler ne touche à rien et rend le focus au bouton
@@ -2020,7 +2024,7 @@ test('an existing copied example stays readable without JavaScript, by keyboard 
       // Copie sans exemple préparé : son état et la consultation sans clé sont dits au premier écran
       assert.match(copied, /Copie d’un exemple publié/);
       assert.equal(/Épreuve source|Copie d’épreuve/.test(copied), false);
-      assert.match(copied, /Version 1/);
+      assert.equal(await page.locator('.puce', {hasText: /^Version/}).count(), 0, 'copie sans exemple, sans puce de version');
       assert.equal(copied.includes('Exemple inventé'), false);
       assert.match(copied, /Votre copie est enregistrée\./);
       assert.match(copied, /sans clé ni appel aux modèles/);
@@ -2300,7 +2304,7 @@ test('privacy forms preserve purpose tokens and expired states', async () => {
       [['col', 'Cas d’usage'], ['col', 'Version'], ['col', 'Effacement prévu'], ['col', 'Actions']]);
     assert.deepEqual(await page.locator('.table-cas tbody td:first-child a').evaluateAll(links => links.map(link => [link.getAttribute('href'), link.textContent])),
       [['/preparation/dossiers/d1', 'Trier des notes de réunion'], ['/preparation/dossiers/d2', 'Rédiger des réponses aux clients']]);
-    assert.deepEqual(await page.locator('.table-cas tbody td:nth-child(2)').allTextContents(), ['Version 2', 'Version 1']);
+    assert.deepEqual(await page.locator('.table-cas tbody td:nth-child(2)').allTextContents(), ['Version 1', 'Aucun exemple']);
     assert.deepEqual(await page.locator('.table-cas tbody td:nth-child(3)').allTextContents(), ['inconnu', 'inconnu']);
     // Chaque ligne garde sa copie (privacy.js) et mène à la confirmation de suppression, avec son adresse de retour
     assert.deepEqual(await page.locator('.table-cas [data-privacy-controls]').evaluateAll(cards => cards.map(card => card.dataset.dossierId)), ['d1', 'd2']);
@@ -2343,7 +2347,7 @@ test('privacy forms preserve purpose tokens and expired states', async () => {
       // Version prête à valider : la carte invite seulement à relire, sans aucune phrase de partage
       const carte = await page.textContent('main');
       assert.equal(/partage/i.test(carte), false, name);
-      if (name === 'current') assert.match(carte, /Version 3 prête à valider\s*Relisez l’exemple, puis validez-le\./);
+      if (name === 'current') assert.match(carte, /Version 2 prête à valider\s*Relisez l’exemple, puis validez-le\./);
       // Accès fermé seulement si la session a expiré : le lien vers les copies porte le nom de sa page
       assert.deepEqual((await page.locator('.etat a.lien[href="/preparation/data"]').allTextContents()).map(t => t.trim()),
         name === 'expired' ? ['Mes données'] : [], name);

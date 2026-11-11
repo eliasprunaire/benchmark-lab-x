@@ -1105,7 +1105,8 @@ class ParcoursComplet(unittest.TestCase):
         # Avant préparation, la page dit son état de copie et non un exemple déjà préparé
         self.assertIn('Copie d’un exemple publié', page.visible)
         self.assertNotRegex(page.visible, 'Épreuve source|Copie d’épreuve')
-        self.assertIn('Version 1', page.visible)
+        # Copie sans exemple préparé : aucune puce de version, le numéro ne vaut que pour un exemple
+        self.assertEqual([], [n['text'] for n in page.nodes if n['tag'] == 'span' and 'puce' in n['attrs'].get('class', '').split() and n['text'].startswith('Version')])
         self.assertNotIn('Exemple inventé', page.visible)
         self.assertIn('Votre copie est enregistrée.', page.visible)
         self.assertIn('sans clé ni appel aux modèles', page.visible)
@@ -1133,7 +1134,7 @@ class ParcoursComplet(unittest.TestCase):
         # Le rechargement garde la source, la qualification publiée et les pièces copiées
         self.assertIn('Exemple source', reloaded.visible)
         self.assertIn('Copie d’un exemple publié', reloaded.visible)
-        self.assertIn('Version 1', reloaded.visible)
+        self.assertEqual([], [n['text'] for n in reloaded.nodes if n['tag'] == 'span' and 'puce' in n['attrs'].get('class', '').split() and n['text'].startswith('Version')])
         self.assertIn('Qualification réussie', reloaded.visible)
         self.assertTrue(any('Relève les opérations inventées' in n['text'] for n in reloaded.nodes
                             if n['tag'] == 'pre' and 'example-text' in n['attrs'].get('class', '')))
@@ -2374,6 +2375,8 @@ class ParcoursComplet(unittest.TestCase):
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'clarification', 'Envoyer ma réponse')
+        # Révision 2 sans exemple : aucune puce de version
+        self.assertEqual([], [n['text'] for n in page.nodes if n['tag'] == 'span' and 'puce' in n['attrs'].get('class', '').split() and n['text'].startswith('Version')])
         self.assertIn('Quel format', page.visible)
         # Sans exemple, rien à valider ni qualifier : ces blocs n'apparaissent pas encore
         self.assertFalse(any(n['attrs'].get('id') in ('validation', 'comparaison') for n in page.nodes))
@@ -2383,6 +2386,9 @@ class ParcoursComplet(unittest.TestCase):
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'exemple', 'Oui, c’est le cas d’usage à tester')
+        # Premier exemple, révision technique 3 : « Version 1 »
+        self.assertIn('Version 1 prête à valider', page.visible)
+        self.assertEqual(['Version 1'], [n['text'] for n in page.nodes if n['tag'] == 'span' and 'puce' in n['attrs'].get('class', '').split() and n['text'].startswith('Version')])
         self.assertIn('Relever toutes les actions', page.visible)
         self.assertNotIn('Evaly ne peut pas comparer ce cas d’usage', page.visible)
         # B5 : la phrase de service sur le contrôle payé est retirée du bloc de décision
@@ -2407,10 +2413,16 @@ class ParcoursComplet(unittest.TestCase):
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'exemple corrigé', 'Oui, c’est le cas d’usage à tester')
+        self.assertIn('Version 2 prête à valider', page.visible)
+        self.assertEqual(['Version 2'], [n['text'] for n in page.nodes if n['tag'] == 'span' and 'puce' in n['attrs'].get('class', '').split() and n['text'].startswith('Version')])
+        self.assertEqual(dossier + '/revisions/3', page.link('Version précédente'))
         self.assertIn('Tableau des actions avec responsable', page.visible)
         previous, _, _ = self.request(page.link('Version précédente'))
         self.assertNotIn('Tableau des actions avec responsable', previous.visible)
         self.examine(previous, dossier + '/revisions/3', 'révision précédente', 'Ouvrir la version actuelle')
+        # Premier exemple : aucun lien vers la révision 2, qui n'est qu'une question
+        self.assertEqual(['Version 1'], [n['text'] for n in previous.nodes if n['tag'] == 'span' and 'puce' in n['attrs'].get('class', '').split() and n['text'].startswith('Version')])
+        self.assertFalse(any(n['tag'] == 'a' and 'Version précédente' in n['text'] for n in previous.nodes))
         page, _, _ = self.request(previous.link('Ouvrir la version actuelle'))
         page = self.submit(page, '/validation', {})
         self.examine(page, dossier, 'qualification en attente', None)
@@ -2420,6 +2432,11 @@ class ParcoursComplet(unittest.TestCase):
         prep.execute_qualification(self.data, start['qualification_operation'], self.bound[1])
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'exemple qualifié', 'Choisir les modèles')
+        # Historique : les exemples seuls, numérotés par rang, chacun lié à sa révision technique
+        self.assertIn('Versions : 1 · 2.', page.depliant('Historique des versions'))
+        self.assertEqual([('1', dossier + '/revisions/3'), ('2', dossier + '/revisions/4')],
+                         [(n['text'], n['attrs']['href']) for n in page.nodes if n['tag'] == 'a' and n['details']
+                          and n['text'] in ('1', '2', '3', '4')])
         self.assertIn('Exemple contrôlé, prêt à comparer', page.visible)
         self.assertEqual('Votre cas d’usage', next(n['text'] for n in page.nodes if n['tag'] == 'h1'))
         state = next(n for n in page.nodes if 'etat' in n['attrs'].get('class', '').split())
@@ -2458,6 +2475,9 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(headers['Location'])
         models = next(n for n in page.nodes if n['tag'] == 'table')
         self.assertEqual(2, models['text'].count('non accepté par ce modèle'))
+        # Lancement sur la révision 4 : la puce et le contrôle disent le rang de l'exemple
+        self.assertEqual(['Version 2'], [n['text'] for n in page.nodes if n['tag'] == 'span' and 'puce' in n['attrs'].get('class', '').split() and n['text'].startswith('Version')])
+        self.assertRegex(page.visible, r'Exemple validé\s+version 2\b')
         older = self.submit(self.request(configurations)[0], '/configurations', {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
             'tier': 'low', 'effort:mistralai/mistral-small-2603': 'none'})
@@ -2707,6 +2727,8 @@ class ParcoursComplet(unittest.TestCase):
         data, _, _ = self.request('/preparation/data')
         ligne = next(n for n in data.nodes if n['tag'] == 'a' and n['attrs'].get('href') == dossier)
         self.assertIn('Transformer des notes', ligne['text'])
+        # Deux exemples, révisions 3 et 4 : la table dit « Version 2 »
+        self.assertIn('Version 2', next(n['text'] for n in data.nodes if n['tag'] == 'tr' and 'Transformer des notes' in n['text']))
         self.assertTrue(any(n['tag'] == 'table' for n in data.nodes))
         self.assertIn('Vos cas d’usage', data.visible)
         page, _, _ = self.request(configurations)
@@ -3098,7 +3120,8 @@ class ParcoursComplet(unittest.TestCase):
             prep.execute_qualification(self.data, self.starts.get_nowait()['qualification_operation'], self.bound[1])
             self.rejouer_relances(dossier_id)
             page, _, raw = self.request(dossier)
-            versions.append(re.search(r'[Vv]ersion (\d+)', page.visible).group(1))
+            # Révision technique de l'exemple contrôlé : le numéro affiché est son rang parmi les exemples
+            versions.append(page.form('/messages')['fields']['revision'])
             return page, raw
 
         def corriger(ajout):
@@ -3158,7 +3181,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Relever chaque action avec son responsable : attendu satisfait, décidé satisfait', verification)
         self.assertIn('Relever chaque action avec son responsable : attendu non satisfait, décidé non satisfait', verification)
         self.assertIn('Ajouter une action absente des notes : attendu faute absente, décidé faute absente', verification)
-        self.assertIn('Contrôlé sur la version ' + versions[-1] + ' de l’exemple', verification)
+        rang = next(iter([n['text'] for n in page.nodes if n['tag'] == 'span' and 'puce' in n['attrs'].get('class', '').split() and n['text'].startswith('Version')]))
+        self.assertIn('Contrôlé sur la ' + rang.lower() + ' de l’exemple', verification)
         # 7. Ce qu'un témoin prouve, et ce qu'il ne prouve pas
         self.assertIn('Ce résultat dit ce que le contrôle a décidé sur ce témoin avec cette référence ; '
                       'il ne prouve pas que l’attendu est juste.', verification)

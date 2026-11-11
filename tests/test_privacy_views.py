@@ -13,7 +13,7 @@ def example_view():
                         'pieces': [{'id': 'p1', 'name': 'reunion.txt'}], 'human_work': 'Relire', 'acceptable_ambiguities': [], 'limits': []},
             'example_contents': {'p1': 'Une réunion entièrement inventée'}, 'changes': [],
             'criteria': {'eliminatory': [], 'obligations': ['Conserver les décisions'], 'quality': []},
-            'criteria_rule': 'Chaque obligation compte', 'package_sha256': 'a' * 64,
+            'criteria_rule': 'Chaque obligation compte', 'package_sha256': 'a' * 64, 'example_revisions': [1],
             'privacy': {'csrf_token': 'privacy-token', 'session_expires_at': '2099-01-01T00:00:00Z',
                         'dossier_id': 'd1', 'content_version': 1}}
 
@@ -144,7 +144,7 @@ def browser_views():
         form=dict(dossier_id='d', action_id='a', request='court', useful='', context=''))
     examples['message-error'] = dict(error='Ce texte est trop long.', error_field='message',
         form=dict(action_id='a', revision=1, kind='clarify', message='long'))
-    base = dict(dossier_id='d1', revision=2, current_revision=3, stage='preview', package=None,
+    base = dict(dossier_id='d1', revision=2, current_revision=3, stage='preview', package=None, example_revisions=[],
         validation=None, qualified=False, explanation='Exemple attendu', availability=available,
         payload=dict(request='Besoin entièrement fictif', clarifications=[], validated_assumptions=[],
                      reformulation='', fictional_parameters={}))
@@ -180,6 +180,7 @@ def browser_views():
             # contrôle terminé : l'exemple contrôlé s'affiche (B50)
             sample = example_view()
             value.update({key: sample[key] for key in ('package', 'example_contents', 'criteria', 'criteria_rule', 'package_sha256', 'changes', 'piece_changes') if key in sample})
+            value['example_revisions'] = [1]
         examples[f'progress-{stage}-{qualification.get("status", "none")}-{prior}'] = value
     # Question de l'assistant à laquelle le demandeur peut répondre : parcours clavier de la préparation
     examples['question'] = dict(examples['progress-clarification-none-False'], availability=available)
@@ -197,8 +198,8 @@ def browser_views():
     metadata.update(content_version=4)
     # Mes données avec ses contrôles de confidentialité : chaque ligne de la table porte ses boutons de gestion
     liste = {key: metadata[key] for key in ('csrf_token', 'session_expires_at')}
-    examples['privacy-listing'] = dict(kind='privacy_data', dossiers=[dict(dossier_id='d1', need='Trier des notes de réunion', revision=2),
-                                                                      dict(dossier_id='d2', need='Rédiger des réponses aux clients', revision=1)],
+    examples['privacy-listing'] = dict(kind='privacy_data', dossiers=[dict(dossier_id='d1', need='Trier des notes de réunion', revision=2, example_count=1),
+                                                                      dict(dossier_id='d2', need='Rédiger des réponses aux clients', revision=1, example_count=0)],
                                        privacy=liste)
     # Confirmation de « Supprimer ce cas d'usage » : une page du serveur, utilisable sans JavaScript
     examples['case-delete'] = dict(kind='case_delete', dossier=dict(dossier_id='d1', need='Trier des notes de réunion'),
@@ -226,7 +227,7 @@ def browser_views():
     # Page d'un cas : version courante, accès expiré ou version antérieure ; aucune ne propose de contribution
     for name, expired, prior in (('current', False, False), ('expired', True, False), ('prior', False, True)):
         value = example_view()
-        value.update(revision=3, current_revision=4 if prior else 3)
+        value.update(revision=3, current_revision=4 if prior else 3, example_revisions=[2, 3])
         if expired:
             value['privacy']['session_expires_at'] = '2000-01-01T00:00:00Z'
         examples['case-' + name] = value
@@ -241,7 +242,7 @@ def browser_views():
         examples['bootstrap-' + name] = dict(kind='session_bootstrap', return_path=path)
     # #465 : copie existante d’un exemple publié, sans package ni qualification importée
     copy = deepcopy(example_view())
-    copy.update(stage='draft', package=None, validation=None, qualified=False, operations=0,
+    copy.update(stage='draft', package=None, validation=None, qualified=False, operations=0, example_revisions=[],
                 availability=dict(assistant_configured=True, admission_open=False, can_submit=False, reason='access'),
                 explanation='Copie d’une épreuve publiée : décrivez votre besoin.')
     copy['payload'] = dict(copy['payload'], request='')
