@@ -989,9 +989,6 @@ RAISONS_ENVOI = {
     'interrupted': ('Nous ne savons pas si le modèle a répondu. Rien n’est relancé ; cette opération sera close automatiquement.', 'alerte'),
     'restore': ('Service momentanément indisponible, réessayez plus tard.', 'alerte'),
     'unresolved': ('Envois fermés : le résultat ou le coût d’un appel précédent n’est pas encore connu.', 'alerte')}
-# Ancien ton du produit : (ton, mot de statut) ; le mot double la couleur
-MOTS_TON = {'action': ('att', 'À faire'), 'wait': ('att', 'En cours'), 'warn': ('vig', 'À vérifier'), 'err': ('ko', 'À revoir'),
-            'done': ('ok', 'Terminé'), 'unk': ('inc', 'Inconnu')}
 CONTROLE = {'QUALIFIED': 'Réussi', 'BLOCKED': 'Bloqué', 'PENDING': 'En attente'}
 # Contrôle de l'exemple : état connu de l'exemple avant et après validation
 TEXTE_CONTROLE_ATTENTE = ('Après votre validation, l’assistant contrôle que la consigne, les pièces et les critères permettent de juger '
@@ -1214,9 +1211,9 @@ def liste_benchmarks(value, url, current_campaigns):
     """Benchmarks lancés avec cet exemple, le plus récent d'abord, et le journal détaillé en tiroir"""
     items = ''
     for number, campaign in reversed(list(enumerate(current_campaigns, 1))):
-        ton, heading, _, target, _ = campaign_status(campaign, url)
+        ton, _, heading, _, target, _ = campaign_status(campaign, url)
         items += ('<li><a href="' + text(target) + '">Benchmark ' + str(number) + ' du '
-                  + text(date_lisible_utc(campaign['conditions']['frozen_at'])) + '</a>' + mot(heading, MOTS_TON[ton][0]) + '</li>')
+                  + text(date_lisible_utc(campaign['conditions']['frozen_at'])) + '</a>' + mot(heading, ton) + '</li>')
     return ('<section id="comparaison" aria-labelledby="t-comps"><div class="zone-titre"><h2 id="t-comps">Benchmarks de cet exemple</h2></div>'
             '<ul class="gb-hist carte">' + items + '</ul></section>')
 
@@ -1313,8 +1310,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         action = btn('#corriger', 'Corriger l’exemple', icone='stylo')
     # Un benchmark existe : l'encadré dit son état et mène à lui, jamais à un nouveau choix de modèles
     if value['validation'] and current_campaigns and not snapshot and not prior_revision and not operator_blocked:
-        ancien, titre, texte, cible, libelle = campaign_status(current_campaigns[-1], url)
-        ton, mot_ = MOTS_TON[ancien]
+        ton, mot_, titre, texte, cible, libelle = campaign_status(current_campaigns[-1], url)
         action = btn(cible, libelle)
     elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
         action = btn(url + '/configurations', 'Choisir les modèles')
@@ -1328,7 +1324,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         ton, mot_, titre, texte = ('ok', 'Déjà testé', 'Exemple déjà testé',
                                    'Vous consultez l’exemple tel qu’il a été testé. Ses résultats restent disponibles.')
         notices += notice_ligne('Lecture seule. Si vous modifiez l’exemple, vos changements formeront une nouvelle version, à valider de nouveau.', 'cadenas')
-        resultats = [campaign_status(c, url)[3] for c in current_campaigns if c['attempts']]
+        resultats = [campaign_status(c, url)[4] for c in current_campaigns if c['attempts']]
         action = btn(url, 'Nouveau benchmark') + (lien(resultats[-1], 'Revenir aux résultats', 'retour') if resultats else '')
     elif prior_revision:
         ton, mot_, titre = 'vig', 'Lecture seule', 'Ancienne version'
@@ -1606,7 +1602,7 @@ def render(value, csrf, path='/preparation', *, error=False, status=None):
         phrase = ('Cette sortie construite déclare son producteur, sa date, sa source et son empreinte. '
                   if declaree else
                   'Cette sortie construite ne déclare pas de producteur, de date ni de source. ')
-        content = state_block('unk', 'Sortie construite', 'Réponse fournie pour le contrôle',
+        content = state_block('inc', 'Sortie construite', 'Réponse fournie pour le contrôle',
             '<p>' + phrase + 'Elle n’est pas un reçu candidat. Ce contrôle ne qualifie pas le juge.</p>')
         rows = '<dt>Nom</dt><dd>' + text(value['name']) + '</dd>'
         if declaree:

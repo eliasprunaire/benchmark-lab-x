@@ -1117,21 +1117,21 @@ def campaign_followup(campaign):
 
 
 def campaign_status(campaign, dossier_url):
-    """Ton, titre, phrase, cible et action d'un benchmark : même lecture sur la page du cas et le suivi"""
+    """Ton, mot, titre, phrase, cible et action d'un benchmark : même lecture sur la page du cas et le suivi"""
     base = dossier_url + '/campaigns/' + campaign['campaign_id']
     if not campaign['attempts']:
-        return ('action', 'Benchmark prêt à lancer', 'Vérifiez les modèles et les coûts estimés, puis lancez le benchmark.',
+        return ('att', 'À faire', 'Benchmark prêt à lancer', 'Vérifiez les modèles et les coûts estimés, puis lancez le benchmark.',
                 base + '/conditions', 'Vérifier puis lancer le benchmark')
     if (campaign.get('judgment') or {}).get('can_start'):
         # Le bouton qui lance la vérification payante est sur le suivi : le cas y mène, jamais vers des résultats vides
-        return ('action', 'Vérification des réponses à lancer', 'Les réponses sont arrivées. Leur vérification, payée avec votre clé '
+        return ('att', 'À faire', 'Vérification des réponses à lancer', 'Les réponses sont arrivées. Leur vérification, payée avec votre clé '
                 'OpenRouter, se lance depuis le suivi du benchmark.', base + '/conditions', 'Lancer la vérification des réponses')
     active, ready, message = campaign_followup(campaign)
     if ready:
-        return 'done', 'Benchmark terminé', message, base, 'Voir les résultats'
+        return 'ok', 'Terminé', 'Benchmark terminé', message, base, 'Voir les résultats'
     if active:
-        return 'wait', 'Benchmark en cours', message, base + '/conditions', 'Suivre le benchmark'
-    return 'warn', 'Le benchmark demande votre attention', message, base + '/conditions', 'Voir ce qui s’est passé'
+        return 'att', 'En cours', 'Benchmark en cours', message, base + '/conditions', 'Suivre le benchmark'
+    return 'vig', 'À vérifier', 'Le benchmark demande votre attention', message, base + '/conditions', 'Voir ce qui s’est passé'
 
 
 def render_campaign_followup(value, csrf):
