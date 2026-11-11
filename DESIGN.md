@@ -123,7 +123,7 @@ pied de page : marque, Parcours, Informations légales, grand EVALY, bande basse
 - Le menu est une liste. Sous 860 px, il devient un dépliant « Menu ». `aria-current="page"` marque seulement l'entrée qui est la page affichée, jamais une page descendante ni une page d'erreur.
 - Le pied de page a trois colonnes (deux sous 860 px, une sous 480 px) : la marque et sa tagline, sans note, puis « Parcours » et « Informations légales ». Viennent ensuite le mot EVALY en grand, puis une bande en trois zones : « Par Cybrel · né au Lab-X », la version et la source, le lien « Code source ».
 - Les cinq stations du cas (Besoin, Exemple, Validation, Modèles, Résultats) forment la piste. Les stations franchies sont des liens. Sous 700 px, seul le nom de la station courante reste visible.
-- Deux colonnes (`.colonnes`) : 360 px à droite pour l'état, la décision et le coût. Sous 1000 px, une seule colonne. `.cote-avant` remonte la colonne de droite avant le détail.
+- Deux colonnes (`.colonnes`) : 360 px à droite pour l'état et la décision. Le coût observé de la préparation est une information facultative : la page du cas ne l'affiche pas, la page Résultats le donne dans les dépenses du benchmark. Sous 1000 px, une seule colonne. `.cote-avant` remonte la colonne de droite avant le détail.
 - Chaque page se lit à 390 px sans défilement horizontal de la page. Seul un tableau défile dans son propre conteneur.
 
 ## Formes

@@ -16,7 +16,7 @@ from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MO
                              render_comparison, render_configurations, render_campaign_models, campaign_followup, contexte_vue, titre_vue)
 from .fragments import (ETAPES, bouton, btn, bulle_assistant, bulle_vous, cadre, champ, cles, consigne,
                         critere_ligne, criteres_actifs, date_lisible_utc, disque, erreur_champ, etat, feuille, fil, form, ic, icon, jour_lisible,
-                        lien, listing, montant_lisible, mot, notice_ligne, piste, puce, releves, ruban, section,
+                        lien, listing, montant_lisible, mot, notice_ligne, piste, puce, ruban, section,
                         segments_liens, state_block, tampon, tete, text, tiroir)
 from .projection import (projection_body)
 from .results_views import (contexte_apercu, contexte_resultats, render_preview)
@@ -997,33 +997,6 @@ TEXTE_CONTROLE_REUSSI = ('L’assistant a contrôlé cette version : la consigne
                          'les réponses des modèles.')
 
 
-def cout_preparation(value):
-    """Coût de la préparation en relevé compact : estimé, observé ou corrigé, jamais deviné"""
-    lignes, notes = [], ''
-    if 'indicative_cost' in value:
-        estimate = value['indicative_cost']
-        amount = estimate.get('token_subtotal_usd') if estimate else None
-        lignes.append(('Coût estimé de la préparation', None if amount is None else montant_lisible(amount), 'USD',
-                       'non estimable' if amount is None else 'estimation, pas une facture'))
-        notes = '<p class="petit">Calcul de l’estimation : tokens utilisés × tarifs du modèle relevés avant l’appel.</p>'
-    if value.get('observed_cost'):
-        cost = value['observed_cost']
-        inconnu = cost['status'] == 'UNKNOWN'
-        lignes.append(('Coût observé de la préparation', None if inconnu else montant_lisible(cost['amount']), '' if inconnu else cost['currency'],
-                       'source : ' + str(cost['source'])))
-    elif value.get('operations') == 0:
-        # Zéro opération : aucune dépense à rapprocher, pas même une dépense inconnue
-        lignes.append(('Coût de la préparation', 'aucun', '', 'aucun appel modèle effectué'))
-    else:
-        lignes.append(('Coût de la préparation', None, '', 'aucun justificatif reçu'))
-    if value.get('cost_reconciliation'):
-        proof, cost = value['cost_reconciliation'], value['effective_cost']
-        lignes.append(('Coût corrigé après vérification', montant_lisible(cost['amount']), cost['currency'],
-                       'source : ' + str(proof['source']) + ', confirmée par ' + str(proof['actor']) + ' le ' + str(proof['observed_at'])))
-        notes += '<p class="petit">Le justificatif d’origine reste inchangé.</p>'
-    return releves(lignes, compact=True) + notes
-
-
 def formulaire_reponse(csrf, url, revision, *, desactive, aide, decrit='', libelle='Votre réponse à l’assistant', envoi='Envoyer ma réponse',
                        minlength=None):
     """Champ de réponse de la conversation : un champ, un bouton, la raison du refus liée au champ désactivé"""
@@ -1370,7 +1343,6 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         carte = '<div id="availability">' + etat(ton, mot_, titre, texte, marque_html=marque, corps_html=suivi) + '</div>'
     else:
         carte = etat(ton, mot_, titre, texte, action) if titre else ''
-    cout = cout_preparation(value)
     nom = request if len(request) <= 60 else request[:59].rstrip() + '…'
     contexte = (puce(nom, plein=True) if request else '') + puce('Version ' + str(revision)) + ruban('Copie d’un exemple publié' if source and package is None else 'Exemple inventé')
     avant = ' cote-avant' if package and value['validation'] or (value['validation'] and not request) else ''
@@ -1409,10 +1381,10 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
                             + '<p class="effet">' + ic('cle') + '<span>La préparation est payée avec votre clé OpenRouter. '
                             + ('La' if can_submit else '<a href="/preparation/access">Ajoutez votre clé</a> : la') + ' copie reste consultable sans elle.</span></p>',
                             classe='decision')
-            droite = decision + cout
+            droite = decision
             haut = '<div class="ge-pile">' + carte + '</div>'
         else:
-            droite = carte + cout + liens
+            droite = carte + liens
             haut = ''
         corps = (haut + '<div class="colonnes"><div class="entretien">' + gauche + '</div><aside class="cote gb-cote' + avant + '" aria-label="Où en est la préparation">'
                  + droite + '</aside>' + ('<div class="pile pile-bas">' + bas + '</div>' if bas else '') + '</div>')
@@ -1435,14 +1407,14 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         if revision > 1:
             haut = '<div class="gb-cote">' + etat('att', 'À valider', 'Version ' + str(revision) + ' prête à valider',
                                                 'Relisez l’exemple, puis validez-le.') + '</div>'
-        droite = decision + cout + liens
+        droite = decision + liens
         avant = ''
     elif prior_revision and not value['validation'] and stage == 'preview':
         droite = ('<div class="carte gb-ancienne"><span class="etiq">Étape 3 sur 5</span><h2>Valider l’exemple</h2>'
-                  '<p>Cet exemple n’est pas encore validé. Ouvrez la version actuelle pour le valider.</p></div>' + cout + liens)
+                  '<p>Cet exemple n’est pas encore validé. Ouvrez la version actuelle pour le valider.</p></div>' + liens)
         haut = '<div class="gb-cote">' + carte + '</div>'
     else:
-        droite = carte + cout + liens
+        droite = carte + liens
         avant = ' cote-avant'
     if value.get('privacy') and not active_session(value['privacy']) and package:
         haut = '<div class="gb-cote">' + etat('vig', 'Accès fermé', 'Votre accès à ce cas est fermé',

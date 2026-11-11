@@ -94,8 +94,9 @@ class CostReconciliationTests(unittest.TestCase):
         self.assertNotIn('fixture-account', storage._strict_json(view))
         self.assertNotIn('preparation_budget', view)
         rendered = views.render(view, self.csrf).decode()
-        self.assertIn('Coût corrigé après vérification', rendered)
-        self.assertIn('Coût observé de la préparation</dt><dd><span class="val">inconnu</span>', rendered)
+        # La page du cas n'affiche plus le coût de la préparation ; la vue garde le coût observé et le coût corrigé, vérifiés plus haut
+        self.assertNotIn('Coût corrigé après vérification', rendered)
+        self.assertNotIn('Coût observé de la préparation', rendered)
         self.assertEqual(self.authority, prep.admission(self.store, transport=self.transport))
         self.assertEqual((self.operation_id, False), prep.submit(self.store, self.session, 'd', self.body, 'fixture-source', self.transport))
         message = dict(action_id='separate-action', revision=view['revision'], kind='clarify', message='Continuer le dossier fictif')

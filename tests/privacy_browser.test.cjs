@@ -1977,14 +1977,14 @@ test('an existing copied example stays readable without JavaScript, by keyboard 
       assert.match(copied, /sans clé ni appel aux modèles/);
       assert.match(copied, /servira à préparer votre exemple/);
       assert.equal(copied.includes('Ajoutez votre clé OpenRouter pour préparer un exemple.'), false);
-      assert.match(copied, /aucun appel modèle effectué/);
+      assert.equal(copied.includes('aucun appel modèle effectué'), false);
       await page.reload();
       const reloadedCopy = await page.textContent('main');
       assert.match(reloadedCopy, /Copie d’un exemple publié/);
       assert.match(reloadedCopy, /Exemple source/);
       assert.match(reloadedCopy, /Pièce source <script>alert\(1\)<\/script>/);
       assert.match(reloadedCopy, /Qualification absente/);
-      assert.match(reloadedCopy, /aucun appel modèle effectué/);
+      assert.equal(reloadedCopy.includes('aucun appel modèle effectué'), false);
       assert.equal(await page.locator('script[src*="privacy.js"]').count(), 1);
       assert.equal(await page.locator('main script:not([src])').count(), 1);
       assert.equal(await page.locator('main img, main script[src*="alert"]').count(), 0);
@@ -2145,7 +2145,7 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       layout = await zones();
       assert.equal(layout.overflow, 0, `${width} préparation sans débordement`);
       assert.ok(layout.reply && layout.state, `${width} réponse dans la conversation, état en synthèse`);
-      assert.match(layout.side, /Coût de la préparation/, `${width} coût en synthèse`);
+      assert.equal(/Coût de la préparation/.test(layout.side), false, `${width} aucun coût en synthèse`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de préparation`);
       await page.goto(origin + '/render/case-current');
       layout = await zones();

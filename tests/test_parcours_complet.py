@@ -1118,8 +1118,8 @@ class ParcoursComplet(unittest.TestCase):
         need = page.form('/messages')
         self.assertEqual(['message'], [n['attrs'].get('name') for n in need['nodes'] if n['tag'] == 'textarea'])
         self.assertIn('Ajoutez votre clé', page.visible)
-        # Zéro opération : la page nomme l’absence d’appel au lieu de suggérer une dépense non rapprochée
-        self.assertIn('aucun appel modèle effectué', page.visible)
+        # Zéro opération : la page du cas n'affiche aucun bloc de coût, ni absence d'appel ni dépense non rapprochée
+        self.assertNotIn('aucun appel modèle effectué', page.visible)
         self.assertNotIn('justificatif', page.visible)
         self.assertNotIn('Coût observé', page.visible)
         # La copie reste refusée sans clé : aucun appel ni dossier partiel
@@ -1128,7 +1128,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual([], self.calls)
         # Rechargement sans clé et sans besoin envoyé : même état, aucun appel fictif déclenché
         reloaded, _, _ = self.request(dossier)
-        self.assertIn('aucun appel modèle effectué', reloaded.visible)
+        self.assertNotIn('aucun appel modèle effectué', reloaded.visible)
         self.assertNotIn('justificatif', reloaded.visible)
         # Le rechargement garde la source, la qualification publiée et les pièces copiées
         self.assertIn('Exemple source', reloaded.visible)
@@ -1381,8 +1381,9 @@ class ParcoursComplet(unittest.TestCase):
         # Un dossier préparé garde sa marque d’exemple inventé, pas celle d’une simple copie
         self.assertIn('Exemple inventé', page.visible)
         self.assertNotIn('Copie d’un exemple publié', page.visible)
-        # Le coût observé d’une opération reçue reste affiché tel quel, jamais remplacé par un zéro
-        self.assertRegex(page.visible, r'Coût observé de la préparation\s*0,10\s*USD')
+        # Le coût observé de la préparation quitte la page du cas ; la page Résultats le garde dans les dépenses du benchmark
+        self.assertNotIn('Coût observé', page.visible)
+        self.assertRegex(resultats.depliant('Coût complet'), r'Préparation de l’exemple : 0,30 USD.*factice : 0,10 USD')
         self.assertNotIn('Aucun appel modèle effectué pour ce dossier.', page.visible)
         self.assertTrue(any('Relève les opérations inventées' in n['text'] for n in page.nodes
                             if n['tag'] == 'pre' and 'example-text' in n['attrs'].get('class', '')))
@@ -1444,12 +1445,11 @@ class ParcoursComplet(unittest.TestCase):
             return value
         self.assistants['transport'] = SessionAssistant(cout_inconnu, {'model': 'factice'})
         dossier, page, _ = self.copie_preparee()
-        self.assertRegex(page.visible, r'Coût observé de la préparation\s*inconnu\s*source : Reçu simulé sans coût')
-        self.assertNotRegex(page.visible, r'Coût observé de la préparation\s*0')
+        # La page du cas n'affiche plus le coût de la préparation ; le magasin garde l'inconnue, vérifiée plus bas
+        self.assertNotIn('Coût observé', page.visible)
         self.assertNotIn('Aucun appel modèle effectué pour ce dossier.', page.visible)
         reloaded, _, _ = self.request(dossier)
-        self.assertRegex(reloaded.visible, r'Coût observé de la préparation\s*inconnu')
-        self.assertNotRegex(reloaded.visible, r'Coût observé de la préparation\s*0')
+        self.assertNotIn('Coût observé', reloaded.visible)
         with closing(storage.Store(self.data)) as store:
             operations = store.inspect_operations()
             self.assertEqual(['UNKNOWN'], [operation['observed_cost']['status'] for operation in operations])

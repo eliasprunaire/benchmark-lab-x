@@ -929,10 +929,9 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('0.009', operation['observed_cost']['amount'])
         self.assertEqual('0.009', self.store.inspect_budget('fixture')['spent'])
         page = views.render(view, self.csrf).decode()
-        self.assertIn('Coût estimé de la préparation', page)
-        self.assertIn('estimation, pas une facture', page)
-        self.assertIn('0,02000<small>USD</small>', page)
-        self.assertIn('0,009<small>USD</small>', page)
+        # La vue garde l'estimation et le coût observé ; la page du cas ne les affiche plus
+        self.assertNotIn('Coût estimé de la préparation', page)
+        self.assertNotIn('Coût observé de la préparation', page)
         for invalid in (None, {}, {'prompt_tokens': 0},
                         {'prompt_tokens': False, 'completion_tokens': 1},
                         {'prompt_tokens': -1, 'completion_tokens': 1},
@@ -1023,7 +1022,8 @@ class OpenRouterPreparationTests(unittest.TestCase):
         self.assertEqual('clarification', view['stage'])
         self.assertNotIn('indicative_cost', view)
         self.assertIsNone(self.store.inspect_operations()[0]['receipt']['observed_configuration'])
-        self.assertIn('Coût observé', views.render(view, self.csrf).decode())
+        # La vue garde le coût inconnu ; la page du cas n'affiche plus le coût de la préparation
+        self.assertNotIn('Coût observé', views.render(view, self.csrf).decode())
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
     def test_killed_executor_restarts_closed_with_durable_ambiguous_request(self):
