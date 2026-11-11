@@ -69,6 +69,8 @@ def browser_views():
             attempts=[dict(state=state, incident=incident)], cells=[dict(configuration_id='x', state=state)],
             panel=[dict(id='x', model='Modèle A')])
         examples['followup-' + name] = value
+    # Suivi avec le tiroir de copie locale ; `followup-received` reste sans lui, les tests avec script s'en servent
+    examples['followup-received-privacy'] = dict(deepcopy(examples['followup-received']), privacy=example_view()['privacy'])
     # #525, #533 : crédit épuisé sur le premier essai, campagne arrêtée, second modèle jamais interrogé
     value = deepcopy(examples['followup-incident'])
     value['campaign'].update(admission_open=False, stop_reason='ACQUISITION_EVIDENCE_INCOMPLETE',
@@ -125,6 +127,7 @@ def browser_views():
                  'not_adjustable': False,
                  'selected': True},
                 {'id': 'modele-b', 'name': 'Modèle B', 'not_adjustable': True, 'selected': True}],
+     'privacy': example_view()['privacy'],
      'superseded': []}
     examples['configurations-one'] = deepcopy(examples['configurations-selected'])
     examples['configurations-one']['models'][1]['selected'] = False

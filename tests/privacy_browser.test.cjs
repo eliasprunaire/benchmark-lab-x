@@ -1635,6 +1635,11 @@ test('access and launch screens preserve available actions, estimates and refusa
       assert.ok((await page.textContent('main')).includes('Enregistrer ce choix n’appelle aucun modèle.'), `${width} aucun appel`);
       assert.equal(await page.locator('.barre-choix button[form="configurations-form"]').innerText(), 'Continuer');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0, `${width} débordement des modèles`);
+      // Le tiroir de copie locale garde sous le bandeau et sous le suivi la marge posée sous les colonnes
+      const marge = () => page.locator('.cadre > .privacy-controls').evaluate(e => parseFloat(getComputedStyle(e).marginTop));
+      assert.ok(await marge() >= 32, `${width} marge sous le bandeau`);
+      await page.goto(origin + '/render/followup-received-privacy');
+      assert.ok(await marge() >= 32, `${width} marge sous le suivi`);
       await page.goto(origin + '/render/launch-ready');
       // Le récapitulatif porte les montants et le seul bouton ; le tableau reste dans la colonne de lecture
       const pupitre = await page.locator('form.pupitre').innerText();
