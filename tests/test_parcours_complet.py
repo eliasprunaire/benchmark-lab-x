@@ -2432,6 +2432,10 @@ class ParcoursComplet(unittest.TestCase):
         page = self.submit(page, '/validation', {})
         self.examine(page, dossier, 'qualification en attente', None)
         self.assertIn('Contrôle de l’exemple en cours', page.visible)
+        # Validé par l'utilisateur, pas encore contrôlé : l'historique ne parle pas de validation (GLOSSARY.md)
+        historique = page.depliant('Historique des versions')
+        self.assertIn('Aucun exemple contrôlé pour l’instant.', historique)
+        self.assertNotIn('validé', historique)
         self.assertEqual(1, page.visible.count('Actualiser'))
         # La piste et l'étape en cours du contrôle de l'exemple
         self.assertEqual(2, sum(1 for n in page.nodes if n['tag'] == 'li' and n['attrs'].get('aria-current') == 'step'))
@@ -2446,6 +2450,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertLess(page.nodes.index(controle), page.nodes.index(exemple))
         # Historique : les exemples seuls, numérotés par rang, chacun lié à sa révision technique
         self.assertIn('Versions : 1 · 2.', page.depliant('Historique des versions'))
+        # Une entrée par contrat de comparaison, enregistré après le contrôle réussi : l'exemple est dit contrôlé
+        titres = [n['text'] for n in page.nodes if n['tag'] == 'h3' and n['details'] and n['text'].startswith('Exemple ')]
+        self.assertEqual(['Exemple contrôlé 1'], titres)
         self.assertEqual([('1', dossier + '/revisions/3'), ('2', dossier + '/revisions/4')],
                          [(n['text'], n['attrs']['href']) for n in page.nodes if n['tag'] == 'a' and n['details']
                           and n['text'] in ('1', '2', '3', '4')])

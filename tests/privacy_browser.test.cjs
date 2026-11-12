@@ -2277,6 +2277,15 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
     assert.equal(await page.locator('#controle details').count(), 0, 'aucun détail vide');
     assert.equal(await page.locator('details.privacy-controls, #t-suppr').count(), 2);
     assert.equal(await page.locator('.pile-bas summary .titre', {hasText: 'Historique des versions et des benchmarks'}).count(), 1);
+    // Historique : « contrôlé », jamais « validé » ; vide après un contrôle bloqué, une entrée par contrat de comparaison
+    const historique = [];
+    for (const view of ['example-BLOCKED', 'example-history']) {
+      await page.goto(origin + '/render/' + view);
+      historique.push(await page.locator('.pile-bas details', {has: page.locator('summary .titre', {hasText: 'Historique des versions et des benchmarks'})})
+        .evaluate(d => [...d.querySelectorAll('h3, p:not(.petit)')].map(e => e.textContent)));
+    }
+    assert.deepEqual(historique, [['Aucun exemple contrôlé pour l’instant.'], ['Exemple contrôlé 1']]);
+    await page.goto(origin + '/render/example-QUALIFIED');
     assert.equal(await page.evaluate(() => Boolean(document.querySelector('#controle').compareDocumentPosition(
       document.querySelector('details#exemple')) & Node.DOCUMENT_POSITION_FOLLOWING)), true);
     await page.locator('nav.piste a[href="#exemple"]').click();

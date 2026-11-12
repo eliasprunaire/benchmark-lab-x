@@ -922,11 +922,11 @@ def render_task_index(task):
         # Le numéro distingue deux benchmarks figés dans la même seconde
         items = ''.join('<li><span>Benchmark ' + str(number) + ' du ' + text(date_lisible_utc(campaign['frozen_at'])) + '</span>'
                         + lien(campaign['href'], 'Voir les résultats') + '</li>' for number, campaign in enumerate(version['campaigns'], 1))
-        content += ('<div id="version-' + text(version['version']) + '"><h3>Exemple validé ' + text(version['version']) + '</h3><ul>'
+        content += ('<div id="version-' + text(version['version']) + '"><h3>Exemple contrôlé ' + text(version['version']) + '</h3><ul>'
                     + (items or '<li><span>Aucun benchmark lancé avec cet exemple.</span></li>') + '</ul><div class="actions">'
                     + lien(task['href'] + '/revisions/' + str(version['revision']), 'Voir cet exemple') + '</div></div>')
     if not task['versions']:
-        content += '<p>Aucun exemple validé pour l’instant.</p>'
+        content += '<p>Aucun exemple contrôlé pour l’instant.</p>'
     return content
 
 
