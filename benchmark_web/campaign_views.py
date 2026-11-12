@@ -1100,7 +1100,7 @@ def _cause_arret(campaign):
     return 'Un problème technique a arrêté un essai.' if incident else None
 
 
-def _cause_couloir(campaign, cell, model, closed, unusable):
+def _cause_couloir(campaign, cell, model, closed):
     """Cause d'arrêt propre à un couloir (#696) : essai non appelé, ou motif de la dernière tentative de sa cellule"""
     if cell['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open'):
         return 'Le benchmark s’est arrêté avant cet essai.'
@@ -1115,11 +1115,7 @@ def _cause_couloir(campaign, cell, model, closed, unusable):
         return NOT_SENT_TEXT
     if incident == AMBIGUOUS_EXPIRED or cell['cell_id'] in closed:
         return 'Appel clos sans réponse confirmée.'
-    if cause := missing_evidence(last):
-        return cause
-    if cell['cell_id'] in unusable:
-        return {'LENGTH': 'Réponse coupée par la limite de longueur.', 'EMPTY_OUTPUT': 'Réponse vide.'}.get(incident)
-    return None
+    return missing_evidence(last)
 
 
 def _suivi(campaign):
@@ -1285,7 +1281,7 @@ def render_campaign_followup(value, csrf):
         else:
             mark = states.get(cell['state'], statut('inc', 'État inconnu', 'question'))
         etats = (reponse, 'sansobjet' if _exclue(campaign, cell, closed, unusable) else verification if reponse == 'fait' else 'avenir')
-        cause = _cause_couloir(campaign, cell, model, closed, unusable) if partielle else None
+        cause = _cause_couloir(campaign, cell, model, closed) if partielle else None
         lanes += couloir(model_name(model, names) if model else 'Modèle', ([prefix] if prefix else []) + lines + ([cause] if cause else []),
                          mark, position, etats=etats)
     received = sum(cell['state'] == 'RECEIVED' for cell in cells)
