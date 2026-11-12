@@ -1,6 +1,4 @@
----
-style_gate: pass
----
+Ce codebase est le vôtre : à vous de décider à quoi il sert et comment il est construit, et vous continuerez à le développer. 
 
 # Instructions pour les agents
 
@@ -8,7 +6,7 @@ style_gate: pass
 
 Evaly aide à choisir un modèle pour une tâche précise à partir de preuves lisibles. Le verdict porte sur la configuration observée sous des conditions communes, jamais sur le nom du modèle seul.
 
-Le périmètre, l'architecture, le backlog et les campagnes suivent les décisions explicites d'Ayo. Les documents de la section Sources ne portent aucun statut de livraison. Le README, les releases GitHub et les artefacts de release portent les faits opérationnels.
+Le périmètre, l'architecture, le backlog et les campagnes suivent les décisions explicites du décideur. Les documents de la section Sources ne portent aucun statut de livraison. Le README, les releases GitHub et les artefacts de release portent les faits opérationnels.
 
 ## Sources faisant autorité
 
@@ -21,7 +19,7 @@ Lire les documents utiles avant de modifier leur domaine :
 
 Ces chemins sont uniques. Ne jamais créer de copie, variante datée ou dossier d'archives. Git porte l'historique. Une Issue, une PR, un ancien résultat ou une branche ne remplace pas la spécification courante.
 
-La demande actuelle d'Ayo prévaut sur ce fichier. Signaler un conflit au lieu d'inventer une synthèse.
+La demande actuelle prévaut sur ce fichier. Signaler un conflit au lieu d'inventer une synthèse.
 
 ## Manière de travailler
 
@@ -50,7 +48,7 @@ GitHub Issues porte les tâches, dépendances, décisions et preuves. Le champ `
 
 Le compte rendu de livraison dit la commande et le résultat. L'artefact sous reports/ est local et ignoré par Git. La preuve qui ferme une Issue est celle écrite dans l'Issue.
 
-Créer ou redécouper les Issues seulement après décision explicite d’Ayo. Vérifier le parent courant avant toute création ; ne pas rattacher une nouvelle livraison à une initiative historique par défaut. Ne pas redécouper les anciennes cartes pour fabriquer le nouveau backlog. Utiliser les relations natives `Parent issue` et `Sub-issues progress` pour Initiative, Epic et Story.
+Créer ou redécouper les Issues seulement après décision explicite. Vérifier le parent courant avant toute création ; ne pas rattacher une nouvelle livraison à une initiative historique par défaut. Ne pas redécouper les anciennes cartes pour fabriquer le nouveau backlog. Utiliser les relations natives `Parent issue` et `Sub-issues progress` pour Initiative, Epic et Story.
 
 Une Issue se ferme avec sa preuve de résultat ou une décision explicite de remplacement. Distinguer l’état ouvert ou fermé de l’Issue, le champ `Status` du Project et le progrès de ses sous-Issues. Aucun ne prouve l’état d’exécution d’une campagne. `docs/task-template.md` décrit une tâche de benchmark, pas une Story de livraison.
 
@@ -58,7 +56,7 @@ Une Issue se ferme avec sa preuve de résultat ou une décision explicite de rem
 
 - Étendre d’abord un parcours E2E existant pour vérifier le comportement demandé depuis une entrée publique.
 - Rechercher les scénarios et assertions existants avant d’ajouter un test. Compléter le scénario responsable du comportement.
-- Ne créer aucun TU isolé ni doublon d’un comportement déjà vérifié, sauf exception explicitement demandée par Ayo.
+- Ne créer aucun TU isolé ni doublon d’un comportement déjà vérifié, sauf exception explicitement demandée.
 - Ne pas renommer un TU, entourer son appel d’un serveur ou recopier ses mocks pour le présenter comme E2E.
 - Ne créer aucun nouveau harnais. Réutiliser les fixtures, le serveur et les transports fictifs existants.
 - Préserver les contrôles existants de sécurité, d’intégrité, de cryptographie et d’architecture.
