@@ -6085,8 +6085,8 @@ class ParcoursComplet(unittest.TestCase):
         etat = next(n for n in cas.nodes if 'etat' in n['attrs'].get('class', '').split())
         self.assertEqual('att', etat['attrs']['data-ton'])
         self.assertIn('Vérification des réponses à lancer', etat['text'])
-        self.assertIn('Certaines réponses sont arrivées avant l’arrêt du benchmark : leur vérification, payée avec votre clé '
-                      'OpenRouter, se lance depuis le suivi.', etat['text'])
+        self.assertIn('Certaines réponses sont arrivées avant l’arrêt du benchmark. Leur vérification, payée avec votre clé '
+                      'OpenRouter, se lance depuis le suivi du benchmark.', etat['text'])
         self.assertEqual(suivi, urlsplit(cas.link('Lancer la vérification des réponses')).path)
         self.assertIn('Vérification des réponses à lancer', next(n['text'] for n in cas.nodes if n['attrs'].get('id') == 'comparaison'))
         # Consulter ne réserve aucune vérification et n'appelle aucun juge

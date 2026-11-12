@@ -1161,14 +1161,13 @@ def _suivi(campaign):
                     ('att', 'À lancer', 'horloge'))
         if _partielle(campaign):
             # Comparaison arrêtée (#696) : la vérification des réponses reçues est le titre, la cause de l'arrêt reste dite
-            couverture = judgment.get('reason') or ('Certains essais n’ont pas été appelés.' if any(
+            couverture = ('Certains essais n’ont pas été appelés.' if any(
                 c['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open') for c in cells)
                 else 'Certains essais n’ont pas donné de réponse exploitable.')
             title, suite, aspect = (('La vérification des réponses reçues est à lancer.', 'Vous pouvez lancer la vérification des réponses reçues.',
                                      ('att', 'À lancer', 'horloge')) if judgment.get('can_start') else
-                                    ('La vérification des réponses reçues n’est pas lancée.', 'La vérification des réponses reçues n’est pas lancée.',
-                                     ('inc', 'Non lancée', 'horloge')))
-            return False, False, title, ' '.join(filter(None, (_cause_arret(campaign), couverture, suite))), aspect
+                                    ('La vérification des réponses reçues n’est pas lancée.', None, ('inc', 'Non lancée', 'horloge')))
+            return False, False, title, ' '.join(filter(None, (_cause_arret(campaign), couverture, suite, judgment.get('reason')))), aspect
     stopped = campaign.get('stop_reason') or campaign.get('restore_pending') or not campaign.get('admission_open')
     # Un modèle encore interrogé garde le suivi actif, même si un autre a déjà rencontré un incident
     if not stopped and any(c['state'] == 'EMISSION_POSSIBLE' for c in cells):
@@ -1234,9 +1233,9 @@ def campaign_status(campaign, dossier_url):
                 base + '/conditions', 'Vérifier puis lancer le benchmark')
     if (campaign.get('judgment') or {}).get('can_start'):
         # Le bouton qui lance la vérification payante est sur le suivi : le cas y mène, jamais vers des résultats vides
-        return ('att', 'À faire', 'Vérification des réponses à lancer', 'Certaines réponses sont arrivées avant l’arrêt du benchmark : leur '
-                'vérification, payée avec votre clé OpenRouter, se lance depuis le suivi.' if _partielle(campaign) else
-                'Les réponses sont arrivées. Leur vérification, payée avec votre clé OpenRouter, se lance depuis le suivi du benchmark.',
+        return ('att', 'À faire', 'Vérification des réponses à lancer', ('Certaines réponses sont arrivées avant l’arrêt du benchmark.'
+                if _partielle(campaign) else 'Les réponses sont arrivées.')
+                + ' Leur vérification, payée avec votre clé OpenRouter, se lance depuis le suivi du benchmark.',
                 base + '/conditions', 'Lancer la vérification des réponses')
     active, ready, message = campaign_followup(campaign)
     if ready:

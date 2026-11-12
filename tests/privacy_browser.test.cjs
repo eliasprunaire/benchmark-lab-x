@@ -1793,16 +1793,18 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
     // #696 : comparaison arrêtée, vérification des réponses reçues à lancer ou non autorisée ; la cause reste dite sans être le titre
     const suiviPartiel = '/preparation/dossiers/d1/campaigns/c1/conditions';
     const credit = 'Crédit OpenRouter épuisé pour votre clé : rechargez-le ou relevez son plafond.';
+    // Le motif du jugement suit la couverture ; sans vérification autorisée, le titre n'est pas répété
     for (const [view, title, mot, suite, allowed] of [
       ['judgment-NOT_STARTED-partial', 'La vérification des réponses reçues est à lancer.', 'À lancer',
-        'Vous pouvez lancer la vérification des réponses reçues.', true],
+        ' Vous pouvez lancer la vérification des réponses reçues.', true],
       ['judgment-NOT_STARTED-partial-locked', 'La vérification des réponses reçues n’est pas lancée.', 'Non lancée',
-        'La vérification des réponses reçues n’est pas lancée.', false]]) {
+        ' Motif fictif du jugement.', false]]) {
       await page.goto(origin + '/render/' + view);
       const text = await page.textContent('main');
       assert.equal(await page.locator('#t-direct').textContent(), title, view);
       assert.ok((await page.locator('.g-statut').textContent()).includes(mot), view);
-      assert.equal(await page.locator('#t-direct + p').textContent(), credit + ' Certains essais n’ont pas été appelés. ' + suite, view);
+      assert.equal(await page.locator('#t-direct + p').textContent(), credit + ' Certains essais n’ont pas été appelés.' + suite, view);
+      assert.equal(text.split(title).length, 2, view + ' titre répété');
       for (const absent of ['Toutes les réponses sont arrivées', 'rien n’est relancé automatiquement']) assert.equal(text.includes(absent), false, view + absent);
       assert.match(text, /1\/3\s*réponses reçues/, view);
       assert.match(text, /0\/1\s*réponses vérifiées/, view);
@@ -1820,6 +1822,11 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       assert.equal(await page.locator('.g-note').count(), Number(allowed), view);
       assert.equal(text.includes('Vérifier les réponses reçues'), allowed, view);
     }
+    await page.goto(origin + '/render/judgment-NOT_STARTED-partial-closed');
+    assert.equal(await page.locator('#t-direct + p').textContent(), 'Un essai est resté sans réponse confirmée et a été clos. '
+      + 'Certains essais n’ont pas donné de réponse exploitable. Vous pouvez lancer la vérification des réponses reçues.');
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.couloir')].map(li =>
+      [...li.querySelectorAll('.couloir-nom small > span')].map(span => span.textContent).slice(1))), [[], [credit], ['Appel clos sans réponse confirmée.']]);
     // Sans JavaScript, le formulaire envoie la confirmation et le jeton, et rien d'autre
     await page.goto(origin + '/render/judgment-NOT_STARTED-partial');
     posts = [];
@@ -1829,7 +1836,7 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
     // Page du cas des mêmes données : même état ; sans vérification autorisée, aucune invitation à la lancer
     for (const [view, heading, ton, phrase, link] of [
       ['case-NOT_STARTED-partial', 'Vérification des réponses à lancer', 'att',
-        'Certaines réponses sont arrivées avant l’arrêt du benchmark : leur vérification, payée avec votre clé OpenRouter, se lance depuis le suivi.',
+        'Certaines réponses sont arrivées avant l’arrêt du benchmark. Leur vérification, payée avec votre clé OpenRouter, se lance depuis le suivi du benchmark.',
         'Lancer la vérification des réponses'],
       ['case-NOT_STARTED-partial-locked', 'Le benchmark demande votre attention', 'vig', 'La vérification des réponses reçues n’est pas lancée.',
         'Voir ce qui s’est passé']]) {

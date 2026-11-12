@@ -116,10 +116,15 @@ def browser_views():
                                                      ('y', 'RECEIVED', 'CREDIT_EXHAUSTED', None), ('z', 'INTENT_RECORDED', None, None))])
     partial['judgment'] = dict(status='NOT_STARTED', total=1, completed=0, reason=None, can_start=True, unusable_cells=['y1'], closed_cells=[])
     examples['judgment-NOT_STARTED-partial'] = value
-    # Garde d'affichage, sans transition moteur : la même comparaison sans vérification autorisée
+    # Garde d'affichage, sans transition moteur : la même comparaison sans vérification autorisée, avec un motif du jugement
     locked = deepcopy(value)
-    locked['campaign']['judgment']['can_start'] = False
+    locked['campaign']['judgment'].update(can_start=False, reason='Motif fictif du jugement.')
     examples['judgment-NOT_STARTED-partial-locked'] = locked
+    # Exclusions seulement closes ou inexploitables : aucun essai non appelé n'est annoncé
+    closed = deepcopy(value)
+    closed['campaign']['cells'][2]['state'] = 'AMBIGUOUS'
+    closed['campaign']['attempts'][2].update(state='AMBIGUOUS', incident='AMBIGUOUS_EXPIRED')
+    examples['judgment-NOT_STARTED-partial-closed'] = closed
     # Pages du cas des mêmes données : exemple validé et contrôlé, révision de la comparaison
     for name, source in (('partial', value), ('partial-locked', locked)):
         examples['case-NOT_STARTED-' + name] = dict(example_view(), validation={'validated_at': '2026-09-16T08:00:00Z'}, qualified=True,
