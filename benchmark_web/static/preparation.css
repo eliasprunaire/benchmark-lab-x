@@ -322,7 +322,7 @@ legend { padding: 0; margin-bottom: 10px; }
 .bulle { position: relative; display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: start; }
 .bulle-qui { font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--discret); margin-bottom: 4px; }
 .bulle-texte { padding: 18px 22px; background: var(--carte); border: 2px solid var(--filet); border-radius: 4px 18px 18px 18px; font-size: 1.12rem; }
-.bulle-question .bulle-texte { background: var(--signal); color: var(--sur-signal); font-size: clamp(1.25rem, 2.2vw, 1.6rem); font-weight: 700; font-stretch: 108%; line-height: 1.25; }
+.bulle-question .bulle-texte { background: var(--signal); color: var(--sur-signal); }
 .bulle-vous { grid-template-columns: 1fr auto; }
 .bulle-vous .bulle-texte { border-radius: 18px 4px 18px 18px; background: var(--creux); border-color: transparent; }
 .avatar { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--encre); background: var(--carte); font-family: var(--mono); font-weight: 700; font-size: .62rem; letter-spacing: .04em; }
@@ -336,7 +336,7 @@ legend { padding: 0; margin-bottom: 10px; }
 /* ——— Dossier : consigne, pièces, critères ——— */
 .consigne { position: relative; padding: clamp(22px, 3vw, 34px); background: var(--carte); border: 2px solid var(--filet); border-radius: var(--r); }
 .consigne > .ruban { position: absolute; top: -12px; left: 22px; }
-.consigne blockquote { margin: 8px 0 0; font-size: clamp(1.3rem, 2.4vw, 1.9rem); font-weight: 700; font-stretch: 110%; line-height: 1.2; letter-spacing: -.01em; }
+.consigne blockquote { margin: 8px 0 0; font-size: 1.12rem; }
 .pieces { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 22px; list-style: none; padding-top: 10px; }
 .feuille { position: relative; }
 .feuille > details > summary { list-style: none; cursor: pointer; display: grid; gap: 8px; min-height: 210px; padding: 30px 20px 18px; background: var(--carte); border: 2px solid var(--filet); border-radius: 6px; transition: transform .18s ease; }

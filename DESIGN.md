@@ -100,6 +100,7 @@ Contrastes mesurés (texte sur fond), minimum 4,5:1 hors focus sur jaune (4,77:1
 |---|---|---|---|
 | Titres | Mona Sans | 800, largeur 112 %, espacement −0,02 em ; `h1` en 850 et largeur 125 % | `h1` à `h4`, marque, boutons |
 | Texte | Mona Sans | 400, 16 px, interligne 1,55 | paragraphes, champs, tableaux |
+| Lecture de conversation | Mona Sans | 400, 1,12 rem (17,92 px), interligne 1,55 | bulles de conversation, consigne, paragraphe des limites |
 | Étiquettes | Geist Mono | 11 à 13 px, capitales espacées | menu, étiquettes, mots de statut, notes de relevé |
 | Compteurs | Silkscreen | 700 | seulement le résumé de la barre de choix des modèles |
 

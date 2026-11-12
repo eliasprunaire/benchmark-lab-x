@@ -775,6 +775,28 @@ test('case deletion still requests server purge when IndexedDB is unavailable an
 
 
 const LEGAL = ['mentions-legales', 'cgu', 'confidentialite'];
+// Texte de lecture : corps rapporté à celui de la page et graisse de chaque sélecteur ; cadre et ruban de la consigne
+function lectureMesuree(selectors) {
+  const corps = parseFloat(getComputedStyle(document.body).fontSize);
+  const mesures = Object.fromEntries(selectors.map(selector => {
+    const style = getComputedStyle(document.querySelector(selector));
+    return [selector, {taille: parseFloat(style.fontSize) / corps, graisse: Number(style.fontWeight)}];
+  }));
+  const consigne = document.querySelector('.consigne');
+  return {mesures, cadre: consigne && getComputedStyle(consigne).borderTopWidth, ruban: consigne?.querySelector(':scope > .ruban')?.textContent};
+}
+// Bornes fixes : au plus 1,2 fois le corps (plafond de .texte-l), graisse 500 au plus (texte courant le plus lourd)
+async function lectureCourante(page, where, selectors, ruban) {
+  const lecture = await page.evaluate(lectureMesuree, selectors);
+  for (const [selector, mesure] of Object.entries(lecture.mesures)) {
+    assert.ok(mesure.taille <= 1.2, `${where} ${selector} en corps de lecture : ${mesure.taille}`);
+    assert.ok(mesure.graisse <= 500, `${where} ${selector} en graisse courante : ${mesure.graisse}`);
+  }
+  if (ruban) {
+    assert.equal(lecture.cadre, '2px', `${where} cadre de la consigne`);
+    assert.equal(lecture.ruban, ruban, `${where} ruban de la consigne`);
+  }
+}
 // WCAG 2.x : 4.5:1, 3:1 pour le grand texte ; fond pris au premier ancêtre opaque
 function contrastFailures() {
   const channels = color => color.match(/[\d.]+/g).map(Number);
@@ -1645,6 +1667,7 @@ test('access and launch screens preserve available actions, estimates and refusa
       await page.goto(origin + '/render/followup-received-privacy');
       assert.ok(await marge() >= 32, `${width} marge sous le suivi`);
       await page.goto(origin + '/render/launch-ready');
+      await lectureCourante(page, `${width} lancement`, ['.consigne blockquote'], 'Ce qui sera testé');
       // Le récapitulatif porte les montants et le seul bouton ; le tableau reste dans la colonne de lecture
       const pupitre = await page.locator('form.pupitre').innerText();
       for (const phrase of [/RÉPONSES, ESTIMATION\s+3,50 USD/i, /Lancer le benchmark/])
@@ -2207,6 +2230,7 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       assert.match(layout.side, /Oui, c’est le cas\u00a0d’usage à tester/, `${width} bouton de validation en synthèse`);
       assert.equal(layout.consent, false, `${width} aucun bloc de partage`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de validation`);
+      await lectureCourante(page, `${width} exemple à valider`, ['.bulle-question .bulle-texte', '.consigne blockquote'], 'Consigne donnée aux modèles');
     }
     // Parcours clavier de la préparation à 390 px, sans souris ni JavaScript : saisie, question de l'assistant, aperçu,
     // correction. Chaque arrêt du focus est visible dans l'écran, entier en largeur, non masqué par l'en-tête fixe
@@ -2248,6 +2272,7 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
     await tabulerJusqua('form#nouveau button[type="submit"]', {retour: true});
     // Question de l'assistant : la réponse puis son envoi
     await page.goto(origin + '/render/question');
+    await lectureCourante(page, '390 question', ['.bulle-question .bulle-texte']);
     await tabulerJusqua('#message');
     await page.keyboard.type('Les notes viennent d’une réunion d’équipe.');
     await tabulerJusqua('button[type="submit"]:not([disabled])');
