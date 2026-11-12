@@ -1204,8 +1204,9 @@ def render_campaign_followup(value, csrf):
             mark, position, reponse = statut('inc', 'Non appelé', 'pause'), 'p0', 'bloque'
         else:
             mark = states.get(cell['state'], statut('inc', 'État inconnu', 'question'))
-        # Seule une réponse reçue et exploitable entre dans « réponses vérifiées » ; une réponse arrêtée n'y entrera jamais
-        etats = (reponse, verification if reponse == 'fait' else 'sansobjet' if reponse == 'bloque' else 'avenir')
+        # Exclusions définitives de « réponses vérifiées » : cellule close, inexploitable ou non appelée ; un essai à vérifier non clos peut encore l'être
+        exclue = cell.get('cell_id') in closed | unusable or cell['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open')
+        etats = (reponse, 'sansobjet' if exclue else verification if reponse == 'fait' else 'avenir')
         lanes += couloir(model_name(model, names) if model else 'Modèle', ([prefix] if prefix else []) + lines, mark, position, etats=etats)
     received = sum(cell['state'] == 'RECEIVED' for cell in cells)
     # Ni l'appel clos ni la cellule sans réponse exploitable ne comptent comme une réponse reçue (#541)

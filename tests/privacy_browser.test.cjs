@@ -1727,7 +1727,9 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       // Deux segments par couloir : seul le segment en cours bouge
       const attendus = {running: [['reponse', 'encours', true], ['verification', 'avenir', false]],
         received: [['reponse', 'fait', false], ['verification', 'avenir', false]],
-        'operator-exhausted': [['reponse', 'bloque', false], ['verification', 'sansobjet', false]]};
+        'operator-exhausted': [['reponse', 'bloque', false], ['verification', 'sansobjet', false]],
+        // Un essai à vérifier non clos peut encore recevoir sa réponse, puis être vérifié
+        ambiguous: [['reponse', 'bloque', false], ['verification', 'avenir', false]]};
       if (attendus[state]) assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.couloir [data-segment]')].map(segment =>
         [segment.dataset.segment, segment.dataset.etat, [...segment.querySelectorAll('*')].some(e => getComputedStyle(e).animationName !== 'none')])),
         attendus[state], state);
