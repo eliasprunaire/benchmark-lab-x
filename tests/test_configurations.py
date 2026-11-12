@@ -235,51 +235,6 @@ class ConfigurationsTests(unittest.TestCase):
         self.assertEqual([], view['models'])
         self.assertEqual('Relevé de modèles indisponible', view['detail'])
 
-    def test_releve_fige_sans_endpoint_ou_prix_invalide_reste_lisible(self):
-        """Production, v0.44.2 à 859dd17 : « Choisir les modèles » rendait HTTP 500
-
-        Le relevé stocké vient d'une collecte sous l'ancienne règle des candidats ; la règle courante en
-        ajoute dont le relevé n'a aucun endpoint. Un modèle publié au prix « -1 » est l'autre cas réel.
-        Modes d'échec couverts :
-        1. la page rend 500 au lieu de la sélection ;
-        2. un modèle sans endpoint connu ou au prix invalide est proposé ou accepté ;
-        3. un relevé complet change de contenu
-        """
-        import json
-        from benchmark import service
-
-        def get():
-            # Même frontière que l'exécuteur : une IntegrityError y devient le 500 « STORAGE »
-            def handle(message):
-                code, view, _, _ = web_api.dispatch(
-                    self.store, message['method'], message['path'], message['token'], message['body'],
-                    'a' * 40, True, candidate_identity=self.identity)
-                return {'status': code, 'value': view}
-            with patch.object(preparation, 'session', return_value=(self.session, 'csrf', 'token')), \
-                    patch.object(model_catalogue, '_now', return_value=NOW):
-                result = service._handled({'method': 'GET', 'path': '/preparation/dossiers/fixture/configurations',
-                                           'token': 'token', 'body': None}, handle)
-            return result['status'], [model['id'] for model in result['value'].get('models', [])]
-
-        def releve(change):
-            document = json.loads(self.store._connection.execute('SELECT raw_json FROM s2_model_catalogue').fetchone()[0])
-            change(document)
-            self.store._connection.execute('UPDATE s2_model_catalogue SET raw_json=?', (storage._strict_json(document),))
-        complet = get()
-        self.assertEqual((200, ['deepseek/deepseek-v4.1-flash', 'mistralai/mistral-medium-3-5', 'openai/gpt-5.6-sol']),
-                         complet)
-        # Candidat entré après la collecte : le relevé n'a aucun endpoint pour lui
-        releve(lambda document: document['endpoints'].pop('mistralai/mistral-medium-3-5'))
-        self.assertEqual((200, ['deepseek/deepseek-v4.1-flash', 'openai/gpt-5.6-sol']), get())
-        with self.assertRaisesRegex(ValueError, 'exclu'):
-            self.prepare(['openai/gpt-5.6-sol', 'mistralai/mistral-medium-3-5'])
-        # Prix publié invalide, comme « -1 » : ce modèle seul est écarté
-        releve(lambda document: next(model for model in document['models'] if model['id'] == 'deepseek/deepseek-v4.1-flash')
-               ['pricing'].update(prompt='-1', completion='-1'))
-        self.assertEqual((200, ['openai/gpt-5.6-sol']), get())
-        with self.assertRaisesRegex(ValueError, 'exclu'):
-            self.prepare(['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'])
-
     def test_stale_catalogue_is_visible_without_changing_the_frozen_estimate(self):
         from benchmark_web.views import render
         first = self.prepare(['openai/gpt-5.6-sol', 'mistralai/mistral-medium-3-5'])

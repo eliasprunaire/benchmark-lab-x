@@ -275,11 +275,14 @@ excluded_providers = "fixture"
                 self.assertEqual(first['fetched_at'], result['fetched_at'])
                 self.assertEqual(first['models'], catalogue.selection(store)['models'])
 
-    def test_endpoint_absent_du_releve_exclu_document_corrompu_refuse(self):
-        """Un candidat sans endpoint dans le relevé n'est pas proposé ; un document d'endpoint corrompu reste une erreur"""
+    def test_document_d_endpoint_corrompu_reste_une_erreur_d_integrite(self):
+        """Un endpoint absent du relevé est exclu (parcours complet) ; un document présent mais corrompu reste une erreur
+
+        Le parcours ne voit qu'un 500 générique : ce test fixe le type et le motif de l'erreur, que l'exclusion ne doit pas avaler
+        """
         with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
             with patch.object(catalogue, '_now', return_value=NOW):
-                first = catalogue.refresh(store, self.fetch([]))
+                catalogue.refresh(store, self.fetch([]))
             raw = store._connection.execute('SELECT raw_json FROM s2_model_catalogue').fetchone()[0]
 
             def stored(change):
@@ -288,12 +291,6 @@ excluded_providers = "fixture"
                 store._connection.execute('UPDATE s2_model_catalogue SET raw_json=?', (storage._strict_json(document),))
                 with patch.object(catalogue, '_now', return_value=NOW):
                     return catalogue.selection(store)
-            # Candidat de la règle courante absent d'un relevé collecté sous une autre règle
-            absent = stored(lambda document: document['endpoints'].pop('x-ai/grok-4-preview'))
-            missing = next(model for model in absent['models'] if model['id'] == 'x-ai/grok-4-preview')
-            self.assertEqual(('no_available_endpoint', None), (missing['excluded'], missing['route']))
-            self.assertEqual([model for model in first['models'] if model['id'] != 'x-ai/grok-4-preview'],
-                             [model for model in absent['models'] if model['id'] != 'x-ai/grok-4-preview'])
             for corrupted in ('illisible', ['x'], {'id': 'x-ai/grok-4-preview', 'endpoints': 'x'}):
                 with self.subTest(corrupted=corrupted), self.assertRaisesRegex(storage.IntegrityError, 'Cache endpoint incomplet'):
                     stored(lambda document: document['endpoints'].update({'x-ai/grok-4-preview': corrupted}))

@@ -2465,6 +2465,16 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('L’équipe Bench-X doit maintenant préparer la comparaison', page.visible)
         self.assertTrue(any('Les actions et leur format sont vérifiables' in n['text']
                             for n in page.nodes if n['attrs'].get('id') == 'controle'))
+        # PR #702, production v0.44.2 à 859dd17 : le relevé stocké vient d'une collecte sous l'ancienne règle des
+        # candidats ; un candidat courant n'y a aucun endpoint, un autre est publié au prix « -1 ». La page rendait 500
+        with closing(storage.Store(self.data)) as store:
+            document = json.loads(store._connection.execute('SELECT raw_json FROM s2_model_catalogue').fetchone()[0])
+            document['models'].append(model('moonshotai/kimi-k2.7-code', 'moonshotai', ['high'])[0])
+            sans_prix, routes = model('nvidia/switchyard', 'nvidia', [])
+            sans_prix['pricing'] = {'prompt': '-1', 'completion': '-1'}
+            document['models'].append(sans_prix)
+            document['endpoints']['nvidia/switchyard'] = routes
+            store._connection.execute('UPDATE s2_model_catalogue SET raw_json=?', (storage._strict_json(document),))
         configurations = page.link('Choisir les modèles')
         page, _, _ = self.request(configurations)
         self.examine(page, configurations, 'choix des configurations', 'Continuer')
@@ -2474,6 +2484,12 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Relevé des modèles du', page.visible)
         self.assertNotIn('2026-09-15T12:00:00+00:00', page.visible)
         form = page.form('/configurations')
+        # Seuls les modèles du relevé avec une route et des prix valides sont proposés
+        self.assertEqual(['deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603', 'openai/gpt-5.6-sol'],
+                         sorted(n['attrs']['value'] for n in form['nodes'] if n['attrs'].get('name') == 'models'))
+        for exclu in ('moonshotai/kimi-k2.7-code', 'nvidia/switchyard'):
+            # Un formulaire forgé avec ce modèle est refusé proprement, sans 500 ni sélection enregistrée
+            self.request(form['action'], form['fields'] | {'models': ['openai/gpt-5.6-sol', exclu], 'tier': 'low'}, status=400)
         # Niveau adapté à chaque modèle : aucun refus, l'adaptation est montrée avant le lancement
         tuning = next(n for n in page.nodes if n['tag'] == 'details' and 'Choisir un niveau différent pour un modèle' in n['text'])
         self.assertIn('Modèle C', tuning['text'])
