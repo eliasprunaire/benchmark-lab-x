@@ -106,7 +106,7 @@ PREPARATION_PROGRESS_SCRIPT = """(() => {
     status.textContent = message;
     const progress = panel.querySelector('progress');
     if (progress) progress.hidden = true;
-    document.querySelectorAll('.tourne').forEach(node => node.classList.remove('tourne'));
+    document.querySelectorAll('.tourne, .attend').forEach(node => node.classList.remove('tourne', 'attend'));
     pause.hidden = true;
     link.hidden = false;
   }
@@ -941,16 +941,27 @@ def render_catalogue(value):
         '<p class="texte-l">Visible par vous seul, dans ce navigateur. Pour chaque cas validé, retrouvez ses exemples et ses benchmarks.</p>'))
 
 
+# Étapes d'une attente : nom de la liste, puis l'étape faite, l'étape en cours et l'étape à venir
+ETAPES_ATTENTE = {'preparation': ('Étapes de la préparation', 'Envoi enregistré', 'L’assistant prépare sa réponse', 'Une question, ou votre exemple'),
+                  'controle': ('Étapes du contrôle de l’exemple', 'Exemple validé', 'L’assistant contrôle l’exemple', 'Exemple contrôlé, ou à revoir')}
+
+
+def etapes_attente(cle, classe='checklist'):
+    """Liste des étapes d'une attente (préparation, contrôle de l'exemple) ; l'étape en cours porte `aria-current="step"`"""
+    nom, fait, en_cours, a_venir = ETAPES_ATTENTE[cle]
+    lignes = (('coche', 'check', fait, mot('Fait', 'ok'), ''), ('coche coche-att', 'horloge', en_cours, mot('En cours', 'att'), ' aria-current="step"'),
+              ('coche coche-vide', 'question', a_venir, mot('À venir', 'inc'), ''))
+    return ('<ul class="' + classe + '" aria-label="' + text(nom) + '">' + ''.join(
+        '<li' + courante + '><span class="' + coche + '">' + ic(icone) + '</span><span>' + text(libelle) + '</span>' + statut + '</li>'
+        for coche, icone, libelle, statut, courante in lignes) + '</ul>')
+
+
 def render_attente(value):
     """Demande enregistrée : l'envoi est pris en compte, l'assistant prépare sa réponse"""
     url = '/preparation' if value.get('kind') == 'honeypot_ack' else '/preparation/dossiers/' + value['dossier_id']
-    lignes = (('coche', 'check', 'Envoi enregistré', mot('Fait', 'ok')), ('coche coche-att', 'horloge', 'L’assistant prépare sa réponse', mot('En cours', 'att')),
-              ('coche coche-vide', 'question', 'Une question, ou votre exemple', mot('À venir', 'inc')))
-    liste = ''.join('<li><span class="' + classe + '">' + ic(icone) + '</span><span>' + text(libelle) + '</span>' + statut + '</li>'
-                    for classe, icone, libelle, statut in lignes)
     corps = ('<div class="gb-seul gb-cote">' + etat('att', 'Enregistrée', 'L’assistant prépare sa réponse',
              'Votre envoi est bien enregistré. Vous pouvez quitter cette page et revenir plus tard.', btn(url, 'Suivre mon cas d’usage'),
-             marque_html=disque('disque-l tourne')) + '<ul class="checklist carte" aria-label="Étapes de la préparation">' + liste + '</ul></div>')
+             marque_html=disque('disque-l tourne'), classe='attend') + etapes_attente('preparation', 'checklist carte') + '</div>')
     return 'Demande enregistrée', corps, dict(piste_html=piste('besoin'))
 
 
@@ -1348,7 +1359,8 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
                  + '<button class="btn btn-sec" type="button" hidden>' + ic('pause') + 'Arrêter la mise à jour automatique</button>'
                  '<p class="cache" role="status"></p></div>')
         # `availability` nomme la raison du refus d'envoi liée au champ désactivé
-        carte = '<div id="availability">' + etat(ton, mot_, titre, texte, marque_html=marque, corps_html=suivi) + '</div>'
+        carte = ('<div id="availability">' + etat(ton, mot_, titre, texte, marque_html=marque, classe='attend',
+                 corps_html=etapes_attente('preparation' if stage == 'waiting' else 'controle') + suivi) + '</div>')
     else:
         carte = etat(ton, mot_, titre, texte, action) if titre else ''
     nom = request if len(request) <= 60 else request[:59].rstrip() + '…'

@@ -1452,7 +1452,12 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
         // K7 : la cible d'arrêt garde 44 px de haut
         const stop = page.getByRole('button', {name: 'Arrêter la mise à jour automatique'});
         assert.ok((await stop.boundingBox()).height >= 44, 'arrêt du suivi sous 44 px');
+        assert.equal(await page.locator('.etat.attend').count(), 1);
         await stop.click();
+        // L'arrêt fige l'encadré : ni disque qui tourne, ni bande qui défile
+        assert.equal(await page.locator('.etat.attend, .tourne').count(), 0);
+        assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.etat, .etat *')]
+          .flatMap(e => [getComputedStyle(e).animationName, getComputedStyle(e, '::after').animationName]).filter(name => name !== 'none')), []);
       }
       if (action !== 'complete') {
         await page.clock.runFor(30000);
@@ -2181,7 +2186,12 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       await page.goto(origin + `/render/progress-${stage}-${status}-${prior ? 'True' : 'False'}`);
       assert.equal(await page.locator('#preparation-progress').count(), Number(pending));
       assert.equal(await page.locator('.etat .disque.tourne').count(), Number(pending));
+      // Pendant l'attente, l'encadré nomme ses étapes ; la bande de l'étape en cours défile (pseudo-élément)
+      assert.equal(await page.locator('main .checklist').count(), Number(pending));
+      assert.equal(await page.locator('.etat.attend').count(), Number(pending));
       if (pending) {
+        assert.equal(await page.locator('main .checklist li[aria-current="step"]').count(), 1);
+        assert.equal(await page.locator('main .checklist li[aria-current="step"]').evaluate(li => getComputedStyle(li, '::after').animationName), 'rayures');
         assert.equal(await page.locator('#availability').count(), 1);
         assert.equal(await page.locator('aside#availability').count(), 0);
         // La barre `progress` sert au script de suivi ; à l'écran, seul le disque tourne
@@ -2191,6 +2201,15 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
         assert.equal(await page.locator('#preparation-progress button').isHidden(), true);
       }
     }
+    // Mouvement réduit : aucune animation, pseudo-éléments compris ; l'étape en cours reste nommée
+    const reduit = await browser.newContext({javaScriptEnabled: false, reducedMotion: 'reduce'});
+    try {
+      const calme = await reduit.newPage();
+      await calme.goto(origin + '/render/progress-waiting-none-False');
+      assert.equal(await calme.locator('main .checklist li[aria-current="step"]').count(), 1);
+      assert.deepEqual(await calme.evaluate(() => [...document.querySelectorAll('main *')]
+        .flatMap(e => [getComputedStyle(e).animationName, getComputedStyle(e, '::after').animationName]).filter(name => name !== 'none')), []);
+    } finally {await reduit.close();}
     // Composition S18 : zone principale et colonne de synthèse, l'état reste en tête, sans bloc de partage
     const zones = () => page.evaluate(() => {
       const box = node => node.getBoundingClientRect(), side = box(document.querySelector('.cote')), main = box(document.querySelector('.pile-l, .entretien'));
@@ -2540,6 +2559,9 @@ test('public and private pages retain legal information and exact release identi
       await page.goto(origin + '/render/' + name);
       assert.ok((await page.title()).startsWith('Demande enregistrée'));
       assert.equal(await page.locator('.etat[data-ton="att"]').count(), 1);
+      // Même attente que la préparation : l'étape en cours porte la bande qui défile
+      assert.equal(await page.locator('.etat.attend + .checklist li[aria-current="step"]').count(), 1);
+      assert.equal(await page.locator('.checklist li[aria-current="step"]').evaluate(li => getComputedStyle(li, '::after').animationName), 'rayures');
       assert.ok((await page.textContent('main')).includes('Votre envoi est bien enregistré'));
       assert.ok((await page.textContent('main')).includes('Suivre mon cas d’usage'));
       assert.equal(await page.locator('#openrouter-key').count(), 0);

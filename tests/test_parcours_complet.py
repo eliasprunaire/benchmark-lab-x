@@ -2372,6 +2372,8 @@ class ParcoursComplet(unittest.TestCase):
         dossier = page.link('Actualiser')
         self.examine(page, dossier, 'attente', None)
         self.assertEqual(1, page.visible.count('Actualiser'))
+        # La piste et l'étape en cours de la préparation
+        self.assertEqual(2, sum(1 for n in page.nodes if n['tag'] == 'li' and n['attrs'].get('aria-current') == 'step'))
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'clarification', 'Envoyer ma réponse')
@@ -2428,6 +2430,8 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, dossier, 'qualification en attente', None)
         self.assertIn('Contrôle de l’exemple en cours', page.visible)
         self.assertEqual(1, page.visible.count('Actualiser'))
+        # La piste et l'étape en cours du contrôle de l'exemple
+        self.assertEqual(2, sum(1 for n in page.nodes if n['tag'] == 'li' and n['attrs'].get('aria-current') == 'step'))
         start = self.starts.get_nowait()
         prep.execute_qualification(self.data, start['qualification_operation'], self.bound[1])
         page, _, _ = self.request(dossier)
