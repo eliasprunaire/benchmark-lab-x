@@ -4763,12 +4763,16 @@ class ParcoursComplet(unittest.TestCase):
             body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest())
         value['receipt']['result'].update(output=content, incident='PROVIDER_RESPONSE_INCOMPLETE')
 
-    def evaluer(self, dossier):
+    def evaluer(self, dossier, pendant=None):
+        """Lance la vérification des réponses ; `pendant` est appelé quand elle est lancée, avant son exécution"""
         from benchmark import automatic_judgment as auto
         page, _, _ = self.request(dossier)
         page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.submit(page, '/evaluate', {})
-        auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
+        ids = self.starts.get_nowait()['judgment_operations']
+        if pendant:
+            pendant()
+        auto.execute_campaign(self.data, ids, self.bound[2])
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
         results, _, raw = self.request(comparison)
         self.examine(results, comparison, 'résultats avec reprises', None)
@@ -6055,8 +6059,16 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(lignes[2].startswith('Modèle C : aucune dépense'), lignes[2])
         self.assertIn('non envoyé : le benchmark s’est arrêté avant cet essai', lignes[2])
         self.assertNotIn('dépense à venir', texte)
+        # Revue PR #695 : seule la réponse comptée suit la vérification ; réponse inexploitable et essai non appelé restent sans objet
+        segments = []
+
+        def verification():
+            page, _, _ = self.request(suivi)
+            segments.append([n['attrs']['data-etat'] for n in page.nodes if n['attrs'].get('data-segment') == 'verification'])
         # La réponse exploitable de Modèle A est seule évaluée ; la couverture prévue reste distincte
-        html = self.evaluer(dossier)
+        html = self.evaluer(dossier, verification)
+        verification()
+        self.assertEqual([['encours', 'sansobjet', 'sansobjet'], ['fait', 'sansobjet', 'sansobjet']], segments)
         self.assertEqual(1, judge.request.call_count)
         self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu)', html)
         self.assertIn('Modèle C n’a pas été appelé : le benchmark s’est arrêté avant cet essai.', html)
