@@ -279,10 +279,11 @@ function renderRecord(record, parent) {
     record.messages.forEach(message => messages.append(node('li', message)));
     section('Vos messages (' + record.messages.length + ')', parent).append(messages);
   }
-  for (const revision of record.revisions) {
+  // Seules les révisions à exemple ont une version : leur rang, comme sur la page du cas
+  for (const [rang, revision] of record.revisions.filter(item => item.instruction !== '').entries()) {
     const [statut, ...suite] = revision.qualification.split('\n');
     const etat = CONTROLE[statut];
-    const corps = section('Version ' + revision.number + ' de l’exemple', parent, etat ? [mot(...etat)] : []);
+    const corps = section('Version ' + (rang + 1) + ' de l’exemple', parent, etat ? [mot(...etat)] : []);
     if (revision.instruction) {
       const consigne = node('p', revision.instruction); consigne.className = 'hist-consigne';
       corps.append(node('h4', 'Consigne'), consigne);
@@ -314,7 +315,8 @@ function face(record) {
   const summary = node('summary');
   const titre = node('span', record.need || 'Cas ' + record.dossier_id); titre.className = 'hist-titre';
   const count = record.campaigns.length;
-  const meta = node('span', 'Version ' + (record.revisions.at(-1)?.number ?? 0) + ' · ' + (count ? count + ' benchmark' + (count > 1 ? 's' : '') : 'aucun benchmark'));
+  const exemples = record.revisions.filter(item => item.instruction !== '').length;
+  const meta = node('span', (exemples ? 'Version ' + exemples : 'Aucun exemple') + ' · ' + (count ? count + ' benchmark' + (count > 1 ? 's' : '') : 'aucun benchmark'));
   meta.className = 'hist-meta';
   const mots = node('span'); mots.className = 'mots';
   const verdicts = record.campaigns.flatMap(campaign => campaign.models.map(model => model.verdict));

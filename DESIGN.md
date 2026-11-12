@@ -123,7 +123,7 @@ pied de page : marque, Parcours, Informations légales, grand EVALY, bande basse
 - Le menu est une liste. Sous 860 px, il devient un dépliant « Menu ». `aria-current="page"` marque seulement l'entrée qui est la page affichée, jamais une page descendante ni une page d'erreur.
 - Le pied de page a trois colonnes (deux sous 860 px, une sous 480 px) : la marque et sa tagline, sans note, puis « Parcours » et « Informations légales ». Viennent ensuite le mot EVALY en grand, puis une bande en trois zones : « Par Cybrel · né au Lab-X », la version et la source, le lien « Code source ».
 - Les cinq stations du cas (Besoin, Exemple, Validation, Modèles, Résultats) forment la piste. Les stations franchies sont des liens. Sous 700 px, seul le nom de la station courante reste visible.
-- Deux colonnes (`.colonnes`) : 360 px à droite pour l'état, la décision et le coût. Sous 1000 px, une seule colonne. `.cote-avant` remonte la colonne de droite avant le détail.
+- Deux colonnes (`.colonnes`) : 360 px à droite pour l'état et la décision. Le coût observé de la préparation est une information facultative : la page du cas ne l'affiche pas, la page Résultats le donne dans les dépenses du benchmark. Sous 1000 px, une seule colonne. `.cote-avant` remonte la colonne de droite avant le détail.
 - Chaque page se lit à 390 px sans défilement horizontal de la page. Seul un tableau défile dans son propre conteneur.
 
 ## Formes
@@ -141,7 +141,7 @@ Chaque composant HTML a sa fonction dans `benchmark_web/fragments.py`. Les noms 
 - **Tampon** (`tampon`) : verdict en capitales dans un cadre double, toujours avec son mot. `ok` Satisfait, `ko` Ne satisfait pas, `att` À reprendre, `vig` Non vérifié, `inc` Inconnu. La variante `xl` sert au bilan. La classe `frappe` anime l'arrivée.
 - **Boutons** (`btn`, `bouton`) : 52 px de haut minimum. Le bouton principal est jaune. `sec` est transparent à bord encre. `xl` est grand. Au survol, le bouton se décale de 3 px et projette un filet plein. Un seul bouton principal par écran. Le bouton de suppression est rouge (`btn-danger`). `lien` est l'action discrète avec flèche.
 - **Relevés** (`releves`, `readout`) : un chiffre déjà connu, en grand, toujours nommé au-dessus. Une valeur absente s'affiche « inconnu ». La variante `compact` sert à la colonne de droite.
-- **Récapitulatif avant dépense** : une ligne de synthèse, puis le bouton qui lance, puis le détail. La prévision des réponses et la réservation de la vérification s'affichent séparément, jamais additionnées.
+- **Récapitulatif avant dépense** : une ligne de synthèse, puis le bouton qui lance, puis le détail. La prévision des réponses et la réservation de la vérification s'affichent séparément, jamais additionnées. L'annonce des réserves avant la validation de l'exemple est facultative et informative : la page de validation ne l'affiche pas ; une info-bulle pourra la porter.
 - **Tiroir** (`tiroir`) : `details` natif avec titre, résumé de statut et signe plus. Il contient le détail rigoureux, les preuves et les options secondaires.
 - **Champ** (`champ`, `composeur` dans `views.py`) : libellé visible, aide liée par `aria-describedby`, bord encre de 2 px, 52 px de haut minimum. Une erreur porte `aria-invalid="true"` et un message `role="alert"` (`erreur_champ`). Le champ unique de Mes cas d'usage (`.compo`) a un halo animé au focus et des exemples qui défilent quand il est vide.
 - **Zone** (`zone`, `section`) : bande pleine largeur avec étiquette et titre, ou section d'une colonne.

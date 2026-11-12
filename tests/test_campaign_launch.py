@@ -462,8 +462,8 @@ class RequesterCampaignLaunch(unittest.TestCase):
                          next(check for check in checks if check['key'] == 'estimate_available')['detail'])
         preview = p.view(self.store, self.sid, 'fixture')
         preview['indicative_cost'] = None
-        self.assertIn('Coût estimé de la préparation</dt><dd><span class="val">inconnu</span><span class="note">non estimable</span>',
-                      views.render(preview, 'csrf').decode())
+        # La page du cas n'affiche plus le coût estimé de la préparation, même non estimable
+        self.assertNotIn('Coût estimé de la préparation', views.render(preview, 'csrf').decode())
 
     def test_chaque_controle_bloque_avec_sa_cle(self):
         with self.assertRaises(p.Denied) as disconnected:

@@ -16,7 +16,7 @@ from .campaign_views import (COMPARISON_FOCUS_SCRIPT, campaign_status, CUSTOM_MO
                              render_comparison, render_configurations, render_campaign_models, campaign_followup, contexte_vue, titre_vue)
 from .fragments import (ETAPES, bouton, btn, bulle_assistant, bulle_vous, cadre, champ, cles, consigne,
                         critere_ligne, criteres_actifs, date_lisible_utc, disque, erreur_champ, etat, feuille, fil, form, ic, icon, jour_lisible,
-                        lien, listing, montant_lisible, mot, notice_ligne, piste, puce, releves, ruban, section,
+                        lien, listing, montant_lisible, mot, notice_ligne, numero_version, piste, puce, ruban, section,
                         segments_liens, state_block, tampon, tete, text, tiroir)
 from .projection import (projection_body)
 from .results_views import (contexte_apercu, contexte_resultats, render_preview)
@@ -165,7 +165,7 @@ WITNESS_STATES = {'CONFIRMED': 'Décision conforme à l’attendu', 'CONTRADICTE
                   'NOT_RUN': 'Contrôle non exécuté', 'STALE': 'Preuve d’une autre version, non retenue'}
 
 
-def render_witnesses(qualification):
+def render_witnesses(qualification, value):
     """Témoins de la vérification, sans identifiant interne : ce que le contrôle a décidé, pas l'exactitude de l'attendu"""
     if 'witnesses' not in qualification:
         return ''
@@ -183,11 +183,13 @@ def render_witnesses(qualification):
                'référence ; il ne prouve pas que l’attendu est juste.</p>')
     for witness in qualification['witnesses']:
         cost = witness['cost']
+        numero = numero_version(value, witness['revision'])
         content += ('<h4>' + text(WITNESS_KINDS[witness['kind']]) + ' : ' + text(WITNESS_STATES[witness['state']]) + '</h4>'
                     + '<p>Attendu justifié : ' + text(witness['justification']) + '</p>'
                     + listing(row['description'] + ' : attendu ' + decision(row, row['expected']) + ', décidé '
                               + decision(row, row['decided']) for row in witness['expected'])
-                    + '<p class="petit">Contrôlé sur la version ' + text(str(witness['revision'])) + ' de l’exemple, avec sa référence'
+                    + '<p class="petit">' + ('Contrôlé sur la version ' + str(numero) + ' de l’exemple, avec sa référence' if numero
+                                             else 'Contrôlé avec sa référence')
                     + ('' if cost is None else ' · coût observé : ' + text(
                         'inconnu' if cost['status'] != 'KNOWN' else montant_lisible(cost['amount']) + ' ' + cost['currency']))
                     + '.</p><details><summary>Lire la réponse témoin</summary><div class="example-text">'
@@ -910,9 +912,12 @@ def render_cases(value, csrf):
 def render_task_index(task):
     """Exemples validés d'un cas d'usage et leurs benchmarks, visibles par vous seul"""
     content = '<p class="petit">Visible par vous seul : rien n’est publié dans le catalogue public.</p>'
-    content += '<p class="petit">Versions : ' + ' · '.join(
-        '<a href="' + text(task['href']) + '/revisions/' + str(revision) + '">' + str(revision) + '</a>'
-        for revision in task['revisions']) + '.</p>'
+    # Les exemples seuls, numérotés par leur rang ; le lien garde la révision technique
+    exemples = task.get('example_revisions') or []
+    if exemples:
+        content += '<p class="petit">Versions : ' + ' · '.join(
+            '<a href="' + text(task['href']) + '/revisions/' + str(revision) + '">' + str(rang) + '</a>'
+            for rang, revision in enumerate(exemples, 1)) + '.</p>'
     for version in task['versions']:
         # Le numéro distingue deux benchmarks figés dans la même seconde
         items = ''.join('<li><span>Benchmark ' + str(number) + ' du ' + text(date_lisible_utc(campaign['frozen_at'])) + '</span>'
@@ -997,33 +1002,6 @@ TEXTE_CONTROLE_REUSSI = ('L’assistant a contrôlé cette version : la consigne
                          'les réponses des modèles.')
 
 
-def cout_preparation(value):
-    """Coût de la préparation en relevé compact : estimé, observé ou corrigé, jamais deviné"""
-    lignes, notes = [], ''
-    if 'indicative_cost' in value:
-        estimate = value['indicative_cost']
-        amount = estimate.get('token_subtotal_usd') if estimate else None
-        lignes.append(('Coût estimé de la préparation', None if amount is None else montant_lisible(amount), 'USD',
-                       'non estimable' if amount is None else 'estimation, pas une facture'))
-        notes = '<p class="petit">Calcul de l’estimation : tokens utilisés × tarifs du modèle relevés avant l’appel.</p>'
-    if value.get('observed_cost'):
-        cost = value['observed_cost']
-        inconnu = cost['status'] == 'UNKNOWN'
-        lignes.append(('Coût observé de la préparation', None if inconnu else montant_lisible(cost['amount']), '' if inconnu else cost['currency'],
-                       'source : ' + str(cost['source'])))
-    elif value.get('operations') == 0:
-        # Zéro opération : aucune dépense à rapprocher, pas même une dépense inconnue
-        lignes.append(('Coût de la préparation', 'aucun', '', 'aucun appel modèle effectué'))
-    else:
-        lignes.append(('Coût de la préparation', None, '', 'aucun justificatif reçu'))
-    if value.get('cost_reconciliation'):
-        proof, cost = value['cost_reconciliation'], value['effective_cost']
-        lignes.append(('Coût corrigé après vérification', montant_lisible(cost['amount']), cost['currency'],
-                       'source : ' + str(proof['source']) + ', confirmée par ' + str(proof['actor']) + ' le ' + str(proof['observed_at'])))
-        notes += '<p class="petit">Le justificatif d’origine reste inchangé.</p>'
-    return releves(lignes, compact=True) + notes
-
-
 def formulaire_reponse(csrf, url, revision, *, desactive, aide, decrit='', libelle='Votre réponse à l’assistant', envoi='Envoyer ma réponse',
                        minlength=None):
     """Champ de réponse de la conversation : un champ, un bouton, la raison du refus liée au champ désactivé"""
@@ -1042,7 +1020,7 @@ def tiroir_correction(csrf, url, revision, disabled, *, ouvert=False):
                  '<p class="petit">Ce qui est convenu reste acquis. Si l’exemple change, vous le validerez de nouveau. '
                  'Les versions précédentes restent consultables.</p>'
                  '<div class="champ"><label for="kind">Votre message sert à</label><select id="kind" name="kind"' + disabled + '>'
-                 '<option value="clarify">Répondre à l’assistant ou confirmer le travail</option>'
+                 '<option value="clarify">Répondre à l’assistant ou confirmer le cas d’usage</option>'
                  '<option value="correct" selected>Modifier cet exemple</option></select></div>'
                  + champ('Votre précision ou correction', 'message', ident='message', maxlength=1000, desactive=bool(disabled), aide='')
                  + HONEYPOT + '<div class="actions envoi">' + bouton('Envoyer ce message', sec=True).replace(
@@ -1052,32 +1030,19 @@ def tiroir_correction(csrf, url, revision, disabled, *, ouvert=False):
 
 MODE_CORRIGER = ('<div class="mode-corriger"><div class="mc-correct"><h2>Corriger l’exemple</h2>'
                  '<p>L’assistant lit votre message et prépare une nouvelle version. Vous la relirez avant de la valider.</p>'
-                 + bouton('Corriger ce travail', xl=True).replace('type="submit"', 'type="submit" form="form-corriger"') + '</div>'
+                 + bouton('Corriger cet exemple', xl=True).replace('type="submit"', 'type="submit" form="form-corriger"') + '</div>'
                  '<div class="mc-clarify"><h2>Répondre à l’assistant</h2>'
                  '<p>L’assistant lit votre réponse et reprend la préparation de l’exemple.</p>'
                  + bouton('Envoyer ma réponse', xl=True).replace('type="submit"', 'type="submit" form="form-corriger"') + '</div></div>')
 
 
-def decision_validation(csrf, url, value, disabled, estimation_html):
+def decision_validation(csrf, url, value, disabled):
     """Bloc jaune de la validation : valider l'exemple, ou (tiroir de correction ouvert) envoyer la correction"""
     return form(csrf, url + '/validation', binding(value['dossier_id'], value['revision'], value['package_sha256']),
                 '<span class="etiq">Étape 3 sur 5</span><div class="mode-valider" id="validation"><h2>Valider l’exemple</h2>'
                 '<p>Vous confirmez que cet exemple représente bien votre besoin.</p>'
-                + bouton('Oui, c’est le travail à tester', xl=True).replace('type="submit"', 'type="submit"' + disabled) + estimation_html + '</div>'
+                + bouton('Oui, c’est le cas\xa0d’usage à tester', xl=True).replace('type="submit"', 'type="submit"' + disabled) + '</div>'
                 + MODE_CORRIGER, classe='decision')
-
-
-def estimation_controle(value):
-    """Annonce de dépense avant validation : deux réserves distinctes, jamais additionnées (DESIGN.md)"""
-    estimate = value.get('qualification_estimate')
-    if not estimate:
-        return ''
-    return ('<p class="petit">Estimation avant consommation : une réserve est bloquée sur votre crédit avant chaque appel. '
-            'Pour le contrôle de l’exemple : au plus ' + text(montant_lisible(estimate['check_usd']))
-            + ' USD réservé. Puis, pour le contrôle de chaque témoin, ' + text(str(estimate['witness_limit']))
-            + ' au plus : au plus ' + text(montant_lisible(estimate['witness_usd']))
-            + ' USD réservé par témoin. Un témoin est une réponse inventée, recevable ou fautive, soumise au '
-            'contrôle qui jugera les modèles. Le coût observé est relevé ensuite sur le justificatif de chaque appel.</p>')
 
 
 def critere_obligation(item):
@@ -1115,7 +1080,7 @@ def bloc_dossier(value):
         limites += '<h3>Ambiguïtés acceptées</h3>' + listing(package['acceptable_ambiguities'])
     if package['limits']:
         limites += '<h3>Limites de l’exemple</h3>' + listing(package['limits'])
-    contenu += tiroir('Limites et travail restant', limites)
+    contenu += tiroir('Limites et travail restant', limites, ouvert=True)
     labels = {'instruction': 'Consigne', 'deliverables': 'Livrables', 'criteria': 'Critères',
               'acceptable_ambiguities': 'Ambiguïtés acceptées', 'pieces': 'Pièces'}
     if value['changes']:
@@ -1163,7 +1128,7 @@ def controle_exemple(value, qualification, automatic, referral):
         # L'encadré d'état porte déjà la remarque d'un contrôle bloqué ou impossible
         dans_encadre = not reussi and qualification.get('status') == 'BLOCKED' or bool(qualification.get('cause'))
         corps += ('' if dans_encadre else '<p>Remarque du contrôle : ' + text(qualification['summary']) + '</p>')
-        corps += (listing(finding['text'] for finding in qualification.get('findings', [])) + render_witnesses(qualification))
+        corps += (listing(finding['text'] for finding in qualification.get('findings', [])) + render_witnesses(qualification, value))
     else:
         resume = CONTROLE.get(qualification.get('qualification_status'), 'En attente')
         if qualification.get('findings'):
@@ -1188,7 +1153,7 @@ def ligne_exemples(value, stages, cases):
         + ('<p class="petit">Le contrat de l’exemple 1 a changé depuis la création de certains exemples : '
            'ces exemples ne suivent plus la même consigne. Ajoutez-les de nouveau depuis l’exemple 1.' if drifted else
            '<p class="petit">Tous les exemples suivent la même consigne, les mêmes livrables et les mêmes critères.')
-        + ' Plusieurs exemples ne prouvent pas qu’ils représentent votre travail : chacun reste inventé, validé et '
+        + ' Plusieurs exemples ne prouvent pas qu’ils représentent votre cas d’usage : chacun reste inventé, validé et '
         'contrôlé séparément.</p>')
     return section('Exemples de ce cas d’usage', corps, 'cas')
 
@@ -1248,6 +1213,7 @@ def hors_champ(value, referral, request, benchmarks, bas):
 def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
     """Page d'un cas d'usage : besoin, exemple, validation, révision ou hors champ ; renvoie (titre, contenu, en-tête, état)"""
     dossier_id, revision = value['dossier_id'], value['revision']
+    numero = numero_version(value)
     url = '/preparation/dossiers/' + dossier_id
     source, source_notice = value.get('source'), value.get('source_notice') or {}
     package, stage = value['package'], value['stage']
@@ -1269,7 +1235,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
               'clarification': ('att', 'Question', 'L’assistant a une question',
                                 'Répondez : l’exemple sera préparé ensuite. Vous pouvez quitter la page et revenir.'),
               'preview': ('att', 'À relire', 'Votre exemple est prêt', 'Lisez la consigne et les pièces, corrigez si besoin, puis validez.'),
-              'scope_confirmation': ('att', 'Question', 'Précisez le travail à comparer',
+              'scope_confirmation': ('att', 'Question', 'Précisez le cas d’usage à comparer',
                                      'Evaly compare des modèles sur un travail concret, avec un résultat attendu et des critères vérifiables. '
                                      'Aucun benchmark ne se lance à cette étape.'),
               # La cause vient de l'explication ; l'envoi reste ouvert sauf motif de disponibilité affiché à part
@@ -1314,7 +1280,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         action = btn(cible, libelle)
     elif value['validation'] and value.get('qualified') and not snapshot and not prior_revision:
         action = btn(url + '/configurations', 'Choisir les modèles')
-    h1 = ('Votre cas d’usage' if value['validation'] else 'Est-ce le travail à tester ?' if package else 'Votre cas d’usage privé' if source
+    h1 = ('Votre cas d’usage' if value['validation'] else 'Est-ce le cas\xa0d’usage à tester ?' if package else 'Votre cas d’usage privé' if source
           else 'Précisons votre besoin')
     if launched and not snapshot and package:
         h1 = 'Exemple validé, benchmark lancé'
@@ -1354,7 +1320,7 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
     if current_campaigns and package:
         bas += liste_benchmarks(value, url, current_campaigns)
     if value.get('campaigns') and package:
-        bas += tiroir('Historique détaillé des benchmarks', render_campaign_records(value['campaigns'], url),
+        bas += tiroir('Historique détaillé des benchmarks', render_campaign_records(value['campaigns'], url, value),
                       resume='Benchmark ' + str(len(current_campaigns)) if current_campaigns else '')
     if cases and package:
         bas += ligne_exemples(value, stages, cases)
@@ -1365,13 +1331,15 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
     # Une fois la vue écrite, le tail de `render` n'ajoute plus les contrôles de confidentialité de cette page
     sortie = dict(bas_place=True)
     ancre = lien(path, 'Actualiser', 'actualiser') if not pending else ''
-    precedente = lien(url + '/revisions/' + str(revision - 1), 'Version précédente') if revision > 1 else ''
+    # Version précédente : l'exemple d'avant, jamais une révision de conversation
+    avant_exemple = max((r for r in value.get('example_revisions') or [] if r < revision), default=None)
+    precedente = lien(url + '/revisions/' + str(avant_exemple), 'Version précédente') if numero and avant_exemple else ''
     liens = '<div class="actions">' + ancre + precedente + '</div>' if ancre or precedente else ''
     if referral:
         benchmarks = [(identity, reference) for identity, reference in BENCHMARK_REFERENCES.items()
                       if reference['category'] == referral and reference.get('availability') == 'available']
         contenu = hors_champ(value, referral, request, benchmarks, bas)
-        return 'Hors du champ d’Evaly', contenu, dict(piste_html=navigation, contexte_html=puce('Version ' + str(revision)), cadre_propre=True), sortie
+        return 'Hors du champ d’Evaly', contenu, dict(piste_html=navigation, contexte_html=puce('Version ' + str(numero)) if numero else '', cadre_propre=True), sortie
     if pending:
         marque = disque('disque-l tourne')
         # Le script de suivi relit cette adresse et masque la barre `progress` quand il s'arrête
@@ -1383,9 +1351,8 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         carte = '<div id="availability">' + etat(ton, mot_, titre, texte, marque_html=marque, corps_html=suivi) + '</div>'
     else:
         carte = etat(ton, mot_, titre, texte, action) if titre else ''
-    cout = cout_preparation(value)
     nom = request if len(request) <= 60 else request[:59].rstrip() + '…'
-    contexte = (puce(nom, plein=True) if request else '') + puce('Version ' + str(revision)) + ruban('Copie d’un exemple publié' if source and package is None else 'Exemple inventé')
+    contexte = (puce(nom, plein=True) if request else '') + (puce('Version ' + str(numero)) if numero else '') + ruban('Copie d’un exemple publié' if source and package is None else 'Exemple inventé')
     avant = ' cote-avant' if package and value['validation'] or (value['validation'] and not request) else ''
     if package is None:
         # Conversation : le besoin, la question de l'assistant, puis le champ de réponse
@@ -1422,10 +1389,10 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
                             + '<p class="effet">' + ic('cle') + '<span>La préparation est payée avec votre clé OpenRouter. '
                             + ('La' if can_submit else '<a href="/preparation/access">Ajoutez votre clé</a> : la') + ' copie reste consultable sans elle.</span></p>',
                             classe='decision')
-            droite = decision + cout
+            droite = decision
             haut = '<div class="ge-pile">' + carte + '</div>'
         else:
-            droite = carte + cout + liens
+            droite = carte + liens
             haut = ''
         corps = (haut + '<div class="colonnes"><div class="entretien">' + gauche + '</div><aside class="cote gb-cote' + avant + '" aria-label="Où en est la préparation">'
                  + droite + '</aside>' + ('<div class="pile pile-bas">' + bas + '</div>' if bas else '') + '</div>')
@@ -1443,19 +1410,19 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
         gauche = render_source_copy(source, source_notice) + gauche
     haut = ''
     if avant_validation:
-        decision = decision_validation(csrf, url, value, disabled, estimation_controle(value))
+        decision = decision_validation(csrf, url, value, disabled)
         # Une version déjà remplacée ou un accès fermé s'annonce au-dessus des colonnes
-        if revision > 1:
-            haut = '<div class="gb-cote">' + etat('att', 'À valider', 'Version ' + str(revision) + ' prête à valider',
+        if numero is not None:
+            haut = '<div class="gb-cote">' + etat('att', 'À valider', 'Version ' + str(numero) + ' prête à valider',
                                                 'Relisez l’exemple, puis validez-le.') + '</div>'
-        droite = decision + cout + liens
+        droite = decision + liens
         avant = ''
     elif prior_revision and not value['validation'] and stage == 'preview':
         droite = ('<div class="carte gb-ancienne"><span class="etiq">Étape 3 sur 5</span><h2>Valider l’exemple</h2>'
-                  '<p>Cet exemple n’est pas encore validé. Ouvrez la version actuelle pour le valider.</p></div>' + cout + liens)
+                  '<p>Cet exemple n’est pas encore validé. Ouvrez la version actuelle pour le valider.</p></div>' + liens)
         haut = '<div class="gb-cote">' + carte + '</div>'
     else:
-        droite = carte + cout + liens
+        droite = carte + liens
         avant = ' cote-avant'
     if value.get('privacy') and not active_session(value['privacy']) and package:
         haut = '<div class="gb-cote">' + etat('vig', 'Accès fermé', 'Votre accès à ce cas est fermé',

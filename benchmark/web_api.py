@@ -184,10 +184,13 @@ def _campaign_of(path):
 def _dossiers(store, session_id):
     """Cas encore ouverts de la session, avec leur échéance d'effacement quand le stockage s7 la connaît"""
     from . import privacy
-    rows = p.connection_for(store).execute('SELECT dossier_id,current_revision FROM s2_dossiers WHERE session_id=? ORDER BY dossier_id',
-                                           (session_id,)).fetchall()
+    from .restitution import example_revisions
+    connection = p.connection_for(store)
+    rows = connection.execute('SELECT dossier_id,current_revision FROM s2_dossiers WHERE session_id=? ORDER BY dossier_id',
+                              (session_id,)).fetchall()
     expiry = privacy.dossier_expiries(store._connection, session_id) if privacy.available(store._connection) else {}
-    return [{'dossier_id': d, 'revision': r, 'expires_at': expiry.get(d), 'need': store.get_dossier(d, r)['request']}
+    return [{'dossier_id': d, 'revision': r, 'example_count': len(example_revisions(connection, d)), 'expires_at': expiry.get(d),
+             'need': store.get_dossier(d, r)['request']}
             for d, r in rows if privacy.visible(store._connection, session_id, d)]
 
 
@@ -359,6 +362,7 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
     launch_route = re.fullmatch(r'/preparation/dossiers/([A-Za-z0-9_-]{1,128})/campaigns/([A-Za-z0-9_-]{1,128})/(conditions|start|evaluate)', path)
     if launch_route:
         from .acquisition import campaigns
+        from .restitution import example_revisions
         dossier_id, campaign_id, action = launch_route.groups()
         connection = p.connection_for(store)
         p.owner(connection, session_id, dossier_id)
@@ -397,6 +401,7 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
             value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
                                           access_secret=access_secret,
                                           access_transport=access_transport, judgment_transport=judgment_transport)
+            value['example_revisions'] = example_revisions(p.connection_for(store), dossier_id)
             if requester:
                 value['launchable'] = False
             else:
@@ -413,11 +418,13 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
             ids = auto.reserve_campaign(store, session_id, dossier_id, campaign_id, judgment_transport)
             value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
                 access_secret=access_secret, access_transport=access_transport)
+            value['example_revisions'] = example_revisions(p.connection_for(store), dossier_id)
             return 202, value, None, {'judgment_operations': ids} if ids else None
         if method == 'GET' and action == 'conditions':
             value = campaigns.launch_view(store, session_id, dossier_id, campaign_id,
                                           access_secret=access_secret,
                                           access_transport=access_transport, judgment_transport=judgment_transport)
+            value['example_revisions'] = example_revisions(p.connection_for(store), dossier_id)
             if requester and campaign_id in _LAUNCHING:
                 value['checks'].append(dict(key='launch_pending', ok=False,
                     detail='un lancement de ce benchmark est déjà en cours d’enregistrement ; actualisez la page dans un moment'))
@@ -449,6 +456,7 @@ def _dispatch(store, method, path, token, body, source, transport, *, qualificat
     revision = None if revision is None else int(revision)
     if method == 'GET' and action is None:
         result = p.view(store, session_id, dossier_id, revision, include_history=True)
+        result['example_revisions'] = result['task_index']['example_revisions']
         if campaign_reference:
             result['campaigns'] = [campaign for campaign in result.get('campaigns', [])
                                    if campaign['campaign_id'] == campaign_reference and campaign['task']['revision'] == revision]

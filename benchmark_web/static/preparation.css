@@ -611,6 +611,8 @@ html { scroll-padding-top: 96px; }
 /* Écarts verticaux entre blocs voisins */
 .bilan + .signaux { margin-top: 16px; }
 .colonnes + *, .colonnes-moitie + *, .depart + * { margin-top: clamp(32px, 4vw, 48px); }
+/* Tiroir de copie locale posé après le contenu d'une page sans colonnes : bandeau des modèles, suivi */
+.cadre > .privacy-controls { margin-top: clamp(32px, 4vw, 48px); }
 .carte .tiroir, .actions + .tiroir, fieldset + .tiroir { margin-top: 16px; }
 .carte .tiroir + .actions, .tiroir + .actions { margin-top: 16px; }
 .pile > .tiroir + .tiroir { margin-top: 0; }

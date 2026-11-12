@@ -72,6 +72,13 @@ def tete(titre, *, piste_html='', contexte_html='', sous_titre_html=''):
             + sous_titre_html + contexte + '</header></div>')
 
 
+def numero_version(value, revision=None):
+    """Numéro affiché d’une révision : son rang parmi les révisions qui portent un exemple ; None sans exemple"""
+    revisions = value.get('example_revisions') or []
+    revision = value.get('revision') if revision is None else revision
+    return revisions.index(revision) + 1 if revision in revisions else None
+
+
 def puce(texte, plein=False, icone: str | None = None):
     """Puce de contexte (nom du cas, version) ; `plein` l'inverse"""
     return ('<span class="puce' + (' puce-plein' if plein else '') + '">'

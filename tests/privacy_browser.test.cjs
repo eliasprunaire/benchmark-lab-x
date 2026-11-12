@@ -144,11 +144,13 @@ print(json.dumps({**browser_views(),
                       'models': [{'id': 'mistralai/mistral-medium-3-5', 'name': 'Mistral Medium 3.5', 'selected': True,
                                   'not_adjustable': False, 'levels': ['none', 'high'], 'chosen': ''},
                                  {'id': 'deepseek/deepseek-v4.1-flash', 'name': 'DeepSeek V4.1 Flash', 'selected': True,
-                                  'not_adjustable': True, 'levels': [], 'chosen': ''}],
+                                  'not_adjustable': True, 'levels': [], 'chosen': ''},
+                                 {'id': 'openai/gpt-5.6-sol', 'name': 'GPT 5.6 Sol', 'selected': False,
+                                  'not_adjustable': False, 'levels': ['low', 'high'], 'chosen': ''}],
                       'current_tier': 'low', 'available_tiers': ['low', 'high'], 'configurations': [],
                       'current_campaign_id': None, 'estimate_total_usd': None, 'superseded': [],
                       'estimate_available': False, 'assumptions': None, 'custom_models': []}, 'csrf').decode(),
-                  'comparison_script': views.COMPARISON_FOCUS_SCRIPT, **attempt,
+                  'comparison_script': views.COMPARISON_FOCUS_SCRIPT, 'custom_models_script': views.CUSTOM_MODELS_SCRIPT, **attempt,
                   'launch': views.render(launch(), 'csrf').decode(),
                   'followup': views.render(launch('EMISSION_POSSIBLE'), 'csrf').decode(),
                   'followup_done': views.render(launch('RECEIVED'), 'csrf').decode(),
@@ -192,7 +194,7 @@ print(json.dumps({**browser_views(),
       res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'sha256-${createHash('sha256').update(rendered.filtres_script).digest('base64')}'; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
       res.end(html);
     } else if (url.pathname.startsWith('/render/') || url.pathname === rendered.detail_href) {
-      const hashes = [rendered.script, rendered.comparison_script, rendered.progress_script]
+      const hashes = [rendered.script, rendered.comparison_script, rendered.progress_script, rendered.custom_models_script]
         .map(script => `'sha256-${createHash('sha256').update(script).digest('base64')}'`).join(' ');
       res.setHeader('Content-Type', 'text/html');
       res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' ${hashes}; connect-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'`);
@@ -331,7 +333,10 @@ test('public local history renders inert text and exports a complete case after 
     // Au-delà de six fiches : les six premières, un filtre sans accents et un bouton pour tout afficher
     for (let i = 2; i <= 7; i++) {
       // Copies anciennes : benchmark sans date, aucun message ; la fiche n'affiche pas de section vide
-      fixture(1, 'Cas numéro ' + i, {dossier_id: 'd' + i, messages: [], campaigns: [{...fresh().campaigns[0], frozen_at: undefined}]});
+      // Cas numéro 2 : une question avant l'exemple ; seule la révision à exemple compte, au rang 1
+      const question = {number: 1, instruction: '', deliverables: [], criteria: [], pieces: [], qualification: ''};
+      fixture(1, 'Cas numéro ' + i, {dossier_id: 'd' + i, messages: [], campaigns: [{...fresh().campaigns[0], frozen_at: undefined}],
+        ...(i === 2 ? {revisions: [question, {...fresh().revisions[0], number: 2}]} : {})});
       manifest.dossier_id = 'd' + i;
       await page.evaluate(id => historyStore.archive(id, 1), 'd' + i);
     }
@@ -347,6 +352,7 @@ test('public local history renders inert text and exports a complete case after 
     await page.getByRole('button', {name: 'Afficher toutes les fiches (7)'}).click();
     assert.equal(await visibles(), 7);
     const ancienne = page.locator('[data-privacy-list] > details', {hasText: 'Cas numéro 2'});
+    assert.match(await ancienne.locator(':scope > summary .hist-meta').textContent(), /^Version 1 · 1 benchmark/);
     assert.deepEqual((await ancienne.locator('.hist-corps > details > summary').allTextContents()).map(text => text.trim()),
       ['Version 1 de l’exempleRéussi', 'Benchmark 1']);
     // Toute suppression se confirme sur place : Annuler ne touche à rien et rend le focus au bouton
@@ -868,10 +874,11 @@ test('legal pages keep CSP, French headings, visible focus, AA contrast and fit 
 });
 
 test('per-model reasoning tuning opens without JavaScript, stays in the form and fits 390 px', async () => {
-  for (const colorScheme of ['light', 'dark']) {
-    const context = await browser.newContext({viewport: {width: 390, height: 844}, colorScheme, javaScriptEnabled: false});
+  for (const [colorScheme, javaScriptEnabled] of [['light', false], ['dark', false], ['light', true], ['dark', true]]) {
+    const context = await browser.newContext({viewport: {width: 390, height: 844}, colorScheme, javaScriptEnabled});
     try {
       const page = await context.newPage(); page.setDefaultTimeout(3000);
+      const where = `${colorScheme} ${javaScriptEnabled ? 'avec' : 'sans'} script`;
       await page.goto(origin + '/render/configurations');
       const tuning = page.locator('details', {hasText: 'Choisir un niveau différent pour un modèle'});
       assert.equal(await tuning.count(), 1, colorScheme);
@@ -883,12 +890,46 @@ test('per-model reasoning tuning opens without JavaScript, stays in the form and
       assert.deepEqual(await select.locator('option').evaluateAll(options => options.map(option => option.value)), ['', 'none', 'high']);
       assert.equal(await page.locator('label[for="' + await select.getAttribute('id') + '"]').textContent(), 'Mistral Medium 3.5');
       assert.equal(await page.locator('select[name="effort:deepseek/deepseek-v4.1-flash"]').count(), 0, `${colorScheme} niveau fixe sans réglage`);
+      // Sans script, chaque modèle réglable garde sa ligne ; avec script, seules les lignes des modèles cochés restent
+      const box = id => page.locator(`input[name="models"][value="${id}"]`), line = id => page.locator(`li[data-modele="${id}"]`);
+      assert.equal(await page.locator('select[name="effort:openai/gpt-5.6-sol"]').getAttribute('form'), 'configurations-form', where);
+      assert.equal(await page.locator('li[data-modele]').count(), 3, where);
+      assert.equal(await line('openai/gpt-5.6-sol').isVisible(), !javaScriptEnabled, `${where} modèle non coché`);
+      assert.equal(await line('mistralai/mistral-medium-3-5').isVisible(), true, `${where} modèle coché`);
+      if (javaScriptEnabled) {
+        await box('mistralai/mistral-medium-3-5').uncheck();
+        assert.equal(await line('mistralai/mistral-medium-3-5').isVisible(), false, `${where} modèle décoché`);
+        await box('openai/gpt-5.6-sol').check();
+        assert.equal(await line('openai/gpt-5.6-sol').isVisible(), true, `${where} modèle coché ensuite`);
+        await box('openai/gpt-5.6-sol').uncheck(); await box('deepseek/deepseek-v4.1-flash').uncheck();
+        assert.equal(await tuning.isVisible(), false, `${where} tiroir sans ligne masqué`);
+        await box('mistralai/mistral-medium-3-5').check(); await box('deepseek/deepseek-v4.1-flash').check();
+        assert.equal(await tuning.isVisible(), true, `${where} tiroir de nouveau visible`);
+      }
+      // Bandeau : sous deux modèles cochés, le message remplace la synthèse et, avec script, désactive le bouton
+      const bandeau = () => page.evaluate(() => {
+        const bar = document.querySelector('.barre-choix'), bouton = bar.querySelector('button');
+        return [!bar.querySelector('[data-choix-synthese]').hidden, !bar.querySelector('[data-choix-minimum]').hidden,
+                bouton.disabled, bouton.getAttribute('aria-describedby'), bar.querySelector('.resume').innerText];
+      });
+      let bande = await bandeau();
+      assert.deepEqual(bande.slice(0, 4), [true, false, false, null], `${where} deux modèles cochés`);
+      assert.match(bande[4], /^2 modèles/, where);
+      if (javaScriptEnabled) {
+        await box('mistralai/mistral-medium-3-5').uncheck();
+        bande = await bandeau();
+        assert.deepEqual(bande.slice(0, 4), [false, true, true, 'choix-minimum'], `${where} un modèle coché`);
+        assert.equal(bande[4], 'Choisissez au moins deux modèles', where);
+        await box('mistralai/mistral-medium-3-5').check();
+        bande = await bandeau();
+        assert.deepEqual(bande.slice(0, 4), [true, false, false, null], `${where} deux modèles de nouveau`);
+      }
       await select.focus();
       assert.notEqual(await select.evaluate(element => getComputedStyle(element).outlineStyle), 'none', `${colorScheme} focus invisible`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${colorScheme} débordement`);
       assert.deepEqual(await page.evaluate(contrastFailures), [], colorScheme);
       mkdirSync('reports/privacy-browser', {recursive: true});
-      await page.screenshot({path: `reports/privacy-browser/configurations-tuning-${colorScheme}-mobile.png`, fullPage: true});
+      await page.screenshot({path: `reports/privacy-browser/configurations-tuning-${colorScheme}${javaScriptEnabled ? '-script' : ''}-mobile.png`, fullPage: true});
     } finally {await context.close();}
   }
 });
@@ -1192,7 +1233,7 @@ test('results and publication preview stay readable at 390 px: whole words, stac
     // Contribution retirée : la décision principale reste, sans choix de partage
     await page.goto(origin + '/render/example');
     assert.equal(await page.evaluate(() => {
-      const validate = [...document.querySelectorAll('#validation button')].find(button => /Oui, c’est le travail à tester/.test(button.textContent));
+      const validate = [...document.querySelectorAll('#validation button')].find(button => /Oui, c’est le cas\u00a0d’usage à tester/.test(button.textContent));
       return Boolean(validate) && !document.querySelector('[data-privacy-post="contribution"]');
     }), true, 'décision principale sans choix de partage');
   } finally {await context.close();}
@@ -1562,6 +1603,13 @@ test('access and launch screens preserve available actions, estimates and refusa
     assert.equal(/Votre sélection|Coût total estimé|Plafond :/.test(selection), false);
     assert.equal(await page.locator('a[href$="/campaigns/d1-c1/conditions"]').count(), 0);
     assert.equal(await page.getByRole('button', {name: 'Continuer', exact: true}).count(), 1);
+    // Un seul modèle coché, sans script : le message s'affiche, le bouton reste actif et le moteur refusera l'envoi
+    await page.goto(origin + '/render/configurations-one');
+    assert.deepEqual(await page.evaluate(() => {
+      const bar = document.querySelector('.barre-choix');
+      return [bar.querySelector('[data-choix-synthese]').hidden, bar.querySelector('[data-choix-minimum]').hidden,
+              bar.querySelector('button').disabled, bar.hasAttribute('disabled')];
+    }), [true, false, false, false]);
     for (const [name, text] of [['16-01', '16 septembre 2026 à 12:00:01 UTC'],
       ['16-02', '16 septembre 2026 à 12:00:02 UTC'], ['15-00', '15 septembre 2026 à 12:00:00 UTC']]) {
       await page.goto(origin + '/render/date-' + name);
@@ -1591,6 +1639,11 @@ test('access and launch screens preserve available actions, estimates and refusa
       assert.ok((await page.textContent('main')).includes('Enregistrer ce choix n’appelle aucun modèle.'), `${width} aucun appel`);
       assert.equal(await page.locator('.barre-choix button[form="configurations-form"]').innerText(), 'Continuer');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0, `${width} débordement des modèles`);
+      // Le tiroir de copie locale garde sous le bandeau et sous le suivi la marge posée sous les colonnes
+      const marge = () => page.locator('.cadre > .privacy-controls').evaluate(e => parseFloat(getComputedStyle(e).marginTop));
+      assert.ok(await marge() >= 32, `${width} marge sous le bandeau`);
+      await page.goto(origin + '/render/followup-received-privacy');
+      assert.ok(await marge() >= 32, `${width} marge sous le suivi`);
       await page.goto(origin + '/render/launch-ready');
       // Le récapitulatif porte les montants et le seul bouton ; le tableau reste dans la colonne de lecture
       const pupitre = await page.locator('form.pupitre').innerText();
@@ -1971,20 +2024,20 @@ test('an existing copied example stays readable without JavaScript, by keyboard 
       // Copie sans exemple préparé : son état et la consultation sans clé sont dits au premier écran
       assert.match(copied, /Copie d’un exemple publié/);
       assert.equal(/Épreuve source|Copie d’épreuve/.test(copied), false);
-      assert.match(copied, /Version 1/);
+      assert.equal(await page.locator('.puce', {hasText: /^Version/}).count(), 0, 'copie sans exemple, sans puce de version');
       assert.equal(copied.includes('Exemple inventé'), false);
       assert.match(copied, /Votre copie est enregistrée\./);
       assert.match(copied, /sans clé ni appel aux modèles/);
       assert.match(copied, /servira à préparer votre exemple/);
       assert.equal(copied.includes('Ajoutez votre clé OpenRouter pour préparer un exemple.'), false);
-      assert.match(copied, /aucun appel modèle effectué/);
+      assert.equal(copied.includes('aucun appel modèle effectué'), false);
       await page.reload();
       const reloadedCopy = await page.textContent('main');
       assert.match(reloadedCopy, /Copie d’un exemple publié/);
       assert.match(reloadedCopy, /Exemple source/);
       assert.match(reloadedCopy, /Pièce source <script>alert\(1\)<\/script>/);
       assert.match(reloadedCopy, /Qualification absente/);
-      assert.match(reloadedCopy, /aucun appel modèle effectué/);
+      assert.equal(reloadedCopy.includes('aucun appel modèle effectué'), false);
       assert.equal(await page.locator('script[src*="privacy.js"]').count(), 1);
       assert.equal(await page.locator('main script:not([src])').count(), 1);
       assert.equal(await page.locator('main img, main script[src*="alert"]').count(), 0);
@@ -2058,7 +2111,7 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
     assert.ok((await page.locator('nav.piste [aria-current="step"]').textContent()).includes('Validation'));
     assert.equal(await page.locator('nav.piste a[href$="/configurations"]').count(), 1);
     await page.goto(origin + '/render/scope');
-    assert.ok((await page.textContent('main')).includes('Précisez le travail à comparer'));
+    assert.ok((await page.textContent('main')).includes('Précisez le cas d’usage à comparer'));
     assert.ok((await page.textContent('main')).includes('Aucun benchmark ne se lance à cette étape.'));
     assert.equal((await page.textContent('main')).includes('Choisir les modèles'), false);
     assert.equal(await page.locator('a[href="#exemple"], a[href="#validation"], form[action$="/validation"], #openrouter-key').count(), 0);
@@ -2145,13 +2198,13 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       layout = await zones();
       assert.equal(layout.overflow, 0, `${width} préparation sans débordement`);
       assert.ok(layout.reply && layout.state, `${width} réponse dans la conversation, état en synthèse`);
-      assert.match(layout.side, /Coût de la préparation/, `${width} coût en synthèse`);
+      assert.equal(/Coût de la préparation/.test(layout.side), false, `${width} aucun coût en synthèse`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de préparation`);
       await page.goto(origin + '/render/case-current');
       layout = await zones();
       assert.equal(layout.overflow, 0, `${width} validation sans débordement`);
       assert.ok(layout.example && layout.correction && layout.validation, `${width} exemple et correction en zone principale, validation en synthèse`);
-      assert.match(layout.side, /Oui, c’est le travail à tester/, `${width} bouton de validation en synthèse`);
+      assert.match(layout.side, /Oui, c’est le cas\u00a0d’usage à tester/, `${width} bouton de validation en synthèse`);
       assert.equal(layout.consent, false, `${width} aucun bloc de partage`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de validation`);
     }
@@ -2204,14 +2257,14 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
     await tabulerJusqua('#piece-1 > summary');
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('#piece-1').evaluate(d => d.open), true, 'pièce ouverte au clavier');
-    // Correction : le tiroir s'ouvre, le message se tape, puis le bouton jaune devient « Corriger ce travail »
+    // Correction : le tiroir s'ouvre, le message se tape, puis le bouton jaune devient « Corriger cet exemple »
     await tabulerJusqua('#corriger > summary');
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('#corriger').evaluate(d => d.open), true, 'tiroir de correction ouvert au clavier');
     await tabulerJusqua('#corriger #message');
     await page.keyboard.type('Ajouter une action sans échéance.');
     await tabulerJusqua('button[form="form-corriger"]');
-    assert.match(await page.evaluate(() => document.activeElement.textContent), /Corriger ce travail/);
+    assert.match(await page.evaluate(() => document.activeElement.textContent), /Corriger cet exemple/);
   } finally {await context.close();}
 });
 
@@ -2221,7 +2274,7 @@ test('privacy forms preserve purpose tokens and expired states', async () => {
     const page = await context.newPage();
     await page.goto(origin + '/render/example');
     const text = await page.textContent('main');
-    assert.ok(text.indexOf('Les pièces') < text.indexOf('Oui, c’est le travail à tester'));
+    assert.ok(text.indexOf('Les pièces') < text.indexOf('Oui, c’est le cas\u00a0d’usage à tester'));
     assert.ok(text.includes('Efface la copie de ce navigateur et demande la suppression sur le serveur'));
     // Contribution retirée : ni case, ni texte de partage sur la page d'un cas
     assert.equal(await page.locator('.privacy-consent, [data-privacy-post="contribution"]').count(), 0);
@@ -2251,7 +2304,7 @@ test('privacy forms preserve purpose tokens and expired states', async () => {
       [['col', 'Cas d’usage'], ['col', 'Version'], ['col', 'Effacement prévu'], ['col', 'Actions']]);
     assert.deepEqual(await page.locator('.table-cas tbody td:first-child a').evaluateAll(links => links.map(link => [link.getAttribute('href'), link.textContent])),
       [['/preparation/dossiers/d1', 'Trier des notes de réunion'], ['/preparation/dossiers/d2', 'Rédiger des réponses aux clients']]);
-    assert.deepEqual(await page.locator('.table-cas tbody td:nth-child(2)').allTextContents(), ['Version 2', 'Version 1']);
+    assert.deepEqual(await page.locator('.table-cas tbody td:nth-child(2)').allTextContents(), ['Version 1', 'Aucun exemple']);
     assert.deepEqual(await page.locator('.table-cas tbody td:nth-child(3)').allTextContents(), ['inconnu', 'inconnu']);
     // Chaque ligne garde sa copie (privacy.js) et mène à la confirmation de suppression, avec son adresse de retour
     assert.deepEqual(await page.locator('.table-cas [data-privacy-controls]').evaluateAll(cards => cards.map(card => card.dataset.dossierId)), ['d1', 'd2']);
@@ -2294,7 +2347,7 @@ test('privacy forms preserve purpose tokens and expired states', async () => {
       // Version prête à valider : la carte invite seulement à relire, sans aucune phrase de partage
       const carte = await page.textContent('main');
       assert.equal(/partage/i.test(carte), false, name);
-      if (name === 'current') assert.match(carte, /Version 3 prête à valider\s*Relisez l’exemple, puis validez-le\./);
+      if (name === 'current') assert.match(carte, /Version 2 prête à valider\s*Relisez l’exemple, puis validez-le\./);
       // Accès fermé seulement si la session a expiré : le lien vers les copies porte le nom de sa page
       assert.deepEqual((await page.locator('.etat a.lien[href="/preparation/data"]').allTextContents()).map(t => t.trim()),
         name === 'expired' ? ['Mes données'] : [], name);

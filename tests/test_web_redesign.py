@@ -115,8 +115,8 @@ class DossierPageTests(unittest.TestCase):
         for raw_key in ('<li>eliminatory</li>', '<li>obligations</li>', '<li>quality</li>'):
             self.assertNotIn(raw_key, page)
         self.assertNotIn('<li>faible</li>', page)
-        self.assertIn('<h1>Est-ce le travail à tester ?</h1>', page)
-        self.assertIn('<title>Est-ce le travail à tester ?', page)
+        self.assertIn('<h1>Est-ce le cas\xa0d’usage à tester ?</h1>', page)
+        self.assertIn('<title>Est-ce le cas\xa0d’usage à tester ?', page)
 
         single_group = render(['Toutes les actions présentes'])
         self.assertIn('<span class="genre">Obligation</span>', single_group)
@@ -124,7 +124,7 @@ class DossierPageTests(unittest.TestCase):
         self.assertNotIn('<span class="genre">Erreur éliminatoire</span>', single_group)
         self.assertNotIn('<span class="genre">Qualité</span>', single_group)
         self.assertIn(rule, single_group)
-        self.assertIn('<h1>Est-ce le travail à tester ?</h1>', single_group)
+        self.assertIn('<h1>Est-ce le cas\xa0d’usage à tester ?</h1>', single_group)
 
 
     def test_state_block_steps_and_hidden_correction_without_digests(self):
@@ -146,10 +146,12 @@ class DossierPageTests(unittest.TestCase):
         # Avant validation, le bloc jaune porte la décision ; le tiroir de correction est celui que ce bloc commande
         self.assertIn('<form class="decision" method="post"', page)
         self.assertIn('<details class="tiroir" id="corriger">', page)
+        self.assertIn('<details class="tiroir" open><summary><span class="titre">Limites et travail restant</span>', page)
         self.assertIn('<form id="form-corriger" method="post"', page)
         self.assertIn('aria-current="step"', page)
         self.assertIn('<span class="n">03</span><span class="l">Validation</span>', page)
-        self.assertIn('Oui, c’est le travail à tester', page)
+        self.assertIn('Oui, c’est le cas\xa0d’usage à tester', page)
+        self.assertIn('Répondre à l’assistant ou confirmer le cas d’usage', page)
         self.assertIn('type="submit" form="form-corriger"', page)
         self.assertIn('>Actualiser<svg', page)
         self.assertIn('<div class="website" hidden aria-hidden="true"><label for="website">Site web</label>', page)

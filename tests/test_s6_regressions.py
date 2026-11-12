@@ -455,8 +455,9 @@ class S6Regressions(unittest.TestCase):
                          {campaign['campaign_id'] for campaign in index['versions'][0]['campaigns']})
         for suffix, revision in (('', current), ('/revisions/' + str(previous), previous)):
             with self.subTest(revision=revision):
+                # La page porte aussi les révisions à exemple, qui numérotent les versions affichées
                 expected = dict(p.view(self.store, self.sid, 'fixture', revision),
-                                current_revision=current, task_index=index,
+                                current_revision=current, task_index=index, example_revisions=index['example_revisions'],
                                 availability=p.availability(self.store, False))
                 transaction, reads = 0, []
 
@@ -479,8 +480,9 @@ class S6Regressions(unittest.TestCase):
                 self.assertEqual(200, code)
                 self.assertEqual(expected, actual)
                 self.assertEqual(['fixture'], [call.args[2] for call in project.call_args_list])
-                self.assertEqual(2, len(reads))
-                self.assertEqual(reads[0], reads[1])
+                # Trois lectures dans la même transaction : la révision demandée, toutes les révisions et celles à exemple
+                self.assertEqual(3, len(reads))
+                self.assertEqual({reads[0]}, set(reads))
                 with self.assertRaises(p.Denied):
                     web_api.dispatch(self.store, 'GET', '/preparation/dossiers/fixture' + suffix,
                                      foreign_token, None, 'a' * 40, False)

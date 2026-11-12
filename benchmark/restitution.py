@@ -624,6 +624,12 @@ def _detail(store, connection, session_id, dossier_id, value, attempt_id):
                                  '#attempt-' + attempt_id))
 
 
+def example_revisions(connection, dossier_id):
+    """Révisions qui portent un exemple, dans l’ordre : leur rang est le numéro de version affiché"""
+    return [r for r, in connection.execute(
+        'SELECT revision FROM s2_revisions WHERE dossier_id=? AND package_json IS NOT NULL ORDER BY revision', (dossier_id,))]
+
+
 def _task_index(store, connection, dossier_id, current, campaigns):
     revisions = [r[0] for r in connection.execute(
         'SELECT revision FROM s2_revisions WHERE dossier_id=? ORDER BY revision', (dossier_id,))]
@@ -647,6 +653,7 @@ def _task_index(store, connection, dossier_id, current, campaigns):
                        for v in campaigns if v['contract_sha256'] == fingerprint]))
     return dict(dossier_id=dossier_id, need=store.get_dossier(dossier_id, current)['request'],
                 revision=current, revisions=revisions, versions=versions,
+                example_revisions=example_revisions(connection, dossier_id),
                 href='/preparation/dossiers/' + dossier_id)
 
 
