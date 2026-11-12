@@ -1074,6 +1074,17 @@ textarea:disabled { background: var(--creux); color: var(--discret); cursor: not
 .vit .coureur.p0 .disque { left: 0; }
 .coureur.pm .disque { left: 45%; }
 .coureur.pm .trace { transform: scaleX(.45); }
+/* Suivi : deux segments par couloir, Réponse puis Vérification ; le disque s'arrête au repère qui les sépare */
+.voie > [data-segment] { position: absolute; top: 0; bottom: 0; }
+.voie > [data-segment="reponse"] { left: 0; right: 50%; }
+.voie > [data-segment="verification"] { left: 50%; right: 12px; border-left: 2px solid var(--nuit-2); }
+.direct [data-segment="reponse"] .coureur { inset: 0 10px 0 0; }
+/* Segment Vérification, couleur du compteur « réponses vérifiées » : vide à venir, bloqué ou sans objet ; rayé en cours ; plein une fois terminé */
+[data-segment="verification"] .trace { position: absolute; left: 6px; right: 0; top: 50%; height: 8px; margin-top: -4px; border-radius: 4px; }
+[data-segment="verification"][data-etat="encours"] .trace { background: repeating-linear-gradient(90deg, var(--sur-nuit) 0 10px, transparent 10px 16px); }
+/* Même phase sur tous les couloirs : le suivi ne sait pas quelle réponse est vérifiée */
+.vit [data-segment="verification"][data-etat="encours"] .trace { animation: rayures .8s linear infinite; }
+[data-segment="verification"][data-etat="fait"] .trace { background: var(--sur-nuit); }
 .g-liste-modeles { list-style: none; display: grid; gap: 14px; }
 .g-liste-modeles .carte { display: grid; gap: 8px; }
 .g-haut .etat .actions { grid-column: 2; }

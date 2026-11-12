@@ -1485,6 +1485,8 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.direct-tete').length,
       document.querySelectorAll('#campaign-status > .direct-tete').length]), [1, 1]);
     assert.match(await page.locator('#campaign-status').textContent(), /0\/2\s*réponses vérifiées/);
+    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#campaign-status .couloir').length,
+      document.querySelectorAll('#campaign-status [data-segment="verification"]').length]), [2, 2]);
     await start();
     await tick(3000, 'followup-stopped', 'FOLLOWUP_COMPLETE');
     await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1/conditions');
@@ -1722,6 +1724,13 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       if (terminal) assert.ok(text.includes('Celles qui n’ont pas encore de verdict attendent leur vérification.'));
       // #541 : la ligne de compte ne présente pas le modèle épuisé comme une réponse reçue
       if (state === 'operator-exhausted') assert.match(text, /0\/1\s*réponses reçues/, text);
+      // Deux segments par couloir : seul le segment en cours bouge
+      const attendus = {running: [['reponse', 'encours', true], ['verification', 'avenir', false]],
+        received: [['reponse', 'fait', false], ['verification', 'avenir', false]],
+        'operator-exhausted': [['reponse', 'bloque', false], ['verification', 'sansobjet', false]]};
+      if (attendus[state]) assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.couloir [data-segment]')].map(segment =>
+        [segment.dataset.segment, segment.dataset.etat, [...segment.querySelectorAll('*')].some(e => getComputedStyle(e).animationName !== 'none')])),
+        attendus[state], state);
     }
     for (const status of ['NOT_STARTED', 'WAITING', 'RUNNING', 'COMPLETE', 'BLOCKED']) {
       await page.goto(origin + '/render/judgment-' + status);
@@ -1733,6 +1742,13 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       assert.match(text, new RegExp(`${Number(ready)}/1\\s*réponses vérifiées`));
       assert.equal(await page.locator('form[action$="/evaluate"]').count(), Number(status === 'NOT_STARTED'));
       assert.equal(await page.locator('script').count() > 0, active || ready);
+      // Segment Vérification : l'état du jugement sur chaque couloir ; seule la vérification en cours bouge
+      const verification = {NOT_STARTED: 'avenir', WAITING: 'avenir', RUNNING: 'encours', COMPLETE: 'fait', BLOCKED: 'bloque'}[status];
+      const couloirs = await page.evaluate(() => [...document.querySelectorAll('.couloir')].map(li => [
+        li.querySelector('[data-segment="verification"]')?.dataset.etat,
+        [...li.querySelectorAll('*')].some(e => {const style = getComputedStyle(e); return style.animationName !== 'none' && style.animationPlayState === 'running';})]));
+      assert.ok(couloirs.length > 0, status);
+      assert.deepEqual(couloirs, couloirs.map(() => [verification, status === 'RUNNING']), status);
       if (status === 'NOT_STARTED') {
         assert.equal(await page.locator('input[name="confirm"]').inputValue(), 'yes');
         assert.equal(await page.locator('input[name="csrf_token"]').inputValue(), 'csrf');
@@ -1744,6 +1760,15 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
         assert.equal(text.includes('Gérer ma clé'), false);
       }
     }
+    // Mouvement réduit pendant la vérification : rien ne bouge, l'état de chaque segment reste lisible
+    const reduit = await browser.newContext({javaScriptEnabled: false, reducedMotion: 'reduce'});
+    try {
+      const calme = await reduit.newPage();
+      await calme.goto(origin + '/render/judgment-RUNNING');
+      assert.deepEqual(await calme.evaluate(() => [...document.querySelectorAll('main *')]
+        .flatMap(e => [getComputedStyle(e).animationName, getComputedStyle(e, '::after').animationName]).filter(name => name !== 'none')), []);
+      assert.equal(await calme.locator('.couloir [data-segment="verification"][data-etat="encours"]').count(), 1);
+    } finally {await reduit.close();}
     for (const [state, judgment, active] of [['EMISSION_POSSIBLE', 'None', true], ['INTENT_RECORDED', 'None', true],
       ['EMISSION_POSSIBLE', 'WAITING', true], ['RECEIVED', 'None', false], ['RECEIVED', 'BLOCKED', false]]) {
       await page.goto(origin + '/render/mixed-' + state + '-' + judgment);

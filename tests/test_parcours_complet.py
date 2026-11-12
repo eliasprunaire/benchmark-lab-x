@@ -2670,7 +2670,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual('Suivi du benchmark', next(n['text'] for n in page.nodes if n['tag'] == 'h1'))
         self.assertIn('En file', page.visible)
         self.assertNotIn('Benchmark terminé', page.visible)
-        self.assertTrue(any('Modèle BRaisonnement fixeEn file' in n['text'] for n in page.nodes if n['tag'] == 'li'))
+        # Les libellés des segments, réservés aux lecteurs d'écran, s'insèrent entre le réglage et le tampon
+        self.assertTrue(any(ligne.startswith('Modèle BRaisonnement fixe') and ligne.endswith('En file') for ligne in couloirs(page)))
         self.assertFalse(any(f['action'].endswith('/cap') for f in page.forms))
         self.assertEqual(3, len(self.calls))
         execution.execute_launch(self.data, attempts[:1], self.candidate,
@@ -4263,6 +4264,10 @@ class ParcoursComplet(unittest.TestCase):
         ids = self.starts.get_nowait()['judgment_operations']
         # La réponse absente n'est jamais envoyée au juge
         self.assertEqual(2, len(ids))
+        # Vérification lancée, pas encore exécutée : son segment est en cours sur chaque réponse comptée
+        followup, _, _ = self.request(recap)
+        self.assertEqual(['encours', 'encours', 'sansobjet'],
+                         sorted(n['attrs']['data-etat'] for n in followup.nodes if n['attrs'].get('data-segment') == 'verification'))
         auto.execute_campaign(self.data, ids, self.bound[2])
         self.assertEqual(2, judge.request.call_count)
         with closing(storage.Store(self.data)) as store:
@@ -4288,6 +4293,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('les essais se sont arrêtés avant la fin', results.visible)
         followup, _, _ = self.request(recap)
         self.assertIn('2 /2 réponses vérifiées', followup.visible)
+        self.assertEqual(['fait', 'fait', 'sansobjet'],
+                         sorted(n['attrs']['data-etat'] for n in followup.nodes if n['attrs'].get('data-segment') == 'verification'))
         # Une nouvelle sélection ne retire pas l'accès aux résultats de la comparaison évaluée
         page, _, _ = self.request(dossier + '/configurations')
         self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'tier': 'high'})

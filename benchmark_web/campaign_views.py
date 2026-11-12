@@ -1185,22 +1185,28 @@ def render_campaign_followup(value, csrf):
     # Appel clos sans réponse confirmée (#537), dans la comparaison ou sa chaîne de relances : ni reçu ni compté
     closed = set(outcome.get('closed_cells', ())) | {
         a.get('cell_id') for a in campaign['attempts'] if a.get('incident') == AMBIGUOUS_EXPIRED}
+    # Segment Vérification : l'état du jugement de la campagne, le même sur chaque couloir compté
+    verification = {'RUNNING': 'encours', 'COMPLETE': 'fait', 'BLOCKED': 'bloque'}.get((campaign.get('judgment') or {}).get('status'), 'avenir')
     lanes = ''
     for cell in cells:
         model = models.get(cell['configuration_id'])
         lines = lignes_raisonnement(model) if model else []
         prefix = ' · '.join(filter(None, (examples.get(cell.get('case_id')), 'Essai ' + str(cell['repetition']) if 'repetition' in cell else '')))
         position = {'INTENT_RECORDED': 'p0', 'NOT_STARTED': 'p0', 'RECEIVED': 'p100', 'AMBIGUOUS': 'pm'}.get(cell['state'], '')
+        # `position` ne suffit pas : `p0` vaut pour une réponse à venir comme pour une réponse arrêtée
+        reponse = {'EMISSION_POSSIBLE': 'encours', 'RECEIVED': 'fait', 'AMBIGUOUS': 'bloque'}.get(cell['state'], 'avenir')
         if cell['state'] == 'RECEIVED' and cell.get('cell_id') in closed:
-            mark, position = statut('vig', 'Non confirmée', 'alerte'), 'pm'
+            mark, position, reponse = statut('vig', 'Non confirmée', 'alerte'), 'pm', 'bloque'
         elif cell['state'] == 'RECEIVED' and cell.get('cell_id') in unusable:
-            mark, position = statut('ko', 'Sans réponse', 'croix'), 'p0'
+            mark, position, reponse = statut('ko', 'Sans réponse', 'croix'), 'p0', 'bloque'
         elif cell['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open'):
             # Sans admission, une intention n'est jamais émise (#525), comme sur la page de résultats
-            mark, position = statut('inc', 'Non appelé', 'pause'), 'p0'
+            mark, position, reponse = statut('inc', 'Non appelé', 'pause'), 'p0', 'bloque'
         else:
             mark = states.get(cell['state'], statut('inc', 'État inconnu', 'question'))
-        lanes += couloir(model_name(model, names) if model else 'Modèle', ([prefix] if prefix else []) + lines, mark, position)
+        # Une cellule close ou sans réponse exploitable sort du compte des réponses vérifiées
+        etats = (reponse, 'sansobjet' if cell.get('cell_id') in closed | unusable else verification)
+        lanes += couloir(model_name(model, names) if model else 'Modèle', ([prefix] if prefix else []) + lines, mark, position, etats=etats)
     received = sum(cell['state'] == 'RECEIVED' for cell in cells)
     # Ni l'appel clos ni la cellule sans réponse exploitable ne comptent comme une réponse reçue (#541)
     received -= sum(cell['state'] == 'RECEIVED' and cell.get('cell_id') in closed | unusable for cell in cells)
@@ -1244,11 +1250,21 @@ def render_campaign_followup(value, csrf):
             + status + note + foot + '</section></div>')
 
 
-def couloir(nom, lignes, statut_html, position=''):
-    """Un couloir du suivi : le modèle et son réglage, sa piste avec le disque d'essai, puis son statut"""
+# Segments d'un couloir : clé, nom et mot de chaque état, lus par les lecteurs d'écran
+SEGMENTS = (('reponse', 'Réponse', {'avenir': 'à venir', 'encours': 'en cours', 'fait': 'reçue', 'bloque': 'arrêtée'}),
+            ('verification', 'Vérification', {'avenir': 'à venir', 'encours': 'en cours', 'fait': 'terminée', 'bloque': 'bloquée',
+                                              'sansobjet': 'sans objet'}))
+
+
+def couloir(nom, lignes, statut_html, position='', *, etats):
+    """Un couloir du suivi : le modèle et son réglage, le segment Réponse avec le disque d'essai, le segment Vérification, puis son statut ;
+    `etats` donne l'état des deux segments"""
+    coureur = '<span class="coureur' + (' ' + position if position else '') + '"><span class="trace"></span>' + disque() + '</span>'
+    segments = ''.join('<span data-segment="' + cle + '" data-etat="' + valeur + '"><span class="cache">' + text(libelle + ' : ' + mots[valeur])
+                       + '</span>' + (coureur if cle == 'reponse' else '<span class="trace"></span>') + '</span>'
+                       for (cle, libelle, mots), valeur in zip(SEGMENTS, etats))
     return ('<li class="couloir"><span class="couloir-nom">' + text(nom) + ('<small>' + ''.join('<span>' + text(ligne) + '</span>' for ligne in lignes)
-            + '</small>' if lignes else '') + '</span><span class="voie"><span class="coureur' + (' ' + position if position else '')
-            + '"><span class="trace"></span>' + disque() + '</span></span>' + statut_html + '</li>')
+            + '</small>' if lignes else '') + '</span><span class="voie">' + segments + '</span>' + statut_html + '</li>')
 
 
 def example_label(case, number):

@@ -150,13 +150,14 @@ Chaque composant HTML a sa fonction dans `benchmark_web/fragments.py`. Les noms 
 - **Harnais** (`harnais`) : valeur « pi.dev » avec lien et info-bulle sur le lancement à vide, sans numéro de version.
 - **Table des cas** (`table-cas`) : cas d'usage, version, effacement prévu, actions ; une carte par ligne sous 900 px, libellé de date en mono. Le vide s'écrit « Aucun cas d’usage. » sur fond `signal-pale`.
 - **Accueil** : dès 1100 px, l'accroche et les trois atouts à parts égales sur une ligne, alignés par le haut, puis le bouton et le lien, l'un sous l'autre et centrés, dans un bloc à part, plus aéré ; deux colonnes de 861 à 1099 px ; une seule sous 860 px ; puis banc d'essai de nuit avec trois couloirs de démonstration, cinq stations, règle du verdict.
-- **Suivi en direct** : couloirs de nuit, un disque qui avance par modèle, tampon d'état à droite.
+- **Suivi en direct** : couloirs de nuit, tampon d'état à droite. Chaque couloir a deux segments, Réponse puis Vérification, nommés pour les lecteurs d’écran. Le disque d’essai court dans le segment Réponse et s’arrête au repère qui le sépare du segment Vérification. Le segment Réponse reprend la couleur du compteur « réponses reçues », le segment Vérification celle du compteur « réponses vérifiées ».
 - **Pied de page** : voir « Mise en page ». Le lien « Code source » répond à l'offre de source de l'AGPL §13 et ne disparaît jamais.
 
 ## Mouvement
 
 - Le mouvement sert la lecture : le disque d'essai qui court (accueil, suivi), le tampon qui frappe (`frappe`, 0,32 s, ressort `cubic-bezier(.2, .9, .3, 1.25)`), le mot qui défile dans le titre de l'accueil, les exemples qui défilent dans le champ vide, le halo du champ au focus.
 - L’étape en cours d’une attente (préparation, contrôle de l’exemple, « Demande enregistrée ») porte sous son libellé une bande rayée `att` de 4 px qui défile vers la droite (`rayures`, 16 px en 0,8 s, linéaire, infini). La classe `attend` de l’encadré porte ce mouvement. Sur la préparation et le contrôle de l’exemple, l’arrêt de la mise à jour automatique retire `attend`.
+- Pendant la vérification des réponses, le segment Vérification de chaque couloir porte une bande rayée `sur-nuit` qui défile (`rayures`, 16 px en 0,8 s, linéaire, infini), en même phase sur tous les couloirs : le suivi ne sait pas quelle réponse est vérifiée.
 - Aucune animation n'est nécessaire pour comprendre un état.
 - `prefers-reduced-motion: reduce` supprime toutes les animations et transitions. Le disque et les traces prennent alors leur position finale ; les bandes rayées restent immobiles et pleines.
 - Les transitions de survol durent 150 à 200 ms : décalage du bouton, flèche des liens, signe plus des tiroirs.
