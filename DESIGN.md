@@ -159,7 +159,7 @@ Chaque composant HTML a sa fonction dans `benchmark_web/fragments.py`. Les noms 
 - L’étape en cours d’une attente (préparation, contrôle de l’exemple, « Demande enregistrée ») porte sous son libellé une bande rayée `att` de 4 px qui défile vers la droite (`rayures`, 16 px en 0,8 s, linéaire, infini). La classe `attend` de l’encadré porte ce mouvement. Sur la préparation et le contrôle de l’exemple, l’arrêt de la mise à jour automatique retire `attend`.
 - Pendant la vérification des réponses, le segment Vérification de chaque couloir porte une bande rayée `sur-nuit` qui défile (`rayures`, 16 px en 0,8 s, linéaire, infini), en même phase sur tous les couloirs : le suivi ne sait pas quelle réponse est vérifiée.
 - Aucune animation n'est nécessaire pour comprendre un état.
-- `prefers-reduced-motion: reduce` supprime toutes les animations et transitions. Le disque et les traces prennent alors leur position finale ; les bandes rayées restent immobiles et pleines.
+- `prefers-reduced-motion: reduce` supprime toutes les animations et transitions. Le disque et les traces prennent alors leur position finale. Les bandes rayées restent immobiles et gardent leurs rayures sur toute leur longueur : les rayures disent « en cours », un segment Vérification terminé reste plein.
 - Les transitions de survol durent 150 à 200 ms : décalage du bouton, flèche des liens, signe plus des tiroirs.
 - Aucun nouveau mouvement sans nouvelle règle dans ce fichier.
 
