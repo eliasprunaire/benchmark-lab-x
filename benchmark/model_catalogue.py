@@ -260,10 +260,15 @@ def _selection(fetched_at, document, registry):
             raise storage.IntegrityError('Cache endpoint incomplet')
         try:
             view.append(model_view(model, detail, excluded_providers))
-        except ValueError:
+        except ValueError as error:
             # Seul un prix publié invalide écarte le modèle ; toute autre donnée invalide refuse le relevé
             if not _invalid_price(model):
                 raise
+            try:
+                # Sans ses prix publiés, la vue doit aboutir : sinon l'erreur vient d'une autre donnée
+                model_view({**model, 'pricing': {}}, detail, excluded_providers)
+            except ValueError:
+                raise error
             view.append(_malformed_view(model_id, model))
     return {'fetched_at': fetched_at.isoformat(),
             'stale': _now() - fetched_at >= timedelta(hours=settings['cache_hours']),
