@@ -204,6 +204,10 @@ def browser_views():
         value['task_index'] = dict(href='/preparation/dossiers/d1', example_revisions=[1], versions=[])
         examples['example-' + status] = value
     examples['example-readonly'] = dict(deepcopy(examples['example-BLOCKED']), current_revision=2)
+    # Historique avec une entrée : un contrat de comparaison existe pour cet exemple contrôlé
+    value = deepcopy(examples['example-QUALIFIED'])
+    value['task_index']['versions'] = [dict(version=1, revision=1, campaigns=[])]
+    examples['example-history'] = value
     value = deepcopy(examples['example-QUALIFIED'])
     value['qualification']['findings'] = [dict(severity='note', text='Note ' + str(i)) for i in range(5)] + [
         dict(severity='blocking', text='Blocage ' + str(i)) for i in range(4)]
