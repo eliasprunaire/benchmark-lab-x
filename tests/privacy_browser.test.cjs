@@ -2184,7 +2184,7 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
     await page.goto(origin + '/render/example-QUALIFIED');
     assert.equal(await page.locator('details#exemple').count(), 1);
     assert.equal(await page.locator('details#exemple').evaluate(d => d.open), false);
-    assert.equal(await page.locator('#controle .mot').count(), 1);
+    assert.equal(await page.locator('#controle > .zone-titre .mot').count(), 1);
     assert.equal(await page.locator('#controle details').count(), 0, 'aucun détail vide');
     assert.equal(await page.locator('details.privacy-controls, #t-suppr').count(), 2);
     assert.equal(await page.locator('.pile-bas summary .titre', {hasText: 'Historique des versions et des benchmarks'}).count(), 1);

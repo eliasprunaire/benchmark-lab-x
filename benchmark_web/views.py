@@ -1166,7 +1166,8 @@ def controle_exemple(value, qualification, automatic, referral):
                         resume=str(len(autres)) + (' autres remarques' if len(autres) > 1 else ' autre remarque')
                         + ' · ' + str(nombre) + (' témoins' if nombre > 1 else ' témoin'))
     ton = 'ok' if reussi else 'inc' if qualification.get('cause') else 'ko' if qualification.get('qualification_status', qualification.get('status')) == 'BLOCKED' else 'att'
-    return section('Contrôle de l’exemple', mot(resume, ton) + corps, 'controle')
+    return ('<section class="pile" id="controle" aria-labelledby="t-controle"><div class="zone-titre">'
+            '<h2 id="t-controle">Contrôle de l’exemple</h2>' + mot(resume, ton) + '</div>' + corps + '</section>')
 
 
 def ligne_exemples(value, stages, cases):
