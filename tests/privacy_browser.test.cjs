@@ -1452,7 +1452,12 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
         // K7 : la cible d'arrêt garde 44 px de haut
         const stop = page.getByRole('button', {name: 'Arrêter la mise à jour automatique'});
         assert.ok((await stop.boundingBox()).height >= 44, 'arrêt du suivi sous 44 px');
+        assert.equal(await page.locator('.etat.attend').count(), 1);
         await stop.click();
+        // L'arrêt fige l'encadré : ni disque qui tourne, ni bande qui défile
+        assert.equal(await page.locator('.etat.attend, .tourne').count(), 0);
+        assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.etat, .etat *')]
+          .flatMap(e => [getComputedStyle(e).animationName, getComputedStyle(e, '::after').animationName]).filter(name => name !== 'none')), []);
       }
       if (action !== 'complete') {
         await page.clock.runFor(30000);
@@ -1480,6 +1485,8 @@ test('benchmark followup survives an isolated failure, stops after three in a ro
     assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('.direct-tete').length,
       document.querySelectorAll('#campaign-status > .direct-tete').length]), [1, 1]);
     assert.match(await page.locator('#campaign-status').textContent(), /0\/2\s*réponses vérifiées/);
+    assert.deepEqual(await page.evaluate(() => [document.querySelectorAll('#campaign-status .couloir').length,
+      document.querySelectorAll('#campaign-status [data-segment="verification"]').length]), [2, 2]);
     await start();
     await tick(3000, 'followup-stopped', 'FOLLOWUP_COMPLETE');
     await page.waitForURL(origin + '/preparation/dossiers/d1/campaigns/c1/conditions');
@@ -1717,6 +1724,15 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       if (terminal) assert.ok(text.includes('Celles qui n’ont pas encore de verdict attendent leur vérification.'));
       // #541 : la ligne de compte ne présente pas le modèle épuisé comme une réponse reçue
       if (state === 'operator-exhausted') assert.match(text, /0\/1\s*réponses reçues/, text);
+      // Deux segments par couloir : seul le segment en cours bouge
+      const attendus = {running: [['reponse', 'encours', true], ['verification', 'avenir', false]],
+        received: [['reponse', 'fait', false], ['verification', 'avenir', false]],
+        'operator-exhausted': [['reponse', 'bloque', false], ['verification', 'sansobjet', false]],
+        // Un essai à vérifier non clos peut encore recevoir sa réponse, puis être vérifié
+        ambiguous: [['reponse', 'bloque', false], ['verification', 'avenir', false]]};
+      if (attendus[state]) assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.couloir [data-segment]')].map(segment =>
+        [segment.dataset.segment, segment.dataset.etat, [...segment.querySelectorAll('*')].some(e => getComputedStyle(e).animationName !== 'none')])),
+        attendus[state], state);
     }
     for (const status of ['NOT_STARTED', 'WAITING', 'RUNNING', 'COMPLETE', 'BLOCKED']) {
       await page.goto(origin + '/render/judgment-' + status);
@@ -1728,6 +1744,13 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       assert.match(text, new RegExp(`${Number(ready)}/1\\s*réponses vérifiées`));
       assert.equal(await page.locator('form[action$="/evaluate"]').count(), Number(status === 'NOT_STARTED'));
       assert.equal(await page.locator('script').count() > 0, active || ready);
+      // Segment Vérification : l'état du jugement sur chaque couloir ; seule la vérification en cours bouge
+      const verification = {NOT_STARTED: 'avenir', WAITING: 'avenir', RUNNING: 'encours', COMPLETE: 'fait', BLOCKED: 'bloque'}[status];
+      const couloirs = await page.evaluate(() => [...document.querySelectorAll('.couloir')].map(li => [
+        li.querySelector('[data-segment="verification"]')?.dataset.etat,
+        [...li.querySelectorAll('*')].some(e => {const style = getComputedStyle(e); return style.animationName !== 'none' && style.animationPlayState === 'running';})]));
+      assert.ok(couloirs.length > 0, status);
+      assert.deepEqual(couloirs, couloirs.map(() => [verification, status === 'RUNNING']), status);
       if (status === 'NOT_STARTED') {
         assert.equal(await page.locator('input[name="confirm"]').inputValue(), 'yes');
         assert.equal(await page.locator('input[name="csrf_token"]').inputValue(), 'csrf');
@@ -1739,6 +1762,21 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
         assert.equal(text.includes('Gérer ma clé'), false);
       }
     }
+    // Comparaison arrêtée avec un essai non appelé : la vérification en cours reste active, seule la ligne comptée bouge
+    await page.goto(origin + '/render/judgment-RUNNING-partial');
+    assert.equal(await page.locator('#preparation-progress').count(), 1);
+    assert.equal(await page.locator('#t-direct').textContent(), 'Les réponses sont vérifiées.');
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.couloir')].map(li =>
+      [...li.querySelectorAll('*')].filter(e => getComputedStyle(e).animationName !== 'none').length)), [1, 0]);
+    // Mouvement réduit pendant la vérification : rien ne bouge, l'état de chaque segment reste lisible
+    const reduit = await browser.newContext({javaScriptEnabled: false, reducedMotion: 'reduce'});
+    try {
+      const calme = await reduit.newPage();
+      await calme.goto(origin + '/render/judgment-RUNNING');
+      assert.deepEqual(await calme.evaluate(() => [...document.querySelectorAll('main *')]
+        .flatMap(e => [getComputedStyle(e).animationName, getComputedStyle(e, '::after').animationName]).filter(name => name !== 'none')), []);
+      assert.equal(await calme.locator('.couloir [data-segment="verification"][data-etat="encours"]').count(), 1);
+    } finally {await reduit.close();}
     for (const [state, judgment, active] of [['EMISSION_POSSIBLE', 'None', true], ['INTENT_RECORDED', 'None', true],
       ['EMISSION_POSSIBLE', 'WAITING', true], ['RECEIVED', 'None', false], ['RECEIVED', 'BLOCKED', false]]) {
       await page.goto(origin + '/render/mixed-' + state + '-' + judgment);
@@ -2181,7 +2219,12 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       await page.goto(origin + `/render/progress-${stage}-${status}-${prior ? 'True' : 'False'}`);
       assert.equal(await page.locator('#preparation-progress').count(), Number(pending));
       assert.equal(await page.locator('.etat .disque.tourne').count(), Number(pending));
+      // Pendant l'attente, l'encadré nomme ses étapes ; la bande de l'étape en cours défile (pseudo-élément)
+      assert.equal(await page.locator('main .checklist').count(), Number(pending));
+      assert.equal(await page.locator('.etat.attend').count(), Number(pending));
       if (pending) {
+        assert.equal(await page.locator('main .checklist li[aria-current="step"]').count(), 1);
+        assert.equal(await page.locator('main .checklist li[aria-current="step"]').evaluate(li => getComputedStyle(li, '::after').animationName), 'rayures');
         assert.equal(await page.locator('#availability').count(), 1);
         assert.equal(await page.locator('aside#availability').count(), 0);
         // La barre `progress` sert au script de suivi ; à l'écran, seul le disque tourne
@@ -2191,6 +2234,15 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
         assert.equal(await page.locator('#preparation-progress button').isHidden(), true);
       }
     }
+    // Mouvement réduit : aucune animation, pseudo-éléments compris ; l'étape en cours reste nommée
+    const reduit = await browser.newContext({javaScriptEnabled: false, reducedMotion: 'reduce'});
+    try {
+      const calme = await reduit.newPage();
+      await calme.goto(origin + '/render/progress-waiting-none-False');
+      assert.equal(await calme.locator('main .checklist li[aria-current="step"]').count(), 1);
+      assert.deepEqual(await calme.evaluate(() => [...document.querySelectorAll('main *')]
+        .flatMap(e => [getComputedStyle(e).animationName, getComputedStyle(e, '::after').animationName]).filter(name => name !== 'none')), []);
+    } finally {await reduit.close();}
     // Composition S18 : zone principale et colonne de synthèse, l'état reste en tête, sans bloc de partage
     const zones = () => page.evaluate(() => {
       const box = node => node.getBoundingClientRect(), side = box(document.querySelector('.cote')), main = box(document.querySelector('.pile-l, .entretien'));
@@ -2540,6 +2592,9 @@ test('public and private pages retain legal information and exact release identi
       await page.goto(origin + '/render/' + name);
       assert.ok((await page.title()).startsWith('Demande enregistrée'));
       assert.equal(await page.locator('.etat[data-ton="att"]').count(), 1);
+      // Même attente que la préparation : l'étape en cours porte la bande qui défile
+      assert.equal(await page.locator('.etat.attend + .checklist li[aria-current="step"]').count(), 1);
+      assert.equal(await page.locator('.checklist li[aria-current="step"]').evaluate(li => getComputedStyle(li, '::after').animationName), 'rayures');
       assert.ok((await page.textContent('main')).includes('Votre envoi est bien enregistré'));
       assert.ok((await page.textContent('main')).includes('Suivre mon cas d’usage'));
       assert.equal(await page.locator('#openrouter-key').count(), 0);

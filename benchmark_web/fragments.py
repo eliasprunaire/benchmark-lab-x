@@ -98,11 +98,12 @@ def mot(texte, ton='inc'):
     return '<span class="mot" data-ton="' + ton + '">' + ic(TONS[ton]) + text(texte) + '</span>'
 
 
-def etat(ton, mot_texte, titre, texte='', actions_html='', marque_html=None, *, corps_html='', ident=None):
-    """Encadré d'état unique d'un écran : pastille, mot de statut, titre h2, une phrase, actions ; `corps_html` s'ajoute après la phrase"""
+def etat(ton, mot_texte, titre, texte='', actions_html='', marque_html=None, *, corps_html='', ident=None, classe=''):
+    """Encadré d'état unique d'un écran : pastille, mot de statut, titre h2, une phrase, actions ; `corps_html` s'ajoute après la phrase,
+    `classe` à la classe `etat` (`attend` pendant une attente)"""
     ident = ident or 'etat-' + format(zlib.crc32((mot_texte + titre).encode()), 'x')
     repere = marque_html if marque_html is not None else '<span class="pastille">' + ic(TONS[ton]) + '</span>'
-    return ('<section class="etat" data-ton="' + ton + '" aria-labelledby="' + ident + '">' + repere
+    return ('<section class="etat' + (' ' + text(classe) if classe else '') + '" data-ton="' + ton + '" aria-labelledby="' + ident + '">' + repere
             + mot(mot_texte, ton) + '<h2 id="' + ident + '">' + text(titre) + '</h2>'
             + ('<p>' + text(texte) + '</p>' if texte else '') + corps_html
             + ('<div class="actions">' + actions_html + '</div>' if actions_html else '') + '</section>')

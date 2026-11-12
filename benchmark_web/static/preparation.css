@@ -1002,6 +1002,18 @@ table.comparatif td:last-child a, table.comparatif td:last-child .lien { white-s
 .gb-notice .ic { margin-top: .2em; }
 .checklist .coche-att { background: var(--att-fond); color: var(--att); border: 2px solid var(--att); }
 .checklist .coche-vide { background: transparent; color: var(--discret); border: 2px dashed var(--discret); }
+/* Attente (préparation, contrôle de l'exemple) : les étapes sous la phrase, sur toute la largeur de l'encadré */
+.etat > .checklist { grid-column: 1 / -1; margin-top: 6px; border-top: 1px dashed var(--filet-doux); }
+/* Le mot d'état sous le libellé, comme sous 620 px : l'encadré occupe la colonne étroite dès 1001 px */
+.etat > .checklist li { grid-template-columns: auto 1fr; row-gap: 2px; padding: 10px 0; }
+.etat > .checklist li > .mot { grid-column: 2; justify-self: start; }
+/* Chaque étape garde le ton de son mot : sans ces règles, `[data-ton="att"] .mot` de l'encadré les teinte toutes */
+.etat .checklist .mot[data-ton="ok"] { background: var(--ok-fond); color: var(--ok); }
+.etat .checklist .mot[data-ton="inc"] { background: var(--inc-fond); color: var(--inc); }
+/* L'étape en cours porte une bande rayée qui défile ; sur a et c, l'arrêt de la mise à jour retire `attend` et la bande */
+.attend .checklist li[aria-current="step"], .attend + .checklist li[aria-current="step"] { position: relative; }
+.attend .checklist li[aria-current="step"]::after, .attend + .checklist li[aria-current="step"]::after { content: ""; position: absolute; left: 44px; right: 0; bottom: -2px; height: 4px; border-radius: 2px; background: repeating-linear-gradient(90deg, var(--att) 0 10px, transparent 10px 16px); animation: rayures .8s linear infinite; }
+@keyframes rayures { to { background-position: 16px 0; } }
 .checklist .mot { white-space: nowrap; }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: .55; cursor: not-allowed; transform: none; box-shadow: none; }
 textarea:disabled { background: var(--creux); color: var(--discret); cursor: not-allowed; }
@@ -1062,6 +1074,17 @@ textarea:disabled { background: var(--creux); color: var(--discret); cursor: not
 .vit .coureur.p0 .disque { left: 0; }
 .coureur.pm .disque { left: 45%; }
 .coureur.pm .trace { transform: scaleX(.45); }
+/* Suivi : deux segments par couloir, Réponse puis Vérification ; le disque s'arrête au repère qui les sépare */
+.voie > [data-segment] { position: absolute; top: 0; bottom: 0; }
+.voie > [data-segment="reponse"] { left: 0; right: 50%; }
+.voie > [data-segment="verification"] { left: 50%; right: 12px; border-left: 2px solid var(--nuit-2); }
+.direct [data-segment="reponse"] .coureur { inset: 0 10px 0 0; }
+/* Segment Vérification, couleur du compteur « réponses vérifiées » : vide à venir, bloqué ou sans objet ; rayé en cours ; plein une fois terminé */
+[data-segment="verification"] .trace { position: absolute; left: 6px; right: 0; top: 50%; height: 8px; margin-top: -4px; border-radius: 4px; }
+[data-segment="verification"][data-etat="encours"] .trace { background: repeating-linear-gradient(90deg, var(--sur-nuit) 0 10px, transparent 10px 16px); }
+/* Même phase sur tous les couloirs : le suivi ne sait pas quelle réponse est vérifiée */
+.vit [data-segment="verification"][data-etat="encours"] .trace { animation: rayures .8s linear infinite; }
+[data-segment="verification"][data-etat="fait"] .trace { background: var(--sur-nuit); }
 .g-liste-modeles { list-style: none; display: grid; gap: 14px; }
 .g-liste-modeles .carte { display: grid; gap: 8px; }
 .g-haut .etat .actions { grid-column: 2; }

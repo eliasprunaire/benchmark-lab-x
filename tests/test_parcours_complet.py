@@ -2372,6 +2372,8 @@ class ParcoursComplet(unittest.TestCase):
         dossier = page.link('Actualiser')
         self.examine(page, dossier, 'attente', None)
         self.assertEqual(1, page.visible.count('Actualiser'))
+        # La piste et l'étape en cours de la préparation
+        self.assertEqual(2, sum(1 for n in page.nodes if n['tag'] == 'li' and n['attrs'].get('aria-current') == 'step'))
         prep.execute(self.data, self.starts.get_nowait(), self.bound[0])
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'clarification', 'Envoyer ma réponse')
@@ -2428,6 +2430,8 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, dossier, 'qualification en attente', None)
         self.assertIn('Contrôle de l’exemple en cours', page.visible)
         self.assertEqual(1, page.visible.count('Actualiser'))
+        # La piste et l'étape en cours du contrôle de l'exemple
+        self.assertEqual(2, sum(1 for n in page.nodes if n['tag'] == 'li' and n['attrs'].get('aria-current') == 'step'))
         start = self.starts.get_nowait()
         prep.execute_qualification(self.data, start['qualification_operation'], self.bound[1])
         page, _, _ = self.request(dossier)
@@ -2666,7 +2670,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual('Suivi du benchmark', next(n['text'] for n in page.nodes if n['tag'] == 'h1'))
         self.assertIn('En file', page.visible)
         self.assertNotIn('Benchmark terminé', page.visible)
-        self.assertTrue(any('Modèle BRaisonnement fixeEn file' in n['text'] for n in page.nodes if n['tag'] == 'li'))
+        # Les libellés des segments, réservés aux lecteurs d'écran, s'insèrent entre le réglage et le tampon
+        self.assertTrue(any(ligne.startswith('Modèle BRaisonnement fixe') and ligne.endswith('En file') for ligne in couloirs(page)))
         self.assertFalse(any(f['action'].endswith('/cap') for f in page.forms))
         self.assertEqual(3, len(self.calls))
         execution.execute_launch(self.data, attempts[:1], self.candidate,
@@ -4259,6 +4264,10 @@ class ParcoursComplet(unittest.TestCase):
         ids = self.starts.get_nowait()['judgment_operations']
         # La réponse absente n'est jamais envoyée au juge
         self.assertEqual(2, len(ids))
+        # Vérification lancée, pas encore exécutée : son segment est en cours sur chaque réponse comptée
+        followup, _, _ = self.request(recap)
+        self.assertEqual(['encours', 'encours', 'sansobjet'],
+                         sorted(n['attrs']['data-etat'] for n in followup.nodes if n['attrs'].get('data-segment') == 'verification'))
         auto.execute_campaign(self.data, ids, self.bound[2])
         self.assertEqual(2, judge.request.call_count)
         with closing(storage.Store(self.data)) as store:
@@ -4284,6 +4293,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('les essais se sont arrêtés avant la fin', results.visible)
         followup, _, _ = self.request(recap)
         self.assertIn('2 /2 réponses vérifiées', followup.visible)
+        self.assertEqual(['fait', 'fait', 'sansobjet'],
+                         sorted(n['attrs']['data-etat'] for n in followup.nodes if n['attrs'].get('data-segment') == 'verification'))
         # Une nouvelle sélection ne retire pas l'accès aux résultats de la comparaison évaluée
         page, _, _ = self.request(dossier + '/configurations')
         self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'tier': 'high'})
@@ -4752,12 +4763,16 @@ class ParcoursComplet(unittest.TestCase):
             body_base64=b64encode(body).decode(), body_sha256=sha256(body).hexdigest())
         value['receipt']['result'].update(output=content, incident='PROVIDER_RESPONSE_INCOMPLETE')
 
-    def evaluer(self, dossier):
+    def evaluer(self, dossier, pendant=None):
+        """Lance la vérification des réponses ; `pendant` est appelé quand elle est lancée, avant son exécution"""
         from benchmark import automatic_judgment as auto
         page, _, _ = self.request(dossier)
         page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.submit(page, '/evaluate', {})
-        auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
+        ids = self.starts.get_nowait()['judgment_operations']
+        if pendant:
+            pendant()
+        auto.execute_campaign(self.data, ids, self.bound[2])
         comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
         results, _, raw = self.request(comparison)
         self.examine(results, comparison, 'résultats avec reprises', None)
@@ -6044,8 +6059,20 @@ class ParcoursComplet(unittest.TestCase):
         self.assertTrue(lignes[2].startswith('Modèle C : aucune dépense'), lignes[2])
         self.assertIn('non envoyé : le benchmark s’est arrêté avant cet essai', lignes[2])
         self.assertNotIn('dépense à venir', texte)
+        # Revue PR #695 : seule la réponse comptée suit la vérification ; réponse inexploitable et essai non appelé restent sans objet
+        # L'essai non appelé n'empêche pas le suivi de dire la vérification en cours et de la faire défiler
+        segments = []
+
+        def verification():
+            page, _, _ = self.request(suivi)
+            liste = next(n for n in page.nodes if n['tag'] == 'ol' and 'couloirs' in n['attrs'].get('class', '').split())
+            segments.append((next(n['text'] for n in page.nodes if n['attrs'].get('id') == 't-direct'), 'vit' in liste['attrs']['class'].split(),
+                             [n['attrs']['data-etat'] for n in page.nodes if n['attrs'].get('data-segment') == 'verification']))
         # La réponse exploitable de Modèle A est seule évaluée ; la couverture prévue reste distincte
-        html = self.evaluer(dossier)
+        html = self.evaluer(dossier, verification)
+        verification()
+        self.assertEqual([('Les réponses sont vérifiées.', True, ['encours', 'sansobjet', 'sansobjet']),
+                          ('Vérification des réponses terminée.', False, ['fait', 'sansobjet', 'sansobjet'])], segments)
         self.assertEqual(1, judge.request.call_count)
         self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu)', html)
         self.assertIn('Modèle C n’a pas été appelé : le benchmark s’est arrêté avant cet essai.', html)

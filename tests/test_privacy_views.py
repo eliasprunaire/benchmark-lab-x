@@ -95,6 +95,10 @@ def browser_views():
         value['campaign']['judgment'] = dict(status=status, total=1, completed=int(status == 'COMPLETE'),
             reason='Budget insuffisant' if status == 'BLOCKED' else None, can_start=status == 'NOT_STARTED')
         examples['judgment-' + status] = value
+    # Revue PR #695 : vérification en cours d'une comparaison arrêtée, avec un essai non appelé
+    value = deepcopy(examples['followup-credit-exhausted'])
+    value['campaign']['judgment'] = dict(status='RUNNING', total=1, completed=0, reason=None, can_start=False)
+    examples['judgment-RUNNING-partial'] = value
     for state, judgment in (('EMISSION_POSSIBLE', None), ('INTENT_RECORDED', None),
                            ('EMISSION_POSSIBLE', 'WAITING'), ('RECEIVED', None), ('RECEIVED', 'BLOCKED')):
         value = deepcopy(examples['followup-received'])
