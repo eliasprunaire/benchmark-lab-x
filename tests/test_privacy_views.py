@@ -99,6 +99,37 @@ def browser_views():
     value = deepcopy(examples['followup-credit-exhausted'])
     value['campaign']['judgment'] = dict(status='RUNNING', total=1, completed=0, reason=None, can_start=False)
     examples['judgment-RUNNING-partial'] = value
+    # #696 : comparaison arrêtée, vérification de la réponse exploitable à lancer ; chaque tentative est reliée à sa cellule
+    value = deepcopy(examples['followup-received'])
+    partial = value['campaign']
+    partial['conditions'].update(pi=dict(package='pi', version='1', status='PINNED'), packages=[], tools=[], skills=[], defaults={}, environment={})
+    partial.update(task=dict(version=1, revision=1), admission_open=False, allowed_cells=[], restore_pending=False,
+        stop_reason='ACQUISITION_EVIDENCE_INCOMPLETE', cost_basis={},
+        panel=[dict(id=key, model=name, revision='1', provider='fournisseur fictif', access='openrouter', channel_id=None, route='auto',
+                    effort='off', parameters={}, required_observations=[]) for key, name in (('x', 'Modèle A'), ('y', 'Modèle B'), ('z', 'Modèle C'))],
+        cells=[dict(cell_id=key + '1', case_id='case-1', configuration_id=key, state=state)
+               for key, state in (('x', 'RECEIVED'), ('y', 'RECEIVED'), ('z', 'INTENT_RECORDED'))],
+        attempts=[dict(operation_id='op-' + key, execution_id='ex-1', cell_id=key + '1', state=state, created_at='2026-09-15T00:00:00Z',
+                       emitted_at=None, received_at=None, receipt_id=None, emission='INCONNU', observed_configuration={}, observation_sources={},
+                       observed_cost=cost, incident=incident, attribution_incident=[])
+                  for key, state, incident, cost in (('x', 'RECEIVED', None, dict(status='KNOWN', amount='0.0100', currency='USD', source='OpenRouter')),
+                                                     ('y', 'RECEIVED', 'CREDIT_EXHAUSTED', None), ('z', 'INTENT_RECORDED', None, None))])
+    partial['judgment'] = dict(status='NOT_STARTED', total=1, completed=0, reason=None, can_start=True, unusable_cells=['y1'], closed_cells=[])
+    examples['judgment-NOT_STARTED-partial'] = value
+    # Garde d'affichage, sans transition moteur : la même comparaison sans vérification autorisée, avec un motif du jugement
+    locked = deepcopy(value)
+    locked['campaign']['judgment'].update(can_start=False, reason='Motif fictif du jugement.')
+    examples['judgment-NOT_STARTED-partial-locked'] = locked
+    # Exclusions seulement closes ou inexploitables : aucun essai non appelé n'est annoncé
+    closed = deepcopy(value)
+    closed['campaign']['cells'][2]['state'] = 'AMBIGUOUS'
+    closed['campaign']['attempts'][2].update(state='AMBIGUOUS', incident='AMBIGUOUS_EXPIRED')
+    examples['judgment-NOT_STARTED-partial-closed'] = closed
+    # Pages du cas des mêmes données : exemple validé et contrôlé, révision de la comparaison
+    for name, source in (('partial', value), ('partial-locked', locked)):
+        examples['case-NOT_STARTED-' + name] = dict(example_view(), validation={'validated_at': '2026-09-16T08:00:00Z'}, qualified=True,
+            qualification=dict(status='QUALIFIED', qualification_status='QUALIFIED', approval_status='QUALIFIED', summary='Contrôle', findings=[]),
+            campaigns=[deepcopy(source['campaign'])])
     for state, judgment in (('EMISSION_POSSIBLE', None), ('INTENT_RECORDED', None),
                            ('EMISSION_POSSIBLE', 'WAITING'), ('RECEIVED', None), ('RECEIVED', 'BLOCKED')):
         value = deepcopy(examples['followup-received'])

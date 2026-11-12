@@ -1790,6 +1790,65 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
         .flatMap(e => [getComputedStyle(e).animationName, getComputedStyle(e, '::after').animationName]).filter(name => name !== 'none')), []);
       assert.equal(await calme.locator('.couloir [data-segment="verification"][data-etat="encours"]').count(), 1);
     } finally {await reduit.close();}
+    // #696 : comparaison arrêtée, vérification des réponses reçues à lancer ou non autorisée ; la cause reste dite sans être le titre
+    const suiviPartiel = '/preparation/dossiers/d1/campaigns/c1/conditions';
+    const credit = 'Crédit OpenRouter épuisé pour votre clé : rechargez-le ou relevez son plafond.';
+    // Le motif du jugement suit la couverture ; sans vérification autorisée, le titre n'est pas répété
+    for (const [view, title, mot, suite, allowed] of [
+      ['judgment-NOT_STARTED-partial', 'La vérification des réponses reçues est à lancer.', 'À lancer',
+        ' Vous pouvez lancer la vérification des réponses reçues.', true],
+      ['judgment-NOT_STARTED-partial-locked', 'La vérification des réponses reçues n’est pas lancée.', 'Non lancée',
+        ' Motif fictif du jugement.', false]]) {
+      await page.goto(origin + '/render/' + view);
+      const text = await page.textContent('main');
+      assert.equal(await page.locator('#t-direct').textContent(), title, view);
+      assert.ok((await page.locator('.g-statut').textContent()).includes(mot), view);
+      assert.equal(await page.locator('#t-direct + p').textContent(), credit + ' Certains essais n’ont pas été appelés.' + suite, view);
+      assert.equal(text.split(title).length, 2, view + ' titre répété');
+      for (const absent of ['Toutes les réponses sont arrivées', 'rien n’est relancé automatiquement']) assert.equal(text.includes(absent), false, view + absent);
+      assert.match(text, /1\/3\s*réponses reçues/, view);
+      assert.match(text, /0\/1\s*réponses vérifiées/, view);
+      // Statut et cause de chaque couloir, segment Vérification, aucun mouvement avant le lancement
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.couloir')].map(li => [
+        [...li.querySelectorAll('.couloir-nom small > span')].map(span => span.textContent), li.lastElementChild.textContent.trim(),
+        li.querySelector('[data-segment="verification"]').dataset.etat,
+        [...li.querySelectorAll('*')].filter(e => getComputedStyle(e).animationName !== 'none').length])), [
+        [['Raisonnement non renseigné'], 'Reçue', 'avenir', 0],
+        [['Raisonnement non renseigné', credit], 'Sans réponse', 'sansobjet', 0],
+        [['Raisonnement non renseigné', 'Le benchmark s’est arrêté avant cet essai.'], 'Non appelé', 'sansobjet', 0]], view);
+      assert.equal(await page.locator('#preparation-progress, [data-results-href], script').count(), 0, view);
+      assert.equal(await page.locator('main a[href="' + suiviPartiel + '"]', {hasText: 'Actualiser le suivi'}).count(), 1, view);
+      assert.equal(await page.locator('form[action$="/evaluate"]').count(), Number(allowed), view);
+      assert.equal(await page.locator('.g-note').count(), Number(allowed), view);
+      assert.equal(text.includes('Vérifier les réponses reçues'), allowed, view);
+    }
+    await page.goto(origin + '/render/judgment-NOT_STARTED-partial-closed');
+    assert.equal(await page.locator('#t-direct + p').textContent(), 'Un essai est resté sans réponse confirmée et a été clos. '
+      + 'Certains essais n’ont pas donné de réponse exploitable. Vous pouvez lancer la vérification des réponses reçues.');
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.couloir')].map(li =>
+      [...li.querySelectorAll('.couloir-nom small > span')].map(span => span.textContent).slice(1))), [[], [credit], ['Appel clos sans réponse confirmée.']]);
+    // Sans JavaScript, le formulaire envoie la confirmation et le jeton, et rien d'autre
+    await page.goto(origin + '/render/judgment-NOT_STARTED-partial');
+    posts = [];
+    await page.getByRole('button', {name: 'Vérifier les réponses reçues'}).click();
+    assert.deepEqual(posts, [{path: '/preparation/dossiers/d1/campaigns/c1/evaluate', body: {csrf_token: 'csrf', confirm: 'yes'}}]);
+    posts = [];
+    // Page du cas des mêmes données : même état ; sans vérification autorisée, aucune invitation à la lancer
+    for (const [view, heading, ton, phrase, link] of [
+      ['case-NOT_STARTED-partial', 'Vérification des réponses à lancer', 'att',
+        'Certaines réponses sont arrivées avant l’arrêt du benchmark. Leur vérification, payée avec votre clé OpenRouter, se lance depuis le suivi du benchmark.',
+        'Lancer la vérification des réponses'],
+      ['case-NOT_STARTED-partial-locked', 'Le benchmark demande votre attention', 'vig', 'La vérification des réponses reçues n’est pas lancée.',
+        'Voir ce qui s’est passé']]) {
+      await page.goto(origin + '/render/' + view);
+      const etat = page.locator('.etat').first();
+      assert.equal(await etat.getAttribute('data-ton'), ton, view);
+      assert.ok((await etat.textContent()).includes(heading), view);
+      assert.ok((await etat.textContent()).includes(phrase), view);
+      assert.equal(await page.locator('main a[href="' + suiviPartiel + '"]', {hasText: link}).count(), 1, view);
+      assert.equal(await page.locator('main a', {hasText: 'Lancer la vérification'}).count(), Number(ton === 'att'), view);
+      assert.ok((await page.locator('#comparaison').textContent()).includes(heading), view);
+    }
     for (const [state, judgment, active] of [['EMISSION_POSSIBLE', 'None', true], ['INTENT_RECORDED', 'None', true],
       ['EMISSION_POSSIBLE', 'WAITING', true], ['RECEIVED', 'None', false], ['RECEIVED', 'BLOCKED', false]]) {
       await page.goto(origin + '/render/mixed-' + state + '-' + judgment);
@@ -1800,7 +1859,8 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
     // Composition S18 : état en tête, liste des modèles en zone principale, compteurs en synthèse, actions hors de la zone réécrite
     for (const width of [1440, 390]) {
       await page.setViewportSize({width, height: 900});
-      for (const view of ['followup-running', 'followup-credit-exhausted', 'judgment-NOT_STARTED', 'followup-received']) {
+      for (const view of ['followup-running', 'followup-credit-exhausted', 'judgment-NOT_STARTED', 'followup-received',
+        'judgment-NOT_STARTED-partial', 'judgment-NOT_STARTED-partial-locked']) {
         await page.goto(origin + '/render/' + view);
         const layout = await page.evaluate(() => {
           const status = document.getElementById('campaign-status');
@@ -1816,7 +1876,36 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
         assert.match(layout.counter, /\d+\/\d+\s*réponses reçues/, `${width} ${view} compteur`);
         assert.equal(layout.actionsInside, 0, `${width} ${view} actions hors de la zone réécrite`);
       }
+      for (const view of ['case-NOT_STARTED-partial', 'case-NOT_STARTED-partial-locked']) {
+        await page.goto(origin + '/render/' + view);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0,
+          `${width} ${view} sans débordement`);
+      }
     }
+  } finally {await context.close();}
+});
+
+test('a partial benchmark to check reads nothing and sends nothing by itself, with scripts', async () => {
+  const context = await browser.newContext();
+  try {
+    const errors = [], requests = [];
+    const page = await context.newPage(); page.setDefaultTimeout(5000);
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => {if (message.type() === 'error') errors.push(message.text());});
+    page.on('request', request => {if (['fetch', 'xhr'].includes(request.resourceType()) || request.method() !== 'GET') requests.push(request.method() + ' ' + request.url());});
+    posts = [];
+    await page.clock.install();
+    for (const view of ['judgment-NOT_STARTED-partial', 'judgment-NOT_STARTED-partial-locked']) {
+      await page.goto(origin + '/render/' + view);
+      // Une minute sans action : aucune lecture du suivi, aucun envoi, aucune navigation vers des résultats
+      await page.clock.runFor(60000);
+      assert.equal(page.url(), origin + '/render/' + view);
+      assert.equal(await page.locator('#preparation-progress').count(), 0, view);
+      assert.equal(await page.locator('form[action$="/evaluate"]').count(), Number(view === 'judgment-NOT_STARTED-partial'), view);
+    }
+    assert.deepEqual(requests, []);
+    assert.equal(posts.length, 0);
+    assert.deepEqual(errors, []);
   } finally {await context.close();}
 });
 
