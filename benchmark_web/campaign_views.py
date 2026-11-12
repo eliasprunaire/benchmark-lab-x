@@ -1186,7 +1186,7 @@ def render_campaign_followup(value, csrf):
     closed = set(outcome.get('closed_cells', ())) | {
         a.get('cell_id') for a in campaign['attempts'] if a.get('incident') == AMBIGUOUS_EXPIRED}
     # Segment Vérification : l'état du jugement de la campagne, le même sur chaque couloir compté
-    verification = {'RUNNING': 'encours', 'COMPLETE': 'fait', 'BLOCKED': 'bloque'}.get((campaign.get('judgment') or {}).get('status'), 'avenir')
+    verification = {'RUNNING': 'encours', 'COMPLETE': 'fait', 'BLOCKED': 'bloque'}.get((campaign.get('judgment') or {}).get('status', ''), 'avenir')
     lanes = ''
     for cell in cells:
         model = models.get(cell['configuration_id'])
