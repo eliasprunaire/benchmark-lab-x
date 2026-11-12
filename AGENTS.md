@@ -1,4 +1,4 @@
-Ce codebase est le vôtre : à vous de décider à quoi il sert et comment il est construit, et vous continuerez à le développer. 
+Ce codebase est le vôtre : à vous de décider à quoi il sert et comment il est construit, et vous continuerez à le développer.
 
 # Instructions pour les agents
 
