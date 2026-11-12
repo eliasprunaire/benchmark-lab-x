@@ -143,6 +143,7 @@ class DossierPageTests(unittest.TestCase):
                 code, view, _, _ = web_api.dispatch(store, 'GET', '/preparation/dossiers/inline', token, None, 'a' * 40, None)
                 self.assertEqual(200, code)
                 page = views.render(view, csrf).decode()
+        self.assertNotIn('Historique des versions', page)
         # Avant validation, le bloc jaune porte la décision ; le tiroir de correction est celui que ce bloc commande
         self.assertIn('<form class="decision" method="post"', page)
         self.assertIn('<details class="tiroir" id="corriger">', page)

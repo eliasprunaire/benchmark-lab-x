@@ -1326,7 +1326,8 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         self.assertIn('Exemple à revoir avant le benchmark', page.visible)
         self.assertIn('La référence de la copie ne permet pas cette vérification.', page.visible)
-        self.assertTrue(any(constat['text'] in n['text'] for n in page.nodes if n['tag'] == 'details'))
+        self.assertTrue(any(constat['text'] in n['text'] for n in page.nodes if n['attrs'].get('id') == 'controle'))
+        self.assertTrue(any(n['attrs'].get('id') == 'exemple' and 'open' in n['attrs'] for n in page.nodes))
         self.assertFalse(any(n['tag'] == 'a' and n['text'] == 'Choisir les modèles' for n in page.nodes))
         _, _, raw = self.request(dossier + '/configurations', status=403)
         self.assertIn('Terminez l’étape précédente avant de poursuivre.', raw.decode())
@@ -2426,6 +2427,8 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(['Version 1'], [n['text'] for n in previous.nodes if n['tag'] == 'span' and 'puce' in n['attrs'].get('class', '').split() and n['text'].startswith('Version')])
         self.assertFalse(any(n['tag'] == 'a' and 'Version précédente' in n['text'] for n in previous.nodes))
         page, _, _ = self.request(previous.link('Ouvrir la version actuelle'))
+        self.assertFalse(any(n['tag'] == 'details' and n['text'].lstrip().startswith('Historique des versions') for n in page.nodes))
+        self.assertFalse(any(n['tag'] == 'details' and n['attrs'].get('id') == 'exemple' for n in page.nodes))
         page = self.submit(page, '/validation', {})
         self.examine(page, dossier, 'qualification en attente', None)
         self.assertIn('Contrôle de l’exemple en cours', page.visible)
@@ -2436,6 +2439,11 @@ class ParcoursComplet(unittest.TestCase):
         prep.execute_qualification(self.data, start['qualification_operation'], self.bound[1])
         page, _, _ = self.request(dossier)
         self.examine(page, dossier, 'exemple qualifié', 'Choisir les modèles')
+        exemple = next(n for n in page.nodes if n['tag'] == 'details' and n['attrs'].get('id') == 'exemple')
+        self.assertNotIn('open', exemple['attrs'])
+        self.assertTrue(next(n for n in page.nodes if n['tag'] == 'blockquote')['details'])
+        controle = next(n for n in page.nodes if n['attrs'].get('id') == 'controle')
+        self.assertLess(page.nodes.index(controle), page.nodes.index(exemple))
         # Historique : les exemples seuls, numérotés par rang, chacun lié à sa révision technique
         self.assertIn('Versions : 1 · 2.', page.depliant('Historique des versions'))
         self.assertEqual([('1', dossier + '/revisions/3'), ('2', dossier + '/revisions/4')],
@@ -2449,7 +2457,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('Approbation', ' '.join(n['text'] for n in page.nodes))
         self.assertNotIn('L’équipe Bench-X doit maintenant préparer la comparaison', page.visible)
         self.assertTrue(any('Les actions et leur format sont vérifiables' in n['text']
-                            for n in page.nodes if n['tag'] == 'details'))
+                            for n in page.nodes if n['attrs'].get('id') == 'controle'))
         configurations = page.link('Choisir les modèles')
         page, _, _ = self.request(configurations)
         self.examine(page, configurations, 'choix des configurations', 'Continuer')
@@ -2775,7 +2783,7 @@ class ParcoursComplet(unittest.TestCase):
         denied = self.submit(page, '/dossiers', {'request': 'Une autre demande assez longue pour passer le contrôle de saisie'}, status=403)
         self.assertIn('Ajoutez votre clé OpenRouter', denied.visible)
         page, _, _ = self.request(dossier)
-        self.assertIn('Tableau des actions avec responsable', page.visible)
+        self.assertIn('Tableau des actions avec responsable', page.depliant('Exemple'))
         self.assertEqual(5, len(self.calls))
         self.assertEqual(1, len(self.qualifier.calls))
         self.verifier_atteignabilite()
@@ -2973,7 +2981,8 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, dossier, 'exemple bloqué', 'Corriger l’exemple')
         self.assertIn('Exemple à revoir avant le benchmark', page.visible)
         self.assertIn('Une exclusion repose sur la seule référence de jugement.', page.visible)
-        self.assertTrue(any(constat['text'] in n['text'] for n in page.nodes if n['tag'] == 'details'))
+        self.assertTrue(any(constat['text'] in n['text'] for n in page.nodes if n['attrs'].get('id') == 'controle'))
+        self.assertTrue(any(n['attrs'].get('id') == 'exemple' and 'open' in n['attrs'] for n in page.nodes))
         self.assertFalse(any(n['tag'] == 'a' and n['text'] == 'Choisir les modèles' for n in page.nodes))
         _, _, raw = self.request(dossier + '/configurations', status=403)
         self.assertIn('Terminez l’étape précédente avant de poursuivre.', raw.decode())
@@ -3137,7 +3146,7 @@ class ParcoursComplet(unittest.TestCase):
 
         def detail(page):
             return next(n['text'] for n in page.nodes if n['tag'] == 'details'
-                        and 'Contrôle de l’exemple' in n['text'])
+                        and 'Détail du contrôle' in n['text'])
 
         # 2. Réussite déclarée sans citation de la réponse témoin : non qualifiée
         page, _ = verifier({'alternative': {'O1': ('PASS', 'Passage absent de la réponse témoin')}})
@@ -3973,7 +3982,7 @@ class ParcoursComplet(unittest.TestCase):
 
         def detail(page):
             return next(n['text'] for n in page.nodes if n['tag'] == 'details'
-                        and 'Contrôle de l’exemple' in n['text'])
+                        and 'Détail du contrôle' in n['text'])
 
         def retries():
             with closing(storage.Store(self.data)) as store:
@@ -4064,8 +4073,7 @@ class ParcoursComplet(unittest.TestCase):
         state = next(n for n in page.nodes if 'etat' in n['attrs'].get('class', '').split())
         self.assertIn('Exemple à revoir avant le benchmark', state['text'])
         self.assertNotIn('Vérifier puis lancer', page.visible)
-        verification = next(n['text'] for n in page.nodes if n['tag'] == 'details'
-                            and 'Contrôle de l’exemple' in n['text'])
+        verification = next(n['text'] for n in page.nodes if n['attrs'].get('id') == 'controle')
         self.assertIn('Ce que le contrôle de l’exemple a relevé', verification)
         self.assertIn(affiche, verification)
         self.assertNotIn('ne sont pas assez établis', verification)
@@ -4430,8 +4438,8 @@ class ParcoursComplet(unittest.TestCase):
         dossier = self.exemple_qualifie()
         page, _, _ = self.request(dossier)
         for value in (composee, forme, echeance):
-            self.assertIn(value, page.visible)
-        self.assertNotIn("'elements'", page.visible)
+            self.assertIn(value, page.depliant('Exemple'))
+        self.assertNotIn("'elements'", page.depliant('Exemple'))
         page, _, _ = self.request(dossier + '/configurations')
         page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
                                                      'tier': 'low'})
@@ -4556,7 +4564,7 @@ class ParcoursComplet(unittest.TestCase):
         page, _, _ = self.request(dossier)
         self.assertIn('Exemple contrôlé, prêt à comparer', page.visible)
         verification = next(n['text'] for n in page.nodes if n['tag'] == 'details'
-                            and 'Contrôle de l’exemple' in n['text'])
+                            and 'Détail du contrôle' in n['text'])
         self.assertIn(exigence + ' : attendu non satisfait, décidé non satisfait', verification)
         # 2 et 3. Deux réponses : une autre formulation valable, une omission
         page, _, _ = self.request(page.link('Choisir les modèles'))

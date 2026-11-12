@@ -216,7 +216,7 @@ CONFIDENTIALITE = (
     'le retrait de l’option, et '
     'd’arrêter ou d’effacer l’historique local.</p>'
     '<p>Vous pouvez agir vous-même, sans nous écrire :</p><ul>'
-    '<li><strong>supprimer un cas d’usage</strong> : bouton « Supprimer ce cas d’usage » sur la page du cas ;</li>'
+    '<li><strong>supprimer un cas d’usage</strong> : bouton « Supprimer ce cas d’usage » sur la page d’un cas validé, et dans Mes données pour tout cas ;</li>'
     '<li><strong>retirer votre clé d’accès</strong> : page <a href="/preparation/access">Ma clé OpenRouter</a> ;</li>'
     '<li><strong>retirer une contribution</strong> : page <a href="/preparation/contributions">Mes '
     'contributions</a> ;</li>'

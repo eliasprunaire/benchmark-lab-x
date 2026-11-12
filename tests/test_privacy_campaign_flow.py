@@ -214,6 +214,8 @@ class PrivacyCampaignFlow(unittest.TestCase):
         self.assertNotIn('data-privacy-post="contribution"', page)
         self.assertNotIn('privacy-consent', page)
         self.assertIn('<details class="tiroir privacy-controls"', page)
+        self.assertIn('<details class="tiroir" id="exemple">', page)
+        self.assertIn('id="controle"', page)
         self.assertEqual({'NE SATISFAIT PAS'}, {row['verdict'] for row in compared['rows']})
         self.assertEqual('COMPLETE', auto.status(self.store, self.store._connection, cid)['status'])
         final = archive.archive_manifest(self.store, self.sid, 'erase')

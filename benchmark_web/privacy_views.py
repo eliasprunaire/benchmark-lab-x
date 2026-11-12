@@ -169,7 +169,7 @@ def render_deleted():
 
 
 def render_privacy_controls(value, csrf, path='/preparation'):
-    """Pied des pages d'un cas : suppression, puis copie de ce cas dans ce navigateur"""
+    """Pied des pages d'un cas : copie de ce cas dans ce navigateur, puis suppression"""
     privacy = value.get('privacy')
     if not privacy or 'dossiers' in value:
         # Mes cas d'usage écrit son propre repère d'activité ; Mes données n'en écrit aucun
@@ -186,16 +186,19 @@ def render_privacy_controls(value, csrf, path='/preparation'):
         attrs += ' data-campaign-id="' + text(privacy['campaign_id']) + '"'
     if type(privacy.get('content_version')) is int:
         attrs += ' data-content-version="' + str(privacy['content_version']) + '"'
-    content = ''
+    visible = 'stage' not in value or value.get('validation') is not None
+    # Le statut reste un enfant direct et les deux boutons restent montables par `privacy.js`
+    statut = '<p class="petit" role="status" data-privacy-status>Vos copies s’affichent ici quand JavaScript est activé.</p>'
+    boutons = ('<div class="actions"><button type="button" class="btn btn-sec btn-s" data-privacy-action="archive" hidden>'
+               'Garder une copie dans ce navigateur</button><button type="button" class="btn btn-sec btn-s" data-privacy-action="enable-case" hidden>'
+               'Réactiver l’historique de ce cas</button></div>')
+    if not visible:
+        return '<div hidden' + attrs + '>' + statut + boutons + '</div>'
+    content = ('<details class="tiroir privacy-controls"' + attrs + '><summary><span class="titre">Copie dans ce navigateur</span>'
+               '<span class="resume">Historique local</span><span class="plus" aria-hidden="true"></span></summary>'
+               + statut + '<div class="tiroir-corps">' + boutons + '</div></details>')
     if 'stage' in value and (value.get('package') or value.get('source') or value.get('checks', {}).get('out_of_scope')):
         content += zone_suppression(dossier, urlsplit(path).path, active)
-    # Le statut et les boutons sont des enfants directs : `privacy.js` les cherche ainsi et ouvre ce dépliant en cas d'échec
-    content += ('<details class="tiroir privacy-controls"' + attrs + '><summary><span class="titre">Copie dans ce navigateur</span>'
-                '<span class="resume">Historique local</span><span class="plus" aria-hidden="true"></span></summary>'
-                '<p class="petit" role="status" data-privacy-status>Vos copies s’affichent ici quand JavaScript est activé.</p>'
-                '<div class="tiroir-corps"><div class="actions"><button type="button" class="btn btn-sec btn-s" data-privacy-action="archive" hidden>'
-                'Garder une copie dans ce navigateur</button><button type="button" class="btn btn-sec btn-s" data-privacy-action="enable-case" hidden>'
-                'Réactiver l’historique de ce cas</button></div></div></details>')
     return content
 
 
