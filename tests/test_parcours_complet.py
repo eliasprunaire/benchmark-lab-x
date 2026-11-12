@@ -6042,15 +6042,56 @@ class ParcoursComplet(unittest.TestCase):
         # Coût inconnu, jamais zéro ; chaque réserve reste celle de l'admission
         self.assertEqual(('UNKNOWN', None), (cout['status'], cout['amount']))
         self.assertEqual(sorted(reserves.values()), sorted(t[4] for t in tentatives))
+        # #696 : l'acquisition réelle laisse la vérification de la réponse exploitable à lancer
+        from benchmark import automatic_judgment as auto
+
+        def jugement():
+            with closing(storage.Store(self.data)) as store:
+                value = auto.status(store, store._connection, campaign_id)
+            return value['status'], value['can_start'], value['total']
+        self.assertEqual(('NOT_STARTED', True, 1), jugement())
         # Consultations, puis redémarrage de l'exécuteur : aucun essai de plus, preuves inchangées
         for _ in range(2):
             page, _, _ = self.request(suivi)
-            self.assertIn('Une réponse reçue n’indique ni le modèle qui a répondu ni son coût. Le benchmark '
-                          's’est arrêté', page.visible)
-            self.assertNotIn('problème technique', page.visible)
+            # #696 : la vérification est le titre ; la cause de l'arrêt reste dite, sans promettre de relance
+            self.assertEqual('La vérification des réponses reçues est à lancer.',
+                             next(n['text'] for n in page.nodes if n['attrs'].get('id') == 't-direct'))
+            self.assertIn('À lancer', next(n['text'] for n in page.nodes if 'g-statut' in n['attrs'].get('class', '').split()))
+            self.assertIn('Une réponse reçue n’indique ni le modèle qui a répondu ni son coût. Certains essais n’ont pas été appelés. '
+                          'Vous pouvez lancer la vérification des réponses reçues.', page.visible)
+            for absent in ('problème technique', 'Toutes les réponses sont arrivées', 'rien n’est relancé automatiquement'):
+                self.assertNotIn(absent, page.visible)
+            lignes = couloirs(page)
             self.assertEqual(['Reçue', 'Sans réponse', 'Non appelé'], [
-                next(mot for mot in ('Reçue', 'Sans réponse', 'Non appelé') if ligne.endswith(mot)) for ligne in couloirs(page)])
+                next(mot for mot in ('Reçue', 'Sans réponse', 'Non appelé') if ligne.endswith(mot)) for ligne in lignes])
+            # Cause par couloir : celle que la tentative de la cellule établit, rien sur la réponse comptée
+            self.assertIn('Une réponse reçue n’indique ni le modèle qui a répondu ni son coût.', lignes[1])
+            self.assertIn('Le benchmark s’est arrêté avant cet essai.', lignes[2])
+            self.assertNotIn('n’indique', lignes[0])
+            self.assertNotIn('avant cet essai', lignes[0] + lignes[1])
             self.assertIn('1 /3 réponses reçues', page.visible)
+            liste = next(n for n in page.nodes if n['tag'] == 'ol' and 'couloirs' in n['attrs'].get('class', '').split())
+            self.assertNotIn('vit', liste['attrs']['class'].split())
+            self.assertEqual(['avenir', 'sansobjet', 'sansobjet'],
+                             [n['attrs']['data-etat'] for n in page.nodes if n['attrs'].get('data-segment') == 'verification'])
+            # Ni lecture automatique ni redirection vers des résultats vides ; le lancement reste une action explicite
+            self.assertFalse(any(n['attrs'].get('id') == 'preparation-progress' or 'data-results-href' in n['attrs'] for n in page.nodes))
+            self.assertEqual(suivi, urlsplit(page.link('Actualiser le suivi')).path)
+            formulaire = page.form('/evaluate')['fields']
+            self.assertEqual('yes', formulaire['confirm'])
+            self.assertTrue(formulaire['csrf_token'])
+        # Page du cas et liste de ses benchmarks : même état, le bouton mène au suivi
+        cas, _, _ = self.request(dossier)
+        etat = next(n for n in cas.nodes if 'etat' in n['attrs'].get('class', '').split())
+        self.assertEqual('att', etat['attrs']['data-ton'])
+        self.assertIn('Vérification des réponses à lancer', etat['text'])
+        self.assertIn('Certaines réponses sont arrivées avant l’arrêt du benchmark : leur vérification, payée avec votre clé '
+                      'OpenRouter, se lance depuis le suivi.', etat['text'])
+        self.assertEqual(suivi, urlsplit(cas.link('Lancer la vérification des réponses')).path)
+        self.assertIn('Vérification des réponses à lancer', next(n['text'] for n in cas.nodes if n['attrs'].get('id') == 'comparaison'))
+        # Consulter ne réserve aucune vérification et n'appelle aucun juge
+        self.assertEqual(('NOT_STARTED', True, 1), jugement())
+        self.assertEqual(0, judge.request.call_count)
         with closing(storage.Store(self.data)) as store:
             runtime.stop(self.data, store, 'PROCESS_STARTED_ADMISSION_BLOCKED', after_process_exit=True)
         self.clock += timedelta(hours=1)
@@ -6101,7 +6142,9 @@ class ParcoursComplet(unittest.TestCase):
         dossier, _, envois, _ = self.lancer_avec_reprises(list(self.MAJORANTS), comportement)
         self.assertEqual([('openai/gpt-5.6-sol', 4096)], envois)
         page, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
-        self.assertIn('Le coût d’une réponse reçue n’est pas connu. Le benchmark s’est arrêté', page.visible)
+        # #696 : la réponse reçue reste à vérifier ; la preuve qui manque reste dite sous ce titre
+        self.assertIn('La vérification des réponses reçues est à lancer. Le coût d’une réponse reçue n’est pas connu. '
+                      'Certains essais n’ont pas été appelés.', page.visible)
 
     def test_reprise_refusee_ne_bloque_pas_la_comparaison(self):
         """Une reprise refusée avant envoi (clé révoquée, par exemple) ne reste pas en attente

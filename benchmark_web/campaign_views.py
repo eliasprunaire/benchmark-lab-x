@@ -1067,6 +1067,61 @@ def _exclue(campaign, cell, closed, unusable):
     return cell.get('cell_id') in closed | unusable or cell['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open')
 
 
+def _partielle(campaign):
+    """Vérification à lancer d'une comparaison arrêtée (#696) : une réponse exploitable, les autres essais définitivement exclus"""
+    judgment = campaign.get('judgment') or {}
+    cells = campaign['cells']
+    closed, unusable = _hors_compte(campaign)
+    return (judgment.get('status') == 'NOT_STARTED' and bool(judgment.get('total')) and bool(cells)
+            and not any(judgment.get(key) for key in ('relaunch', 'relaunching', 'recovering'))
+            and not all(c['state'] == 'RECEIVED' for c in cells)
+            and all(c['state'] == 'RECEIVED' or _exclue(campaign, c, closed, unusable) for c in cells))
+
+
+def _cause_arret(campaign):
+    """Cause globale de l'arrêt en une phrase, ou None (#696)"""
+    # Même priorité que les en-têtes d'arrêt de `_suivi`, sans leur suite ; ce bloc n'est pas déplacé (#650 le modifie)
+    attempts = campaign['attempts']
+    if any(a.get('incident') == 'CONNECTION_FAILED' for a in attempts):
+        return NOT_SENT_TEXT
+    if any(a.get('incident') == AMBIGUOUS_EXPIRED for a in attempts):
+        return 'Un essai est resté sans réponse confirmée et a été clos.'
+    incidents = [a for a in attempts if a.get('incident') in INCIDENT_TEXT]
+    named = next((a for a in incidents if a['incident'] in ('KEY_REJECTED', 'CREDIT_EXHAUSTED')), incidents[0] if incidents else None)
+    if named:
+        cell = next((c for c in campaign['cells'] if c.get('cell_id') == named.get('cell_id')), {})
+        config = next((p for p in campaign['panel'] if p['id'] == cell.get('configuration_id')), {})
+        return incident_text(config.get('channel_id'), named['incident'])
+    missing = next(filter(None, map(missing_evidence, sorted(attempts, key=lambda a: a.get('received_at') or '', reverse=True))), None)
+    incident = any(a.get('incident') or a.get('attribution_incident') for a in attempts)
+    if campaign.get('stop_reason') == 'ACQUISITION_EVIDENCE_INCOMPLETE' and missing and (
+            incident or any(c['state'] == 'INTENT_RECORDED' for c in campaign['cells'])):
+        return missing
+    return 'Un problème technique a arrêté un essai.' if incident else None
+
+
+def _cause_couloir(campaign, cell, model, closed, unusable):
+    """Cause d'arrêt propre à un couloir (#696) : essai non appelé, ou motif de la dernière tentative de sa cellule"""
+    if cell['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open'):
+        return 'Le benchmark s’est arrêté avant cet essai.'
+    # Sans `cell_id` commun, aucun motif n'est attribué à la ligne : la cause globale reste dans le détail
+    last = next((a for a in reversed(campaign['attempts']) if cell.get('cell_id') and a.get('cell_id') == cell['cell_id']), None)
+    if not last:
+        return None
+    incident = last.get('incident')
+    if incident in INCIDENT_TEXT:
+        return incident_text((model or {}).get('channel_id'), incident)
+    if incident == 'CONNECTION_FAILED':
+        return NOT_SENT_TEXT
+    if incident == AMBIGUOUS_EXPIRED or cell['cell_id'] in closed:
+        return 'Appel clos sans réponse confirmée.'
+    if cause := missing_evidence(last):
+        return cause
+    if cell['cell_id'] in unusable:
+        return {'LENGTH': 'Réponse coupée par la limite de longueur.', 'EMPTY_OUTPUT': 'Réponse vide.'}.get(incident)
+    return None
+
+
 def _suivi(campaign):
     """Titre, détail et aspect de l'état du suivi : (actif, terminé, titre, détail, aspect), affichage seulement"""
     cells = campaign['cells']
@@ -1104,6 +1159,16 @@ def _suivi(campaign):
             return (False, False, 'La vérification des réponses est à lancer.', ' '.join(filter(None, (
                 'Toutes les réponses sont arrivées. Leur vérification n’est pas encore lancée.', judgment.get('reason')))),
                     ('att', 'À lancer', 'horloge'))
+        if _partielle(campaign):
+            # Comparaison arrêtée (#696) : la vérification des réponses reçues est le titre, la cause de l'arrêt reste dite
+            couverture = judgment.get('reason') or ('Certains essais n’ont pas été appelés.' if any(
+                c['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open') for c in cells)
+                else 'Certains essais n’ont pas donné de réponse exploitable.')
+            title, suite, aspect = (('La vérification des réponses reçues est à lancer.', 'Vous pouvez lancer la vérification des réponses reçues.',
+                                     ('att', 'À lancer', 'horloge')) if judgment.get('can_start') else
+                                    ('La vérification des réponses reçues n’est pas lancée.', 'La vérification des réponses reçues n’est pas lancée.',
+                                     ('inc', 'Non lancée', 'horloge')))
+            return False, False, title, ' '.join(filter(None, (_cause_arret(campaign), couverture, suite))), aspect
     stopped = campaign.get('stop_reason') or campaign.get('restore_pending') or not campaign.get('admission_open')
     # Un modèle encore interrogé garde le suivi actif, même si un autre a déjà rencontré un incident
     if not stopped and any(c['state'] == 'EMISSION_POSSIBLE' for c in cells):
@@ -1169,8 +1234,10 @@ def campaign_status(campaign, dossier_url):
                 base + '/conditions', 'Vérifier puis lancer le benchmark')
     if (campaign.get('judgment') or {}).get('can_start'):
         # Le bouton qui lance la vérification payante est sur le suivi : le cas y mène, jamais vers des résultats vides
-        return ('att', 'À faire', 'Vérification des réponses à lancer', 'Les réponses sont arrivées. Leur vérification, payée avec votre clé '
-                'OpenRouter, se lance depuis le suivi du benchmark.', base + '/conditions', 'Lancer la vérification des réponses')
+        return ('att', 'À faire', 'Vérification des réponses à lancer', 'Certaines réponses sont arrivées avant l’arrêt du benchmark : leur '
+                'vérification, payée avec votre clé OpenRouter, se lance depuis le suivi.' if _partielle(campaign) else
+                'Les réponses sont arrivées. Leur vérification, payée avec votre clé OpenRouter, se lance depuis le suivi du benchmark.',
+                base + '/conditions', 'Lancer la vérification des réponses')
     active, ready, message = campaign_followup(campaign)
     if ready:
         return 'ok', 'Terminé', 'Benchmark terminé', message, base, 'Voir les résultats'
@@ -1199,6 +1266,8 @@ def render_campaign_followup(value, csrf):
     closed, unusable = _hors_compte(campaign)
     # Segment Vérification : l'état du jugement de la campagne, le même sur chaque couloir compté
     verification = {'RUNNING': 'encours', 'COMPLETE': 'fait', 'BLOCKED': 'bloque'}.get((campaign.get('judgment') or {}).get('status', ''), 'avenir')
+    # Cause par couloir : seulement pour la vérification à lancer d'une comparaison arrêtée (#696)
+    partielle = _partielle(campaign)
     lanes = ''
     for cell in cells:
         model = models.get(cell['configuration_id'])
@@ -1217,7 +1286,9 @@ def render_campaign_followup(value, csrf):
         else:
             mark = states.get(cell['state'], statut('inc', 'État inconnu', 'question'))
         etats = (reponse, 'sansobjet' if _exclue(campaign, cell, closed, unusable) else verification if reponse == 'fait' else 'avenir')
-        lanes += couloir(model_name(model, names) if model else 'Modèle', ([prefix] if prefix else []) + lines, mark, position, etats=etats)
+        cause = _cause_couloir(campaign, cell, model, closed, unusable) if partielle else None
+        lanes += couloir(model_name(model, names) if model else 'Modèle', ([prefix] if prefix else []) + lines + ([cause] if cause else []),
+                         mark, position, etats=etats)
     received = sum(cell['state'] == 'RECEIVED' for cell in cells)
     # Ni l'appel clos ni la cellule sans réponse exploitable ne comptent comme une réponse reçue (#541)
     received -= sum(cell['state'] == 'RECEIVED' and cell.get('cell_id') in closed | unusable for cell in cells)
