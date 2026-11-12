@@ -1762,6 +1762,12 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
         assert.equal(text.includes('Gérer ma clé'), false);
       }
     }
+    // Comparaison arrêtée avec un essai non appelé : la vérification en cours reste active, seule la ligne comptée bouge
+    await page.goto(origin + '/render/judgment-RUNNING-partial');
+    assert.equal(await page.locator('#preparation-progress').count(), 1);
+    assert.equal(await page.locator('#t-direct').textContent(), 'Les réponses sont vérifiées.');
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.couloir')].map(li =>
+      [...li.querySelectorAll('*')].filter(e => getComputedStyle(e).animationName !== 'none').length)), [1, 0]);
     // Mouvement réduit pendant la vérification : rien ne bouge, l'état de chaque segment reste lisible
     const reduit = await browser.newContext({javaScriptEnabled: false, reducedMotion: 'reduce'});
     try {

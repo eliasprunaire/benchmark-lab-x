@@ -1051,6 +1051,22 @@ INCIDENT_ASPECTS = {'KEY_REJECTED': ('ko', 'Clé refusée', 'croix'), 'CREDIT_EX
                     'RATE_LIMITED': ('vig', 'Limite de débit', 'alerte'), 'PROVIDER_ERROR': ('ko', 'Incident', 'alerte')}
 
 
+def _hors_compte(campaign):
+    """Cellules closes et cellules sans réponse exploitable : ni reçues ni comptées"""
+    # Modèle resté en incident fournisseur à sa dernière tentative (#537) : sa réponse reçue n'est pas exploitable
+    # Comparaison du demandeur : lu dans son évaluation ; campagne opérateur : dans sa projection (#539)
+    outcome = campaign.get('judgment') or campaign
+    # Appel clos sans réponse confirmée (#537), dans la comparaison ou sa chaîne de relances : ni reçu ni compté
+    closed = set(outcome.get('closed_cells', ())) | {
+        a.get('cell_id') for a in campaign['attempts'] if a.get('incident') == AMBIGUOUS_EXPIRED}
+    return closed, set(outcome.get('unusable_cells', ()))
+
+
+def _exclue(campaign, cell, closed, unusable):
+    """Exclusion définitive de « réponses vérifiées » : cellule close, inexploitable ou non appelée ; un essai à vérifier non clos peut encore l'être"""
+    return cell.get('cell_id') in closed | unusable or cell['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open')
+
+
 def _suivi(campaign):
     """Titre, détail et aspect de l'état du suivi : (actif, terminé, titre, détail, aspect), affichage seulement"""
     cells = campaign['cells']
@@ -1075,13 +1091,15 @@ def _suivi(campaign):
             return (True, False, str(count) + (' modèles arrêtés' if count > 1 else ' modèle arrêté')
                     + ' par la limite de longueur ' + ('sont relancés' if count > 1 else 'est relancé') + ' avec une longueur de réponse plus haute.',
                     'Les réponses arrivent au fur et à mesure.', ('att', 'Reprise en cours', 'horloge'))
-        if status in ('WAITING', 'RUNNING') and cells and all(c['state'] == 'RECEIVED' for c in cells):
-            # Une relance automatique programmée dit sa cause et son délai ; rien n'est à faire
-            if status == 'WAITING':
-                return (True, False, 'La vérification des réponses attend son tour.', 'Toutes les réponses sont arrivées.',
-                        ('inc', 'En attente', 'horloge'))
+        closed, unusable = _hors_compte(campaign)
+        # Vérification en cours : chaque réponse comptée est reçue ; un essai non appelé ou clos n'attend plus rien
+        if status == 'RUNNING' and cells and all(c['state'] == 'RECEIVED' or _exclue(campaign, c, closed, unusable) for c in cells):
             return (True, False, 'Les réponses sont vérifiées.', judgment.get('reason') or 'Chaque réponse est vérifiée selon les critères de votre exemple.',
                     ('att', 'Vérification en cours', 'horloge'))
+        # Une relance automatique programmée dit sa cause et son délai ; rien n'est à faire
+        if status == 'WAITING' and cells and all(c['state'] == 'RECEIVED' for c in cells):
+            return (True, False, 'La vérification des réponses attend son tour.', 'Toutes les réponses sont arrivées.',
+                    ('inc', 'En attente', 'horloge'))
         if status == 'NOT_STARTED' and cells and all(c['state'] == 'RECEIVED' for c in cells):
             return (False, False, 'La vérification des réponses est à lancer.', ' '.join(filter(None, (
                 'Toutes les réponses sont arrivées. Leur vérification n’est pas encore lancée.', judgment.get('reason')))),
@@ -1178,13 +1196,7 @@ def render_campaign_followup(value, csrf):
     ordered = campaign.get('cases', [])
     # Plusieurs essais d'un modèle : chaque ligne nomme son exemple et son essai
     examples = {case['id']: example_label(case, number) for number, case in enumerate(ordered, 1)} if len(ordered) > 1 else {}
-    # Modèle resté en incident fournisseur à sa dernière tentative (#537) : sa réponse reçue n'est pas exploitable
-    # Comparaison du demandeur : lu dans son évaluation ; campagne opérateur : dans sa projection (#539)
-    outcome = campaign.get('judgment') or campaign
-    unusable = set(outcome.get('unusable_cells', ()))
-    # Appel clos sans réponse confirmée (#537), dans la comparaison ou sa chaîne de relances : ni reçu ni compté
-    closed = set(outcome.get('closed_cells', ())) | {
-        a.get('cell_id') for a in campaign['attempts'] if a.get('incident') == AMBIGUOUS_EXPIRED}
+    closed, unusable = _hors_compte(campaign)
     # Segment Vérification : l'état du jugement de la campagne, le même sur chaque couloir compté
     verification = {'RUNNING': 'encours', 'COMPLETE': 'fait', 'BLOCKED': 'bloque'}.get((campaign.get('judgment') or {}).get('status', ''), 'avenir')
     lanes = ''
@@ -1204,9 +1216,7 @@ def render_campaign_followup(value, csrf):
             mark, position, reponse = statut('inc', 'Non appelé', 'pause'), 'p0', 'bloque'
         else:
             mark = states.get(cell['state'], statut('inc', 'État inconnu', 'question'))
-        # Exclusions définitives de « réponses vérifiées » : cellule close, inexploitable ou non appelée ; un essai à vérifier non clos peut encore l'être
-        exclue = cell.get('cell_id') in closed | unusable or cell['state'] == 'INTENT_RECORDED' and not campaign.get('admission_open')
-        etats = (reponse, 'sansobjet' if exclue else verification if reponse == 'fait' else 'avenir')
+        etats = (reponse, 'sansobjet' if _exclue(campaign, cell, closed, unusable) else verification if reponse == 'fait' else 'avenir')
         lanes += couloir(model_name(model, names) if model else 'Modèle', ([prefix] if prefix else []) + lines, mark, position, etats=etats)
     received = sum(cell['state'] == 'RECEIVED' for cell in cells)
     # Ni l'appel clos ni la cellule sans réponse exploitable ne comptent comme une réponse reçue (#541)

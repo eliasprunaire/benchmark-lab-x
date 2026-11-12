@@ -6060,15 +6060,19 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('non envoyé : le benchmark s’est arrêté avant cet essai', lignes[2])
         self.assertNotIn('dépense à venir', texte)
         # Revue PR #695 : seule la réponse comptée suit la vérification ; réponse inexploitable et essai non appelé restent sans objet
+        # L'essai non appelé n'empêche pas le suivi de dire la vérification en cours et de la faire défiler
         segments = []
 
         def verification():
             page, _, _ = self.request(suivi)
-            segments.append([n['attrs']['data-etat'] for n in page.nodes if n['attrs'].get('data-segment') == 'verification'])
+            liste = next(n for n in page.nodes if n['tag'] == 'ol' and 'couloirs' in n['attrs'].get('class', '').split())
+            segments.append((next(n['text'] for n in page.nodes if n['attrs'].get('id') == 't-direct'), 'vit' in liste['attrs']['class'].split(),
+                             [n['attrs']['data-etat'] for n in page.nodes if n['attrs'].get('data-segment') == 'verification']))
         # La réponse exploitable de Modèle A est seule évaluée ; la couverture prévue reste distincte
         html = self.evaluer(dossier, verification)
         verification()
-        self.assertEqual([['encours', 'sansobjet', 'sansobjet'], ['fait', 'sansobjet', 'sansobjet']], segments)
+        self.assertEqual([('Les réponses sont vérifiées.', True, ['encours', 'sansobjet', 'sansobjet']),
+                          ('Vérification des réponses terminée.', False, ['fait', 'sansobjet', 'sansobjet'])], segments)
         self.assertEqual(1, judge.request.call_count)
         self.assertIn('Aucune réponse exploitable pour Modèle B (cause non établie par le reçu)', html)
         self.assertIn('Modèle C n’a pas été appelé : le benchmark s’est arrêté avant cet essai.', html)
