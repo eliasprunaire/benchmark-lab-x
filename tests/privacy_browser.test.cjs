@@ -89,7 +89,10 @@ def launch(state=None):
             'launchable': state is None, 'judgment_estimate_usd': '0.30', 'estimate_total_usd': None,
             'access': {'status': 'connected', 'limit_remaining_usd': '18.5', 'limit_usd': '20'}}
 # Cas lancé : la page du cas et ses contrôles de confidentialité, sans choix de contribution, comme le fait views.render
-launched = views.render(example_view(), 'csrf').decode()
+validated = dict(example_view(), validation={'validated_at': '2026-09-16T08:00:00Z'}, qualified=True,
+                 qualification=dict(status='QUALIFIED', qualification_status='QUALIFIED', approval_status='QUALIFIED',
+                                    summary='Contrôle', findings=[]))
+launched = views.render(validated, 'csrf').decode()
 # Les notices inventées restent dans les fixtures de test
 from pathlib import Path
 from unittest.mock import patch
@@ -136,7 +139,7 @@ print(json.dumps({**browser_views(),
                   'reference_help_unavailable': reference_help_unavailable, **approved, 'data': views.render({'kind': 'privacy_data'}, '').decode(), 'launched': launched,
                   **{path[1:]: views.render({'kind': 'legal', 'path': path}, '').decode()
                      for path in ('/mentions-legales', '/cgu', '/confidentialite')},
-                  'example': views.render(example_view(), 'csrf').decode(), 'script': views.STEP_SCRIPT,
+                  'example': views.render(validated, 'csrf').decode(), 'script': views.STEP_SCRIPT,
                   'home': views.render({'kind': 'home'}, '').decode(),
                   'dossiers': views.render({'dossiers': []}, 'csrf').decode(),
                   'configurations': views.render({
@@ -458,11 +461,21 @@ test('an opened case is kept in local history by default under CSP, a list write
     const page = await context.newPage(); page.setDefaultTimeout(3000);
     const failures = [];
     page.on('pageerror', error => failures.push(error.message));
-    page.on('console', message => {if (/Content Security Policy/.test(message.text())) failures.push(message.text());});
+    page.on('console', message => {if (message.type() === 'error') failures.push(message.text());});
     const databases = () => page.evaluate(async () => (await indexedDB.databases()).map(db => db.name));
     // Historique actif par défaut : la page versionnée d'un cas ouvert en garde une copie, sans action ni envoi
     await page.goto(origin + '/render/example');
     await page.waitForFunction(texte => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent === texte, copie);
+    await page.goto(origin + '/render/case-current');
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent ===
+      'Ce navigateur a déjà la version la plus récente de ce cas.');
+    assert.equal(await page.locator('details.privacy-controls, section.zone-suppr').count(), 0);
+    assert.equal(await page.locator('[data-privacy-controls][hidden] > [data-privacy-status]').count(), 1);
+    assert.equal(await page.locator('[data-privacy-controls] [data-privacy-action="archive"], [data-privacy-controls] [data-privacy-action="enable-case"]').count(), 2);
+    await page.goto(origin + '/render/example');
+    await page.waitForFunction(() => document.querySelector('[data-privacy-controls] [data-privacy-status]').textContent ===
+      'Ce navigateur a déjà la version la plus récente de ce cas.');
+    assert.deepEqual(failures, []);
     assert.equal(posts.length, 0);
     assert.deepEqual(await databases(), ['bench-x-history']);
     assert.equal(await page.locator('[data-privacy-action="enable-case"]').evaluate(button => button.hidden), true);
@@ -1253,7 +1266,7 @@ test('results and publication preview stay readable at 390 px: whole words, stac
     await page.setViewportSize({width: 390, height: 844});
     await page.screenshot({path: 'reports/privacy-browser/preview-mobile.png', fullPage: true});
     // Contribution retirée : la décision principale reste, sans choix de partage
-    await page.goto(origin + '/render/example');
+    await page.goto(origin + '/render/case-current');
     assert.equal(await page.evaluate(() => {
       const validate = [...document.querySelectorAll('#validation button')].find(button => /Oui, c’est le cas\u00a0d’usage à tester/.test(button.textContent));
       return Boolean(validate) && !document.querySelector('[data-privacy-post="contribution"]');
@@ -2169,8 +2182,33 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       assert.ok((await page.locator('nav.piste').textContent()).includes(text));
     assert.equal(await page.locator('nav.piste a[href="#besoin"]').count(), 1);
     await page.goto(origin + '/render/example-QUALIFIED');
+    assert.equal(await page.locator('details#exemple').count(), 1);
+    assert.equal(await page.locator('details#exemple').evaluate(d => d.open), false);
+    assert.equal(await page.locator('#controle > .zone-titre .mot').count(), 1);
+    assert.equal(await page.locator('#controle details').count(), 0, 'aucun détail vide');
+    assert.equal(await page.locator('details.privacy-controls, #t-suppr').count(), 2);
+    assert.equal(await page.locator('.pile-bas summary .titre', {hasText: 'Historique des versions et des benchmarks'}).count(), 1);
+    assert.equal(await page.evaluate(() => Boolean(document.querySelector('#controle').compareDocumentPosition(
+      document.querySelector('details#exemple')) & Node.DOCUMENT_POSITION_FOLLOWING)), true);
+    await page.locator('nav.piste a[href="#exemple"]').click();
+    assert.equal(await page.locator('details#exemple').evaluate(d => d.open), false);
+    assert.equal(await page.locator('details#exemple > summary').evaluate(e => {
+      const r = e.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight;
+    }), true);
+
     assert.ok((await page.locator('nav.piste [aria-current="step"]').textContent()).includes('Validation'));
     assert.equal(await page.locator('nav.piste a[href$="/configurations"]').count(), 1);
+    await page.goto(origin + '/render/example-findings');
+    assert.deepEqual(await page.locator('#controle > ul > li').allTextContents(), ['Blocage 0', 'Blocage 1', 'Blocage 2', 'Blocage 3']);
+    assert.deepEqual(await page.locator('#controle details li').allTextContents(), ['Note 0', 'Note 1', 'Note 2', 'Note 3', 'Note 4']);
+    assert.equal(await page.locator('#controle details summary .titre').textContent(), 'Détail du contrôle');
+    assert.equal(await page.locator('#controle details summary .resume').textContent(), '5 autres remarques · 0 témoin');
+    await page.goto(origin + '/render/example-findings-mixed');
+    assert.deepEqual(await page.locator('#controle > ul > li').allTextContents(), ['Blocage 3', 'Note 0', 'Note 1']);
+    assert.deepEqual(await page.locator('#controle details li').allTextContents(), ['Note 2', 'Note 3', 'Note 4']);
+    await page.goto(origin + '/render/example-readonly');
+    assert.equal(await page.locator('details#exemple').evaluate(d => d.open), false);
+    assert.equal(await page.locator('details#corriger, form[action$="/validation"]').count(), 0);
     await page.goto(origin + '/render/scope');
     assert.ok((await page.textContent('main')).includes('Précisez le cas d’usage à comparer'));
     assert.ok((await page.textContent('main')).includes('Aucun benchmark ne se lance à cette étape.'));
@@ -2179,6 +2217,8 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
     for (const category of ['math', 'coding', 'other']) {
       await page.goto(origin + '/render/out-of-scope-' + category);
       const text = await page.textContent('main');
+      assert.equal(await page.locator('details.privacy-controls, #t-suppr, .pile-bas').count(), 0);
+      assert.equal(await page.locator('[hidden][data-privacy-controls]').count(), 1);
       assert.ok(text.includes(category === 'other' ? 'Evaly compare des modèles sur un travail précis' : 'Ce travail est déjà mesuré par des benchmarks publics'));
       assert.ok(text.includes('Décrire un cas d’usage précis'));
       assert.equal(/Envoyer ma réponse|Choisir les modèles|équipe (Bench-X|Evaly)|n’est pas encore/.test(text), false);
@@ -2207,6 +2247,8 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
     assert.ok((await page.textContent('main')).includes('Le contrôle de l’exemple n’a pas pu démarrer.'));
     assert.equal((await page.textContent('main')).includes('Approbation'), false);
     await page.goto(origin + '/render/example-BLOCKED');
+    assert.equal(await page.locator('details#exemple').evaluate(d => d.open), true);
+    assert.equal(await page.locator('details#corriger').evaluate(d => d.open), true);
     assert.ok((await page.textContent('main')).includes('Exemple à revoir avant le benchmark'));
     assert.equal(await page.locator('img[src="x"]').count(), 0);
     assert.equal((await page.textContent('main')).split('<img src=x onerror="alert(1)">Correction requise').length, 2);
@@ -2275,7 +2317,12 @@ test('preparation screens preserve navigation, accessible forms and recoverable 
       assert.ok(layout.reply && layout.state, `${width} réponse dans la conversation, état en synthèse`);
       assert.equal(/Coût de la préparation/.test(layout.side), false, `${width} aucun coût en synthèse`);
       assert.ok(width === 1440 ? layout.right : layout.below, `${width} position de la synthèse de préparation`);
+      await page.goto(origin + '/render/copy-dossier');
+      assert.equal(await page.locator('.pile-bas').count(), 0);
+      assert.equal(await page.locator('[data-privacy-controls]').count(), 1);
       await page.goto(origin + '/render/case-current');
+      assert.equal(await page.locator('details.privacy-controls, #t-suppr, details#exemple').count(), 0);
+      assert.equal(await page.locator('[data-privacy-controls][data-privacy-activity][data-content-version]').count(), 1);
       layout = await zones();
       assert.equal(layout.overflow, 0, `${width} validation sans débordement`);
       assert.ok(layout.example && layout.correction && layout.validation, `${width} exemple et correction en zone principale, validation en synthèse`);
@@ -2351,7 +2398,8 @@ test('privacy forms preserve purpose tokens and expired states', async () => {
     const page = await context.newPage();
     await page.goto(origin + '/render/example');
     const text = await page.textContent('main');
-    assert.ok(text.indexOf('Les pièces') < text.indexOf('Oui, c’est le cas\u00a0d’usage à tester'));
+    assert.equal(await page.locator('form[action$="/validation"]').count(), 0);
+    assert.equal(await page.locator('details#exemple').count(), 1);
     assert.ok(text.includes('Efface la copie de ce navigateur et demande la suppression sur le serveur'));
     // Contribution retirée : ni case, ni texte de partage sur la page d'un cas
     assert.equal(await page.locator('.privacy-consent, [data-privacy-post="contribution"]').count(), 0);

@@ -157,7 +157,8 @@ def browser_views():
         explanation='Acceptez-vous un exemple avec des pièces textuelles inventées ?')
     for category in ('math', 'coding', 'other'):
         examples['out-of-scope-' + category] = dict(base, stage='suspended',
-            checks=dict(out_of_scope=category), explanation='Un test générique, sans tâche de travail à comparer')
+            checks=dict(out_of_scope=category), privacy=example_view()['privacy'],
+            explanation='Un test générique, sans tâche de travail à comparer')
     for reason in ('open', 'interrupted', 'restore'):
         examples['suspended-' + reason] = dict(base, current_revision=2, stage='suspended',
             explanation='Incident chez OpenRouter ou chez le fournisseur du modèle.',
@@ -169,7 +170,17 @@ def browser_views():
                 approval_status=status, summary='<img src=x onerror="alert(1)">Correction requise', findings=[]))
         if status == 'BLOCKED':
             value['qualification']['operation_id'] = 'op'
+        value['task_index'] = dict(href='/preparation/dossiers/d1', example_revisions=[1], versions=[])
         examples['example-' + status] = value
+    examples['example-readonly'] = dict(deepcopy(examples['example-BLOCKED']), current_revision=2)
+    value = deepcopy(examples['example-QUALIFIED'])
+    value['qualification']['findings'] = [dict(severity='note', text='Note ' + str(i)) for i in range(5)] + [
+        dict(severity='blocking', text='Blocage ' + str(i)) for i in range(4)]
+    examples['example-findings'] = value
+    value = deepcopy(value)
+    value['qualification']['findings'] = value['qualification']['findings'][:5] + value['qualification']['findings'][-1:]
+    value['qualification']['witnesses'] = []
+    examples['example-findings-mixed'] = value
     for stage, qualification, prior, pending in (
             ('waiting', {}, False, True), ('waiting', {}, True, False), ('clarification', {}, False, False),
             ('suspended', {}, False, False), ('preview', {'operation_id': 'op', 'status': 'PENDING'}, False, True),

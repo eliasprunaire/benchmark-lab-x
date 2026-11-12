@@ -1476,3 +1476,12 @@ fieldset:disabled .annuler, fieldset:not(:disabled) .apres-suppression { display
   .table-cas .ge-gerer .btn { white-space: normal; }
   .table-cas td[data-label]::before { content: attr(data-label); display: block; font-family: var(--mono); font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--discret); }
 }
+
+/* ——— Lot 4 : synthèse du cas après validation ——— */
+/* Tiroirs jointifs dans la colonne principale et dans l’exemple, comme dans .pile (css:618) */
+.pile-l > .tiroir + .tiroir, #exemple > .tiroir-corps > .tiroir + .tiroir { margin-top: 0; }
+/* Tiroir Exemple ouvert : place pour le ruban de la consigne (-12 px), rythme interne et filets secondaires */
+#exemple > .tiroir-corps { padding-top: 22px; }
+#exemple > .tiroir-corps > * + * { margin-top: clamp(24px, 3.5vw, 36px); }
+#exemple > .tiroir-corps > .tiroir { border-top-width: 1px; border-top-color: var(--filet-doux); }
+#exemple > .tiroir-corps > .tiroir:last-of-type { border-bottom: 1px solid var(--filet-doux); }

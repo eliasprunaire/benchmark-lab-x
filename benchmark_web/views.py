@@ -1081,7 +1081,7 @@ def bloc_dossier(value):
     package = value['package']
     pieces = ''.join(feuille(piece['name'], '', value['example_contents'][piece['id']], 'piece-' + str(index))
                      for index, piece in enumerate(package['pieces'], 1))
-    contenu = consigne(package['instruction'], ident='exemple')
+    contenu = consigne(package['instruction'], ident=None if value['validation'] is not None else 'exemple')
     contenu += ('<section class="pile" aria-labelledby="t-pieces"><div class="zone-titre"><h2 id="t-pieces">Les pièces</h2><span class="petit">'
                 + str(len(package['pieces'])) + (' documents inventés' if len(package['pieces']) > 1 else ' document inventé')
                 + '</span></div><ul class="pieces">' + pieces + '</ul></section>')
@@ -1127,7 +1127,7 @@ def bloc_precisions(value):
 
 
 def controle_exemple(value, qualification, automatic, referral):
-    """Tiroir « Contrôle de l'exemple » : ce que le contrôle a relevé, ou pourquoi il n'a pas eu lieu"""
+    """Contrôle en attente avant validation, synthèse et preuves après validation"""
     if not value['package'] or referral:
         return ''
     reussi = qualification.get('qualification_status') == 'QUALIFIED' or qualification.get('status') == 'QUALIFIED'
@@ -1139,12 +1139,35 @@ def controle_exemple(value, qualification, automatic, referral):
         # L'encadré d'état porte déjà la remarque d'un contrôle bloqué ou impossible
         dans_encadre = not reussi and qualification.get('status') == 'BLOCKED' or bool(qualification.get('cause'))
         corps += ('' if dans_encadre else '<p>Remarque du contrôle : ' + text(qualification['summary']) + '</p>')
-        corps += (listing(finding['text'] for finding in qualification.get('findings', [])) + render_witnesses(qualification, value))
     else:
         resume = CONTROLE.get(qualification.get('qualification_status'), 'En attente')
+        if value['validation'] is not None and qualification.get('summary'):
+            corps += '<p>Remarque du contrôle : ' + text(qualification['summary']) + '</p>'
         if qualification.get('findings'):
-            corps += '<p>Bloqué. Ce que le contrôle de l’exemple a relevé :</p>' + listing(finding['text'] for finding in qualification['findings'])
-    return tiroir('Contrôle de l’exemple', corps, resume=resume)
+            corps += '<p>Bloqué. Ce que le contrôle de l’exemple a relevé :</p>'
+    if value['validation'] is None:
+        corps += listing(f['text'] for f in qualification.get('findings', []))
+        corps += render_witnesses(qualification, value) if automatic else ''
+        return tiroir('Contrôle de l’exemple', corps, resume=resume)
+    if preparation_pending(value):
+        return ''
+    # Toutes les remarques bloquantes restent visibles, puis les notes jusqu'à trois remarques
+    findings = qualification.get('findings', [])
+    bloquantes = [f for f in findings if f.get('severity') == 'blocking']
+    notes = [f for f in findings if f.get('severity') != 'blocking']
+    limite = max(0, 3 - len(bloquantes))
+    visibles, autres = bloquantes + notes[:limite], notes[limite:]
+    corps += listing(f['text'] for f in visibles)
+    temoins = render_witnesses(qualification, value) if qualification.get('witnesses') != [] else ''
+    if autres or temoins:
+        nombre = len(qualification.get('witnesses') or [])
+        detail = listing(f['text'] for f in autres) + temoins
+        corps += tiroir('Détail du contrôle', detail,
+                        resume=str(len(autres)) + (' autres remarques' if len(autres) > 1 else ' autre remarque')
+                        + ' · ' + str(nombre) + (' témoins' if nombre > 1 else ' témoin'))
+    ton = 'ok' if reussi else 'inc' if qualification.get('cause') else 'ko' if qualification.get('qualification_status', qualification.get('status')) == 'BLOCKED' else 'att'
+    return ('<section class="pile" id="controle" aria-labelledby="t-controle"><div class="zone-titre">'
+            '<h2 id="t-controle">Contrôle de l’exemple</h2>' + mot(resume, ton) + '</div>' + corps + '</section>')
 
 
 def ligne_exemples(value, stages, cases):
@@ -1224,6 +1247,7 @@ def hors_champ(value, referral, request, benchmarks, bas):
 def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
     """Page d'un cas d'usage : besoin, exemple, validation, révision ou hors champ ; renvoie (titre, contenu, en-tête, état)"""
     dossier_id, revision = value['dossier_id'], value['revision']
+    apres = value['validation'] is not None
     numero = numero_version(value)
     url = '/preparation/dossiers/' + dossier_id
     source, source_notice = value.get('source'), value.get('source_notice') or {}
@@ -1325,22 +1349,25 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
     privacy_html = render_privacy_controls(value, csrf)
     partage = ''
     bas = ''
-    if value.get('task_index'):
-        bas += tiroir('Historique des versions et des benchmarks', render_task_index(value['task_index']))
     cases = value.get('cases', [])
     if current_campaigns and package:
         bas += liste_benchmarks(value, url, current_campaigns)
+    if cases and package:
+        bas += ligne_exemples(value, stages, cases)
+    if apres and value.get('task_index'):
+        bas += tiroir('Historique des versions et des benchmarks', render_task_index(value['task_index']))
     if value.get('campaigns') and package:
         bas += tiroir('Historique détaillé des benchmarks', render_campaign_records(value['campaigns'], url, value),
                       resume='Benchmark ' + str(len(current_campaigns)) if current_campaigns else '')
-    if cases and package:
-        bas += ligne_exemples(value, stages, cases)
-    if (package and value['validation'] and (not cases or cases[0]['current']) and not snapshot and not prior_revision and not referral):
+    if (package and apres and (not cases or cases[0]['current']) and not snapshot and not prior_revision and not referral):
         bas += ajouter_exemple(csrf, dossier_id, disabled)
-    bas += controle_exemple(value, qualification, automatic, referral) if package else ''
-    bas += privacy_html + partage
-    # Une fois la vue écrite, le tail de `render` n'ajoute plus les contrôles de confidentialité de cette page
-    sortie = dict(bas_place=True)
+    controle = controle_exemple(value, qualification, automatic, referral) if package else ''
+    if not apres:
+        bas += controle
+    if apres:
+        bas += privacy_html + partage
+    # Avant validation, `render` place le porteur caché après les colonnes
+    sortie = dict(bas_place=apres)
     ancre = lien(path, 'Actualiser', 'actualiser') if not pending else ''
     # Version précédente : l'exemple d'avant, jamais une révision de conversation
     avant_exemple = max((r for r in value.get('example_revisions') or [] if r < revision), default=None)
@@ -1413,7 +1440,14 @@ def render_dossier(value, csrf, path, *, pending, can_submit, navigation):
             corps += '<script>' + PREPARATION_PROGRESS_SCRIPT + '</script>' if pending else ''
         return h1, corps, entete, sortie
     # Exemple : consigne, pièces, critères et correction à gauche, décision ou état à droite
-    gauche = notices + (bulle_assistant(explanation) if explanation and not value['validation'] else '') + bloc_dossier(value)
+    exemple = bloc_dossier(value)
+    if apres:
+        pieces = len(package['pieces'])
+        criteres = sum(len(value['criteria'][key]) for key in ('obligations', 'eliminatory', 'quality'))
+        resume = (str(pieces) + (' pièces' if pieces > 1 else ' pièce') + ' · '
+                  + str(criteres) + (' critères' if criteres > 1 else ' critère'))
+        exemple = controle + tiroir('Exemple', exemple, resume=resume, ouvert=corriger and editable, ident='exemple')
+    gauche = notices + (bulle_assistant(explanation) if explanation and not apres else '') + exemple
     avant_validation = editable and stage == 'preview' and value['validation'] is None
     if editable:
         gauche += tiroir_correction(csrf, url, revision, disabled, ouvert=corriger)
