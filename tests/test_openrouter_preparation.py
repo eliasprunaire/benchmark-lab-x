@@ -470,6 +470,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
             self.assertIn('Un indice qui désigne un élément ou révèle la réponse reste dans judgment', system)
             self.assertIn('toutes les lectures défendables', system)
             # Issue #505 : convention restrictive visible, composantes requises nommées, borne incluse d'une date limite
+            # O4 : le critère public n'énonce la convention que si une date limite figure dans l'exemple
             self.assertIn(
                 'alternatives recevables, inconnues et limites. '
                 'Toute convention qui restreint les lectures recevables figure en termes généraux dans la consigne '
@@ -478,7 +479,7 @@ class OpenRouterPreparationTests(unittest.TestCase):
                 'Pour une date limite, une date seule signifie « au plus tard à cette date, incluse ». '
                 "Cette convention n'autorise pas à supprimer une borne exclue explicite, comme « avant ». "
                 "Les autres relations temporelles et les dates fixées d'événements restent telles quelles. "
-                'Le critère public énonce cette convention.',
+                "Lorsqu'une pièce ou la consigne contient une date limite, le critère public énonce cette convention.",
                 system)
         system = assistant.load_profile(str(
             Path(assistant.__file__).parent / 'profiles' / 'qualification.profile.json'))['system']
