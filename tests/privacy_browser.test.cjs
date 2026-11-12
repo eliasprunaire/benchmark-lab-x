@@ -1266,7 +1266,7 @@ test('results and publication preview stay readable at 390 px: whole words, stac
     await page.setViewportSize({width: 390, height: 844});
     await page.screenshot({path: 'reports/privacy-browser/preview-mobile.png', fullPage: true});
     // Contribution retirée : la décision principale reste, sans choix de partage
-    await page.goto(origin + '/render/example');
+    await page.goto(origin + '/render/case-current');
     assert.equal(await page.evaluate(() => {
       const validate = [...document.querySelectorAll('#validation button')].find(button => /Oui, c’est le cas\u00a0d’usage à tester/.test(button.textContent));
       return Boolean(validate) && !document.querySelector('[data-privacy-post="contribution"]');
