@@ -1660,6 +1660,34 @@ test('access and launch screens preserve available actions, estimates and refusa
     await page.goto(origin + '/render/configurations-empty');
     assert.ok((await page.textContent('main')).includes('Relevé de modèles indisponible'));
     assert.equal(await page.locator('#configurations-form').count(), 0);
+    // Lot catalogue, E-CAT-3 : liste présente sans modèle utilisable, rendue comme sans liste, avec scripts
+    const scripted = await browser.newContext();
+    try {
+      const vue = await scripted.newPage();
+      const erreurs = [];
+      vue.on('pageerror', error => erreurs.push(error.message));
+      vue.on('console', message => {if (message.type() === 'error') erreurs.push(message.text());});
+      for (const width of [390, 1440]) {
+        await vue.setViewportSize({width, height: 900});
+        for (const [name, mot, phrase] of [
+          ['configurations-no-model', 'Liste vide', 'La liste des modèles est mise à jour une fois par jour.'],
+          ['configurations-no-model-stale', 'Liste ancienne', 'La liste des modèles n’a pas pu être mise à jour depuis plus d’un jour.']]) {
+          const where = `${name} ${width}`;
+          await vue.goto(origin + '/render/' + name);
+          assert.equal(await vue.locator('.etat').count(), 1, where);
+          assert.equal(await vue.locator('.etat[data-ton="vig"] .mot').innerText(), mot, where);
+          assert.equal(await vue.locator('.etat h2').innerText(), 'Aucun modèle de la liste n’est utilisable pour le moment', where);
+          assert.ok((await vue.locator('.etat p').innerText()).startsWith(phrase), where);
+          assert.equal(await vue.locator('.etat a', {hasText: 'Actualiser la liste'}).count(), 1, where);
+          assert.equal(await vue.locator('input[name="models"]').count(), 0, where);
+          assert.equal(await vue.locator('#configurations-form, .barre-choix').count(), 0, where);
+          assert.equal(await vue.locator('#ajout #custom-models').count(), 1, where);
+          assert.equal(await vue.locator('.btn:not(.btn-sec)').count(), 0, where);
+          assert.equal(await vue.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0, `${where} débordement`);
+        }
+      }
+      assert.deepEqual(erreurs, []);
+    } finally {await scripted.close();}
     // Composition S18 : l'état d'abord, puis la zone principale et la colonne de synthèse, à droite sur ordinateur
     const zones = () => page.evaluate(() => {
       const box = selector => document.querySelector(selector).getBoundingClientRect();

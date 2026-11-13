@@ -2507,6 +2507,40 @@ class ParcoursComplet(unittest.TestCase):
                          sorted(n['attrs']['value'] for n in form_fautif['nodes'] if n['attrs'].get('name') == 'models'))
         self.request(form_fautif['action'], form_fautif['fields'] | {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'tier': 'low'}, status=400)
+        # E-CAT-3 : liste présente, aucun modèle utilisable. La page montrait des cases vides et « Continuer » ;
+        # elle se rend comme sans liste : un seul encadré, puis le seul bloc « Modèle absent »
+        vide = json.loads(releve)
+        for modele in ('openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'):
+            vide['endpoints'][modele]['endpoints'] = []
+        releve_stocke(storage._strict_json(vide))
+        titre = 'Aucun modèle de la liste n’est utilisable pour le moment'
+        with closing(storage.Store(self.data)) as store:
+            collecte = store._connection.execute('SELECT fetched_at FROM s2_model_catalogue').fetchone()[0]
+        for mot, phrase, age in (
+                ('Liste vide', 'La liste des modèles est mise à jour une fois par jour. D’ici là, ajoutez un modèle par son '
+                 'identifiant OpenRouter : le benchmark en demande au moins deux.', collecte),
+                ('Liste ancienne', 'La liste des modèles n’a pas pu être mise à jour depuis plus d’un jour. Actualisez la liste '
+                 'plus tard, ou ajoutez un modèle par son identifiant OpenRouter : le benchmark en demande au moins deux.',
+                 (NOW - timedelta(hours=30)).isoformat())):
+            with closing(storage.Store(self.data)) as store:
+                store._connection.execute('UPDATE s2_model_catalogue SET fetched_at=?', (age,))
+            sans_modele, _, _ = self.request(configurations)
+            cadres = [n for n in sans_modele.nodes if n['tag'] == 'section' and 'etat' in n['attrs'].get('class', '').split()]
+            self.assertEqual(1, len(cadres), mot)
+            self.assertEqual('vig', cadres[0]['attrs'].get('data-ton'), mot)
+            self.assertEqual([mot, titre], [next(n['text'].strip() for n in sans_modele.nodes
+                                                 if n['tag'] == 'span' and 'mot' in n['attrs'].get('class', '').split()),
+                                            next(n['text'].strip() for n in sans_modele.nodes if n['tag'] == 'h2')], mot)
+            visible = ' '.join(sans_modele.visible.split())
+            self.assertIn(phrase, visible, mot)
+            self.assertEqual(configurations, sans_modele.link('Actualiser la liste'), mot)
+            self.assertEqual([], [n for n in sans_modele.nodes if n['tag'] == 'input' and n['attrs'].get('name') == 'models'], mot)
+            self.assertNotIn('Choisissez au moins deux modèles', visible, mot)
+            self.assertNotIn('Continuer', visible, mot)
+            self.assertEqual(1, sum(1 for n in sans_modele.nodes if n['attrs'].get('id') == 'ajout'), mot)
+            self.assertNotIn('#ajout', [n['attrs'].get('href') for n in sans_modele.nodes if n['tag'] == 'a'], mot)
+        with closing(storage.Store(self.data)) as store:
+            store._connection.execute('UPDATE s2_model_catalogue SET fetched_at=?', (collecte,))
         releve_stocke(releve)
         # Niveau adapté à chaque modèle : aucun refus, l'adaptation est montrée avant le lancement
         tuning = next(n for n in page.nodes if n['tag'] == 'details' and 'Choisir un niveau différent pour un modèle' in n['text'])

@@ -172,6 +172,10 @@ def browser_views():
         examples['date-' + stamp[8:10] + '-' + stamp[17:19]] = value
     examples['configurations-empty'] = dict(kind='configurations', dossier_id='d1',
         catalogue_available=False, models=[], detail='Relevé de modèles indisponible', configurations=[])
+    # Lot catalogue, E-CAT-3 : liste présente, aucun modèle utilisable ; récente puis ancienne
+    examples['configurations-no-model'] = dict(deepcopy(examples['configurations-selected']), models=[], configurations=[],
+        current_campaign_id=None, catalogue_available=True, catalogue_stale=False, detail=None)
+    examples['configurations-no-model-stale'] = dict(examples['configurations-no-model'], catalogue_stale=True)
     examples['waiting'] = dict(operation_id='op', dossier_id='d1', availability=available)
     examples['honeypot'] = dict(kind='honeypot_ack')
     examples['listing'] = dict(dossiers=[dict(dossier_id='d1', need='Trier des notes', revision=2)], availability=available)
