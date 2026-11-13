@@ -69,6 +69,12 @@ def browser_views():
             attempts=[dict(state=state, incident=incident)], cells=[dict(configuration_id='x', state=state)],
             panel=[dict(id='x', model='Modèle A')])
         examples['followup-' + name] = value
+    # Un essai reçu, le suivant pas encore émis, admission ouverte : le suivi ne dit pas que rien n'a démarré
+    value = deepcopy(examples['followup-queued'])
+    value['campaign'].update(attempts=[dict(state='RECEIVED', incident=None), dict(state='INTENT_RECORDED', incident=None)],
+        cells=[dict(configuration_id='x', state='RECEIVED'), dict(configuration_id='y', state='INTENT_RECORDED')],
+        panel=[dict(id='x', model='Modèle A'), dict(id='y', model='Modèle B')])
+    examples['followup-queued-partial'] = value
     # Suivi avec le tiroir de copie locale ; `followup-received` reste sans lui, les tests avec script s'en servent
     examples['followup-received-privacy'] = dict(deepcopy(examples['followup-received']), privacy=example_view()['privacy'])
     # #525, #533 : crédit épuisé sur le premier essai, campagne arrêtée, second modèle jamais interrogé

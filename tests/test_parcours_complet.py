@@ -49,6 +49,16 @@ def couloirs(page):
     return [n['text'].strip() for n in page.nodes if n['tag'] == 'li' and 'couloir' in n['attrs'].get('class', '').split()]
 
 
+def texte_du_verdict(page, raw):
+    """Texte de « Pourquoi ce verdict » : paragraphe court, ou contenu du tiroir quand il est long"""
+    if any(n['tag'] == 'details' and n['text'].lstrip().startswith('Explication du verdict') for n in page.nodes):
+        texte = page.depliant('Explication du verdict')
+    else:
+        texte = re.search(r'<h3>Pourquoi ce verdict</h3><p>[^<]*</p><p class="petit">(.*?)</p>',
+                          raw.decode(), re.S)[1]
+    return ' '.join(texte.split()).removeprefix('Explication du verdict').strip()
+
+
 class Page(HTMLParser):
     """Lire les formulaires, le texte hors dépliants et l'ordre natif de tabulation"""
     def __init__(self, raw):
@@ -1565,6 +1575,9 @@ class ParcoursComplet(unittest.TestCase):
         with closing(storage.Store(self.data)) as store:
             one = restitution.results_bundle(store, dossier_id, first_id, piece_ids=selected,
                                              task_id=task, version_id=version)
+            # Paquet public : le motif affiché est calculé depuis les constats, pas recopié du moteur
+            self.assertIn('Toutes les actions présentes : Une action annoncée par la consigne manque au tableau.',
+                          [row['reason'] for row in json.loads(one['manifest'])['rows']])
             two = restitution.results_bundle(store, dossier_id, second_id, piece_ids=second_outputs,
                                              task_id=task, version_id=version)
             three = restitution.results_bundle(store, dossier_id, partial_id, piece_ids=partial_outputs,
@@ -2774,6 +2787,10 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, recap, 'réception partielle', None)
         self.assertIn('Reçue', page.visible)
         self.assertIn('En file', page.visible)
+        # Une réponse est déjà reçue : le suivi ne dit plus que les essais n'ont pas démarré
+        self.assertIn('Un essai attend son tour.', page.visible)
+        self.assertIn('Les réponses arrivent au fur et à mesure. Vous pouvez quitter cette page et revenir.', page.visible)
+        self.assertNotIn('Les essais n’ont pas encore démarré.', page.visible)
         execution.execute_launch(self.data, attempts[1:], self.candidate,
                                  access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(recap)
@@ -4410,9 +4427,10 @@ class ParcoursComplet(unittest.TestCase):
         from base64 import b64encode
         from hashlib import sha256
         from benchmark import automatic_judgment as auto
-        tableau = 'Présenter un tableau à trois colonnes avec une ligne par action'
+        # Descriptions terminées par un point, comme l'assistant de préparation les écrit souvent (test C4)
+        tableau = 'Présenter un tableau à trois colonnes avec une ligne par action.'
         echeances = 'Indiquer pour chaque action son responsable et son échéance'
-        self.criteria = {'eliminatory': ['Inventer une décision absente du compte rendu'],
+        self.criteria = {'eliminatory': ['Inventer une décision absente du compte rendu.'],
                          'obligations': [tableau, echeances], 'quality': []}
         explication = ('Le tableau a bien trois colonnes, mais les actions de relecture '
                        'et d’envoi partagent une même ligne.')
@@ -4468,8 +4486,10 @@ class ParcoursComplet(unittest.TestCase):
             return next(chunk for chunk in html.split('<tr id="attempt-')[1:]
                         if '<span class="modele">' + nom + '<small>' in chunk).split('</tr>')[0]
         cellule = ligne('Modèle A')
+        # Une description insérée perd son point final ; chaque phrase finit par un seul point
         self.assertIn('Erreur éliminatoire : Inventer une décision absente du compte rendu. '
-                      'Exigence non respectée : ' + tableau + '.', cellule)
+                      'Exigence non respectée : ' + tableau, cellule)
+        self.assertNotIn('..', cellule)
         self.assertNotIn('Le tableau a bien', cellule)
         self.assertNotIn(echeances, cellule)
         self.assertNotIn('…', cellule)
@@ -4487,6 +4507,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn(('Non respectée', tableau), states)
         self.assertIn(('Non vérifiable', echeances), states)
         self.assertIn(explication, text)
+        # Deux défauts établis : chaque description sans son point, puis son constat ; une espace entre les deux
+        self.assertEqual(tableau[:-1] + ' : ' + explication + ' Inventer une décision absente du compte rendu : '
+                         'Une action de suivi est inventée', texte_du_verdict(Page(raw), raw))
 
     def test_obligation_composee_jugee_element_par_element(self):
         """Une obligation composée déclarée par la préparation se juge élément par élément
@@ -4505,10 +4528,11 @@ class ParcoursComplet(unittest.TestCase):
         9. une obligation simple change de contrôle à côté d'une obligation composée ;
         10. un élément qui cite un coût rend l'obligation entière non vérifiable (contrôle local supposé)
         """
-        from benchmark import automatic_judgment as auto, privacy_archive
-        composee = 'Lister chaque action avec son échéance'
+        from benchmark import automatic_judgment as auto, privacy_archive, runtime
+        # Obligation et élément en défaut terminés par un point : le motif n'en garde qu'un, en fin de phrase
+        composee = 'Lister chaque action avec son échéance.'
         forme = 'Une ligne par action et son coût, au format « Action : … | Responsable : … »'
-        echeance = 'L’échéance de chaque action reprise des notes'
+        echeance = 'L’échéance de chaque action reprise des notes.'
         simple = 'Nommer le responsable de chaque action'
         self.criteria = {'eliminatory': ['Inventer une décision absente du compte rendu'],
                          'obligations': [{'description': composee, 'elements': [forme, echeance]}, simple],
@@ -4520,23 +4544,43 @@ class ParcoursComplet(unittest.TestCase):
             if cible['description'] == echeance:
                 return 'FAIL', 'candidate', defaut
             return 'PASS', 'candidate', 'Respecté dans la réponse'
-        judge = self.juge_factice(constat)
+        appels = []
+
+        def ajuste(contenu, constats):
+            # Modèle B satisfait tout ; Modèle C manque les deux éléments de l'obligation composée
+            appels.append(contenu['output']['piece_id'])
+            if len(appels) == 2:
+                return [dict(f, status='PASS', finding='Respecté dans la réponse') for f in constats]
+            if len(appels) == 3:
+                return [dict(f, status='FAIL', finding='Forme absente') if f['control_id'] == 'O1_1' else f for f in constats]
+            return constats
+        judge = self.juge_factice(constat, ajuste=ajuste)
         dossier = self.exemple_qualifie()
         page, _, _ = self.request(dossier)
         for value in (composee, forme, echeance):
             self.assertIn(value, page.depliant('Exemple'))
         self.assertNotIn("'elements'", page.depliant('Exemple'))
         page, _, _ = self.request(dossier + '/configurations')
-        page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
-                                                     'tier': 'low'})
+        page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash',
+                                                                'mistralai/mistral-small-2603'], 'tier': 'low'})
         self.submit(page, '/start', {})
-        execution.execute_launch(self.data, self.starts.get_nowait()['candidate_attempts'], self.candidate,
+        attempts = self.starts.get_nowait()['candidate_attempts']
+
+        def candidat(operation, request):
+            value = self.candidate(operation, request)
+            # Coût connu partout : un coût inconnu fermerait l'admission avant le troisième lancement
+            value['cost'].update(status='KNOWN', amount='0.10', currency='USD', source='Reçu candidat simulé S12')
+            return value
+        execution.execute_launch(self.data, attempts, candidat,
                                  access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(dossier)
         page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
-        self.assertEqual(2, judge.request.call_count)
+        self.assertEqual(3, judge.request.call_count)
+        # Enregistrements automatiques : rien n'est stocké, l'audit de démarrage lit le nouveau texte
+        with closing(storage.Store(self.data)) as store:
+            runtime.verify(store)
         obligations = self.judged[0]['obligations']
         self.assertEqual([['O1_1', 'O1_2'], ['O2']], [x['control_ids'] for x in obligations])
         self.assertEqual([dict(id='O1_1', description=forme), dict(id='O1_2', description=echeance)],
@@ -4548,7 +4592,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('O1_', results.visible)
         cellule = next(chunk for chunk in raw.decode().split('<tr id="attempt-')[1:]
                        if '<span class="modele">Modèle A<small>' in chunk).split('</tr>')[0]
-        self.assertIn('Exigence non respectée : ' + composee + ' (' + echeance + ').', cellule)
+        self.assertIn('Exigence non respectée : ' + composee[:-1] + ' (' + echeance[:-1] + ').', cellule)
 
         def modeles(page):
             return [n['text'][:8] for n in page.nodes if n['tag'] == 'span' and n['attrs'].get('class') == 'modele']
@@ -4561,8 +4605,23 @@ class ParcoursComplet(unittest.TestCase):
         states = re.findall(r'>([^<>]+)</span><div><p><b>([^<]+)</b>', text)
         for state in (('Non respectée', composee), ('Respectée', forme), ('Non respectée', echeance), ('Respectée', simple)):
             self.assertIn(state, states)
-        self.assertIn(echeance + ' non respecté : 12 mars inventé, absent des notes', text)
+        # Explication d'un NE SATISFAIT PAS : description sans son point, puis le constat du juge, tel quel
+        self.assertEqual(composee[:-1] + ' : ' + echeance[:-1] + ' non respecté : 12 mars inventé, absent des notes',
+                         texte_du_verdict(detail, raw))
         self.assertNotIn('O1_', text)
+
+        def verdict(nom):
+            ligne = next(chunk for chunk in raw_resultats.split('<tr id="attempt-')[1:]
+                         if '<span class="modele">' + nom + '<small>' in chunk).split('</tr>')[0]
+            page, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', ligne)[1].replace('&amp;', '&'))
+            return texte_du_verdict(page, raw)
+        raw_resultats = self.request(comparison)[2].decode()
+        # SATISFAIT : chaque critère nommé une fois, l'obligation composée comprise ; l'erreur éliminatoire jugée est évitée
+        self.assertEqual('Résultat et obligations prouvés : ' + composee[:-1] + ' ; ' + simple
+                         + '. Erreur éliminatoire évitée : Inventer une décision absente du compte rendu.', verdict('Modèle B'))
+        # H2 du Designer : deux éléments en défaut, deux constats ; la description de l'obligation se répète
+        self.assertEqual(composee[:-1] + ' : Forme absente ' + composee[:-1] + ' : ' + echeance[:-1]
+                         + ' non respecté : 12 mars inventé, absent des notes', verdict('Modèle C'))
         with closing(storage.Store(self.data)) as store:
             session = store._connection.execute('SELECT session_id FROM s2_dossiers').fetchone()[0]
             view = prep.view(store, session, dossier.rsplit('/', 1)[1])
@@ -5223,6 +5282,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn(ATTRIBUTION, apercu.visible)
         self.assertIn(LIMIT, apercu.visible)
         self.assertIn('Réponses vérifiées : 2 · essais lancés : 2 sur 2.', apercu.visible)
+        # Page publique : même texte que le détail privé, sans erreur éliminatoire fictive
+        self.assertEqual(2, ' '.join(apercu.visible.split()).count(
+            'Satisfait : Résultat et obligations prouvés : Toutes les actions présentes.'))
+        self.assertNotIn('Erreur éliminatoire évitée', apercu.visible)
         for vue in (resultats, page, apercu):
             self.sans_promesse(vue)
 
@@ -5941,6 +6004,73 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('1 à reprendre', html)
         self.assertIn('2 satisfont', html)
         self.assertNotIn('Notre conseil', html)
+
+        def explication(nom):
+            ligne = next(chunk for chunk in html.split('<tr id="attempt-')[1:]
+                         if '<span class="modele">' + nom + '<small>' in chunk).split('</tr>')[0]
+            page, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', ligne)[1].replace('&amp;', '&'))
+            return texte_du_verdict(page, raw)
+        # Contrat sans erreur éliminatoire : l'explication n'en nomme aucune ; la preuve insuffisante nomme son critère
+        self.assertEqual('Résultat et obligations prouvés : Toutes les actions présentes.', explication('Modèle A'))
+        self.assertEqual('Preuve insuffisante ou contradictoire : Toutes les actions présentes.', explication('Modèle C'))
+
+    def test_contrat_sans_obligation_refuse_et_description_terminale(self):
+        """H3 et H4 du Designer : un « ? » final ne devient pas « ?. » ; un contrat sans obligation garde une phrase finie
+
+        Modes d'échec couverts :
+        1. le point du moteur s'ajoute après le « ? » d'une description insérée ;
+        2. la préparation accepte un paquet sans aucun critère ;
+        3. un contrat avec une erreur éliminatoire et aucune obligation produit « …prouvés : . ».
+        """
+        # H3 : la description garde son « ? », le moteur ne place aucun point après lui
+        dossier, _ = self.comparer([], lambda critere, sortie: 'excellent',
+                                   criteria={'eliminatory': [], 'obligations': ['Toutes les actions présentes ?'],
+                                             'quality': []})
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        _, _, raw = self.request(comparison)
+        cellule = raw.decode().split('<tr id="attempt-')[1].split('</tr>')[0]
+        page, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
+        self.assertEqual('Résultat et obligations prouvés : Toutes les actions présentes ?',
+                         texte_du_verdict(page, raw))
+        # H4 : sans aucun critère, la préparation refuse le paquet
+        self.criteria = {'eliminatory': [], 'obligations': [], 'quality': []}
+        _, page = self.exemple()
+        self.assertIn('Préparation arrêtée', page.visible)
+        self.assertIn('Résultat reçu non utilisable', page.visible)
+        # H4 : une erreur éliminatoire sans obligation donne un contrat ; la phrase ne laisse pas de liste vide
+        dossier, _ = self.comparer([], lambda critere, sortie: 'excellent', criteria={
+            'eliminatory': ['Inventer une décision absente du compte rendu.'], 'obligations': [], 'quality': []})
+        self.assertEqual([], self.judged[-1]['obligations'])
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        _, _, raw = self.request(comparison)
+        cellule = raw.decode().split('<tr id="attempt-')[1].split('</tr>')[0]
+        page, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
+        self.assertEqual('Résultat et obligations prouvés. Erreur éliminatoire évitée : '
+                         'Inventer une décision absente du compte rendu.', texte_du_verdict(page, raw))
+
+    def test_constat_qui_cite_une_description_terminale(self):
+        """E-TXT-1 : le constat du juge cite un critère dont la description finit par « ? », « ! » ou « … »
+
+        Modes d'échec couverts :
+        1. le point du constat qui suit l'identifiant remplacé s'ajoute au signe final : « ?. », « !. », « …. » ;
+        2. une description terminée par un point donne un double point.
+        """
+        self.maxDiff = None
+        obligations = ['Présenter les actions ?', 'Nommer chaque responsable !', 'Lister les échéances…',
+                       'Citer la source.']
+        dossier, _ = self.comparer([], lambda critere, sortie: 'excellent',
+                                   constat=lambda critere: ('FAIL', 'candidate', 'Contrôle ' + critere['id'] + '.'),
+                                   criteria={'eliminatory': [], 'obligations': obligations, 'quality': []})
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        _, _, raw = self.request(comparison)
+        cellule = raw.decode().split('<tr id="attempt-')[1].split('</tr>')[0]
+        page, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
+        self.assertEqual('Présenter les actions ? : Contrôle Présenter les actions ? '
+                         'Nommer chaque responsable ! : Contrôle Nommer chaque responsable ! '
+                         'Lister les échéances… : Contrôle Lister les échéances… '
+                         'Citer la source : Contrôle Citer la source.', texte_du_verdict(page, raw))
+        for double in ('?.', '!.', '….', '..'):
+            self.assertNotIn(double, page.visible)
 
     def test_sortie_vide_ou_coupee_expliquee_par_le_recu(self):
         """Issue #442 : une sortie vide ou coupée s'explique par ce que le reçu atteste, rien de plus

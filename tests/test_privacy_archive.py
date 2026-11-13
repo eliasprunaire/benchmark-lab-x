@@ -96,6 +96,9 @@ class PrivacyArchiveTests(unittest.TestCase):
         model = record['campaigns'][0]['models'][0]
         self.assertEqual('NE SATISFAIT PAS', model['verdict'])
         self.assertIn('source error', model['answer'])
+        # Motif exporté : texte affiché, descriptions insérées, aucun identifiant brut
+        motive = next(item['text'] for item in model['evidence'] if item['name'] == 'Motif du résultat')
+        self.assertEqual('Action présente : Action omise, précision conservée', motive)
         raw = json.dumps(record)
         for forbidden in ('Attendu fictif réservé', 'PRIVATE_UNSELECTED', self.session_token,
                           'requested_configuration', 'operation_provenance', 'authority_id', 'receipt'):

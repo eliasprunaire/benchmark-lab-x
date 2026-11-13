@@ -130,7 +130,16 @@ class S5Regressions(unittest.TestCase):
         second = self.evaluate(previous_evaluation_id=first['evaluation_id'])
         self.assertEqual('SATISFAIT', second['verdict'])
         self.assertEqual(first['evaluation_id'], second['previous_evaluation_id'])
+        # Texte conservé d'une évaluation stockée : l'audit de démarrage le recalcule à l'identique
+        self.assertEqual('Résultat et obligations prouvés ; contrôles éliminatoires satisfaits : O1, E1',
+                         second['reason'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
+        # Le même enregistrement, écrit avec l'ancien texte, s'affiche avec le texte corrigé
+        from benchmark.reason_text import motif
+        shown = motif(second | dict(qualification=q.inspect_contract(
+            self.store, self.campaign['manifest']['contract_sha256'])))
+        self.assertEqual('Résultat et obligations prouvés : Action présente. Erreur éliminatoire évitée : Action omise.',
+                         shown)
 
     def test_competing_corrections_keep_one_successor(self):
         self.acquire()
@@ -360,14 +369,18 @@ class CompositeObligation(unittest.TestCase):
     def test_owner_page_names_criteria_instead_of_raw_identifiers(self):
         from benchmark_web.campaign_views import render_evaluations
         self.acquire()
-        self.evaluate(judged(('O1', 'format', 'PASS', 'Actions listées comme demandé'),
-                             ('O1', 'deadline', 'FAIL', 'Contrôle O1 : échéance inventée'), self.ERROR))
+        first = self.evaluate(judged(('O1', 'format', 'PASS', 'Actions listées comme demandé'),
+                                     ('O1', 'deadline', 'FAIL', 'Contrôle O1 : échéance inventée'), self.ERROR))
+        self.evaluate(previous_evaluation_id=first['evaluation_id'])
         page = render_evaluations(prep.view(self.store, self.session, 'fixture')['campaigns'][0]['evaluations'], '/d')
         # Motif et constats ; les dépliants de provenance gardent volontairement l'enregistrement complet
         # Vocabulaire des écrans : le travail du juge est une vérification, le benchmark n'est plus une comparaison
         self.assertNotRegex(re.sub(r'<[^>]+>', ' ', page), r'[ÉéEe]valu|[Cc]omparaison')
         findings = page.split('Pièces utilisées pour cette vérification')[0]
         self.assertIn('Actions listées avec leur échéance exacte : échéance inventée', findings)
+        # Un SATISFAIT : le motif affiché nomme chaque critère une fois, sans « contrôles éliminatoires satisfaits »
+        self.assertIn('Résultat et obligations prouvés : ', page)
+        self.assertNotIn('contrôles éliminatoires satisfaits', page)
         for raw in ('O1', 'E1', 'format', 'deadline', 'defect'):
             self.assertNotRegex(findings, r'(?<![\w-])' + raw + r'(?![\w-])')
 

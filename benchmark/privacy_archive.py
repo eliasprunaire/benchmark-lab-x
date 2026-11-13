@@ -13,6 +13,7 @@ import secrets
 from typing import cast
 
 from . import preparation as p, restitution
+from .reason_text import motif
 from .storage import (ConflictError, IntegrityError, SchemaError, _strict_json as encode, _transaction,
                       _fields, _money, _unique_object, _expected_schema)
 from .validation import identifier
@@ -214,7 +215,7 @@ def _models(store, connection, session_id, dossier_id, campaign):
             for link in record['proof_links'] if link['piece_id'] in candidate_ids]
         evidence += [_configuration('Configuration demandée', row['requested_configuration']),
                      _configuration('Configuration observée', row.get('observed_configuration') or {}),
-                     dict(name='Motif du résultat', text=_text(row['reason']))]
+                     dict(name='Motif du résultat', text=_text(motif(row)))]
         for measure in row['measures']:
             evidence.append(dict(name=_text(measure['definition']['measure']),
                 text=_text(str(measure['value'])) + ' ' + _text(measure['unit'])))

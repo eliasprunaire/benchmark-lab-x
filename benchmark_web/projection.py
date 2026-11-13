@@ -4,7 +4,8 @@ Le moteur reçoit ce module par injection (`presentation`) ; il ne l'importe pas
 """
 from html import escape
 from pathlib import Path
-import re
+
+from benchmark.reason_text import motif
 
 STYLESHEET_PATH = Path(__file__).with_name('static') / 'projection.css'
 RESTRICTION_PUBLIQUE = (
@@ -25,13 +26,6 @@ def _libelles_criteres(row):
     items = ([x for c in specification['obligations'] for x in [c] + c.get('elements', [])]
              + specification['eliminatory_errors'] + specification['secondary_criteria'])
     return {item['id']: item.get('description') or item.get('measure') or item.get('label') for item in items}
-
-
-def _remplacer_criteres(value, labels):
-    if not labels:
-        return str(value)
-    pattern = r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)'
-    return re.sub(pattern, lambda match: labels[match[0]], str(value))
 
 
 VERDICTS = {'SATISFAIT': 'Satisfait', 'NE SATISFAIT PAS': 'Ne satisfait pas'}
@@ -106,7 +100,7 @@ def projection_body(value, selected, level=1):
         body += '<section><' + sub + '>' + t(candidates[row['configuration_id']]) + '</' + sub + '>'
         verdict = row.get('decision', {}).get('verdict') or row['verdict']
         body += '<p><strong>' + t(VERDICTS.get(verdict, 'À reprendre')) + '</strong> : '
-        body += t(_remplacer_criteres(row['reason'], row_labels)) + '</p>'
+        body += t(motif(row)) + '</p>'
         if row.get('decision', {}).get('next_action'):
             body += '<p>' + t(row['decision']['next_action']) + '</p>'
         body += '<p>Coût observé : ' + t(_montant(row['cost'])) + ' · coût de la vérification : ' + t(_montant(row['judgment']['cost'])) + '.</p>'

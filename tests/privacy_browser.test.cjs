@@ -1744,6 +1744,8 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
     const page = await context.newPage();
     for (const [state, active, terminal, message] of [
       ['running', true, false, 'Benchmark en cours'], ['queued', true, false, 'Les essais n’ont pas encore démarré'],
+      // Un essai déjà reçu : le suivant attend son tour, sans dire que rien n'a démarré
+      ['queued-partial', true, false, ['Un essai attend son tour.', 'Les réponses arrivent au fur et à mesure. Vous pouvez quitter cette page et revenir.']],
       ['stopped', false, false, 'Le benchmark s’est arrêté avant la fin'],
       ['ambiguous', false, false, 'Un essai n’a pas pu être confirmé'],
       ['incident', false, false, 'Un problème technique est survenu'], ['received', false, true, 'Réponses reçues'],
@@ -1756,6 +1758,7 @@ test('followup distinguishes acquisition, incidents and judgment without reopeni
       await page.goto(origin + '/render/followup-' + state);
       const text = await page.textContent('main');
       for (const part of [message].flat()) assert.ok(text.includes(part), state + ' ' + part);
+      if (state === 'queued-partial') assert.equal(text.includes('Les essais n’ont pas encore démarré'), false, state);
       assert.equal(await page.locator('#preparation-progress').count(), Number(active), state);
       assert.equal(await page.locator('[data-results-href]').count(), Number(terminal), state);
       assert.equal(await page.locator('main form, #cap_usd').count(), 0);

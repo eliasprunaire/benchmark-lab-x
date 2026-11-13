@@ -9,7 +9,6 @@ Il ne possède ni le gabarit de page, ni les erreurs, ni l'accès fournisseur, n
 la préparation : ces domaines restent dans `views`. Il n'importe pas `views`,
 pour qu'aucun cycle ne soit possible.
 """
-import re
 import secrets
 from urllib.parse import urlencode
 
@@ -17,6 +16,7 @@ from benchmark.storage import _strict_json as encode
 from benchmark.preparation import INCIDENT_TEXT, NOT_SENT_TEXT, incident_text
 from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
+from benchmark.reason_text import _inserted, _labels, motif
 
 from .fragments import (FIELD_LABELS, VERDICT_BADGES, field_label, access_summary, badge, bilan, bilan_exemple, bouton, btn, cles, date_lisible_utc, disque, etat, form,
                         harnais, hidden, ic, info_modele, jour_lisible, lien, ligne_modele, listing, montant_lisible, mot, numero_version, personal_key_form,
@@ -276,17 +276,15 @@ def render_custom_models(value, csrf, dossier_url, *, detail=False):
 
 
 def _readable(record, value):
-    """Texte du juge avec les identifiants de critères et d'éléments remplacés par leurs descriptions"""
-    spec = record['qualification']['contract']['specification']
-    labels = {item['id']: item['description'] for criterion in spec['obligations'] + spec['eliminatory_errors']
-              for item in [criterion] + criterion.get('elements', [])}
-    if not labels:
-        return value
-    return re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)', lambda match: labels[match[0]], value)
+    """Texte du juge avec les identifiants de critères et d'éléments remplacés par leurs descriptions
+
+    Une description insérée dans une phrase perd son point final : le moteur place le signe final
+    """
+    return _inserted(value, _labels(record['qualification']['contract']['specification']))
 
 
 def _readable_reason(record):
-    return _readable(record, record['reason'])
+    return motif(record)
 
 
 def _failure_reason(record):
@@ -298,15 +296,25 @@ def _failure_reason(record):
     failed = {key for key, state in _states(record).items() if state == 'FAIL'}
 
     def label(c):
-        elements = [e['description'] for e in c.get('elements', []) if (c['id'], e['id']) in failed]
-        return c['description'] + (' (' + ' ; '.join(elements) + ')' if elements else '')
+        elements = [_insere(e['description']) for e in c.get('elements', []) if (c['id'], e['id']) in failed]
+        return _insere(c['description']) + (' (' + ' ; '.join(elements) + ')' if elements else '')
     parts = []
     for criteria, one, many in ((spec['eliminatory_errors'], 'Erreur éliminatoire', 'Erreurs éliminatoires'),
                                 (spec['obligations'], 'Exigence non respectée', 'Exigences non respectées')):
         named = [label(c) for c in criteria if any(cid == c['id'] for cid, _ in failed)]
         if named:
-            parts.append((many if len(named) > 1 else one) + ' : ' + ' ; '.join(named) + '.')
+            parts.append(_fin((many if len(named) > 1 else one) + ' : ' + ' ; '.join(named)))
     return ' '.join(parts) or _readable_reason(record)
+
+
+def _insere(description):
+    """Description insérée dans une phrase : sans son point final ; « ? », « ! » et « … » restent"""
+    return description.removesuffix('.')
+
+
+def _fin(phrase):
+    """Un seul signe final : aucun point après le « ? », le « ! » ou le « … » d'une description insérée"""
+    return phrase if phrase.endswith(('.', '?', '!', '…')) else phrase + '.'
 
 
 def render_evaluations(evaluations, dossier_url):
@@ -1180,8 +1188,10 @@ def _suivi(campaign):
         return True, False, 'Les modèles travaillent.', 'Les réponses arrivent au fur et à mesure. Vous pouvez quitter cette page et revenir.', DIRECT
     if not stopped and any(c['state'] == 'INTENT_RECORDED' for c in cells):
         # Un modèle a déjà répondu : l'autre essai attend son tour
-        return (True, False, 'Un essai attend son tour.' if any(c['state'] == 'RECEIVED' for c in cells) else 'Le lancement est enregistré.',
-                'Les essais n’ont pas encore démarré.', ('inc', 'En file', 'horloge'))
+        if any(c['state'] == 'RECEIVED' for c in cells):
+            return (True, False, 'Un essai attend son tour.',
+                    'Les réponses arrivent au fur et à mesure. Vous pouvez quitter cette page et revenir.', ('inc', 'En file', 'horloge'))
+        return True, False, 'Le lancement est enregistré.', 'Les essais n’ont pas encore démarré.', ('inc', 'En file', 'horloge')
     if any(a.get('incident') == 'CONNECTION_FAILED' for a in campaign['attempts']):
         return (False, False, NOT_SENT_TEXT, 'Le benchmark s’est arrêté et rien n’est relancé automatiquement.', ('vig', 'Non envoyé', 'alerte'))
     if any(a.get('incident') == AMBIGUOUS_EXPIRED for a in campaign['attempts']):
