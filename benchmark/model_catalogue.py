@@ -361,6 +361,10 @@ def model_view(model, detail, excluded_providers):
     context_length = model.get('context_length')
     if context_length is not None and (type(context_length) is not int or context_length <= 0):
         raise ValueError('Fenêtre de contexte invalide')
+    # Route choisie au prix illisible, négatif ou non fini : ce seul modèle est exclu, comme pour un prix publié.
+    # Après les contrôles qui refusent le relevé : un prix fautif ne masque jamais une autre donnée invalide
+    if route is not None and _invalid_price(route):
+        return _malformed_view(model_id, model)
     return {
         'id': model_id,
         'name': model['name'],

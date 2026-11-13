@@ -952,6 +952,16 @@ def render_configurations(value, csrf):
                                 lien(dossier_url + '/configurations', 'Actualiser la liste', 'actualiser')))
                 + '<div class="reglages">' + render_custom_models(value, csrf, dossier_url, detail=True) + '</div>')
     models = value['models']
+    if not models:
+        # Liste présente sans modèle utilisable : rendue comme sans liste, un seul encadré qui dit aussi son ancienneté
+        mot, phrase = (('Liste ancienne', 'La liste des modèles n’a pas pu être mise à jour depuis plus d’un jour. Actualisez la liste plus tard, '
+                        'ou ajoutez un modèle par son identifiant OpenRouter : le benchmark en demande au moins deux.')
+                       if value.get('catalogue_stale') else
+                       ('Liste vide', 'La liste des modèles est mise à jour une fois par jour. D’ici là, ajoutez un modèle par son identifiant '
+                        'OpenRouter : le benchmark en demande au moins deux.'))
+        return (cadre_haut(etat('vig', mot, 'Aucun modèle de la liste n’est utilisable pour le moment', phrase,
+                                lien(dossier_url + '/configurations', 'Actualiser la liste', 'actualiser')))
+                + '<div class="reglages">' + render_custom_models(value, csrf, dossier_url, detail=True) + '</div>')
     chosen = [model for model in models if model['selected']]
     head = ''
     if value.get('catalogue_stale'):
