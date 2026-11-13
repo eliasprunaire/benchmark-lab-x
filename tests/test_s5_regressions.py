@@ -369,14 +369,18 @@ class CompositeObligation(unittest.TestCase):
     def test_owner_page_names_criteria_instead_of_raw_identifiers(self):
         from benchmark_web.campaign_views import render_evaluations
         self.acquire()
-        self.evaluate(judged(('O1', 'format', 'PASS', 'Actions listées comme demandé'),
-                             ('O1', 'deadline', 'FAIL', 'Contrôle O1 : échéance inventée'), self.ERROR))
+        first = self.evaluate(judged(('O1', 'format', 'PASS', 'Actions listées comme demandé'),
+                                     ('O1', 'deadline', 'FAIL', 'Contrôle O1 : échéance inventée'), self.ERROR))
+        self.evaluate(previous_evaluation_id=first['evaluation_id'])
         page = render_evaluations(prep.view(self.store, self.session, 'fixture')['campaigns'][0]['evaluations'], '/d')
         # Motif et constats ; les dépliants de provenance gardent volontairement l'enregistrement complet
         # Vocabulaire des écrans : le travail du juge est une vérification, le benchmark n'est plus une comparaison
         self.assertNotRegex(re.sub(r'<[^>]+>', ' ', page), r'[ÉéEe]valu|[Cc]omparaison')
         findings = page.split('Pièces utilisées pour cette vérification')[0]
         self.assertIn('Actions listées avec leur échéance exacte : échéance inventée', findings)
+        # Un SATISFAIT : le motif affiché nomme chaque critère une fois, sans « contrôles éliminatoires satisfaits »
+        self.assertIn('Résultat et obligations prouvés : ', page)
+        self.assertNotIn('contrôles éliminatoires satisfaits', page)
         for raw in ('O1', 'E1', 'format', 'deadline', 'defect'):
             self.assertNotRegex(findings, r'(?<![\w-])' + raw + r'(?![\w-])')
 
