@@ -298,15 +298,25 @@ def _failure_reason(record):
     failed = {key for key, state in _states(record).items() if state == 'FAIL'}
 
     def label(c):
-        elements = [e['description'] for e in c.get('elements', []) if (c['id'], e['id']) in failed]
-        return c['description'] + (' (' + ' ; '.join(elements) + ')' if elements else '')
+        elements = [_insere(e['description']) for e in c.get('elements', []) if (c['id'], e['id']) in failed]
+        return _insere(c['description']) + (' (' + ' ; '.join(elements) + ')' if elements else '')
     parts = []
     for criteria, one, many in ((spec['eliminatory_errors'], 'Erreur éliminatoire', 'Erreurs éliminatoires'),
                                 (spec['obligations'], 'Exigence non respectée', 'Exigences non respectées')):
         named = [label(c) for c in criteria if any(cid == c['id'] for cid, _ in failed)]
         if named:
-            parts.append((many if len(named) > 1 else one) + ' : ' + ' ; '.join(named) + '.')
+            parts.append(_fin((many if len(named) > 1 else one) + ' : ' + ' ; '.join(named)))
     return ' '.join(parts) or _readable_reason(record)
+
+
+def _insere(description):
+    """Description insérée dans une phrase : sans son point final ; « ? », « ! » et « … » restent"""
+    return description.removesuffix('.')
+
+
+def _fin(phrase):
+    """Un seul signe final : aucun point après le « ? », le « ! » ou le « … » d'une description insérée"""
+    return phrase if phrase.endswith(('.', '?', '!', '…')) else phrase + '.'
 
 
 def render_evaluations(evaluations, dossier_url):
@@ -1180,8 +1190,10 @@ def _suivi(campaign):
         return True, False, 'Les modèles travaillent.', 'Les réponses arrivent au fur et à mesure. Vous pouvez quitter cette page et revenir.', DIRECT
     if not stopped and any(c['state'] == 'INTENT_RECORDED' for c in cells):
         # Un modèle a déjà répondu : l'autre essai attend son tour
-        return (True, False, 'Un essai attend son tour.' if any(c['state'] == 'RECEIVED' for c in cells) else 'Le lancement est enregistré.',
-                'Les essais n’ont pas encore démarré.', ('inc', 'En file', 'horloge'))
+        if any(c['state'] == 'RECEIVED' for c in cells):
+            return (True, False, 'Un essai attend son tour.',
+                    'Les réponses arrivent au fur et à mesure. Vous pouvez quitter cette page et revenir.', ('inc', 'En file', 'horloge'))
+        return True, False, 'Le lancement est enregistré.', 'Les essais n’ont pas encore démarré.', ('inc', 'En file', 'horloge')
     if any(a.get('incident') == 'CONNECTION_FAILED' for a in campaign['attempts']):
         return (False, False, NOT_SENT_TEXT, 'Le benchmark s’est arrêté et rien n’est relancé automatiquement.', ('vig', 'Non envoyé', 'alerte'))
     if any(a.get('incident') == AMBIGUOUS_EXPIRED for a in campaign['attempts']):
