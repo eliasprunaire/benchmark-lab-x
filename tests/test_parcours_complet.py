@@ -6015,11 +6015,12 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual('Preuve insuffisante ou contradictoire : Toutes les actions présentes.', explication('Modèle C'))
 
     def test_contrat_sans_obligation_refuse_et_description_terminale(self):
-        """H3 et H4 du Designer : un « ? » final ne devient pas « ?. » ; un contrat sans obligation n'existe pas
+        """H3 et H4 du Designer : un « ? » final ne devient pas « ?. » ; un contrat sans obligation garde une phrase finie
 
         Modes d'échec couverts :
         1. le point du moteur s'ajoute après le « ? » d'une description insérée ;
-        2. la qualification accepte un contrat sans aucune obligation, ce qui produirait « …prouvés : . ».
+        2. la préparation accepte un paquet sans aucun critère ;
+        3. un contrat avec une erreur éliminatoire et aucune obligation produit « …prouvés : . ».
         """
         # H3 : la description garde son « ? », le moteur ne place aucun point après lui
         dossier, _ = self.comparer([], lambda critere, sortie: 'excellent',
@@ -6031,17 +6032,45 @@ class ParcoursComplet(unittest.TestCase):
         page, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
         self.assertEqual('Résultat et obligations prouvés : Toutes les actions présentes ?',
                          texte_du_verdict(page, raw))
-        # H4 : sans obligation, la préparation refuse le paquet ; le contrat ne peut donc pas exister
+        # H4 : sans aucun critère, la préparation refuse le paquet
         self.criteria = {'eliminatory': [], 'obligations': [], 'quality': []}
         _, page = self.exemple()
         self.assertIn('Préparation arrêtée', page.visible)
         self.assertIn('Résultat reçu non utilisable', page.visible)
+        # H4 : une erreur éliminatoire sans obligation donne un contrat ; la phrase ne laisse pas de liste vide
+        dossier, _ = self.comparer([], lambda critere, sortie: 'excellent', criteria={
+            'eliminatory': ['Inventer une décision absente du compte rendu.'], 'obligations': [], 'quality': []})
+        self.assertEqual([], self.judged[-1]['obligations'])
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        _, _, raw = self.request(comparison)
+        cellule = raw.decode().split('<tr id="attempt-')[1].split('</tr>')[0]
+        page, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
+        self.assertEqual('Résultat et obligations prouvés. Erreur éliminatoire évitée : '
+                         'Inventer une décision absente du compte rendu.', texte_du_verdict(page, raw))
 
-        # H4 : sans aucune obligation, la phrase ne laisse pas de liste vide
-        from benchmark.reason_text import motif
-        self.assertEqual('Résultat et obligations prouvés.', motif({
-            'verdict': 'SATISFAIT', 'findings': [], 'output_piece_id': 'piece', 'reason': '',
-            'qualification': {'contract': {'specification': {'obligations': [], 'eliminatory_errors': []}}}}))
+    def test_constat_qui_cite_une_description_terminale(self):
+        """E-TXT-1 : le constat du juge cite un critère dont la description finit par « ? », « ! » ou « … »
+
+        Modes d'échec couverts :
+        1. le point du constat qui suit l'identifiant remplacé s'ajoute au signe final : « ?. », « !. », « …. » ;
+        2. une description terminée par un point donne un double point.
+        """
+        self.maxDiff = None
+        obligations = ['Présenter les actions ?', 'Nommer chaque responsable !', 'Lister les échéances…',
+                       'Citer la source.']
+        dossier, _ = self.comparer([], lambda critere, sortie: 'excellent',
+                                   constat=lambda critere: ('FAIL', 'candidate', 'Contrôle ' + critere['id'] + '.'),
+                                   criteria={'eliminatory': [], 'obligations': obligations, 'quality': []})
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        _, _, raw = self.request(comparison)
+        cellule = raw.decode().split('<tr id="attempt-')[1].split('</tr>')[0]
+        page, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
+        self.assertEqual('Présenter les actions ? : Contrôle Présenter les actions ? '
+                         'Nommer chaque responsable ! : Contrôle Nommer chaque responsable ! '
+                         'Lister les échéances… : Contrôle Lister les échéances… '
+                         'Citer la source : Contrôle Citer la source.', texte_du_verdict(page, raw))
+        for double in ('?.', '!.', '….', '..'):
+            self.assertNotIn(double, page.visible)
 
     def test_sortie_vide_ou_coupee_expliquee_par_le_recu(self):
         """Issue #442 : une sortie vide ou coupée s'explique par ce que le reçu atteste, rien de plus
