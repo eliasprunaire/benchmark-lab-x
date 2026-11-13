@@ -30,8 +30,13 @@ def _libelles_criteres(row):
 def _remplacer_criteres(value, labels):
     if not labels:
         return str(value)
-    pattern = r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)'
-    return re.sub(pattern, lambda match: labels[match[0]], str(value))
+
+    def remplacer(match):
+        # Une description insérée perd son point final ; après « ? », « ! » ou « … », pas de point ajouté
+        label = labels[match[1]].removesuffix('.')
+        return label if label.endswith(('?', '!', '…')) else label + match[2]
+    pattern = r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)(\.?)'
+    return re.sub(pattern, remplacer, str(value))
 
 
 VERDICTS = {'SATISFAIT': 'Satisfait', 'NE SATISFAIT PAS': 'Ne satisfait pas'}

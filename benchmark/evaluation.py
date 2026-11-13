@@ -416,25 +416,32 @@ def _verdict(ctx, findings, judgment):
     if (attempt['state'] != 'RECEIVED' or attempt['output_piece_id'] is None
             or attempt['attribution_incident'] or receipt['result']['emission'] != 'ESTABLISHED'
             or receipt['result']['incident'] == 'HARNESS_ERROR'):
-        return 'INDETERMINE', 'Sortie, émission ou attribution insuffisante ; incident conservé séparément'
+        return 'INDETERMINE', 'Sortie, émission ou attribution insuffisante ; incident conservé séparément.'
     if judgment['mode'] == 'assisted' and judgment['operation']['receipt'] is None:
-        return 'INDETERMINE', 'Reçu de jugement absent ; effets et coût inconnus'
+        return 'INDETERMINE', 'Reçu de jugement absent ; effets et coût inconnus.'
     output = attempt['output_piece_id']
     established = defects(findings, output)
     if established:
-        return 'NE SATISFAIT PAS', '; '.join(f['criterion_id'] + ' : ' + f['finding'] for f in established)
+        # Une espace entre deux constats : chacun est une phrase du juge avec sa propre ponctuation
+        return 'NE SATISFAIT PAS', ' '.join(f['criterion_id'] + ' : ' + f['finding'] for f in established)
     if receipt['result']['incident'] is not None:
-        return 'INDETERMINE', 'Incident conservé ; aucune erreur candidate établie indépendamment'
+        return 'INDETERMINE', 'Incident conservé ; aucune erreur candidate établie indépendamment.'
     if any(d['arbitration'] is None for d in judgment['disagreements']):
-        return 'INDETERMINE', 'Désaccord de jugement non arbitré'
+        return 'INDETERMINE', 'Désaccord de jugement non arbitré.'
     if all(f['status'] == 'PASS' and f['attribution'] in ('candidate', 'evidence')
            and any(e['piece_id'] == output for e in f['evidence']) for f in findings):
-        return 'SATISFAIT', 'Résultat et obligations prouvés ; contrôles éliminatoires satisfaits : ' + ', '.join(
-            cid for cid, _ in dict.fromkeys((f['criterion_id'], f['control_id']) for f in findings))
-    return 'INDETERMINE', 'Preuve insuffisante ou contradictoire : ' + ', '.join(
+        eliminatory = {c['id'] for c in ctx['qualification']['contract']['specification']['eliminatory_errors']}
+        proven = list(dict.fromkeys(f['criterion_id'] for f in findings if f['criterion_id'] not in eliminatory))
+        avoided = list(dict.fromkeys(f['criterion_id'] for f in findings if f['criterion_id'] in eliminatory))
+        text = 'Résultat et obligations prouvés : ' + ' ; '.join(proven) + '.'
+        if avoided:
+            text += ((' Erreur éliminatoire évitée : ' if len(avoided) == 1 else ' Erreurs éliminatoires évitées : ')
+                     + ' ; '.join(avoided) + '.')
+        return 'SATISFAIT', text
+    return 'INDETERMINE', 'Preuve insuffisante ou contradictoire : ' + ' ; '.join(
         dict.fromkeys(f['criterion_id'] for f in findings if f['status'] != 'PASS'
                       or f['attribution'] not in ('candidate', 'evidence')
-                      or not any(proof['piece_id'] == output for proof in f['evidence'])))
+                      or not any(proof['piece_id'] == output for proof in f['evidence']))) + '.'
 
 
 def _record(store, connection, ctx, report, *, evaluation_id, created_at, engine_source,

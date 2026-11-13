@@ -276,13 +276,23 @@ def render_custom_models(value, csrf, dossier_url, *, detail=False):
 
 
 def _readable(record, value):
-    """Texte du juge avec les identifiants de critères et d'éléments remplacés par leurs descriptions"""
+    """Texte du juge avec les identifiants de critères et d'éléments remplacés par leurs descriptions
+
+    Une description insérée dans une phrase perd son point final : le moteur place le signe final
+    """
     spec = record['qualification']['contract']['specification']
-    labels = {item['id']: item['description'] for criterion in spec['obligations'] + spec['eliminatory_errors']
+    labels = {item['id']: item['description'].removesuffix('.')
+              for criterion in spec['obligations'] + spec['eliminatory_errors']
               for item in [criterion] + criterion.get('elements', [])}
     if not labels:
         return value
-    return re.sub(r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)', lambda match: labels[match[0]], value)
+
+    def remplacer(match):
+        # Après « ? », « ! » ou « … », le point du moteur ferait « ?. » : la description garde son signe
+        label = labels[match[1]]
+        return label if label.endswith(('?', '!', '…')) else label + match[2]
+    pattern = r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)(\.?)'
+    return re.sub(pattern, remplacer, value)
 
 
 def _readable_reason(record):
