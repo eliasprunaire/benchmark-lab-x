@@ -11,6 +11,7 @@ from .acquisition import campaigns as c
 from .acquisition.recovery import NO_PROGRESS
 from . import evaluation as e, model_catalogue, preparation as p, qualification as q, storage
 from . import public_results
+from .reason_text import motif
 from .publications import SCHEMA, PRESENTATION_VERSION, _decode
 from .storage import ConflictError, IntegrityError, _strict_json as encode
 
@@ -799,7 +800,7 @@ def _public_row(store, row, panel_positions, case_positions, columns, labels, ob
                               status=row['judgment']['cost']['status']))
     public = dict(panel_position=panel_positions[row['configuration_id']],
                   case_position=case_positions[row['case_id']],
-                  verdict=row['verdict'], reason=row['reason'],
+                  verdict=row['verdict'], reason=motif(row),
                   next_action=row['decision'].get('next_action'),
                   findings=[dict(label=labels.get(finding['criterion_id']) or 'Critère du contrat',
                                  status=finding['status'], finding=finding['finding'])

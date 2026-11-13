@@ -17,6 +17,7 @@ from benchmark.storage import _strict_json as encode
 from benchmark.preparation import INCIDENT_TEXT, NOT_SENT_TEXT, incident_text
 from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
+from benchmark.reason_text import motif
 
 from .fragments import (FIELD_LABELS, VERDICT_BADGES, field_label, access_summary, badge, bilan, bilan_exemple, bouton, btn, cles, date_lisible_utc, disque, etat, form,
                         harnais, hidden, ic, info_modele, jour_lisible, lien, ligne_modele, listing, montant_lisible, mot, numero_version, personal_key_form,
@@ -296,7 +297,7 @@ def _readable(record, value):
 
 
 def _readable_reason(record):
-    return _readable(record, record['reason'])
+    return motif(record)
 
 
 def _failure_reason(record):
