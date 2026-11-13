@@ -1197,7 +1197,8 @@ class Store:
         values[7] = _strict_json(operation['resources'])
         from .privacy import operation_allowed, retired_operations
         operation_allowed(connection, operation['dossier_id'])
-        operations = self._operations(connection) + retired_operations(connection)
+        live = self._operations(connection)
+        operations = live + retired_operations(connection)
         if any(row['operation_id'] == operation['operation_id'] for row in operations):
             raise ConflictError('operation identity already exists')
         budget = self._budget(connection, budget_id, operations)
@@ -1206,7 +1207,8 @@ class Store:
             (operation['dossier_id'], operation['revision']),
         ).fetchone():
             raise KeyError((operation['dossier_id'], operation['revision']))
-        if (set(self._blocking_costs(operations, budget, operation['phase'])) - set(retained_cost_ids) or any(
+        # Comme `preflight` et `_envelope` : une ligne retirée garde sa réserve dans le budget, sans reçu ni blocage
+        if (set(self._blocking_costs(live, budget, operation['phase'])) - set(retained_cost_ids) or any(
                 row['budget_id'] == budget_id and row['state'] in ('EMISSION_POSSIBLE', 'AMBIGUOUS')
                 for row in operations)):
             raise BudgetError('unresolved effects or costs block this envelope')

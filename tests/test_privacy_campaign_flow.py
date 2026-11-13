@@ -2,6 +2,7 @@
 from contextlib import closing
 from hashlib import sha256
 from datetime import datetime, timezone
+from decimal import Decimal
 import json
 from pathlib import Path
 import sqlite3
@@ -480,6 +481,13 @@ class PrivacyCampaignFlow(unittest.TestCase):
             replay.update(dossier_id='keep', revision=prep.view(reopened, self.sid, 'keep')['revision'])
             with self.assertRaisesRegex(storage.ConflictError, 'operation identity already exists'):
                 reopened.reserve_intent(replay, operation['budget_id'], operation['reserved_amount'])
+            if phase == 'judgment':
+                # #693 : le jugement retiré au coût inconnu ne bloque plus la réservation suivante de l'enveloppe
+                # personnelle ; sa réserve reste comptée, à côté de la nouvelle
+                fresh = dict(replay, operation_id=sha256(operation['operation_id'].encode()).hexdigest()[:32])
+                reopened.reserve_intent(fresh, operation['budget_id'], operation['reserved_amount'])
+                self.assertEqual(Decimal(budgets[self.budget]['reserved']) + Decimal(operation['reserved_amount']),
+                                 Decimal(reopened.inspect_budget(self.budget)['reserved']))
         self.assertEqual(before_calls, (len(self.candidate_calls), self.http.request.call_count))
 
     def test_unknown_candidate_cost_and_no_replay_survive_purge_and_reopen(self):
