@@ -1575,6 +1575,9 @@ class ParcoursComplet(unittest.TestCase):
         with closing(storage.Store(self.data)) as store:
             one = restitution.results_bundle(store, dossier_id, first_id, piece_ids=selected,
                                              task_id=task, version_id=version)
+            # Paquet public : le motif affiché est calculé depuis les constats, pas recopié du moteur
+            self.assertIn('Toutes les actions présentes : Une action annoncée par la consigne manque au tableau.',
+                          [row['reason'] for row in json.loads(one['manifest'])['rows']])
             two = restitution.results_bundle(store, dossier_id, second_id, piece_ids=second_outputs,
                                              task_id=task, version_id=version)
             three = restitution.results_bundle(store, dossier_id, partial_id, piece_ids=partial_outputs,
