@@ -256,24 +256,67 @@ excluded_providers = "fixture"
                                                                    excluded['input_price_per_million'], excluded['output_price_per_million']))
                 self.assertEqual(['google/gemini-3.0-flash:free', 'openai/gpt-5.6-sol-0902', 'openai/gpt-5.6-sol', 'x-ai/grok-4-preview'],
                                  [model['id'] for model in stored['models'] if model['excluded'] is None])
+        # Lot catalogue, E-CAT-2 : la route choisie prime sur le prix publié. Route au prix « -1 » sous un prix publié
+        # valide : la collecte retombait sur l'ancien relevé, qui vieillissait. Prix publié « -1 » sous une route
+        # valide : le modèle reste proposé, au prix de sa route
+        broken = deepcopy(FIXTURE)
+        next(model for model in broken['data'] if model['id'] == 'openai/gpt-5.5-sol')['pricing'] = {
+            'prompt': '-1', 'completion': '-1'}
+        fetch = self.fetch([])
+
+        def routes(path):
+            if path == '/api/v1/models':
+                return broken
+            value = fetch(path)
+            endpoint = value['data']['endpoints'][0]
+            if path == '/api/v1/models/openai/gpt-5.6-sol/endpoints':
+                endpoint['pricing'] = {'prompt': '-1', 'completion': '-1'}
+            elif path == '/api/v1/models/openai/gpt-5.5-sol/endpoints':
+                endpoint['pricing'] = {'prompt': '0.000001', 'completion': '0.000002'}
+            return value
+        with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
+            with patch.object(catalogue, '_now', return_value=NOW):
+                catalogue.refresh(store, self.fetch([]))
+            later = NOW + timedelta(hours=25)
+            with patch.object(catalogue, '_now', return_value=later):
+                result = catalogue.refresh(store, routes)
+                self.assertEqual(result, catalogue.selection(store))
+            self.assertEqual(later.isoformat(), result['fetched_at'])
+            by_id = {model['id']: model for model in result['models']}
+            self.assertEqual(('malformed', None, None, None), tuple(by_id['openai/gpt-5.6-sol'][key] for key in (
+                'excluded', 'route', 'input_price_per_million', 'output_price_per_million')))
+            self.assertEqual((None, 'fixture', '1.000000', '2.000000'), tuple(by_id['openai/gpt-5.5-sol'][key] for key in (
+                'excluded', 'route', 'input_price_per_million', 'output_price_per_million')))
 
     def test_contexte_invalide_avec_prix_invalide_refuse_le_releve(self):
         """Vérificateur, E-CAT-1 : un prix invalide ne doit pas masquer une autre donnée invalide du même modèle
 
         Le relevé reste refusé et le dernier relevé utilisable est conservé, comme pour un contexte seul invalide
         """
-        with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
-            with patch.object(catalogue, '_now', return_value=NOW):
-                first = catalogue.refresh(store, self.fetch([]))
-            broken = deepcopy(FIXTURE)
-            model = next(model for model in broken['data'] if model['id'] == 'openai/gpt-5.6-sol')
-            model.update(context_length=0, pricing={'prompt': '-1', 'completion': '-1'})
-            fetch = self.fetch([])
-            with patch.object(catalogue, '_now', return_value=NOW + timedelta(hours=24)):
-                result = catalogue.refresh(store, lambda path: broken if path == '/api/v1/models' else fetch(path))
-                self.assertTrue(result['stale'])
-                self.assertEqual(first['fetched_at'], result['fetched_at'])
-                self.assertEqual(first['models'], catalogue.selection(store)['models'])
+        # Lot catalogue, E-CAT-2 : même règle quand le prix invalide est celui de la route choisie
+        for prix in ('publié', 'route'):
+            with self.subTest(prix=prix), tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
+                with patch.object(catalogue, '_now', return_value=NOW):
+                    first = catalogue.refresh(store, self.fetch([]))
+                broken = deepcopy(FIXTURE)
+                model = next(model for model in broken['data'] if model['id'] == 'openai/gpt-5.6-sol')
+                model.update(context_length=0)
+                if prix == 'publié':
+                    model.update(pricing={'prompt': '-1', 'completion': '-1'})
+                fetch = self.fetch([])
+
+                def fetched(path):
+                    if path == '/api/v1/models':
+                        return broken
+                    value = fetch(path)
+                    if prix == 'route' and path == '/api/v1/models/openai/gpt-5.6-sol/endpoints':
+                        value['data']['endpoints'][0]['pricing'] = {'prompt': '-1', 'completion': '-1'}
+                    return value
+                with patch.object(catalogue, '_now', return_value=NOW + timedelta(hours=24)):
+                    result = catalogue.refresh(store, fetched)
+                    self.assertTrue(result['stale'])
+                    self.assertEqual(first['fetched_at'], result['fetched_at'])
+                    self.assertEqual(first['models'], catalogue.selection(store)['models'])
 
     def test_document_d_endpoint_corrompu_reste_une_erreur_d_integrite(self):
         """Un endpoint absent du relevé est exclu (parcours complet) ; un document présent mais corrompu reste une erreur

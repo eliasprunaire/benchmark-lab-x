@@ -2490,6 +2490,24 @@ class ParcoursComplet(unittest.TestCase):
         for exclu in ('moonshotai/kimi-k2.7-code', 'nvidia/switchyard'):
             # Un formulaire forgé avec ce modèle est refusé proprement, sans 500 ni sélection enregistrée
             self.request(form['action'], form['fields'] | {'models': ['openai/gpt-5.6-sol', exclu], 'tier': 'low'}, status=400)
+        # Lot catalogue, E-CAT-2 : la route choisie publie « -1 » sous un prix publié valide. La page rendait 400 ;
+        # seul ce modèle est exclu, et un formulaire forgé avec lui reste refusé
+        with closing(storage.Store(self.data)) as store:
+            releve = store._connection.execute('SELECT raw_json FROM s2_model_catalogue').fetchone()[0]
+        fautif = json.loads(releve)
+        fautif['endpoints']['deepseek/deepseek-v4.1-flash']['endpoints'][0]['pricing'] = {'prompt': '-1', 'completion': '-1'}
+
+        def releve_stocke(raw):
+            with closing(storage.Store(self.data)) as store:
+                store._connection.execute('UPDATE s2_model_catalogue SET raw_json=?', (raw,))
+        releve_stocke(storage._strict_json(fautif))
+        lecture, _, _ = self.request(configurations)
+        form_fautif = lecture.form('/configurations')
+        self.assertEqual(['mistralai/mistral-small-2603', 'openai/gpt-5.6-sol'],
+                         sorted(n['attrs']['value'] for n in form_fautif['nodes'] if n['attrs'].get('name') == 'models'))
+        self.request(form_fautif['action'], form_fautif['fields'] | {
+            'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'], 'tier': 'low'}, status=400)
+        releve_stocke(releve)
         # Niveau adapté à chaque modèle : aucun refus, l'adaptation est montrée avant le lancement
         tuning = next(n for n in page.nodes if n['tag'] == 'details' and 'Choisir un niveau différent pour un modèle' in n['text'])
         self.assertIn('Modèle C', tuning['text'])
@@ -2499,6 +2517,17 @@ class ParcoursComplet(unittest.TestCase):
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash', 'mistralai/mistral-small-2603'],
             'tier': 'low', 'effort:mistralai/mistral-small-2603': 'none'}, status=303)
         self.assertEqual(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions', headers['Location'])
+        # E-CAT-2, lancement : la route d'un modèle de cette sélection devient fautive. Le récapitulatif rendait 400 ;
+        # il reste lisible et son contrôle bloque le lancement, comme pour un endpoint disparu
+        pret, _, _ = self.request(headers['Location'])
+        self.assertIn('Lancer le benchmark', pret.visible)
+        lancement = pret.form('/start')
+        releve_stocke(storage._strict_json(fautif))
+        bloque, _, _ = self.request(headers['Location'])
+        self.assertNotIn('Lancer le benchmark', bloque.visible)
+        self.assertEqual(configurations, bloque.link('Choisir de nouveau les modèles'))
+        self.request(lancement['action'], lancement['fields'], status=403)
+        releve_stocke(releve)
         # Un niveau visant un modèle non coché est refusé ; un niveau hors de ceux du modèle retombe sur l'adaptation
         self.request(form['action'], form['fields'] | {
             'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
