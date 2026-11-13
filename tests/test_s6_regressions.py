@@ -37,8 +37,8 @@ _VOLATILE_PRESENTATION = re.compile(
     rb'output-[0-9a-f]+'
 )
 _FIXTURE_PRESENTATION = {
-    '17': {
-        'index.html': 'a2f4761698a66c648cdc410507aa78798148848e60491baf205b991e1adaf449',
+    '16': {
+        'index.html': 'dd3a9de7a400e296084dd80dee070ddb5f9d9a0e86604811bc21f99b6f60a5ab',
         'style.css': '97b862cb6ea94990ffee87589ea32274c015011a990a432845fe2f90d34d05aa',
     },
 }
@@ -200,7 +200,7 @@ class S6Regressions(unittest.TestCase):
                 labeled = dict(manifest, presentation_version=old)
                 raw = storage._strict_json(labeled).encode()
                 pub._manifest(raw, sha256(raw).hexdigest())
-        unknown = dict(manifest, presentation_version='18')
+        unknown = dict(manifest, presentation_version='17')
         raw = storage._strict_json(unknown).encode()
         with self.assertRaisesRegex(ValueError, 'Version de restitution inconnue'):
             pub._manifest(raw, sha256(raw).hexdigest())
