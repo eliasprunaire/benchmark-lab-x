@@ -1675,7 +1675,7 @@ test('access and launch screens preserve available actions, estimates and refusa
           const where = `${name} ${width}`;
           await vue.goto(origin + '/render/' + name);
           assert.equal(await vue.locator('.etat').count(), 1, where);
-          assert.equal(await vue.locator('.etat[data-ton="vig"] .mot').innerText(), mot, where);
+          assert.equal(await vue.locator('.etat[data-ton="vig"] .mot').textContent(), mot, where);
           assert.equal(await vue.locator('.etat h2').innerText(), 'Aucun modèle de la liste n’est utilisable pour le moment', where);
           assert.ok((await vue.locator('.etat p').innerText()).startsWith(phrase), where);
           assert.equal(await vue.locator('.etat a', {hasText: 'Actualiser la liste'}).count(), 1, where);
