@@ -9,7 +9,6 @@ Il ne possède ni le gabarit de page, ni les erreurs, ni l'accès fournisseur, n
 la préparation : ces domaines restent dans `views`. Il n'importe pas `views`,
 pour qu'aucun cycle ne soit possible.
 """
-import re
 import secrets
 from urllib.parse import urlencode
 
@@ -17,7 +16,7 @@ from benchmark.storage import _strict_json as encode
 from benchmark.preparation import INCIDENT_TEXT, NOT_SENT_TEXT, incident_text
 from benchmark.storage import AMBIGUOUS_EXPIRED, AMBIGUOUS_EXPIRED_TEXT
 from benchmark.evaluation import criterion_state, states
-from benchmark.reason_text import motif
+from benchmark.reason_text import _inserted, _labels, motif
 
 from .fragments import (FIELD_LABELS, VERDICT_BADGES, field_label, access_summary, badge, bilan, bilan_exemple, bouton, btn, cles, date_lisible_utc, disque, etat, form,
                         harnais, hidden, ic, info_modele, jour_lisible, lien, ligne_modele, listing, montant_lisible, mot, numero_version, personal_key_form,
@@ -281,19 +280,7 @@ def _readable(record, value):
 
     Une description insérée dans une phrase perd son point final : le moteur place le signe final
     """
-    spec = record['qualification']['contract']['specification']
-    labels = {item['id']: item['description'].removesuffix('.')
-              for criterion in spec['obligations'] + spec['eliminatory_errors']
-              for item in [criterion] + criterion.get('elements', [])}
-    if not labels:
-        return value
-
-    def remplacer(match):
-        # Après « ? », « ! » ou « … », le point du moteur ferait « ?. » : la description garde son signe
-        label = labels[match[1]]
-        return label if label.endswith(('?', '!', '…')) else label + match[2]
-    pattern = r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)(\.?)'
-    return re.sub(pattern, remplacer, value)
+    return _inserted(value, _labels(record['qualification']['contract']['specification']))
 
 
 def _readable_reason(record):

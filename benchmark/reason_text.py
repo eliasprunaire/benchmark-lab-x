@@ -28,8 +28,15 @@ def _labels(spec):
 
 def _inserted(value, labels):
     """Remplace les identifiants cités par leur description, sans point final"""
-    pattern = r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)'
-    return re.sub(pattern, lambda match: labels[match[0]], value)
+    if not labels:
+        return value
+
+    def remplacer(match):
+        # Après « ? », « ! » ou « … », le point qui suivait l'identifiant ferait « ?. » : il est consommé
+        label = labels[match[1]]
+        return label if label.endswith(('?', '!', '…')) else label + match[2]
+    pattern = r'(?<!\w)(' + '|'.join(map(re.escape, labels)) + r')(?!\w)(\.?)'
+    return re.sub(pattern, remplacer, value)
 
 
 def _point(phrase):
