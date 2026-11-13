@@ -130,6 +130,9 @@ class S5Regressions(unittest.TestCase):
         second = self.evaluate(previous_evaluation_id=first['evaluation_id'])
         self.assertEqual('SATISFAIT', second['verdict'])
         self.assertEqual(first['evaluation_id'], second['previous_evaluation_id'])
+        # Texte conservé d'une évaluation stockée : l'audit de démarrage le recalcule à l'identique
+        self.assertEqual('Résultat et obligations prouvés ; contrôles éliminatoires satisfaits : O1, E1',
+                         second['reason'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
 
     def test_competing_corrections_keep_one_successor(self):

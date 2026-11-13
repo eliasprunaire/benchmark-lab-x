@@ -4525,7 +4525,7 @@ class ParcoursComplet(unittest.TestCase):
         9. une obligation simple change de contrôle à côté d'une obligation composée ;
         10. un élément qui cite un coût rend l'obligation entière non vérifiable (contrôle local supposé)
         """
-        from benchmark import automatic_judgment as auto, privacy_archive
+        from benchmark import automatic_judgment as auto, privacy_archive, runtime
         # Obligation et élément en défaut terminés par un point : le motif n'en garde qu'un, en fin de phrase
         composee = 'Lister chaque action avec son échéance.'
         forme = 'Une ligne par action et son coût, au format « Action : … | Responsable : … »'
@@ -4575,6 +4575,9 @@ class ParcoursComplet(unittest.TestCase):
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
         self.assertEqual(3, judge.request.call_count)
+        # Enregistrements automatiques : rien n'est stocké, l'audit de démarrage lit le nouveau texte
+        with closing(storage.Store(self.data)) as store:
+            runtime.verify(store)
         obligations = self.judged[0]['obligations']
         self.assertEqual([['O1_1', 'O1_2'], ['O2']], [x['control_ids'] for x in obligations])
         self.assertEqual([dict(id='O1_1', description=forme), dict(id='O1_2', description=echeance)],
@@ -6030,6 +6033,15 @@ class ParcoursComplet(unittest.TestCase):
         _, page = self.exemple()
         self.assertIn('Préparation arrêtée', page.visible)
         self.assertIn('Résultat reçu non utilisable', page.visible)
+
+        # H4 : sans aucune obligation, la phrase ne laisse pas de liste vide
+        from benchmark import evaluation as evaluation_module
+        ctx = {'attempt': {'state': 'RECEIVED', 'output_piece_id': 'piece', 'attribution_incident': None,
+                           'operation': {'receipt': {'result': {'emission': 'ESTABLISHED', 'incident': None}}}},
+               'qualification': {'contract': {'specification': {'eliminatory_errors': []}}}}
+        self.assertEqual(('SATISFAIT', 'Résultat et obligations prouvés.'),
+                         evaluation_module._verdict(ctx, [], {'mode': 'automatic', 'operation': None,
+                                                              'disagreements': []}, automatic=True))
 
     def test_sortie_vide_ou_coupee_expliquee_par_le_recu(self):
         """Issue #442 : une sortie vide ou coupée s'explique par ce que le reçu atteste, rien de plus
