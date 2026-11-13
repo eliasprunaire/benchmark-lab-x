@@ -249,7 +249,35 @@ def _selection(fetched_at, document, registry):
     if type(endpoint_documents) is not dict:
         raise storage.IntegrityError('Cache des endpoints absent')
     excluded_providers = set(settings.get('excluded_providers', []))
-    view = [{
+    view = [_malformed_view(model_id, model) for model in models
+            if (model_id := _model_id(model)) is not None
+            and _maker(model_id) in settings['makers'] and _malformed(model)]
+    for model in _candidates(models, settings, fetched_at):
+        model_id = model['id']
+        # Candidat de la règle courante absent d'un relevé collecté sous une autre règle : aucun endpoint connu
+        detail = endpoint_documents.get(model_id, {'id': model_id, 'endpoints': []})
+        if type(detail) is not dict or type(detail.get('endpoints')) is not list:
+            raise storage.IntegrityError('Cache endpoint incomplet')
+        try:
+            view.append(model_view(model, detail, excluded_providers))
+        except ValueError as error:
+            # Seul un prix publié invalide écarte le modèle ; toute autre donnée invalide refuse le relevé
+            if not _invalid_price(model):
+                raise
+            try:
+                # Sans ses prix publiés, la vue doit aboutir : sinon l'erreur vient d'une autre donnée
+                model_view({**model, 'pricing': {}}, detail, excluded_providers)
+            except ValueError:
+                raise error
+            view.append(_malformed_view(model_id, model))
+    return {'fetched_at': fetched_at.isoformat(),
+            'stale': _now() - fetched_at >= timedelta(hours=settings['cache_hours']),
+            'models': view}
+
+
+def _malformed_view(model_id, model):
+    """Modèle listé dont les données publiées sont invalides : visible comme exclu, jamais proposé"""
+    return {
         'id': model_id,
         'name': model.get('name') if type(model.get('name')) is str else None,
         'maker': _maker(model_id),
@@ -263,18 +291,21 @@ def _selection(fetched_at, document, registry):
         'max_output_tokens': None,
         'variant': _variant(model_id),
         'excluded': 'malformed',
-    } for model in models
-        if (model_id := _model_id(model)) is not None
-        and _maker(model_id) in settings['makers'] and _malformed(model)]
-    for model in _candidates(models, settings, fetched_at):
-        model_id = model['id']
-        detail = endpoint_documents.get(model_id)
-        if type(detail) is not dict or type(detail.get('endpoints')) is not list:
-            raise storage.IntegrityError('Cache endpoint incomplet')
-        view.append(model_view(model, detail, excluded_providers))
-    return {'fetched_at': fetched_at.isoformat(),
-            'stale': _now() - fetched_at >= timedelta(hours=settings['cache_hours']),
-            'models': view}
+    }
+
+
+def _invalid_price(model):
+    """Prix publié du modèle illisible, négatif ou non fini, comme le « -1 » d'OpenRouter"""
+    pricing = model.get('pricing')
+    if type(pricing) is not dict:
+        return False
+    try:
+        for key in ('prompt', 'completion'):
+            if pricing.get(key) is not None:
+                storage._money(pricing[key])
+    except ValueError:
+        return True
+    return False
 
 
 def model_view(model, detail, excluded_providers):

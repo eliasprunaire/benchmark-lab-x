@@ -235,6 +235,68 @@ excluded_providers = "fixture"
                 self.assertFalse(renewed['stale'])
                 self.assertNotEqual(first['fetched_at'], renewed['fetched_at'])
 
+    def test_prix_publie_invalide_exclut_ce_modele_et_la_collecte_aboutit(self):
+        """Production : un modèle publié au prix « -1 » faisait échouer toute la collecte
+
+        Le rafraîchissement retombait alors sur le relevé figé ; aucune collecte n'aboutissait plus
+        """
+        for price in ('-1', 'NaN', 'gratuit'):
+            broken = deepcopy(FIXTURE)
+            next(model for model in broken['data'] if model['id'] == 'openai/gpt-5.5-sol')['pricing'] = {
+                'prompt': price, 'completion': price}
+            with self.subTest(price=price), tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
+                fetch = self.fetch([])
+                with patch.object(catalogue, '_now', return_value=NOW):
+                    result = catalogue.refresh(store, lambda path: broken if path == '/api/v1/models' else fetch(path))
+                    stored = catalogue.selection(store)
+                self.assertEqual(result, stored)
+                self.assertEqual(NOW.isoformat(), stored['fetched_at'])
+                excluded = next(model for model in stored['models'] if model['id'] == 'openai/gpt-5.5-sol')
+                self.assertEqual(('malformed', None, None, None), (excluded['excluded'], excluded['route'],
+                                                                   excluded['input_price_per_million'], excluded['output_price_per_million']))
+                self.assertEqual(['google/gemini-3.0-flash:free', 'openai/gpt-5.6-sol-0902', 'openai/gpt-5.6-sol', 'x-ai/grok-4-preview'],
+                                 [model['id'] for model in stored['models'] if model['excluded'] is None])
+
+    def test_contexte_invalide_avec_prix_invalide_refuse_le_releve(self):
+        """Vérificateur, E-CAT-1 : un prix invalide ne doit pas masquer une autre donnée invalide du même modèle
+
+        Le relevé reste refusé et le dernier relevé utilisable est conservé, comme pour un contexte seul invalide
+        """
+        with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
+            with patch.object(catalogue, '_now', return_value=NOW):
+                first = catalogue.refresh(store, self.fetch([]))
+            broken = deepcopy(FIXTURE)
+            model = next(model for model in broken['data'] if model['id'] == 'openai/gpt-5.6-sol')
+            model.update(context_length=0, pricing={'prompt': '-1', 'completion': '-1'})
+            fetch = self.fetch([])
+            with patch.object(catalogue, '_now', return_value=NOW + timedelta(hours=24)):
+                result = catalogue.refresh(store, lambda path: broken if path == '/api/v1/models' else fetch(path))
+                self.assertTrue(result['stale'])
+                self.assertEqual(first['fetched_at'], result['fetched_at'])
+                self.assertEqual(first['models'], catalogue.selection(store)['models'])
+
+    def test_document_d_endpoint_corrompu_reste_une_erreur_d_integrite(self):
+        """Un endpoint absent du relevé est exclu (parcours complet) ; un document présent mais corrompu reste une erreur
+
+        Le parcours ne voit qu'un 500 générique : ce test fixe le type et le motif de l'erreur, que l'exclusion ne doit pas avaler
+        """
+        with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
+            with patch.object(catalogue, '_now', return_value=NOW):
+                catalogue.refresh(store, self.fetch([]))
+            raw = store._connection.execute('SELECT raw_json FROM s2_model_catalogue').fetchone()[0]
+
+            def stored(change):
+                document = json.loads(raw)
+                change(document)
+                store._connection.execute('UPDATE s2_model_catalogue SET raw_json=?', (storage._strict_json(document),))
+                with patch.object(catalogue, '_now', return_value=NOW):
+                    return catalogue.selection(store)
+            for corrupted in ('illisible', ['x'], {'id': 'x-ai/grok-4-preview', 'endpoints': 'x'}):
+                with self.subTest(corrupted=corrupted), self.assertRaisesRegex(storage.IntegrityError, 'Cache endpoint incomplet'):
+                    stored(lambda document: document['endpoints'].update({'x-ai/grok-4-preview': corrupted}))
+            with self.assertRaisesRegex(storage.IntegrityError, 'Cache des endpoints absent'):
+                stored(lambda document: document.update(endpoints=['x']))
+
     def test_endpoint_alias_is_excluded_without_hiding_verified_models(self):
         with tempfile.TemporaryDirectory() as directory, closing(self.store(directory)) as store:
             fixture_fetch = self.fetch([])
