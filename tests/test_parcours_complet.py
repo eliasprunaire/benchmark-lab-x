@@ -6035,13 +6035,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('Résultat reçu non utilisable', page.visible)
 
         # H4 : sans aucune obligation, la phrase ne laisse pas de liste vide
-        from benchmark import evaluation as evaluation_module
-        ctx = {'attempt': {'state': 'RECEIVED', 'output_piece_id': 'piece', 'attribution_incident': None,
-                           'operation': {'receipt': {'result': {'emission': 'ESTABLISHED', 'incident': None}}}},
-               'qualification': {'contract': {'specification': {'eliminatory_errors': []}}}}
-        self.assertEqual(('SATISFAIT', 'Résultat et obligations prouvés.'),
-                         evaluation_module._verdict(ctx, [], {'mode': 'automatic', 'operation': None,
-                                                              'disagreements': []}, automatic=True))
+        from benchmark.reason_text import motif
+        self.assertEqual('Résultat et obligations prouvés.', motif({
+            'verdict': 'SATISFAIT', 'findings': [], 'output_piece_id': 'piece', 'reason': '',
+            'qualification': {'contract': {'specification': {'obligations': [], 'eliminatory_errors': []}}}}))
 
     def test_sortie_vide_ou_coupee_expliquee_par_le_recu(self):
         """Issue #442 : une sortie vide ou coupée s'explique par ce que le reçu atteste, rien de plus

@@ -134,6 +134,12 @@ class S5Regressions(unittest.TestCase):
         self.assertEqual('Résultat et obligations prouvés ; contrôles éliminatoires satisfaits : O1, E1',
                          second['reason'])
         self.assertTrue(self.store.verify_storage()['integrity_ok'])
+        # Le même enregistrement, écrit avec l'ancien texte, s'affiche avec le texte corrigé
+        from benchmark.reason_text import motif
+        shown = motif(second | dict(qualification=q.inspect_contract(
+            self.store, self.campaign['manifest']['contract_sha256'])))
+        self.assertEqual('Résultat et obligations prouvés : Action présente. Erreur éliminatoire évitée : Action omise.',
+                         shown)
 
     def test_competing_corrections_keep_one_successor(self):
         self.acquire()
