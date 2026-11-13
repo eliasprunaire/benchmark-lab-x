@@ -2774,6 +2774,10 @@ class ParcoursComplet(unittest.TestCase):
         self.examine(page, recap, 'réception partielle', None)
         self.assertIn('Reçue', page.visible)
         self.assertIn('En file', page.visible)
+        # Une réponse est déjà reçue : le suivi ne dit plus que les essais n'ont pas démarré
+        self.assertIn('Un essai attend son tour.', page.visible)
+        self.assertIn('Les réponses arrivent au fur et à mesure. Vous pouvez quitter cette page et revenir.', page.visible)
+        self.assertNotIn('Les essais n’ont pas encore démarré.', page.visible)
         execution.execute_launch(self.data, attempts[1:], self.candidate,
                                  access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(recap)
@@ -4410,9 +4414,10 @@ class ParcoursComplet(unittest.TestCase):
         from base64 import b64encode
         from hashlib import sha256
         from benchmark import automatic_judgment as auto
-        tableau = 'Présenter un tableau à trois colonnes avec une ligne par action'
+        # Descriptions terminées par un point, comme l'assistant de préparation les écrit souvent (test C4)
+        tableau = 'Présenter un tableau à trois colonnes avec une ligne par action.'
         echeances = 'Indiquer pour chaque action son responsable et son échéance'
-        self.criteria = {'eliminatory': ['Inventer une décision absente du compte rendu'],
+        self.criteria = {'eliminatory': ['Inventer une décision absente du compte rendu.'],
                          'obligations': [tableau, echeances], 'quality': []}
         explication = ('Le tableau a bien trois colonnes, mais les actions de relecture '
                        'et d’envoi partagent une même ligne.')
@@ -4468,8 +4473,10 @@ class ParcoursComplet(unittest.TestCase):
             return next(chunk for chunk in html.split('<tr id="attempt-')[1:]
                         if '<span class="modele">' + nom + '<small>' in chunk).split('</tr>')[0]
         cellule = ligne('Modèle A')
+        # Une description insérée perd son point final ; chaque phrase finit par un seul point
         self.assertIn('Erreur éliminatoire : Inventer une décision absente du compte rendu. '
-                      'Exigence non respectée : ' + tableau + '.', cellule)
+                      'Exigence non respectée : ' + tableau, cellule)
+        self.assertNotIn('..', cellule)
         self.assertNotIn('Le tableau a bien', cellule)
         self.assertNotIn(echeances, cellule)
         self.assertNotIn('…', cellule)
@@ -4506,9 +4513,10 @@ class ParcoursComplet(unittest.TestCase):
         10. un élément qui cite un coût rend l'obligation entière non vérifiable (contrôle local supposé)
         """
         from benchmark import automatic_judgment as auto, privacy_archive
-        composee = 'Lister chaque action avec son échéance'
+        # Obligation et élément en défaut terminés par un point : le motif n'en garde qu'un, en fin de phrase
+        composee = 'Lister chaque action avec son échéance.'
         forme = 'Une ligne par action et son coût, au format « Action : … | Responsable : … »'
-        echeance = 'L’échéance de chaque action reprise des notes'
+        echeance = 'L’échéance de chaque action reprise des notes.'
         simple = 'Nommer le responsable de chaque action'
         self.criteria = {'eliminatory': ['Inventer une décision absente du compte rendu'],
                          'obligations': [{'description': composee, 'elements': [forme, echeance]}, simple],
@@ -4548,7 +4556,7 @@ class ParcoursComplet(unittest.TestCase):
         self.assertNotIn('O1_', results.visible)
         cellule = next(chunk for chunk in raw.decode().split('<tr id="attempt-')[1:]
                        if '<span class="modele">Modèle A<small>' in chunk).split('</tr>')[0]
-        self.assertIn('Exigence non respectée : ' + composee + ' (' + echeance + ').', cellule)
+        self.assertIn('Exigence non respectée : ' + composee[:-1] + ' (' + echeance[:-1] + ').', cellule)
 
         def modeles(page):
             return [n['text'][:8] for n in page.nodes if n['tag'] == 'span' and n['attrs'].get('class') == 'modele']
