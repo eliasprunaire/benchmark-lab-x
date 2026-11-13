@@ -6552,8 +6552,32 @@ class ParcoursComplet(unittest.TestCase):
         Modes d'échec couverts :
         1. la relance part pendant un autre appel du même budget, ou évalue avant sa réponse ;
         2. l'évaluation lancée avec la comparaison l'arrête parce qu'une relance attend ;
-        3. la relance différée n'est jamais reprogrammée, ou ne lance pas l'évaluation
+        3. la relance différée n'est jamais reprogrammée, ou ne lance pas l'évaluation ;
+        4. un premier cas supprimé puis purgé, au coût de préparation inconnu, arrête l'évaluation (#693)
         """
+        from benchmark import privacy
+        # Couche S7 comme en production : la suppression retire les opérations du cas à la purge
+        privacy.migrate(self.data, SECRET, 'test-693')
+        bootstrap, _, _ = self.request('/preparation')
+        form = bootstrap.form('/session/open')
+        self.request(form['action'], form['fields'], status=303,
+                     extra_headers={'Origin': 'https://fixture.example', 'Sec-Fetch-Site': 'same-origin'})
+        preparer = self.prepare
+
+        def cout_inconnu(operation, request):
+            value = preparer(operation, request)
+            value['cost'] = dict(status='UNKNOWN', amount=None, currency='USD', source='Reçu simulé sans usage.cost')
+            return value
+        with patch.object(self, 'prepare', cout_inconnu):
+            premier = self.exemple_qualifie()
+        page, _, _ = self.request(premier + '/delete?retour=' + premier)
+        form = page.form('/delete')
+        _, headers, _ = self.request(form['action'], form['fields'], status=303)
+        self.assertEqual('/preparation?supprime=1', headers['Location'])
+        self.assertEqual([premier.rsplit('/', 1)[1]], privacy.purge(self.data)['purged'])
+        with closing(storage.Store(self.data)) as store:
+            self.assertIn('UNKNOWN', [(op['observed_cost'] or {}).get('status')
+                                      for op in privacy.retired_operations(store._connection)])
         judge = self.juge_factice()
         script, pendant = [429], []
 
@@ -6578,6 +6602,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertEqual(2, judge.request.call_count)
         with closing(storage.Store(self.data)) as store:
             self.assertIsNone(campaigns.inspect(store, self.start['judgment_campaign'])['stop_reason'])
+        suivi, _, _ = self.request(dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1/conditions')
+        self.assertIn('Vérification des réponses terminée.', suivi.visible)
+        self.assertNotIn('Vérification des réponses interrompue', suivi.visible)
 
     def test_limite_de_debit_sans_preautorisation_garde_l_arret(self):
         """Issue #533 : une comparaison lancée sans relance préautorisée garde l'arrêt nommé de #525"""
