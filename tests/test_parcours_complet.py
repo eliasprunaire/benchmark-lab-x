@@ -49,6 +49,16 @@ def couloirs(page):
     return [n['text'].strip() for n in page.nodes if n['tag'] == 'li' and 'couloir' in n['attrs'].get('class', '').split()]
 
 
+def texte_du_verdict(page, raw):
+    """Texte de « Pourquoi ce verdict » : paragraphe court, ou contenu du tiroir quand il est long"""
+    if any(n['tag'] == 'details' and n['text'].lstrip().startswith('Explication du verdict') for n in page.nodes):
+        texte = page.depliant('Explication du verdict')
+    else:
+        texte = re.search(r'<h3>Pourquoi ce verdict</h3><p>[^<]*</p><p class="petit">(.*?)</p>',
+                          raw.decode(), re.S)[1]
+    return ' '.join(texte.split()).removeprefix('Explication du verdict').strip()
+
+
 class Page(HTMLParser):
     """Lire les formulaires, le texte hors dépliants et l'ordre natif de tabulation"""
     def __init__(self, raw):
@@ -4494,6 +4504,9 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn(('Non respectée', tableau), states)
         self.assertIn(('Non vérifiable', echeances), states)
         self.assertIn(explication, text)
+        # Deux défauts établis : chaque description sans son point, puis son constat ; une espace entre les deux
+        self.assertEqual(tableau[:-1] + ' : ' + explication + ' Inventer une décision absente du compte rendu : '
+                         'Une action de suivi est inventée', texte_du_verdict(Page(raw), raw))
 
     def test_obligation_composee_jugee_element_par_element(self):
         """Une obligation composée déclarée par la préparation se juge élément par élément
@@ -4528,23 +4541,40 @@ class ParcoursComplet(unittest.TestCase):
             if cible['description'] == echeance:
                 return 'FAIL', 'candidate', defaut
             return 'PASS', 'candidate', 'Respecté dans la réponse'
-        judge = self.juge_factice(constat)
+        appels = []
+
+        def ajuste(contenu, constats):
+            # Modèle B satisfait tout ; Modèle C manque les deux éléments de l'obligation composée
+            appels.append(contenu['output']['piece_id'])
+            if len(appels) == 2:
+                return [dict(f, status='PASS', finding='Respecté dans la réponse') for f in constats]
+            if len(appels) == 3:
+                return [dict(f, status='FAIL', finding='Forme absente') if f['control_id'] == 'O1_1' else f for f in constats]
+            return constats
+        judge = self.juge_factice(constat, ajuste=ajuste)
         dossier = self.exemple_qualifie()
         page, _, _ = self.request(dossier)
         for value in (composee, forme, echeance):
             self.assertIn(value, page.depliant('Exemple'))
         self.assertNotIn("'elements'", page.depliant('Exemple'))
         page, _, _ = self.request(dossier + '/configurations')
-        page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash'],
-                                                     'tier': 'low'})
+        page = self.submit(page, '/configurations', {'models': ['openai/gpt-5.6-sol', 'deepseek/deepseek-v4.1-flash',
+                                                                'mistralai/mistral-small-2603'], 'tier': 'low'})
         self.submit(page, '/start', {})
-        execution.execute_launch(self.data, self.starts.get_nowait()['candidate_attempts'], self.candidate,
+        attempts = self.starts.get_nowait()['candidate_attempts']
+
+        def candidat(operation, request):
+            value = self.candidate(operation, request)
+            # Coût connu partout : un coût inconnu fermerait l'admission avant le troisième lancement
+            value['cost'].update(status='KNOWN', amount='0.10', currency='USD', source='Reçu candidat simulé S12')
+            return value
+        execution.execute_launch(self.data, attempts, candidat,
                                  access_secret=SECRET, access_transport=self.access)
         page, _, _ = self.request(dossier)
         page, _, _ = self.request(page.link('Lancer la vérification des réponses'))
         self.submit(page, '/evaluate', {})
         auto.execute_campaign(self.data, self.starts.get_nowait()['judgment_operations'], self.bound[2])
-        self.assertEqual(2, judge.request.call_count)
+        self.assertEqual(3, judge.request.call_count)
         obligations = self.judged[0]['obligations']
         self.assertEqual([['O1_1', 'O1_2'], ['O2']], [x['control_ids'] for x in obligations])
         self.assertEqual([dict(id='O1_1', description=forme), dict(id='O1_2', description=echeance)],
@@ -4569,8 +4599,23 @@ class ParcoursComplet(unittest.TestCase):
         states = re.findall(r'>([^<>]+)</span><div><p><b>([^<]+)</b>', text)
         for state in (('Non respectée', composee), ('Respectée', forme), ('Non respectée', echeance), ('Respectée', simple)):
             self.assertIn(state, states)
-        self.assertIn(echeance + ' non respecté : 12 mars inventé, absent des notes', text)
+        # Explication d'un NE SATISFAIT PAS : description sans son point, puis le constat du juge, tel quel
+        self.assertEqual(composee[:-1] + ' : ' + echeance[:-1] + ' non respecté : 12 mars inventé, absent des notes',
+                         texte_du_verdict(detail, raw))
         self.assertNotIn('O1_', text)
+
+        def verdict(nom):
+            ligne = next(chunk for chunk in raw_resultats.split('<tr id="attempt-')[1:]
+                         if '<span class="modele">' + nom + '<small>' in chunk).split('</tr>')[0]
+            page, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', ligne)[1].replace('&amp;', '&'))
+            return texte_du_verdict(page, raw)
+        raw_resultats = self.request(comparison)[2].decode()
+        # SATISFAIT : chaque critère nommé une fois, l'obligation composée comprise ; l'erreur éliminatoire jugée est évitée
+        self.assertEqual('Résultat et obligations prouvés : ' + composee[:-1] + ' ; ' + simple
+                         + '. Erreur éliminatoire évitée : Inventer une décision absente du compte rendu.', verdict('Modèle B'))
+        # H2 du Designer : deux éléments en défaut, deux constats ; la description de l'obligation se répète
+        self.assertEqual(composee[:-1] + ' : Forme absente ' + composee[:-1] + ' : ' + echeance[:-1]
+                         + ' non respecté : 12 mars inventé, absent des notes', verdict('Modèle C'))
         with closing(storage.Store(self.data)) as store:
             session = store._connection.execute('SELECT session_id FROM s2_dossiers').fetchone()[0]
             view = prep.view(store, session, dossier.rsplit('/', 1)[1])
@@ -5231,6 +5276,10 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn(ATTRIBUTION, apercu.visible)
         self.assertIn(LIMIT, apercu.visible)
         self.assertIn('Réponses vérifiées : 2 · essais lancés : 2 sur 2.', apercu.visible)
+        # Page publique : même texte que le détail privé, sans erreur éliminatoire fictive
+        self.assertEqual(2, ' '.join(apercu.visible.split()).count(
+            'Satisfait : Résultat et obligations prouvés : Toutes les actions présentes.'))
+        self.assertNotIn('Erreur éliminatoire évitée', apercu.visible)
         for vue in (resultats, page, apercu):
             self.sans_promesse(vue)
 
@@ -5949,6 +5998,38 @@ class ParcoursComplet(unittest.TestCase):
         self.assertIn('1 à reprendre', html)
         self.assertIn('2 satisfont', html)
         self.assertNotIn('Notre conseil', html)
+
+        def explication(nom):
+            ligne = next(chunk for chunk in html.split('<tr id="attempt-')[1:]
+                         if '<span class="modele">' + nom + '<small>' in chunk).split('</tr>')[0]
+            page, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', ligne)[1].replace('&amp;', '&'))
+            return texte_du_verdict(page, raw)
+        # Contrat sans erreur éliminatoire : l'explication n'en nomme aucune ; la preuve insuffisante nomme son critère
+        self.assertEqual('Résultat et obligations prouvés : Toutes les actions présentes.', explication('Modèle A'))
+        self.assertEqual('Preuve insuffisante ou contradictoire : Toutes les actions présentes.', explication('Modèle C'))
+
+    def test_contrat_sans_obligation_refuse_et_description_terminale(self):
+        """H3 et H4 du Designer : un « ? » final ne devient pas « ?. » ; un contrat sans obligation n'existe pas
+
+        Modes d'échec couverts :
+        1. le point du moteur s'ajoute après le « ? » d'une description insérée ;
+        2. la qualification accepte un contrat sans aucune obligation, ce qui produirait « …prouvés : . ».
+        """
+        # H3 : la description garde son « ? », le moteur ne place aucun point après lui
+        dossier, _ = self.comparer([], lambda critere, sortie: 'excellent',
+                                   criteria={'eliminatory': [], 'obligations': ['Toutes les actions présentes ?'],
+                                             'quality': []})
+        comparison = dossier + '/campaigns/' + dossier.rsplit('/', 1)[1] + '-c1'
+        _, _, raw = self.request(comparison)
+        cellule = raw.decode().split('<tr id="attempt-')[1].split('</tr>')[0]
+        page, _, raw = self.request(re.search(r'href="([^"]+/attempts/[^"]+)"', cellule)[1].replace('&amp;', '&'))
+        self.assertEqual('Résultat et obligations prouvés : Toutes les actions présentes ?',
+                         texte_du_verdict(page, raw))
+        # H4 : sans obligation, la préparation refuse le paquet ; le contrat ne peut donc pas exister
+        self.criteria = {'eliminatory': [], 'obligations': [], 'quality': []}
+        _, page = self.exemple()
+        self.assertIn('Préparation arrêtée', page.visible)
+        self.assertIn('Résultat reçu non utilisable', page.visible)
 
     def test_sortie_vide_ou_coupee_expliquee_par_le_recu(self):
         """Issue #442 : une sortie vide ou coupée s'explique par ce que le reçu atteste, rien de plus
